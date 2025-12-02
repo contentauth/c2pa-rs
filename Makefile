@@ -41,7 +41,7 @@ endif
 
 # Full local validation, build and test all features including wasm
 # Run this before pushing a PR to pre-validate
-test: check-format check-docs clippy test-local test-wasm-web
+test: check-format check-docs clippy test-local test-wasm
 
 # Auto format code according to standards
 fmt:

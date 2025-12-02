@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::{Read, Seek};
+
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
@@ -20,8 +22,13 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
     assertions::{labels, AssertionMetadata, ReviewRating},
     cbor_types::map_cbor_to_type,
+    context::Context,
     error::Result,
     hashed_uri::HashedUri,
+    jumbf::labels::{to_manifest_uri, to_signature_uri},
+    status_tracker::StatusTracker,
+    store::Store,
+    utils::xmp_inmemory_utils::XmpInfo,
     validation_results::ValidationResults,
     validation_status::ValidationStatus,
     Error,
@@ -519,6 +526,103 @@ impl Ingredient {
         }
 
         ingredient_map.end()
+    }
+
+    /// Create a new Ingredient assertion from a stream
+    /// You must specify the relationship and format.
+    /// This will return the new Ingredient and associated manifest_bytes if they exist.
+    pub(crate) fn from_stream(
+        relationship: Relationship,
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        context: &Context,
+    ) -> Result<(Self, Option<Vec<u8>>)> {
+        let mut validation_log = StatusTracker::default();
+        let mut ingredient = Self::new_v3(relationship);
+        ingredient.format = Some(format.to_owned());
+
+        // Try to get xmp info, if this fails all XmpInfo fields will be None.
+        stream.rewind()?;
+        let xmp_info = XmpInfo::from_source(&mut stream, format);
+        stream.rewind()?;
+        // use xmp info if available
+        ingredient.instance_id = xmp_info.instance_id;
+        ingredient.document_id = xmp_info.document_id;
+        // note, provenance is handled in Store::from_stream
+        // should we add something to ingredient to indicate it was remotely fetched?
+
+        match Store::from_stream(format, &mut stream, &mut validation_log, context) {
+            Ok(store) => {
+                ingredient.with_store(&store, &validation_log)?;
+                let manifest_bytes = store.to_jumbf_internal(0)?;
+                Ok((ingredient, Some(manifest_bytes)))
+            }
+            Err(Error::JumbfNotFound)
+            | Err(Error::ProvenanceMissing)
+            | Err(Error::UnsupportedType) => {
+                // no claims but valid file
+                Ok((ingredient, None))
+            }
+            Err(Error::BadParam(desc)) if desc == *"unrecognized file type" => {
+                Ok((ingredient, None))
+            } // no claims but valid file
+            Err(Error::RemoteManifestUrl(url)) | Err(Error::RemoteManifestFetch(url)) => {
+                let status =
+                    ValidationStatus::new_failure(crate::validation_status::MANIFEST_INACCESSIBLE)
+                        .set_url(url)
+                        .set_explanation("Remote manifest not fetched".to_string());
+                let mut validation_results = ValidationResults::default();
+                validation_results.add_status(status.clone());
+                ingredient.validation_results = Some(validation_results);
+                Ok((ingredient, None))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Add store information to the ingredient assertion
+    pub(crate) fn with_store(
+        &mut self,
+        store: &Store,
+        validation_log: &StatusTracker,
+    ) -> Result<&Self> {
+        self.validation_results = Some(ValidationResults::from_store(store, validation_log));
+
+        if let Some(claim) = store.provenance_claim() {
+            if self.title.is_none() {
+                self.title = claim.title().cloned();
+            }
+            if self.instance_id.is_none() {
+                self.instance_id = Some(claim.instance_id().to_string());
+            }
+
+            let hashes = store.get_manifest_box_hashes(claim);
+
+            self.active_manifest = Some(HashedUri::new(
+                to_manifest_uri(claim.label()),
+                Some(claim.alg().to_owned()),
+                hashes.manifest_box_hash.as_ref(),
+            ));
+            self.claim_signature = Some(HashedUri::new(
+                to_signature_uri(claim.label()),
+                Some(claim.alg().to_owned()),
+                hashes.signature_box_hash.as_ref(),
+            ));
+
+            let thumbnail = claim.thumbnail();
+            if thumbnail.is_some()
+                && self
+                    .validation_results
+                    .as_ref()
+                    .map(|r| r.validation_state())
+                    != Some(crate::ValidationState::Invalid)
+            {
+                self.thumbnail = thumbnail;
+            } else {
+                // todo:: add thumbnail here
+            }
+        }
+        Ok(self)
     }
 }
 

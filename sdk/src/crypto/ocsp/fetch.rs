@@ -23,10 +23,7 @@ use x509_parser::{
     prelude::*,
 };
 
-use crate::{
-    crypto::base64,
-    http::{AsyncHttpResolver, SyncHttpResolver},
-};
+use crate::{context::Context, crypto::base64};
 
 const AD_OCSP_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .48 .1);
 const AUTHORITY_INFO_ACCESS_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .1 .1);
@@ -145,14 +142,8 @@ fn process_ocsp_responders(certs: &[Vec<u8>]) -> Option<Vec<OcspRequestData>> {
 ///
 /// Checks for an OCSP responder in the end-entity certificate. If found, it
 /// will attempt to retrieve the raw DER-encoded OCSP response.
-#[async_generic(async_signature(
-    certs: &[Vec<u8>],
-    http_resolver: &impl AsyncHttpResolver,
-))]
-pub(crate) fn fetch_ocsp_response(
-    certs: &[Vec<u8>],
-    http_resolver: &impl SyncHttpResolver,
-) -> Option<Vec<u8>> {
+#[async_generic]
+pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>], context: &Context) -> Option<Vec<u8>> {
     let requests = process_ocsp_responders(certs)?;
     for request_data in requests {
         let req_url = request_data.url.join(&request_data.request_str).ok()?;
@@ -165,9 +156,13 @@ pub(crate) fn fetch_ocsp_response(
 
         let request = request.body(Vec::new()).ok()?;
         let response = if _sync {
-            http_resolver.http_resolve(request).ok()?
+            context.resolver().http_resolve(request).ok()?
         } else {
-            http_resolver.http_resolve_async(request).await.ok()?
+            context
+                .resolver_async()
+                .http_resolve_async(request)
+                .await
+                .ok()?
         };
 
         if response.status() == 200 {

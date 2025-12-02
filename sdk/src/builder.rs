@@ -36,11 +36,10 @@ use crate::{
         UserCbor,
     },
     claim::Claim,
+    context::Context,
     error::{Error, Result},
-    http::{AsyncGenericResolver, SyncGenericResolver},
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
-    settings::{self, Settings},
     store::Store,
     utils::{hash_utils::hash_to_b64, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
@@ -305,16 +304,16 @@ pub struct Builder {
     pub base_path: Option<PathBuf>,
 
     /// A builder should construct a created, opened or updated manifest.
-    #[deprecated(note = "Use set_intent() to set or intent() to get the builder intent")]
+    #[deprecated(note = "Use set_intent() to set or intent()")]
     pub intent: Option<BuilderIntent>,
 
     /// Container for binary assets (like thumbnails).
     #[serde(skip)]
     pub(crate) resources: ResourceStore,
 
-    // Contains the builder settings
+    // Contains the builder context
     #[serde(skip)]
-    settings: Settings,
+    context: Context,
 }
 
 impl AsRef<Builder> for Builder {
@@ -329,7 +328,19 @@ impl Builder {
     /// * A new [`Builder`].
     pub fn new() -> Self {
         Self {
-            settings: settings::get_settings().unwrap_or_default(),
+            context: Context::new(),
+            ..Default::default()
+        }
+    }
+
+    /// Creates a new [`Builder`] struct from a [`Context`].
+    /// # Arguments
+    /// * `context` - The [`Context`] to use for this [`Builder`].
+    /// # Returns
+    /// * A new [`Builder`].
+    pub fn from_context(context: Context) -> Self {
+        Self {
+            context,
             ..Default::default()
         }
     }
@@ -350,8 +361,8 @@ impl Builder {
     /// * A mutable reference to the [`Builder`].
     #[allow(deprecated)]
     pub fn set_intent(&mut self, intent: BuilderIntent) -> &mut Self {
-        self.settings.builder.intent = Some(intent.clone());
-        self.intent = Some(intent);
+        self.context.settings_mut().builder.intent = Some(intent.clone());
+        self.intent = Some(intent); // self.intent is deprecated but keep in sync for now
         self
     }
 
@@ -361,7 +372,7 @@ impl Builder {
     pub fn intent(&self) -> Option<BuilderIntent> {
         let mut intent = self.intent.clone();
         if intent.is_none() {
-            intent = self.settings.builder.intent.clone();
+            intent = self.context.settings().builder.intent.clone();
         }
         intent
     }
@@ -377,9 +388,23 @@ impl Builder {
     pub fn from_json(json: &str) -> Result<Self> {
         Ok(Self {
             definition: serde_json::from_str(json).map_err(Error::JsonError)?,
-            settings: settings::get_settings().unwrap_or_default(),
+            context: Context::new(),
             ..Default::default()
         })
+    }
+
+    /// Sets the [`ManifestDefinition`] for this [`Builder`] from a JSON string.
+    /// # Arguments
+    /// * `json` - A JSON string representing the [`ManifestDefinition`].
+    /// # Returns
+    /// * A mutable reference to the [`Builder`].
+    /// # Errors
+    /// * Returns an [`Error`] if the JSON is malformed or incorrect.
+    /// # Notes
+    /// * This will overwrite any existing definition in the [`Builder`].
+    pub fn with_json(&mut self, json: &str) -> Result<&mut Self> {
+        self.definition = serde_json::from_str(json).map_err(Error::JsonError)?;
+        Ok(self)
     }
 
     /// Returns a [Vec] of mime types that [c2pa-rs] is able to sign.
@@ -616,8 +641,6 @@ impl Builder {
         T: Into<String>,
         R: Read + Seek + Send,
     {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
         if format == "c2pa" || format == "application/c2pa" {
@@ -632,10 +655,10 @@ impl Builder {
         }
 
         let ingredient = if _sync {
-            ingredient.with_stream(format, stream, &SyncGenericResolver::new(), &settings)?
+            ingredient.with_stream(format, stream, &self.context)?
         } else {
             ingredient
-                .with_stream_async(format, stream, &AsyncGenericResolver::new(), &settings)
+                .with_stream_async(format, stream, &self.context)
                 .await?
         };
 
@@ -831,9 +854,8 @@ impl Builder {
     /// # Errors
     /// * Returns an [`Error`] if the archive cannot be written.
     pub fn to_archive(&mut self, mut stream: impl Write + Seek) -> Result<()> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        if let Some(true) = settings.builder.generate_c2pa_archive {
-            let c2pa_data = self.working_store_sign(&settings)?;
+        if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
+            let c2pa_data = self.working_store_sign()?;
             stream.write_all(&c2pa_data)?;
         } else {
             return self.old_to_archive(stream);
@@ -861,7 +883,8 @@ impl Builder {
             // but we need to disable validation since we are not signing yet
             // so we will read the store directly here
             //crate::Reader::from_stream("application/c2pa", stream).and_then(|r| r.into_builder())
-            let settings = crate::settings::get_settings().unwrap_or_default();
+            let mut context = Context::new();
+            context.settings_mut().verify.verify_after_reading = false;
 
             let mut validation_log = crate::status_tracker::StatusTracker::default();
             stream.rewind()?; // Ensure stream is at the start
@@ -869,18 +892,17 @@ impl Builder {
             let store = Store::from_stream(
                 "application/c2pa",
                 &mut stream,
-                false,
                 &mut validation_log,
-                &SyncGenericResolver::new(),
-                &settings,
+                &context,
             )?;
-            let reader = Reader::from_store(store, &mut validation_log, &settings)?;
+            let mut reader = Reader::new(context);
+            reader.with_store(store, &mut validation_log)?;
             reader.into_builder()
         })
     }
 
     // Convert a Manifest into a Claim
-    fn to_claim(&self, settings: &Settings) -> Result<Claim> {
+    fn to_claim(&self) -> Result<Claim> {
         // utility function to add created or gathered assertions
         fn add_assertion(
             claim: &mut Claim,
@@ -899,7 +921,8 @@ impl Builder {
 
         // add the default claim generator info for this library
         if claim_generator_info.is_empty() {
-            let claim_generator_info_settings = &settings.builder.claim_generator_info;
+            let claim_generator_info_settings =
+                &self.context.settings().builder.claim_generator_info;
             match claim_generator_info_settings {
                 Some(claim_generator_info_settings) => {
                     claim_generator_info.push(claim_generator_info_settings.clone().try_into()?);
@@ -1009,7 +1032,7 @@ impl Builder {
                 &mut claim,
                 definition.redactions.clone(),
                 Some(&self.resources),
-                settings,
+                &self.context,
             )?;
             if !id.is_empty() {
                 ingredient_map.insert(id, (ingredient.relationship(), uri));
@@ -1176,10 +1199,11 @@ impl Builder {
         actions: &mut Actions,
     ) -> Result<()> {
         if actions.all_actions_included.is_none() {
-            actions.all_actions_included = self.settings.builder.actions.all_actions_included;
+            actions.all_actions_included =
+                self.context.settings().builder.actions.all_actions_included;
         }
 
-        let action_templates = &self.settings.builder.actions.templates;
+        let action_templates = &self.context.settings().builder.actions.templates;
 
         if let Some(action_templates) = action_templates {
             let action_templates = action_templates
@@ -1194,7 +1218,7 @@ impl Builder {
             }
         }
 
-        let additional_actions = &self.settings.builder.actions.actions;
+        let additional_actions = &self.context.settings().builder.actions.actions;
 
         if let Some(additional_actions) = additional_actions {
             let additional_actions = additional_actions
@@ -1224,9 +1248,10 @@ impl Builder {
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
     ) -> Result<()> {
+        let settings = self.context.settings();
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
-        let auto_created = self.settings.builder.actions.auto_created_action.enabled;
-        let auto_opened = self.settings.builder.actions.auto_opened_action.enabled;
+        let auto_created = settings.builder.actions.auto_created_action.enabled;
+        let auto_opened = settings.builder.actions.auto_opened_action.enabled;
 
         if (self.intent().is_some() || auto_created || auto_opened)
             && !actions.actions.iter().any(|action| {
@@ -1269,7 +1294,7 @@ impl Builder {
                             let mut action = Action::new(c2pa_action::OPENED)
                                 .set_parameter("ingredients", vec![parent_uri])?;
                             if let Some(source_type) =
-                                &self.settings.builder.actions.auto_opened_action.source_type
+                                &settings.builder.actions.auto_opened_action.source_type
                             {
                                 action = action.set_source_type(source_type.clone());
                             }
@@ -1279,12 +1304,8 @@ impl Builder {
                         }
                     } else if auto_created {
                         let mut action = Action::new(c2pa_action::CREATED);
-                        if let Some(source_type) = &self
-                            .settings
-                            .builder
-                            .actions
-                            .auto_created_action
-                            .source_type
+                        if let Some(source_type) =
+                            &settings.builder.actions.auto_created_action.source_type
                         {
                             action = action.set_source_type(source_type.clone());
                         }
@@ -1302,7 +1323,7 @@ impl Builder {
         }
 
         // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
-        if self.settings.builder.actions.auto_placed_action.enabled {
+        if settings.builder.actions.auto_placed_action.enabled {
             // Get a list of ingredient URIs referenced by "c2pa.placed" actions.
             let mut referenced_uris = HashSet::new();
             for action in &actions.actions {
@@ -1326,8 +1347,7 @@ impl Builder {
 
                     let action = action.set_parameter("ingredients", vec![uri])?;
 
-                    let action = match self.settings.builder.actions.auto_placed_action.source_type
-                    {
+                    let action = match settings.builder.actions.auto_placed_action.source_type {
                         Some(ref source_type) => action.set_source_type(source_type.clone()),
                         _ => action,
                     };
@@ -1339,10 +1359,10 @@ impl Builder {
     }
 
     // Convert a Manifest into a Store
-    fn to_store(&self, settings: &Settings) -> Result<Store> {
-        let claim = self.to_claim(settings)?;
+    fn to_store(&self) -> Result<Store> {
+        let claim = self.to_claim()?;
 
-        let mut store = Store::with_settings(settings);
+        let mut store = Store::with_context(&self.context);
 
         // if this can be an update manifest, then set the update_manifest flag
         if self.intent() == Some(BuilderIntent::Update) {
@@ -1355,12 +1375,7 @@ impl Builder {
     }
 
     #[cfg(feature = "add_thumbnails")]
-    fn maybe_add_thumbnail<R>(
-        &mut self,
-        format: &str,
-        stream: &mut R,
-        settings: &Settings,
-    ) -> Result<&mut Self>
+    fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
     where
         R: Read + Seek + ?Sized,
     {
@@ -1370,7 +1385,7 @@ impl Builder {
         }
 
         // check settings to see if we should auto generate a thumbnail
-        let auto_thumbnail = settings.builder.thumbnail.enabled;
+        let auto_thumbnail = self.context.settings().builder.thumbnail.enabled;
 
         if self.definition.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
@@ -1380,7 +1395,7 @@ impl Builder {
                 crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
                     format,
                     &mut stream,
-                    settings,
+                    self.context.settings(),
                 )?
             {
                 stream.rewind()?;
@@ -1452,8 +1467,6 @@ impl Builder {
         reserve_size: usize,
         format: &str,
     ) -> Result<Vec<u8>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-
         let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
         if dh.is_err() {
             let mut ph = DataHash::new("jumbf manifest", "sha256");
@@ -1464,7 +1477,7 @@ impl Builder {
         }
         self.definition.format = format.to_string();
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
-        let mut store = self.to_store(&settings)?;
+        let mut store = self.to_store()?;
         let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
         Ok(placeholder)
     }
@@ -1496,15 +1509,23 @@ impl Builder {
         data_hash: &DataHash,
         format: &str,
     ) -> Result<Vec<u8>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-
-        let mut store = self.to_store(&settings)?;
+        let mut store = self.to_store()?;
         if _sync {
-            store.get_data_hashed_embeddable_manifest(data_hash, signer, format, None, &settings)
+            store.get_data_hashed_embeddable_manifest(
+                data_hash,
+                signer,
+                format,
+                None,
+                &self.context,
+            )
         } else {
             store
                 .get_data_hashed_embeddable_manifest_async(
-                    data_hash, signer, format, None, &settings,
+                    data_hash,
+                    signer,
+                    format,
+                    None,
+                    &self.context,
                 )
                 .await
         }
@@ -1530,16 +1551,14 @@ impl Builder {
         signer: &dyn Signer,
         format: &str,
     ) -> Result<Vec<u8>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
 
-        let mut store = self.to_store(&settings)?;
+        let mut store = self.to_store()?;
         let bytes = if _sync {
-            store.get_box_hashed_embeddable_manifest(signer, &settings)
+            store.get_box_hashed_embeddable_manifest(signer, &self.context)
         } else {
             store
-                .get_box_hashed_embeddable_manifest_async(signer, &settings)
+                .get_box_hashed_embeddable_manifest_async(signer, &self.context)
                 .await
         }?;
         // get composed version for embedding to JPEG
@@ -1575,13 +1594,6 @@ impl Builder {
         R: Read + Seek + Send,
         W: Write + Read + Seek + Send,
     {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = if _sync {
-            SyncGenericResolver::new()
-        } else {
-            AsyncGenericResolver::new()
-        };
-
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
         // todo:: read instance_id from xmp from stream ?
@@ -1597,17 +1609,17 @@ impl Builder {
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(&format, source, &settings)?;
+        self.maybe_add_thumbnail(&format, source)?;
 
         // convert the manifest to a store
-        let mut store = self.to_store(&settings)?;
+        let mut store = self.to_store()?;
 
         // sign and write our store to to the output image file
         if _sync {
-            store.save_to_stream(&format, source, dest, signer, &http_resolver, &settings)
+            store.save_to_stream(&format, source, dest, signer, &self.context)
         } else {
             store
-                .save_to_stream_async(&format, source, dest, signer, &http_resolver, &settings)
+                .save_to_stream_async(&format, source, dest, signer, &self.context)
                 .await
         }
     }
@@ -1661,8 +1673,6 @@ impl Builder {
         fragment_paths: &Vec<std::path::PathBuf>,
         output_path: P,
     ) -> Result<()> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-
         if !output_path.as_ref().exists() {
             // ensure the path exists
             std::fs::create_dir_all(output_path.as_ref())?;
@@ -1685,7 +1695,7 @@ impl Builder {
         }
 
         // convert the manifest to a store
-        let mut store = self.to_store(&settings)?;
+        let mut store = self.to_store()?;
 
         // sign and write our store to DASH content
         store.save_to_bmff_fragmented(
@@ -1693,7 +1703,7 @@ impl Builder {
             fragment_paths,
             output_path.as_ref(),
             signer,
-            &settings,
+            &self.context,
         )
     }
 
@@ -1785,7 +1795,7 @@ impl Builder {
     /// The working store is signed with a BoxHash over an empty string
     /// And is returned as a Vec<u8> of the c2pa_manifest bytes
     /// This works as an archive of the store that can be read back to restore the Builder state
-    fn working_store_sign(&self, settings: &Settings) -> Result<Vec<u8>> {
+    fn working_store_sign(&self) -> Result<Vec<u8>> {
         // first we need to generate a BoxHash over an empty string
         let mut empty_asset = std::io::Cursor::new("");
         let boxes = jumbf_io::get_assetio_handler("application/c2pa")
@@ -1796,7 +1806,7 @@ impl Builder {
         let box_hash = BoxHash { boxes };
 
         // then convert the builder to a claim and add the box hash assertion
-        let mut claim = self.to_claim(settings)?;
+        let mut claim = self.to_claim()?;
         claim.add_assertion(&box_hash)?;
 
         // now commit and sign it. The signing will allow us to detect tampering.
@@ -2219,7 +2229,7 @@ mod tests {
         #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
-        settings::Settings::from_toml(
+        crate::settings::Settings::from_toml(
             &toml::toml! {
                 [builder.actions.auto_opened_action]
                 enabled = true

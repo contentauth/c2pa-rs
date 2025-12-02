@@ -295,7 +295,7 @@ impl IdentityAssertion {
         partial_claim: &PartialClaim,
         status_tracker: &mut StatusTracker,
     ) -> Result<serde_json::Value, ValidationError<String>> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
+        let settings = crate::Context::new().settings().clone();
         self.check_padding(status_tracker)?;
 
         self.signer_payload
@@ -310,19 +310,19 @@ impl IdentityAssertion {
             // are checked during setting generation.
 
             let cose_verifier = if settings.cawg_trust.verify_trust_list {
-                if let Some(ta) = settings.cawg_trust.trust_anchors {
+                if let Some(ta) = &settings.cawg_trust.trust_anchors {
                     let _ = ctp.add_trust_anchors(ta.as_bytes());
                 }
 
-                if let Some(pa) = settings.cawg_trust.user_anchors {
+                if let Some(pa) = &settings.cawg_trust.user_anchors {
                     let _ = ctp.add_user_trust_anchors(pa.as_bytes());
                 }
 
-                if let Some(tc) = settings.cawg_trust.trust_config {
+                if let Some(tc) = &settings.cawg_trust.trust_config {
                     ctp.add_valid_ekus(tc.as_bytes());
                 }
 
-                if let Some(al) = settings.cawg_trust.allowed_list {
+                if let Some(al) = &settings.cawg_trust.allowed_list {
                     let _ = ctp.add_end_entity_credentials(al.as_bytes());
                 }
 
