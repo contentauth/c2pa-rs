@@ -147,25 +147,33 @@ pub struct HostPattern {
     pattern: String,
     scheme: Option<String>,
     host: Option<String>,
+    port: Option<String>,
 }
 
 impl HostPattern {
     /// Creates a new `HostPattern` with the given pattern.
     pub fn new(pattern: &str) -> Self {
         let pattern = pattern.to_ascii_lowercase();
-        let (scheme, host): (Option<String>, Option<String>) =
+        let (scheme, rest): (Option<String>, &str) =
             if let Some(host) = pattern.strip_prefix("https://") {
-                (Some("https".to_owned()), Some(host.to_owned()))
+                (Some("https".to_owned()), host)
             } else if let Some(host) = pattern.strip_prefix("http://") {
-                (Some("http".to_owned()), Some(host.to_owned()))
+                (Some("http".to_owned()), host)
             } else {
-                (None, Some(pattern.clone()))
+                (None, &pattern)
             };
 
+        let (host, port) = if let Some((host, port)) = rest.rsplit_once(':') {
+            (host, Some(port.to_owned()))
+        } else {
+            (rest, None)
+        };
+
         Self {
+            host: Some(host.to_owned()),
             pattern,
             scheme,
-            host,
+            port,
         }
     }
 
@@ -174,7 +182,8 @@ impl HostPattern {
         if let Some(allowed_host_pattern) = &self.host {
             if let Some(host) = uri.host() {
                 // If there's a wildcard, do an suffix match, otherwise do an exact match.
-                let host_allowed = if let Some(suffix) = allowed_host_pattern.strip_prefix("*.") {
+                let is_host_allowed = if let Some(suffix) = allowed_host_pattern.strip_prefix("*.")
+                {
                     let host = host.to_ascii_lowercase();
 
                     if host.len() <= suffix.len() || !host.ends_with(&suffix) {
@@ -187,7 +196,10 @@ impl HostPattern {
                     allowed_host_pattern.eq_ignore_ascii_case(host)
                 };
 
-                if host_allowed {
+                let is_port_allowed =
+                    self.port.as_deref() == uri.port().as_ref().map(|port| port.as_str());
+
+                if is_host_allowed && is_port_allowed {
                     if let Some(allowed_scheme) = &self.scheme {
                         if let Some(scheme) = uri.scheme() {
                             return scheme.as_str() == allowed_scheme;
@@ -404,6 +416,39 @@ mod test {
 
         let uri = Uri::from_static("http://contentauthenticity.org");
         assert!(!pattern.matches(&uri));
+
+        let uri = Uri::from_static("contentauthenticity.org");
+        assert!(!pattern.matches(&uri));
+    }
+
+    #[test]
+    fn exact_pattern_ip_address() {
+        let pattern = HostPattern::new("192.0.2.1");
+
+        let uri = Uri::from_static("192.0.2.1");
+        assert!(pattern.matches(&uri));
+
+        let uri = Uri::from_static("192.0.2.1.1");
+        assert!(!pattern.matches(&uri));
+    }
+
+    #[test]
+    fn exact_pattern_ip_address_with_port() {
+        let pattern = HostPattern::new("192.0.2.1:443");
+
+        let uri = Uri::from_static("192.0.2.1:443");
+        assert!(pattern.matches(&uri));
+
+        let uri = Uri::from_static("192.0.2.1");
+        assert!(!pattern.matches(&uri));
+    }
+
+    #[test]
+    fn exact_pattern_hostname_with_port() {
+        let pattern = HostPattern::new("contentauthenticity.org:8080");
+
+        let uri = Uri::from_static("contentauthenticity.org:8080");
+        assert!(pattern.matches(&uri));
 
         let uri = Uri::from_static("contentauthenticity.org");
         assert!(!pattern.matches(&uri));
