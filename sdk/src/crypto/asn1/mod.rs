@@ -438,13 +438,12 @@ impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
         // Add the fractional seconds that were parsed but not stored in der_time
         // (der::asn1::GeneralizedTime doesn't support fractional seconds per RFC 5280)
         if gt.nanoseconds > 0 {
-            // with_nanosecond can only fail if nanoseconds >= 1_000_000_000,
-            // but we validated this during parsing in from_der_bytes_rfc3161
-            if let Some(dt_with_nanos) = dt.with_nanosecond(gt.nanoseconds) {
-                dt = dt_with_nanos;
-            }
-            // If with_nanosecond fails, we silently use the time without fractional seconds
-            // rather than panicking, as the timestamp is still valid
+            // SAFETY: nanoseconds is validated to be < 1_000_000_000 during parsing in
+            // from_der_bytes_rfc3161 (line 350-351). If with_nanosecond returns None here,
+            // it indicates a serious internal error that should never happen.
+            dt = dt
+                .with_nanosecond(gt.nanoseconds)
+                .unwrap_or_else(|| unreachable!("nanoseconds value was validated during parsing"));
         }
 
         dt
