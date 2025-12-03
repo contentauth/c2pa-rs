@@ -15,7 +15,7 @@
 
 // Migrating fully from bcder to der will eliminate the need for much of this code.
 
-use std::io::Write;
+use std::{io::Write, str::FromStr};
 
 use bcder::{
     decode::{Constructed, DecodeError, Source},
@@ -318,26 +318,35 @@ impl GeneralizedTime {
             }
 
             let frac_digits = &frac_part[1..]; // Remove leading dot
-            if frac_digits.is_empty() || !frac_digits.chars().all(|c| c.is_ascii_digit()) {
+            if frac_digits.is_empty() || frac_digits.len() > 9 {
                 return Err(der::Tag::GeneralizedTime.value_error());
             }
 
-            // Convert fractional seconds to nanoseconds
-            // The fractional part represents digits after the decimal point
-            // e.g., ".5" = 0.5 seconds = 500000000 nanoseconds
-            //       ".643" = 0.643 seconds = 643000000 nanoseconds
-            // We need to pad with trailing zeros, not leading zeros
-            let mut frac_str = frac_digits.to_string();
-            // Pad to 9 digits with trailing zeros
-            while frac_str.len() < 9 {
-                frac_str.push('0');
+            // Verify all bytes are ASCII digits
+            if !frac_digits.as_bytes()[0].is_ascii_digit() {
+                return Err(der::Tag::GeneralizedTime.value_error());
             }
-            // Truncate if longer than 9 digits
-            frac_str.truncate(9);
 
-            frac_str
-                .parse::<u32>()
-                .map_err(|_| der::Tag::GeneralizedTime.value_error())?
+            // Decode the fractional seconds using approach from RustCrypto's x509-tsp
+            // (See: https://github.com/RustCrypto/formats/blob/master/x509-tsp/src/generalized_time_nanos.rs)
+            // Parse as u32, then multiply by appropriate power of 10 to convert to nanoseconds
+            // e.g., ".5" -> 5 * 10^8 = 500000000 nanoseconds
+            //       ".643" -> 643 * 10^6 = 643000000 nanoseconds
+            // TODO: use u32::from_ascii when it stabilizes
+            let fract_str = std::str::from_utf8(frac_digits.as_bytes())
+                .map_err(|_| der::Tag::GeneralizedTime.value_error())?;
+            let fract_num =
+                u32::from_str(fract_str).map_err(|_| der::Tag::GeneralizedTime.value_error())?;
+
+            // Multiply to convert to nanoseconds
+            fract_num
+                .checked_mul(
+                    10_u32.pow(
+                        9 - u32::try_from(frac_digits.len())
+                            .map_err(|_| der::Tag::GeneralizedTime.value_error())?,
+                    ),
+                )
+                .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?
         } else {
             0
         };
