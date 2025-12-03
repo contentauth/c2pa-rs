@@ -13,6 +13,10 @@
 
 //! HTTP request restriction layer.
 //!
+//! This module provides a [`RestrictedResolver`] that wraps an existing [`SyncHttpResolver`]
+//! or [`AsyncHttpResolver`]. The SDK can also manage an allowed list for you via the
+//! [`Core::allowed_network_hosts`] setting.
+//!
 //! # Why restrict network requests?
 //! In some environments, you may not want the SDK to talk to arbitrary hosts. Restricting
 //! network requests help to:
@@ -30,6 +34,7 @@
 //! time, do not enable any of the HTTP features (`http_*`), see ["Features"].
 //!
 //! ["Features"]: crate#features
+//! [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
 
 use std::io::Read;
 

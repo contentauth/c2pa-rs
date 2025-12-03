@@ -184,9 +184,11 @@ pub enum HttpResolverError {
 
     /// The remote URI is blocked by the allowed list.
     ///
-    /// The allowed list is normally set in a [`RestrictedResolver`].
+    /// The allowed list is normally set in a [`RestrictedResolver`], but can also be
+    /// managed in settings via [`Core::allowed_network_hosts`].
     ///
     /// [`RestrictedResolver`]: restricted::RestrictedResolver
+    /// [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
     #[error("remote URI \"{uri}\" is not permitted by the allowed list")]
     UriDisallowed { uri: String },
 
