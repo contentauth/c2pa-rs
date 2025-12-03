@@ -509,12 +509,8 @@ pub mod tests {
             .unwrap();
         removed.set_position(0);
         let result = load_jumbf_from_stream(asset_type, &mut removed);
-        // For c2pa this is expected to return `Error::InvalidFormat`.
-        if asset_type != "wav"
-            && asset_type != "avi"
-            && asset_type != "mp3"
-            && asset_type != "webp"
-            && asset_type != "c2pa"
+        if (asset_type != "wav")
+            && (asset_type != "avi" && asset_type != "mp3" && asset_type != "webp")
         {
             assert!(matches!(&result.err().unwrap(), Error::JumbfNotFound));
         }
