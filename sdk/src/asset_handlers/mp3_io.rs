@@ -495,6 +495,9 @@ impl AssetPatch for Mp3IO {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum Mp3Error {}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
