@@ -1229,7 +1229,6 @@ mod tests {
 
     /// Test RFC 3161 GeneralizedTime with fractional seconds
     ///
-    /// Real-world test data extracted from ~/Downloads/test/test.jpeg
     /// C2PA manifest with timestamp from freetsa.org: "20251121125823.643Z"
     ///
     /// This test validates that we can parse RFC 3161 timestamps that include
@@ -1244,7 +1243,6 @@ mod tests {
     /// rule, so we need custom parsing for RFC 3161 compliance.
     #[test]
     fn test_generalized_time_rfc3161_fractional_seconds() {
-        // Real-world DER data from ~/Downloads/test/test.jpeg (offset 0x00002e5d)
         // Timestamp from freetsa.org embedded in C2PA manifest
         // Tag: 0x18 (GENERALIZED_TIME)
         // Length: 0x13 (19 bytes)
@@ -1257,8 +1255,8 @@ mod tests {
             b'Z',
         ];
 
-        // Verify: `xxd` the test file to confirm:
-        // $ xxd -s 0x00002e5d -l 21 ~/Downloads/test/test.jpeg
+        // Example xxd output
+        // $ xxd -s 0x00002e5d -l 21 test.jpeg
         // 00002e5d: 1813 3230 3235 3131 3231 3132 3538 3233  ..20251121125823
         // 00002e6d: 2e36 3433 5a                             .643Z
 
