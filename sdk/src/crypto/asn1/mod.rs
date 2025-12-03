@@ -1337,7 +1337,7 @@ mod tests {
             der_bytes.extend_from_slice(time_str.as_bytes());
 
             let gen_time = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
-                .expect(&format!("Failed to parse: {}", desc));
+                .unwrap_or_else(|_| panic!("Failed to parse: {}", desc));
 
             let dt: chrono::DateTime<chrono::Utc> = gen_time.into();
             assert_eq!(
