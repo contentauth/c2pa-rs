@@ -41,7 +41,7 @@ You can enable any of the following features:
 - **rust_native_crypto**: Use Rust native cryptography.
 - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
 - **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
-- **file_io**: Enables APIs that use files ystem I/O.
+- **file_io**: Enables APIs that use file system I/O.
 - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
 - **pdf**: Enables basic PDF read support.
 - **http_ureq**: Enables `ureq` for sync HTTP requests.

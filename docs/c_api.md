@@ -10,7 +10,7 @@ The C interface is not new, but previously it was part of the `c2pa-c` repo. The
 
 ## New approach
 
-Binding to C APIs is a well-established and mature practice. Every language has well-documented methods for binding to C.  Rust has built in support for writing C bindings. If we provide a solid C interface, we can simply bind other languages to C and leverage all the work that has gone into those bindings.  
+Binding to C APIs is a well-established and mature practice. Every language has well-documented methods for binding to C, and Rust has built-in support for it. A solid C interface enables leveraging that work to provide other language bindings.
 
 Bindings must still be written for each language, but since there are so many examples of this, AI engines are very good at writing the code, resulting in well-formed, well-documented bindings, though some manual effort is required to fix some things. Instead of unreadable, incomprehensible auto-generated binding glue, the result is well-structured code bindings that can be customized as needed.
 
