@@ -170,7 +170,11 @@ impl HostPattern {
         };
 
         Self {
-            host: Some(host.to_owned()),
+            host: if host.is_empty() {
+                None
+            } else {
+                Some(host.to_owned())
+            },
             pattern,
             scheme,
             port,
@@ -449,6 +453,20 @@ mod test {
 
         let uri = Uri::from_static("contentauthenticity.org:8080");
         assert!(pattern.matches(&uri));
+
+        let uri = Uri::from_static("contentauthenticity.org");
+        assert!(!pattern.matches(&uri));
+    }
+
+    #[test]
+    fn scheme_only_pattern() {
+        let pattern = HostPattern::new("https://");
+
+        let uri = Uri::from_static("https://contentauthenticity.org");
+        assert!(pattern.matches(&uri));
+
+        let uri = Uri::from_static("http://contentauthenticity.org");
+        assert!(!pattern.matches(&uri));
 
         let uri = Uri::from_static("contentauthenticity.org");
         assert!(!pattern.matches(&uri));
