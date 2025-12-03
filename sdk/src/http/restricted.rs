@@ -162,7 +162,7 @@ impl HostPattern {
         }
     }
 
-    /// Returns if the given URI matches the `HostPattern`.
+    /// Returns true if the given URI matches the `HostPattern`.
     pub fn matches(&self, uri: &Uri) -> bool {
         if let Some(allowed_host_pattern) = &self.host {
             if let Some(host) = uri.host() {
@@ -224,7 +224,7 @@ impl<'de> Deserialize<'de> for HostPattern {
     }
 }
 
-/// Returns if the given URI matches at least one of the [`HostPattern`]s.
+/// Returns true if the given URI matches at least one of the [`HostPattern`]s.
 fn is_uri_allowed(patterns: &[HostPattern], uri: &Uri) -> bool {
     for pattern in patterns {
         if pattern.matches(uri) {
