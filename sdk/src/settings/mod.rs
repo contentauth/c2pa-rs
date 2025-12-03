@@ -226,7 +226,9 @@ pub struct Core {
     ///
     /// Each pattern may include:
     /// - A scheme (e.g. `https://` or `http://`)
-    /// - A hostname, which may have a single leading wildcard (e.g. `*.contentauthenticity.org`)
+    /// - A hostname or IP address (e.g. `contentauthenticity.org` or `192.0.2.1`)
+    ///     - The hostname may contain a single leading wildcard (e.g. `*.contentauthenticity.org`)
+    /// - An optional port (e.g. `contentauthenticity.org:443` or `192.0.2.1:8080`)
     ///
     /// Matching is case-insensitive. A wildcard pattern such as `*.contentauthenticity.org` matches
     /// `sub.contentauthenticity.org`, but does not match `contentauthenticity.org` or `fakecontentauthenticity.org`.
