@@ -157,6 +157,9 @@ pub mod validation_status;
 /// The http module contains generic traits for configuring sync and async http resolvers.
 pub(crate) mod http;
 
+/// The maybe_send module contains traits for conditional Send bounds based on target architecture.
+pub(crate) mod maybe_send;
+
 // Public exports
 pub use assertions::DigitalSourceType;
 #[doc(inline)]
