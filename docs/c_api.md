@@ -18,4 +18,4 @@ Bindings must still be written for each language, but since there are so many ex
 
 The C language is not object-oriented, does not perform garbage collection, and does not natively support things like exception handling.  API may use unsafe pointer references, so care must be taken with pointers and memory management. 
 
-For these reasons, you shouldn't use the C API directly. But it makes a very solid common way to bridge between Rust and other languages when used correctly. Use higher-level structures in the other languages to ensure that references to Rust structures are correctly managed and freed. 
+For these reasons, you shouldn't use the C API directly. But it makes a very solid common way to bridge between Rust and other languages when used correctly. Use higher-level structures in the other languages to ensure that references to native structures are correctly managed and freed. 
