@@ -57,7 +57,6 @@ Here's the JSON with all default values:
     "backing_store_memory_threshold_in_mb": 512,
     "decode_identity_assertions": true
     "allowed_network_hosts": null
-
   },
   "verify": {
     "verify_after_reading": true,
