@@ -489,4 +489,12 @@ mod test {
         let uri = Uri::from_static("contentauthenticity.org");
         assert!(!pattern.matches(&uri));
     }
+
+    #[test]
+    fn invalid_pattern() {
+        let pattern = HostPattern::new("https:// ");
+
+        let uri = Uri::from_static("https://contentauthenticity.org");
+        assert!(!pattern.matches(&uri));
+    }
 }
