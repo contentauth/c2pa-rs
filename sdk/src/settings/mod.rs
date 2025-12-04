@@ -222,6 +222,11 @@ pub struct Core {
     /// [`IdentityAssertion`]: crate::identity::IdentityAssertion
     /// [`Reader`]: crate::Reader
     pub decode_identity_assertions: bool,
+    /// <div class="warning">
+    /// The CAWG identity assertion does not currently respect this setting.
+    /// See <a href="https://github.com/contentauth/c2pa-rs/issues/1645">issue #1645</a>.
+    /// </div>
+    ///
     /// List of host patterns that are allowed for network requests.
     ///
     /// Each pattern may include:
