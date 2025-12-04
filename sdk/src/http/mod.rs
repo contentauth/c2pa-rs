@@ -11,6 +11,36 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! HTTP abstraction layer.
+//!
+//! This module defines generic traits and helpers for performing HTTP requests
+//! without hard-wiring a specific HTTP client. It allows host applications to
+//! plug in their own HTTP implementation, restrict where the SDK may connect,
+//! or disable networking entirely.
+//!
+//! # When do network requests occur?
+//!
+//! The SDK may issue HTTP/S requests in the following scenarios:
+//! - [`Reader`]:
+//!     - Fetching remote manifests
+//!     - Validating CAWG identity assertions
+//!     - Fetching OCSP revocation status
+//! - [`Builder`]:
+//!     - Fetching ingredient remote manifests
+//!     - Fetching timestamps
+//!     - Fetching [`TimeStamp`] assertions
+//!     - Fetching OCSP staples
+//!     - Fetching [`CertificateStatus`] assertions
+//!
+//! Network requests may also be issued during the signing process, such as when
+//! [`SignerSettings::Remote`] is specified.
+//!
+//! [`Reader`]: crate::Reader
+//! [`Builder`]: crate::Builder
+//! [`TimeStamp`]: crate::assertions::TimeStamp
+//! [`CertificateStatus`]: crate::assertions::CertificateStatus
+//! [`SignerSettings::Remote`]: crate::settings::signer::SignerSettings::Remote
+
 use std::io::{self, Read};
 
 use async_trait::async_trait;
@@ -22,7 +52,9 @@ mod reqwest;
 mod ureq;
 mod wasi;
 
-// Since we use `http::Request` and `http::Response` we also expose the `http` crate.
+pub mod restricted;
+
+// Since we expose `http::Request` and `http::Response` in the public API, we also expose the `http` crate.
 pub use http;
 
 /// A resolver for sync (blocking) HTTP requests.
@@ -149,6 +181,16 @@ pub enum HttpResolverError {
     /// Note this often occurs when the http-related features are improperly enabled.
     #[error("the async http resolver is not implemented")]
     AsyncHttpResolverNotImplemented,
+
+    /// The remote URI is blocked by the allowed list.
+    ///
+    /// The allowed list is normally set in a [`RestrictedResolver`], but can also be
+    /// managed in settings via [`Core::allowed_network_hosts`].
+    ///
+    /// [`RestrictedResolver`]: restricted::RestrictedResolver
+    /// [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+    #[error("remote URI \"{uri}\" is not permitted by the allowed list")]
+    UriDisallowed { uri: String },
 
     /// An error occured from the underlying HTTP resolver.
     #[error("an error occurred from the underlying http resolver")]

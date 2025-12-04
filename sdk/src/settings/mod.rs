@@ -27,7 +27,10 @@ use config::{Config, FileFormat};
 use serde_derive::{Deserialize, Serialize};
 use signer::SignerSettings;
 
-use crate::{crypto::base64, settings::builder::BuilderSettings, Error, Result, Signer};
+use crate::{
+    crypto::base64, http::restricted::HostPattern, settings::builder::BuilderSettings, Error,
+    Result, Signer,
+};
 
 const VERSION: u32 = 1;
 
@@ -219,6 +222,54 @@ pub struct Core {
     /// [`IdentityAssertion`]: crate::identity::IdentityAssertion
     /// [`Reader`]: crate::Reader
     pub decode_identity_assertions: bool,
+    /// <div class="warning">
+    /// The CAWG identity assertion does not currently respect this setting.
+    /// See <a href="https://github.com/contentauth/c2pa-rs/issues/1645">issue #1645</a>.
+    /// </div>
+    ///
+    /// List of host patterns that are allowed for network requests.
+    ///
+    /// Each pattern may include:
+    /// - A scheme (e.g. `https://` or `http://`)
+    /// - A hostname or IP address (e.g. `contentauthenticity.org` or `192.0.2.1`)
+    ///     - The hostname may contain a single leading wildcard (e.g. `*.contentauthenticity.org`)
+    /// - An optional port (e.g. `contentauthenticity.org:443` or `192.0.2.1:8080`)
+    ///
+    /// Matching is case-insensitive. A wildcard pattern such as `*.contentauthenticity.org` matches
+    /// `sub.contentauthenticity.org`, but does not match `contentauthenticity.org` or `fakecontentauthenticity.org`.
+    /// If a scheme is present in the pattern, only URIs using the same scheme are considered a match. If the scheme
+    /// is omitted, any scheme is allowed as long as the host matches.
+    ///
+    /// The behavior is as follows:
+    /// - `None` (default) no filtering enabled.
+    /// - `Some(vec)` where `vec` is empty, all traffic is blocked.
+    /// - `Some(vec)` with at least one pattern, filtering enabled for only those patterns.
+    ///
+    /// # Examples
+    ///
+    /// Pattern: `*.contentauthenticity.org`
+    /// - Does match:
+    ///   - `https://sub.contentauthenticity.org`
+    ///   - `http://api.contentauthenticity.org`
+    /// - Does **not** match:
+    ///   - `https://contentauthenticity.org` (no subdomain)
+    ///   - `https://sub.fakecontentauthenticity.org` (different host)
+    ///
+    /// Pattern: `http://192.0.2.1:8080`
+    /// - Does match:
+    ///   - `http://192.0.2.1:8080`
+    /// - Does **not** match:
+    ///   - `https://192.0.2.1:8080` (scheme mismatch)
+    ///   - `http://192.0.2.1` (port omitted)
+    ///   - `http://192.0.2.2:8080` (different IP address)
+    ///
+    /// These settings are consumed by [`RestrictedResolver`]. For information on when the SDK might perform a
+    /// network requests, see ["When do network requests occur?"]
+    ///
+    /// ["When do network requests occur?"]: crate::http#when-do-network-requests-occur
+    /// [`HostPattern`]: crate::http::restricted::HostPattern
+    /// [`RestrictedResolver`]: crate::http::restricted::RestrictedResolver
+    pub allowed_network_hosts: Option<Vec<HostPattern>>,
 }
 
 impl Default for Core {
@@ -228,6 +279,7 @@ impl Default for Core {
             merkle_tree_max_proofs: 5,
             backing_store_memory_threshold_in_mb: 512,
             decode_identity_assertions: true,
+            allowed_network_hosts: None,
         }
     }
 }
