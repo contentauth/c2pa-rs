@@ -1430,15 +1430,11 @@ impl Builder {
         store: &mut Store,
         http_resolver: &impl SyncHttpResolver,
     ) -> Result<()> {
-        if self.settings.builder.update_manifest_timestamp_assertion {
+        if self.settings.builder.add_timestamp_assertion_to_parent {
             let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-            if provenance_claim.update_manifest() {
-                let parent_claim_id = manifest_label_from_uri(
-                    &provenance_claim
-                        .parent_claim_uri()?
-                        .ok_or(Error::ClaimEncoding)?,
-                )
-                .ok_or(Error::ClaimEncoding)?;
+            if let Some(parent_claim_uri) = provenance_claim.parent_claim_uri()? {
+                let parent_claim_id =
+                    manifest_label_from_uri(&parent_claim_uri).ok_or(Error::ClaimEncoding)?;
 
                 // First check if a timestamp assertion already exists.
                 let timestamp_assertions = provenance_claim.timestamp_assertions();

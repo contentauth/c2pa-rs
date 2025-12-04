@@ -28,7 +28,7 @@ use common::compare_stream_to_known_good;
 use common::test_signer;
 
 #[test]
-fn test_update_manifest_timestamp_assertion() {
+fn test_parent_manifest_timestamp_assertion() {
     const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
     const FORMAT: &str = "image/jpeg";
 
@@ -61,7 +61,7 @@ fn test_update_manifest_timestamp_assertion() {
     Settings::from_toml(
         &toml::toml! {
             [builder]
-            update_manifest_timestamp_assertion = true
+            add_timestamp_assertion_to_parent = true
         }
         .to_string(),
     )

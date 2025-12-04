@@ -470,8 +470,8 @@ pub struct BuilderSettings {
     /// Whether to generate a C2PA archive (instead of zip) when writing the manifest builder.
     /// This will eventually become the default behavior.
     pub generate_c2pa_archive: Option<bool>,
-    /// Whether to auto-generate a [`TimeStamp`] assertion for parent of the update manifest if one does not
-    /// exist already.
+    /// Whether to auto-generate a [`TimeStamp`] assertion for parent of the manifest if one does not already
+    /// exist.
     ///
     /// Useful when a manifest was signed offline and you want to attach a trusted timestamp to it later.
     ///
@@ -485,7 +485,7 @@ pub struct BuilderSettings {
     /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
     /// [`Settings::signer`]: crate::settings::signer
     /// [`SignerSettings`]: crate::settings::signer::SignerSettings
-    pub update_manifest_timestamp_assertion: bool,
+    pub add_timestamp_assertion_to_parent: bool,
 }
 
 /// The scope of which manifests to fetch for OCSP.
