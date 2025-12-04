@@ -538,8 +538,15 @@ pub fn verify_time_stamp(
             let mut adjusted_ctp = ctp.clone();
             adjusted_ctp.set_trust_anchors_only(true);
 
+            // Order certificates from leaf to root before trust validation
+            let ordered_cert_ders = order_certificates_leaf_to_root(&cert_ders, cert_pos)?;
+
             if adjusted_ctp
-                .check_certificate_trust(&cert_ders[0..], &cert_ders[0], Some(signing_time))
+                .check_certificate_trust(
+                    &ordered_cert_ders[0..],
+                    &ordered_cert_ders[0],
+                    Some(signing_time),
+                )
                 .is_err()
             {
                 log_item!(
@@ -701,6 +708,68 @@ fn time_to_datetime(t: rasn_pkix::Time) -> DateTime<Utc> {
         rasn_pkix::Time::Utc(u) => u,
         rasn_pkix::Time::General(gt) => generalized_time_to_datetime(gt),
     }
+}
+
+/// Order certificates from leaf to root based on the signer certificate position
+fn order_certificates_leaf_to_root(
+    cert_ders: &[Vec<u8>],
+    leaf_cert_pos: usize,
+) -> Result<Vec<Vec<u8>>, TimeStampError> {
+    if leaf_cert_pos >= cert_ders.len() {
+        return Err(TimeStampError::DecodeError(
+            "invalid leaf certificate position".to_string(),
+        ));
+    }
+
+    let parsed_certs: Result<Vec<_>, _> = cert_ders
+        .iter()
+        .map(|cert_der| x509_parser::certificate::X509Certificate::from_der(cert_der))
+        .collect();
+
+    let parsed_certs = match parsed_certs {
+        Ok(certs) => certs,
+        Err(_) => {
+            return Err(TimeStampError::DecodeError(
+                "failed to parse certificates".to_string(),
+            ));
+        }
+    };
+
+    let mut ordered_certs = Vec::new();
+    let mut used_indices = std::collections::HashSet::new();
+
+    // Start with the provided signer certificate position
+    ordered_certs.push(cert_ders[leaf_cert_pos].clone());
+    used_indices.insert(leaf_cert_pos);
+
+    let mut current_cert_index = leaf_cert_pos;
+
+    for _ in 0..cert_ders.len() {
+        let current_cert = &parsed_certs[current_cert_index].1;
+        let mut found_next = false;
+
+        // Find the next certificate in the chain (try to match issuer and subject name)
+        for (i, (_, next_cert)) in parsed_certs.iter().enumerate() {
+            if used_indices.contains(&i) {
+                continue;
+            }
+
+            if current_cert.issuer() == next_cert.subject() {
+                ordered_certs.push(cert_ders[i].clone());
+                used_indices.insert(i);
+                current_cert_index = i;
+                found_next = true;
+                break;
+            }
+        }
+
+        if !found_next {
+            // No more certificates could be included in this chain.
+            break;
+        }
+    }
+
+    Ok(ordered_certs)
 }
 
 fn validate_timestamp_sig(
