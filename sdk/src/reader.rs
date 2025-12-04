@@ -35,7 +35,7 @@ use crate::{
     claim::Claim,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
-    http::{AsyncGenericResolver, SyncGenericResolver},
+    http::{restricted::RestrictedResolver, AsyncGenericResolver, SyncGenericResolver},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     jumbf_io, log_item,
     manifest::StoreOptions,
@@ -140,11 +140,15 @@ impl Reader {
     #[async_generic]
     pub fn from_stream(format: &str, mut stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
+
         let http_resolver = if _sync {
             SyncGenericResolver::new()
         } else {
             AsyncGenericResolver::new()
         };
+        let mut http_resolver = RestrictedResolver::new(http_resolver);
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
+
         // TODO: passing verify is redundant with settings
         let verify = settings.verify.verify_after_reading;
 
@@ -272,6 +276,8 @@ impl Reader {
         } else {
             AsyncGenericResolver::new()
         };
+        let mut http_resolver = RestrictedResolver::new(http_resolver);
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
 
         let mut validation_log = StatusTracker::default();
 
@@ -326,6 +332,8 @@ impl Reader {
         } else {
             AsyncGenericResolver::new()
         };
+        let mut http_resolver = RestrictedResolver::new(http_resolver);
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
 
         let mut validation_log = StatusTracker::default();
 
@@ -362,7 +370,8 @@ impl Reader {
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
         let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = SyncGenericResolver::new();
+        let mut http_resolver = RestrictedResolver::new(SyncGenericResolver::new());
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
 
         let verify = settings.verify.verify_after_reading;
         let mut validation_log = StatusTracker::default();
