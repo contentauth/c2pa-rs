@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.73.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.72.1...c2pa-v0.73.0)
+_04 December 2025_
+
+### Added
+
+* Restricted HTTP resolvers ([#1630](https://github.com/contentauth/c2pa-rs/pull/1630))
+
 ## [0.72.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.72.0...c2pa-v0.72.1)
 _04 December 2025_
 
