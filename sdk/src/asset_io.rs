@@ -19,7 +19,7 @@ use std::{
 
 use tempfile::NamedTempFile;
 
-use crate::{assertions::BoxMap, error::Result};
+use crate::{assertions::BoxMap, error::Result, maybe_send::MaybeSend};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HashBlockObjectType {
@@ -40,15 +40,9 @@ pub struct HashObjectPositions {
     pub htype: HashBlockObjectType, // type of hash block object
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub trait CAIRead: Read + Seek + Send {}
-#[cfg(target_arch = "wasm32")]
-pub trait CAIRead: Read + Seek {}
+pub trait CAIRead: Read + Seek + MaybeSend {}
 
-#[cfg(not(target_arch = "wasm32"))]
-impl<T> CAIRead for T where T: Read + Seek + Send {}
-#[cfg(target_arch = "wasm32")]
-impl<T> CAIRead for T where T: Read + Seek {}
+impl<T> CAIRead for T where T: Read + Seek + MaybeSend {}
 
 impl From<String> for Box<dyn CAIRead> {
     fn from(val: String) -> Self {
@@ -260,7 +254,7 @@ pub trait RemoteRefEmbed {
 
 /// `ComposedManifestRefEmbed` is used to generate a C2PA manifest.  The
 /// returned `Vec<u8>` contains data preformatted to be directly compatible
-/// with the type specified in `format`.  
+/// with the type specified in `format`.
 pub trait ComposedManifestRef {
     // Return entire CAI block as Vec<u8>
     fn compose_manifest(&self, manifest_data: &[u8], format: &str) -> Result<Vec<u8>>;
