@@ -497,8 +497,8 @@ mod tests {
 
     // Helper to load test certificate
     fn load_test_cert_pem(name: &str) -> Vec<u8> {
-        let path = format!("tests/fixtures/certs/{}", name);
-        std::fs::read(&path).unwrap_or_else(|_| panic!("Failed to read test certificate: {}", path))
+        let path = format!("tests/fixtures/certs/{name}");
+        std::fs::read(&path).unwrap_or_else(|_| panic!("Failed to read test certificate: {path}"))
     }
 
     // Helper to parse PEM and extract DER certificate
@@ -785,13 +785,11 @@ mod tests {
             // Verify we got valid DER data for each cert type
             assert!(
                 !cert_der.is_empty(),
-                "Certificate {} DER should not be empty",
-                cert_name
+                "Certificate {cert_name} DER should not be empty"
             );
             assert_eq!(
                 cert_der[0], 0x30,
-                "Certificate {} should start with SEQUENCE tag",
-                cert_name
+                "Certificate {cert_name} should start with SEQUENCE tag"
             );
         }
 
