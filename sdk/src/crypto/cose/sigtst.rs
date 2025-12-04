@@ -24,7 +24,10 @@ use crate::{
         asn1::rfc3161::{TimeStampResp, TstInfo},
         cose::{CertificateTrustPolicy, CoseError, TimeStampStorage},
         raw_signature::{AsyncRawSigner, RawSigner},
-        time_stamp::{verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampResponse},
+        time_stamp::{
+            verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampError,
+            TimeStampResponse,
+        },
     },
     log_item,
     settings::Settings,
@@ -246,8 +249,8 @@ pub(crate) fn add_sigtst_header(
             // In `sigTst2`, we use only the `TimeStampToken` and not `TimeStampRsp` for
             // sigTst2
             cts = timestamptoken_from_timestamprsp(&cts).map_err(|err| {
-                CoseError::CborGenerationError(format!(
-                    "unable to generate time stamp token: {err:?}"
+                TimeStampError::DecodeError(format!(
+                    "unable to parse time stamp token from timestamp response: {err:?}"
                 ))
             })?;
         }
