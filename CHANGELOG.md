@@ -9,6 +9,36 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.72.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.72.0...c2pa-v0.72.1)
+_04 December 2025_
+
+### Added
+
+* Check if stream matches input format via file signature/structure ([#1528](https://github.com/contentauth/c2pa-rs/pull/1528))
+* Use MaybeSend to simplify code ([#1639](https://github.com/contentauth/c2pa-rs/pull/1639))
+
+### Documented
+
+* Add doc for CLI settings, misc copy edits ([#1636](https://github.com/contentauth/c2pa-rs/pull/1636))
+
+### Fixed
+
+* Set wasm-bindgen-cli version in CI ([#1644](https://github.com/contentauth/c2pa-rs/pull/1644))
+* Fix the timestamp cert chain validation to be independent of the order ([#1600](https://github.com/contentauth/c2pa-rs/pull/1600))
+* RFC 3161 fractional seconds ([#1640](https://github.com/contentauth/c2pa-rs/pull/1640))
+* Stack overflow and hang due to cyclic ingredients ([#1576](https://github.com/contentauth/c2pa-rs/pull/1576))
+* Allow untrusted failure code to be a `Valid` validation state ([#1623](https://github.com/contentauth/c2pa-rs/pull/1623))
+* Remove unmaintained `json5` dependency and other unused `config` crate sub-dependencies ([#1611](https://github.com/contentauth/c2pa-rs/pull/1611))
+
+### Other
+
+* Remove direct dependency on `windows-core` ([#1616](https://github.com/contentauth/c2pa-rs/pull/1616))
+
+### Updated dependencies
+
+* Bump lopdf from 0.31.0 to 0.38.0 ([#1359](https://github.com/contentauth/c2pa-rs/pull/1359))
+* Bump quick-xml from 0.37.5 to 0.38.3 ([#1575](https://github.com/contentauth/c2pa-rs/pull/1575))
+
 ## [0.72.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.3...c2pa-v0.72.0)
 _17 November 2025_
 
