@@ -240,9 +240,26 @@ pub struct Core {
     /// - `Some(vec)` where `vec` is empty, all traffic is blocked.
     /// - `Some(vec)` with at least one pattern, filtering enabled for only those patterns.
     ///
-    /// These settings are consumed by [`RestrictedResolver`].
+    /// # Examples
     ///
-    /// For information on when the SDK might perform an network request, see ["When do network requests occur?"]
+    /// Pattern: `*.contentauthenticity.org`
+    /// - Does match:
+    ///   - `https://sub.contentauthenticity.org`
+    ///   - `http://api.contentauthenticity.org`
+    /// - Does **not** match:
+    ///   - `https://contentauthenticity.org` (no subdomain)
+    ///   - `https://sub.fakecontentauthenticity.org` (different host)
+    ///
+    /// Pattern: `http://192.0.2.1:8080`
+    /// - Does match:
+    ///   - `http://192.0.2.1:8080`
+    /// - Does **not** match:
+    ///   - `https://192.0.2.1:8080` (scheme mismatch)
+    ///   - `http://192.0.2.1` (port omitted)
+    ///   - `http://192.0.2.2:8080` (different IP address)
+    ///
+    /// These settings are consumed by [`RestrictedResolver`]. For information on when the SDK might perform a
+    /// network requests, see ["When do network requests occur?"]
     ///
     /// ["When do network requests occur?"]: crate::http#when-do-network-requests-occur
     /// [`HostPattern`]: crate::http::restricted::HostPattern
