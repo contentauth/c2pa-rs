@@ -94,22 +94,22 @@ impl TimeStamp {
         Ok(())
     }
 
-    /// Send a timestamp token request to the `time_authority_url` with the given `signature`.
+    /// Send a timestamp token request to the `time_authority_url` with the given `message`.
     ///
     /// This function will verify the structure of the returned response but not the trust.
     ///
     /// See [`TimeStamp::refresh_timestamp`] for more information.
     #[async_generic(async_signature(
         time_authority_url: &str,
-        signature: &[u8],
+        message: &[u8],
         http_resolver: &impl AsyncHttpResolver,
     ))]
     pub(crate) fn send_timestamp_token_request(
         time_authority_url: &str,
-        signature: &[u8],
+        message: &[u8],
         http_resolver: &impl SyncHttpResolver,
     ) -> Result<Vec<u8>> {
-        let body = crate::crypto::time_stamp::default_rfc3161_message(signature)?;
+        let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
         let headers = None;
 
         let bytes = if _sync {
@@ -117,7 +117,7 @@ impl TimeStamp {
                 time_authority_url,
                 headers,
                 &body,
-                signature,
+                message,
                 http_resolver,
             )
         } else {
@@ -125,7 +125,7 @@ impl TimeStamp {
                 time_authority_url,
                 headers,
                 &body,
-                signature,
+                message,
                 http_resolver,
             )
             .await
@@ -138,7 +138,7 @@ impl TimeStamp {
         if _sync {
             crate::crypto::time_stamp::verify_time_stamp(
                 &bytes,
-                signature,
+                message,
                 &ctp,
                 &mut tracker,
                 false,
@@ -146,7 +146,7 @@ impl TimeStamp {
         } else {
             crate::crypto::time_stamp::verify_time_stamp_async(
                 &bytes,
-                signature,
+                message,
                 &ctp,
                 &mut tracker,
                 false,
