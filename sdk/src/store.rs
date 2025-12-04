@@ -3906,13 +3906,18 @@ impl Store {
         }
 
         // walk the update manifests until you find an acceptable claim
-        if let Some(parent_uri) = claim.parent_claim_uri().ok()? {
-            let parent_label = manifest_label_from_uri(&parent_uri)?;
-            if let Some(parent) = self.get_claim(&parent_label) {
-                if parent.update_manifest() {
-                    self.get_hash_binding_manifest(parent);
-                } else if !parent.hash_assertions().is_empty() {
-                    return Some(parent.label().to_owned());
+        for i in claim.ingredient_assertions() {
+            let ingredient = Ingredient::from_assertion(i.assertion()).ok()?;
+            if ingredient.relationship == Relationship::ParentOf {
+                if let Some(parent_uri) = ingredient.c2pa_manifest() {
+                    let parent_label = manifest_label_from_uri(&parent_uri.url())?;
+                    if let Some(parent) = self.get_claim(&parent_label) {
+                        if parent.update_manifest() {
+                            self.get_hash_binding_manifest(parent);
+                        } else if !parent.hash_assertions().is_empty() {
+                            return Some(parent.label().to_owned());
+                        }
+                    }
                 }
             }
         }
