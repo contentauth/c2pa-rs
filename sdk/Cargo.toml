@@ -106,15 +106,12 @@ bcder = "0.7.3"
 bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
-chrono = { version = "0.4.39", default-features = false, features = ["serde"] }
+chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
 ciborium = "0.2.2"
 toml = "0.8.23"
 config = { version = "0.14.0", default-features = false, features = [
     "json",
-    "json5",
     "toml",
-    "ron",
-    "ini",
 ] }
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
@@ -138,7 +135,7 @@ img-parts = "0.3.2"
 iref = { version = "3.2.2", features = ["serde"] }
 jfifdump = "0.6.0"
 log = "0.4.8"
-lopdf = { version = "0.31.0", optional = true }
+lopdf = { version = "0.38.0", optional = true }
 lazy_static = "1.4.0"
 memchr = "2.7.6"
 mp4 = "0.14.0"
@@ -157,7 +154,7 @@ pem = "3.0.6"
 pkcs1 = { version = "0.7.5", optional = true }
 pkcs8 = "0.10.2"
 png_pong = "0.9.1"
-quick-xml = "0.37.1"
+quick-xml = "0.38.3"
 rand = "0.8.5"
 rand_chacha = "0.3.1"
 range-set = "0.0.11"
@@ -179,7 +176,7 @@ serde-transcode = "1.1.1"
 sha1 = "0.10.6"
 spki = { version = "0.7.3", optional = true }
 static-iref = "3.0"
-tempfile = "=3.15.0"
+tempfile = "3.23.0"
 thiserror = "2.0.17"
 url = "2.5.3"
 uuid = { version = "1.18.0", features = ["serde", "v4"] }
@@ -239,9 +236,6 @@ pkcs1 = "0.7.5"
 rsa = { version = "0.9.6", features = ["sha2"] }
 spki = "0.7.3"
 
-[target.'cfg(target_env = "p2")'.dependencies]
-tempfile = { version = "3.15", features = ["nightly"] }
-
 [target.'cfg(any(target_os = "wasi", not(target_arch = "wasm32")))'.dependencies]
 image = { version = "0.25.6", default-features = false, features = [
     # TODO: eventually define feature flags for the asset handlers and match them
@@ -289,9 +283,6 @@ web-sys = { version = "0.3.58", features = [
     "WorkerGlobalScope",
 ] }
 
-[target.'cfg(target_os = "windows")'.dependencies]
-windows-core = "0.61.2" # Override yanked version used in chrono and other crates.
-
 [dev-dependencies]
 anyhow = "1.0.97"
 glob = "0.3.1"
@@ -321,7 +312,3 @@ harness = false
 [[bench]]
 name = "read"
 harness = false
-
-
-[package.metadata.cargo-udeps.ignore]
-normal = ["windows-core"]
