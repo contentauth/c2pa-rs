@@ -37,7 +37,10 @@ use crate::{
     },
     claim::Claim,
     error::{Error, Result},
-    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
+    http::{
+        restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
+        SyncGenericResolver, SyncHttpResolver,
+    },
     jumbf::labels::manifest_label_from_uri,
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
@@ -618,6 +621,13 @@ impl Builder {
         R: Read + Seek + Send,
     {
         let settings = crate::settings::get_settings().unwrap_or_default();
+        let http_resolver = if _sync {
+            SyncGenericResolver::new()
+        } else {
+            AsyncGenericResolver::new()
+        };
+        let mut http_resolver = RestrictedResolver::new(http_resolver);
+        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
 
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
@@ -633,10 +643,10 @@ impl Builder {
         }
 
         let ingredient = if _sync {
-            ingredient.with_stream(format, stream, &SyncGenericResolver::new(), &settings)?
+            ingredient.with_stream(format, stream, &http_resolver, &settings)?
         } else {
             ingredient
-                .with_stream_async(format, stream, &AsyncGenericResolver::new(), &settings)
+                .with_stream_async(format, stream, &http_resolver, &settings)
                 .await?
         };
 
@@ -863,6 +873,8 @@ impl Builder {
             // so we will read the store directly here
             //crate::Reader::from_stream("application/c2pa", stream).and_then(|r| r.into_builder())
             let settings = crate::settings::get_settings().unwrap_or_default();
+            let mut http_resolver = RestrictedResolver::new(SyncGenericResolver::new());
+            http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
 
             let mut validation_log = crate::status_tracker::StatusTracker::default();
             stream.rewind()?; // Ensure stream is at the start
@@ -872,7 +884,7 @@ impl Builder {
                 &mut stream,
                 false,
                 &mut validation_log,
-                &SyncGenericResolver::new(),
+                &http_resolver,
                 &settings,
             )?;
             let reader = Reader::from_store(store, &mut validation_log, &settings)?;
@@ -1649,6 +1661,8 @@ impl Builder {
         } else {
             AsyncGenericResolver::new()
         };
+        let mut http_resolver = RestrictedResolver::new(http_resolver);
+        http_resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
 
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
@@ -1679,8 +1693,12 @@ impl Builder {
                     &http_resolver,
                 )?;
             } else {
-                self.maybe_add_timestamp_async(&timestamp_authority_url, &mut store, &http_resolver)
-                    .await?
+                self.maybe_add_timestamp_to_parent_async(
+                    &timestamp_authority_url,
+                    &mut store,
+                    &http_resolver,
+                )
+                .await?
             }
         }
 
