@@ -1430,59 +1430,61 @@ impl Builder {
         store: &mut Store,
         http_resolver: &impl SyncHttpResolver,
     ) -> Result<()> {
-        if self.settings.builder.add_timestamp_assertion_to_parent {
-            let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-            if let Some(parent_claim_uri) = provenance_claim.parent_claim_uri()? {
-                let parent_claim_id =
-                    manifest_label_from_uri(&parent_claim_uri).ok_or(Error::ClaimEncoding)?;
+        if !self.settings.builder.add_timestamp_assertion_to_parent {
+            return Ok(());
+        }
 
-                // First check if a timestamp assertion already exists.
-                let timestamp_assertions = provenance_claim.timestamp_assertions();
-                let mut timestamp_assertion = if !timestamp_assertions.is_empty() {
-                    // There can only be one timestamp assertion per the spec.
-                    let timestamp_assertion =
-                        TimeStamp::from_assertion(timestamp_assertions[0].assertion())?;
-                    if timestamp_assertion
-                        .get_timestamp(&parent_claim_id)
-                        .is_some()
-                    {
-                        return Ok(());
-                    }
+        let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        if let Some(parent_claim_uri) = provenance_claim.parent_claim_uri()? {
+            let parent_claim_id =
+                manifest_label_from_uri(&parent_claim_uri).ok_or(Error::ClaimEncoding)?;
 
-                    timestamp_assertion
-                } else {
-                    TimeStamp::new()
-                };
+            // First check if a timestamp assertion already exists.
+            let timestamp_assertions = provenance_claim.timestamp_assertions();
+            let mut timestamp_assertion = if !timestamp_assertions.is_empty() {
+                // There can only be one timestamp assertion per the spec.
+                let timestamp_assertion =
+                    TimeStamp::from_assertion(timestamp_assertions[0].assertion())?;
+                if timestamp_assertion
+                    .get_timestamp(&parent_claim_id)
+                    .is_some()
+                {
+                    return Ok(());
+                }
 
-                match store.get_cose_sign1_signature(&parent_claim_id)? {
-                    Some(signature) => {
-                        if _sync {
-                            timestamp_assertion.refresh_timestamp(
+                timestamp_assertion
+            } else {
+                TimeStamp::new()
+            };
+
+            match store.get_cose_sign1_signature(&parent_claim_id)? {
+                Some(signature) => {
+                    if _sync {
+                        timestamp_assertion.refresh_timestamp(
+                            time_authority_url,
+                            &parent_claim_id,
+                            &signature,
+                            http_resolver,
+                        )?;
+                    } else {
+                        timestamp_assertion
+                            .refresh_timestamp_async(
                                 time_authority_url,
                                 &parent_claim_id,
                                 &signature,
                                 http_resolver,
-                            )?;
-                        } else {
-                            timestamp_assertion
-                                .refresh_timestamp_async(
-                                    time_authority_url,
-                                    &parent_claim_id,
-                                    &signature,
-                                    http_resolver,
-                                )
-                                .await?;
-                        }
+                            )
+                            .await?;
                     }
-                    None => return Err(Error::ClaimMissingSignatureBox),
                 }
+                None => return Err(Error::ClaimMissingSignatureBox),
+            }
 
-                let claim = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-                if claim.timestamp_assertions().is_empty() {
-                    claim.add_assertion(&timestamp_assertion)?;
-                } else {
-                    claim.replace_assertion(timestamp_assertion.to_assertion()?)?;
-                }
+            let claim = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+            if claim.timestamp_assertions().is_empty() {
+                claim.add_assertion(&timestamp_assertion)?;
+            } else {
+                claim.replace_assertion(timestamp_assertion.to_assertion()?)?;
             }
         }
 
