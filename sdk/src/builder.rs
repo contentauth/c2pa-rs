@@ -1424,7 +1424,7 @@ impl Builder {
         store: &mut Store,
         http_resolver: &impl AsyncHttpResolver,
     ))]
-    fn maybe_add_timestamp(
+    fn maybe_add_timestamp_to_parent(
         &mut self,
         time_authority_url: &str,
         store: &mut Store,
@@ -1673,7 +1673,11 @@ impl Builder {
         // add timestamp if conditions allow
         if let Some(timestamp_authority_url) = signer.time_authority_url() {
             if _sync {
-                self.maybe_add_timestamp(&timestamp_authority_url, &mut store, &http_resolver)?;
+                self.maybe_add_timestamp_to_parent(
+                    &timestamp_authority_url,
+                    &mut store,
+                    &http_resolver,
+                )?;
             } else {
                 self.maybe_add_timestamp_async(&timestamp_authority_url, &mut store, &http_resolver)
                     .await?
