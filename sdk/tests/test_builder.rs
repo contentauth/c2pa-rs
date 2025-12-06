@@ -172,6 +172,70 @@ fn test_builder_cyclic_ingredient() -> Result<()> {
 }
 
 #[test]
+fn test_builder_sidecar_only_bmff_cawg() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    Settings::from_toml(include_str!(
+        "../tests/fixtures/test_settings_with_cawg_signing.toml"
+    ))?; // overlay cawg settings
+
+    let mut source = Cursor::new(include_bytes!("fixtures/video1.mp4"));
+    let format = "video/mp4";
+    let mut dest = Cursor::new(Vec::new());
+
+    let manifest_json = r#"
+    {
+        "assertions": [
+            {
+                "label": "c2pa.metadata",
+                "kind": "Json",
+                "data": {
+                    "@context": { "exif": "http://ns.adobe.com/exif/1.0/" },
+                    "exif:GPSLatitude": "39,21.102N"
+                }
+            },
+            {
+                "label": "cawg.metadata",
+                "kind": "Json",
+                "data": {
+                    "@context": { "cawg": "http://cawg.org/ns/1.0/" },
+                    "cawg:SomeField": "SomeValue"
+                }
+            },
+            {
+                "label": "c2pa.assertion.metadata",
+                "data": {
+                    "@context": { "custom": "http://custom.org/ns/1.0/" },
+                    "custom:Field": "CustomValue"
+                }
+            },
+            {
+                "label": "org.myorg.metadata",
+                "data": {
+                    "@context": { "myorg": "http://myorg.org/ns/1.0/" },
+                    "myorg:Field": "MyOrgValue"
+                }
+            }
+        ]
+    }
+    "#;
+
+    let mut builder = Builder::from_json(manifest_json)?;
+    builder.set_intent(BuilderIntent::Edit);
+    builder.definition.claim_version = Some(2); // use v1 for this test
+    builder.no_embed = true;
+    builder.remote_url = Some("http://somecompany.org".to_string());
+    let c2pa_data = builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
+
+    dest.rewind()?;
+    let reader1 = Reader::from_manifest_data_and_stream(&c2pa_data, format, &mut dest)?;
+    assert!(!reader1.is_embedded());
+    assert_eq!(reader1.remote_url().unwrap(), "http://somecompany.org/");
+    println!("reader1: {reader1}");
+
+    Ok(())
+}
+
+#[test]
 fn test_builder_sidecar_only() -> Result<()> {
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
     let mut source = Cursor::new(include_bytes!("fixtures/earth_apollo17.jpg"));
