@@ -407,7 +407,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-12-05
+          toolchain: nightly-2025-12-06
 
       - name: Install wasmtime
         run: |
@@ -420,7 +420,7 @@ jobs:
           sudo apt-get install -y clang
 
       - name: Add wasm32-wasip2 target
-        run: rustup target add --toolchain nightly-2025-12-05 wasm32-wasip2
+        run: rustup target add --toolchain nightly-2025-12-06 wasm32-wasip2
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -432,7 +432,7 @@ jobs:
           RUST_MIN_STACK: 16777216
           FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
-          cargo +nightly-2025-12-05 test --target wasm32-wasip2 -p c2pa --features "$FEATURES" --no-default-features -- --no-capture
+          cargo +nightly-2025-12-06 test --target wasm32-wasip2 -p c2pa --features "$FEATURES" --no-default-features -- --no-capture
 
   clippy_check:
     name: Clippy
