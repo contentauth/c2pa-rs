@@ -415,4 +415,56 @@ mod tests {
             assert_eq!(ValidationStatus::code_from_error(&error), GENERAL_ERROR);
         }
     }
+
+    mod make_absolute {
+        use super::super::*;
+
+        #[test]
+        fn url_none() {
+            let mut status = ValidationStatus::new("test.code");
+            assert_eq!(status.url(), None);
+
+            status.make_absolute("test_manifest");
+
+            // URL should still be None after make_absolute
+            assert_eq!(status.url(), None);
+        }
+
+        #[test]
+        fn url_does_not_start_with_self_jumbf() {
+            let mut status = ValidationStatus::new("test.code")
+                .set_url("http://example.com/some/url");
+
+            let original_url = status.url().unwrap().to_string();
+            status.make_absolute("test_manifest");
+
+            // URL should remain unchanged
+            assert_eq!(status.url(), Some(original_url.as_str()));
+        }
+
+        #[test]
+        fn url_starts_with_self_jumbf() {
+            let mut status =
+                ValidationStatus::new("test.code").set_url("self#jumbf=c2pa.assertions/test");
+
+            status.make_absolute("active_manifest");
+
+            // URL should be converted to absolute URI with manifest label
+            assert!(status.url().is_some());
+            let url = status.url().unwrap();
+            assert!(url.contains("active_manifest"));
+            assert!(url.starts_with("self#jumbf=/c2pa/active_manifest"));
+        }
+
+        #[test]
+        fn url_is_just_label() {
+            let mut status = ValidationStatus::new("test.code").set_url("Cose_Sign1");
+
+            let original_url = status.url().unwrap().to_string();
+            status.make_absolute("test_manifest");
+
+            // URL should remain unchanged (doesn't start with "self#jumbf")
+            assert_eq!(status.url(), Some(original_url.as_str()));
+        }
+    }
 }
