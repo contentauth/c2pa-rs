@@ -454,6 +454,61 @@ impl Signer for RawSignerWrapper {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    mod signer {
+        use super::super::*;
+        use crate::crypto::raw_signature::SigningAlg;
+
+        // Minimal Signer implementation for testing default methods.
+        struct MinimalSigner;
+
+        impl Signer for MinimalSigner {
+            fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
+                Ok(vec![])
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Ed25519
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                Ok(vec![])
+            }
+
+            fn reserve_size(&self) -> usize {
+                1024
+            }
+        }
+
+        #[test]
+        fn default_timestamp_request_headers() {
+            // Test that the default implementation of timestamp_request_headers returns
+            // None.
+            let signer = MinimalSigner;
+            assert_eq!(signer.timestamp_request_headers(), None);
+        }
+
+        #[test]
+        fn default_timestamp_request_body() {
+            // Test that the default implementation of timestamp_request_body
+            // calls the default_rfc3161_message function.
+            let signer = MinimalSigner;
+            let message = b"test message";
+
+            // The default implementation should successfully create an RFC 3161 message.
+            let result = signer.timestamp_request_body(message);
+            let body = result.unwrap();
+            assert!(!body.is_empty());
+        }
+
+        #[test]
+        fn default_send_timestamp_request_without_url() {
+            // Test that send_timestamp_request returns None when time_authority_url is None.
+            let signer = MinimalSigner;
+            let message = b"test message";
+            assert!(signer.send_timestamp_request(message).is_none());
+        }
+    }
+
     mod async_signer {
         use super::super::*;
         use crate::crypto::raw_signature::SigningAlg;
