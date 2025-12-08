@@ -561,6 +561,201 @@ mod tests {
         }
     }
 
+    mod boxed_signer {
+        use super::super::*;
+        use crate::crypto::raw_signature::SigningAlg;
+
+        // Test signer that returns specific values for testing delegation.
+        struct TestSigner {
+            has_timestamp_headers: bool,
+            has_ocsp: bool,
+        }
+
+        impl Signer for TestSigner {
+            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+                // Simple test signature: just reverse the input
+                Ok(data.iter().copied().rev().collect())
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Es256
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                Ok(vec![vec![1, 2, 3], vec![4, 5, 6]])
+            }
+
+            fn reserve_size(&self) -> usize {
+                2048
+            }
+
+            fn time_authority_url(&self) -> Option<String> {
+                Some("https://timestamp.example.com".to_string())
+            }
+
+            fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+                if self.has_timestamp_headers {
+                    Some(vec![
+                        ("X-Custom-Header".to_string(), "test-value".to_string()),
+                        ("Authorization".to_string(), "Bearer token123".to_string()),
+                    ])
+                } else {
+                    None
+                }
+            }
+
+            fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+                // Return a simple test body based on the message
+                Ok(format!("timestamp-body-for-{}", message.len()).into_bytes())
+            }
+
+            fn ocsp_val(&self) -> Option<Vec<u8>> {
+                if self.has_ocsp {
+                    Some(vec![7, 8, 9, 10])
+                } else {
+                    None
+                }
+            }
+        }
+
+        #[test]
+        fn boxed_signer_timestamp_request_headers_with_headers() {
+            // Test that Box<dyn Signer> correctly delegates timestamp_request_headers
+            let signer = TestSigner {
+                has_timestamp_headers: true,
+                has_ocsp: false,
+            };
+            let boxed: Box<dyn Signer> = Box::new(signer);
+
+            let headers = boxed.timestamp_request_headers();
+            assert!(headers.is_some());
+            let headers = headers.unwrap();
+            assert_eq!(headers.len(), 2);
+            assert_eq!(headers[0].0, "X-Custom-Header");
+            assert_eq!(headers[0].1, "test-value");
+        }
+
+        #[test]
+        fn boxed_signer_timestamp_request_headers_without_headers() {
+            // Test that Box<dyn Signer> returns None when inner signer has no headers
+            let signer = TestSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            let boxed: Box<dyn Signer> = Box::new(signer);
+
+            assert!(boxed.timestamp_request_headers().is_none());
+        }
+
+        #[test]
+        fn boxed_signer_timestamp_request_body() {
+            // Test that Box<dyn Signer> correctly delegates timestamp_request_body
+            let signer = TestSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            let boxed: Box<dyn Signer> = Box::new(signer);
+
+            let message = b"test message";
+            let result = boxed.timestamp_request_body(message);
+            assert!(result.is_ok());
+            let body = result.unwrap();
+            assert_eq!(body, b"timestamp-body-for-12");
+        }
+
+        #[test]
+        fn boxed_signer_send_timestamp_request() {
+            // Test that Box<dyn Signer> correctly delegates send_timestamp_request
+            let signer = TestSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            let boxed: Box<dyn Signer> = Box::new(signer);
+
+            let message = b"test message";
+            // This will return None because the default implementation will try to
+            // make an actual HTTP request which we're not mocking here
+            let _result = boxed.send_timestamp_request(message);
+            // We're just testing that the delegation happens without panic
+        }
+
+        #[test]
+        fn boxed_signer_as_raw_signer() {
+            // Test that Box<dyn Signer> implements RawSigner correctly
+            let signer = TestSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            let boxed: Box<dyn Signer> = Box::new(signer);
+
+            // Test sign via Signer trait
+            let data = b"test data";
+            let signature = Signer::sign(&boxed, data);
+            assert!(signature.is_ok());
+            let sig = signature.unwrap();
+            // Should be reversed
+            assert_eq!(sig, b"atad tset");
+
+            // Test alg via Signer trait
+            assert_eq!(Signer::alg(&boxed), SigningAlg::Es256);
+
+            // Test cert_chain via Signer trait
+            let certs = Signer::certs(&boxed);
+            assert!(certs.is_ok());
+            let cert_chain = certs.unwrap();
+            assert_eq!(cert_chain.len(), 2);
+            assert_eq!(cert_chain[0], vec![1, 2, 3]);
+            assert_eq!(cert_chain[1], vec![4, 5, 6]);
+
+            // Test reserve_size via Signer trait
+            assert_eq!(Signer::reserve_size(&boxed), 2048);
+
+            // Test ocsp_response (via ocsp_val)
+            assert!(boxed.ocsp_val().is_none());
+        }
+
+        #[test]
+        fn boxed_signer_as_raw_signer_with_ocsp() {
+            // Test RawSigner::ocsp_response delegation
+            let signer = TestSigner {
+                has_timestamp_headers: false,
+                has_ocsp: true,
+            };
+            let boxed: Box<dyn Signer> = Box::new(signer);
+
+            // Test ocsp_response
+            let ocsp = boxed.ocsp_val();
+            assert!(ocsp.is_some());
+            assert_eq!(ocsp.unwrap(), vec![7, 8, 9, 10]);
+        }
+
+        #[test]
+        fn boxed_signer_as_timestamp_provider() {
+            // Test that Box<dyn Signer> implements TimeStampProvider correctly
+            let signer = TestSigner {
+                has_timestamp_headers: true,
+                has_ocsp: false,
+            };
+            let boxed: Box<dyn Signer> = Box::new(signer);
+
+            // Test time_stamp_service_url
+            let url = boxed.time_authority_url();
+            assert!(url.is_some());
+            assert_eq!(url.unwrap(), "https://timestamp.example.com");
+
+            // Test time_stamp_request_headers
+            let headers = boxed.timestamp_request_headers();
+            assert!(headers.is_some());
+            assert_eq!(headers.unwrap().len(), 2);
+
+            // Test time_stamp_request_body (which calls sign on the inner signer)
+            let message = b"test";
+            let body = Signer::sign(&boxed, message);
+            assert!(body.is_ok());
+            assert_eq!(body.unwrap(), b"tset"); // reversed
+        }
+    }
+
     mod async_signer {
         use super::super::*;
         use crate::crypto::raw_signature::SigningAlg;
@@ -614,6 +809,13 @@ mod tests {
             let result = signer.timestamp_request_body(message);
             let body = result.unwrap();
             assert!(!body.is_empty());
+        }
+
+        #[c2pa_macros::c2pa_test_async]
+        async fn default_ocsp_val() {
+            // Test that the default implementation of ocsp_val returns None.
+            let signer = MinimalAsyncSigner;
+            assert!(signer.ocsp_val().await.is_none());
         }
 
         // AsyncSigner with a custom time authority URL for testing error paths.
