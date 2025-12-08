@@ -335,4 +335,90 @@ mod tests {
             );
         }
     }
+
+    mod code_from_error {
+        use super::super::*;
+        use crate::assertion::{AssertionDecodeError, AssertionDecodeErrorCause};
+
+        #[test]
+        fn claim_missing() {
+            let error = Error::ClaimMissing {
+                label: "test_claim".to_string(),
+            };
+
+            assert_eq!(ValidationStatus::code_from_error(&error), CLAIM_MISSING);
+        }
+
+        #[test]
+        fn assertion_missing() {
+            let error = Error::AssertionMissing {
+                url: "test_url".to_string(),
+            };
+
+            assert_eq!(
+                ValidationStatus::code_from_error(&error),
+                ASSERTION_MISSING
+            );
+        }
+
+        #[test]
+        fn assertion_decoding() {
+            let decode_error = AssertionDecodeError {
+                label: "test.assertion".to_string(),
+                version: Some(1),
+                content_type: "application/json".to_string(),
+                source: AssertionDecodeErrorCause::BinaryDataNotUtf8,
+            };
+            let error = Error::AssertionDecoding(decode_error);
+
+            assert_eq!(
+                ValidationStatus::code_from_error(&error),
+                ASSERTION_REQUIRED_MISSING
+            );
+        }
+
+        #[test]
+        fn hash_mismatch() {
+            let error = Error::HashMismatch("hash mismatch details".to_string());
+
+            assert_eq!(
+                ValidationStatus::code_from_error(&error),
+                ASSERTION_DATAHASH_MATCH
+            );
+        }
+
+        #[test]
+        fn remote_manifest_fetch() {
+            let error = Error::RemoteManifestFetch("http://example.com".to_string());
+
+            assert_eq!(
+                ValidationStatus::code_from_error(&error),
+                MANIFEST_INACCESSIBLE
+            );
+        }
+
+        #[test]
+        fn prerelease_error() {
+            let error = Error::PrereleaseError;
+
+            assert_eq!(
+                ValidationStatus::code_from_error(&error),
+                STATUS_PRERELEASE
+            );
+        }
+
+        #[test]
+        fn other_error_returns_general_error() {
+            let error = Error::ClaimEncoding;
+
+            assert_eq!(ValidationStatus::code_from_error(&error), GENERAL_ERROR);
+        }
+
+        #[test]
+        fn bad_param_returns_general_error() {
+            let error = Error::BadParam("invalid parameter".to_string());
+
+            assert_eq!(ValidationStatus::code_from_error(&error), GENERAL_ERROR);
+        }
+    }
 }
