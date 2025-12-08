@@ -414,17 +414,11 @@ impl CAIWriter for RiffIO {
             Chunk::read(&mut reader, 0)?
         };
 
-        eprintln!(
-            "[DEBUG write_cai] top_level_chunks.len() = {}",
-            top_level_chunks.len()
-        );
-
         if top_level_chunks.id() != RIFF_ID {
             return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
         }
 
         let first_chunk_size = top_level_chunks.len();
-        eprintln!("[DEBUG write_cai] first_chunk_size = {}", first_chunk_size);
 
         let mut reader = CAIReadWrapper {
             reader: input_stream,
@@ -453,17 +447,8 @@ impl CAIWriter for RiffIO {
             // Ensure input_stream is positioned right after the first chunk
             // Position = 8 bytes (chunk ID + size) + chunk data size
             let position_after_first_chunk = 8 + first_chunk_size as u64;
-            eprintln!(
-                "[DEBUG write_cai] first_chunk_size={}, seeking to position {}",
-                first_chunk_size, position_after_first_chunk
-            );
             input_stream.seek(SeekFrom::Start(position_after_first_chunk))?;
 
-            let current_pos_after_seek = input_stream.stream_position()?;
-            eprintln!(
-                "[DEBUG write_cai] After seek, position = {}",
-                current_pos_after_seek
-            );
             loop {
                 // Check if we're at EOF
                 let current_pos = input_stream.stream_position()?;
@@ -481,19 +466,15 @@ impl CAIWriter for RiffIO {
                 }
 
                 let chunk_id = ChunkId {
-                    value: [
-                        chunk_header[0],
-                        chunk_header[1],
-                        chunk_header[2],
-                        chunk_header[3],
-                    ],
+                    value: chunk_header[0..4]
+                        .try_into()
+                        .map_err(|_e| Error::EmbeddingError)?,
                 };
-                let chunk_size = u32::from_le_bytes([
-                    chunk_header[4],
-                    chunk_header[5],
-                    chunk_header[6],
-                    chunk_header[7],
-                ]) as u64;
+                let chunk_size = u32::from_le_bytes(
+                    chunk_header[4..8]
+                        .try_into()
+                        .map_err(|_e| Error::EmbeddingError)?,
+                ) as u64;
 
                 if chunk_id != RIFF_ID && chunk_id != AVIX_ID {
                     break;
@@ -1118,7 +1099,7 @@ pub mod tests {
         println!("Signing took {:?}", duration);
 
         // Verify we got output
-        assert!(dest.get_ref().len() > 0);
+        assert!(!dest.get_ref().is_empty());
 
         // Verify the output size
         let source_size = std::fs::metadata(test_file).unwrap().len();

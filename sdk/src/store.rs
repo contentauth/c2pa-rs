@@ -3182,11 +3182,9 @@ impl Store {
         reserve_size: usize,
         settings: &Settings,
     ) -> Result<Vec<u8>> {
-        eprintln!("[DEBUG] start_save_stream: Starting for format {}", format);
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
         let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
-        eprintln!("[DEBUG] start_save_stream: Created intermediate stream");
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
@@ -3198,16 +3196,11 @@ impl Store {
             RemoteManifest::Remote(url) => (Some(url), true),
             RemoteManifest::EmbedWithRemote(url) => (Some(url), false),
         };
-        eprintln!(
-            "[DEBUG] start_save_stream: remote_manifest checked, url={:?}, remove={}",
-            url, remove_manifests
-        );
 
         let io_handler = get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
 
         // Do not assume the handler supports XMP or removing manifests unless we need it to
         if let Some(url) = url {
-            eprintln!("[DEBUG] start_save_stream: Handling remote URL: {}", url);
             let external_ref_writer = io_handler
                 .remote_ref_writer_ref()
                 .ok_or(Error::XmpNotSupported)?;
@@ -3236,7 +3229,6 @@ impl Store {
                 )?;
             }
         } else if remove_manifests {
-            eprintln!("[DEBUG] start_save_stream: Removing manifests");
             let manifest_writer = io_handler
                 .get_writer(format)
                 .ok_or(Error::UnsupportedType)?;
@@ -3244,24 +3236,16 @@ impl Store {
             manifest_writer.remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
         } else {
             // just clone stream
-            eprintln!("[DEBUG] start_save_stream: Copying input to intermediate stream...");
             input_stream.rewind()?;
-            let bytes_copied = std::io::copy(input_stream, &mut intermediate_stream)?;
-            eprintln!(
-                "[DEBUG] start_save_stream: Copied {} bytes ({:.2} GB)",
-                bytes_copied,
-                bytes_copied as f64 / 1_073_741_824.0
-            );
+            std::io::copy(input_stream, &mut intermediate_stream)?;
         }
 
         let is_bmff = is_bmff_format(format);
-        eprintln!("[DEBUG] start_save_stream: is_bmff={}", is_bmff);
 
         let mut data;
         let jumbf_size;
 
         if is_bmff {
-            eprintln!("[DEBUG] start_save_stream: Processing BMFF format");
             // 2) Get hash ranges if needed, do not generate for update manifests
             if !pc.update_manifest() {
                 intermediate_stream.rewind()?;
@@ -3324,22 +3308,15 @@ impl Store {
                 }
             }
         } else {
-            eprintln!("[DEBUG] start_save_stream: Processing non-BMFF format (RIFF/AVI)");
             // we will not do automatic hashing if we detect a box hash present
             let mut needs_hashing = false;
             if pc.hash_assertions().is_empty() {
-                eprintln!("[DEBUG] start_save_stream: Getting object locations...");
                 // 2) Get hash ranges if needed, do not generate for update manifests
                 let mut hash_ranges =
                     object_locations_from_stream(format, &mut intermediate_stream)?;
-                eprintln!(
-                    "[DEBUG] start_save_stream: Got {} hash ranges",
-                    hash_ranges.len()
-                );
                 let hashes: Vec<DataHash> = if pc.update_manifest() {
                     Vec::new()
                 } else {
-                    eprintln!("[DEBUG] start_save_stream: Generating data hashes (placeholder)...");
                     Store::generate_data_hashes_for_stream(
                         &mut intermediate_stream,
                         pc.alg(),
@@ -3347,16 +3324,10 @@ impl Store {
                         false,
                     )?
                 };
-                eprintln!(
-                    "[DEBUG] start_save_stream: Generated {} data hashes",
-                    hashes.len()
-                );
 
                 // add the placeholder data hashes to provenance claim so that the required space is reserved
                 for mut hash in hashes {
                     // add padding to account for possible cbor expansion of final DataHash
-                    // Use 50 bytes for all files - this is sufficient even for large multi-GB files
-                    // with complex exclusion ranges
                     let padding: Vec<u8> = vec![0x0; 10];
                     hash.add_padding(padding);
 
@@ -3365,21 +3336,14 @@ impl Store {
                 needs_hashing = true;
             }
 
-            eprintln!("[DEBUG] start_save_stream: Creating JUMBF data...");
             // 3) Generate in memory CAI jumbf block
             data = self.to_jumbf_internal(reserve_size)?;
             jumbf_size = data.len();
-            eprintln!(
-                "[DEBUG] start_save_stream: JUMBF size: {} bytes",
-                jumbf_size
-            );
 
             // write the jumbf to the output stream if we are embedding the manifest
             if !remove_manifests {
-                eprintln!("[DEBUG] start_save_stream: Writing JUMBF to output stream...");
                 intermediate_stream.rewind()?;
                 save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
-                eprintln!("[DEBUG] start_save_stream: JUMBF written to output");
             } else {
                 // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
                 intermediate_stream.rewind()?;
@@ -3389,28 +3353,18 @@ impl Store {
             // 4)  determine final object locations and patch the asset hashes with correct offset
             // replace the source with correct asset hashes so that the claim hash will be correct
             if needs_hashing {
-                eprintln!("[DEBUG] start_save_stream: Calculating final hashes...");
                 let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
                 // get the final hash ranges, but not for update manifests
                 output_stream.rewind()?;
                 let mut new_hash_ranges = object_locations_from_stream(format, output_stream)?;
-                eprintln!(
-                    "[DEBUG] start_save_stream: Got {} final hash ranges",
-                    new_hash_ranges.len()
-                );
                 if !pc.update_manifest() {
-                    eprintln!("[DEBUG] start_save_stream: Generating ACTUAL data hashes from output stream...");
                     let updated_hashes = Store::generate_data_hashes_for_stream(
                         output_stream,
                         pc.alg(),
                         &mut new_hash_ranges,
                         true,
                     )?;
-                    eprintln!(
-                        "[DEBUG] start_save_stream: Generated {} actual hashes",
-                        updated_hashes.len()
-                    );
 
                     // patch existing claim hash with updated data
                     for hash in updated_hashes {
@@ -3420,23 +3374,12 @@ impl Store {
             }
         }
 
-        eprintln!("[DEBUG] start_save_stream: Regenerating final JUMBF...");
         // regenerate the jumbf because the cbor changed
         data = self.to_jumbf_internal(reserve_size)?;
-        eprintln!(
-            "[DEBUG] start_save_stream: Original JUMBF size: {}, Final JUMBF size: {}",
-            jumbf_size,
-            data.len()
-        );
         if jumbf_size != data.len() {
-            eprintln!(
-                "[DEBUG] start_save_stream: ERROR - JUMBF size mismatch! Difference: {} bytes",
-                (data.len() as i64) - (jumbf_size as i64)
-            );
             return Err(Error::JumbfCreationError);
         }
 
-        eprintln!("[DEBUG] start_save_stream: Complete! Returning JUMBF data");
         Ok(data) // return JUMBF data
     }
 
