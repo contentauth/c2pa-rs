@@ -254,4 +254,36 @@ mod tests {
             assert_eq!(status.explanation(), Some(""));
         }
     }
+
+    mod passed {
+        use super::super::*;
+
+        #[test]
+        fn success_kind() {
+            let status = ValidationStatus::new("test.code");
+            assert!(status.passed());
+        }
+
+        #[test]
+        fn informational_kind() {
+            let status = ValidationStatus::new("test.code").set_kind(LogKind::Informational);
+            assert!(status.passed());
+        }
+
+        #[test]
+        fn failure_kind() {
+            let status = ValidationStatus::new_failure("test.code");
+            assert!(!status.passed());
+        }
+
+        #[test]
+        fn failure_from_error() {
+            let error = Error::ClaimMissing {
+                label: "test_claim".to_string(),
+            };
+
+            let status = ValidationStatus::from_error(&error);
+            assert!(!status.passed());
+        }
+    }
 }
