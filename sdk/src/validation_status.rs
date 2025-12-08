@@ -355,10 +355,7 @@ mod tests {
                 url: "test_url".to_string(),
             };
 
-            assert_eq!(
-                ValidationStatus::code_from_error(&error),
-                ASSERTION_MISSING
-            );
+            assert_eq!(ValidationStatus::code_from_error(&error), ASSERTION_MISSING);
         }
 
         #[test]
@@ -401,10 +398,7 @@ mod tests {
         fn prerelease_error() {
             let error = Error::PrereleaseError;
 
-            assert_eq!(
-                ValidationStatus::code_from_error(&error),
-                STATUS_PRERELEASE
-            );
+            assert_eq!(ValidationStatus::code_from_error(&error), STATUS_PRERELEASE);
         }
 
         #[test]
