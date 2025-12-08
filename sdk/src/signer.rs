@@ -540,7 +540,7 @@ mod tests {
         fn send_timestamp_request_error_path() {
             use httpmock::MockServer;
 
-            // Create a mock server that returns an error response (not a valid timestamp)
+            // Create a mock server that returns an error response (not a valid timestamp).
             let server = MockServer::start();
             let mock = server.mock(|when, then| {
                 when.method(httpmock::Method::POST);
@@ -552,7 +552,7 @@ mod tests {
             };
             let message = b"test message";
 
-            // This should return Some(Err(_)) because the mock server returns a 500 error
+            // This should return Some(Err(_)) because the mock server returns a 500 error.
             let result = signer.send_timestamp_request(message);
             assert!(result.is_some());
             assert!(result.unwrap().is_err());
@@ -573,7 +573,7 @@ mod tests {
 
         impl Signer for TestSigner {
             fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-                // Simple test signature: just reverse the input
+                // Simple test signature: just reverse the input.
                 Ok(data.iter().copied().rev().collect())
             }
 
@@ -605,7 +605,7 @@ mod tests {
             }
 
             fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-                // Return a simple test body based on the message
+                // Return a simple test body based on the message.
                 Ok(format!("timestamp-body-for-{}", message.len()).into_bytes())
             }
 
@@ -619,8 +619,8 @@ mod tests {
         }
 
         #[test]
-        fn boxed_signer_timestamp_request_headers_with_headers() {
-            // Test that Box<dyn Signer> correctly delegates timestamp_request_headers
+        fn timestamp_request_headers_with_headers() {
+            // Test that Box<dyn Signer> correctly delegates timestamp_request_headers.
             let signer = TestSigner {
                 has_timestamp_headers: true,
                 has_ocsp: false,
@@ -636,8 +636,8 @@ mod tests {
         }
 
         #[test]
-        fn boxed_signer_timestamp_request_headers_without_headers() {
-            // Test that Box<dyn Signer> returns None when inner signer has no headers
+        fn timestamp_request_headers_without_headers() {
+            // Test that Box<dyn Signer> returns None when inner signer has no headers.
             let signer = TestSigner {
                 has_timestamp_headers: false,
                 has_ocsp: false,
@@ -648,8 +648,8 @@ mod tests {
         }
 
         #[test]
-        fn boxed_signer_timestamp_request_body() {
-            // Test that Box<dyn Signer> correctly delegates timestamp_request_body
+        fn timestamp_request_body() {
+            // Test that Box<dyn Signer> correctly delegates timestamp_request_body.
             let signer = TestSigner {
                 has_timestamp_headers: false,
                 has_ocsp: false,
@@ -664,8 +664,8 @@ mod tests {
         }
 
         #[test]
-        fn boxed_signer_send_timestamp_request() {
-            // Test that Box<dyn Signer> correctly delegates send_timestamp_request
+        fn send_timestamp_request() {
+            // Test that Box<dyn Signer> correctly delegates send_timestamp_request.
             let signer = TestSigner {
                 has_timestamp_headers: false,
                 has_ocsp: false,
@@ -674,32 +674,32 @@ mod tests {
 
             let message = b"test message";
             // This will return None because the default implementation will try to
-            // make an actual HTTP request which we're not mocking here
+            // make an actual HTTP request which we're not mocking here.
             let _result = boxed.send_timestamp_request(message);
-            // We're just testing that the delegation happens without panic
+            // We're just testing that the delegation happens without panic.
         }
 
         #[test]
-        fn boxed_signer_as_raw_signer() {
-            // Test that Box<dyn Signer> implements RawSigner correctly
+        fn as_raw_signer() {
+            // Test that Box<dyn Signer> implements RawSigner correctly.
             let signer = TestSigner {
                 has_timestamp_headers: false,
                 has_ocsp: false,
             };
             let boxed: Box<dyn Signer> = Box::new(signer);
 
-            // Test sign via Signer trait
+            // Test sign via Signer trait.
             let data = b"test data";
             let signature = Signer::sign(&boxed, data);
             assert!(signature.is_ok());
             let sig = signature.unwrap();
-            // Should be reversed
+            // Should be reversed.
             assert_eq!(sig, b"atad tset");
 
-            // Test alg via Signer trait
+            // Test alg via Signer trait.
             assert_eq!(Signer::alg(&boxed), SigningAlg::Es256);
 
-            // Test cert_chain via Signer trait
+            // Test cert_chain via Signer trait.
             let certs = Signer::certs(&boxed);
             assert!(certs.is_ok());
             let cert_chain = certs.unwrap();
@@ -707,48 +707,48 @@ mod tests {
             assert_eq!(cert_chain[0], vec![1, 2, 3]);
             assert_eq!(cert_chain[1], vec![4, 5, 6]);
 
-            // Test reserve_size via Signer trait
+            // Test reserve_size via Signer trait.
             assert_eq!(Signer::reserve_size(&boxed), 2048);
 
-            // Test ocsp_response (via ocsp_val)
+            // Test ocsp_response (via ocsp_val).
             assert!(boxed.ocsp_val().is_none());
         }
 
         #[test]
-        fn boxed_signer_as_raw_signer_with_ocsp() {
-            // Test RawSigner::ocsp_response delegation
+        fn as_raw_signer_with_ocsp() {
+            // Test RawSigner::ocsp_response delegation.
             let signer = TestSigner {
                 has_timestamp_headers: false,
                 has_ocsp: true,
             };
             let boxed: Box<dyn Signer> = Box::new(signer);
 
-            // Test ocsp_response
+            // Test ocsp_response.
             let ocsp = boxed.ocsp_val();
             assert!(ocsp.is_some());
             assert_eq!(ocsp.unwrap(), vec![7, 8, 9, 10]);
         }
 
         #[test]
-        fn boxed_signer_as_timestamp_provider() {
-            // Test that Box<dyn Signer> implements TimeStampProvider correctly
+        fn as_timestamp_provider() {
+            // Test that Box<dyn Signer> implements TimeStampProvider correctly.
             let signer = TestSigner {
                 has_timestamp_headers: true,
                 has_ocsp: false,
             };
             let boxed: Box<dyn Signer> = Box::new(signer);
 
-            // Test time_stamp_service_url
+            // Test time_stamp_service_url.
             let url = boxed.time_authority_url();
             assert!(url.is_some());
             assert_eq!(url.unwrap(), "https://timestamp.example.com");
 
-            // Test time_stamp_request_headers
+            // Test time_stamp_request_headers.
             let headers = boxed.timestamp_request_headers();
             assert!(headers.is_some());
             assert_eq!(headers.unwrap().len(), 2);
 
-            // Test time_stamp_request_body (which calls sign on the inner signer)
+            // Test time_stamp_request_body (which calls sign on the inner signer).
             let message = b"test";
             let body = Signer::sign(&boxed, message);
             assert!(body.is_ok());
@@ -801,7 +801,7 @@ mod tests {
         #[test]
         fn default_timestamp_request_body() {
             // Test that the default implementation of timestamp_request_body
-            // calls the default_rfc3161_message function
+            // calls the default_rfc3161_message function.
             let signer = MinimalAsyncSigner;
             let message = b"test message";
 
@@ -852,7 +852,7 @@ mod tests {
         async fn send_timestamp_request_error_path() {
             use httpmock::MockServer;
 
-            // Create a mock server that returns an error response (not a valid timestamp)
+            // Create a mock server that returns an error response (not a valid timestamp).
             let server = MockServer::start();
             let mock = server.mock(|when, then| {
                 when.method(httpmock::Method::POST);
@@ -864,7 +864,7 @@ mod tests {
             };
             let message = b"test message";
 
-            // This should return Some(Err(_)) because the mock server returns a 500 error
+            // This should return Some(Err(_)) because the mock server returns a 500 error.
             let result = signer.send_timestamp_request(message).await;
             assert!(result.is_some());
             assert!(result.unwrap().is_err());
