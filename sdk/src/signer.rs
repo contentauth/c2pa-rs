@@ -465,36 +465,58 @@ impl Signer for RawSignerWrapper {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::*;
-    use crate::crypto::raw_signature::SigningAlg;
+    mod async_signer {
+        use super::super::*;
+        use crate::crypto::raw_signature::SigningAlg;
 
-    // Minimal AsyncSigner implementation for testing default methods
-    struct MinimalAsyncSigner;
+        // Minimal AsyncSigner implementation for testing default methods.
+        struct MinimalAsyncSigner;
 
-    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-    impl AsyncSigner for MinimalAsyncSigner {
-        async fn sign(&self, _data: Vec<u8>) -> Result<Vec<u8>> {
-            Ok(vec![])
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncSigner for MinimalAsyncSigner {
+            async fn sign(&self, _data: Vec<u8>) -> Result<Vec<u8>> {
+                Ok(vec![])
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Ed25519
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                Ok(vec![])
+            }
+
+            fn reserve_size(&self) -> usize {
+                1024
+            }
         }
 
-        fn alg(&self) -> SigningAlg {
-            SigningAlg::Ed25519
+        #[test]
+        fn default_time_authority_url() {
+            // Test that the default implementation of time_authority_url returns None.
+            let signer = MinimalAsyncSigner;
+            assert_eq!(signer.time_authority_url(), None);
         }
 
-        fn certs(&self) -> Result<Vec<Vec<u8>>> {
-            Ok(vec![])
+        #[test]
+        fn default_timestamp_request_headers() {
+            // Test that the default implementation of timestamp_request_headers returns None.
+            let signer = MinimalAsyncSigner;
+            assert_eq!(signer.timestamp_request_headers(), None);
         }
 
-        fn reserve_size(&self) -> usize {
-            1024
-        }
-    }
+        #[test]
+        fn default_timestamp_request_body() {
+            // Test that the default implementation of timestamp_request_body
+            // calls the default_rfc3161_message function
+            let signer = MinimalAsyncSigner;
+            let message = b"test message";
 
-    #[test]
-    fn test_async_signer_default_time_authority_url() {
-        // Test that the default implementation of time_authority_url returns None
-        let signer = MinimalAsyncSigner;
-        assert_eq!(signer.time_authority_url(), None);
+            // The default implementation should successfully create an RFC 3161 message.
+            let result = signer.timestamp_request_body(message);
+            let body = result.unwrap();
+            assert!(!body.is_empty());
+        }
     }
 }
