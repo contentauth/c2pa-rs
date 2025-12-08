@@ -125,21 +125,7 @@ pub trait Signer {
 /// Trait to allow loading of signing credential from external sources
 #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
 pub(crate) trait ConfigurableSigner: Signer + Sized {
-    /// Create signer form credential files
-    #[cfg(feature = "file_io")]
-    fn from_files<P: AsRef<std::path::Path>>(
-        signcert_path: P,
-        pkey_path: P,
-        alg: SigningAlg,
-        tsa_url: Option<String>,
-    ) -> Result<Self> {
-        let signcert = std::fs::read(signcert_path).map_err(crate::Error::IoError)?;
-        let pkey = std::fs::read(pkey_path).map_err(crate::Error::IoError)?;
-
-        Self::from_signcert_and_pkey(&signcert, &pkey, alg, tsa_url)
-    }
-
-    /// Create signer from credentials data
+    /// Create signer from credentials data.
     fn from_signcert_and_pkey(
         signcert: &[u8],
         pkey: &[u8],
