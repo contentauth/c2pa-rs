@@ -215,3 +215,43 @@ impl PartialEq for ValidationStatus {
 // -- unofficial status code --
 
 pub(crate) const STATUS_PRERELEASE: &str = "com.adobe.prerelease";
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    mod explanation {
+        use super::super::*;
+
+        #[test]
+        fn none() {
+            let status = ValidationStatus::new("test.code");
+            assert_eq!(status.explanation(), None);
+        }
+
+        #[test]
+        fn some() {
+            let status = ValidationStatus::new("test.code")
+                .set_explanation("This is a test explanation".to_string());
+
+            assert_eq!(status.explanation(), Some("This is a test explanation"));
+        }
+
+        #[test]
+        fn with_error() {
+            let error = Error::ClaimMissing {
+                label: "test_claim".to_string(),
+            };
+
+            let status = ValidationStatus::from_error(&error);
+            assert!(status.explanation().is_some());
+            assert!(status.explanation().unwrap().contains("claim missing"));
+        }
+
+        #[test]
+        fn empty_string() {
+            let status = ValidationStatus::new("test.code").set_explanation("".to_string());
+            assert_eq!(status.explanation(), Some(""));
+        }
+    }
+}
