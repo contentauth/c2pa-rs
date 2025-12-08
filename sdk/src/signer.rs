@@ -460,3 +460,41 @@ impl Signer for RawSignerWrapper {
         Some(Box::new(&*self.0))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use crate::crypto::raw_signature::SigningAlg;
+
+    // Minimal AsyncSigner implementation for testing default methods
+    struct MinimalAsyncSigner;
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl AsyncSigner for MinimalAsyncSigner {
+        async fn sign(&self, _data: Vec<u8>) -> Result<Vec<u8>> {
+            Ok(vec![])
+        }
+
+        fn alg(&self) -> SigningAlg {
+            SigningAlg::Ed25519
+        }
+
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
+            Ok(vec![])
+        }
+
+        fn reserve_size(&self) -> usize {
+            1024
+        }
+    }
+
+    #[test]
+    fn test_async_signer_default_time_authority_url() {
+        // Test that the default implementation of time_authority_url returns None
+        let signer = MinimalAsyncSigner;
+        assert_eq!(signer.time_authority_url(), None);
+    }
+}
