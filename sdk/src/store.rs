@@ -3357,7 +3357,7 @@ impl Store {
                     // add padding to account for possible cbor expansion of final DataHash
                     // Use 50 bytes for all files - this is sufficient even for large multi-GB files
                     // with complex exclusion ranges
-                    let padding: Vec<u8> = vec![0x0; 50];
+                    let padding: Vec<u8> = vec![0x0; 10];
                     hash.add_padding(padding);
 
                     pc.add_assertion(&hash)?;
