@@ -286,4 +286,53 @@ mod tests {
             assert!(!status.passed());
         }
     }
+
+    mod code_from_error_str {
+        use super::super::*;
+
+        #[test]
+        fn claim_missing() {
+            assert_eq!(
+                ValidationStatus::code_from_error_str("ClaimMissing"),
+                CLAIM_MISSING
+            );
+        }
+
+        #[test]
+        fn assertion_missing_prefix() {
+            assert_eq!(
+                ValidationStatus::code_from_error_str("AssertionMissing: some details"),
+                ASSERTION_MISSING
+            );
+        }
+
+        #[test]
+        fn hash_mismatch_prefix() {
+            assert_eq!(
+                ValidationStatus::code_from_error_str("HashMismatch: details"),
+                ASSERTION_DATAHASH_MATCH
+            );
+        }
+
+        #[test]
+        fn unrecognized_error_returns_general_error() {
+            assert_eq!(
+                ValidationStatus::code_from_error_str("SomeUnknownError"),
+                GENERAL_ERROR
+            );
+        }
+
+        #[test]
+        fn empty_string_returns_general_error() {
+            assert_eq!(ValidationStatus::code_from_error_str(""), GENERAL_ERROR);
+        }
+
+        #[test]
+        fn random_string_returns_general_error() {
+            assert_eq!(
+                ValidationStatus::code_from_error_str("ThisDoesNotMatchAnything"),
+                GENERAL_ERROR
+            );
+        }
+    }
 }
