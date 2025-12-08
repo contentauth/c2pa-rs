@@ -507,6 +507,58 @@ mod tests {
             let message = b"test message";
             assert!(signer.send_timestamp_request(message).is_none());
         }
+
+        // Signer with a custom time authority URL for testing error paths.
+        struct SignerWithUrl {
+            url: String,
+        }
+
+        impl Signer for SignerWithUrl {
+            fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
+                Ok(vec![])
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Ed25519
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                Ok(vec![])
+            }
+
+            fn reserve_size(&self) -> usize {
+                1024
+            }
+
+            fn time_authority_url(&self) -> Option<String> {
+                Some(self.url.clone())
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        #[test]
+        fn send_timestamp_request_error_path() {
+            use httpmock::MockServer;
+
+            // Create a mock server that returns an error response (not a valid timestamp)
+            let server = MockServer::start();
+            let mock = server.mock(|when, then| {
+                when.method(httpmock::Method::POST);
+                then.status(500).body("Internal Server Error");
+            });
+
+            let signer = SignerWithUrl {
+                url: server.url("/timestamp"),
+            };
+            let message = b"test message";
+
+            // This should return Some(Err(_)) because the mock server returns a 500 error
+            let result = signer.send_timestamp_request(message);
+            assert!(result.is_some());
+            assert!(result.unwrap().is_err());
+
+            mock.assert();
+        }
     }
 
     mod async_signer {
@@ -562,6 +614,60 @@ mod tests {
             let result = signer.timestamp_request_body(message);
             let body = result.unwrap();
             assert!(!body.is_empty());
+        }
+
+        // AsyncSigner with a custom time authority URL for testing error paths.
+        struct AsyncSignerWithUrl {
+            url: String,
+        }
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncSigner for AsyncSignerWithUrl {
+            async fn sign(&self, _data: Vec<u8>) -> Result<Vec<u8>> {
+                Ok(vec![])
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Ed25519
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                Ok(vec![])
+            }
+
+            fn reserve_size(&self) -> usize {
+                1024
+            }
+
+            fn time_authority_url(&self) -> Option<String> {
+                Some(self.url.clone())
+            }
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        #[c2pa_macros::c2pa_test_async]
+        async fn send_timestamp_request_error_path() {
+            use httpmock::MockServer;
+
+            // Create a mock server that returns an error response (not a valid timestamp)
+            let server = MockServer::start();
+            let mock = server.mock(|when, then| {
+                when.method(httpmock::Method::POST);
+                then.status(500).body("Internal Server Error");
+            });
+
+            let signer = AsyncSignerWithUrl {
+                url: server.url("/timestamp"),
+            };
+            let message = b"test message";
+
+            // This should return Some(Err(_)) because the mock server returns a 500 error
+            let result = signer.send_timestamp_request(message).await;
+            assert!(result.is_some());
+            assert!(result.unwrap().is_err());
+
+            mock.assert();
         }
     }
 }
