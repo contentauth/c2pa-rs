@@ -414,9 +414,17 @@ impl CAIWriter for RiffIO {
             Chunk::read(&mut reader, 0)?
         };
 
+        eprintln!(
+            "[DEBUG write_cai] top_level_chunks.len() = {}",
+            top_level_chunks.len()
+        );
+
         if top_level_chunks.id() != RIFF_ID {
             return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
         }
+
+        let first_chunk_size = top_level_chunks.len();
+        eprintln!("[DEBUG write_cai] first_chunk_size = {}", first_chunk_size);
 
         let mut reader = CAIReadWrapper {
             reader: input_stream,
@@ -441,7 +449,21 @@ impl CAIWriter for RiffIO {
             .map_err(|_e| Error::EmbeddingError)?;
 
         // Copy additional RIFF/AVIX chunks for large AVI files
-        if self.riff_format == "avi" {
+        if self.riff_format == "avi" || self.riff_format == "video/avi" {
+            // Ensure input_stream is positioned right after the first chunk
+            // Position = 8 bytes (chunk ID + size) + chunk data size
+            let position_after_first_chunk = 8 + first_chunk_size as u64;
+            eprintln!(
+                "[DEBUG write_cai] first_chunk_size={}, seeking to position {}",
+                first_chunk_size, position_after_first_chunk
+            );
+            input_stream.seek(SeekFrom::Start(position_after_first_chunk))?;
+
+            let current_pos_after_seek = input_stream.stream_position()?;
+            eprintln!(
+                "[DEBUG write_cai] After seek, position = {}",
+                current_pos_after_seek
+            );
             loop {
                 // Check if we're at EOF
                 let current_pos = input_stream.stream_position()?;
@@ -1101,12 +1123,8 @@ pub mod tests {
         // Verify the output size
         let source_size = std::fs::metadata(test_file).unwrap().len();
         let dest_size = dest.get_ref().len() as u64;
-        println!(
-            "Source: {} bytes ({:.2} GB), Dest: {} bytes ({:.2} GB)",
-            source_size,
-            source_size as f64 / 1_073_741_824.0,
-            dest_size,
-            dest_size as f64 / 1_073_741_824.0
-        );
+        println!("Source: {} bytes, Dest: {} bytes", source_size, dest_size);
+        assert!(dest_size > source_size); // Should be larger with C2PA
+        assert!(dest_size < source_size + 100_000); // But not too much larger
     }
 }
