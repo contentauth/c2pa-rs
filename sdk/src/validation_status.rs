@@ -432,8 +432,8 @@ mod tests {
 
         #[test]
         fn url_does_not_start_with_self_jumbf() {
-            let mut status = ValidationStatus::new("test.code")
-                .set_url("http://example.com/some/url");
+            let mut status =
+                ValidationStatus::new("test.code").set_url("http://example.com/some/url");
 
             let original_url = status.url().unwrap().to_string();
             status.make_absolute("test_manifest");
