@@ -215,3 +215,256 @@ impl PartialEq for ValidationStatus {
 // -- unofficial status code --
 
 pub(crate) const STATUS_PRERELEASE: &str = "com.adobe.prerelease";
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    mod explanation {
+        use super::super::*;
+
+        #[test]
+        fn none() {
+            let status = ValidationStatus::new("test.code");
+            assert_eq!(status.explanation(), None);
+        }
+
+        #[test]
+        fn some() {
+            let status = ValidationStatus::new("test.code")
+                .set_explanation("This is a test explanation".to_string());
+
+            assert_eq!(status.explanation(), Some("This is a test explanation"));
+        }
+
+        #[test]
+        fn with_error() {
+            let error = Error::ClaimMissing {
+                label: "test_claim".to_string(),
+            };
+
+            let status = ValidationStatus::from_error(&error);
+            assert!(status.explanation().is_some());
+            assert!(status.explanation().unwrap().contains("claim missing"));
+        }
+
+        #[test]
+        fn empty_string() {
+            let status = ValidationStatus::new("test.code").set_explanation("".to_string());
+            assert_eq!(status.explanation(), Some(""));
+        }
+    }
+
+    mod passed {
+        use super::super::*;
+
+        #[test]
+        fn success_kind() {
+            let status = ValidationStatus::new("test.code");
+            assert!(status.passed());
+        }
+
+        #[test]
+        fn informational_kind() {
+            let status = ValidationStatus::new("test.code").set_kind(LogKind::Informational);
+            assert!(status.passed());
+        }
+
+        #[test]
+        fn failure_kind() {
+            let status = ValidationStatus::new_failure("test.code");
+            assert!(!status.passed());
+        }
+
+        #[test]
+        fn failure_from_error() {
+            let error = Error::ClaimMissing {
+                label: "test_claim".to_string(),
+            };
+
+            let status = ValidationStatus::from_error(&error);
+            assert!(!status.passed());
+        }
+    }
+
+    mod code_from_error_str {
+        use super::super::*;
+
+        #[test]
+        fn claim_missing() {
+            assert_eq!(
+                ValidationStatus::code_from_error_str("ClaimMissing"),
+                CLAIM_MISSING
+            );
+        }
+
+        #[test]
+        fn assertion_missing_prefix() {
+            assert_eq!(
+                ValidationStatus::code_from_error_str("AssertionMissing: some details"),
+                ASSERTION_MISSING
+            );
+        }
+
+        #[test]
+        fn hash_mismatch_prefix() {
+            assert_eq!(
+                ValidationStatus::code_from_error_str("HashMismatch: details"),
+                ASSERTION_DATAHASH_MATCH
+            );
+        }
+
+        #[test]
+        fn unrecognized_error_returns_general_error() {
+            assert_eq!(
+                ValidationStatus::code_from_error_str("SomeUnknownError"),
+                GENERAL_ERROR
+            );
+        }
+
+        #[test]
+        fn empty_string_returns_general_error() {
+            assert_eq!(ValidationStatus::code_from_error_str(""), GENERAL_ERROR);
+        }
+
+        #[test]
+        fn random_string_returns_general_error() {
+            assert_eq!(
+                ValidationStatus::code_from_error_str("ThisDoesNotMatchAnything"),
+                GENERAL_ERROR
+            );
+        }
+    }
+
+    mod code_from_error {
+        use super::super::*;
+        use crate::assertion::{AssertionDecodeError, AssertionDecodeErrorCause};
+
+        #[test]
+        fn claim_missing() {
+            let error = Error::ClaimMissing {
+                label: "test_claim".to_string(),
+            };
+
+            assert_eq!(ValidationStatus::code_from_error(&error), CLAIM_MISSING);
+        }
+
+        #[test]
+        fn assertion_missing() {
+            let error = Error::AssertionMissing {
+                url: "test_url".to_string(),
+            };
+
+            assert_eq!(ValidationStatus::code_from_error(&error), ASSERTION_MISSING);
+        }
+
+        #[test]
+        fn assertion_decoding() {
+            let decode_error = AssertionDecodeError {
+                label: "test.assertion".to_string(),
+                version: Some(1),
+                content_type: "application/json".to_string(),
+                source: AssertionDecodeErrorCause::BinaryDataNotUtf8,
+            };
+            let error = Error::AssertionDecoding(decode_error);
+
+            assert_eq!(
+                ValidationStatus::code_from_error(&error),
+                ASSERTION_REQUIRED_MISSING
+            );
+        }
+
+        #[test]
+        fn hash_mismatch() {
+            let error = Error::HashMismatch("hash mismatch details".to_string());
+
+            assert_eq!(
+                ValidationStatus::code_from_error(&error),
+                ASSERTION_DATAHASH_MATCH
+            );
+        }
+
+        #[test]
+        fn remote_manifest_fetch() {
+            let error = Error::RemoteManifestFetch("http://example.com".to_string());
+
+            assert_eq!(
+                ValidationStatus::code_from_error(&error),
+                MANIFEST_INACCESSIBLE
+            );
+        }
+
+        #[test]
+        fn prerelease_error() {
+            let error = Error::PrereleaseError;
+
+            assert_eq!(ValidationStatus::code_from_error(&error), STATUS_PRERELEASE);
+        }
+
+        #[test]
+        fn other_error_returns_general_error() {
+            let error = Error::ClaimEncoding;
+
+            assert_eq!(ValidationStatus::code_from_error(&error), GENERAL_ERROR);
+        }
+
+        #[test]
+        fn bad_param_returns_general_error() {
+            let error = Error::BadParam("invalid parameter".to_string());
+
+            assert_eq!(ValidationStatus::code_from_error(&error), GENERAL_ERROR);
+        }
+    }
+
+    mod make_absolute {
+        use super::super::*;
+
+        #[test]
+        fn url_none() {
+            let mut status = ValidationStatus::new("test.code");
+            assert_eq!(status.url(), None);
+
+            status.make_absolute("test_manifest");
+
+            // URL should still be None after make_absolute
+            assert_eq!(status.url(), None);
+        }
+
+        #[test]
+        fn url_does_not_start_with_self_jumbf() {
+            let mut status =
+                ValidationStatus::new("test.code").set_url("http://example.com/some/url");
+
+            let original_url = status.url().unwrap().to_string();
+            status.make_absolute("test_manifest");
+
+            // URL should remain unchanged
+            assert_eq!(status.url(), Some(original_url.as_str()));
+        }
+
+        #[test]
+        fn url_starts_with_self_jumbf() {
+            let mut status =
+                ValidationStatus::new("test.code").set_url("self#jumbf=c2pa.assertions/test");
+
+            status.make_absolute("active_manifest");
+
+            // URL should be converted to absolute URI with manifest label
+            assert!(status.url().is_some());
+            let url = status.url().unwrap();
+            assert!(url.contains("active_manifest"));
+            assert!(url.starts_with("self#jumbf=/c2pa/active_manifest"));
+        }
+
+        #[test]
+        fn url_is_just_label() {
+            let mut status = ValidationStatus::new("test.code").set_url("Cose_Sign1");
+
+            let original_url = status.url().unwrap().to_string();
+            status.make_absolute("test_manifest");
+
+            // URL should remain unchanged (doesn't start with "self#jumbf")
+            assert_eq!(status.url(), Some(original_url.as_str()));
+        }
+    }
+}
