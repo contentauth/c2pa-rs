@@ -4193,7 +4193,7 @@ mod tests {
         use super::super::*;
 
         #[test]
-        fn test_claim_assertion_instance_string() -> Result<()> {
+        fn claim_assertion_instance_string() -> Result<()> {
             let mut claim = crate::utils::test::create_min_test_claim()?;
 
             const MY_METADATA: &str = "my.metadata";
@@ -4228,6 +4228,34 @@ mod tests {
             }
 
             Ok(())
+        }
+
+        #[test]
+        fn label_ingredient_thumbnail_without_image_type() {
+            // Test the None branch in label() when get_thumbnail_image_type returns None
+            // (line 176: None => label).
+
+            // Create an assertion with ingredient thumbnail label (no image type extension).
+            let test_data = b"test data";
+            let assertion = Assertion::from_data_cbor(labels::INGREDIENT_THUMBNAIL, test_data);
+
+            // Create a ClaimAssertion with instance > 0 to trigger the thumbnail path.
+            let claim_assertion = ClaimAssertion::new(
+                assertion,
+                1, // instance > 0
+                b"test_hash",
+                "sha256",
+                None,
+                ClaimAssertionType::Gathered,
+            );
+
+            // Call label() which should hit line 176 (None branch).
+            let label = claim_assertion.label();
+
+            // Expected format: "c2pa.thumbnail.ingredient__1" (no image type extension).
+            assert_eq!(label, format!("{}__1", labels::INGREDIENT_THUMBNAIL));
+            assert!(!label.contains(".jpeg"));
+            assert!(!label.contains(".png"));
         }
     }
 }
