@@ -4188,4 +4188,46 @@ pub mod tests {
 
         Ok(())
     }
+
+    mod claim_assertion {
+        use super::super::*;
+
+        #[test]
+        fn test_claim_assertion_instance_string() -> Result<()> {
+            let mut claim = crate::utils::test::create_min_test_claim()?;
+
+            const MY_METADATA: &str = "my.metadata";
+            let data = json!({
+            "@context" : {
+                "dc" : "http://purl.org/dc/elements/1.1/"
+            },
+            "dc:created": "2025 August 13",
+            "dc:creator": [
+                "John Doe"
+            ]
+            })
+            .to_string();
+
+            let metadata = assertions::Metadata::new(MY_METADATA, &data)?;
+
+            // Add multiple assertions to create different instances.
+            claim.add_assertion(&metadata)?;
+            claim.add_assertion(&metadata)?;
+            claim.add_assertion(&metadata)?;
+
+            // Test instance_string() for different instance numbers.
+            for i in 0..3 {
+                let ca = claim
+                    .get_claim_assertion(MY_METADATA, i)
+                    .expect("should find assertion");
+
+                // Verify instance_string() returns the string representation of the
+                // instance number.
+                assert_eq!(ca.instance_string(), format!("{}", i));
+                assert_eq!(ca.instance_string(), i.to_string());
+            }
+
+            Ok(())
+        }
+    }
 }
