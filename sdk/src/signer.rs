@@ -310,7 +310,6 @@ impl RawSigner for Box<dyn Signer> {
     }
 
     fn ocsp_response(&self) -> Option<Vec<u8>> {
-        eprintln!("HUH, A DIFFERENT I WANTED @ 397");
         self.as_ref().ocsp_val()
     }
 }
