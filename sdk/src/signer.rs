@@ -1055,6 +1055,192 @@ mod tests {
         }
     }
 
+    mod raw_signer_wrapper {
+        use super::super::*;
+        use crate::crypto::{
+            raw_signature::{RawSigner, RawSignerError, SigningAlg},
+            time_stamp::{TimeStampError, TimeStampProvider},
+        };
+
+        // Test RawSigner that implements TimeStampProvider for testing delegation.
+        struct TestRawSigner {
+            has_timestamp_headers: bool,
+            has_timestamp_url: bool,
+        }
+
+        impl RawSigner for TestRawSigner {
+            fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+                // Simple test signature: uppercase the input.
+                Ok(data.iter().map(|b| b.to_ascii_uppercase()).collect())
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Ps256
+            }
+
+            fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+                Ok(vec![vec![21, 22, 23]])
+            }
+
+            fn reserve_size(&self) -> usize {
+                512
+            }
+        }
+
+        impl TimeStampProvider for TestRawSigner {
+            fn time_stamp_service_url(&self) -> Option<String> {
+                if self.has_timestamp_url {
+                    Some("https://raw-timestamp.example.com".to_string())
+                } else {
+                    None
+                }
+            }
+
+            fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+                if self.has_timestamp_headers {
+                    Some(vec![
+                        ("X-Raw-Header".to_string(), "raw-value".to_string()),
+                        ("Content-Length".to_string(), "1234".to_string()),
+                    ])
+                } else {
+                    None
+                }
+            }
+
+            fn time_stamp_request_body(
+                &self,
+                message: &[u8],
+            ) -> std::result::Result<Vec<u8>, TimeStampError> {
+                Ok(format!("raw-ts-body-{}", message.len()).into_bytes())
+            }
+
+            fn send_time_stamp_request(
+                &self,
+                _message: &[u8],
+            ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+                if self.has_timestamp_url {
+                    // Return a mock success response.
+                    Some(Ok(vec![99, 100, 101]))
+                } else {
+                    None
+                }
+            }
+        }
+
+        #[test]
+        fn time_authority_url_with_url() {
+            // Test that RawSignerWrapper correctly delegates time_authority_url.
+            let raw_signer = TestRawSigner {
+                has_timestamp_headers: false,
+                has_timestamp_url: true,
+            };
+            let wrapper = RawSignerWrapper(Box::new(raw_signer));
+
+            let url = Signer::time_authority_url(&wrapper);
+            assert_eq!(url, Some("https://raw-timestamp.example.com".to_string()));
+        }
+
+        #[test]
+        fn time_authority_url_without_url() {
+            // Test that RawSignerWrapper returns None when no URL.
+            let raw_signer = TestRawSigner {
+                has_timestamp_headers: false,
+                has_timestamp_url: false,
+            };
+            let wrapper = RawSignerWrapper(Box::new(raw_signer));
+
+            assert!(Signer::time_authority_url(&wrapper).is_none());
+        }
+
+        #[test]
+        fn timestamp_request_headers_with_headers() {
+            // Test that RawSignerWrapper correctly delegates timestamp_request_headers.
+            let raw_signer = TestRawSigner {
+                has_timestamp_headers: true,
+                has_timestamp_url: false,
+            };
+            let wrapper = RawSignerWrapper(Box::new(raw_signer));
+
+            let headers = Signer::timestamp_request_headers(&wrapper);
+            assert!(headers.is_some());
+            let headers = headers.unwrap();
+            assert_eq!(headers.len(), 2);
+            assert_eq!(headers[0].0, "X-Raw-Header");
+            assert_eq!(headers[0].1, "raw-value");
+            assert_eq!(headers[1].0, "Content-Length");
+        }
+
+        #[test]
+        fn timestamp_request_headers_without_headers() {
+            // Test that RawSignerWrapper returns None when no headers.
+            let raw_signer = TestRawSigner {
+                has_timestamp_headers: false,
+                has_timestamp_url: false,
+            };
+            let wrapper = RawSignerWrapper(Box::new(raw_signer));
+
+            assert!(Signer::timestamp_request_headers(&wrapper).is_none());
+        }
+
+        #[test]
+        fn timestamp_request_body_delegation() {
+            // Test that RawSignerWrapper correctly delegates timestamp_request_body.
+            let raw_signer = TestRawSigner {
+                has_timestamp_headers: false,
+                has_timestamp_url: false,
+            };
+            let wrapper = RawSignerWrapper(Box::new(raw_signer));
+
+            let message = b"test timestamp message";
+            let body = Signer::timestamp_request_body(&wrapper, message);
+            assert!(body.is_ok());
+            assert_eq!(body.unwrap(), b"raw-ts-body-22");
+        }
+
+        #[test]
+        fn send_timestamp_request_with_url() {
+            // Test that RawSignerWrapper correctly delegates send_timestamp_request.
+            let raw_signer = TestRawSigner {
+                has_timestamp_headers: false,
+                has_timestamp_url: true,
+            };
+            let wrapper = RawSignerWrapper(Box::new(raw_signer));
+
+            let message = b"test";
+            let result = Signer::send_timestamp_request(&wrapper, message);
+            assert!(result.is_some());
+            let response = result.unwrap();
+            assert!(response.is_ok());
+            assert_eq!(response.unwrap(), vec![99, 100, 101]);
+        }
+
+        #[test]
+        fn send_timestamp_request_without_url() {
+            // Test that RawSignerWrapper returns None when no URL.
+            let raw_signer = TestRawSigner {
+                has_timestamp_headers: false,
+                has_timestamp_url: false,
+            };
+            let wrapper = RawSignerWrapper(Box::new(raw_signer));
+
+            let message = b"test";
+            assert!(Signer::send_timestamp_request(&wrapper, message).is_none());
+        }
+
+        #[test]
+        fn raw_signer_delegation() {
+            // Test that RawSignerWrapper correctly delegates raw_signer.
+            let raw_signer = TestRawSigner {
+                has_timestamp_headers: false,
+                has_timestamp_url: false,
+            };
+            let wrapper = RawSignerWrapper(Box::new(raw_signer));
+
+            let raw_signer_ref = Signer::raw_signer(&wrapper);
+            assert!(raw_signer_ref.is_some());
+        }
+    }
+
     mod async_signer {
         use super::super::*;
         use crate::crypto::raw_signature::SigningAlg;
