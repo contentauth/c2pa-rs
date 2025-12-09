@@ -4003,7 +4003,7 @@ pub(crate) fn check_ocsp_status(
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
