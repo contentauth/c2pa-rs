@@ -4171,6 +4171,92 @@ mod tests {
     }
 
     #[test]
+    fn test_from_value_unsupported_claim_version() {
+        // Test Claim::from_value with invalid claim version (lines 572-574).
+        // This should fail when neither 'assertions' nor 'created_assertions' is present.
+
+        use std::collections::BTreeMap;
+
+        use serde_cbor::Value;
+
+        // Create a minimal CBOR map without assertions or created_assertions fields.
+        let mut claim_map = BTreeMap::new();
+        claim_map.insert(
+            Value::Text("claim_generator".to_string()),
+            Value::Text("test_generator".to_string()),
+        );
+        claim_map.insert(
+            Value::Text("signature".to_string()),
+            Value::Text("self#jumbf=/test/c2pa.signature".to_string()),
+        );
+        claim_map.insert(
+            Value::Text("dc:format".to_string()),
+            Value::Text("image/jpeg".to_string()),
+        );
+        claim_map.insert(
+            Value::Text("instanceID".to_string()),
+            Value::Text("xmp:iid:12345678-1234-1234-1234-123456789012".to_string()),
+        );
+
+        let claim_value = Value::Map(claim_map);
+        let claim_cbor = serde_cbor::to_vec(&claim_value).unwrap();
+
+        // Try to create a claim from this invalid data.
+        let result = Claim::from_data("test_label", &claim_cbor);
+
+        // Should fail with unsupported claim version error.
+        assert!(result.is_err());
+        match result {
+            Err(Error::ClaimDecoding(msg)) => {
+                assert!(msg.contains("unsupported claim version"));
+            }
+            _ => panic!("Expected ClaimDecoding error with 'unsupported claim version' message"),
+        }
+    }
+
+    #[test]
+    fn test_from_value_both_assertions_fields() {
+        // Test Claim::from_value with both 'assertions' and 'created_assertions' present.
+        // This is also invalid and should trigger lines 572-574.
+
+        use std::collections::BTreeMap;
+
+        use serde_cbor::Value;
+
+        // Create a CBOR map with BOTH assertions and created_assertions fields.
+        let mut claim_map = BTreeMap::new();
+        claim_map.insert(
+            Value::Text("claim_generator".to_string()),
+            Value::Text("test_generator".to_string()),
+        );
+
+        // Add both assertions fields (invalid - should only have one).
+        claim_map.insert(
+            Value::Text("assertions".to_string()),
+            Value::Array(vec![]), // Empty array
+        );
+        claim_map.insert(
+            Value::Text("created_assertions".to_string()),
+            Value::Array(vec![]), // Empty array
+        );
+
+        let claim_value = Value::Map(claim_map);
+        let claim_cbor = serde_cbor::to_vec(&claim_value).unwrap();
+
+        // Try to create a claim from this invalid data.
+        let result = Claim::from_data("test_label", &claim_cbor);
+
+        // Should fail with unsupported claim version error.
+        assert!(result.is_err());
+        match result {
+            Err(Error::ClaimDecoding(msg)) => {
+                assert!(msg.contains("unsupported claim version"));
+            }
+            _ => panic!("Expected ClaimDecoding error with 'unsupported claim version' message"),
+        }
+    }
+
+    #[test]
     fn test_add_assertion_variants() -> Result<()> {
         let mut claim = crate::utils::test::create_min_test_claim()?;
 
