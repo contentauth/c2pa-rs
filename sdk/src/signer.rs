@@ -765,6 +765,9 @@ mod tests {
     }
 
     mod boxed_async_signer {
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        use wasm_bindgen_test::*;
+
         use super::super::*;
         use crate::crypto::raw_signature::SigningAlg;
 
@@ -800,7 +803,10 @@ mod tests {
 
             fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
                 if self.has_timestamp_headers {
-                    Some(vec![("X-Async-Header".to_string(), "async-value".to_string())])
+                    Some(vec![(
+                        "X-Async-Header".to_string(),
+                        "async-value".to_string(),
+                    )])
                 } else {
                     None
                 }
@@ -1242,6 +1248,9 @@ mod tests {
     }
 
     mod async_signer {
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        use wasm_bindgen_test::*;
+
         use super::super::*;
         use crate::crypto::raw_signature::SigningAlg;
 
