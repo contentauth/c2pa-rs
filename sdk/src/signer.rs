@@ -764,6 +764,297 @@ mod tests {
         }
     }
 
+    mod boxed_async_signer {
+        use super::super::*;
+        use crate::crypto::raw_signature::SigningAlg;
+
+        // Test async signer that returns specific values for testing delegation.
+        struct TestAsyncSigner {
+            has_timestamp_headers: bool,
+            has_ocsp: bool,
+        }
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncSigner for TestAsyncSigner {
+            async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
+                // Simple test signature: just reverse the input.
+                Ok(data.into_iter().rev().collect())
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Es384
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                Ok(vec![vec![11, 12, 13], vec![14, 15, 16]])
+            }
+
+            fn reserve_size(&self) -> usize {
+                4096
+            }
+
+            fn time_authority_url(&self) -> Option<String> {
+                Some("https://async-timestamp.example.com".to_string())
+            }
+
+            fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+                if self.has_timestamp_headers {
+                    Some(vec![("X-Async-Header".to_string(), "async-value".to_string())])
+                } else {
+                    None
+                }
+            }
+
+            fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+                Ok(format!("async-timestamp-{}", message.len()).into_bytes())
+            }
+
+            async fn ocsp_val(&self) -> Option<Vec<u8>> {
+                if self.has_ocsp {
+                    Some(vec![17, 18, 19, 20])
+                } else {
+                    None
+                }
+            }
+        }
+
+        #[c2pa_macros::c2pa_test_async]
+        async fn sign_delegation() {
+            // Test that BoxedAsyncSigner correctly delegates sign.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            let data = b"async test".to_vec();
+            let signature = AsyncSigner::sign(&boxed, data).await;
+            assert!(signature.is_ok());
+            assert_eq!(signature.unwrap(), b"tset cnysa");
+        }
+
+        #[test]
+        fn alg_delegation() {
+            // Test that BoxedAsyncSigner correctly delegates alg.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            assert_eq!(AsyncSigner::alg(&boxed), SigningAlg::Es384);
+        }
+
+        #[test]
+        fn certs_delegation() {
+            // Test that BoxedAsyncSigner correctly delegates certs.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            let certs = AsyncSigner::certs(&boxed);
+            assert!(certs.is_ok());
+            let cert_chain = certs.unwrap();
+            assert_eq!(cert_chain.len(), 2);
+            assert_eq!(cert_chain[0], vec![11, 12, 13]);
+            assert_eq!(cert_chain[1], vec![14, 15, 16]);
+        }
+
+        #[test]
+        fn reserve_size_delegation() {
+            // Test that BoxedAsyncSigner correctly delegates reserve_size.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            assert_eq!(AsyncSigner::reserve_size(&boxed), 4096);
+        }
+
+        #[test]
+        fn time_authority_url_delegation() {
+            // Test that BoxedAsyncSigner correctly delegates time_authority_url.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            let url = AsyncSigner::time_authority_url(&boxed);
+            assert_eq!(url, Some("https://async-timestamp.example.com".to_string()));
+        }
+
+        #[test]
+        fn timestamp_request_headers_with_headers() {
+            // Test that BoxedAsyncSigner correctly delegates timestamp_request_headers.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: true,
+                has_ocsp: false,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            let headers = AsyncSigner::timestamp_request_headers(&boxed);
+            assert!(headers.is_some());
+            let headers = headers.unwrap();
+            assert_eq!(headers.len(), 1);
+            assert_eq!(headers[0].0, "X-Async-Header");
+        }
+
+        #[test]
+        fn timestamp_request_headers_without_headers() {
+            // Test that BoxedAsyncSigner returns None when no headers.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            assert!(AsyncSigner::timestamp_request_headers(&boxed).is_none());
+        }
+
+        #[test]
+        fn timestamp_request_body_delegation() {
+            // Test that BoxedAsyncSigner correctly delegates timestamp_request_body.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            let message = b"test message";
+            let body = AsyncSigner::timestamp_request_body(&boxed, message);
+            assert!(body.is_ok());
+            assert_eq!(body.unwrap(), b"async-timestamp-12");
+        }
+
+        #[c2pa_macros::c2pa_test_async]
+        async fn send_timestamp_request_delegation() {
+            // Test that BoxedAsyncSigner correctly delegates send_timestamp_request.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            let message = b"test";
+            let _result = AsyncSigner::send_timestamp_request(&boxed, message).await;
+            // Just testing delegation without panic.
+        }
+
+        #[c2pa_macros::c2pa_test_async]
+        async fn ocsp_val_without_ocsp() {
+            // Test that BoxedAsyncSigner correctly delegates ocsp_val when None.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            let ocsp = AsyncSigner::ocsp_val(&boxed).await;
+            assert!(ocsp.is_none());
+        }
+
+        #[c2pa_macros::c2pa_test_async]
+        async fn ocsp_val_with_ocsp() {
+            // Test that BoxedAsyncSigner correctly delegates ocsp_val when Some.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: false,
+                has_ocsp: true,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            let ocsp = AsyncSigner::ocsp_val(&boxed).await;
+            assert!(ocsp.is_some());
+            assert_eq!(ocsp.unwrap(), vec![17, 18, 19, 20]);
+        }
+
+        #[test]
+        fn direct_cose_handling_delegation() {
+            // Test that BoxedAsyncSigner correctly delegates direct_cose_handling.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            // Default implementation returns false.
+            assert!(!AsyncSigner::direct_cose_handling(&boxed));
+        }
+
+        #[test]
+        fn dynamic_assertions_delegation() {
+            // Test that BoxedAsyncSigner correctly delegates dynamic_assertions.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            // Default implementation returns empty vec.
+            let assertions = AsyncSigner::dynamic_assertions(&boxed);
+            assert!(assertions.is_empty());
+        }
+
+        #[test]
+        fn async_raw_signer_delegation() {
+            // Test that BoxedAsyncSigner correctly delegates async_raw_signer.
+            let signer = TestAsyncSigner {
+                has_timestamp_headers: false,
+                has_ocsp: false,
+            };
+            #[cfg(not(target_arch = "wasm32"))]
+            let boxed: Box<dyn AsyncSigner + Send + Sync> = Box::new(signer);
+            #[cfg(target_arch = "wasm32")]
+            let boxed: Box<dyn AsyncSigner> = Box::new(signer);
+
+            // Default implementation returns None.
+            assert!(AsyncSigner::async_raw_signer(&boxed).is_none());
+        }
+    }
+
     mod async_signer {
         use super::super::*;
         use crate::crypto::raw_signature::SigningAlg;
