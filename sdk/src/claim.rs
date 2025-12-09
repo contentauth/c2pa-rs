@@ -453,10 +453,13 @@ impl Claim {
         }
     }
 
-    /// Create a new claim with a user supplied GUID.
-    /// user_guid: is user supplied guid conforming the C2PA spec for manifest names
-    /// claim_generator: User agent see c2pa spec for format
-    /// claim_version: the Claim version to generate
+    /// Create a new [`Claim`] with a user-supplied GUID.
+    ///
+    /// # Parameters
+    ///
+    /// * `user_guid` is a user-supplied GUID conforming to the C2PA spec for manifest names.
+    /// * `claim_generator` is a user-agent description. (See c2pa spec for format.)
+    /// * `claim_version` is the Claim version to generate.
     pub fn new_with_user_guid<S: Into<String>>(
         claim_generator: S,
         user_guid: S,
@@ -4141,6 +4144,30 @@ mod tests {
             2,
         );
         assert!(c5.is_err());
+
+        // UUID version 1 (not version 4/Random) - should fail (line 477).
+        let c6 = Claim::new_with_user_guid(
+            "claim_generator",
+            "urn:c2pa:3fad1ead-1ed5-11d0-873b-ea5f58adea82:acme",
+            2,
+        );
+        assert!(c6.is_err());
+
+        // UUID version 5 (not version 4/Random) - should fail (line 477).
+        let c7 = Claim::new_with_user_guid(
+            "claim_generator",
+            "urn:c2pa:3fad1ead-8ed5-54d0-873b-ea5f58adea82:acme",
+            2,
+        );
+        assert!(c7.is_err());
+
+        // V1 without CGI prefix - should succeed (lines 500-503).
+        Claim::new_with_user_guid(
+            "claim_generator",
+            "urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+            1,
+        )
+        .unwrap();
     }
 
     #[test]
