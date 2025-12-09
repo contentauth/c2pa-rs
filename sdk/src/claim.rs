@@ -4257,5 +4257,132 @@ mod tests {
             assert!(!label.contains(".jpeg"));
             assert!(!label.contains(".png"));
         }
+
+        #[test]
+        fn is_same_type() -> Result<()> {
+            // Test ClaimAssertion::is_same_type (lines 215-217).
+            let mut claim = crate::utils::test::create_min_test_claim()?;
+
+            const MY_METADATA: &str = "my.metadata";
+            let data = json!({
+            "@context" : {
+                "dc" : "http://purl.org/dc/elements/1.1/"
+            },
+            "dc:created": "2025 August 13",
+            "dc:creator": [
+                 "John Doe"
+            ]
+            })
+            .to_string();
+
+            let metadata1 = assertions::Metadata::new(MY_METADATA, &data)?;
+            let metadata2 = assertions::Metadata::new(MY_METADATA, &data)?;
+
+            claim.add_assertion(&metadata1)?;
+
+            let ca = claim
+                .get_claim_assertion(MY_METADATA, 0)
+                .expect("should find assertion");
+
+            // Create another assertion of the same type.
+            let same_type_assertion = metadata2.to_assertion()?;
+
+            // Test is_same_type returns true for same type.
+            assert!(ca.is_same_type(&same_type_assertion));
+
+            // Create a different type of assertion.
+            let actions = Actions::new();
+            let different_type_assertion = actions.to_assertion()?;
+
+            // Test is_same_type returns false for different type.
+            assert!(!ca.is_same_type(&different_type_assertion));
+
+            Ok(())
+        }
+
+        #[test]
+        fn set_assertion_type() -> Result<()> {
+            // Test ClaimAssertion::set_assertion_type (lines 223-225).
+            let mut claim = crate::utils::test::create_min_test_claim()?;
+
+            const MY_METADATA: &str = "my.metadata";
+            let data = json!({
+            "@context" : {
+                "dc" : "http://purl.org/dc/elements/1.1/"
+            },
+            "dc:created": "2025 August 13",
+            "dc:creator": [
+                 "John Doe"
+            ]
+            })
+            .to_string();
+
+            let metadata = assertions::Metadata::new(MY_METADATA, &data)?;
+            claim.add_assertion(&metadata)?;
+
+            let mut ca = claim
+                .get_claim_assertion(MY_METADATA, 0)
+                .expect("should find assertion")
+                .clone();
+
+            // Initially should be Gathered.
+            assert_eq!(ca.assertion_type(), ClaimAssertionType::Gathered);
+
+            // Change to Created.
+            ca.set_assertion_type(ClaimAssertionType::Created);
+            assert_eq!(ca.assertion_type(), ClaimAssertionType::Created);
+
+            // Change to V1.
+            ca.set_assertion_type(ClaimAssertionType::V1);
+            assert_eq!(ca.assertion_type(), ClaimAssertionType::V1);
+
+            Ok(())
+        }
+
+        #[test]
+        fn impl_debug() -> Result<()> {
+            // Test Debug implementation for ClaimAssertion (lines 228-236).
+            let mut claim = crate::utils::test::create_min_test_claim()?;
+
+            const MY_METADATA: &str = "my.metadata";
+            let data = json!({
+            "@context" : {
+                "dc" : "http://purl.org/dc/elements/1.1/"
+            },
+            "dc:created": "2025 August 13",
+            "dc:creator": [
+                 "John Doe"
+            ]
+            })
+            .to_string();
+
+            let metadata = assertions::Metadata::new(MY_METADATA, &data)?;
+            claim.add_assertion(&metadata)?;
+            claim.add_assertion(&metadata)?;
+
+            let ca0 = claim
+                .get_claim_assertion(MY_METADATA, 0)
+                .expect("should find assertion");
+
+            let ca1 = claim
+                .get_claim_assertion(MY_METADATA, 1)
+                .expect("should find assertion");
+
+            // Format using Debug trait.
+            let debug_str0 = format!("{:?}", ca0);
+            let debug_str1 = format!("{:?}", ca1);
+
+            // Verify the debug output contains expected components.
+            assert!(debug_str0.contains("instance: 0"));
+            assert!(debug_str0.contains("Gathered"));
+
+            assert!(debug_str1.contains("instance: 1"));
+            assert!(debug_str1.contains("Gathered"));
+
+            // Verify they're different (different instances).
+            assert_ne!(debug_str0, debug_str1);
+
+            Ok(())
+        }
     }
 }
