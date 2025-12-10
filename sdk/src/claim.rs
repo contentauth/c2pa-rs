@@ -4022,7 +4022,9 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{resource_store::UriOrResource, utils::test::create_test_claim};
+    use crate::{
+        assertions::EmbeddedData, resource_store::UriOrResource, utils::test::create_test_claim,
+    };
 
     #[test]
     fn test_build_claim() {
@@ -5075,6 +5077,71 @@ mod tests {
                 // The serialization should fail.
                 assert!(result.is_err());
             }
+        }
+    }
+
+    #[test]
+    fn test_build_multiple_claim_generator_info() {
+        // Test line 965: Error when claim has more than one claim_generator_info for v2.
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // Add a second claim_generator_info to trigger the error.
+        let info2 = ClaimGeneratorInfo::new("second app");
+        claim.add_claim_generator_info(info2);
+
+        // Build should fail with VersionCompatibility error.
+        let result = claim.build();
+        assert!(result.is_err());
+        match result {
+            Err(Error::VersionCompatibility(msg)) => {
+                assert_eq!(msg, "only 1 claim_generator_info allowed");
+            }
+            _ => panic!("Expected VersionCompatibility error"),
+        }
+    }
+
+    #[test]
+    fn test_build_missing_claim_generator_info() {
+        // Test line 971: Error when claim_generator_info is missing for v2.
+        let mut claim = Claim::new("test_generator", Some("test"), 2);
+
+        // Don't add claim_generator_info (it's None by default).
+        // This should trigger the error at line 971.
+        let result = claim.build();
+        assert!(result.is_err());
+        match result {
+            Err(Error::VersionCompatibility(msg)) => {
+                assert_eq!(msg, "claim_generator_info is mandatory");
+            }
+            _ => panic!("Expected VersionCompatibility error"),
+        }
+    }
+
+    #[test]
+    fn test_build_multiple_claim_thumbnails() {
+        // Test line 986: Error when claim has more than one claim thumbnail.
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // create_test_claim already adds one claim thumbnail.
+        // Add a second claim thumbnail to trigger the error.
+        let claim_thumbnail2 =
+            EmbeddedData::new(CLAIM_THUMBNAIL, "image/jpeg", vec![0xca, 0xfe, 0xba, 0xbe]);
+
+        claim
+            .add_assertion(&claim_thumbnail2)
+            .expect("failed to add second claim thumbnail");
+
+        // Build should fail with OtherError.
+        let result = claim.build();
+        assert!(result.is_err());
+        match result {
+            Err(Error::OtherError(msg)) => {
+                assert_eq!(
+                    msg.to_string(),
+                    "only one claim thumbnail assertion allowed"
+                );
+            }
+            _ => panic!("Expected OtherError"),
         }
     }
 }
