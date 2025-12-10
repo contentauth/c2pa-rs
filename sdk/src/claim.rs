@@ -4928,17 +4928,39 @@ mod tests {
 
         #[test]
         fn serialize_v1_without_format() {
-            // Test line 851: Serialization path when format is None.
-            // This covers the else branch after line 849.
+            // Test when format is None - this exercises the path where the
+            // if condition at line 849 is false (format is None).
             let mut claim = create_test_claim().expect("create test claim");
+
+            // Force V1 serialization.
+            claim.claim_version = 1;
 
             // Clear the format.
             claim.format = None;
 
-            // Serialize to CBOR - this should exercise line 851.
+            // Serialize to CBOR.
             let result = serde_cbor::to_vec(&claim);
 
             // The serialization should work even without format.
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn serialize_v1_with_format() {
+            // Test line 851: Serialization path when format is present (Some).
+            // This covers line 850 (serializing the format field) and line 851 (closing brace).
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Force V1 serialization.
+            claim.claim_version = 1;
+
+            // Ensure format is set to trigger lines 850-851.
+            claim.format = Some("image/jpeg".to_string());
+
+            // Serialize to CBOR.
+            let result = serde_cbor::to_vec(&claim);
+
+            // The serialization should work with format.
             assert!(result.is_ok());
         }
 
