@@ -619,6 +619,9 @@ impl Claim {
                     }
                 }
             } else {
+                // NOTE: This error path is unreachable in practice because map_cbor_to_type()
+                // returns None for non-Map values, causing version detection (lines 562-564)
+                // to fail with "unsupported claim version" before reaching this point.
                 return Err(Error::ClaimDecoding("claim is not an object".to_string()));
             }
 
@@ -717,6 +720,9 @@ impl Claim {
                     }
                 }
             } else {
+                // NOTE: This error path is unreachable in practice because map_cbor_to_type()
+                // returns None for non-Map values, causing version detection (lines 567-570)
+                // to fail with "unsupported claim version" before reaching this point.
                 return Err(Error::ClaimDecoding("claim is not an object".to_string()));
             }
 
@@ -730,6 +736,10 @@ impl Claim {
             let signature: String = map_cbor_to_type(SIGNATURE_F, &claim_value).ok_or(
                 Error::ClaimDecoding("signature is missing or invalid".to_string()),
             )?;
+            // NOTE: The error "created_assertions is missing or invalid" below is unreachable
+            // in practice because version detection (lines 567-570) requires created_assertions
+            // to be deserializable as Vec<HashedUri>. If it's missing or invalid, version
+            // detection fails with "unsupported claim version" before reaching this point.
             let created_assertions: Vec<HashedUri> =
                 map_cbor_to_type(CREATED_ASSERTIONS_F, &claim_value).ok_or(
                     Error::ClaimDecoding("created_assertions is missing or invalid".to_string()),
@@ -4498,13 +4508,17 @@ mod tests {
 
             Ok(())
         }
+    }
+
+    mod claim_decoding {
+        use super::super::*;
+        use crate::utils::test::create_test_claim;
 
         #[test]
         fn from_value_v1_non_text_key() {
-            // Test line 618: V1 claim with non-text key
             use serde_cbor::Value;
 
-            // Create a minimal V1 claim structure with a non-text key (integer)
+            // Create a minimal V1 claim structure with a non-text key (integer).
             let mut map = std::collections::BTreeMap::new();
             map.insert(
                 Value::Text(CLAIM_GENERATOR_F.to_string()),
@@ -4523,7 +4537,8 @@ mod tests {
                 Value::Text(INSTANCE_ID_F.to_string()),
                 Value::Text("xmp:iid:test".to_string()),
             );
-            // Add a non-text key (integer) to trigger error
+
+            // Add a non-text key (integer) to trigger error.
             map.insert(Value::Integer(123), Value::Text("invalid".to_string()));
 
             let claim_value = Value::Map(map);
@@ -4542,14 +4557,14 @@ mod tests {
 
         #[test]
         fn from_value_v1_not_an_object() {
-            // Test line 622: V1 claim that is not an object (Map)
+            // Test line 622: V1 claim that is not an object (Map).
             // Note: This error path is actually unreachable in practice because
             // map_cbor_to_type() returns None for non-Map values, causing version
             // detection to fail with "unsupported claim version" before line 622.
             // This test verifies the actual behavior.
             use serde_cbor::Value;
 
-            // Create a non-object value (Array)
+            // Create a non-object value (Array).
             let claim_value = Value::Array(vec![
                 Value::Text("assertions".to_string()),
                 Value::Array(vec![]),
@@ -4562,7 +4577,7 @@ mod tests {
             assert!(result.is_err());
             match result {
                 Err(Error::ClaimDecoding(msg)) => {
-                    // The version detection fails before reaching the "claim is not an object" check
+                    // The version detection fails before reaching the "claim is not an object" check.
                     assert_eq!(msg, "unsupported claim version");
                 }
                 _ => panic!("Expected ClaimDecoding error with 'unsupported claim version'"),
@@ -4571,10 +4586,9 @@ mod tests {
 
         #[test]
         fn from_value_v2_unknown_field() {
-            // Test line 711: V2 claim with unknown field
             use serde_cbor::Value;
 
-            // Create a minimal V2 claim structure with an unknown field
+            // Create a minimal V2 claim structure with an unknown field.
             let mut map = std::collections::BTreeMap::new();
             map.insert(
                 Value::Text(INSTANCE_ID_F.to_string()),
@@ -4599,7 +4613,8 @@ mod tests {
                 Value::Text(CREATED_ASSERTIONS_F.to_string()),
                 Value::Array(vec![]),
             );
-            // Add an unknown field to trigger error
+
+            // Add an unknown field to trigger error.
             map.insert(
                 Value::Text("unknown_field".to_string()),
                 Value::Text("invalid".to_string()),
@@ -4621,10 +4636,9 @@ mod tests {
 
         #[test]
         fn from_value_v2_non_text_key() {
-            // Test line 716: V2 claim with non-text key
             use serde_cbor::Value;
 
-            // Create a minimal V2 claim structure with a non-text key (integer)
+            // Create a minimal V2 claim structure with a non-text key (integer).
             let mut map = std::collections::BTreeMap::new();
             map.insert(
                 Value::Text(INSTANCE_ID_F.to_string()),
@@ -4649,7 +4663,8 @@ mod tests {
                 Value::Text(CREATED_ASSERTIONS_F.to_string()),
                 Value::Array(vec![]),
             );
-            // Add a non-text key (integer) to trigger error
+
+            // Add a non-text key (integer) to trigger error.
             map.insert(Value::Integer(456), Value::Text("invalid".to_string()));
 
             let claim_value = Value::Map(map);
@@ -4668,14 +4683,14 @@ mod tests {
 
         #[test]
         fn from_value_v2_not_an_object() {
-            // Test line 720: V2 claim that is not an object (Map)
+            // Test line 720: V2 claim that is not an object (Map).
             // Note: This error path is actually unreachable in practice because
             // map_cbor_to_type() returns None for non-Map values, causing version
             // detection to fail with "unsupported claim version" before line 720.
             // This test verifies the actual behavior.
             use serde_cbor::Value;
 
-            // Create a non-object value (Array)
+            // Create a non-object value (Array).
             let claim_value = Value::Array(vec![
                 Value::Text("created_assertions".to_string()),
                 Value::Array(vec![]),
@@ -4688,11 +4703,241 @@ mod tests {
             assert!(result.is_err());
             match result {
                 Err(Error::ClaimDecoding(msg)) => {
-                    // The version detection fails before reaching the "claim is not an object" check
+                    // The version detection fails before reaching the "claim is not an object" check.
                     assert_eq!(msg, "unsupported claim version");
                 }
                 _ => panic!("Expected ClaimDecoding error with 'unsupported claim version'"),
             }
+        }
+
+        #[test]
+        fn from_value_v2_missing_instance_id() {
+            // Test line 725: V2 claim missing instanceID field.
+            use serde_cbor::Value;
+
+            // Create a V2 claim structure without instanceID.
+            let mut map = std::collections::BTreeMap::new();
+
+            // instanceID is missing - this should trigger the error.
+            map.insert(
+                Value::Text(CLAIM_GENERATOR_INFO_F.to_string()),
+                Value::Map({
+                    let mut info_map = std::collections::BTreeMap::new();
+                    info_map.insert(
+                        Value::Text("name".to_string()),
+                        Value::Text("test_app".to_string()),
+                    );
+                    info_map
+                }),
+            );
+            map.insert(
+                Value::Text(SIGNATURE_F.to_string()),
+                Value::Text("self#jumbf=c2pa.signature".to_string()),
+            );
+            map.insert(
+                Value::Text(CREATED_ASSERTIONS_F.to_string()),
+                Value::Array(vec![]),
+            );
+
+            let claim_value = Value::Map(map);
+            let data = serde_cbor::to_vec(&claim_value).unwrap();
+
+            let result = Claim::from_value(claim_value, "test_label", &data);
+
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    assert_eq!(msg, "instanceID is missing or invalid");
+                }
+                _ => panic!("Expected ClaimDecoding error with 'instanceID is missing or invalid'"),
+            }
+        }
+
+        #[test]
+        fn from_value_v2_missing_claim_generator_info() {
+            use serde_cbor::Value;
+
+            // Create a V2 claim structure without claim_generator_info.
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(
+                Value::Text(INSTANCE_ID_F.to_string()),
+                Value::Text("xmp:iid:test".to_string()),
+            );
+            // claim_generator_info is missing - this should trigger the error.
+            map.insert(
+                Value::Text(SIGNATURE_F.to_string()),
+                Value::Text("self#jumbf=c2pa.signature".to_string()),
+            );
+            map.insert(
+                Value::Text(CREATED_ASSERTIONS_F.to_string()),
+                Value::Array(vec![]),
+            );
+
+            let claim_value = Value::Map(map);
+            let data = serde_cbor::to_vec(&claim_value).unwrap();
+
+            let result = Claim::from_value(claim_value, "test_label", &data);
+
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    assert_eq!(msg, "claim_generator_info is missing or invalid");
+                }
+                _ => panic!(
+                    "Expected ClaimDecoding error with 'claim_generator_info is missing or invalid'"
+                ),
+            }
+        }
+
+        #[test]
+        fn from_value_v2_missing_signature() {
+            use serde_cbor::Value;
+
+            // Create a V2 claim structure without signature.
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(
+                Value::Text(INSTANCE_ID_F.to_string()),
+                Value::Text("xmp:iid:test".to_string()),
+            );
+            map.insert(
+                Value::Text(CLAIM_GENERATOR_INFO_F.to_string()),
+                Value::Map({
+                    let mut info_map = std::collections::BTreeMap::new();
+                    info_map.insert(
+                        Value::Text("name".to_string()),
+                        Value::Text("test_app".to_string()),
+                    );
+                    info_map
+                }),
+            );
+
+            // signature is missing - this should trigger the error.
+            map.insert(
+                Value::Text(CREATED_ASSERTIONS_F.to_string()),
+                Value::Array(vec![]),
+            );
+
+            let claim_value = Value::Map(map);
+            let data = serde_cbor::to_vec(&claim_value).unwrap();
+
+            let result = Claim::from_value(claim_value, "test_label", &data);
+
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    assert_eq!(msg, "signature is missing or invalid");
+                }
+                _ => panic!("Expected ClaimDecoding error with 'signature is missing or invalid'"),
+            }
+        }
+
+        #[test]
+        fn from_value_v2_missing_created_assertions() {
+            // Note: This error path is actually unreachable in practice because
+            // version detection (lines 567-570) requires created_assertions to be
+            // deserializable as Vec<HashedUri>. If it's missing or invalid, version
+            // detection fails with "unsupported claim version" before line 736.
+            // This test verifies the actual behavior.
+            use serde_cbor::Value;
+
+            // Create a V2 claim structure with invalid created_assertions.
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(
+                Value::Text(INSTANCE_ID_F.to_string()),
+                Value::Text("xmp:iid:test".to_string()),
+            );
+            map.insert(
+                Value::Text(CLAIM_GENERATOR_INFO_F.to_string()),
+                Value::Map({
+                    let mut info_map = std::collections::BTreeMap::new();
+                    info_map.insert(
+                        Value::Text("name".to_string()),
+                        Value::Text("test_app".to_string()),
+                    );
+                    info_map
+                }),
+            );
+            map.insert(
+                Value::Text(SIGNATURE_F.to_string()),
+                Value::Text("self#jumbf=c2pa.signature".to_string()),
+            );
+
+            // created_assertions is present but invalid (not a proper array of HashedUri).
+            map.insert(
+                Value::Text(CREATED_ASSERTIONS_F.to_string()),
+                Value::Text("invalid".to_string()), // Wrong type
+            );
+
+            let claim_value = Value::Map(map);
+            let data = serde_cbor::to_vec(&claim_value).unwrap();
+
+            let result = Claim::from_value(claim_value, "test_label", &data);
+
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    // The version detection fails before reaching the field extraction at line 736.
+                    assert_eq!(msg, "unsupported claim version");
+                }
+                _ => panic!("Expected ClaimDecoding error with 'unsupported claim version'"),
+            }
+        }
+
+        #[test]
+        fn serialize_v1_with_optional_fields() {
+            // Test lines 815, 817, 820: Serialization with alg, alg_soft, and metadata.
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Set the optional fields to trigger the increment paths at lines 815, 817, 820.
+            claim.alg = Some("sha256".to_string());
+            claim.alg_soft = Some("sha256-soft".to_string());
+
+            // Add metadata to trigger line 820.
+            let metadata = crate::assertions::AssertionMetadata::new();
+            claim.add_claim_metadata(metadata);
+
+            // Serialize to CBOR (triggers serialize_v1).
+            let cbor_data = claim.data().expect("serialize claim");
+
+            // Verify we can deserialize it back.
+            let restored = Claim::from_data("test_label", &cbor_data).expect("deserialize claim");
+
+            assert_eq!(restored.alg, Some("sha256".to_string()));
+            assert_eq!(restored.alg_soft, Some("sha256-soft".to_string()));
+            assert!(restored.metadata().is_some());
+        }
+
+        #[test]
+        fn serialize_v1_without_claim_generator() {
+            // Test line 828: Serialization path when claim_generator is None
+            // This covers the else branch of the `if let Some(cg) = self.claim_generator()`.
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Clear claim_generator to test the None path.
+            claim.claim_generator = None;
+
+            // Serialize to CBOR - this should exercise line 828.
+            // Note: This may fail validation in build(), so we just serialize directly.
+            let result = serde_cbor::to_vec(&claim);
+
+            // The serialization should work even without claim_generator.
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn serialize_v1_without_format() {
+            // Test line 841: Serialization path when format is None.
+            // This covers the else branch after line 840.
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Clear the format.
+            claim.format = None;
+
+            // Serialize to CBOR - this should exercise line 841.
+            let result = serde_cbor::to_vec(&claim);
+
+            // The serialization should work even without format.
+            assert!(result.is_ok());
         }
     }
 }
