@@ -4512,7 +4512,6 @@ mod tests {
 
     mod claim_decoding {
         use super::super::*;
-        use crate::utils::test::create_test_claim;
 
         #[test]
         fn from_value_v1_non_text_key() {
@@ -4883,108 +4882,199 @@ mod tests {
             }
         }
 
-        #[test]
-        fn serialize_v1_with_optional_fields() {
-            // Test lines 827, 830, 851, 863, 866: Serialization with alg, alg_soft, metadata, and format.
-            let mut claim = create_test_claim().expect("create test claim");
+        mod serialize_v1 {
+            use crate::utils::test::create_test_claim;
 
-            // Force the claim to use V1 serialization by setting claim_version to 1.
-            claim.claim_version = 1;
+            #[test]
+            fn with_optional_fields() {
+                // Test lines 827, 830, 851, 863, 866: Serialization with alg, alg_soft, metadata, and format.
+                let mut claim = create_test_claim().expect("create test claim");
 
-            // Ensure format is set to trigger line 851.
-            claim.format = Some("image/jpeg".to_string());
+                // Force the claim to use V1 serialization by setting claim_version to 1.
+                claim.claim_version = 1;
 
-            // Set the optional fields to trigger the paths at lines 827, 830, 863, 866.
-            claim.alg = Some("sha256".to_string());
-            claim.alg_soft = Some("sha256-soft".to_string());
+                // Ensure format is set to trigger line 851.
+                claim.format = Some("image/jpeg".to_string());
 
-            // Add metadata to trigger lines 830, 866.
-            let metadata = crate::assertions::AssertionMetadata::new();
-            claim.add_claim_metadata(metadata);
+                // Set the optional fields to trigger the paths at lines 827, 830, 863, 866.
+                claim.alg = Some("sha256".to_string());
+                claim.alg_soft = Some("sha256-soft".to_string());
 
-            // Serialize to CBOR (triggers serialize_v1).
-            let result = serde_cbor::to_vec(&claim);
+                // Add metadata to trigger lines 830, 866.
+                let metadata = crate::assertions::AssertionMetadata::new();
+                claim.add_claim_metadata(metadata);
 
-            // The serialization should work with optional fields.
-            assert!(result.is_ok());
+                // Serialize to CBOR (triggers serialize_v1).
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should work with optional fields.
+                assert!(result.is_ok());
+            }
+
+            #[test]
+            fn without_claim_generator() {
+                // Test line 838: Serialization path when claim_generator is None
+                // This covers the else branch of the `if let Some(cg) = self.claim_generator()`.
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // Clear claim_generator to test the None path.
+                claim.claim_generator = None;
+
+                // Serialize to CBOR - this should exercise line 838.
+                // Note: This may fail validation in build(), so we just serialize directly.
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should work even without claim_generator.
+                assert!(result.is_ok());
+            }
+
+            #[test]
+            fn without_format() {
+                // Test when format is None - this exercises the path where the
+                // if condition at line 849 is false (format is None).
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // Force V1 serialization.
+                claim.claim_version = 1;
+
+                // Clear the format.
+                claim.format = None;
+
+                // Serialize to CBOR.
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should work even without format.
+                assert!(result.is_ok());
+            }
+
+            #[test]
+            fn with_format() {
+                // Test line 851: Serialization path when format is present (Some).
+                // This covers line 850 (serializing the format field) and line 851 (closing brace).
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // Force V1 serialization.
+                claim.claim_version = 1;
+
+                // Ensure format is set to trigger lines 850-851.
+                claim.format = Some("image/jpeg".to_string());
+
+                // Serialize to CBOR.
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should work with format.
+                assert!(result.is_ok());
+            }
+
+            #[test]
+            fn without_optional_fields() {
+                // Test serialization paths when alg, alg_soft, and metadata are all None.
+                // This covers the branches where optional fields are not present (i.e., the
+                // if conditions at lines 823, 826, 829 evaluate to false, and the if conditions
+                // at lines 862, 865 also evaluate to false).
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // Force the claim to use V1 serialization by setting claim_version to 1.
+                claim.claim_version = 1;
+
+                // Ensure these optional fields are None to skip the optional field handling.
+                claim.alg = None;
+                claim.alg_soft = None;
+                claim.metadata = None;
+
+                // Serialize to CBOR - tests the None branches for optional fields.
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should work even without optional fields.
+                assert!(result.is_ok());
+            }
         }
 
-        #[test]
-        fn serialize_v1_without_claim_generator() {
-            // Test line 838: Serialization path when claim_generator is None
-            // This covers the else branch of the `if let Some(cg) = self.claim_generator()`.
-            let mut claim = create_test_claim().expect("create test claim");
+        mod serialize_v2 {
+            use crate::utils::test::create_test_claim;
 
-            // Clear claim_generator to test the None path.
-            claim.claim_generator = None;
+            #[test]
+            fn with_optional_fields() {
+                // Test lines 893, 902, 904, 907, 944, 947: Serialization with all optional fields.
+                let mut claim = create_test_claim().expect("create test claim");
 
-            // Serialize to CBOR - this should exercise line 838.
-            // Note: This may fail validation in build(), so we just serialize directly.
-            let result = serde_cbor::to_vec(&claim);
+                // V2 is the default for create_test_claim(), but let's be explicit.
+                claim.claim_version = 2;
 
-            // The serialization should work even without claim_generator.
-            assert!(result.is_ok());
-        }
+                // Set gathered_assertions to trigger line 893.
+                claim.gathered_assertions = Some(vec![]);
 
-        #[test]
-        fn serialize_v1_without_format() {
-            // Test when format is None - this exercises the path where the
-            // if condition at line 849 is false (format is None).
-            let mut claim = create_test_claim().expect("create test claim");
+                // Set optional fields to trigger lines 902, 904, 907, 944, 947.
+                claim.alg = Some("sha256".to_string());
+                claim.alg_soft = Some("sha256-soft".to_string());
 
-            // Force V1 serialization.
-            claim.claim_version = 1;
+                // Add metadata to trigger lines 907, 947.
+                let metadata = crate::assertions::AssertionMetadata::new();
+                claim.add_claim_metadata(metadata);
 
-            // Clear the format.
-            claim.format = None;
+                // Serialize to CBOR (triggers serialize_v2).
+                let result = serde_cbor::to_vec(&claim);
 
-            // Serialize to CBOR.
-            let result = serde_cbor::to_vec(&claim);
+                // The serialization should work with optional fields.
+                assert!(result.is_ok());
+            }
 
-            // The serialization should work even without format.
-            assert!(result.is_ok());
-        }
+            #[test]
+            fn without_optional_fields() {
+                // Test serialization when optional fields (gathered_assertions, alg, alg_soft, metadata) are None.
+                let mut claim = create_test_claim().expect("create test claim");
 
-        #[test]
-        fn serialize_v1_with_format() {
-            // Test line 851: Serialization path when format is present (Some).
-            // This covers line 850 (serializing the format field) and line 851 (closing brace).
-            let mut claim = create_test_claim().expect("create test claim");
+                // V2 is the default for create_test_claim().
+                claim.claim_version = 2;
 
-            // Force V1 serialization.
-            claim.claim_version = 1;
+                // Ensure optional fields are None.
+                claim.gathered_assertions = None;
+                claim.alg = None;
+                claim.alg_soft = None;
+                claim.metadata = None;
 
-            // Ensure format is set to trigger lines 850-851.
-            claim.format = Some("image/jpeg".to_string());
+                // Serialize to CBOR.
+                let result = serde_cbor::to_vec(&claim);
 
-            // Serialize to CBOR.
-            let result = serde_cbor::to_vec(&claim);
+                // The serialization should work without optional fields.
+                assert!(result.is_ok());
+            }
 
-            // The serialization should work with format.
-            assert!(result.is_ok());
-        }
+            #[test]
+            fn with_empty_claim_generator_info() {
+                // Test lines 919-921: Error path when claim_generator_info is empty.
+                let mut claim = create_test_claim().expect("create test claim");
 
-        #[test]
-        fn serialize_v1_without_optional_fields() {
-            // Test serialization paths when alg, alg_soft, and metadata are all None.
-            // This covers the branches where optional fields are not present (i.e., the
-            // if conditions at lines 823, 826, 829 evaluate to false, and the if conditions
-            // at lines 862, 865 also evaluate to false).
-            let mut claim = create_test_claim().expect("create test claim");
+                // V2 claim.
+                claim.claim_version = 2;
 
-            // Force the claim to use V1 serialization by setting claim_version to 1.
-            claim.claim_version = 1;
+                // Set claim_generator_info to an empty vector to trigger the error at lines 919-921.
+                claim.claim_generator_info = Some(Vec::new());
 
-            // Ensure these optional fields are None to skip the optional field handling.
-            claim.alg = None;
-            claim.alg_soft = None;
-            claim.metadata = None;
+                // Serialize to CBOR - this should fail with an error.
+                let result = serde_cbor::to_vec(&claim);
 
-            // Serialize to CBOR - tests the None branches for optional fields.
-            let result = serde_cbor::to_vec(&claim);
+                // The serialization should fail.
+                assert!(result.is_err());
+            }
 
-            // The serialization should work even without optional fields.
-            assert!(result.is_ok());
+            #[test]
+            fn without_claim_generator_info() {
+                // Test lines 924-926: Error path when claim_generator_info is None.
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // V2 claim.
+                claim.claim_version = 2;
+
+                // Set claim_generator_info to None to trigger the error at lines 924-926.
+                claim.claim_generator_info = None;
+
+                // Serialize to CBOR - this should fail with an error.
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should fail.
+                assert!(result.is_err());
+            }
         }
     }
 }
