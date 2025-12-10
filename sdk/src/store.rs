@@ -1725,12 +1725,6 @@ impl Store {
                         }
                     }
 
-                    // if this ingredient is the hash binding claim (update manifest)
-                    // then we have to check the binding here
-                    if ingredient.label() == svi.binding_claim {
-                        Claim::verify_hash_binding(ingredient, asset_data, svi, validation_log)?;
-                    }
-
                     Claim::verify_claim(
                         ingredient,
                         asset_data,
