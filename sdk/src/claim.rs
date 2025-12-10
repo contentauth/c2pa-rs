@@ -4253,6 +4253,38 @@ mod tests {
         }
     }
 
+    mod add_claim_metadata {
+        #[test]
+        fn add_multiple_metadata_items() {
+            // Test line 1185: Add multiple claim metadata items to exercise the Some(md_vec) branch.
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Add first metadata - exercises the None branch (line 1186).
+            let metadata1 = crate::assertions::AssertionMetadata::new();
+            claim.add_claim_metadata(metadata1);
+
+            // Verify first metadata was added.
+            let md = claim.metadata().unwrap();
+            assert_eq!(md.len(), 1);
+
+            // Add second metadata - exercises the Some(md_vec) branch (line 1185).
+            let metadata2 = crate::assertions::AssertionMetadata::new();
+            claim.add_claim_metadata(metadata2);
+
+            // Verify both metadata items are present.
+            let md = claim.metadata().unwrap();
+            assert_eq!(md.len(), 2);
+
+            // Add third metadata to further verify the Some branch works correctly.
+            let metadata3 = crate::assertions::AssertionMetadata::new();
+            claim.add_claim_metadata(metadata3);
+
+            // Verify all three metadata items are present.
+            let md = claim.metadata().unwrap();
+            assert_eq!(md.len(), 3);
+        }
+    }
+
     mod add_assertion {
         use super::super::*;
 
