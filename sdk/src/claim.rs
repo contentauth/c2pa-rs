@@ -4949,7 +4949,7 @@ mod tests {
             // if conditions at lines 823, 826, 829 evaluate to false, and the if conditions
             // at lines 862, 865 also evaluate to false).
             let mut claim = create_test_claim().expect("create test claim");
-            
+
             // Force the claim to use V1 serialization by setting claim_version to 1.
             claim.claim_version = 1;
 
