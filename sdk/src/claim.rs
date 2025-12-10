@@ -5189,4 +5189,27 @@ mod tests {
             }
         }
     }
+
+    mod label {
+        #[test]
+        fn returns_regular_label_when_no_conflict() {
+            let claim = crate::utils::test::create_test_claim().expect("create test claim");
+            // Should return the regular label when conflict_label is None
+            assert!(claim.label().len() > 0);
+        }
+
+        #[test]
+        fn returns_conflict_label_when_set() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+            let original_label = claim.label().to_string();
+            
+            // Set a conflict label
+            let conflict_label = "conflict_label_test";
+            claim.set_conflict_label(conflict_label.to_string());
+            
+            // Should now return the conflict label instead of the original
+            assert_eq!(claim.label(), conflict_label);
+            assert_ne!(claim.label(), original_label);
+        }
+    }
 }
