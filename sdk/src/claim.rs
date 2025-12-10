@@ -4022,9 +4022,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{
-        assertions::EmbeddedData, resource_store::UriOrResource, utils::test::create_test_claim,
-    };
+    use crate::utils::test::create_test_claim;
 
     #[test]
     fn test_build_claim() {
@@ -4061,258 +4059,207 @@ mod tests {
         println!("Claim: {json_str}");
     }
 
-    #[test]
-    fn test_build_claim_generator_hints() {
-        // Create a new claim.
-        let mut claim = create_test_claim().expect("create test claim");
+    mod new_with_user_guid {
+        use super::super::*;
 
-        claim.add_claim_generator_hint(
-            GH_FULL_VERSION_LIST,
-            Value::String(r#""user app";v="2.3.4""#.to_string()),
-        );
-        claim.add_claim_generator_hint(
-            GH_FULL_VERSION_LIST,
-            Value::String(r#""some toolkit";v="1.0.0""#.to_string()),
-        );
+        #[test]
+        fn good_v1() {
+            Claim::new_with_user_guid(
+                "claim_generator",
+                "acme:urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                1,
+            )
+            .unwrap();
+        }
 
-        let expected_value = r#""user app";v="2.3.4", "some toolkit";v="1.0.0""#;
+        #[test]
+        fn good_v2() {
+            Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+                2,
+            )
+            .unwrap();
+        }
 
-        let cg_map = claim.get_claim_generator_hint_map().unwrap();
-        let value = &cg_map[GH_FULL_VERSION_LIST];
+        #[test]
+        fn feature_incompatible() {
+            let result = Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+                1,
+            );
+            assert!(result.is_err());
+        }
 
-        assert_eq!(expected_value, value.as_str().unwrap());
-    }
+        #[test]
+        fn version_incompatible() {
+            let result = Claim::new_with_user_guid(
+                "claim_generator",
+                "acme:urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                2,
+            );
+            assert!(result.is_err());
+        }
 
-    #[test]
-    fn test_build_claim_generator_info() {
-        // Create a new claim.
-        let mut claim = create_test_claim().expect("create test claim");
+        #[test]
+        fn malformed() {
+            let result = Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+                1,
+            );
+            assert!(result.is_err());
+        }
 
-        let mut info = ClaimGeneratorInfo::new("test app");
-        info.version = Some("2.3.4".to_string());
-        info.icon = Some(UriOrResource::HashedUri(HashedUri::new(
-            "self#jumbf=c2pa.databoxes.data_box".to_string(),
-            None,
-            b"hashed",
-        )));
-        info.insert("something", "else");
+        #[test]
+        fn bad_v2_scheme() {
+            let result = Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:blahblah:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+                2,
+            );
+            assert!(result.is_err());
+        }
 
-        claim.add_claim_generator_info(info);
+        #[test]
+        fn uuid_version_1_not_allowed() {
+            // UUID version 1 (not version 4/Random) - should fail (line 477).
+            let result = Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:c2pa:3fad1ead-1ed5-11d0-873b-ea5f58adea82:acme",
+                2,
+            );
+            assert!(result.is_err());
+        }
 
-        let cgi = claim.claim_generator_info().unwrap();
+        #[test]
+        fn uuid_version_5_not_allowed() {
+            // UUID version 5 (not version 4/Random) - should fail (line 477).
+            let result = Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:c2pa:3fad1ead-8ed5-54d0-873b-ea5f58adea82:acme",
+                2,
+            );
+            assert!(result.is_err());
+        }
 
-        assert_eq!(&cgi[0].name, "test app");
-        assert_eq!(cgi[0].version.as_deref(), Some("2.3.4"));
-        if let UriOrResource::HashedUri(r) = cgi[1].icon.as_ref().unwrap() {
-            assert_eq!(r.hash(), b"hashed");
+        #[test]
+        fn v1_without_cgi_prefix() {
+            // V1 without CGI prefix - should succeed (lines 500-503).
+            Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                1,
+            )
+            .unwrap();
         }
     }
 
-    #[test]
-    fn test_new_with_user_guid() {
-        // good v1
-        Claim::new_with_user_guid(
-            "claim_generator",
-            "acme:urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
-            1,
-        )
-        .unwrap();
+    mod claim_generator_hints {
+        use super::super::*;
 
-        // good v2
-        Claim::new_with_user_guid(
-            "claim_generator",
-            "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
-            2,
-        )
-        .unwrap();
+        #[test]
+        fn add_multiple_hints() {
+            // Create a new claim.
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
 
-        // feature incompatible
-        let c2 = Claim::new_with_user_guid(
-            "claim_generator",
-            "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
-            1,
-        );
-        assert!(c2.is_err());
+            claim.add_claim_generator_hint(
+                GH_FULL_VERSION_LIST,
+                Value::String(r#""user app";v="2.3.4""#.to_string()),
+            );
+            claim.add_claim_generator_hint(
+                GH_FULL_VERSION_LIST,
+                Value::String(r#""some toolkit";v="1.0.0""#.to_string()),
+            );
 
-        // version incompatible
-        let c3 = Claim::new_with_user_guid(
-            "claim_generator",
-            "acme:urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
-            2,
-        );
-        assert!(c3.is_err());
+            let expected_value = r#""user app";v="2.3.4", "some toolkit";v="1.0.0""#;
 
-        // malformed
-        let c4 = Claim::new_with_user_guid(
-            "claim_generator",
-            "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
-            1,
-        );
-        assert!(c4.is_err());
+            let cg_map = claim.get_claim_generator_hint_map().unwrap();
+            let value = &cg_map[GH_FULL_VERSION_LIST];
 
-        // bad v2
-        let c5 = Claim::new_with_user_guid(
-            "claim_generator",
-            "urn:blahblah:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
-            2,
-        );
-        assert!(c5.is_err());
-
-        // UUID version 1 (not version 4/Random) - should fail (line 477).
-        let c6 = Claim::new_with_user_guid(
-            "claim_generator",
-            "urn:c2pa:3fad1ead-1ed5-11d0-873b-ea5f58adea82:acme",
-            2,
-        );
-        assert!(c6.is_err());
-
-        // UUID version 5 (not version 4/Random) - should fail (line 477).
-        let c7 = Claim::new_with_user_guid(
-            "claim_generator",
-            "urn:c2pa:3fad1ead-8ed5-54d0-873b-ea5f58adea82:acme",
-            2,
-        );
-        assert!(c7.is_err());
-
-        // V1 without CGI prefix - should succeed (lines 500-503).
-        Claim::new_with_user_guid(
-            "claim_generator",
-            "urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
-            1,
-        )
-        .unwrap();
+            assert_eq!(expected_value, value.as_str().unwrap());
+        }
     }
 
-    #[test]
-    fn test_from_value_unsupported_claim_version() {
-        // Test Claim::from_value with invalid claim version (lines 572-574).
-        // This should fail when neither 'assertions' nor 'created_assertions' is present.
+    mod claim_generator_info {
+        use super::super::*;
+        use crate::resource_store::UriOrResource;
 
-        use std::collections::BTreeMap;
+        #[test]
+        fn add_and_retrieve_info() {
+            // Create a new claim.
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
 
-        use serde_cbor::Value;
+            let mut info = ClaimGeneratorInfo::new("test app");
+            info.version = Some("2.3.4".to_string());
+            info.icon = Some(UriOrResource::HashedUri(HashedUri::new(
+                "self#jumbf=c2pa.databoxes.data_box".to_string(),
+                None,
+                b"hashed",
+            )));
+            info.insert("something", "else");
 
-        // Create a minimal CBOR map without assertions or created_assertions fields.
-        let mut claim_map = BTreeMap::new();
-        claim_map.insert(
-            Value::Text("claim_generator".to_string()),
-            Value::Text("test_generator".to_string()),
-        );
-        claim_map.insert(
-            Value::Text("signature".to_string()),
-            Value::Text("self#jumbf=/test/c2pa.signature".to_string()),
-        );
-        claim_map.insert(
-            Value::Text("dc:format".to_string()),
-            Value::Text("image/jpeg".to_string()),
-        );
-        claim_map.insert(
-            Value::Text("instanceID".to_string()),
-            Value::Text("xmp:iid:12345678-1234-1234-1234-123456789012".to_string()),
-        );
+            claim.add_claim_generator_info(info);
 
-        let claim_value = Value::Map(claim_map);
-        let claim_cbor = serde_cbor::to_vec(&claim_value).unwrap();
+            let cgi = claim.claim_generator_info().unwrap();
 
-        // Try to create a claim from this invalid data.
-        let result = Claim::from_data("test_label", &claim_cbor);
-
-        // Should fail with unsupported claim version error.
-        assert!(result.is_err());
-        match result {
-            Err(Error::ClaimDecoding(msg)) => {
-                assert!(msg.contains("unsupported claim version"));
+            assert_eq!(&cgi[0].name, "test app");
+            assert_eq!(cgi[0].version.as_deref(), Some("2.3.4"));
+            if let UriOrResource::HashedUri(r) = cgi[1].icon.as_ref().unwrap() {
+                assert_eq!(r.hash(), b"hashed");
             }
-            _ => panic!("Expected ClaimDecoding error with 'unsupported claim version' message"),
         }
     }
 
-    #[test]
-    fn test_from_value_both_assertions_fields() {
-        // Test Claim::from_value with both 'assertions' and 'created_assertions' present.
-        // This is also invalid and should trigger lines 572-574.
+    mod add_assertion {
+        use super::super::*;
 
-        use std::collections::BTreeMap;
+        #[test]
+        fn add_multiple_instances() -> Result<()> {
+            let mut claim = crate::utils::test::create_min_test_claim()?;
 
-        use serde_cbor::Value;
+            const MY_METADATA: &str = "my.metadata";
+            let data = json!({
+            "@context" : {
+                "dc" : "http://purl.org/dc/elements/1.1/"
+            },
+            "dc:created": "2025 August 13",
+            "dc:creator": [
+                 "John Doe"
+            ]
+            })
+            .to_string();
 
-        // Create a CBOR map with BOTH assertions and created_assertions fields.
-        let mut claim_map = BTreeMap::new();
-        claim_map.insert(
-            Value::Text("claim_generator".to_string()),
-            Value::Text("test_generator".to_string()),
-        );
+            let metadata = assertions::Metadata::new(MY_METADATA, &data)?;
 
-        // Add both assertions fields (invalid - should only have one).
-        claim_map.insert(
-            Value::Text("assertions".to_string()),
-            Value::Array(vec![]), // Empty array
-        );
-        claim_map.insert(
-            Value::Text("created_assertions".to_string()),
-            Value::Array(vec![]), // Empty array
-        );
+            // add first time
+            claim.add_assertion(&metadata)?;
 
-        let claim_value = Value::Map(claim_map);
-        let claim_cbor = serde_cbor::to_vec(&claim_value).unwrap();
+            // add second time should create instance label
+            claim.add_assertion(&metadata)?;
 
-        // Try to create a claim from this invalid data.
-        let result = Claim::from_data("test_label", &claim_cbor);
+            // add third time should create instance label
+            claim.add_assertion(&metadata)?;
 
-        // Should fail with unsupported claim version error.
-        assert!(result.is_err());
-        match result {
-            Err(Error::ClaimDecoding(msg)) => {
-                assert!(msg.contains("unsupported claim version"));
+            // check that we have three instances now
+            let instances = claim.count_instances(MY_METADATA);
+            assert_eq!(instances, 3);
+
+            // check that we can retrieve each one
+            for i in 0..instances {
+                let ca = claim
+                    .get_claim_assertion(MY_METADATA, i)
+                    .expect("should find assertion");
+                assert_eq!(ca.instance(), i);
+                assert_eq!(ca.label_raw(), MY_METADATA);
+                assert_eq!(ca.assertion().label(), MY_METADATA);
+                assert_eq!(ca.assertion_type(), ClaimAssertionType::Gathered);
+                //assert_eq!(ca.assertion().decode_data(), AssertionData::Cbor(vec![1, 2, 3, 4]));
             }
-            _ => panic!("Expected ClaimDecoding error with 'unsupported claim version' message"),
+
+            Ok(())
         }
-    }
-
-    #[test]
-    fn test_add_assertion_variants() -> Result<()> {
-        let mut claim = crate::utils::test::create_min_test_claim()?;
-
-        const MY_METADATA: &str = "my.metadata";
-        let data = json!({
-        "@context" : {
-            "dc" : "http://purl.org/dc/elements/1.1/"
-        },
-        "dc:created": "2025 August 13",
-        "dc:creator": [
-             "John Doe"
-        ]
-        })
-        .to_string();
-
-        let metadata = assertions::Metadata::new(MY_METADATA, &data)?;
-
-        // add first time
-        claim.add_assertion(&metadata)?;
-
-        // add second time should create instance label
-        claim.add_assertion(&metadata)?;
-
-        // add third time should create instance label
-        claim.add_assertion(&metadata)?;
-
-        // check that we have three instances now
-        let instances = claim.count_instances(MY_METADATA);
-        assert_eq!(instances, 3);
-
-        // check that we can retrieve each one
-        for i in 0..instances {
-            let ca = claim
-                .get_claim_assertion(MY_METADATA, i)
-                .expect("should find assertion");
-            assert_eq!(ca.instance(), i);
-            assert_eq!(ca.label_raw(), MY_METADATA);
-            assert_eq!(ca.assertion().label(), MY_METADATA);
-            assert_eq!(ca.assertion_type(), ClaimAssertionType::Gathered);
-            //assert_eq!(ca.assertion().decode_data(), AssertionData::Cbor(vec![1, 2, 3, 4]));
-        }
-
-        Ok(())
     }
 
     mod claim_assertion {
@@ -4514,6 +4461,96 @@ mod tests {
 
     mod claim_decoding {
         use super::super::*;
+
+        #[test]
+        fn from_value_unsupported_claim_version() {
+            // Test Claim::from_value with invalid claim version (lines 572-574).
+            // This should fail when neither 'assertions' nor 'created_assertions' is present.
+
+            use std::collections::BTreeMap;
+
+            use serde_cbor::Value;
+
+            // Create a minimal CBOR map without assertions or created_assertions fields.
+            let mut claim_map = BTreeMap::new();
+            claim_map.insert(
+                Value::Text("claim_generator".to_string()),
+                Value::Text("test_generator".to_string()),
+            );
+            claim_map.insert(
+                Value::Text("signature".to_string()),
+                Value::Text("self#jumbf=/test/c2pa.signature".to_string()),
+            );
+            claim_map.insert(
+                Value::Text("dc:format".to_string()),
+                Value::Text("image/jpeg".to_string()),
+            );
+            claim_map.insert(
+                Value::Text("instanceID".to_string()),
+                Value::Text("xmp:iid:12345678-1234-1234-1234-123456789012".to_string()),
+            );
+
+            let claim_value = Value::Map(claim_map);
+            let claim_cbor = serde_cbor::to_vec(&claim_value).unwrap();
+
+            // Try to create a claim from this invalid data.
+            let result = Claim::from_data("test_label", &claim_cbor);
+
+            // Should fail with unsupported claim version error.
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    assert!(msg.contains("unsupported claim version"));
+                }
+                _ => {
+                    panic!("Expected ClaimDecoding error with 'unsupported claim version' message")
+                }
+            }
+        }
+
+        #[test]
+        fn from_value_both_assertions_fields() {
+            // Test Claim::from_value with both 'assertions' and 'created_assertions' present.
+            // This is also invalid and should trigger lines 572-574.
+
+            use std::collections::BTreeMap;
+
+            use serde_cbor::Value;
+
+            // Create a CBOR map with BOTH assertions and created_assertions fields.
+            let mut claim_map = BTreeMap::new();
+            claim_map.insert(
+                Value::Text("claim_generator".to_string()),
+                Value::Text("test_generator".to_string()),
+            );
+
+            // Add both assertions fields (invalid - should only have one).
+            claim_map.insert(
+                Value::Text("assertions".to_string()),
+                Value::Array(vec![]), // Empty array
+            );
+            claim_map.insert(
+                Value::Text("created_assertions".to_string()),
+                Value::Array(vec![]), // Empty array
+            );
+
+            let claim_value = Value::Map(claim_map);
+            let claim_cbor = serde_cbor::to_vec(&claim_value).unwrap();
+
+            // Try to create a claim from this invalid data.
+            let result = Claim::from_data("test_label", &claim_cbor);
+
+            // Should fail with unsupported claim version error.
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    assert!(msg.contains("unsupported claim version"));
+                }
+                _ => {
+                    panic!("Expected ClaimDecoding error with 'unsupported claim version' message")
+                }
+            }
+        }
 
         #[test]
         fn from_value_v1_non_text_key() {
@@ -5080,68 +5117,76 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_build_multiple_claim_generator_info() {
-        // Test line 965: Error when claim has more than one claim_generator_info for v2.
-        let mut claim = create_test_claim().expect("create test claim");
+    mod build {
+        use super::super::*;
+        use crate::{
+            assertions::EmbeddedData, claim::labels::CLAIM_THUMBNAIL,
+            utils::test::create_test_claim,
+        };
 
-        // Add a second claim_generator_info to trigger the error.
-        let info2 = ClaimGeneratorInfo::new("second app");
-        claim.add_claim_generator_info(info2);
+        #[test]
+        fn multiple_claim_generator_info() {
+            // Test line 965: Error when claim has more than one claim_generator_info for v2.
+            let mut claim = create_test_claim().expect("create test claim");
 
-        // Build should fail with VersionCompatibility error.
-        let result = claim.build();
-        assert!(result.is_err());
-        match result {
-            Err(Error::VersionCompatibility(msg)) => {
-                assert_eq!(msg, "only 1 claim_generator_info allowed");
+            // Add a second claim_generator_info to trigger the error.
+            let info2 = ClaimGeneratorInfo::new("second app");
+            claim.add_claim_generator_info(info2);
+
+            // Build should fail with VersionCompatibility error.
+            let result = claim.build();
+            assert!(result.is_err());
+            match result {
+                Err(Error::VersionCompatibility(msg)) => {
+                    assert_eq!(msg, "only 1 claim_generator_info allowed");
+                }
+                _ => panic!("Expected VersionCompatibility error"),
             }
-            _ => panic!("Expected VersionCompatibility error"),
         }
-    }
 
-    #[test]
-    fn test_build_missing_claim_generator_info() {
-        // Test line 971: Error when claim_generator_info is missing for v2.
-        let mut claim = Claim::new("test_generator", Some("test"), 2);
+        #[test]
+        fn missing_claim_generator_info() {
+            // Test line 971: Error when claim_generator_info is missing for v2.
+            let mut claim = Claim::new("test_generator", Some("test"), 2);
 
-        // Don't add claim_generator_info (it's None by default).
-        // This should trigger the error at line 971.
-        let result = claim.build();
-        assert!(result.is_err());
-        match result {
-            Err(Error::VersionCompatibility(msg)) => {
-                assert_eq!(msg, "claim_generator_info is mandatory");
+            // Don't add claim_generator_info (it's None by default).
+            // This should trigger the error at line 971.
+            let result = claim.build();
+            assert!(result.is_err());
+            match result {
+                Err(Error::VersionCompatibility(msg)) => {
+                    assert_eq!(msg, "claim_generator_info is mandatory");
+                }
+                _ => panic!("Expected VersionCompatibility error"),
             }
-            _ => panic!("Expected VersionCompatibility error"),
         }
-    }
 
-    #[test]
-    fn test_build_multiple_claim_thumbnails() {
-        // Test line 986: Error when claim has more than one claim thumbnail.
-        let mut claim = create_test_claim().expect("create test claim");
+        #[test]
+        fn multiple_claim_thumbnails() {
+            // Test line 986: Error when claim has more than one claim thumbnail.
+            let mut claim = create_test_claim().expect("create test claim");
 
-        // create_test_claim already adds one claim thumbnail.
-        // Add a second claim thumbnail to trigger the error.
-        let claim_thumbnail2 =
-            EmbeddedData::new(CLAIM_THUMBNAIL, "image/jpeg", vec![0xca, 0xfe, 0xba, 0xbe]);
+            // create_test_claim already adds one claim thumbnail.
+            // Add a second claim thumbnail to trigger the error.
+            let claim_thumbnail2 =
+                EmbeddedData::new(CLAIM_THUMBNAIL, "image/jpeg", vec![0xca, 0xfe, 0xba, 0xbe]);
 
-        claim
-            .add_assertion(&claim_thumbnail2)
-            .expect("failed to add second claim thumbnail");
+            claim
+                .add_assertion(&claim_thumbnail2)
+                .expect("failed to add second claim thumbnail");
 
-        // Build should fail with OtherError.
-        let result = claim.build();
-        assert!(result.is_err());
-        match result {
-            Err(Error::OtherError(msg)) => {
-                assert_eq!(
-                    msg.to_string(),
-                    "only one claim thumbnail assertion allowed"
-                );
+            // Build should fail with OtherError.
+            let result = claim.build();
+            assert!(result.is_err());
+            match result {
+                Err(Error::OtherError(msg)) => {
+                    assert_eq!(
+                        msg.to_string(),
+                        "only one claim thumbnail assertion allowed"
+                    );
+                }
+                _ => panic!("Expected OtherError"),
             }
-            _ => panic!("Expected OtherError"),
         }
     }
 }
