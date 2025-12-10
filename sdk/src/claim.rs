@@ -5195,7 +5195,7 @@ mod tests {
         fn returns_regular_label_when_no_conflict() {
             let claim = crate::utils::test::create_test_claim().expect("create test claim");
             // Should return the regular label when conflict_label is None
-            assert!(claim.label().len() > 0);
+            assert!(!claim.label().is_empty());
         }
 
         #[test]
@@ -5430,7 +5430,7 @@ mod tests {
             assert!(uri.starts_with("self#jumbf="));
             assert!(uri.contains("c2pa"));
             // The label should be embedded in the URI
-            assert!(uri.contains(&claim.label()));
+            assert!(uri.contains(claim.label()));
         }
     }
 }
