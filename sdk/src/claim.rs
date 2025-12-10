@@ -4182,6 +4182,47 @@ mod tests {
         }
     }
 
+    mod add_claim_generator {
+        use super::super::*;
+
+        #[test]
+        fn add_hint_with_non_special_key() {
+            // Test for line 1211: the default branch in the match statement.
+            // This tests adding a hint with a key that is not GH_UA or GH_FULL_VERSION_LIST.
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Add a hint with a custom key.
+            claim.add_claim_generator_hint("Custom-Key", Value::String("custom value".to_string()));
+
+            let cg_map = claim.get_claim_generator_hint_map().unwrap();
+            let value = &cg_map["Custom-Key"];
+
+            assert_eq!("custom value", value.as_str().unwrap());
+
+            // Add another value for the same key. It should replace, not merge.
+            claim.add_claim_generator_hint("Custom-Key", Value::String("new value".to_string()));
+
+            let cg_map = claim.get_claim_generator_hint_map().unwrap();
+            let value = &cg_map["Custom-Key"];
+
+            assert_eq!("new value", value.as_str().unwrap());
+        }
+
+        #[test]
+        fn add_hint_with_gh_ua_key() {
+            // Test merging behavior for GH_UA key.
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            claim.add_claim_generator_hint(GH_UA, Value::String("first value".to_string()));
+            claim.add_claim_generator_hint(GH_UA, Value::String("second value".to_string()));
+
+            let cg_map = claim.get_claim_generator_hint_map().unwrap();
+            let value = &cg_map[GH_UA];
+
+            assert_eq!("first value, second value", value.as_str().unwrap());
+        }
+    }
+
     mod claim_generator_info {
         use super::super::*;
         use crate::resource_store::UriOrResource;
