@@ -1193,38 +1193,34 @@ impl Claim {
     }
 
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
-        if self.claim_generator_hints.is_none() {
-            self.claim_generator_hints = Some(HashMap::new());
-        }
+        let hints_map = self.claim_generator_hints.get_or_insert_with(HashMap::new);
 
-        if let Some(map) = &mut self.claim_generator_hints {
-            // if the key is already there do we need to merge the new value, so get its value
-            let curr_val = match hint_key {
-                // keys where new values should be merges
-                GH_UA | GH_FULL_VERSION_LIST => {
-                    if let Some(curr_ch_ua) = map.get(hint_key) {
-                        curr_ch_ua.as_str().map(|curr_val| curr_val.to_owned())
-                    } else {
-                        None
-                    }
+        // if the key is already there do we need to merge the new value, so get its value
+        let curr_val = match hint_key {
+            // keys where new values should be merges
+            GH_UA | GH_FULL_VERSION_LIST => {
+                if let Some(curr_ch_ua) = hints_map.get(hint_key) {
+                    curr_ch_ua.as_str().map(|curr_val| curr_val.to_owned())
+                } else {
+                    None
                 }
-                _ => None,
-            };
-
-            // had an existing value so merge
-            if let Some(curr_val) = curr_val {
-                if let Some(append_val) = hint_value.as_str() {
-                    map.insert(
-                        hint_key.to_string(),
-                        Value::String(format!("{curr_val}, {append_val}")),
-                    );
-                }
-                return;
             }
+            _ => None,
+        };
 
-            // all other keys treat as replacement
-            map.insert(hint_key.to_string(), hint_value);
+        // had an existing value so merge
+        if let Some(curr_val) = curr_val {
+            if let Some(append_val) = hint_value.as_str() {
+                hints_map.insert(
+                    hint_key.to_string(),
+                    Value::String(format!("{curr_val}, {append_val}")),
+                );
+            }
+            return;
         }
+
+        // all other keys treat as replacement
+        hints_map.insert(hint_key.to_string(), hint_value);
     }
 
     pub fn get_claim_generator_hint_map(&self) -> Option<&HashMap<String, Value>> {
