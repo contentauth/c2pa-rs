@@ -1311,7 +1311,7 @@ impl Claim {
 
     fn compatibility_checks(&self, assertion: &Assertion) -> Result<()> {
         let assertion_version = assertion.get_ver();
-        let assertion_label = assertion.label();
+        let assertion_label = assertion.label_root();
 
         if assertion_label == ACTIONS {
             // check for actions V1
@@ -5561,6 +5561,183 @@ mod tests {
             assert!(result.is_ok());
             let hash = result.unwrap();
             assert!(!hash.is_empty());
+        }
+    }
+
+    mod compatibility_checks {
+        use super::super::*;
+        use crate::assertions::{Action, Actions};
+
+        #[test]
+        fn actions_version_too_low() {
+            // Test lines 1318-1322: actions assertion with version < 1.
+            let claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Create an actions assertion with version 0 (less than minimum required version 1).
+            let actions = Actions::new().add_action(Action::new("c2pa.edited"));
+
+            // Create the assertion with version 0.
+            let actions_cbor = serde_cbor::to_vec(&actions).expect("failed to serialize actions");
+            let assertion = Assertion::new(
+                "c2pa.actions",
+                Some(0), // version 0 is below the minimum of 1
+                AssertionData::Cbor(actions_cbor),
+            );
+
+            // Call compatibility_checks and expect an error.
+            let result = claim.compatibility_checks(&assertion);
+            assert!(result.is_err());
+
+            let err = result.unwrap_err();
+            match err {
+                Error::VersionCompatibility(msg) => {
+                    assert_eq!(msg, "action assertion version too low");
+                }
+                _ => panic!("Expected VersionCompatibility error, got: {:?}", err),
+            }
+        }
+
+        #[test]
+        fn deprecated_action_copied() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.copied".
+            test_deprecated_action("c2pa.copied");
+        }
+
+        #[test]
+        fn deprecated_action_formatted() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.formatted".
+            test_deprecated_action("c2pa.formatted");
+        }
+
+        #[test]
+        fn deprecated_action_version_updated() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.version_updated".
+            test_deprecated_action("c2pa.version_updated");
+        }
+
+        #[test]
+        fn deprecated_action_printed() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.printed".
+            test_deprecated_action("c2pa.printed");
+        }
+
+        #[test]
+        fn deprecated_action_managed() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.managed".
+            test_deprecated_action("c2pa.managed");
+        }
+
+        #[test]
+        fn deprecated_action_produced() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.produced".
+            test_deprecated_action("c2pa.produced");
+        }
+
+        #[test]
+        fn deprecated_action_saved() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.saved".
+            test_deprecated_action("c2pa.saved");
+        }
+
+        fn test_deprecated_action(action_name: &str) {
+            let claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Create an actions assertion with a deprecated action.
+            let actions = Actions::new().add_action(Action::new(action_name));
+
+            // Create the assertion with version 2 (valid version, but contains deprecated action).
+            let actions_cbor = serde_cbor::to_vec(&actions).expect("failed to serialize actions");
+            let assertion =
+                Assertion::new("c2pa.actions", Some(2), AssertionData::Cbor(actions_cbor));
+
+            // Call compatibility_checks and expect an error.
+            let result = claim.compatibility_checks(&assertion);
+            assert!(result.is_err());
+
+            let err = result.unwrap_err();
+            match err {
+                Error::VersionCompatibility(msg) => {
+                    assert_eq!(msg, "action assertion has been deprecated");
+                }
+                _ => panic!("Expected VersionCompatibility error, got: {:?}", err),
+            }
+        }
+
+        #[test]
+        fn bmff_hash_version_too_low() {
+            // Test lines 1337-1339: BMFF hash assertion with version < 2.
+            let claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Create a BMFF hash assertion with version 1 (less than minimum required version 2).
+            // We just need a minimal valid CBOR structure for the hash data.
+            let bmff_hash_data = serde_cbor::to_vec(&serde_json::json!({
+                "alg": "sha256",
+                "hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+                "name": "test.mp4"
+            }))
+            .expect("failed to serialize bmff hash");
+
+            let assertion = Assertion::new(
+                "c2pa.hash.bmff",
+                Some(1), // version 1 is below the minimum of 2
+                AssertionData::Cbor(bmff_hash_data),
+            );
+
+            // Call compatibility_checks and expect an error.
+            let result = claim.compatibility_checks(&assertion);
+            assert!(result.is_err());
+
+            let err = result.unwrap_err();
+            match err {
+                Error::VersionCompatibility(msg) => {
+                    assert_eq!(msg, "BMFF hash assertion version too low");
+                }
+                _ => panic!("Expected VersionCompatibility error, got: {:?}", err),
+            }
+        }
+
+        #[test]
+        fn bmff_hash_version_valid() {
+            // Test valid BMFF hash assertion with version 2.
+            let claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Create a BMFF hash assertion with version 2 (valid).
+            let bmff_hash_data = serde_cbor::to_vec(&serde_json::json!({
+                "alg": "sha256",
+                "hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+                "name": "test.mp4"
+            }))
+            .expect("failed to serialize bmff hash");
+
+            let assertion = Assertion::new(
+                "c2pa.hash.bmff",
+                Some(2), // version 2 is valid
+                AssertionData::Cbor(bmff_hash_data),
+            );
+
+            // Call compatibility_checks and expect success.
+            let result = claim.compatibility_checks(&assertion);
+            assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        }
+
+        #[test]
+        fn actions_version_valid() {
+            // Test valid actions assertion with version 2.
+            let claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Create an actions assertion with a non-deprecated action and version 2.
+            let actions = Actions::new().add_action(Action::new("c2pa.edited"));
+
+            let actions_cbor = serde_cbor::to_vec(&actions).expect("failed to serialize actions");
+            let assertion = Assertion::new(
+                "c2pa.actions",
+                Some(2), // version 2 is valid
+                AssertionData::Cbor(actions_cbor),
+            );
+
+            // Call compatibility_checks and expect success.
+            let result = claim.compatibility_checks(&assertion);
+            assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
         }
     }
 }
