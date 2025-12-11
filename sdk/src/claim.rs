@@ -5847,4 +5847,73 @@ mod tests {
             crate::settings::reset_default_settings().expect("failed to reset settings");
         }
     }
+
+    mod get_databox {
+        use super::super::*;
+        use crate::{assertions::DataBox, utils::test::create_test_claim};
+
+        /// Test line 1518: get_databox returns None when manifest label doesn't match.
+        #[test]
+        fn mismatched_manifest_label() {
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Add a databox to the claim.
+            let databox = DataBox {
+                format: "application/octet-stream".to_string(),
+                data: vec![1, 2, 3, 4, 5],
+                data_types: None,
+            };
+            let db_cbor = serde_cbor::to_vec(&databox).expect("serialize databox");
+            claim
+                .put_databox("c2pa.data_1", &db_cbor, None)
+                .expect("put databox");
+
+            // Create a HashedUri with a different manifest label.
+            let wrong_manifest_uri = to_databox_uri("wrong_manifest_label", "c2pa.data_1");
+            let hashed_uri =
+                HashedUri::new(wrong_manifest_uri, Some("sha256".to_string()), b"hash");
+
+            // Should return None because the manifest labels don't match.
+            assert!(claim.get_databox(&hashed_uri).is_none());
+        }
+
+        /// Test lines 1523-1526: get_databox returns None when box_name_from_uri returns None.
+        #[test]
+        fn invalid_relative_uri() {
+            let claim = create_test_claim().expect("create test claim");
+
+            // Create a HashedUri with an invalid relative URI (empty path component).
+            let invalid_uri = "".to_string();
+            let hashed_uri = HashedUri::new(invalid_uri, Some("sha256".to_string()), b"hash");
+
+            // Should return None because box_name_from_uri will return None for empty string.
+            assert!(claim.get_databox(&hashed_uri).is_none());
+        }
+
+        /// Test line 1534: get_databox returns None when databox is not found.
+        #[test]
+        fn databox_not_found_wrong_hash() {
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Add a databox to the claim.
+            let databox = DataBox {
+                format: "application/octet-stream".to_string(),
+                data: vec![1, 2, 3, 4, 5],
+                data_types: None,
+            };
+            let db_cbor = serde_cbor::to_vec(&databox).expect("serialize databox");
+            claim
+                .put_databox("c2pa.data_1", &db_cbor, None)
+                .expect("put databox");
+
+            // Create a HashedUri with the correct manifest label and URI,
+            // but with a wrong hash.
+            let correct_uri = to_databox_uri(claim.label(), "c2pa.data_1");
+            let wrong_hash = b"wrong_hash_value";
+            let hashed_uri = HashedUri::new(correct_uri, Some("sha256".to_string()), wrong_hash);
+
+            // Should return None because the hash doesn't match.
+            assert!(claim.get_databox(&hashed_uri).is_none());
+        }
+    }
 }
