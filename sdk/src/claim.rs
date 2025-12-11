@@ -6059,7 +6059,7 @@ mod tests {
 
         /// Test line 1725: DataHash::from_assertion error case when non-DataHash assertion is present.
         #[test]
-        fn update_data_hash_skips_non_data_hash_assertions() {
+        fn update_data_hash_fails_when_data_hash_not_found() {
             #[allow(deprecated)]
             use crate::assertions::{CreativeWork, DataHash};
 
@@ -6070,34 +6070,17 @@ mod tests {
             let creative_work = CreativeWork::new();
             claim.add_assertion(&creative_work).expect("add_assertion");
 
-            // Add a DataHash assertion.
-            let mut data_hash = DataHash::new("test.jpg", "sha256");
-            data_hash.set_hash(vec![1, 2, 3, 4, 5]);
-            claim
-                .add_assertion(&data_hash)
-                .expect("add data hash assertion");
-
-            // Update the DataHash with new values.
-            let mut updated_data_hash = DataHash::new("test.jpg", "sha256");
-            updated_data_hash.set_hash(vec![6, 7, 8, 9, 10]);
-
-            // This should succeed and update only the DataHash assertion.
+            // Try to update a DataHash that doesn't exist.
             // Line 1725 is triggered when the matcher tries to parse the CreativeWork
             // assertion as a DataHash and fails, returning false.
-            let result = claim.update_data_hash(updated_data_hash);
+            // Since no matching DataHash is found, this should return NotFound error.
+            let mut data_hash = DataHash::new("test.jpg", "sha256");
+            data_hash.set_hash(vec![1, 2, 3, 4, 5]);
 
-            // Should succeed.
-            assert!(result.is_ok());
+            let result = claim.update_data_hash(data_hash);
 
-            // Verify that the DataHash was updated by checking the hash value.
-            let updated_dh = claim
-                .assertion_store
-                .iter()
-                .find(|ca| ca.assertion().label() == DataHash::LABEL)
-                .expect("DataHash assertion should exist");
-
-            let dh = DataHash::from_assertion(updated_dh.assertion()).expect("parse DataHash");
-            assert_eq!(dh.hash, vec![6, 7, 8, 9, 10]);
+            // Should fail with NotFound because no DataHash assertion exists.
+            assert!(matches!(result, Err(Error::NotFound)));
         }
     }
 }
