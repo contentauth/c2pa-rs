@@ -5502,4 +5502,65 @@ mod tests {
             assert!(uri.contains(claim.label()));
         }
     }
+
+    mod calc_assertion_box_hash {
+        use super::super::*;
+        use crate::assertions::Uuid;
+
+        #[test]
+        fn uuid_assertion_without_salt() {
+            // Test line 1287: calc_assertion_box_hash with AssertionData::Uuid and salt = None.
+            // This tests the closing brace of the `if let Some(salt)` block for the Uuid variant.
+            const LABEL: &str = "test.uuid.assertion";
+            const UUID: &str = "ABCDABCDABCDABCDABCDABCDABCDABCD";
+            const DATA: [u8; 16] = [
+                0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+                0x0b, 0x0e,
+            ];
+
+            // Create a UUID assertion.
+            let uuid_assertion = Uuid::new(LABEL, UUID.to_string(), DATA.to_vec());
+            let assertion = uuid_assertion
+                .to_assertion()
+                .expect("failed to create assertion");
+
+            // Call calc_assertion_box_hash with salt = None to exercise line 1287.
+            let result = Claim::calc_assertion_box_hash(LABEL, &assertion, None, "sha256");
+
+            // The function should succeed and return a hash.
+            assert!(result.is_ok());
+            let hash = result.unwrap();
+            assert!(!hash.is_empty());
+        }
+
+        #[test]
+        fn uuid_assertion_with_salt() {
+            // Test the opposite path: UUID assertion with salt provided.
+            const LABEL: &str = "test.uuid.assertion";
+            const UUID: &str = "ABCDABCDABCDABCDABCDABCDABCDABCD";
+            const DATA: [u8; 16] = [
+                0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+                0x0b, 0x0e,
+            ];
+
+            // Create a UUID assertion.
+            let uuid_assertion = Uuid::new(LABEL, UUID.to_string(), DATA.to_vec());
+            let assertion = uuid_assertion
+                .to_assertion()
+                .expect("failed to create assertion");
+
+            // Call calc_assertion_box_hash with salt provided to exercise the Some branch.
+            // Salt must be at least 16 bytes long.
+            let salt = vec![
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+                0x0f, 0x10,
+            ];
+            let result = Claim::calc_assertion_box_hash(LABEL, &assertion, Some(salt), "sha256");
+
+            // The function should succeed and return a hash.
+            assert!(result.is_ok());
+            let hash = result.unwrap();
+            assert!(!hash.is_empty());
+        }
+    }
 }
