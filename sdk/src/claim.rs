@@ -5923,4 +5923,97 @@ mod tests {
             assert!(claim.get_databox(&hashed_uri).is_none());
         }
     }
+
+    mod update_assertion {
+        use super::*;
+        // Using CreativeWork for testing internal update_assertion functionality.
+        // While deprecated for public use, it's suitable for testing the error paths.
+        #[allow(deprecated)]
+        use crate::assertions::CreativeWork;
+
+        /// Test line 1656: Error when no matching assertion is found in assertion_store.
+        #[test]
+        #[allow(deprecated)]
+        fn assertion_not_found_in_store() {
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Create an assertion that doesn't exist in the claim.
+            let nonexistent_assertion = CreativeWork::new().to_assertion().expect("to_assertion");
+
+            // Try to update the nonexistent assertion.
+            let result = claim.update_assertion(nonexistent_assertion, |_| true, |_, a| Ok(a));
+
+            // Should return NotFound error.
+            assert!(matches!(result, Err(Error::NotFound)));
+        }
+
+        /// Test line 1664: Error from patch_fn callback during assertion update.
+        #[test]
+        #[allow(deprecated)]
+        fn patch_fn_error() {
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Add an assertion that we can later update.
+            let creative_work = CreativeWork::new();
+            claim.add_assertion(&creative_work).expect("add_assertion");
+
+            // Create a replacement assertion.
+            let replace_with = CreativeWork::new().to_assertion().expect("to_assertion");
+
+            // Use a patch_fn that returns an error.
+            let result = claim.update_assertion(
+                replace_with,
+                |ca| ca.assertion().label() == "stds.schema-org.CreativeWork",
+                |_, _| Err(Error::AssertionInvalidRedaction),
+            );
+
+            // Should return the error from patch_fn.
+            assert!(matches!(result, Err(Error::AssertionInvalidRedaction)));
+        }
+
+        /// Test line 1686: Error when no matching hash is found in assertions list.
+        #[test]
+        #[allow(deprecated)]
+        fn hash_not_found_in_assertions_list() {
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Add an assertion.
+            let creative_work = CreativeWork::new();
+            claim.add_assertion(&creative_work).expect("add_assertion");
+
+            // Create a replacement assertion (doesn't need to be different).
+            let replace_with = CreativeWork::new().to_assertion().expect("to_assertion");
+
+            // Corrupt the assertions list by removing or modifying the hash reference.
+            // We'll save the original hash and then modify it in the assertions list.
+            if let Some(target_assertion) = claim
+                .assertion_store
+                .iter()
+                .find(|ca| ca.assertion().label() == "stds.schema-org.CreativeWork")
+            {
+                let target_label = target_assertion.label();
+                let original_hash = target_assertion.hash().to_vec();
+
+                // Find and modify the hash in the assertions list.
+                if let Some(hashed_uri) = claim.assertions.iter_mut().find(|f| {
+                    f.url().contains(&target_label) && vec_compare(&f.hash(), &original_hash)
+                }) {
+                    // Corrupt the hash so it won't match during update_assertion.
+                    let mut corrupted_hash = original_hash.clone();
+                    corrupted_hash[0] ^= 0xff; // Flip bits in first byte.
+                    hashed_uri.update_hash(corrupted_hash);
+                }
+            }
+
+            // Try to update the assertion with corrupted hash reference.
+            let result = claim.update_assertion(
+                replace_with,
+                |ca| ca.assertion().label() == "stds.schema-org.CreativeWork",
+                |_, a| Ok(a),
+            );
+
+            // Should return NotFound error because the hash doesn't match.
+            assert!(matches!(result, Err(Error::NotFound)));
+        }
+    }
 }
