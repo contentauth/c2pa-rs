@@ -5877,16 +5877,18 @@ mod tests {
             assert!(claim.get_databox(&hashed_uri).is_none());
         }
 
-        /// Test lines 1523-1526: get_databox returns None when box_name_from_uri returns None.
+        /// Test line 1526: get_databox with empty URI string.
+        /// This tests the defensive None check when box_name_from_uri might return None.
         #[test]
-        fn invalid_relative_uri() {
+        fn empty_uri_string() {
             let claim = create_test_claim().expect("create test claim");
 
-            // Create a HashedUri with an invalid relative URI (empty path component).
-            let invalid_uri = "".to_string();
-            let hashed_uri = HashedUri::new(invalid_uri, Some("sha256".to_string()), b"hash");
+            // Create a HashedUri with an empty URI.
+            // This ensures we go through the else branch (manifest_label_from_uri returns None)
+            // and tests the box_name_from_uri None check at line 1526.
+            let hashed_uri = HashedUri::new(String::new(), Some("sha256".to_string()), b"hash");
 
-            // Should return None because box_name_from_uri will return None for empty string.
+            // Should return None.
             assert!(claim.get_databox(&hashed_uri).is_none());
         }
 
