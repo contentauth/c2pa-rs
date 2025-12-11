@@ -6057,30 +6057,103 @@ mod tests {
             assert!(matches!(result, Err(Error::NotFound)));
         }
 
-        /// Test line 1725: DataHash::from_assertion error case when non-DataHash assertion is present.
+        /// Test line 1725: DataHash::from_assertion error case with corrupt DataHash assertion.
         #[test]
-        fn update_data_hash_fails_when_data_hash_not_found() {
-            #[allow(deprecated)]
-            use crate::assertions::{CreativeWork, DataHash};
+        fn update_data_hash_skips_corrupt_data_hash() {
+            use crate::assertions::{labels, DataHash};
 
             let mut claim = create_test_claim().expect("create test claim");
 
-            // Add a non-DataHash assertion.
-            #[allow(deprecated)]
+            // Create a corrupt DataHash assertion with invalid CBOR data.
+            // This has the correct label but invalid structure.
+            let corrupt_assertion = Assertion::from_data_cbor(
+                labels::DATA_HASH,
+                &[0xff, 0xff, 0xff], // Invalid CBOR.
+            );
+
+            // Add the corrupt assertion to the store manually.
+            let dummy_hash = vec![0u8; 32];
+            let corrupt_claim_assertion = ClaimAssertion::new(
+                corrupt_assertion,
+                0,
+                &dummy_hash,
+                "sha256",
+                None,
+                ClaimAssertionType::Created,
+            );
+            claim.put_assertion_store(corrupt_claim_assertion);
+
+            // Also add a valid DataHash assertion with a matching name.
+            let mut valid_data_hash = DataHash::new("test.jpg", "sha256");
+            valid_data_hash.set_hash(vec![1, 2, 3, 4, 5]);
+            claim
+                .add_assertion(&valid_data_hash)
+                .expect("add valid data hash");
+
+            // Try to update the DataHash.
+            // Line 1725 is triggered when the matcher encounters the corrupt DataHash,
+            // tries to parse it, fails, and returns false.
+            // Then it should find the valid one and update it.
+            let mut updated_data_hash = DataHash::new("test.jpg", "sha256");
+            updated_data_hash.set_hash(vec![6, 7, 8, 9, 10]);
+
+            let result = claim.update_data_hash(updated_data_hash);
+
+            // Should succeed because a valid DataHash exists.
+            assert!(result.is_ok());
+        }
+
+        /// Test line 1672: calc_assertion_box_hash error when salt is invalid.
+        #[test]
+        #[allow(deprecated)]
+        fn calc_assertion_box_hash_fails_with_invalid_salt() {
+            use crate::{
+                assertions::CreativeWork, hashed_uri::HashedUri, jumbf::boxes::JumbfParseError,
+            };
+
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Create an assertion with valid content.
             let creative_work = CreativeWork::new();
-            claim.add_assertion(&creative_work).expect("add_assertion");
+            let assertion = creative_work.to_assertion().expect("to_assertion");
 
-            // Try to update a DataHash that doesn't exist.
-            // Line 1725 is triggered when the matcher tries to parse the CreativeWork
-            // assertion as a DataHash and fails, returning false.
-            // Since no matching DataHash is found, this should return NotFound error.
-            let mut data_hash = DataHash::new("test.jpg", "sha256");
-            data_hash.set_hash(vec![1, 2, 3, 4, 5]);
+            // Create a ClaimAssertion with an invalid salt (less than 16 bytes).
+            // This bypasses normal validation by manually constructing the ClaimAssertion.
+            let invalid_salt = vec![1, 2, 3, 4, 5]; // Only 5 bytes, needs to be >= 16.
+            let dummy_hash = vec![0u8; 32];
+            let claim_assertion = ClaimAssertion::new(
+                assertion.clone(),
+                0,
+                &dummy_hash,
+                "sha256",
+                Some(invalid_salt),
+                ClaimAssertionType::Created,
+            );
 
-            let result = claim.update_data_hash(data_hash);
+            // Manually add to assertion_store to bypass validation.
+            claim.put_assertion_store(claim_assertion);
 
-            // Should fail with NotFound because no DataHash assertion exists.
-            assert!(matches!(result, Err(Error::NotFound)));
+            // Add corresponding hashed URI to assertions list.
+            let label = format!("self#jumbf=c2pa.assertions/{}", assertion.label());
+            let hashed_uri = HashedUri::new(label, None, &dummy_hash.clone());
+            claim.assertions.push(hashed_uri);
+
+            // Try to update the assertion with the invalid salt.
+            // This should fail when calc_assertion_box_hash tries to set the salt.
+            let replace_with = CreativeWork::new().to_assertion().expect("to_assertion");
+            let result = claim.update_assertion(
+                replace_with,
+                |ca| ca.assertion().label() == "stds.schema-org.CreativeWork",
+                |_, a| Ok(a),
+            );
+
+            // Should return JumbfParseError because the salt is invalid.
+            match result {
+                Err(Error::JumbfParseError(JumbfParseError::InvalidSalt)) => {
+                    // Test passed.
+                }
+                other => panic!("Expected InvalidSalt error, got: {:?}", other),
+            }
         }
     }
 }
