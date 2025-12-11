@@ -5740,4 +5740,111 @@ mod tests {
             assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
         }
     }
+
+    mod claim_assertion_type {
+        use super::super::*;
+
+        #[test]
+        fn label_in_created_assertion_labels() {
+            // Test lines 1368-1369: When a label is in the created_assertion_labels setting,
+            // it should return ClaimAssertionType::Created.
+
+            // Set up settings with created_assertion_labels containing "stds.exif".
+            let toml_config = r#"
+                [builder]
+                created_assertion_labels = ["stds.exif"]
+            "#;
+            crate::settings::Settings::from_toml(toml_config).expect("failed to set settings");
+
+            // Create a V2 claim.
+            let claim = Claim::new("test_generator", None, 2);
+
+            // Test that stds.exif is classified as Created.
+            let assertion_type = claim.claim_assertion_type("stds.exif", false);
+            assert_eq!(assertion_type, ClaimAssertionType::Created);
+
+            // Clean up settings.
+            crate::settings::reset_default_settings().expect("failed to reset settings");
+        }
+
+        #[test]
+        fn label_not_in_created_assertion_labels() {
+            // Test lines 1370-1371: When a label is not in the created_assertion_labels setting,
+            // it should return ClaimAssertionType::Gathered.
+
+            // Set up settings with created_assertion_labels containing only "stds.exif".
+            let toml_config = r#"
+                [builder]
+                created_assertion_labels = ["stds.exif"]
+            "#;
+            crate::settings::Settings::from_toml(toml_config).expect("failed to set settings");
+
+            // Create a V2 claim.
+            let claim = Claim::new("test_generator", None, 2);
+
+            // Test that c2pa.location (not in the list) is classified as Gathered.
+            let assertion_type = claim.claim_assertion_type("c2pa.location", false);
+            assert_eq!(assertion_type, ClaimAssertionType::Gathered);
+
+            // Clean up settings.
+            crate::settings::reset_default_settings().expect("failed to reset settings");
+        }
+
+        #[test]
+        fn multiple_labels_in_created_assertion_labels() {
+            // Test lines 1368-1369: Test with multiple labels in the created_assertion_labels setting.
+
+            // Set up settings with multiple labels.
+            let toml_config = r#"
+                [builder]
+                created_assertion_labels = ["stds.exif", "c2pa.location", "my.custom.assertion"]
+            "#;
+            crate::settings::Settings::from_toml(toml_config).expect("failed to set settings");
+
+            // Create a V2 claim.
+            let claim = Claim::new("test_generator", None, 2);
+
+            // Test that all labels in the list are classified as Created.
+            assert_eq!(
+                claim.claim_assertion_type("stds.exif", false),
+                ClaimAssertionType::Created
+            );
+            assert_eq!(
+                claim.claim_assertion_type("c2pa.location", false),
+                ClaimAssertionType::Created
+            );
+            assert_eq!(
+                claim.claim_assertion_type("my.custom.assertion", false),
+                ClaimAssertionType::Created
+            );
+
+            // Test that a label not in the list is classified as Gathered.
+            assert_eq!(
+                claim.claim_assertion_type("c2pa.thumbnail", false),
+                ClaimAssertionType::Gathered
+            );
+
+            // Clean up settings.
+            crate::settings::reset_default_settings().expect("failed to reset settings");
+        }
+
+        #[test]
+        fn no_created_assertion_labels_setting() {
+            // Test lines 1373-1374: When created_assertion_labels is None (default),
+            // non-hash assertions should return ClaimAssertionType::Gathered.
+
+            // Ensure settings are at default (no created_assertion_labels).
+            crate::settings::reset_default_settings().expect("failed to reset settings");
+
+            // Create a V2 claim.
+            let claim = Claim::new("test_generator", None, 2);
+
+            // Test that a non-hash assertion is classified as Gathered when no setting is present.
+            let assertion_type = claim.claim_assertion_type("stds.exif", false);
+            assert_eq!(assertion_type, ClaimAssertionType::Gathered);
+
+            // Clean up settings.
+            crate::settings::reset_default_settings().expect("failed to reset settings");
+        }
+    }
 }
