@@ -508,6 +508,7 @@ mod tests {
         }
 
         // Signer with a custom time authority URL for testing error paths.
+        #[cfg(not(target_arch = "wasm32"))]
         struct SignerWithUrl {
             url: String,
         }
@@ -1313,6 +1314,7 @@ mod tests {
         }
 
         // AsyncSigner with a custom time authority URL for testing error paths.
+        #[cfg(not(target_arch = "wasm32"))]
         struct AsyncSignerWithUrl {
             url: String,
         }
