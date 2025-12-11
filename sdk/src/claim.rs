@@ -5924,6 +5924,47 @@ mod tests {
         }
     }
 
+    mod add_verifiable_credential {
+        use super::*;
+
+        /// Test lines 1573-1575: Error when trying to add verifiable credential to a V2+ claim.
+        #[test]
+        fn version_compatibility_error() {
+            // Create a V2 claim.
+            let mut claim = Claim::new("test_generator", None, 2);
+
+            // Try to add a verifiable credential (only supported in V1).
+            let test_vc = r#"{
+                "@context": [
+                    "https://www.w3.org/2018/credentials/v1",
+                    "http://schema.org"
+                ],
+                "id": "https://example.com/credentials/123",
+                "type": [
+                    "VerifiableCredential",
+                    "NPPACredential"
+                ],
+                "issuer": "https://nppa.org/",
+                "credentialSubject": {
+                    "id": "https://example.com/subject/456",
+                    "name": "Bob Ross",
+                    "memberOf": "https://nppa.org/"
+                }
+            }"#;
+
+            let result = claim.add_verifiable_credential(test_vc);
+
+            // Should return VersionCompatibility error.
+            assert!(result.is_err());
+            match result {
+                Err(Error::VersionCompatibility(msg)) => {
+                    assert_eq!(msg, "verifiable credentials not supported");
+                }
+                _ => panic!("Expected VersionCompatibility error with 'verifiable credentials not supported' message"),
+            }
+        }
+    }
+
     mod update_assertion {
         use super::*;
         // Using CreativeWork for testing internal update_assertion functionality.
