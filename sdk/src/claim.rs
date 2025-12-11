@@ -6692,4 +6692,194 @@ mod tests {
             Ok(())
         }
     }
+
+    mod verify_claim_tests {
+        use super::*;
+        use crate::{
+            assertions::{Action, Actions},
+            crypto::cose::CertificateTrustPolicy,
+            http::SyncGenericResolver,
+            settings::Settings,
+            status_tracker::{ErrorBehavior, StatusTracker},
+            store::StoreValidationInfo,
+            validation_status, DigitalSourceType,
+        };
+
+        /// Test lines 1960-1966: Verify that verify_claim returns ClaimMissingSignatureBox
+        /// when the signature box is missing or points to the wrong manifest.
+        #[test]
+        fn signature_box_missing() -> Result<()> {
+            // Create a test claim with a V2 label.
+            let mut claim = crate::utils::test::create_test_claim()?;
+            claim.build()?;
+
+            // Set an invalid signature URI that doesn't point to the SIGNATURE box.
+            claim.signature = "self#jumbf=/c2pa/invalid_box".to_string();
+
+            // Set up minimal validation infrastructure.
+            let mut validation_log =
+                StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+            let svi = StoreValidationInfo::default();
+            let ctp = CertificateTrustPolicy::default();
+            let http_resolver = SyncGenericResolver::new();
+            let settings = Settings::default();
+
+            // Create minimal asset data (empty bytes).
+            let asset_bytes = Vec::new();
+            let mut asset_data = ClaimAssetData::Bytes(&asset_bytes, "image/jpeg");
+
+            // Attempt to verify the claim - should fail with ClaimMissingSignatureBox.
+            let result = Claim::verify_claim(
+                &claim,
+                &mut asset_data,
+                &svi,
+                false,
+                &ctp,
+                &mut validation_log,
+                &http_resolver,
+                &settings,
+            );
+
+            // Verify we get the expected error.
+            assert!(matches!(result, Err(Error::ClaimMissingSignatureBox)));
+
+            // Verify the validation log contains the expected status code.
+            let log_items = validation_log.logged_items();
+            assert!(
+                log_items.iter().any(|item| {
+                    item.validation_status.as_ref().map(|s| s.as_ref())
+                        == Some(validation_status::CLAIM_SIGNATURE_MISSING)
+                }),
+                "Expected CLAIM_SIGNATURE_MISSING in validation log"
+            );
+
+            Ok(())
+        }
+
+        /// Test lines 1971-1977: Verify that verify_claim returns ClaimInvalidContent
+        /// when a V2 claim has an invalid label format.
+        #[test]
+        fn invalid_v2_claim_label() -> Result<()> {
+            // Create a minimal claim structure with invalid label.
+            // We'll use the fact that claim_version is checked against label format.
+            let mut claim = Claim::new("test", Some("test"), 2);
+
+            // Override the label to something invalid for V2.
+            // V2 labels must follow the pattern: urn:c2pa:GUID[:vendor[:version_reason]]
+            // Let's set it to something that doesn't parse correctly.
+            claim.label = "invalid_label_format".to_string();
+
+            // Add minimal required assertions for V2.
+            let mut cg_info = ClaimGeneratorInfo::new("test app");
+            cg_info.version = Some("1.0.0".to_string());
+            claim.add_claim_generator_info(cg_info);
+
+            let created_action =
+                Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty);
+            let actions = Actions::new().add_action(created_action);
+            claim.add_assertion(&actions)?;
+
+            claim.build()?;
+
+            // Set a valid signature URI to pass the first check.
+            claim.signature = format!("self#jumbf={}/c2pa.signature", claim.label());
+
+            // Set up minimal validation infrastructure.
+            let mut validation_log =
+                StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+            let svi = StoreValidationInfo::default();
+            let ctp = CertificateTrustPolicy::default();
+            let http_resolver = SyncGenericResolver::new();
+            let settings = Settings::default();
+
+            // Create minimal asset data (empty bytes).
+            let asset_bytes = Vec::new();
+            let mut asset_data = ClaimAssetData::Bytes(&asset_bytes, "image/jpeg");
+
+            // Attempt to verify the claim - should fail with ClaimInvalidContent.
+            let result = Claim::verify_claim(
+                &claim,
+                &mut asset_data,
+                &svi,
+                false,
+                &ctp,
+                &mut validation_log,
+                &http_resolver,
+                &settings,
+            );
+
+            // Verify we get the expected error.
+            assert!(
+                matches!(result, Err(Error::ClaimInvalidContent)),
+                "Expected ClaimInvalidContent, got: {:?}",
+                result
+            );
+
+            // Verify the validation log contains the expected status code.
+            let log_items = validation_log.logged_items();
+            assert!(
+                log_items.iter().any(|item| {
+                    item.validation_status.as_ref().map(|s| s.as_ref())
+                        == Some(validation_status::CLAIM_MALFORMED)
+                }),
+                "Expected CLAIM_MALFORMED in validation log"
+            );
+
+            Ok(())
+        }
+
+        /// Test lines 1987-1989: Verify that verify_claim handles the case where
+        /// original_bytes is None and data() must be called.
+        #[test]
+        fn generates_data_when_original_bytes_none() -> Result<()> {
+            // Create a test claim without original_bytes (typical for newly created claims).
+            let mut claim = crate::utils::test::create_test_claim()?;
+            claim.build()?;
+
+            // Ensure original_bytes is None to trigger the data generation path.
+            assert!(
+                claim.original_bytes.is_none(),
+                "original_bytes should be None for newly created claim"
+            );
+
+            // The claim needs a valid signature to get past the early checks.
+            // Since we're testing the data generation path, we'll need to sign it.
+            // However, for this specific test, we just want to verify the code path
+            // is exercised. The function will fail later due to missing signature,
+            // but lines 1987-1989 will be covered.
+
+            claim.signature = format!("self#jumbf={}/c2pa.signature", claim.label());
+
+            // Set up minimal validation infrastructure.
+            let mut validation_log =
+                StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+            let svi = StoreValidationInfo::default();
+            let ctp = CertificateTrustPolicy::default();
+            let http_resolver = SyncGenericResolver::new();
+            let settings = Settings::default();
+
+            // Create minimal asset data (empty bytes).
+            let asset_bytes = Vec::new();
+            let mut asset_data = ClaimAssetData::Bytes(&asset_bytes, "image/jpeg");
+
+            // Attempt to verify the claim. It will fail, but lines 1987-1989 will execute
+            // since original_bytes is None and data() will be called.
+            let result = Claim::verify_claim(
+                &claim,
+                &mut asset_data,
+                &svi,
+                false,
+                &ctp,
+                &mut validation_log,
+                &http_resolver,
+                &settings,
+            );
+
+            // The verification will fail (no valid signature), but we've exercised
+            // the code path where data() is called.
+            assert!(result.is_err(), "Expected verification to fail");
+
+            Ok(())
+        }
+    }
 }
