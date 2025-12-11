@@ -6156,4 +6156,198 @@ mod tests {
             }
         }
     }
+
+    mod redact_assertion {
+        use super::super::*;
+        use crate::{
+            assertions::{labels, Actions, DataBox, Metadata},
+            jumbf::labels::to_databox_uri,
+        };
+
+        /// Test line 1759: Error when trying to redact an actions assertion.
+        #[test]
+        fn cannot_redact_actions_assertion() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Add an actions assertion.
+            let actions = Actions::new().add_action(crate::assertions::Action::new("c2pa.edited"));
+            claim
+                .add_assertion(&actions)
+                .expect("failed to add actions assertion");
+
+            // Try to redact the actions assertion.
+            // Build a URI that looks like a self#jumbf link to an actions assertion.
+            let actions_uri = format!("self#jumbf={}/{}", labels::ASSERTION_STORE, labels::ACTIONS);
+
+            let result = claim.redact_assertion(&actions_uri);
+
+            // Should fail with AssertionInvalidRedaction.
+            assert!(result.is_err());
+            match result {
+                Err(Error::AssertionInvalidRedaction) => {
+                    // Test passed.
+                }
+                other => panic!("Expected AssertionInvalidRedaction error, got: {:?}", other),
+            }
+        }
+
+        /// Test line 1759: Error when trying to redact a c2pa.hash.* assertion.
+        #[test]
+        fn cannot_redact_hash_assertion() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Try to redact a hash assertion (e.g., c2pa.hash.data).
+            // Build a URI that looks like a self#jumbf link to a hash assertion.
+            let hash_uri = format!("self#jumbf={}/c2pa.hash.data", labels::ASSERTION_STORE);
+
+            let result = claim.redact_assertion(&hash_uri);
+
+            // Should fail with AssertionInvalidRedaction.
+            assert!(result.is_err());
+            match result {
+                Err(Error::AssertionInvalidRedaction) => {
+                    // Test passed.
+                }
+                other => panic!("Expected AssertionInvalidRedaction error, got: {:?}", other),
+            }
+        }
+
+        /// Test line 1759: Error when trying to redact a c2pa.hash.bmff assertion.
+        #[test]
+        fn cannot_redact_bmff_hash_assertion() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Try to redact a BMFF hash assertion.
+            let hash_uri = format!("self#jumbf={}/c2pa.hash.bmff", labels::ASSERTION_STORE);
+
+            let result = claim.redact_assertion(&hash_uri);
+
+            // Should fail with AssertionInvalidRedaction.
+            assert!(result.is_err());
+            match result {
+                Err(Error::AssertionInvalidRedaction) => {
+                    // Test passed.
+                }
+                other => panic!("Expected AssertionInvalidRedaction error, got: {:?}", other),
+            }
+        }
+
+        /// Test lines 1763-1771: Successfully redacting an assertion from assertion_store.
+        #[test]
+        fn successfully_redact_assertion() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Add a metadata assertion that can be redacted.
+            const MY_METADATA: &str = "my.test.metadata";
+            let data = serde_json::json!({
+                "@context": {
+                    "dc": "http://purl.org/dc/elements/1.1/"
+                },
+                "dc:title": "Test Title"
+            })
+            .to_string();
+
+            let metadata = Metadata::new(MY_METADATA, &data).expect("create metadata");
+            claim
+                .add_assertion(&metadata)
+                .expect("failed to add metadata assertion");
+
+            // Count assertions before redaction.
+            let initial_count = claim.assertion_store.len();
+            assert!(initial_count > 0);
+
+            // Build a URI that looks like a self#jumbf link to the assertion.
+            let assertion_uri = format!("self#jumbf={}/{}", labels::ASSERTION_STORE, MY_METADATA);
+
+            // Redact the assertion.
+            let result = claim.redact_assertion(&assertion_uri);
+
+            // Should succeed.
+            assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+
+            // Verify the assertion was removed.
+            assert_eq!(claim.assertion_store.len(), initial_count - 1);
+
+            // Verify the specific assertion is no longer present.
+            assert!(!claim
+                .assertion_store
+                .iter()
+                .any(|ca| ca.label() == MY_METADATA));
+        }
+
+        /// Test lines 1772-1780: Successfully redacting a databox.
+        #[test]
+        fn successfully_redact_databox() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Add a databox to the claim.
+            let databox = DataBox {
+                format: "application/octet-stream".to_string(),
+                data: vec![1, 2, 3, 4, 5],
+                data_types: None,
+            };
+            let db_cbor = serde_cbor::to_vec(&databox).expect("serialize databox");
+            claim
+                .put_databox("c2pa.test_databox", &db_cbor, None)
+                .expect("put databox");
+
+            // Verify the databox was added.
+            assert_eq!(claim.databoxes().len(), 1);
+
+            // Build the correct URI using to_databox_uri.
+            let databox_uri = to_databox_uri(claim.label(), "c2pa.test_databox");
+
+            // Redact the databox.
+            let result = claim.redact_assertion(&databox_uri);
+
+            // Should succeed.
+            assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+
+            // Verify the databox was removed.
+            assert_eq!(claim.databoxes().len(), 0);
+        }
+
+        /// Test line 1783: Error when trying to redact a non-existent assertion.
+        #[test]
+        fn cannot_redact_nonexistent_assertion() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Try to redact an assertion that doesn't exist in the assertion_store.
+            let nonexistent_uri = format!(
+                "self#jumbf={}/c2pa.nonexistent.assertion",
+                labels::ASSERTION_STORE
+            );
+
+            let result = claim.redact_assertion(&nonexistent_uri);
+
+            // Should fail with AssertionInvalidRedaction (line 1783).
+            assert!(result.is_err());
+            match result {
+                Err(Error::AssertionInvalidRedaction) => {
+                    // Test passed.
+                }
+                other => panic!("Expected AssertionInvalidRedaction error, got: {:?}", other),
+            }
+        }
+
+        /// Test line 1783: Error when trying to redact a non-existent databox.
+        #[test]
+        fn cannot_redact_nonexistent_databox() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Try to redact a databox that doesn't exist in the data_boxes.
+            let nonexistent_uri = to_databox_uri(claim.label(), "c2pa.nonexistent.databox");
+
+            let result = claim.redact_assertion(&nonexistent_uri);
+
+            // Should fail with AssertionInvalidRedaction (line 1783).
+            assert!(result.is_err());
+            match result {
+                Err(Error::AssertionInvalidRedaction) => {
+                    // Test passed.
+                }
+                other => panic!("Expected AssertionInvalidRedaction error, got: {:?}", other),
+            }
+        }
+    }
 }
