@@ -6349,5 +6349,27 @@ mod tests {
                 other => panic!("Expected AssertionInvalidRedaction error, got: {:?}", other),
             }
         }
+
+        /// Test lines 1781-1783: Error when URI contains neither ASSERTION_STORE nor DATABOX_STORE.
+        #[test]
+        fn cannot_redact_invalid_uri() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Try to redact with a URI that doesn't contain ASSERTION_STORE or DATABOX_STORE.
+            // This causes both the if and else-if conditions to be false, so execution
+            // falls through the closing brace at line 1781 to the error at line 1783.
+            let invalid_uri = "self#jumbf=c2pa.unknown_store/some.assertion";
+
+            let result = claim.redact_assertion(invalid_uri);
+
+            // Should fail with AssertionInvalidRedaction (line 1783).
+            assert!(result.is_err());
+            match result {
+                Err(Error::AssertionInvalidRedaction) => {
+                    // Test passed.
+                }
+                other => panic!("Expected AssertionInvalidRedaction error, got: {:?}", other),
+            }
+        }
     }
 }
