@@ -1523,6 +1523,11 @@ impl Claim {
             if let Some(box_name) = box_name_from_uri(&hr.url()) {
                 to_databox_uri(self.label(), &box_name)
             } else {
+                // NOTE: This branch is currently unreachable because box_name_from_uri
+                // always returns Some(...) with the current implementation. The function
+                // uses split('/') which always produces at least one element, so
+                // parts.last() will always return Some. This is defensive code in case
+                // the implementation of box_name_from_uri changes in the future.
                 return None;
             }
         };
