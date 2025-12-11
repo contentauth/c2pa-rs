@@ -513,6 +513,7 @@ mod tests {
             url: String,
         }
 
+        #[cfg(not(target_arch = "wasm32"))]
         impl Signer for SignerWithUrl {
             fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
                 Ok(vec![])
@@ -1319,8 +1320,8 @@ mod tests {
             url: String,
         }
 
-        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        #[cfg(not(target_arch = "wasm32"))]
+        #[async_trait]
         impl AsyncSigner for AsyncSignerWithUrl {
             async fn sign(&self, _data: Vec<u8>) -> Result<Vec<u8>> {
                 Ok(vec![])
@@ -1343,8 +1344,8 @@ mod tests {
             }
         }
 
-        #[cfg(not(target_arch = "wasm32"))]
         #[c2pa_macros::c2pa_test_async]
+        #[cfg(not(target_arch = "wasm32"))]
         async fn send_timestamp_request_error_path() {
             use httpmock::MockServer;
 

@@ -6056,5 +6056,48 @@ mod tests {
             // Should return NotFound error because the hash doesn't match.
             assert!(matches!(result, Err(Error::NotFound)));
         }
+
+        /// Test line 1725: DataHash::from_assertion error case when non-DataHash assertion is present.
+        #[test]
+        fn update_data_hash_skips_non_data_hash_assertions() {
+            #[allow(deprecated)]
+            use crate::assertions::{CreativeWork, DataHash};
+
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Add a non-DataHash assertion.
+            #[allow(deprecated)]
+            let creative_work = CreativeWork::new();
+            claim.add_assertion(&creative_work).expect("add_assertion");
+
+            // Add a DataHash assertion.
+            let mut data_hash = DataHash::new("test.jpg", "sha256");
+            data_hash.set_hash(vec![1, 2, 3, 4, 5]);
+            claim
+                .add_assertion(&data_hash)
+                .expect("add data hash assertion");
+
+            // Update the DataHash with new values.
+            let mut updated_data_hash = DataHash::new("test.jpg", "sha256");
+            updated_data_hash.set_hash(vec![6, 7, 8, 9, 10]);
+
+            // This should succeed and update only the DataHash assertion.
+            // Line 1725 is triggered when the matcher tries to parse the CreativeWork
+            // assertion as a DataHash and fails, returning false.
+            let result = claim.update_data_hash(updated_data_hash);
+
+            // Should succeed.
+            assert!(result.is_ok());
+
+            // Verify that the DataHash was updated by checking the hash value.
+            let updated_dh = claim
+                .assertion_store
+                .iter()
+                .find(|ca| ca.assertion().label() == DataHash::LABEL)
+                .expect("DataHash assertion should exist");
+
+            let dh = DataHash::from_assertion(updated_dh.assertion()).expect("parse DataHash");
+            assert_eq!(dh.hash, vec![6, 7, 8, 9, 10]);
+        }
     }
 }
