@@ -3922,6 +3922,20 @@ impl Claim {
         }
     }
 
+    /// Return the claim JUMBF URI of the ingredient with a ParentOf relationship.
+    pub fn parent_claim_uri(&self) -> Result<Option<String>> {
+        for i in self.ingredient_assertions() {
+            let ingredient = Ingredient::from_assertion(i.assertion())?;
+            if ingredient.relationship == Relationship::ParentOf {
+                return Ok(ingredient
+                    .c2pa_manifest()
+                    .map(|hashed_uri| hashed_uri.url()));
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Checks whether or not ocsp values are present in claim
     pub fn has_ocsp_vals(&self) -> bool {
         if !self.certificate_status_assertions().is_empty() {

@@ -24,12 +24,15 @@ use crate::{
         asn1::rfc3161::{TimeStampResp, TstInfo},
         cose::{CertificateTrustPolicy, CoseError, TimeStampStorage},
         raw_signature::{AsyncRawSigner, RawSigner},
-        time_stamp::{verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampResponse},
+        time_stamp::{
+            verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampError,
+            TimeStampResponse,
+        },
     },
     log_item,
     settings::Settings,
     status_tracker::StatusTracker,
-    validation_status,
+    validation_status, Result,
 };
 
 /// Given a COSE signature, retrieve the `sigTst` header from it and validate
@@ -144,9 +147,22 @@ pub(crate) fn parse_and_validate_sigtst(
         let tbs = cose_countersign_data(data, p_header);
 
         let tst_info_res = if _sync {
-            verify_time_stamp(&token.val, &tbs, ctp, validation_log, settings)
+            verify_time_stamp(
+                &token.val,
+                &tbs,
+                ctp,
+                validation_log,
+                settings.verify.verify_timestamp_trust,
+            )
         } else {
-            verify_time_stamp_async(&token.val, &tbs, ctp, validation_log, settings).await
+            verify_time_stamp_async(
+                &token.val,
+                &tbs,
+                ctp,
+                validation_log,
+                settings.verify.verify_timestamp_trust,
+            )
+            .await
         };
 
         if let Ok(tst_info) = tst_info_res {
@@ -232,9 +248,11 @@ pub(crate) fn add_sigtst_header(
         if tss == TimeStampStorage::V2_sigTst2_CTT {
             // In `sigTst2`, we use only the `TimeStampToken` and not `TimeStampRsp` for
             // sigTst2
-            cts = timestamptoken_from_timestamprsp(&cts).ok_or(CoseError::CborGenerationError(
-                "unable to generate time stamp token".to_string(),
-            ))?;
+            cts = timestamptoken_from_timestamprsp(&cts).map_err(|err| {
+                TimeStampError::DecodeError(format!(
+                    "unable to parse time stamp token from timestamp response: {err:?}"
+                ))
+            })?;
         }
 
         let cts = make_cose_timestamp(&cts);
@@ -272,26 +290,35 @@ fn make_cose_timestamp(ts_data: &[u8]) -> TstContainer {
 }
 
 /// Return DER encoded TimeStampToken used by sigTst2 from TimeStampResponse.
-pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Option<Vec<u8>> {
+pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Result<Vec<u8>> {
     let ts_resp = TimeStampResponse(
-        Constructed::decode(ts, bcder::Mode::Der, TimeStampResp::take_from).ok()?,
+        Constructed::decode(ts, bcder::Mode::Der, TimeStampResp::take_from).map_err(|err| {
+            CoseError::InternalError(format!("invalid timestamp response: {err:?}"))
+        })?,
     );
 
-    let tst = ts_resp.0.time_stamp_token?;
+    let tst = ts_resp
+        .0
+        .time_stamp_token
+        .ok_or_else(|| CoseError::InternalError("invalid timestamp token".to_string()))?;
 
-    let a: Result<Vec<u32>, CoseError> = tst
+    let a = tst
         .content_type
         .iter()
         .map(|v| {
             v.to_u32()
                 .ok_or(CoseError::InternalError("invalid component".to_string()))
         })
-        .collect();
+        .collect::<Result<Vec<u32>, CoseError>>()?;
 
     let ci = ContentInfo {
-        content_type: rasn::types::ObjectIdentifier::new(a.ok()?)?,
+        content_type: rasn::types::ObjectIdentifier::new(a).ok_or(CoseError::InternalError(
+            "invalid object identifier for timestamp response".to_string(),
+        ))?,
         content: rasn::types::Any::new(tst.content.as_bytes().to_vec()),
     };
 
-    rasn::der::encode(&ci).ok()
+    Ok(rasn::der::encode(&ci).map_err(|err| {
+        CoseError::InternalError(format!("failed to encode timestamp token: {err:?}"))
+    })?)
 }

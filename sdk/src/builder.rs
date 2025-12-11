@@ -32,12 +32,16 @@ use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
-        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User,
-        UserCbor,
+        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail,
+        TimeStamp, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
-    http::{restricted::RestrictedResolver, AsyncGenericResolver, SyncGenericResolver},
+    http::{
+        restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
+        SyncGenericResolver, SyncHttpResolver,
+    },
+    jumbf::labels::manifest_label_from_uri,
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::{self, Settings},
@@ -1364,12 +1368,7 @@ impl Builder {
     }
 
     #[cfg(feature = "add_thumbnails")]
-    fn maybe_add_thumbnail<R>(
-        &mut self,
-        format: &str,
-        stream: &mut R,
-        settings: &Settings,
-    ) -> Result<&mut Self>
+    fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
     where
         R: Read + Seek + ?Sized,
     {
@@ -1379,7 +1378,7 @@ impl Builder {
         }
 
         // check settings to see if we should auto generate a thumbnail
-        let auto_thumbnail = settings.builder.thumbnail.enabled;
+        let auto_thumbnail = self.settings.builder.thumbnail.enabled;
 
         if self.definition.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
@@ -1389,7 +1388,7 @@ impl Builder {
                 crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
                     format,
                     &mut stream,
-                    settings,
+                    &self.settings,
                 )?
             {
                 stream.rewind()?;
@@ -1429,6 +1428,79 @@ impl Builder {
             stream.rewind()?;
         }
         Ok(self)
+    }
+
+    #[async_generic(async_signature(
+        &mut self,
+        time_authority_url: &str,
+        store: &mut Store,
+        http_resolver: &impl AsyncHttpResolver,
+    ))]
+    fn maybe_add_timestamp_to_parent(
+        &mut self,
+        time_authority_url: &str,
+        store: &mut Store,
+        http_resolver: &impl SyncHttpResolver,
+    ) -> Result<()> {
+        if !self.settings.builder.add_timestamp_assertion_to_parent {
+            return Ok(());
+        }
+
+        let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        if let Some(parent_claim_uri) = provenance_claim.parent_claim_uri()? {
+            let parent_claim_id =
+                manifest_label_from_uri(&parent_claim_uri).ok_or(Error::ClaimEncoding)?;
+
+            // First check if a timestamp assertion already exists.
+            let timestamp_assertions = provenance_claim.timestamp_assertions();
+            let mut timestamp_assertion = if !timestamp_assertions.is_empty() {
+                // There can only be one timestamp assertion per the spec.
+                let timestamp_assertion =
+                    TimeStamp::from_assertion(timestamp_assertions[0].assertion())?;
+                if timestamp_assertion
+                    .get_timestamp(&parent_claim_id)
+                    .is_some()
+                {
+                    return Ok(());
+                }
+
+                timestamp_assertion
+            } else {
+                TimeStamp::new()
+            };
+
+            match store.get_cose_sign1_signature(&parent_claim_id)? {
+                Some(signature) => {
+                    if _sync {
+                        timestamp_assertion.refresh_timestamp(
+                            time_authority_url,
+                            &parent_claim_id,
+                            &signature,
+                            http_resolver,
+                        )?;
+                    } else {
+                        timestamp_assertion
+                            .refresh_timestamp_async(
+                                time_authority_url,
+                                &parent_claim_id,
+                                &signature,
+                                http_resolver,
+                            )
+                            .await?;
+                    }
+                }
+                None => return Err(Error::ClaimMissingSignatureBox),
+            }
+
+            let claim = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+            if claim.timestamp_assertions().is_empty() {
+                claim.add_assertion(&timestamp_assertion)?;
+            } else {
+                claim.replace_assertion(timestamp_assertion.to_assertion()?)?;
+            }
+        }
+
+        Ok(())
     }
 
     // Find an assertion in the manifest.
@@ -1584,14 +1656,13 @@ impl Builder {
         R: Read + Seek + Send,
         W: Write + Read + Seek + Send,
     {
-        let settings = crate::settings::get_settings().unwrap_or_default();
         let http_resolver = if _sync {
             SyncGenericResolver::new()
         } else {
             AsyncGenericResolver::new()
         };
         let mut http_resolver = RestrictedResolver::new(http_resolver);
-        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
+        http_resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
 
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
@@ -1608,17 +1679,49 @@ impl Builder {
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(&format, source, &settings)?;
+        self.maybe_add_thumbnail(&format, source)?;
 
         // convert the manifest to a store
-        let mut store = self.to_store(&settings)?;
+        let mut store = self.to_store(&self.settings)?;
+
+        // add timestamp if conditions allow
+        if let Some(timestamp_authority_url) = signer.time_authority_url() {
+            if _sync {
+                self.maybe_add_timestamp_to_parent(
+                    &timestamp_authority_url,
+                    &mut store,
+                    &http_resolver,
+                )?;
+            } else {
+                self.maybe_add_timestamp_to_parent_async(
+                    &timestamp_authority_url,
+                    &mut store,
+                    &http_resolver,
+                )
+                .await?
+            }
+        }
 
         // sign and write our store to to the output image file
         if _sync {
-            store.save_to_stream(&format, source, dest, signer, &http_resolver, &settings)
+            store.save_to_stream(
+                &format,
+                source,
+                dest,
+                signer,
+                &http_resolver,
+                &self.settings,
+            )
         } else {
             store
-                .save_to_stream_async(&format, source, dest, signer, &http_resolver, &settings)
+                .save_to_stream_async(
+                    &format,
+                    source,
+                    dest,
+                    signer,
+                    &http_resolver,
+                    &self.settings,
+                )
                 .await
         }
     }
