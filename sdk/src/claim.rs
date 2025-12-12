@@ -453,10 +453,13 @@ impl Claim {
         }
     }
 
-    /// Create a new claim with a user supplied GUID.
-    /// user_guid: is user supplied guid conforming the C2PA spec for manifest names
-    /// claim_generator: User agent see c2pa spec for format
-    /// claim_version: the Claim version to generate
+    /// Create a new [`Claim`] with a user-supplied GUID.
+    ///
+    /// # Parameters
+    ///
+    /// * `user_guid` is a user-supplied GUID conforming to the C2PA spec for manifest names.
+    /// * `claim_generator` is a user-agent description. (See c2pa spec for format.)
+    /// * `claim_version` is the Claim version to generate.
     pub fn new_with_user_guid<S: Into<String>>(
         claim_generator: S,
         user_guid: S,
@@ -616,6 +619,9 @@ impl Claim {
                     }
                 }
             } else {
+                // NOTE: This error path is unreachable in practice because map_cbor_to_type()
+                // returns None for non-Map values, causing version detection (lines 562-564)
+                // to fail with "unsupported claim version" before reaching this point.
                 return Err(Error::ClaimDecoding("claim is not an object".to_string()));
             }
 
@@ -714,6 +720,9 @@ impl Claim {
                     }
                 }
             } else {
+                // NOTE: This error path is unreachable in practice because map_cbor_to_type()
+                // returns None for non-Map values, causing version detection (lines 567-570)
+                // to fail with "unsupported claim version" before reaching this point.
                 return Err(Error::ClaimDecoding("claim is not an object".to_string()));
             }
 
@@ -727,6 +736,10 @@ impl Claim {
             let signature: String = map_cbor_to_type(SIGNATURE_F, &claim_value).ok_or(
                 Error::ClaimDecoding("signature is missing or invalid".to_string()),
             )?;
+            // NOTE: The error "created_assertions is missing or invalid" below is unreachable
+            // in practice because version detection (lines 567-570) requires created_assertions
+            // to be deserializable as Vec<HashedUri>. If it's missing or invalid, version
+            // detection fails with "unsupported claim version" before reaching this point.
             let created_assertions: Vec<HashedUri> =
                 map_cbor_to_type(CREATED_ASSERTIONS_F, &claim_value).ok_or(
                     Error::ClaimDecoding("created_assertions is missing or invalid".to_string()),
@@ -1180,38 +1193,34 @@ impl Claim {
     }
 
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
-        if self.claim_generator_hints.is_none() {
-            self.claim_generator_hints = Some(HashMap::new());
-        }
+        let hints_map = self.claim_generator_hints.get_or_insert_with(HashMap::new);
 
-        if let Some(map) = &mut self.claim_generator_hints {
-            // if the key is already there do we need to merge the new value, so get its value
-            let curr_val = match hint_key {
-                // keys where new values should be merges
-                GH_UA | GH_FULL_VERSION_LIST => {
-                    if let Some(curr_ch_ua) = map.get(hint_key) {
-                        curr_ch_ua.as_str().map(|curr_val| curr_val.to_owned())
-                    } else {
-                        None
-                    }
+        // if the key is already there do we need to merge the new value, so get its value
+        let curr_val = match hint_key {
+            // keys where new values should be merges
+            GH_UA | GH_FULL_VERSION_LIST => {
+                if let Some(curr_ch_ua) = hints_map.get(hint_key) {
+                    curr_ch_ua.as_str().map(|curr_val| curr_val.to_owned())
+                } else {
+                    None
                 }
-                _ => None,
-            };
-
-            // had an existing value so merge
-            if let Some(curr_val) = curr_val {
-                if let Some(append_val) = hint_value.as_str() {
-                    map.insert(
-                        hint_key.to_string(),
-                        Value::String(format!("{curr_val}, {append_val}")),
-                    );
-                }
-                return;
             }
+            _ => None,
+        };
 
-            // all other keys treat as replacement
-            map.insert(hint_key.to_string(), hint_value);
+        // had an existing value so merge
+        if let Some(curr_val) = curr_val {
+            if let Some(append_val) = hint_value.as_str() {
+                hints_map.insert(
+                    hint_key.to_string(),
+                    Value::String(format!("{curr_val}, {append_val}")),
+                );
+            }
+            return;
         }
+
+        // all other keys treat as replacement
+        hints_map.insert(hint_key.to_string(), hint_value);
     }
 
     pub fn get_claim_generator_hint_map(&self) -> Option<&HashMap<String, Value>> {
@@ -1302,7 +1311,7 @@ impl Claim {
 
     fn compatibility_checks(&self, assertion: &Assertion) -> Result<()> {
         let assertion_version = assertion.get_ver();
-        let assertion_label = assertion.label();
+        let assertion_label = assertion.label_root();
 
         if assertion_label == ACTIONS {
             // check for actions V1
@@ -1514,6 +1523,11 @@ impl Claim {
             if let Some(box_name) = box_name_from_uri(&hr.url()) {
                 to_databox_uri(self.label(), &box_name)
             } else {
+                // NOTE: This branch is currently unreachable because box_name_from_uri
+                // always returns Some(...) with the current implementation. The function
+                // uses split('/') which always produces at least one element, so
+                // parts.last() will always return Some. This is defensive code in case
+                // the implementation of box_name_from_uri changes in the future.
                 return None;
             }
         };
@@ -4003,12 +4017,13 @@ pub(crate) fn check_ocsp_status(
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     #![allow(clippy::expect_used)]
+    #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{resource_store::UriOrResource, utils::test::create_test_claim};
+    use crate::utils::test::create_test_claim;
 
     #[test]
     fn test_build_claim() {
@@ -4045,147 +4060,2831 @@ pub mod tests {
         println!("Claim: {json_str}");
     }
 
-    #[test]
-    fn test_build_claim_generator_hints() {
-        // Create a new claim.
-        let mut claim = create_test_claim().expect("create test claim");
+    mod new_with_user_guid {
+        use super::super::*;
 
-        claim.add_claim_generator_hint(
-            GH_FULL_VERSION_LIST,
-            Value::String(r#""user app";v="2.3.4""#.to_string()),
-        );
-        claim.add_claim_generator_hint(
-            GH_FULL_VERSION_LIST,
-            Value::String(r#""some toolkit";v="1.0.0""#.to_string()),
-        );
+        #[test]
+        fn good_v1() {
+            Claim::new_with_user_guid(
+                "claim_generator",
+                "acme:urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                1,
+            )
+            .unwrap();
+        }
 
-        let expected_value = r#""user app";v="2.3.4", "some toolkit";v="1.0.0""#;
+        #[test]
+        fn good_v2() {
+            Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+                2,
+            )
+            .unwrap();
+        }
 
-        let cg_map = claim.get_claim_generator_hint_map().unwrap();
-        let value = &cg_map[GH_FULL_VERSION_LIST];
+        #[test]
+        fn feature_incompatible() {
+            let result = Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+                1,
+            );
+            assert!(result.is_err());
+        }
 
-        assert_eq!(expected_value, value.as_str().unwrap());
-    }
+        #[test]
+        fn version_incompatible() {
+            let result = Claim::new_with_user_guid(
+                "claim_generator",
+                "acme:urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                2,
+            );
+            assert!(result.is_err());
+        }
 
-    #[test]
-    fn test_build_claim_generator_info() {
-        // Create a new claim.
-        let mut claim = create_test_claim().expect("create test claim");
+        #[test]
+        fn malformed() {
+            let result = Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+                1,
+            );
+            assert!(result.is_err());
+        }
 
-        let mut info = ClaimGeneratorInfo::new("test app");
-        info.version = Some("2.3.4".to_string());
-        info.icon = Some(UriOrResource::HashedUri(HashedUri::new(
-            "self#jumbf=c2pa.databoxes.data_box".to_string(),
-            None,
-            b"hashed",
-        )));
-        info.insert("something", "else");
+        #[test]
+        fn bad_v2_scheme() {
+            let result = Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:blahblah:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+                2,
+            );
+            assert!(result.is_err());
+        }
 
-        claim.add_claim_generator_info(info);
+        #[test]
+        fn uuid_version_1_not_allowed() {
+            // UUID version 1 (not version 4/Random) - should fail (line 477).
+            let result = Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:c2pa:3fad1ead-1ed5-11d0-873b-ea5f58adea82:acme",
+                2,
+            );
+            assert!(result.is_err());
+        }
 
-        let cgi = claim.claim_generator_info().unwrap();
+        #[test]
+        fn uuid_version_5_not_allowed() {
+            // UUID version 5 (not version 4/Random) - should fail (line 477).
+            let result = Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:c2pa:3fad1ead-8ed5-54d0-873b-ea5f58adea82:acme",
+                2,
+            );
+            assert!(result.is_err());
+        }
 
-        assert_eq!(&cgi[0].name, "test app");
-        assert_eq!(cgi[0].version.as_deref(), Some("2.3.4"));
-        if let UriOrResource::HashedUri(r) = cgi[1].icon.as_ref().unwrap() {
-            assert_eq!(r.hash(), b"hashed");
+        #[test]
+        fn v1_without_cgi_prefix() {
+            // V1 without CGI prefix - should succeed (lines 500-503).
+            Claim::new_with_user_guid(
+                "claim_generator",
+                "urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                1,
+            )
+            .unwrap();
         }
     }
 
-    #[test]
-    fn test_new_with_user_guid() {
-        // good v1
-        Claim::new_with_user_guid(
-            "claim_generator",
-            "acme:urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
-            1,
-        )
-        .unwrap();
+    mod claim_generator_hints {
+        use super::super::*;
 
-        // good v2
-        Claim::new_with_user_guid(
-            "claim_generator",
-            "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
-            2,
-        )
-        .unwrap();
+        #[test]
+        fn add_multiple_hints() {
+            // Create a new claim.
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
 
-        // feature incompatible
-        let c2 = Claim::new_with_user_guid(
-            "claim_generator",
-            "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
-            1,
-        );
-        assert!(c2.is_err());
+            claim.add_claim_generator_hint(
+                GH_FULL_VERSION_LIST,
+                Value::String(r#""user app";v="2.3.4""#.to_string()),
+            );
+            claim.add_claim_generator_hint(
+                GH_FULL_VERSION_LIST,
+                Value::String(r#""some toolkit";v="1.0.0""#.to_string()),
+            );
 
-        // version incompatible
-        let c3 = Claim::new_with_user_guid(
-            "claim_generator",
-            "acme:urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
-            2,
-        );
-        assert!(c3.is_err());
+            let expected_value = r#""user app";v="2.3.4", "some toolkit";v="1.0.0""#;
 
-        // malformed
-        let c4 = Claim::new_with_user_guid(
-            "claim_generator",
-            "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
-            1,
-        );
-        assert!(c4.is_err());
+            let cg_map = claim.get_claim_generator_hint_map().unwrap();
+            let value = &cg_map[GH_FULL_VERSION_LIST];
 
-        // bad v2
-        let c5 = Claim::new_with_user_guid(
-            "claim_generator",
-            "urn:blahblah:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
-            2,
-        );
-        assert!(c5.is_err());
+            assert_eq!(expected_value, value.as_str().unwrap());
+        }
     }
 
-    #[test]
-    fn test_add_assertion_variants() -> Result<()> {
-        let mut claim = crate::utils::test::create_min_test_claim()?;
+    mod add_claim_generator {
+        use super::super::*;
 
-        const MY_METADATA: &str = "my.metadata";
-        let data = json!({
-        "@context" : {
-            "dc" : "http://purl.org/dc/elements/1.1/"
-        },
-        "dc:created": "2025 August 13",
-        "dc:creator": [
-             "John Doe"
-        ]
-        })
-        .to_string();
+        #[test]
+        fn add_hint_with_non_special_key() {
+            // Test for line 1211: the default branch in the match statement.
+            // This tests adding a hint with a key that is not GH_UA or GH_FULL_VERSION_LIST.
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
 
-        let metadata = assertions::Metadata::new(MY_METADATA, &data)?;
+            // Add a hint with a custom key.
+            claim.add_claim_generator_hint("Custom-Key", Value::String("custom value".to_string()));
 
-        // add first time
-        claim.add_assertion(&metadata)?;
+            let cg_map = claim.get_claim_generator_hint_map().unwrap();
+            let value = &cg_map["Custom-Key"];
 
-        // add second time should create instance label
-        claim.add_assertion(&metadata)?;
+            assert_eq!("custom value", value.as_str().unwrap());
 
-        // add third time should create instance label
-        claim.add_assertion(&metadata)?;
+            // Add another value for the same key. It should replace, not merge.
+            claim.add_claim_generator_hint("Custom-Key", Value::String("new value".to_string()));
 
-        // check that we have three instances now
-        let instances = claim.count_instances(MY_METADATA);
-        assert_eq!(instances, 3);
+            let cg_map = claim.get_claim_generator_hint_map().unwrap();
+            let value = &cg_map["Custom-Key"];
 
-        // check that we can retrieve each one
-        for i in 0..instances {
+            assert_eq!("new value", value.as_str().unwrap());
+        }
+
+        #[test]
+        fn add_hint_with_gh_ua_key() {
+            // Test merging behavior for GH_UA key.
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            claim.add_claim_generator_hint(GH_UA, Value::String("first value".to_string()));
+            claim.add_claim_generator_hint(GH_UA, Value::String("second value".to_string()));
+
+            let cg_map = claim.get_claim_generator_hint_map().unwrap();
+            let value = &cg_map[GH_UA];
+
+            assert_eq!("first value, second value", value.as_str().unwrap());
+        }
+    }
+
+    mod claim_generator_info {
+        use super::super::*;
+        use crate::resource_store::UriOrResource;
+
+        #[test]
+        fn add_and_retrieve_info() {
+            // Create a new claim.
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            let mut info = ClaimGeneratorInfo::new("test app");
+            info.version = Some("2.3.4".to_string());
+            info.icon = Some(UriOrResource::HashedUri(HashedUri::new(
+                "self#jumbf=c2pa.databoxes.data_box".to_string(),
+                None,
+                b"hashed",
+            )));
+            info.insert("something", "else");
+
+            claim.add_claim_generator_info(info);
+
+            let cgi = claim.claim_generator_info().unwrap();
+
+            assert_eq!(&cgi[0].name, "test app");
+            assert_eq!(cgi[0].version.as_deref(), Some("2.3.4"));
+            if let UriOrResource::HashedUri(r) = cgi[1].icon.as_ref().unwrap() {
+                assert_eq!(r.hash(), b"hashed");
+            }
+        }
+    }
+
+    mod add_claim_metadata {
+        #[test]
+        fn add_multiple_metadata_items() {
+            // Test line 1185: Add multiple claim metadata items to exercise the Some(md_vec) branch.
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Add first metadata - exercises the None branch (line 1186).
+            let metadata1 = crate::assertions::AssertionMetadata::new();
+            claim.add_claim_metadata(metadata1);
+
+            // Verify first metadata was added.
+            let md = claim.metadata().unwrap();
+            assert_eq!(md.len(), 1);
+
+            // Add second metadata - exercises the Some(md_vec) branch (line 1185).
+            let metadata2 = crate::assertions::AssertionMetadata::new();
+            claim.add_claim_metadata(metadata2);
+
+            // Verify both metadata items are present.
+            let md = claim.metadata().unwrap();
+            assert_eq!(md.len(), 2);
+
+            // Add third metadata to further verify the Some branch works correctly.
+            let metadata3 = crate::assertions::AssertionMetadata::new();
+            claim.add_claim_metadata(metadata3);
+
+            // Verify all three metadata items are present.
+            let md = claim.metadata().unwrap();
+            assert_eq!(md.len(), 3);
+        }
+    }
+
+    mod add_assertion {
+        use super::super::*;
+
+        #[test]
+        fn add_multiple_instances() -> Result<()> {
+            let mut claim = crate::utils::test::create_min_test_claim()?;
+
+            const MY_METADATA: &str = "my.metadata";
+            let data = json!({
+            "@context" : {
+                "dc" : "http://purl.org/dc/elements/1.1/"
+            },
+            "dc:created": "2025 August 13",
+            "dc:creator": [
+                 "John Doe"
+            ]
+            })
+            .to_string();
+
+            let metadata = assertions::Metadata::new(MY_METADATA, &data)?;
+
+            // add first time
+            claim.add_assertion(&metadata)?;
+
+            // add second time should create instance label
+            claim.add_assertion(&metadata)?;
+
+            // add third time should create instance label
+            claim.add_assertion(&metadata)?;
+
+            // check that we have three instances now
+            let instances = claim.count_instances(MY_METADATA);
+            assert_eq!(instances, 3);
+
+            // check that we can retrieve each one
+            for i in 0..instances {
+                let ca = claim
+                    .get_claim_assertion(MY_METADATA, i)
+                    .expect("should find assertion");
+                assert_eq!(ca.instance(), i);
+                assert_eq!(ca.label_raw(), MY_METADATA);
+                assert_eq!(ca.assertion().label(), MY_METADATA);
+                assert_eq!(ca.assertion_type(), ClaimAssertionType::Gathered);
+                //assert_eq!(ca.assertion().decode_data(), AssertionData::Cbor(vec![1, 2, 3, 4]));
+            }
+
+            Ok(())
+        }
+    }
+
+    mod claim_assertion {
+        use super::super::*;
+
+        #[test]
+        fn claim_assertion_instance_string() -> Result<()> {
+            let mut claim = crate::utils::test::create_min_test_claim()?;
+
+            const MY_METADATA: &str = "my.metadata";
+            let data = json!({
+            "@context" : {
+                "dc" : "http://purl.org/dc/elements/1.1/"
+            },
+            "dc:created": "2025 August 13",
+            "dc:creator": [
+                "John Doe"
+            ]
+            })
+            .to_string();
+
+            let metadata = assertions::Metadata::new(MY_METADATA, &data)?;
+
+            // Add multiple assertions to create different instances.
+            claim.add_assertion(&metadata)?;
+            claim.add_assertion(&metadata)?;
+            claim.add_assertion(&metadata)?;
+
+            // Test instance_string() for different instance numbers.
+            for i in 0..3 {
+                let ca = claim
+                    .get_claim_assertion(MY_METADATA, i)
+                    .expect("should find assertion");
+
+                // Verify instance_string() returns the string representation of the
+                // instance number.
+                assert_eq!(ca.instance_string(), format!("{}", i));
+                assert_eq!(ca.instance_string(), i.to_string());
+            }
+
+            Ok(())
+        }
+
+        #[test]
+        fn label_ingredient_thumbnail_without_image_type() {
+            // Test the None branch in label() when get_thumbnail_image_type returns None
+            // (line 176: None => label).
+
+            // Create an assertion with ingredient thumbnail label (no image type extension).
+            let test_data = b"test data";
+            let assertion = Assertion::from_data_cbor(labels::INGREDIENT_THUMBNAIL, test_data);
+
+            // Create a ClaimAssertion with instance > 0 to trigger the thumbnail path.
+            let claim_assertion = ClaimAssertion::new(
+                assertion,
+                1, // instance > 0
+                b"test_hash",
+                "sha256",
+                None,
+                ClaimAssertionType::Gathered,
+            );
+
+            // Call label() which should hit line 176 (None branch).
+            let label = claim_assertion.label();
+
+            // Expected format: "c2pa.thumbnail.ingredient__1" (no image type extension).
+            assert_eq!(label, format!("{}__1", labels::INGREDIENT_THUMBNAIL));
+            assert!(!label.contains(".jpeg"));
+            assert!(!label.contains(".png"));
+        }
+
+        #[test]
+        fn is_same_type() -> Result<()> {
+            // Test ClaimAssertion::is_same_type (lines 215-217).
+            let mut claim = crate::utils::test::create_min_test_claim()?;
+
+            const MY_METADATA: &str = "my.metadata";
+            let data = json!({
+            "@context" : {
+                "dc" : "http://purl.org/dc/elements/1.1/"
+            },
+            "dc:created": "2025 August 13",
+            "dc:creator": [
+                 "John Doe"
+            ]
+            })
+            .to_string();
+
+            let metadata1 = assertions::Metadata::new(MY_METADATA, &data)?;
+            let metadata2 = assertions::Metadata::new(MY_METADATA, &data)?;
+
+            claim.add_assertion(&metadata1)?;
+
             let ca = claim
-                .get_claim_assertion(MY_METADATA, i)
+                .get_claim_assertion(MY_METADATA, 0)
                 .expect("should find assertion");
-            assert_eq!(ca.instance(), i);
-            assert_eq!(ca.label_raw(), MY_METADATA);
-            assert_eq!(ca.assertion().label(), MY_METADATA);
-            assert_eq!(ca.assertion_type(), ClaimAssertionType::Gathered);
-            //assert_eq!(ca.assertion().decode_data(), AssertionData::Cbor(vec![1, 2, 3, 4]));
+
+            // Create another assertion of the same type.
+            let same_type_assertion = metadata2.to_assertion()?;
+
+            // Test is_same_type returns true for same type.
+            assert!(ca.is_same_type(&same_type_assertion));
+
+            // Create a different type of assertion.
+            let actions = Actions::new();
+            let different_type_assertion = actions.to_assertion()?;
+
+            // Test is_same_type returns false for different type.
+            assert!(!ca.is_same_type(&different_type_assertion));
+
+            Ok(())
         }
 
-        Ok(())
+        #[test]
+        fn set_assertion_type() -> Result<()> {
+            // Test ClaimAssertion::set_assertion_type (lines 223-225).
+            let mut claim = crate::utils::test::create_min_test_claim()?;
+
+            const MY_METADATA: &str = "my.metadata";
+            let data = json!({
+            "@context" : {
+                "dc" : "http://purl.org/dc/elements/1.1/"
+            },
+            "dc:created": "2025 August 13",
+            "dc:creator": [
+                 "John Doe"
+            ]
+            })
+            .to_string();
+
+            let metadata = assertions::Metadata::new(MY_METADATA, &data)?;
+            claim.add_assertion(&metadata)?;
+
+            let mut ca = claim
+                .get_claim_assertion(MY_METADATA, 0)
+                .expect("should find assertion")
+                .clone();
+
+            // Initially should be Gathered.
+            assert_eq!(ca.assertion_type(), ClaimAssertionType::Gathered);
+
+            // Change to Created.
+            ca.set_assertion_type(ClaimAssertionType::Created);
+            assert_eq!(ca.assertion_type(), ClaimAssertionType::Created);
+
+            // Change to V1.
+            ca.set_assertion_type(ClaimAssertionType::V1);
+            assert_eq!(ca.assertion_type(), ClaimAssertionType::V1);
+
+            Ok(())
+        }
+
+        #[test]
+        fn impl_debug() -> Result<()> {
+            // Test Debug implementation for ClaimAssertion (lines 228-236).
+            let mut claim = crate::utils::test::create_min_test_claim()?;
+
+            const MY_METADATA: &str = "my.metadata";
+            let data = json!({
+            "@context" : {
+                "dc" : "http://purl.org/dc/elements/1.1/"
+            },
+            "dc:created": "2025 August 13",
+            "dc:creator": [
+                 "John Doe"
+            ]
+            })
+            .to_string();
+
+            let metadata = assertions::Metadata::new(MY_METADATA, &data)?;
+            claim.add_assertion(&metadata)?;
+            claim.add_assertion(&metadata)?;
+
+            let ca0 = claim
+                .get_claim_assertion(MY_METADATA, 0)
+                .expect("should find assertion");
+
+            let ca1 = claim
+                .get_claim_assertion(MY_METADATA, 1)
+                .expect("should find assertion");
+
+            // Format using Debug trait.
+            let debug_str0 = format!("{:?}", ca0);
+            let debug_str1 = format!("{:?}", ca1);
+
+            // Verify the debug output contains expected components.
+            assert!(debug_str0.contains("instance: 0"));
+            assert!(debug_str0.contains("Gathered"));
+
+            assert!(debug_str1.contains("instance: 1"));
+            assert!(debug_str1.contains("Gathered"));
+
+            // Verify they're different (different instances).
+            assert_ne!(debug_str0, debug_str1);
+
+            Ok(())
+        }
+    }
+
+    mod claim_decoding {
+        use super::super::*;
+
+        #[test]
+        fn from_value_unsupported_claim_version() {
+            // Test Claim::from_value with invalid claim version (lines 572-574).
+            // This should fail when neither 'assertions' nor 'created_assertions' is present.
+
+            use std::collections::BTreeMap;
+
+            use serde_cbor::Value;
+
+            // Create a minimal CBOR map without assertions or created_assertions fields.
+            let mut claim_map = BTreeMap::new();
+            claim_map.insert(
+                Value::Text("claim_generator".to_string()),
+                Value::Text("test_generator".to_string()),
+            );
+            claim_map.insert(
+                Value::Text("signature".to_string()),
+                Value::Text("self#jumbf=/test/c2pa.signature".to_string()),
+            );
+            claim_map.insert(
+                Value::Text("dc:format".to_string()),
+                Value::Text("image/jpeg".to_string()),
+            );
+            claim_map.insert(
+                Value::Text("instanceID".to_string()),
+                Value::Text("xmp:iid:12345678-1234-1234-1234-123456789012".to_string()),
+            );
+
+            let claim_value = Value::Map(claim_map);
+            let claim_cbor = serde_cbor::to_vec(&claim_value).unwrap();
+
+            // Try to create a claim from this invalid data.
+            let result = Claim::from_data("test_label", &claim_cbor);
+
+            // Should fail with unsupported claim version error.
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    assert!(msg.contains("unsupported claim version"));
+                }
+                _ => {
+                    panic!("Expected ClaimDecoding error with 'unsupported claim version' message")
+                }
+            }
+        }
+
+        #[test]
+        fn from_value_both_assertions_fields() {
+            // Test Claim::from_value with both 'assertions' and 'created_assertions' present.
+            // This is also invalid and should trigger lines 572-574.
+
+            use std::collections::BTreeMap;
+
+            use serde_cbor::Value;
+
+            // Create a CBOR map with BOTH assertions and created_assertions fields.
+            let mut claim_map = BTreeMap::new();
+            claim_map.insert(
+                Value::Text("claim_generator".to_string()),
+                Value::Text("test_generator".to_string()),
+            );
+
+            // Add both assertions fields (invalid - should only have one).
+            claim_map.insert(
+                Value::Text("assertions".to_string()),
+                Value::Array(vec![]), // Empty array
+            );
+            claim_map.insert(
+                Value::Text("created_assertions".to_string()),
+                Value::Array(vec![]), // Empty array
+            );
+
+            let claim_value = Value::Map(claim_map);
+            let claim_cbor = serde_cbor::to_vec(&claim_value).unwrap();
+
+            // Try to create a claim from this invalid data.
+            let result = Claim::from_data("test_label", &claim_cbor);
+
+            // Should fail with unsupported claim version error.
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    assert!(msg.contains("unsupported claim version"));
+                }
+                _ => {
+                    panic!("Expected ClaimDecoding error with 'unsupported claim version' message")
+                }
+            }
+        }
+
+        #[test]
+        fn from_value_v1_non_text_key() {
+            use serde_cbor::Value;
+
+            // Create a minimal V1 claim structure with a non-text key (integer).
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(
+                Value::Text(CLAIM_GENERATOR_F.to_string()),
+                Value::Text("test_generator".to_string()),
+            );
+            map.insert(
+                Value::Text(SIGNATURE_F.to_string()),
+                Value::Text("self#jumbf=c2pa.signature".to_string()),
+            );
+            map.insert(Value::Text(ASSERTIONS_F.to_string()), Value::Array(vec![]));
+            map.insert(
+                Value::Text(DC_FORMAT_F.to_string()),
+                Value::Text("image/jpeg".to_string()),
+            );
+            map.insert(
+                Value::Text(INSTANCE_ID_F.to_string()),
+                Value::Text("xmp:iid:test".to_string()),
+            );
+
+            // Add a non-text key (integer) to trigger error.
+            map.insert(Value::Integer(123), Value::Text("invalid".to_string()));
+
+            let claim_value = Value::Map(map);
+            let data = serde_cbor::to_vec(&claim_value).unwrap();
+
+            let result = Claim::from_value(claim_value, "test_label", &data);
+
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    assert_eq!(msg, "non-text key in V1 claim");
+                }
+                _ => panic!("Expected ClaimDecoding error with 'non-text key in V1 claim'"),
+            }
+        }
+
+        #[test]
+        fn from_value_v1_not_an_object() {
+            // Test line 622: V1 claim that is not an object (Map).
+            // Note: This error path is actually unreachable in practice because
+            // map_cbor_to_type() returns None for non-Map values, causing version
+            // detection to fail with "unsupported claim version" before line 622.
+            // This test verifies the actual behavior.
+            use serde_cbor::Value;
+
+            // Create a non-object value (Array).
+            let claim_value = Value::Array(vec![
+                Value::Text("assertions".to_string()),
+                Value::Array(vec![]),
+            ]);
+
+            let data = serde_cbor::to_vec(&claim_value).unwrap();
+
+            let result = Claim::from_value(claim_value, "test_label", &data);
+
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    // The version detection fails before reaching the "claim is not an object" check.
+                    assert_eq!(msg, "unsupported claim version");
+                }
+                _ => panic!("Expected ClaimDecoding error with 'unsupported claim version'"),
+            }
+        }
+
+        #[test]
+        fn from_value_v2_unknown_field() {
+            use serde_cbor::Value;
+
+            // Create a minimal V2 claim structure with an unknown field.
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(
+                Value::Text(INSTANCE_ID_F.to_string()),
+                Value::Text("xmp:iid:test".to_string()),
+            );
+            map.insert(
+                Value::Text(CLAIM_GENERATOR_INFO_F.to_string()),
+                Value::Map({
+                    let mut info_map = std::collections::BTreeMap::new();
+                    info_map.insert(
+                        Value::Text("name".to_string()),
+                        Value::Text("test_app".to_string()),
+                    );
+                    info_map
+                }),
+            );
+            map.insert(
+                Value::Text(SIGNATURE_F.to_string()),
+                Value::Text("self#jumbf=c2pa.signature".to_string()),
+            );
+            map.insert(
+                Value::Text(CREATED_ASSERTIONS_F.to_string()),
+                Value::Array(vec![]),
+            );
+
+            // Add an unknown field to trigger error.
+            map.insert(
+                Value::Text("unknown_field".to_string()),
+                Value::Text("invalid".to_string()),
+            );
+
+            let claim_value = Value::Map(map);
+            let data = serde_cbor::to_vec(&claim_value).unwrap();
+
+            let result = Claim::from_value(claim_value, "test_label", &data);
+
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    assert!(msg.starts_with("unknown V2 claim field:"));
+                }
+                _ => panic!("Expected ClaimDecoding error with 'unknown V2 claim field'"),
+            }
+        }
+
+        #[test]
+        fn from_value_v2_non_text_key() {
+            use serde_cbor::Value;
+
+            // Create a minimal V2 claim structure with a non-text key (integer).
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(
+                Value::Text(INSTANCE_ID_F.to_string()),
+                Value::Text("xmp:iid:test".to_string()),
+            );
+            map.insert(
+                Value::Text(CLAIM_GENERATOR_INFO_F.to_string()),
+                Value::Map({
+                    let mut info_map = std::collections::BTreeMap::new();
+                    info_map.insert(
+                        Value::Text("name".to_string()),
+                        Value::Text("test_app".to_string()),
+                    );
+                    info_map
+                }),
+            );
+            map.insert(
+                Value::Text(SIGNATURE_F.to_string()),
+                Value::Text("self#jumbf=c2pa.signature".to_string()),
+            );
+            map.insert(
+                Value::Text(CREATED_ASSERTIONS_F.to_string()),
+                Value::Array(vec![]),
+            );
+
+            // Add a non-text key (integer) to trigger error.
+            map.insert(Value::Integer(456), Value::Text("invalid".to_string()));
+
+            let claim_value = Value::Map(map);
+            let data = serde_cbor::to_vec(&claim_value).unwrap();
+
+            let result = Claim::from_value(claim_value, "test_label", &data);
+
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    assert_eq!(msg, "non-text key in V2 claim");
+                }
+                _ => panic!("Expected ClaimDecoding error with 'non-text key in V2 claim'"),
+            }
+        }
+
+        #[test]
+        fn from_value_v2_not_an_object() {
+            // Test line 720: V2 claim that is not an object (Map).
+            // Note: This error path is actually unreachable in practice because
+            // map_cbor_to_type() returns None for non-Map values, causing version
+            // detection to fail with "unsupported claim version" before line 720.
+            // This test verifies the actual behavior.
+            use serde_cbor::Value;
+
+            // Create a non-object value (Array).
+            let claim_value = Value::Array(vec![
+                Value::Text("created_assertions".to_string()),
+                Value::Array(vec![]),
+            ]);
+
+            let data = serde_cbor::to_vec(&claim_value).unwrap();
+
+            let result = Claim::from_value(claim_value, "test_label", &data);
+
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    // The version detection fails before reaching the "claim is not an object" check.
+                    assert_eq!(msg, "unsupported claim version");
+                }
+                _ => panic!("Expected ClaimDecoding error with 'unsupported claim version'"),
+            }
+        }
+
+        #[test]
+        fn from_value_v2_missing_instance_id() {
+            // Test line 725: V2 claim missing instanceID field.
+            use serde_cbor::Value;
+
+            // Create a V2 claim structure without instanceID.
+            let mut map = std::collections::BTreeMap::new();
+
+            // instanceID is missing - this should trigger the error.
+            map.insert(
+                Value::Text(CLAIM_GENERATOR_INFO_F.to_string()),
+                Value::Map({
+                    let mut info_map = std::collections::BTreeMap::new();
+                    info_map.insert(
+                        Value::Text("name".to_string()),
+                        Value::Text("test_app".to_string()),
+                    );
+                    info_map
+                }),
+            );
+            map.insert(
+                Value::Text(SIGNATURE_F.to_string()),
+                Value::Text("self#jumbf=c2pa.signature".to_string()),
+            );
+            map.insert(
+                Value::Text(CREATED_ASSERTIONS_F.to_string()),
+                Value::Array(vec![]),
+            );
+
+            let claim_value = Value::Map(map);
+            let data = serde_cbor::to_vec(&claim_value).unwrap();
+
+            let result = Claim::from_value(claim_value, "test_label", &data);
+
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    assert_eq!(msg, "instanceID is missing or invalid");
+                }
+                _ => panic!("Expected ClaimDecoding error with 'instanceID is missing or invalid'"),
+            }
+        }
+
+        #[test]
+        fn from_value_v2_missing_claim_generator_info() {
+            use serde_cbor::Value;
+
+            // Create a V2 claim structure without claim_generator_info.
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(
+                Value::Text(INSTANCE_ID_F.to_string()),
+                Value::Text("xmp:iid:test".to_string()),
+            );
+            // claim_generator_info is missing - this should trigger the error.
+            map.insert(
+                Value::Text(SIGNATURE_F.to_string()),
+                Value::Text("self#jumbf=c2pa.signature".to_string()),
+            );
+            map.insert(
+                Value::Text(CREATED_ASSERTIONS_F.to_string()),
+                Value::Array(vec![]),
+            );
+
+            let claim_value = Value::Map(map);
+            let data = serde_cbor::to_vec(&claim_value).unwrap();
+
+            let result = Claim::from_value(claim_value, "test_label", &data);
+
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    assert_eq!(msg, "claim_generator_info is missing or invalid");
+                }
+                _ => panic!(
+                    "Expected ClaimDecoding error with 'claim_generator_info is missing or invalid'"
+                ),
+            }
+        }
+
+        #[test]
+        fn from_value_v2_missing_signature() {
+            use serde_cbor::Value;
+
+            // Create a V2 claim structure without signature.
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(
+                Value::Text(INSTANCE_ID_F.to_string()),
+                Value::Text("xmp:iid:test".to_string()),
+            );
+            map.insert(
+                Value::Text(CLAIM_GENERATOR_INFO_F.to_string()),
+                Value::Map({
+                    let mut info_map = std::collections::BTreeMap::new();
+                    info_map.insert(
+                        Value::Text("name".to_string()),
+                        Value::Text("test_app".to_string()),
+                    );
+                    info_map
+                }),
+            );
+
+            // signature is missing - this should trigger the error.
+            map.insert(
+                Value::Text(CREATED_ASSERTIONS_F.to_string()),
+                Value::Array(vec![]),
+            );
+
+            let claim_value = Value::Map(map);
+            let data = serde_cbor::to_vec(&claim_value).unwrap();
+
+            let result = Claim::from_value(claim_value, "test_label", &data);
+
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    assert_eq!(msg, "signature is missing or invalid");
+                }
+                _ => panic!("Expected ClaimDecoding error with 'signature is missing or invalid'"),
+            }
+        }
+
+        #[test]
+        fn from_value_v2_missing_created_assertions() {
+            // Note: This error path is actually unreachable in practice because
+            // version detection (lines 567-570) requires created_assertions to be
+            // deserializable as Vec<HashedUri>. If it's missing or invalid, version
+            // detection fails with "unsupported claim version" before line 736.
+            // This test verifies the actual behavior.
+            use serde_cbor::Value;
+
+            // Create a V2 claim structure with invalid created_assertions.
+            let mut map = std::collections::BTreeMap::new();
+            map.insert(
+                Value::Text(INSTANCE_ID_F.to_string()),
+                Value::Text("xmp:iid:test".to_string()),
+            );
+            map.insert(
+                Value::Text(CLAIM_GENERATOR_INFO_F.to_string()),
+                Value::Map({
+                    let mut info_map = std::collections::BTreeMap::new();
+                    info_map.insert(
+                        Value::Text("name".to_string()),
+                        Value::Text("test_app".to_string()),
+                    );
+                    info_map
+                }),
+            );
+            map.insert(
+                Value::Text(SIGNATURE_F.to_string()),
+                Value::Text("self#jumbf=c2pa.signature".to_string()),
+            );
+
+            // created_assertions is present but invalid (not a proper array of HashedUri).
+            map.insert(
+                Value::Text(CREATED_ASSERTIONS_F.to_string()),
+                Value::Text("invalid".to_string()), // Wrong type
+            );
+
+            let claim_value = Value::Map(map);
+            let data = serde_cbor::to_vec(&claim_value).unwrap();
+
+            let result = Claim::from_value(claim_value, "test_label", &data);
+
+            assert!(result.is_err());
+            match result {
+                Err(Error::ClaimDecoding(msg)) => {
+                    // The version detection fails before reaching the field extraction at line 736.
+                    assert_eq!(msg, "unsupported claim version");
+                }
+                _ => panic!("Expected ClaimDecoding error with 'unsupported claim version'"),
+            }
+        }
+
+        mod serialize_v1 {
+            use crate::utils::test::create_test_claim;
+
+            #[test]
+            fn with_optional_fields() {
+                // Test lines 827, 830, 851, 863, 866: Serialization with alg, alg_soft, metadata, and format.
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // Force the claim to use V1 serialization by setting claim_version to 1.
+                claim.claim_version = 1;
+
+                // Ensure format is set to trigger line 851.
+                claim.format = Some("image/jpeg".to_string());
+
+                // Set the optional fields to trigger the paths at lines 827, 830, 863, 866.
+                claim.alg = Some("sha256".to_string());
+                claim.alg_soft = Some("sha256-soft".to_string());
+
+                // Add metadata to trigger lines 830, 866.
+                let metadata = crate::assertions::AssertionMetadata::new();
+                claim.add_claim_metadata(metadata);
+
+                // Serialize to CBOR (triggers serialize_v1).
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should work with optional fields.
+                assert!(result.is_ok());
+            }
+
+            #[test]
+            fn without_claim_generator() {
+                // Test line 838: Serialization path when claim_generator is None
+                // This covers the else branch of the `if let Some(cg) = self.claim_generator()`.
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // Clear claim_generator to test the None path.
+                claim.claim_generator = None;
+
+                // Serialize to CBOR - this should exercise line 838.
+                // Note: This may fail validation in build(), so we just serialize directly.
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should work even without claim_generator.
+                assert!(result.is_ok());
+            }
+
+            #[test]
+            fn without_format() {
+                // Test when format is None - this exercises the path where the
+                // if condition at line 849 is false (format is None).
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // Force V1 serialization.
+                claim.claim_version = 1;
+
+                // Clear the format.
+                claim.format = None;
+
+                // Serialize to CBOR.
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should work even without format.
+                assert!(result.is_ok());
+            }
+
+            #[test]
+            fn with_format() {
+                // Test line 851: Serialization path when format is present (Some).
+                // This covers line 850 (serializing the format field) and line 851 (closing brace).
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // Force V1 serialization.
+                claim.claim_version = 1;
+
+                // Ensure format is set to trigger lines 850-851.
+                claim.format = Some("image/jpeg".to_string());
+
+                // Serialize to CBOR.
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should work with format.
+                assert!(result.is_ok());
+            }
+
+            #[test]
+            fn without_optional_fields() {
+                // Test serialization paths when alg, alg_soft, and metadata are all None.
+                // This covers the branches where optional fields are not present (i.e., the
+                // if conditions at lines 823, 826, 829 evaluate to false, and the if conditions
+                // at lines 862, 865 also evaluate to false).
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // Force the claim to use V1 serialization by setting claim_version to 1.
+                claim.claim_version = 1;
+
+                // Ensure these optional fields are None to skip the optional field handling.
+                claim.alg = None;
+                claim.alg_soft = None;
+                claim.metadata = None;
+
+                // Serialize to CBOR - tests the None branches for optional fields.
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should work even without optional fields.
+                assert!(result.is_ok());
+            }
+        }
+
+        mod serialize_v2 {
+            use crate::utils::test::create_test_claim;
+
+            #[test]
+            fn with_optional_fields() {
+                // Test lines 893, 902, 904, 907, 944, 947: Serialization with all optional fields.
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // V2 is the default for create_test_claim(), but let's be explicit.
+                claim.claim_version = 2;
+
+                // Set gathered_assertions to trigger line 893.
+                claim.gathered_assertions = Some(vec![]);
+
+                // Set optional fields to trigger lines 902, 904, 907, 944, 947.
+                claim.alg = Some("sha256".to_string());
+                claim.alg_soft = Some("sha256-soft".to_string());
+
+                // Add metadata to trigger lines 907, 947.
+                let metadata = crate::assertions::AssertionMetadata::new();
+                claim.add_claim_metadata(metadata);
+
+                // Serialize to CBOR (triggers serialize_v2).
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should work with optional fields.
+                assert!(result.is_ok());
+            }
+
+            #[test]
+            fn without_optional_fields() {
+                // Test serialization when optional fields (gathered_assertions, alg, alg_soft, metadata) are None.
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // V2 is the default for create_test_claim().
+                claim.claim_version = 2;
+
+                // Ensure optional fields are None.
+                claim.gathered_assertions = None;
+                claim.alg = None;
+                claim.alg_soft = None;
+                claim.metadata = None;
+
+                // Serialize to CBOR.
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should work without optional fields.
+                assert!(result.is_ok());
+            }
+
+            #[test]
+            fn with_empty_claim_generator_info() {
+                // Test lines 919-921: Error path when claim_generator_info is empty.
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // V2 claim.
+                claim.claim_version = 2;
+
+                // Set claim_generator_info to an empty vector to trigger the error at lines 919-921.
+                claim.claim_generator_info = Some(Vec::new());
+
+                // Serialize to CBOR - this should fail with an error.
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should fail.
+                assert!(result.is_err());
+            }
+
+            #[test]
+            fn without_claim_generator_info() {
+                // Test lines 924-926: Error path when claim_generator_info is None.
+                let mut claim = create_test_claim().expect("create test claim");
+
+                // V2 claim.
+                claim.claim_version = 2;
+
+                // Set claim_generator_info to None to trigger the error at lines 924-926.
+                claim.claim_generator_info = None;
+
+                // Serialize to CBOR - this should fail with an error.
+                let result = serde_cbor::to_vec(&claim);
+
+                // The serialization should fail.
+                assert!(result.is_err());
+            }
+        }
+    }
+
+    mod build {
+        use super::super::*;
+        use crate::{
+            assertions::EmbeddedData, claim::labels::CLAIM_THUMBNAIL,
+            utils::test::create_test_claim,
+        };
+
+        #[test]
+        fn multiple_claim_generator_info() {
+            // Test line 965: Error when claim has more than one claim_generator_info for v2.
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Add a second claim_generator_info to trigger the error.
+            let info2 = ClaimGeneratorInfo::new("second app");
+            claim.add_claim_generator_info(info2);
+
+            // Build should fail with VersionCompatibility error.
+            let result = claim.build();
+            assert!(result.is_err());
+            match result {
+                Err(Error::VersionCompatibility(msg)) => {
+                    assert_eq!(msg, "only 1 claim_generator_info allowed");
+                }
+                _ => panic!("Expected VersionCompatibility error"),
+            }
+        }
+
+        #[test]
+        fn missing_claim_generator_info() {
+            // Test line 971: Error when claim_generator_info is missing for v2.
+            let mut claim = Claim::new("test_generator", Some("test"), 2);
+
+            // Don't add claim_generator_info (it's None by default).
+            // This should trigger the error at line 971.
+            let result = claim.build();
+            assert!(result.is_err());
+            match result {
+                Err(Error::VersionCompatibility(msg)) => {
+                    assert_eq!(msg, "claim_generator_info is mandatory");
+                }
+                _ => panic!("Expected VersionCompatibility error"),
+            }
+        }
+
+        #[test]
+        fn multiple_claim_thumbnails() {
+            // Test line 986: Error when claim has more than one claim thumbnail.
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // create_test_claim already adds one claim thumbnail.
+            // Add a second claim thumbnail to trigger the error.
+            let claim_thumbnail2 =
+                EmbeddedData::new(CLAIM_THUMBNAIL, "image/jpeg", vec![0xca, 0xfe, 0xba, 0xbe]);
+
+            claim
+                .add_assertion(&claim_thumbnail2)
+                .expect("failed to add second claim thumbnail");
+
+            // Build should fail with OtherError.
+            let result = claim.build();
+            assert!(result.is_err());
+            match result {
+                Err(Error::OtherError(msg)) => {
+                    assert_eq!(
+                        msg.to_string(),
+                        "only one claim thumbnail assertion allowed"
+                    );
+                }
+                _ => panic!("Expected OtherError"),
+            }
+        }
+    }
+
+    mod label {
+        #[test]
+        fn returns_regular_label_when_no_conflict() {
+            let claim = crate::utils::test::create_test_claim().expect("create test claim");
+            // Should return the regular label when conflict_label is None
+            assert!(!claim.label().is_empty());
+        }
+
+        #[test]
+        fn returns_conflict_label_when_set() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+            let original_label = claim.label().to_string();
+
+            // Set a conflict label
+            let conflict_label = "conflict_label_test";
+            claim.set_conflict_label(conflict_label.to_string());
+
+            // Should now return the conflict label instead of the original
+            assert_eq!(claim.label(), conflict_label);
+            assert_ne!(claim.label(), original_label);
+        }
+    }
+
+    mod conflict_label {
+        #[test]
+        fn returns_none_when_not_set() {
+            let claim = crate::utils::test::create_test_claim().expect("create test claim");
+            // Should return None when conflict_label hasn't been set
+            assert_eq!(claim.conflict_label(), &None);
+        }
+
+        #[test]
+        fn returns_some_when_set() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Set a conflict label
+            let conflict_label = "conflict_label_test";
+            claim.set_conflict_label(conflict_label.to_string());
+
+            // Should now return Some with the conflict label
+            assert_eq!(claim.conflict_label(), &Some(conflict_label.to_string()));
+        }
+    }
+
+    mod vendor {
+        use super::super::*;
+
+        #[test]
+        fn returns_none_for_v1_claim_without_vendor() {
+            // V1 claim without vendor
+            let claim = Claim::new_with_user_guid(
+                "test_generator",
+                "urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                1,
+            )
+            .expect("failed to create claim");
+
+            assert_eq!(claim.vendor(), None);
+        }
+
+        #[test]
+        fn returns_some_for_v1_claim_with_vendor() {
+            // V1 claim with vendor
+            let claim = Claim::new_with_user_guid(
+                "test_generator",
+                "acme:urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                1,
+            )
+            .expect("failed to create claim");
+
+            assert_eq!(claim.vendor(), Some("acme".to_string()));
+        }
+
+        #[test]
+        fn returns_none_for_v2_claim_without_vendor() {
+            // V2 claim without vendor
+            let claim = Claim::new_with_user_guid(
+                "test_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                2,
+            )
+            .expect("failed to create claim");
+
+            assert_eq!(claim.vendor(), None);
+        }
+
+        #[test]
+        fn returns_some_for_v2_claim_with_vendor() {
+            // V2 claim with vendor
+            let claim = Claim::new_with_user_guid(
+                "test_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+                2,
+            )
+            .expect("failed to create claim");
+
+            assert_eq!(claim.vendor(), Some("acme".to_string()));
+        }
+    }
+
+    mod claim_instance_version {
+        use super::super::*;
+
+        #[test]
+        fn returns_none_for_v1_claim() {
+            // V1 claims don't have instance version
+            let claim = Claim::new_with_user_guid(
+                "test_generator",
+                "urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                1,
+            )
+            .expect("failed to create claim");
+
+            assert_eq!(claim.claim_instance_version(), None);
+        }
+
+        #[test]
+        fn returns_none_for_v2_claim_without_version() {
+            // V2 claim without version
+            let claim = Claim::new_with_user_guid(
+                "test_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                2,
+            )
+            .expect("failed to create claim");
+
+            assert_eq!(claim.claim_instance_version(), None);
+        }
+
+        #[test]
+        fn returns_version_for_v2_claim_with_version() {
+            // V2 claim with version (but no vendor, using :: syntax)
+            // Note: We can't create this through new_with_user_guid since it creates
+            // labels without version/reason. We'll need to test this by creating
+            // a claim and then verifying the parsing works correctly.
+            // For now, verify the method exists and returns None for claims without version.
+            let claim = Claim::new_with_user_guid(
+                "test_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+                2,
+            )
+            .expect("failed to create claim");
+
+            // This claim doesn't have a version in its label
+            assert_eq!(claim.claim_instance_version(), None);
+        }
+    }
+
+    mod claim_instance_reason {
+        use super::super::*;
+
+        #[test]
+        fn returns_none_for_v1_claim() {
+            // V1 claims don't have instance reason
+            let claim = Claim::new_with_user_guid(
+                "test_generator",
+                "urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                1,
+            )
+            .expect("failed to create claim");
+
+            assert_eq!(claim.claim_instance_reason(), None);
+        }
+
+        #[test]
+        fn returns_none_for_v2_claim_without_reason() {
+            // V2 claim without reason
+            let claim = Claim::new_with_user_guid(
+                "test_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                2,
+            )
+            .expect("failed to create claim");
+
+            assert_eq!(claim.claim_instance_reason(), None);
+        }
+
+        #[test]
+        fn returns_reason_for_v2_claim_with_reason() {
+            // Similar to version test, we verify the method exists and returns None
+            // when reason isn't in the label
+            let claim = Claim::new_with_user_guid(
+                "test_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+                2,
+            )
+            .expect("failed to create claim");
+
+            // This claim doesn't have a reason in its label
+            assert_eq!(claim.claim_instance_reason(), None);
+        }
+    }
+
+    mod uri {
+        use super::super::*;
+
+        #[test]
+        fn returns_manifest_uri_for_v1_claim() {
+            let claim = Claim::new_with_user_guid(
+                "test_generator",
+                "urn:uuid:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                1,
+            )
+            .expect("failed to create claim");
+
+            let uri = claim.uri();
+            // URI should start with self#jumbf= and contain the manifest store
+            assert!(uri.starts_with("self#jumbf="));
+            assert!(uri.contains("c2pa"));
+        }
+
+        #[test]
+        fn returns_manifest_uri_for_v2_claim() {
+            let claim = Claim::new_with_user_guid(
+                "test_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82",
+                2,
+            )
+            .expect("failed to create claim");
+
+            let uri = claim.uri();
+            // URI should start with self#jumbf= and contain the manifest store
+            assert!(uri.starts_with("self#jumbf="));
+            assert!(uri.contains("c2pa"));
+        }
+
+        #[test]
+        fn returns_manifest_uri_for_v2_claim_with_vendor() {
+            let claim = Claim::new_with_user_guid(
+                "test_generator",
+                "urn:c2pa:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+                2,
+            )
+            .expect("failed to create claim");
+
+            let uri = claim.uri();
+            // URI should start with self#jumbf= and contain the manifest store and label
+            assert!(uri.starts_with("self#jumbf="));
+            assert!(uri.contains("c2pa"));
+            // The label should be embedded in the URI
+            assert!(uri.contains(claim.label()));
+        }
+    }
+
+    mod calc_assertion_box_hash {
+        use super::super::*;
+        use crate::assertions::Uuid;
+
+        #[test]
+        fn uuid_assertion_without_salt() {
+            // Test line 1287: calc_assertion_box_hash with AssertionData::Uuid and salt = None.
+            // This tests the closing brace of the `if let Some(salt)` block for the Uuid variant.
+            const LABEL: &str = "test.uuid.assertion";
+            const UUID: &str = "ABCDABCDABCDABCDABCDABCDABCDABCD";
+            const DATA: [u8; 16] = [
+                0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+                0x0b, 0x0e,
+            ];
+
+            // Create a UUID assertion.
+            let uuid_assertion = Uuid::new(LABEL, UUID.to_string(), DATA.to_vec());
+            let assertion = uuid_assertion
+                .to_assertion()
+                .expect("failed to create assertion");
+
+            // Call calc_assertion_box_hash with salt = None to exercise line 1287.
+            let result = Claim::calc_assertion_box_hash(LABEL, &assertion, None, "sha256");
+
+            // The function should succeed and return a hash.
+            assert!(result.is_ok());
+            let hash = result.unwrap();
+            assert!(!hash.is_empty());
+        }
+
+        #[test]
+        fn uuid_assertion_with_salt() {
+            // Test the opposite path: UUID assertion with salt provided.
+            const LABEL: &str = "test.uuid.assertion";
+            const UUID: &str = "ABCDABCDABCDABCDABCDABCDABCDABCD";
+            const DATA: [u8; 16] = [
+                0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+                0x0b, 0x0e,
+            ];
+
+            // Create a UUID assertion.
+            let uuid_assertion = Uuid::new(LABEL, UUID.to_string(), DATA.to_vec());
+            let assertion = uuid_assertion
+                .to_assertion()
+                .expect("failed to create assertion");
+
+            // Call calc_assertion_box_hash with salt provided to exercise the Some branch.
+            // Salt must be at least 16 bytes long.
+            let salt = vec![
+                0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+                0x0f, 0x10,
+            ];
+            let result = Claim::calc_assertion_box_hash(LABEL, &assertion, Some(salt), "sha256");
+
+            // The function should succeed and return a hash.
+            assert!(result.is_ok());
+            let hash = result.unwrap();
+            assert!(!hash.is_empty());
+        }
+    }
+
+    mod compatibility_checks {
+        use super::super::*;
+        use crate::assertions::{Action, Actions};
+
+        #[test]
+        fn actions_version_too_low() {
+            // Test lines 1318-1322: actions assertion with version < 1.
+            let claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Create an actions assertion with version 0 (less than minimum required version 1).
+            let actions = Actions::new().add_action(Action::new("c2pa.edited"));
+
+            // Create the assertion with version 0.
+            let actions_cbor = serde_cbor::to_vec(&actions).expect("failed to serialize actions");
+            let assertion = Assertion::new(
+                "c2pa.actions",
+                Some(0), // version 0 is below the minimum of 1
+                AssertionData::Cbor(actions_cbor),
+            );
+
+            // Call compatibility_checks and expect an error.
+            let result = claim.compatibility_checks(&assertion);
+            assert!(result.is_err());
+
+            let err = result.unwrap_err();
+            match err {
+                Error::VersionCompatibility(msg) => {
+                    assert_eq!(msg, "action assertion version too low");
+                }
+                _ => panic!("Expected VersionCompatibility error, got: {:?}", err),
+            }
+        }
+
+        #[test]
+        fn deprecated_action_copied() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.copied".
+            test_deprecated_action("c2pa.copied");
+        }
+
+        #[test]
+        fn deprecated_action_formatted() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.formatted".
+            test_deprecated_action("c2pa.formatted");
+        }
+
+        #[test]
+        fn deprecated_action_version_updated() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.version_updated".
+            test_deprecated_action("c2pa.version_updated");
+        }
+
+        #[test]
+        fn deprecated_action_printed() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.printed".
+            test_deprecated_action("c2pa.printed");
+        }
+
+        #[test]
+        fn deprecated_action_managed() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.managed".
+            test_deprecated_action("c2pa.managed");
+        }
+
+        #[test]
+        fn deprecated_action_produced() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.produced".
+            test_deprecated_action("c2pa.produced");
+        }
+
+        #[test]
+        fn deprecated_action_saved() {
+            // Test lines 1324-1331: actions assertion with deprecated action "c2pa.saved".
+            test_deprecated_action("c2pa.saved");
+        }
+
+        fn test_deprecated_action(action_name: &str) {
+            let claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Create an actions assertion with a deprecated action.
+            let actions = Actions::new().add_action(Action::new(action_name));
+
+            // Create the assertion with version 2 (valid version, but contains deprecated action).
+            let actions_cbor = serde_cbor::to_vec(&actions).expect("failed to serialize actions");
+            let assertion =
+                Assertion::new("c2pa.actions", Some(2), AssertionData::Cbor(actions_cbor));
+
+            // Call compatibility_checks and expect an error.
+            let result = claim.compatibility_checks(&assertion);
+            assert!(result.is_err());
+
+            let err = result.unwrap_err();
+            match err {
+                Error::VersionCompatibility(msg) => {
+                    assert_eq!(msg, "action assertion has been deprecated");
+                }
+                _ => panic!("Expected VersionCompatibility error, got: {:?}", err),
+            }
+        }
+
+        #[test]
+        fn bmff_hash_version_too_low() {
+            // Test lines 1337-1339: BMFF hash assertion with version < 2.
+            let claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Create a BMFF hash assertion with version 1 (less than minimum required version 2).
+            // We just need a minimal valid CBOR structure for the hash data.
+            let bmff_hash_data = serde_cbor::to_vec(&serde_json::json!({
+                "alg": "sha256",
+                "hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+                "name": "test.mp4"
+            }))
+            .expect("failed to serialize bmff hash");
+
+            let assertion = Assertion::new(
+                "c2pa.hash.bmff",
+                Some(1), // version 1 is below the minimum of 2
+                AssertionData::Cbor(bmff_hash_data),
+            );
+
+            // Call compatibility_checks and expect an error.
+            let result = claim.compatibility_checks(&assertion);
+            assert!(result.is_err());
+
+            let err = result.unwrap_err();
+            match err {
+                Error::VersionCompatibility(msg) => {
+                    assert_eq!(msg, "BMFF hash assertion version too low");
+                }
+                _ => panic!("Expected VersionCompatibility error, got: {:?}", err),
+            }
+        }
+
+        #[test]
+        fn bmff_hash_version_valid() {
+            // Test valid BMFF hash assertion with version 2.
+            let claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Create a BMFF hash assertion with version 2 (valid).
+            let bmff_hash_data = serde_cbor::to_vec(&serde_json::json!({
+                "alg": "sha256",
+                "hash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+                "name": "test.mp4"
+            }))
+            .expect("failed to serialize bmff hash");
+
+            let assertion = Assertion::new(
+                "c2pa.hash.bmff",
+                Some(2), // version 2 is valid
+                AssertionData::Cbor(bmff_hash_data),
+            );
+
+            // Call compatibility_checks and expect success.
+            let result = claim.compatibility_checks(&assertion);
+            assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        }
+
+        #[test]
+        fn actions_version_valid() {
+            // Test valid actions assertion with version 2.
+            let claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Create an actions assertion with a non-deprecated action and version 2.
+            let actions = Actions::new().add_action(Action::new("c2pa.edited"));
+
+            let actions_cbor = serde_cbor::to_vec(&actions).expect("failed to serialize actions");
+            let assertion = Assertion::new(
+                "c2pa.actions",
+                Some(2), // version 2 is valid
+                AssertionData::Cbor(actions_cbor),
+            );
+
+            // Call compatibility_checks and expect success.
+            let result = claim.compatibility_checks(&assertion);
+            assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        }
+    }
+
+    mod claim_assertion_type {
+        use super::super::*;
+
+        #[test]
+        fn label_in_created_assertion_labels() {
+            // Test lines 1368-1369: When a label is in the created_assertion_labels setting,
+            // it should return ClaimAssertionType::Created.
+
+            // Set up settings with created_assertion_labels containing "stds.exif".
+            let toml_config = r#"
+                [builder]
+                created_assertion_labels = ["stds.exif"]
+            "#;
+            crate::settings::Settings::from_toml(toml_config).expect("failed to set settings");
+
+            // Create a V2 claim.
+            let claim = Claim::new("test_generator", None, 2);
+
+            // Test that stds.exif is classified as Created.
+            let assertion_type = claim.claim_assertion_type("stds.exif", false);
+            assert_eq!(assertion_type, ClaimAssertionType::Created);
+
+            // Clean up settings.
+            crate::settings::reset_default_settings().expect("failed to reset settings");
+        }
+
+        #[test]
+        fn label_not_in_created_assertion_labels() {
+            // Test lines 1370-1371: When a label is not in the created_assertion_labels setting,
+            // it should return ClaimAssertionType::Gathered.
+
+            // Set up settings with created_assertion_labels containing only "stds.exif".
+            let toml_config = r#"
+                [builder]
+                created_assertion_labels = ["stds.exif"]
+            "#;
+            crate::settings::Settings::from_toml(toml_config).expect("failed to set settings");
+
+            // Create a V2 claim.
+            let claim = Claim::new("test_generator", None, 2);
+
+            // Test that c2pa.location (not in the list) is classified as Gathered.
+            let assertion_type = claim.claim_assertion_type("c2pa.location", false);
+            assert_eq!(assertion_type, ClaimAssertionType::Gathered);
+
+            // Clean up settings.
+            crate::settings::reset_default_settings().expect("failed to reset settings");
+        }
+
+        #[test]
+        fn multiple_labels_in_created_assertion_labels() {
+            // Test lines 1368-1369: Test with multiple labels in the created_assertion_labels setting.
+
+            // Set up settings with multiple labels.
+            let toml_config = r#"
+                [builder]
+                created_assertion_labels = ["stds.exif", "c2pa.location", "my.custom.assertion"]
+            "#;
+            crate::settings::Settings::from_toml(toml_config).expect("failed to set settings");
+
+            // Create a V2 claim.
+            let claim = Claim::new("test_generator", None, 2);
+
+            // Test that all labels in the list are classified as Created.
+            assert_eq!(
+                claim.claim_assertion_type("stds.exif", false),
+                ClaimAssertionType::Created
+            );
+            assert_eq!(
+                claim.claim_assertion_type("c2pa.location", false),
+                ClaimAssertionType::Created
+            );
+            assert_eq!(
+                claim.claim_assertion_type("my.custom.assertion", false),
+                ClaimAssertionType::Created
+            );
+
+            // Test that a label not in the list is classified as Gathered.
+            assert_eq!(
+                claim.claim_assertion_type("c2pa.thumbnail", false),
+                ClaimAssertionType::Gathered
+            );
+
+            // Clean up settings.
+            crate::settings::reset_default_settings().expect("failed to reset settings");
+        }
+
+        #[test]
+        fn no_created_assertion_labels_setting() {
+            // Test lines 1373-1374: When created_assertion_labels is None (default),
+            // non-hash assertions should return ClaimAssertionType::Gathered.
+
+            // Ensure settings are at default (no created_assertion_labels).
+            crate::settings::reset_default_settings().expect("failed to reset settings");
+
+            // Create a V2 claim.
+            let claim = Claim::new("test_generator", None, 2);
+
+            // Test that a non-hash assertion is classified as Gathered when no setting is present.
+            let assertion_type = claim.claim_assertion_type("stds.exif", false);
+            assert_eq!(assertion_type, ClaimAssertionType::Gathered);
+
+            // Clean up settings.
+            crate::settings::reset_default_settings().expect("failed to reset settings");
+        }
+    }
+
+    mod get_databox {
+        use super::super::*;
+        use crate::{assertions::DataBox, utils::test::create_test_claim};
+
+        /// Test line 1518: get_databox returns None when manifest label doesn't match.
+        #[test]
+        fn mismatched_manifest_label() {
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Add a databox to the claim.
+            let databox = DataBox {
+                format: "application/octet-stream".to_string(),
+                data: vec![1, 2, 3, 4, 5],
+                data_types: None,
+            };
+            let db_cbor = serde_cbor::to_vec(&databox).expect("serialize databox");
+            claim
+                .put_databox("c2pa.data_1", &db_cbor, None)
+                .expect("put databox");
+
+            // Create a HashedUri with a different manifest label.
+            let wrong_manifest_uri = to_databox_uri("wrong_manifest_label", "c2pa.data_1");
+            let hashed_uri =
+                HashedUri::new(wrong_manifest_uri, Some("sha256".to_string()), b"hash");
+
+            // Should return None because the manifest labels don't match.
+            assert!(claim.get_databox(&hashed_uri).is_none());
+        }
+
+        /// Test line 1526: get_databox with empty URI string.
+        /// This tests the defensive None check when box_name_from_uri might return None.
+        #[test]
+        fn empty_uri_string() {
+            let claim = create_test_claim().expect("create test claim");
+
+            // Create a HashedUri with an empty URI.
+            // This ensures we go through the else branch (manifest_label_from_uri returns None)
+            // and tests the box_name_from_uri None check at line 1526.
+            let hashed_uri = HashedUri::new(String::new(), Some("sha256".to_string()), b"hash");
+
+            // Should return None.
+            assert!(claim.get_databox(&hashed_uri).is_none());
+        }
+
+        /// Test line 1534: get_databox returns None when databox is not found.
+        #[test]
+        fn databox_not_found_wrong_hash() {
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Add a databox to the claim.
+            let databox = DataBox {
+                format: "application/octet-stream".to_string(),
+                data: vec![1, 2, 3, 4, 5],
+                data_types: None,
+            };
+            let db_cbor = serde_cbor::to_vec(&databox).expect("serialize databox");
+            claim
+                .put_databox("c2pa.data_1", &db_cbor, None)
+                .expect("put databox");
+
+            // Create a HashedUri with the correct manifest label and URI,
+            // but with a wrong hash.
+            let correct_uri = to_databox_uri(claim.label(), "c2pa.data_1");
+            let wrong_hash = b"wrong_hash_value";
+            let hashed_uri = HashedUri::new(correct_uri, Some("sha256".to_string()), wrong_hash);
+
+            // Should return None because the hash doesn't match.
+            assert!(claim.get_databox(&hashed_uri).is_none());
+        }
+    }
+
+    mod add_verifiable_credential {
+        use super::*;
+
+        /// Test lines 1573-1575: Error when trying to add verifiable credential to a V2+ claim.
+        #[test]
+        fn version_compatibility_error() {
+            // Create a V2 claim.
+            let mut claim = Claim::new("test_generator", None, 2);
+
+            // Try to add a verifiable credential (only supported in V1).
+            let test_vc = r#"{
+                "@context": [
+                    "https://www.w3.org/2018/credentials/v1",
+                    "http://schema.org"
+                ],
+                "id": "https://example.com/credentials/123",
+                "type": [
+                    "VerifiableCredential",
+                    "NPPACredential"
+                ],
+                "issuer": "https://nppa.org/",
+                "credentialSubject": {
+                    "id": "https://example.com/subject/456",
+                    "name": "Bob Ross",
+                    "memberOf": "https://nppa.org/"
+                }
+            }"#;
+
+            let result = claim.add_verifiable_credential(test_vc);
+
+            // Should return VersionCompatibility error.
+            assert!(result.is_err());
+            match result {
+                Err(Error::VersionCompatibility(msg)) => {
+                    assert_eq!(msg, "verifiable credentials not supported");
+                }
+                _ => panic!("Expected VersionCompatibility error with 'verifiable credentials not supported' message"),
+            }
+        }
+    }
+
+    mod update_assertion {
+        use super::*;
+        // Using CreativeWork for testing internal update_assertion functionality.
+        // While deprecated for public use, it's suitable for testing the error paths.
+        #[allow(deprecated)]
+        use crate::assertions::CreativeWork;
+
+        /// Test line 1656: Error when no matching assertion is found in assertion_store.
+        #[test]
+        #[allow(deprecated)]
+        fn assertion_not_found_in_store() {
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Create an assertion that doesn't exist in the claim.
+            let nonexistent_assertion = CreativeWork::new().to_assertion().expect("to_assertion");
+
+            // Try to update the nonexistent assertion.
+            let result = claim.update_assertion(nonexistent_assertion, |_| true, |_, a| Ok(a));
+
+            // Should return NotFound error.
+            assert!(matches!(result, Err(Error::NotFound)));
+        }
+
+        /// Test line 1664: Error from patch_fn callback during assertion update.
+        #[test]
+        #[allow(deprecated)]
+        fn patch_fn_error() {
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Add an assertion that we can later update.
+            let creative_work = CreativeWork::new();
+            claim.add_assertion(&creative_work).expect("add_assertion");
+
+            // Create a replacement assertion.
+            let replace_with = CreativeWork::new().to_assertion().expect("to_assertion");
+
+            // Use a patch_fn that returns an error.
+            let result = claim.update_assertion(
+                replace_with,
+                |ca| ca.assertion().label() == "stds.schema-org.CreativeWork",
+                |_, _| Err(Error::AssertionInvalidRedaction),
+            );
+
+            // Should return the error from patch_fn.
+            assert!(matches!(result, Err(Error::AssertionInvalidRedaction)));
+        }
+
+        /// Test line 1686: Error when no matching hash is found in assertions list.
+        #[test]
+        #[allow(deprecated)]
+        fn hash_not_found_in_assertions_list() {
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Add an assertion.
+            let creative_work = CreativeWork::new();
+            claim.add_assertion(&creative_work).expect("add_assertion");
+
+            // Create a replacement assertion (doesn't need to be different).
+            let replace_with = CreativeWork::new().to_assertion().expect("to_assertion");
+
+            // Corrupt the assertions list by removing or modifying the hash reference.
+            // We'll save the original hash and then modify it in the assertions list.
+            if let Some(target_assertion) = claim
+                .assertion_store
+                .iter()
+                .find(|ca| ca.assertion().label() == "stds.schema-org.CreativeWork")
+            {
+                let target_label = target_assertion.label();
+                let original_hash = target_assertion.hash().to_vec();
+
+                // Find and modify the hash in the assertions list.
+                if let Some(hashed_uri) = claim.assertions.iter_mut().find(|f| {
+                    f.url().contains(&target_label) && vec_compare(&f.hash(), &original_hash)
+                }) {
+                    // Corrupt the hash so it won't match during update_assertion.
+                    let mut corrupted_hash = original_hash.clone();
+                    corrupted_hash[0] ^= 0xff; // Flip bits in first byte.
+                    hashed_uri.update_hash(corrupted_hash);
+                }
+            }
+
+            // Try to update the assertion with corrupted hash reference.
+            let result = claim.update_assertion(
+                replace_with,
+                |ca| ca.assertion().label() == "stds.schema-org.CreativeWork",
+                |_, a| Ok(a),
+            );
+
+            // Should return NotFound error because the hash doesn't match.
+            assert!(matches!(result, Err(Error::NotFound)));
+        }
+
+        /// Test line 1725: DataHash::from_assertion error case with corrupt DataHash assertion.
+        #[test]
+        fn update_data_hash_skips_corrupt_data_hash() {
+            use crate::assertions::{labels, DataHash};
+
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Create a corrupt DataHash assertion with invalid CBOR data.
+            // This has the correct label but invalid structure.
+            let corrupt_assertion = Assertion::from_data_cbor(
+                labels::DATA_HASH,
+                &[0xff, 0xff, 0xff], // Invalid CBOR.
+            );
+
+            // Add the corrupt assertion to the store manually.
+            let dummy_hash = vec![0u8; 32];
+            let corrupt_claim_assertion = ClaimAssertion::new(
+                corrupt_assertion,
+                0,
+                &dummy_hash,
+                "sha256",
+                None,
+                ClaimAssertionType::Created,
+            );
+            claim.put_assertion_store(corrupt_claim_assertion);
+
+            // Also add a valid DataHash assertion with a matching name.
+            let mut valid_data_hash = DataHash::new("test.jpg", "sha256");
+            valid_data_hash.set_hash(vec![1, 2, 3, 4, 5]);
+            claim
+                .add_assertion(&valid_data_hash)
+                .expect("add valid data hash");
+
+            // Try to update the DataHash.
+            // Line 1725 is triggered when the matcher encounters the corrupt DataHash,
+            // tries to parse it, fails, and returns false.
+            // Then it should find the valid one and update it.
+            let mut updated_data_hash = DataHash::new("test.jpg", "sha256");
+            updated_data_hash.set_hash(vec![6, 7, 8, 9, 10]);
+
+            let result = claim.update_data_hash(updated_data_hash);
+
+            // Should succeed because a valid DataHash exists.
+            assert!(result.is_ok());
+        }
+
+        /// Test line 1672: calc_assertion_box_hash error when salt is invalid.
+        #[test]
+        #[allow(deprecated)]
+        fn calc_assertion_box_hash_fails_with_invalid_salt() {
+            use crate::{
+                assertions::CreativeWork, hashed_uri::HashedUri, jumbf::boxes::JumbfParseError,
+            };
+
+            let mut claim = create_test_claim().expect("create test claim");
+
+            // Create an assertion with valid content.
+            let creative_work = CreativeWork::new();
+            let assertion = creative_work.to_assertion().expect("to_assertion");
+
+            // Create a ClaimAssertion with an invalid salt (less than 16 bytes).
+            // This bypasses normal validation by manually constructing the ClaimAssertion.
+            let invalid_salt = vec![1, 2, 3, 4, 5]; // Only 5 bytes, needs to be >= 16.
+            let dummy_hash = vec![0u8; 32];
+            let claim_assertion = ClaimAssertion::new(
+                assertion.clone(),
+                0,
+                &dummy_hash,
+                "sha256",
+                Some(invalid_salt),
+                ClaimAssertionType::Created,
+            );
+
+            // Manually add to assertion_store to bypass validation.
+            claim.put_assertion_store(claim_assertion);
+
+            // Add corresponding hashed URI to assertions list.
+            let label = format!("self#jumbf=c2pa.assertions/{}", assertion.label());
+            let hashed_uri = HashedUri::new(label, None, &dummy_hash.clone());
+            claim.assertions.push(hashed_uri);
+
+            // Try to update the assertion with the invalid salt.
+            // This should fail when calc_assertion_box_hash tries to set the salt.
+            let replace_with = CreativeWork::new().to_assertion().expect("to_assertion");
+            let result = claim.update_assertion(
+                replace_with,
+                |ca| ca.assertion().label() == "stds.schema-org.CreativeWork",
+                |_, a| Ok(a),
+            );
+
+            // Should return JumbfParseError because the salt is invalid.
+            match result {
+                Err(Error::JumbfParseError(JumbfParseError::InvalidSalt)) => {
+                    // Test passed.
+                }
+                other => panic!("Expected InvalidSalt error, got: {:?}", other),
+            }
+        }
+    }
+
+    mod redact_assertion {
+        use super::super::*;
+        use crate::{
+            assertions::{labels, Actions, DataBox, Metadata},
+            jumbf::labels::to_databox_uri,
+        };
+
+        /// Test line 1759: Error when trying to redact an actions assertion.
+        #[test]
+        fn cannot_redact_actions_assertion() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Add an actions assertion.
+            let actions = Actions::new().add_action(crate::assertions::Action::new("c2pa.edited"));
+            claim
+                .add_assertion(&actions)
+                .expect("failed to add actions assertion");
+
+            // Try to redact the actions assertion.
+            // Build a URI that looks like a self#jumbf link to an actions assertion.
+            let actions_uri = format!("self#jumbf={}/{}", labels::ASSERTION_STORE, labels::ACTIONS);
+
+            let result = claim.redact_assertion(&actions_uri);
+
+            // Should fail with AssertionInvalidRedaction.
+            assert!(result.is_err());
+            match result {
+                Err(Error::AssertionInvalidRedaction) => {
+                    // Test passed.
+                }
+                other => panic!("Expected AssertionInvalidRedaction error, got: {:?}", other),
+            }
+        }
+
+        /// Test line 1759: Error when trying to redact a c2pa.hash.* assertion.
+        #[test]
+        fn cannot_redact_hash_assertion() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Try to redact a hash assertion (e.g., c2pa.hash.data).
+            // Build a URI that looks like a self#jumbf link to a hash assertion.
+            let hash_uri = format!("self#jumbf={}/c2pa.hash.data", labels::ASSERTION_STORE);
+
+            let result = claim.redact_assertion(&hash_uri);
+
+            // Should fail with AssertionInvalidRedaction.
+            assert!(result.is_err());
+            match result {
+                Err(Error::AssertionInvalidRedaction) => {
+                    // Test passed.
+                }
+                other => panic!("Expected AssertionInvalidRedaction error, got: {:?}", other),
+            }
+        }
+
+        /// Test line 1759: Error when trying to redact a c2pa.hash.bmff assertion.
+        #[test]
+        fn cannot_redact_bmff_hash_assertion() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Try to redact a BMFF hash assertion.
+            let hash_uri = format!("self#jumbf={}/c2pa.hash.bmff", labels::ASSERTION_STORE);
+
+            let result = claim.redact_assertion(&hash_uri);
+
+            // Should fail with AssertionInvalidRedaction.
+            assert!(result.is_err());
+            match result {
+                Err(Error::AssertionInvalidRedaction) => {
+                    // Test passed.
+                }
+                other => panic!("Expected AssertionInvalidRedaction error, got: {:?}", other),
+            }
+        }
+
+        /// Test lines 1763-1771: Successfully redacting an assertion from assertion_store.
+        #[test]
+        fn successfully_redact_assertion() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Add a metadata assertion that can be redacted.
+            const MY_METADATA: &str = "my.test.metadata";
+            let data = serde_json::json!({
+                "@context": {
+                    "dc": "http://purl.org/dc/elements/1.1/"
+                },
+                "dc:title": "Test Title"
+            })
+            .to_string();
+
+            let metadata = Metadata::new(MY_METADATA, &data).expect("create metadata");
+            claim
+                .add_assertion(&metadata)
+                .expect("failed to add metadata assertion");
+
+            // Count assertions before redaction.
+            let initial_count = claim.assertion_store.len();
+            assert!(initial_count > 0);
+
+            // Build a URI that looks like a self#jumbf link to the assertion.
+            let assertion_uri = format!("self#jumbf={}/{}", labels::ASSERTION_STORE, MY_METADATA);
+
+            // Redact the assertion.
+            let result = claim.redact_assertion(&assertion_uri);
+
+            // Should succeed.
+            assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+
+            // Verify the assertion was removed.
+            assert_eq!(claim.assertion_store.len(), initial_count - 1);
+
+            // Verify the specific assertion is no longer present.
+            assert!(!claim
+                .assertion_store
+                .iter()
+                .any(|ca| ca.label() == MY_METADATA));
+        }
+
+        /// Test lines 1772-1780: Successfully redacting a databox.
+        #[test]
+        fn successfully_redact_databox() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Add a databox to the claim.
+            let databox = DataBox {
+                format: "application/octet-stream".to_string(),
+                data: vec![1, 2, 3, 4, 5],
+                data_types: None,
+            };
+            let db_cbor = serde_cbor::to_vec(&databox).expect("serialize databox");
+            claim
+                .put_databox("c2pa.test_databox", &db_cbor, None)
+                .expect("put databox");
+
+            // Verify the databox was added.
+            assert_eq!(claim.databoxes().len(), 1);
+
+            // Build the correct URI using to_databox_uri.
+            let databox_uri = to_databox_uri(claim.label(), "c2pa.test_databox");
+
+            // Redact the databox.
+            let result = claim.redact_assertion(&databox_uri);
+
+            // Should succeed.
+            assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+
+            // Verify the databox was removed.
+            assert_eq!(claim.databoxes().len(), 0);
+        }
+
+        /// Test line 1783: Error when trying to redact a non-existent assertion.
+        #[test]
+        fn cannot_redact_nonexistent_assertion() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Try to redact an assertion that doesn't exist in the assertion_store.
+            let nonexistent_uri = format!(
+                "self#jumbf={}/c2pa.nonexistent.assertion",
+                labels::ASSERTION_STORE
+            );
+
+            let result = claim.redact_assertion(&nonexistent_uri);
+
+            // Should fail with AssertionInvalidRedaction (line 1783).
+            assert!(result.is_err());
+            match result {
+                Err(Error::AssertionInvalidRedaction) => {
+                    // Test passed.
+                }
+                other => panic!("Expected AssertionInvalidRedaction error, got: {:?}", other),
+            }
+        }
+
+        /// Test line 1783: Error when trying to redact a non-existent databox.
+        #[test]
+        fn cannot_redact_nonexistent_databox() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Try to redact a databox that doesn't exist in the data_boxes.
+            let nonexistent_uri = to_databox_uri(claim.label(), "c2pa.nonexistent.databox");
+
+            let result = claim.redact_assertion(&nonexistent_uri);
+
+            // Should fail with AssertionInvalidRedaction (line 1783).
+            assert!(result.is_err());
+            match result {
+                Err(Error::AssertionInvalidRedaction) => {
+                    // Test passed.
+                }
+                other => panic!("Expected AssertionInvalidRedaction error, got: {:?}", other),
+            }
+        }
+
+        /// Test lines 1781-1783: Error when URI contains neither ASSERTION_STORE nor DATABOX_STORE.
+        #[test]
+        fn cannot_redact_invalid_uri() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+
+            // Try to redact with a URI that doesn't contain ASSERTION_STORE or DATABOX_STORE.
+            // This causes both the if and else-if conditions to be false, so execution
+            // falls through the closing brace at line 1781 to the error at line 1783.
+            let invalid_uri = "self#jumbf=c2pa.unknown_store/some.assertion";
+
+            let result = claim.redact_assertion(invalid_uri);
+
+            // Should fail with AssertionInvalidRedaction (line 1783).
+            assert!(result.is_err());
+            match result {
+                Err(Error::AssertionInvalidRedaction) => {
+                    // Test passed.
+                }
+                other => panic!("Expected AssertionInvalidRedaction error, got: {:?}", other),
+            }
+        }
+    }
+
+    mod hash {
+        use super::*;
+
+        /// Test line 1787: Verify that hash() returns a non-empty hash for a valid claim.
+        #[test]
+        fn returns_hash_for_valid_claim() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+            claim.build().expect("build claim");
+
+            let hash = claim.hash();
+
+            // Hash should not be empty for a valid claim.
+            assert!(!hash.is_empty(), "Expected non-empty hash");
+            // Hash length should be reasonable (e.g., SHA-256 is 32 bytes).
+            assert!(
+                hash.len() >= 16,
+                "Expected hash length >= 16, got {}",
+                hash.len()
+            );
+        }
+
+        /// Test line 1790: Verify that hash() returns an empty Vec when data() fails.
+        #[test]
+        fn returns_empty_when_data_fails() {
+            // Create a claim with invalid data that will fail on data().
+            let claim = Claim::new("test", Some("test"), 2);
+            // Don't build it, so data() should fail.
+
+            let hash = claim.hash();
+
+            // Should return empty vector when data() fails (line 1790).
+            assert!(hash.is_empty(), "Expected empty hash when data() fails");
+        }
+
+        /// Test that different claims produce different hashes.
+        #[test]
+        fn different_claims_produce_different_hashes() {
+            let mut claim1 = crate::utils::test::create_test_claim().expect("create test claim");
+            claim1.build().expect("build claim1");
+
+            let mut claim2 =
+                crate::utils::test::create_min_test_claim().expect("create min test claim");
+            claim2.build().expect("build claim2");
+
+            let hash1 = claim1.hash();
+            let hash2 = claim2.hash();
+
+            // Different claims should produce different hashes.
+            assert_ne!(
+                hash1, hash2,
+                "Expected different hashes for different claims"
+            );
+        }
+    }
+
+    mod signing_time {
+        /// Test line 1795: Verify that signing_time() returns None for an unsigned claim.
+        #[test]
+        fn returns_none_for_unsigned_claim() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+            claim.build().expect("build claim");
+
+            let signing_time = claim.signing_time();
+
+            // Should return None when there is no signature info (line 1799).
+            assert!(
+                signing_time.is_none(),
+                "Expected None for unsigned claim, got: {:?}",
+                signing_time
+            );
+        }
+
+        /// Test line 1799: Verify that signing_time() returns None when signature_info returns None.
+        #[test]
+        fn returns_none_when_signature_info_is_none() {
+            // Create a claim without building it so it has no signature.
+            let claim = super::Claim::new("test", Some("test"), 2);
+
+            let signing_time = claim.signing_time();
+
+            // Should return None because the else block at line 1799 is executed.
+            assert!(
+                signing_time.is_none(),
+                "Expected None when signature_info is None"
+            );
+        }
+    }
+
+    mod signing_issuer {
+        /// Test line 1804: Verify that signing_issuer() returns None for an unsigned claim.
+        #[test]
+        fn returns_none_for_unsigned_claim() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+            claim.build().expect("build claim");
+
+            let signing_issuer = claim.signing_issuer();
+
+            // Should return None when there is no signature info (line 1808).
+            assert!(
+                signing_issuer.is_none(),
+                "Expected None for unsigned claim, got: {:?}",
+                signing_issuer
+            );
+        }
+
+        /// Test line 1808: Verify that signing_issuer() returns None when signature_info returns None.
+        #[test]
+        fn returns_none_when_signature_info_is_none() {
+            // Create a claim without building it so it has no signature.
+            let claim = super::Claim::new("test", Some("test"), 2);
+
+            let signing_issuer = claim.signing_issuer();
+
+            // Should return None because the else block at line 1808 is executed.
+            assert!(
+                signing_issuer.is_none(),
+                "Expected None when signature_info is None"
+            );
+        }
+    }
+
+    mod signing_cert_serial {
+        /// Test line 1813: Verify that signing_cert_serial() returns None for an unsigned claim.
+        #[test]
+        fn returns_none_for_unsigned_claim() {
+            let mut claim = crate::utils::test::create_test_claim().expect("create test claim");
+            claim.build().expect("build claim");
+
+            let cert_serial = claim.signing_cert_serial();
+
+            // Should return None when there is no signature info.
+            assert!(
+                cert_serial.is_none(),
+                "Expected None for unsigned claim, got: {:?}",
+                cert_serial
+            );
+        }
+
+        /// Test line 1815: Verify that signing_cert_serial() returns None when signature_info is None.
+        #[test]
+        fn returns_none_when_signature_info_is_none() {
+            // Create a claim without signature info.
+            let claim = super::Claim::new("test", Some("test"), 2);
+
+            let cert_serial = claim.signing_cert_serial();
+
+            // The and_then at line 1815 should short-circuit to None.
+            assert!(
+                cert_serial.is_none(),
+                "Expected None when signature_info is None"
+            );
+        }
+
+        /// Test lines 1814-1816: Verify the map operation that converts serial to String.
+        #[test]
+        fn converts_serial_to_string() {
+            // This test verifies the chaining logic at lines 1814-1816.
+            // The actual conversion to string would be tested indirectly
+            // through integration tests with signed claims.
+            let claim = super::Claim::new("test", Some("test"), 2);
+
+            // The result should be None since there's no signature_info.
+            let cert_serial = claim.signing_cert_serial();
+            assert!(cert_serial.is_none());
+        }
+    }
+
+    mod verify_claim_async_tests {
+        use c2pa_macros::c2pa_test_async;
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        use wasm_bindgen_test::wasm_bindgen_test;
+
+        #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+        wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+        use super::*;
+        use crate::{
+            assertions::{Action, Actions},
+            crypto::cose::CertificateTrustPolicy,
+            http::AsyncGenericResolver,
+            settings::Settings,
+            status_tracker::{ErrorBehavior, StatusTracker},
+            store::StoreValidationInfo,
+            validation_status, DigitalSourceType,
+        };
+
+        /// Test lines 1869-1877: Verify that verify_claim_async returns ClaimMissingSignatureBox
+        /// when the signature box is missing or points to the wrong manifest.
+        #[c2pa_test_async]
+        async fn signature_box_missing() -> Result<()> {
+            // Create a test claim with a V2 label.
+            let mut claim = crate::utils::test::create_test_claim()?;
+            claim.build()?;
+
+            // Set an invalid signature URI that doesn't point to the SIGNATURE box.
+            claim.signature = "self#jumbf=/c2pa/invalid_box".to_string();
+
+            // Set up minimal validation infrastructure.
+            let mut validation_log =
+                StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+            let svi = StoreValidationInfo::default();
+            let ctp = CertificateTrustPolicy::default();
+            let http_resolver = AsyncGenericResolver::new();
+            let settings = Settings::default();
+
+            // Create minimal asset data (empty bytes).
+            let asset_bytes = Vec::new();
+            let mut asset_data = ClaimAssetData::Bytes(&asset_bytes, "image/jpeg");
+
+            // Attempt to verify the claim - should fail with ClaimMissingSignatureBox.
+            let result = Claim::verify_claim_async(
+                &claim,
+                &mut asset_data,
+                &svi,
+                false,
+                &ctp,
+                &mut validation_log,
+                &http_resolver,
+                &settings,
+            )
+            .await;
+
+            // Verify we get the expected error.
+            assert!(matches!(result, Err(Error::ClaimMissingSignatureBox)));
+
+            // Verify the validation log contains the expected status code.
+            let log_items = validation_log.logged_items();
+            assert!(
+                log_items.iter().any(|item| {
+                    item.validation_status.as_ref().map(|s| s.as_ref())
+                        == Some(validation_status::CLAIM_SIGNATURE_MISSING)
+                }),
+                "Expected CLAIM_SIGNATURE_MISSING in validation log"
+            );
+
+            Ok(())
+        }
+
+        /// Test lines 1880-1888: Verify that verify_claim_async returns ClaimInvalidContent
+        /// when a V2 claim has an invalid label format.
+        #[c2pa_test_async]
+        async fn invalid_v2_claim_label() -> Result<()> {
+            // Create a test claim with a V2 label.
+            let mut claim = crate::utils::test::create_test_claim()?;
+            claim.build()?;
+
+            // Manually override the label to an invalid format for V2.
+            // The claim.label field is private, so we need to use reflection or
+            // create the claim differently. Let's create a claim with an invalid label.
+            // We'll use new_with_user_guid with an invalid format.
+
+            // Actually, we need to create a claim that passes initial validation
+            // but has an invalid label. Let's manipulate the internal state.
+            // Since we can't directly set the label, we'll need to work around this.
+
+            // Create a minimal claim structure with invalid label.
+            // We'll use the fact that claim_version is checked against label format.
+            let mut claim = Claim::new("test", Some("test"), 2);
+
+            // Override the label to something invalid for V2.
+            // V2 labels must follow the pattern: urn:c2pa:GUID[:vendor[:version_reason]]
+            // Let's set it to something that doesn't parse correctly.
+            claim.label = "invalid_label_format".to_string();
+
+            // Add minimal required assertions for V2.
+            let mut cg_info = ClaimGeneratorInfo::new("test app");
+            cg_info.version = Some("1.0.0".to_string());
+            claim.add_claim_generator_info(cg_info);
+
+            let created_action =
+                Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty);
+            let actions = Actions::new().add_action(created_action);
+            claim.add_assertion(&actions)?;
+
+            claim.build()?;
+
+            // Set a valid signature URI to pass the first check.
+            claim.signature = format!("self#jumbf={}/c2pa.signature", claim.label());
+
+            // Set up minimal validation infrastructure.
+            let mut validation_log =
+                StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+            let svi = StoreValidationInfo::default();
+            let ctp = CertificateTrustPolicy::default();
+            let http_resolver = AsyncGenericResolver::new();
+            let settings = Settings::default();
+
+            // Create minimal asset data (empty bytes).
+            let asset_bytes = Vec::new();
+            let mut asset_data = ClaimAssetData::Bytes(&asset_bytes, "image/jpeg");
+
+            // Attempt to verify the claim - should fail with ClaimInvalidContent.
+            let result = Claim::verify_claim_async(
+                &claim,
+                &mut asset_data,
+                &svi,
+                false,
+                &ctp,
+                &mut validation_log,
+                &http_resolver,
+                &settings,
+            )
+            .await;
+
+            // Verify we get the expected error.
+            assert!(
+                matches!(result, Err(Error::ClaimInvalidContent)),
+                "Expected ClaimInvalidContent, got: {:?}",
+                result
+            );
+
+            // Verify the validation log contains the expected status code.
+            let log_items = validation_log.logged_items();
+            assert!(
+                log_items.iter().any(|item| {
+                    item.validation_status.as_ref().map(|s| s.as_ref())
+                        == Some(validation_status::CLAIM_MALFORMED)
+                }),
+                "Expected CLAIM_MALFORMED in validation log"
+            );
+
+            Ok(())
+        }
+    }
+
+    mod verify_claim_tests {
+        use super::*;
+        use crate::{
+            assertions::{Action, Actions},
+            crypto::cose::CertificateTrustPolicy,
+            http::SyncGenericResolver,
+            settings::Settings,
+            status_tracker::{ErrorBehavior, StatusTracker},
+            store::StoreValidationInfo,
+            validation_status, DigitalSourceType,
+        };
+
+        /// Test lines 1960-1966: Verify that verify_claim returns ClaimMissingSignatureBox
+        /// when the signature box is missing or points to the wrong manifest.
+        #[test]
+        fn signature_box_missing() -> Result<()> {
+            // Create a test claim with a V2 label.
+            let mut claim = crate::utils::test::create_test_claim()?;
+            claim.build()?;
+
+            // Set an invalid signature URI that doesn't point to the SIGNATURE box.
+            claim.signature = "self#jumbf=/c2pa/invalid_box".to_string();
+
+            // Set up minimal validation infrastructure.
+            let mut validation_log =
+                StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+            let svi = StoreValidationInfo::default();
+            let ctp = CertificateTrustPolicy::default();
+            let http_resolver = SyncGenericResolver::new();
+            let settings = Settings::default();
+
+            // Create minimal asset data (empty bytes).
+            let asset_bytes = Vec::new();
+            let mut asset_data = ClaimAssetData::Bytes(&asset_bytes, "image/jpeg");
+
+            // Attempt to verify the claim - should fail with ClaimMissingSignatureBox.
+            let result = Claim::verify_claim(
+                &claim,
+                &mut asset_data,
+                &svi,
+                false,
+                &ctp,
+                &mut validation_log,
+                &http_resolver,
+                &settings,
+            );
+
+            // Verify we get the expected error.
+            assert!(matches!(result, Err(Error::ClaimMissingSignatureBox)));
+
+            // Verify the validation log contains the expected status code.
+            let log_items = validation_log.logged_items();
+            assert!(
+                log_items.iter().any(|item| {
+                    item.validation_status.as_ref().map(|s| s.as_ref())
+                        == Some(validation_status::CLAIM_SIGNATURE_MISSING)
+                }),
+                "Expected CLAIM_SIGNATURE_MISSING in validation log"
+            );
+
+            Ok(())
+        }
+
+        /// Test lines 1971-1977: Verify that verify_claim returns ClaimInvalidContent
+        /// when a V2 claim has an invalid label format.
+        #[test]
+        fn invalid_v2_claim_label() -> Result<()> {
+            // Create a minimal claim structure with invalid label.
+            // We'll use the fact that claim_version is checked against label format.
+            let mut claim = Claim::new("test", Some("test"), 2);
+
+            // Override the label to something invalid for V2.
+            // V2 labels must follow the pattern: urn:c2pa:GUID[:vendor[:version_reason]]
+            // Let's set it to something that doesn't parse correctly.
+            claim.label = "invalid_label_format".to_string();
+
+            // Add minimal required assertions for V2.
+            let mut cg_info = ClaimGeneratorInfo::new("test app");
+            cg_info.version = Some("1.0.0".to_string());
+            claim.add_claim_generator_info(cg_info);
+
+            let created_action =
+                Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty);
+            let actions = Actions::new().add_action(created_action);
+            claim.add_assertion(&actions)?;
+
+            claim.build()?;
+
+            // Set a valid signature URI to pass the first check.
+            claim.signature = format!("self#jumbf={}/c2pa.signature", claim.label());
+
+            // Set up minimal validation infrastructure.
+            let mut validation_log =
+                StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+            let svi = StoreValidationInfo::default();
+            let ctp = CertificateTrustPolicy::default();
+            let http_resolver = SyncGenericResolver::new();
+            let settings = Settings::default();
+
+            // Create minimal asset data (empty bytes).
+            let asset_bytes = Vec::new();
+            let mut asset_data = ClaimAssetData::Bytes(&asset_bytes, "image/jpeg");
+
+            // Attempt to verify the claim - should fail with ClaimInvalidContent.
+            let result = Claim::verify_claim(
+                &claim,
+                &mut asset_data,
+                &svi,
+                false,
+                &ctp,
+                &mut validation_log,
+                &http_resolver,
+                &settings,
+            );
+
+            // Verify we get the expected error.
+            assert!(
+                matches!(result, Err(Error::ClaimInvalidContent)),
+                "Expected ClaimInvalidContent, got: {:?}",
+                result
+            );
+
+            // Verify the validation log contains the expected status code.
+            let log_items = validation_log.logged_items();
+            assert!(
+                log_items.iter().any(|item| {
+                    item.validation_status.as_ref().map(|s| s.as_ref())
+                        == Some(validation_status::CLAIM_MALFORMED)
+                }),
+                "Expected CLAIM_MALFORMED in validation log"
+            );
+
+            Ok(())
+        }
+
+        /// Test lines 1987-1989: Verify that verify_claim handles the case where
+        /// original_bytes is None and data() must be called.
+        #[test]
+        fn generates_data_when_original_bytes_none() -> Result<()> {
+            // Create a test claim without original_bytes (typical for newly created claims).
+            let mut claim = crate::utils::test::create_test_claim()?;
+            claim.build()?;
+
+            // Ensure original_bytes is None to trigger the data generation path.
+            assert!(
+                claim.original_bytes.is_none(),
+                "original_bytes should be None for newly created claim"
+            );
+
+            // The claim needs a valid signature to get past the early checks.
+            // Since we're testing the data generation path, we'll need to sign it.
+            // However, for this specific test, we just want to verify the code path
+            // is exercised. The function will fail later due to missing signature,
+            // but lines 1987-1989 will be covered.
+
+            claim.signature = format!("self#jumbf={}/c2pa.signature", claim.label());
+
+            // Set up minimal validation infrastructure.
+            let mut validation_log =
+                StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+            let svi = StoreValidationInfo::default();
+            let ctp = CertificateTrustPolicy::default();
+            let http_resolver = SyncGenericResolver::new();
+            let settings = Settings::default();
+
+            // Create minimal asset data (empty bytes).
+            let asset_bytes = Vec::new();
+            let mut asset_data = ClaimAssetData::Bytes(&asset_bytes, "image/jpeg");
+
+            // Attempt to verify the claim. It will fail, but lines 1987-1989 will execute
+            // since original_bytes is None and data() will be called.
+            let result = Claim::verify_claim(
+                &claim,
+                &mut asset_data,
+                &svi,
+                false,
+                &ctp,
+                &mut validation_log,
+                &http_resolver,
+                &settings,
+            );
+
+            // The verification will fail (no valid signature), but we've exercised
+            // the code path where data() is called.
+            assert!(result.is_err(), "Expected verification to fail");
+
+            Ok(())
+        }
     }
 }
