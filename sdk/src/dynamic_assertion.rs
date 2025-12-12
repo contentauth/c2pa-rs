@@ -21,7 +21,7 @@ use async_trait::async_trait;
 pub use crate::reader::{AsyncPostValidator, PostValidator};
 use crate::{
     hashed_uri::HashedUri,
-    maybe_send::{MaybeSend, MaybeSync},
+    maybe_send_sync::{MaybeSend, MaybeSync},
     Result,
 };
 

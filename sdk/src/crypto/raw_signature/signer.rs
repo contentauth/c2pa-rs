@@ -19,7 +19,7 @@ use crate::{
         raw_signature::SigningAlg,
         time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     },
-    maybe_send::{MaybeSend, MaybeSync},
+    maybe_send_sync::{MaybeSend, MaybeSync},
 };
 
 /// Implementations of the `RawSigner` trait generate a cryptographic signature

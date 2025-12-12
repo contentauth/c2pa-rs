@@ -23,7 +23,7 @@ use crate::{
         time_stamp::TimeStampError,
     },
     http::SyncGenericResolver,
-    maybe_send::MaybeSync,
+    maybe_send_sync::MaybeSync,
 };
 
 /// A `TimeStampProvider` implementation can contact a [RFC 3161] time stamp

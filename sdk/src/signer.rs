@@ -20,7 +20,7 @@ use crate::{
     },
     dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
     http::SyncGenericResolver,
-    maybe_send::MaybeSync,
+    maybe_send_sync::MaybeSync,
     Result,
 };
 

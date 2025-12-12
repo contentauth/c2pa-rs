@@ -15,7 +15,7 @@ use async_trait::async_trait;
 
 use crate::{
     identity::{builder::IdentityBuilderError, SignerPayload},
-    maybe_send::{MaybeSend, MaybeSync},
+    maybe_send_sync::{MaybeSend, MaybeSync},
 };
 
 /// An implementation of `CredentialHolder` is able to generate a signature

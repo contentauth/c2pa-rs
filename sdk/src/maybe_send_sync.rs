@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! The `maybe_send` module provides a trait that conditionally requires `Send`
+//! The `maybe_send_sync` module provides a trait that conditionally requires `Send`
 //! based on the target architecture. This is necessary because WASM32 targets
 //! do not support the `Send` trait for async operations.
 //!
@@ -30,7 +30,7 @@
 /// # Examples
 ///
 /// ```rust,ignore
-/// use crate::maybe_send::MaybeSend;
+/// use crate::maybe_send_sync::MaybeSend;
 ///
 /// // Use in trait bounds
 /// pub fn process<T: MaybeSend>(value: T) -> Result<()> {
@@ -63,7 +63,7 @@ impl<T> MaybeSend for T {}
 /// # Examples
 ///
 /// ```rust,ignore
-/// use crate::maybe_send::MaybeSync;
+/// use crate::maybe_send_sync::MaybeSync;
 ///
 /// // Use in trait bounds
 /// pub fn process<T: MaybeSync>(value: T) -> Result<()> {
