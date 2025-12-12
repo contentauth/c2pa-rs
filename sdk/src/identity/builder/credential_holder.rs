@@ -15,7 +15,7 @@ use async_trait::async_trait;
 
 use crate::{
     identity::{builder::IdentityBuilderError, SignerPayload},
-    maybe_send::MaybeSend,
+    maybe_send::{MaybeSend, MaybeSync},
 };
 
 /// An implementation of `CredentialHolder` is able to generate a signature
@@ -64,7 +64,7 @@ pub trait CredentialHolder {
 /// [§8. Credentials, signatures, and validation methods]: https://cawg.io/identity/1.1-draft/#_credentials_signatures_and_validation_methods
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait AsyncCredentialHolder: Sync + MaybeSend {
+pub trait AsyncCredentialHolder: MaybeSync + MaybeSend {
     /// Returns the designated `sig_type` value for this kind of credential.
     fn sig_type(&self) -> &'static str;
 

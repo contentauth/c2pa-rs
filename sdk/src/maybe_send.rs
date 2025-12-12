@@ -54,3 +54,36 @@ impl<T: Send> MaybeSend for T {}
 
 #[cfg(target_arch = "wasm32")]
 impl<T> MaybeSend for T {}
+
+/// A trait that is `Sync` on non-WASM targets and not `Sync` on WASM targets.
+///
+/// This is useful for traits and generic bounds that need to conditionally require `Sync`
+/// based on whether the code is targeting WASM or native platforms.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::maybe_send::MaybeSync;
+///
+/// // Use in trait bounds
+/// pub fn process<T: MaybeSync>(value: T) -> Result<()> {
+///     // On native: T must be Sync
+///     // On WASM: T can be anything
+/// }
+///
+/// // Use in trait definitions
+/// pub trait MyTrait: MaybeSync {
+///     fn my_method(&self);
+/// }
+/// ```
+#[cfg(not(target_arch = "wasm32"))]
+pub trait MaybeSync: Sync {}
+
+#[cfg(target_arch = "wasm32")]
+pub trait MaybeSync {}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Sync> MaybeSync for T {}
+
+#[cfg(target_arch = "wasm32")]
+impl<T> MaybeSync for T {}
