@@ -74,7 +74,7 @@ use crate::{
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
-    maybe_send::MaybeSend,
+    maybe_send_sync::MaybeSend,
     settings::{builder::OcspFetchScope, Settings},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{

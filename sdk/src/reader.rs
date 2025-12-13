@@ -40,7 +40,7 @@ use crate::{
     jumbf_io, log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
-    maybe_send::MaybeSend,
+    maybe_send_sync::MaybeSend,
     settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
