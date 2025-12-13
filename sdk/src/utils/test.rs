@@ -19,10 +19,10 @@ use std::{
     collections::HashMap,
     io::{Cursor, Read, Write},
     path::PathBuf,
+    sync::LazyLock,
 };
 
 use env_logger;
-use once_cell::sync::Lazy;
 use tempfile::TempDir;
 
 use crate::{
@@ -85,7 +85,7 @@ macro_rules! define_fixtures {
         )*
 
         // Create the registry mapping filenames to data and format
-        static EMBEDDED_FIXTURES: Lazy<HashMap<&'static str, (&'static [u8], &'static str)>> = Lazy::new(|| {
+        static EMBEDDED_FIXTURES: LazyLock<HashMap<&'static str, (&'static [u8], &'static str)>> = LazyLock::new(|| {
             let mut map = HashMap::new();
             $(
                 // Convert to &[u8] slice to avoid fixed-size array type issues
