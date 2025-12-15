@@ -39,12 +39,10 @@ use signer::SignConfig;
 use tempfile::NamedTempFile;
 #[cfg(not(target_os = "wasi"))]
 use tokio::runtime::Runtime;
-use url::Url;
 #[cfg(target_os = "wasi")]
 use wstd::runtime::block_on;
 
 use crate::{
-    callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
     info::info,
 };
 
@@ -58,166 +56,284 @@ mod signer;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None, arg_required_else_help(true))]
 struct CliArgs {
-    /// Path to manifest definition JSON file.
-    #[clap(short, long, requires = "output")]
-    manifest: Option<PathBuf>,
-
-    /// Path to output file or folder.
-    #[clap(short, long)]
-    output: Option<PathBuf>,
-
-    /// Path to a parent file.
-    #[clap(short, long)]
-    parent: Option<PathBuf>,
-
-    /// Manifest definition passed as a JSON string.
-    #[clap(short, long, conflicts_with = "manifest")]
-    config: Option<String>,
-
-    /// Display detailed C2PA-formatted manifest data.
-    #[clap(short, long)]
-    detailed: bool,
-
-    /// Force overwrite of output if it already exists.
-    #[clap(short, long)]
-    force: bool,
-
-    /// The path to an asset to examine or embed a manifest into.
-    path: PathBuf,
-
-    /// Embed remote URL manifest reference.
-    #[clap(short, long)]
-    remote: Option<String>,
-
-    /// Path to a binary .c2pa manifest to use for validation against the input asset.
-    ///
-    /// This field will override the input asset's embedded or remote manifest.
-    #[clap(long)]
-    external_manifest: Option<PathBuf>,
-
-    /// Generate a sidecar (.c2pa) manifest
-    #[clap(short, long)]
-    sidecar: bool,
-
-    /// Write ingredient report and assets to a folder.
-    #[clap(short, long)]
-    ingredient: bool,
-
-    /// Create a tree diagram of the manifest store.
-    #[clap(long)]
-    tree: bool,
-
-    /// Extract certificate chain.
-    #[clap(long = "certs")]
-    cert_chain: bool,
-
-    /// Do not perform validation of signature after signing.
-    #[clap(long = "no_signing_verify")]
-    no_signing_verify: bool,
-
-    #[command(subcommand)]
-    command: Option<Commands>,
-
-    /// Show manifest size, XMP url and other stats.
-    #[clap(long)]
-    info: bool,
-
-    /// Path to an executable that will sign the claim bytes.
-    #[clap(long)]
-    signer_path: Option<PathBuf>,
-
-    /// To be used with the [callback_signer] argument. This value should at least: size of CoseSign1 CBOR +
-    /// the size of certificate chain provided in the manifest definition's `sign_cert` field + the size of the
-    /// signature of the Time Stamp Authority response. A typical size of CoseSign1 CBOR is in the 1-2K range. If
-    /// the reserve size is too small an error will be returned during signing.
-    /// For example:
-    ///
-    /// The reserve-size can be calculated like this if you aren't including a `tsa_url` key in
-    /// your manifest description:
-    ///
-    ///     1024 + sign_cert.len()
-    ///
-    /// Or, if you are including a `tsa_url` in your manifest definition, you will calculate the
-    /// reserve size like this:
-    ///
-    ///     1024 + sign_cert.len() + tsa_signature_response.len()
-    ///
-    /// Note:
-    /// We'll default the `reserve-size` to a value of 20_000, if no value is provided. This
-    /// will probably leave extra `0`s of unused space. Please specify a reserve-size if possible.
-    #[clap(long, default_value("20000"))]
-    reserve_size: usize,
-
-    // TODO: ideally this would be called config, not to be confused with the other config arg
-    /// Path to the settings file in JSON or TOML.
-    ///
-    /// By default the settings file is read from `$XDG_CONFIG_HOME/c2pa/c2pa.toml`.
+    /// Path to SDK settings file (JSON or TOML format)
+    /// 
+    /// Configure signing credentials, trust anchors, and SDK behavior.
+    /// Default location: $XDG_CONFIG_HOME/c2pa/settings.json
     #[clap(
         long,
         env = "C2PATOOL_SETTINGS",
         default_value = default_settings_path().into_os_string()
     )]
     settings: PathBuf,
+
+    #[command(subcommand)]
+    command: Commands,
 }
 
 fn default_settings_path() -> PathBuf {
     let strategy = etcetera::choose_base_strategy().unwrap();
     let mut path = strategy.config_dir();
     path.push("c2pa");
-    path.push("c2pa.toml");
+    path.push("settings.json");
     path
 }
 
-#[derive(Clone, Debug)]
-enum TrustResource {
-    File(PathBuf),
-    Url(Url),
-}
-
-fn parse_resource_string(s: &str) -> Result<TrustResource> {
-    if let Ok(url) = s.parse::<Url>() {
-        Ok(TrustResource::Url(url))
-    } else {
-        let p = PathBuf::from_str(s)?;
-
-        Ok(TrustResource::File(p))
-    }
-}
-
-// We only construct one per invocation, not worth shrinking this.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Sub-command to configure trust store options, "trust --help for more details"
-    Trust {
-        /// URL or path to file containing list of trust anchors in PEM format
-        #[arg(long = "trust_anchors", env="C2PATOOL_TRUST_ANCHORS", value_parser = parse_resource_string)]
-        trust_anchors: Option<TrustResource>,
+    /// Read and validate a C2PA asset
+    Show {
+        /// Path to asset to examine
+        #[clap(value_name = "FILE")]
+        input: PathBuf,
 
-        /// URL or path to file containing specific manifest signing certificates in PEM format to implicitly trust
-        #[arg(long = "allowed_list", env="C2PATOOL_ALLOWED_LIST", value_parser = parse_resource_string)]
-        allowed_list: Option<TrustResource>,
+        /// Show detailed C2PA-formatted manifest data
+        #[clap(short, long)]
+        detailed: bool,
 
-        /// URL or path to file containing configured EKUs in Oid dot notation
-        #[arg(long = "trust_config", env="C2PATOOL_TRUST_CONFIG", value_parser = parse_resource_string)]
-        trust_config: Option<TrustResource>,
+        /// Display as tree diagram
+        #[clap(long)]
+        tree: bool,
+
+        /// Extract certificate chain to stdout
+        #[clap(long)]
+        certs: bool,
+
+        /// Show manifest size, XMP URL and other stats
+        #[clap(long)]
+        info: bool,
+
+        /// Path to external .c2pa manifest (overrides embedded)
+        #[clap(long, value_name = "FILE")]
+        external_manifest: Option<PathBuf>,
+
+        /// Output file or directory for report
+        #[clap(short, long, value_name = "PATH")]
+        output: Option<PathBuf>,
+
+        /// Force overwrite if output exists
+        #[clap(short, long)]
+        force: bool,
     },
-    /// Sub-command to add manifest to fragmented BMFF content
-    ///
-    /// The init path can be a glob to process entire directories of content, for example:
-    ///
-    /// c2patool -m test2.json -o /my_output_folder "/my_renditions/**/my_init.mp4" fragment --fragments_glob "myfile_abc*[0-9].m4s"
-    ///
-    /// NOTE: The glob patterns are quoted to prevent shell expansion.
+
+    /// Create a saved ingredient from an asset (.c2pa file)
+    Ingredient {
+        /// Path to asset
+        #[clap(value_name = "FILE")]
+        input: PathBuf,
+
+        /// Output .c2pa file path or directory for detailed report
+        #[clap(short, long, value_name = "FILE|DIR")]
+        output: PathBuf,
+
+        /// Generate detailed ingredient report with assets
+        #[clap(short, long)]
+        detailed: bool,
+
+        /// Force overwrite if output exists
+        #[clap(short, long)]
+        force: bool,
+    },
+
+    /// Create a new manifest with digital source type (create intent)
+    Create {
+        /// Input asset file (used to generate output, not a parent)
+        #[clap(short, long, value_name = "FILE")]
+        input: PathBuf,
+
+        /// Digital source type for the new asset
+        #[clap(long, value_name = "TYPE")]
+        source_type: String,
+
+        /// Path to manifest definition JSON file
+        #[clap(short, long, value_name = "FILE", conflicts_with = "manifest_json")]
+        manifest: Option<PathBuf>,
+
+        /// Manifest definition as JSON string
+        #[clap(long, conflicts_with = "manifest")]
+        manifest_json: Option<String>,
+
+        /// Additional ingredient files or .c2pa archives to add
+        #[clap(long = "ingredient", value_name = "FILE")]
+        ingredients: Vec<PathBuf>,
+
+        /// Output path for signed asset or builder archive (.c2pa)
+        #[clap(short, long, value_name = "FILE")]
+        output: PathBuf,
+
+        /// Save as builder archive instead of signing
+        #[clap(long, conflicts_with_all = ["sidecar", "remote"])]
+        archive: bool,
+
+        /// Generate sidecar (.c2pa) instead of embedding signature
+        #[clap(long, conflicts_with = "archive")]
+        sidecar: bool,
+
+        /// Embed remote URL manifest reference
+        #[clap(long, value_name = "URL", conflicts_with = "archive")]
+        remote: Option<String>,
+
+        /// Force overwrite if output exists
+        #[clap(short, long)]
+        force: bool,
+    },
+
+    /// Edit an existing asset with new assertions (edit intent)
+    Edit {
+        /// Parent asset (required, creates parent ingredient)
+        #[clap(short, long, value_name = "FILE")]
+        parent: PathBuf,
+
+        /// Input asset file (edited version, defaults to parent if not specified)
+        #[clap(short, long, value_name = "FILE")]
+        input: Option<PathBuf>,
+
+        /// Path to manifest definition JSON file
+        #[clap(short, long, value_name = "FILE", conflicts_with = "manifest_json")]
+        manifest: Option<PathBuf>,
+
+        /// Manifest definition as JSON string
+        #[clap(long, conflicts_with = "manifest")]
+        manifest_json: Option<String>,
+
+        /// Additional ingredient files or .c2pa archives to add
+        #[clap(long = "ingredient", value_name = "FILE")]
+        ingredients: Vec<PathBuf>,
+
+        /// Output path for signed asset or builder archive (.c2pa)
+        #[clap(short, long, value_name = "FILE")]
+        output: PathBuf,
+
+        /// Save as builder archive instead of signing
+        #[clap(long, conflicts_with_all = ["sidecar", "remote"])]
+        archive: bool,
+
+        /// Generate sidecar (.c2pa) instead of embedding signature
+        #[clap(long, conflicts_with = "archive")]
+        sidecar: bool,
+
+        /// Embed remote URL manifest reference
+        #[clap(long, value_name = "URL", conflicts_with = "archive")]
+        remote: Option<String>,
+
+        /// Force overwrite if output exists
+        #[clap(short, long)]
+        force: bool,
+    },
+
+    /// Update an existing asset with minimal changes (update intent)
+    Update {
+        /// Input asset (this is the parent for update intent)
+        #[clap(short, long, value_name = "FILE")]
+        input: PathBuf,
+
+        /// Path to manifest definition JSON file
+        #[clap(short, long, value_name = "FILE", conflicts_with = "manifest_json")]
+        manifest: Option<PathBuf>,
+
+        /// Manifest definition as JSON string
+        #[clap(long, conflicts_with = "manifest")]
+        manifest_json: Option<String>,
+
+        /// Output path for signed asset or builder archive (.c2pa)
+        #[clap(short, long, value_name = "FILE")]
+        output: PathBuf,
+
+        /// Save as builder archive instead of signing
+        #[clap(long, conflicts_with_all = ["sidecar", "remote"])]
+        archive: bool,
+
+        /// Generate sidecar (.c2pa) instead of embedding signature
+        #[clap(long, conflicts_with = "archive")]
+        sidecar: bool,
+
+        /// Embed remote URL manifest reference
+        #[clap(long, value_name = "URL", conflicts_with = "archive")]
+        remote: Option<String>,
+
+        /// Force overwrite if output exists
+        #[clap(short, long)]
+        force: bool,
+    },
+
+    /// Resume work from a saved builder archive
+    Resume {
+        /// Path to builder archive (.c2pa)
+        #[clap(value_name = "FILE")]
+        archive: PathBuf,
+
+        /// Additional ingredient files or .c2pa archives to add
+        #[clap(long = "ingredient", value_name = "FILE")]
+        ingredients: Vec<PathBuf>,
+
+        /// Output path for signed asset or updated builder archive (.c2pa)
+        #[clap(short, long, value_name = "FILE")]
+        output: PathBuf,
+
+        /// Save as builder archive instead of signing
+        #[clap(long, conflicts_with_all = ["sidecar", "remote"])]
+        archive_output: bool,
+
+        /// Generate sidecar (.c2pa) instead of embedding signature
+        #[clap(long, conflicts_with = "archive_output")]
+        sidecar: bool,
+
+        /// Embed remote URL manifest reference
+        #[clap(long, value_name = "URL", conflicts_with = "archive_output")]
+        remote: Option<String>,
+
+        /// Force overwrite if output exists
+        #[clap(short, long)]
+        force: bool,
+    },
+
+    /// Manage settings configuration
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+
+    /// Sign fragmented BMFF content
     Fragment {
-        /// Glob pattern to find the fragments of the asset. The path is automatically set to be the same as
-        /// the init segment.
-        ///
-        /// The fragments_glob pattern should only match fragment file names not the full paths (e.g. "myfile_abc*[0-9].m4s"
-        /// to match [myfile_abc1.m4s, myfile_abc2180.m4s, ...] )
-        #[arg(long = "fragments_glob", verbatim_doc_comment)]
-        fragments_glob: Option<PathBuf>,
+        /// Path to init segment (can be a glob pattern)
+        #[clap(value_name = "INIT_SEGMENT")]
+        input: PathBuf,
+
+        /// Path to manifest definition JSON
+        #[clap(short, long, value_name = "FILE")]
+        manifest: PathBuf,
+
+        /// Glob pattern for fragment files
+        #[clap(long, value_name = "PATTERN")]
+        fragments_glob: PathBuf,
+
+        /// Output directory
+        #[clap(short, long, value_name = "DIR")]
+        output: PathBuf,
+
+        /// Force overwrite if output exists
+        #[clap(short, long)]
+        force: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigAction {
+    /// Show current settings
+    Show,
+
+    /// Initialize default config file
+    Init {
+        /// Force overwrite if config already exists
+        #[clap(short, long)]
+        force: bool,
+    },
+
+    /// Validate config file
+    Validate,
+
+    /// Show path to config file
+    Path,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -277,199 +393,10 @@ fn load_ingredient(path: &Path) -> Result<Ingredient> {
     }
 }
 
-fn load_trust_resource(resource: &TrustResource) -> Result<String> {
-    match resource {
-        TrustResource::File(path) => {
-            let data = std::fs::read_to_string(path)
-                .with_context(|| format!("Failed to read trust resource from path: {path:?}"))?;
-
-            Ok(data)
-        }
-        TrustResource::Url(url) => {
-            #[cfg(not(target_os = "wasi"))]
-            let data = reqwest::blocking::get(url.to_string())?
-                .text()
-                .with_context(|| format!("Failed to read trust resource from URL: {url}"))?;
-
-            #[cfg(target_os = "wasi")]
-            let data = blocking_get(&url.to_string())?;
-            Ok(data)
-        }
-    }
-}
-
-#[cfg(target_os = "wasi")]
-fn blocking_get(url: &str) -> Result<String> {
-    use std::io::Read;
-
-    use url::Url;
-    use wasi::http::{
-        outgoing_handler,
-        types::{Fields, OutgoingRequest, Scheme},
-    };
-
-    let parsed_url =
-        Url::parse(url).map_err(|e| Error::ResourceNotFound(format!("invalid URL: {}", e)))?;
-    let path_with_query = parsed_url[url::Position::BeforeHost..].to_string();
-    let request = OutgoingRequest::new(Fields::new());
-    request.set_path_with_query(Some(&path_with_query)).unwrap();
-
-    // Set the scheme based on the URL.
-    let scheme = match parsed_url.scheme() {
-        "http" => Scheme::Http,
-        "https" => Scheme::Https,
-        _ => return Err(anyhow!("unsupported URL scheme".to_string(),)),
-    };
-
-    request.set_scheme(Some(&scheme)).unwrap();
-
-    match outgoing_handler::handle(request, None) {
-        Ok(resp) => {
-            resp.subscribe().block();
-
-            let response = resp
-                .get()
-                .expect("HTTP request response missing")
-                .expect("HTTP request response requested more than once")
-                .expect("HTTP request failed");
-
-            if response.status() == 200 {
-                let raw_header = response.headers().get("Content-Length");
-                if raw_header.first().map(|val| val.is_empty()).unwrap_or(true) {
-                    return Err(anyhow!("url returned no content length".to_string()));
-                }
-
-                let str_parsed_header = match std::str::from_utf8(raw_header.first().unwrap()) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        return Err(anyhow!(format!(
-                            "error parsing content length header: {}",
-                            e
-                        )))
-                    }
-                };
-
-                let content_length: usize = match str_parsed_header.parse() {
-                    Ok(s) => s,
-                    Err(e) => {
-                        return Err(anyhow!(format!(
-                            "error parsing content length header: {}",
-                            e
-                        )))
-                    }
-                };
-
-                let body = {
-                    let mut buf = Vec::with_capacity(content_length);
-                    let response_body = response
-                        .consume()
-                        .expect("failed to get incoming request body");
-                    let mut stream = response_body
-                        .stream()
-                        .expect("failed to get response body stream");
-                    stream
-                        .read_to_end(&mut buf)
-                        .expect("failed to read response body");
-                    buf
-                };
-
-                let body_string = std::str::from_utf8(&body)
-                    .map_err(|e| anyhow!(format!("invalid UTF-8: {}", e)))?;
-                Ok(body_string.to_string())
-            } else {
-                Err(anyhow!(format!(
-                    "fetch failed: code: {}",
-                    response.status(),
-                )))
-            }
-        }
-
-        Err(e) => Err(anyhow!(e.to_string())),
-    }
-}
-
 fn configure_sdk(args: &CliArgs) -> Result<()> {
     if args.settings.exists() {
         Settings::from_file(&args.settings)?;
     }
-
-    let mut enable_trust_checks = false;
-
-    if let Some(Commands::Trust {
-        trust_anchors,
-        allowed_list,
-        trust_config,
-    }) = &args.command
-    {
-        if let Some(trust_list) = &trust_anchors {
-            debug!("Using trust anchors from {trust_list:?}");
-
-            let data = load_trust_resource(trust_list)?;
-            Settings::from_toml(
-                &toml::toml! {
-                    [trust]
-                    trust_anchors = data
-                }
-                .to_string(),
-            )?;
-
-            enable_trust_checks = true;
-        }
-
-        if let Some(allowed_list) = &allowed_list {
-            debug!("Using allowed list from {allowed_list:?}");
-
-            let data = load_trust_resource(allowed_list)?;
-            Settings::from_toml(
-                &toml::toml! {
-                    [trust]
-                    allowed_list = data
-                }
-                .to_string(),
-            )?;
-
-            enable_trust_checks = true;
-        }
-
-        if let Some(trust_config) = &trust_config {
-            debug!("Using trust config from {trust_config:?}");
-
-            let data = load_trust_resource(trust_config)?;
-            Settings::from_toml(
-                &toml::toml! {
-                    [trust]
-                    trust_config = data
-                }
-                .to_string(),
-            )?;
-
-            enable_trust_checks = true;
-        }
-    }
-
-    // if any trust setting is provided enable the trust checks
-    // there is no disabling of default setting only the ability to enable if they were internally disabled
-    if enable_trust_checks {
-        Settings::from_toml(
-            &toml::toml! {
-                [verify]
-                verify_trust = true
-            }
-            .to_string(),
-        )?;
-    }
-
-    // enable or disable verification after signing
-    {
-        Settings::from_toml(
-            &toml::toml! {
-                [trust]
-                verify_after_sign = (!args.no_signing_verify)
-            }
-            .to_string(),
-        )?;
-    }
-
     Ok(())
 }
 
@@ -584,328 +511,777 @@ fn validate_cawg(reader: &mut Reader) -> Result<()> {
     }
 }
 
-fn reader_from_args(args: &CliArgs) -> Result<Reader> {
-    if let Some(external_manifest) = &args.external_manifest {
-        let c2pa_data = fs::read(external_manifest)?;
-        let format = match c2pa::format_from_path(&args.path) {
-            Some(format) => format,
-            None => {
-                bail!("Format for {:?} is unrecognized", args.path);
+fn handle_config_command(args: &CliArgs, action: &ConfigAction) -> Result<()> {
+    match action {
+        ConfigAction::Show => {
+            if args.settings.exists() {
+                let content = std::fs::read_to_string(&args.settings)?;
+                println!("{}", content);
+            } else {
+                println!("No settings file found at: {}", args.settings.display());
+                println!("Run 'c2patool config init' to create a default settings file.");
             }
-        };
-        Ok(
-            Reader::from_manifest_data_and_stream(&c2pa_data, &format, File::open(&args.path)?)
-                .map_err(special_errs)?,
-        )
-    } else {
-        Ok(Reader::from_file(&args.path).map_err(special_errs)?)
+        }
+        ConfigAction::Init { force } => {
+            if args.settings.exists() && !force {
+                bail!(
+                    "Settings file already exists at: {}\nUse --force to overwrite",
+                    args.settings.display()
+                );
+            }
+
+            // Create parent directory if it doesn't exist
+            if let Some(parent) = args.settings.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            // Create default settings file (JSON format) matching SDK Settings structure
+            let default_settings = serde_json::json!({
+                "sign": {
+                    "alg": "es256",
+                    "private_key": "path/to/private.key",
+                    "sign_cert": "path/to/certs.pem",
+                    "ta_url": "http://timestamp.digicert.com"
+                },
+                "verify": {
+                    "verify_trust": false
+                }
+            });
+
+            let settings_str = serde_json::to_string_pretty(&default_settings)?;
+            std::fs::write(&args.settings, settings_str)?;
+
+            println!("Default settings file created at: {}", args.settings.display());
+            println!("\nEdit this file to configure your signing credentials and other settings.");
+        }
+        ConfigAction::Validate => {
+            if !args.settings.exists() {
+                bail!("Settings file not found at: {}", args.settings.display());
+            }
+
+            // Try to load settings to validate
+            Settings::from_file(&args.settings)?;
+            println!("Settings file is valid: {}", args.settings.display());
+        }
+        ConfigAction::Path => {
+            println!("{}", args.settings.display());
+            if args.settings.exists() {
+                println!("(file exists)");
+            } else {
+                println!("(file does not exist)");
+            }
+        }
     }
+    Ok(())
+}
+
+fn get_signer(sign_config: &SignConfig) -> Result<Box<dyn Signer>> {
+    match Settings::signer() {
+        Ok(signer) => Ok(signer),
+        Err(Error::MissingSignerSettings) => sign_config.signer(),
+        Err(err) => Err(err)?,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_create_command(
+    input: &Path,
+    _source_type: &str,
+    manifest: Option<&PathBuf>,
+    manifest_json: Option<&String>,
+    ingredients: &[PathBuf],
+    output: &Path,
+    archive: bool,
+    sidecar: bool,
+    remote: Option<&String>,
+    force: bool,
+) -> Result<()> {
+    // TODO: Add support for source_type (Intent::Create) when SDK supports it
+    
+    // Read the json from file or string
+    let (json, base_path) = match manifest {
+        Some(manifest_path) => {
+            let base_path = std::fs::canonicalize(manifest_path)?
+                .parent()
+                .map(|p| p.to_path_buf());
+            (std::fs::read_to_string(manifest_path)?, base_path)
+        }
+        None => (
+            manifest_json.cloned().unwrap_or_default(),
+            std::env::current_dir().ok(),
+        ),
+    };
+
+    let mut sign_config = SignConfig::from_json(&json)?;
+    let manifest_def: ManifestDef = serde_json::from_slice(json.as_bytes())?;
+    let mut builder = Builder::from_json(&json)?;
+
+    // Set base path
+    if let Some(base) = base_path.as_ref() {
+        builder.set_base_path(base);
+        sign_config.set_base_path(base);
+    }
+
+    // Add ingredients from manifest definition
+    if let Some(paths) = manifest_def. {
+        for mut path in paths {
+            if let Some(base) = &base_path {
+                if !path.is_absolute() {
+                    path = base.join(&path);
+                }
+            }
+            let ingredient = load_ingredient(&path)?;
+            builder.add_ingredient(ingredient);
+        }
+    }
+
+    // Add ingredients from command line
+    for ingredient_path in ingredients {
+        let ingredient = load_ingredient(ingredient_path)?;
+        builder.add_ingredient(ingredient);
+    }
+
+    // Handle remote/sidecar options
+    if let Some(remote_url) = remote {
+        builder.set_remote_url(remote_url.clone());
+        if sidecar {
+            builder.set_no_embed(true);
+        }
+    } else if sidecar {
+        builder.set_no_embed(true);
+    }
+
+    if archive {
+        // Save as builder archive
+        if output.exists() && !force {
+            bail!("Output already exists; use -f/force to force write");
+        }
+        let mut archive_file = File::create(output)?;
+        builder.to_archive(&mut archive_file)?;
+        println!("Builder archive saved to: {}", output.display());
+    } else {
+        // Sign and save
+        let signer = get_signer(&sign_config)?;
+        
+        if ext_normal(output) != ext_normal(input) {
+            bail!("Output type must match source type");
+        }
+
+        // Handle force flag - delete output if it exists and force is true
+        if output.exists() && force {
+            remove_file(output)?;
+        } else if output.exists() {
+            bail!("Output already exists; use -f/force to force write");
+        }
+
+        let manifest_data = builder
+            .sign_file(signer.as_ref(), input, output)
+            .context("embedding manifest")?;
+
+        if sidecar {
+            let sidecar_path = output.with_extension("c2pa");
+            File::create(&sidecar_path)?.write_all(&manifest_data)?;
+        }
+
+        let mut reader = Reader::from_file(output).map_err(special_errs)?;
+        validate_cawg(&mut reader)?;
+        println!("{reader}");
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_edit_command(
+    parent: &Path,
+    input: Option<&PathBuf>,
+    manifest: Option<&PathBuf>,
+    manifest_json: Option<&String>,
+    ingredients: &[PathBuf],
+    output: &Path,
+    archive: bool,
+    sidecar: bool,
+    remote: Option<&String>,
+    force: bool,
+) -> Result<()> {
+    // Use parent as input if not specified
+    let input_path = input.map(|p| p.as_path()).unwrap_or(parent);
+
+    // Read the json from file or string
+    let (json, base_path) = match manifest {
+        Some(manifest_path) => {
+            let base_path = std::fs::canonicalize(manifest_path)?
+                .parent()
+                .map(|p| p.to_path_buf());
+            (std::fs::read_to_string(manifest_path)?, base_path)
+        }
+        None => (
+            manifest_json.cloned().unwrap_or_default(),
+            std::env::current_dir().ok(),
+        ),
+    };
+
+    let mut sign_config = SignConfig::from_json(&json)?;
+    let manifest_def: ManifestDef = serde_json::from_slice(json.as_bytes())?;
+    let mut builder = Builder::from_json(&json)?;
+
+    // Set base path
+    if let Some(base) = base_path.as_ref() {
+        builder.set_base_path(base);
+        sign_config.set_base_path(base);
+    }
+
+    // Add ingredients from manifest definition
+    if let Some(paths) = manifest_def.ingredient_paths {
+        for mut path in paths {
+            if let Some(base) = &base_path {
+                if !path.is_absolute() {
+                    path = base.join(&path);
+                }
+            }
+            let ingredient = load_ingredient(&path)?;
+            builder.add_ingredient(ingredient);
+        }
+    }
+
+    // Add parent ingredient
+    let mut parent_ingredient = load_ingredient(parent)?;
+    parent_ingredient.set_is_parent();
+    builder.add_ingredient(parent_ingredient);
+
+    // Add ingredients from command line
+    for ingredient_path in ingredients {
+        let ingredient = load_ingredient(ingredient_path)?;
+        builder.add_ingredient(ingredient);
+    }
+
+    // Handle remote/sidecar options
+    if let Some(remote_url) = remote {
+        builder.set_remote_url(remote_url.clone());
+        if sidecar {
+            builder.set_no_embed(true);
+        }
+    } else if sidecar {
+        builder.set_no_embed(true);
+    }
+
+    if archive {
+        // Save as builder archive
+        if output.exists() && !force {
+            bail!("Output already exists; use -f/force to force write");
+        }
+        let mut archive_file = File::create(output)?;
+        builder.to_archive(&mut archive_file)?;
+        println!("Builder archive saved to: {}", output.display());
+    } else {
+        // Sign and save
+        let signer = get_signer(&sign_config)?;
+        
+        if ext_normal(output) != ext_normal(input_path) {
+            bail!("Output type must match input type");
+        }
+
+        // Special case: if input and output are the same, copy input to temp file first
+        let temp_input = if input_path == output && output.exists() {
+            let temp = NamedTempFile::new()?;
+            copy(input_path, temp.path())?;
+            Some(temp)
+        } else {
+            None
+        };
+
+        let actual_input = if let Some(ref temp) = temp_input {
+            temp.path()
+        } else {
+            input_path
+        };
+
+        // Handle force flag - delete output if it exists and force is true
+        if output.exists() && force {
+            remove_file(output)?;
+        } else if output.exists() {
+            bail!("Output already exists; use -f/force to force write");
+        }
+
+        let manifest_data = builder
+            .sign_file(signer.as_ref(), actual_input, output)
+            .context("embedding manifest")?;
+
+        if sidecar {
+            let sidecar_path = output.with_extension("c2pa");
+            File::create(&sidecar_path)?.write_all(&manifest_data)?;
+        }
+
+        let mut reader = Reader::from_file(output).map_err(special_errs)?;
+        validate_cawg(&mut reader)?;
+        println!("{reader}");
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_update_command(
+    input: &Path,
+    manifest: Option<&PathBuf>,
+    manifest_json: Option<&String>,
+    output: &Path,
+    archive: bool,
+    sidecar: bool,
+    remote: Option<&String>,
+    force: bool,
+) -> Result<()> {
+    // Read the json from file or string
+    let (json, base_path) = match manifest {
+        Some(manifest_path) => {
+            let base_path = std::fs::canonicalize(manifest_path)?
+                .parent()
+                .map(|p| p.to_path_buf());
+            (std::fs::read_to_string(manifest_path)?, base_path)
+        }
+        None => (
+            manifest_json.cloned().unwrap_or_default(),
+            std::env::current_dir().ok(),
+        ),
+    };
+
+    let mut sign_config = SignConfig::from_json(&json)?;
+    let manifest_def: ManifestDef = serde_json::from_slice(json.as_bytes())?;
+    let mut builder = Builder::from_json(&json)?;
+
+    // Set base path
+    if let Some(base) = base_path.as_ref() {
+        builder.set_base_path(base);
+        sign_config.set_base_path(base);
+    }
+
+    // Add ingredients from manifest definition
+    if let Some(paths) = manifest_def.ingredient_paths {
+        for mut path in paths {
+            if let Some(base) = &base_path {
+                if !path.is_absolute() {
+                    path = base.join(&path);
+                }
+            }
+            let ingredient = load_ingredient(&path)?;
+            builder.add_ingredient(ingredient);
+        }
+    }
+
+    // For update, input is the parent
+    let mut parent_ingredient = load_ingredient(input)?;
+    parent_ingredient.set_is_parent();
+    builder.add_ingredient(parent_ingredient);
+
+    // Handle remote/sidecar options
+    if let Some(remote_url) = remote {
+        builder.set_remote_url(remote_url.clone());
+        if sidecar {
+            builder.set_no_embed(true);
+        }
+    } else if sidecar {
+        builder.set_no_embed(true);
+    }
+
+    if archive {
+        // Save as builder archive
+        if output.exists() && !force {
+            bail!("Output already exists; use -f/force to force write");
+        }
+        let mut archive_file = File::create(output)?;
+        builder.to_archive(&mut archive_file)?;
+        println!("Builder archive saved to: {}", output.display());
+    } else {
+        // Sign and save
+        let signer = get_signer(&sign_config)?;
+        
+        if ext_normal(output) != ext_normal(input) {
+            bail!("Output type must match input type");
+        }
+
+        // Handle force flag - delete output if it exists and force is true
+        if output.exists() && force {
+            remove_file(output)?;
+        } else if output.exists() {
+            bail!("Output already exists; use -f/force to force write");
+        }
+
+        let manifest_data = builder
+            .sign_file(signer.as_ref(), input, output)
+            .context("embedding manifest")?;
+
+        if sidecar {
+            let sidecar_path = output.with_extension("c2pa");
+            File::create(&sidecar_path)?.write_all(&manifest_data)?;
+        }
+
+        let mut reader = Reader::from_file(output).map_err(special_errs)?;
+        validate_cawg(&mut reader)?;
+        println!("{reader}");
+    }
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_resume_command(
+    archive_path: &Path,
+    ingredients: &[PathBuf],
+    output: &Path,
+    archive_output: bool,
+    sidecar: bool,
+    remote: Option<&String>,
+    force: bool,
+) -> Result<()> {
+    // Load builder from archive
+    let mut builder = Builder::from_archive(File::open(archive_path)?)?;
+
+    // Add ingredients from command line
+    for ingredient_path in ingredients {
+        let ingredient = load_ingredient(ingredient_path)?;
+        builder.add_ingredient(ingredient);
+    }
+
+    // Handle remote/sidecar options
+    if let Some(remote_url) = remote {
+        builder.set_remote_url(remote_url.clone());
+        if sidecar {
+            builder.set_no_embed(true);
+        }
+    } else if sidecar {
+        builder.set_no_embed(true);
+    }
+
+    if archive_output {
+        // Save as builder archive
+        if output.exists() && !force {
+            bail!("Output already exists; use -f/force to force write");
+        }
+        let mut archive_file = File::create(output)?;
+        builder.to_archive(&mut archive_file)?;
+        println!("Builder archive saved to: {}", output.display());
+    } else {
+        // Sign and save
+        // Get signer from settings since we don't have manifest JSON
+        let _signer = match Settings::signer() {
+            Ok(signer) => signer,
+            Err(e) => bail!("No signer configured in settings: {}", e),
+        };
+        
+        if output.exists() && !force {
+            bail!("Output already exists; use -f/force to force write");
+        }
+
+        // TODO: Need to get the input path from the archive
+        // For now, this will need SDK support
+        bail!("Resume signing not yet fully implemented - SDK needs to store input reference in archive");
+    }
+
+    Ok(())
+}
+
+fn handle_fragment_command(
+    input: &Path,
+    manifest: &Path,
+    fragments_glob: &Path,
+    output: &Path,
+    force: bool,
+) -> Result<()> {
+    if output.exists() && !output.is_dir() {
+        bail!("Output cannot point to existing file, must be a directory");
+    }
+
+    if output.exists() && !force {
+        bail!("Output already exists; use -f/force to force write");
+    }
+
+    // Read manifest
+    let json = std::fs::read_to_string(manifest)?;
+    let base_path = std::fs::canonicalize(manifest)?
+        .parent()
+        .map(|p| p.to_path_buf());
+
+    let mut sign_config = SignConfig::from_json(&json)?;
+    let manifest_def: ManifestDef = serde_json::from_slice(json.as_bytes())?;
+    let mut builder = Builder::from_json(&json)?;
+
+    // Set base path
+    if let Some(base) = base_path.as_ref() {
+        builder.set_base_path(base);
+        sign_config.set_base_path(base);
+    }
+
+    // Add ingredients from manifest definition
+    if let Some(paths) = manifest_def.ingredient_paths {
+        for mut path in paths {
+            if let Some(base) = &base_path {
+                if !path.is_absolute() {
+                    path = base.join(&path);
+                }
+            }
+            let ingredient = load_ingredient(&path)?;
+            builder.add_ingredient(ingredient);
+        }
+    }
+
+    let signer = get_signer(&sign_config)?;
+
+    sign_fragmented(&mut builder, signer.as_ref(), input, &fragments_glob.to_path_buf(), output)?;
+
+    Ok(())
 }
 
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
     // set RUST_LOG=debug to get detailed debug logging
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "error");
-    }
+    // if std::env::var("RUST_LOG").is_err() {
+    //     std::env::set_var("RUST_LOG", "error");
+    // }
     env_logger::init();
-
-    let path = &args.path;
-
-    if args.info {
-        return info(path);
-    }
-
-    if args.cert_chain {
-        let reader = Reader::from_file(path).map_err(special_errs)?;
-        // todo: add cawg certs here??
-        if let Some(manifest) = reader.active_manifest() {
-            if let Some(si) = manifest.signature_info() {
-                println!("{}", si.cert_chain());
-                // todo: add ocsp validation info
-                return Ok(());
-            }
-        }
-        bail!("No certificate chain found");
-    }
-
-    if args.tree {
-        println!("{}", tree::tree(path)?);
-        return Ok(());
-    }
-
-    let is_fragment = matches!(
-        &args.command,
-        Some(Commands::Fragment { fragments_glob: _ })
-    );
 
     // configure the SDK
     configure_sdk(&args).context("Could not configure c2pa-rs")?;
 
-    // Remove manifest needs to also remove XMP provenance
-    // if args.remove_manifest {
-    //     match args.output {
-    //         Some(output) => {
-    //             if output.exists() && !args.force {
-    //                 bail!("Output already exists; use -f/force to force write");
-    //             }
-    //             if path != &output {
-    //                 std::fs::copy(path, &output)?;
-    //             }
-    //             Manifest::remove_manifest(&output)?
-    //         },
-    //         None => {
-    //             bail!("The -o/--output argument is required for this operation");
-    //         }
-    //     }
-    //     return Ok(());
-    // }
-
-    // if we have a manifest config, process it
-    if args.manifest.is_some() || args.config.is_some() {
-        // read the json from file or config, and get base path if from file
-        let (json, base_path) = match args.manifest.as_deref() {
-            Some(manifest_path) => {
-                let base_path = std::fs::canonicalize(manifest_path)?
-                    .parent()
-                    .map(|p| p.to_path_buf());
-                (std::fs::read_to_string(manifest_path)?, base_path)
+    match &args.command {
+        Commands::Show {
+            input,
+            detailed,
+            tree,
+            certs,
+            info,
+            external_manifest,
+            output,
+            force,
+        } => {
+            if *info {
+                return self::info(input);
             }
-            None => (
-                args.config.unwrap_or_default(),
-                std::env::current_dir().ok(),
-            ),
-        };
 
-        // read the signing information from the manifest definition
-        let mut sign_config = SignConfig::from_json(&json)?;
-
-        // read the manifest information
-        let manifest_def: ManifestDef = serde_json::from_slice(json.as_bytes())?;
-        let mut builder = Builder::from_json(&json)?;
-        let mut manifest = manifest_def.manifest;
-
-        // add claim_tool generator so we know this was created using this tool
-        let mut tool_generator = ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME"));
-        tool_generator.set_version(env!("CARGO_PKG_VERSION"));
-        if !manifest.claim_generator_info.is_empty()
-            || manifest.claim_generator_info[0].name == "c2pa-rs"
-        {
-            manifest.claim_generator_info = vec![tool_generator];
-        } else {
-            manifest.claim_generator_info.insert(1, tool_generator);
-        }
-
-        // set manifest base path before ingredients so ingredients can override it
-        if let Some(base) = base_path.as_ref() {
-            builder.set_base_path(base);
-            sign_config.set_base_path(base);
-        }
-
-        // Add any ingredients specified as file paths
-        if let Some(paths) = manifest_def.ingredient_paths {
-            for mut path in paths {
-                // ingredient paths are relative to the manifest path
-                if let Some(base) = &base_path {
-                    if !(path.is_absolute()) {
-                        path = base.join(&path)
+            if *certs {
+                let reader = Reader::from_file(input).map_err(special_errs)?;
+                if let Some(manifest) = reader.active_manifest() {
+                    if let Some(si) = manifest.signature_info() {
+                        println!("{}", si.cert_chain());
+                        return Ok(());
                     }
                 }
-                let ingredient = load_ingredient(&path)?;
-                builder.add_ingredient(ingredient);
+                bail!("No certificate chain found");
             }
-        }
 
-        if let Some(parent_path) = args.parent {
-            let mut ingredient = load_ingredient(&parent_path)?;
-            ingredient.set_is_parent();
-            builder.add_ingredient(ingredient);
-        }
-
-        // If the source file has a manifest store, and no parent is specified treat the source as a parent.
-        // note: This could be treated as an update manifest eventually since the image is the same
-        let has_parent = builder.definition.ingredients.iter().any(|i| i.is_parent());
-        if !has_parent && !is_fragment {
-            let mut source_ingredient = Ingredient::from_file(&args.path)?;
-            if source_ingredient.manifest_data().is_some() {
-                source_ingredient.set_is_parent();
-                builder.add_ingredient(source_ingredient);
+            if *tree {
+                println!("{}", self::tree::tree(input)?);
+                return Ok(());
             }
-        }
 
-        if let Some(remote) = args.remote {
-            if args.sidecar {
-                builder.set_no_embed(true);
-                builder.set_remote_url(remote);
+            let mut reader = if let Some(external_manifest) = external_manifest {
+                let c2pa_data = fs::read(external_manifest)?;
+                let format = match c2pa::format_from_path(input) {
+                    Some(format) => format,
+                    None => bail!("Format for {:?} is unrecognized", input),
+                };
+                Reader::from_manifest_data_and_stream(&c2pa_data, &format, File::open(input)?)
+                    .map_err(special_errs)?
             } else {
-                builder.set_remote_url(remote);
-            }
-        } else if args.sidecar {
-            builder.set_no_embed(true);
-        }
+                Reader::from_file(input).map_err(special_errs)?
+            };
 
-        let signer = if let Some(signer_process_name) = args.signer_path {
-            let cb_config = CallbackSignerConfig::new(&sign_config, args.reserve_size)?;
+            validate_cawg(&mut reader)?;
 
-            let process_runner = Box::new(ExternalProcessRunner::new(
-                cb_config.clone(),
-                signer_process_name,
-            ));
-            let signer = CallbackSigner::new(process_runner, cb_config);
+            // Handle output to file or directory
+            if let Some(output_path) = output {
+                if output_path.is_dir() || (!output_path.exists() && output_path.extension().is_none()) {
+                    // Directory output - write manifest_store.json and optionally detailed.json
+                    if output_path.exists() {
+                        if *force {
+                            remove_dir_all(output_path)?;
+                        } else {
+                            bail!("Output already exists; use -f/force to force write");
+                        }
+                    }
+                    create_dir_all(output_path)?;
 
-            Box::new(signer)
-        } else {
-            match Settings::signer() {
-                Ok(signer) => signer,
-                Err(Error::MissingSignerSettings) => sign_config.signer()?,
-                Err(err) => Err(err)?,
-            }
-        };
-
-        if let Some(output) = args.output {
-            // fragmented embedding
-            if let Some(Commands::Fragment { fragments_glob }) = &args.command {
-                if output.exists() && !output.is_dir() {
-                    bail!("Output cannot point to existing file, must be a directory");
-                }
-
-                if let Some(fg) = &fragments_glob {
-                    return sign_fragmented(&mut builder, signer.as_ref(), &args.path, fg, &output);
+                    if *detailed {
+                        let detailed_json = format!("{reader:#?}");
+                        File::create(output_path.join("detailed.json"))?
+                            .write_all(detailed_json.as_bytes())?;
+                    } else {
+                        let summary = reader.to_string();
+                        File::create(output_path.join("manifest_store.json"))?
+                            .write_all(summary.as_bytes())?;
+                    }
+                    println!("Manifest report written to the directory {output_path:?}");
                 } else {
-                    bail!("fragments_glob must be set");
+                    // File output
+                    if output_path.exists() && !force {
+                        bail!("Output already exists; use -f/force to force write");
+                    }
+                    let content = if *detailed {
+                        format!("{reader:#?}")
+                    } else {
+                        reader.to_string()
+                    };
+                    std::fs::write(output_path, content)?;
+                    println!("Manifest report written to {}", output_path.display());
                 }
             } else {
-                if ext_normal(&output) != ext_normal(&args.path) {
-                    bail!("Output type must match source type");
+                // Print to stdout
+                if *detailed {
+                    println!("{reader:#?}");
+                } else {
+                    println!("{reader}");
                 }
+            }
+        }
+
+        Commands::Ingredient {
+            input,
+            output,
+            detailed,
+            force,
+        } => {
+            if output.is_file() || output.extension().is_some() {
+                // Single file output
+                if output.exists() && !force {
+                    bail!("Output already exists; use -f/force to force write");
+                }
+                let ingredient = Ingredient::from_file(input).map_err(special_errs)?;
+                let report = ingredient.to_string();
+                std::fs::write(output, report)?;
+                println!("Ingredient saved to: {}", output.display());
+            } else {
+                // Directory output
                 if output.exists() {
-                    if args.force && output != args.path {
-                        remove_file(&output)?;
-                    } else if !args.force {
+                    if *force {
+                        remove_dir_all(output)?;
+                    } else {
                         bail!("Output already exists; use -f/force to force write");
                     }
                 }
-                if output.file_name().is_none() {
-                    bail!("Missing filename on output");
-                }
-                if output.extension().is_none() {
-                    bail!("Missing extension output");
-                }
+                create_dir_all(output)?;
 
-                let manifest_data = if args.path != output {
-                    builder
-                        .sign_file(signer.as_ref(), &args.path, &output)
-                        .context("embedding manifest")?
+                if *detailed {
+                    let report = Ingredient::from_file_with_folder(input, output)
+                        .map_err(special_errs)?
+                        .to_string();
+                    File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
+                    println!("Ingredient report written to: {}", output.display());
                 } else {
-                    let mut file = NamedTempFile::new()?;
-                    let format = format_from_path(&args.path).unwrap();
-                    let mut source = File::open(&args.path)?;
-                    if builder.definition.title.is_none() {
-                        if let Some(title) = output.file_name() {
-                            builder.definition.title = Some(title.to_string_lossy().to_string());
-                        }
-                    }
-                    let manifest_data =
-                        builder.sign(signer.as_ref(), &format, &mut source, &mut file)?;
-
-                    if !output.exists() {
-                        // ensure the path to the file exists
-                        if let Some(output_dir) = &output.parent() {
-                            create_dir_all(output_dir)?;
-                        }
-                    }
-
-                    match file.persist(&output) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            let file = e.file;
-                            copy(file, &output)?;
-                        }
-                    }
-
-                    manifest_data
-                };
-
-                if args.sidecar {
-                    let sidecar = output.with_extension("c2pa");
-                    let mut file = File::create(&sidecar)?;
-                    file.write_all(&manifest_data)?;
-                }
-
-                // generate a report on the output file
-                let mut reader = Reader::from_file(&output).map_err(special_errs)?;
-                validate_cawg(&mut reader)?;
-                if args.detailed {
-                    println!("{reader:#?}");
-                } else {
-                    println!("{reader}")
+                    let ingredient = Ingredient::from_file(input).map_err(special_errs)?;
+                    let report = ingredient.to_string();
+                    File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
+                    println!("Ingredient saved to: {}", output.display());
                 }
             }
-        } else {
-            bail!("Output path required with manifest definition")
         }
-    } else if args.parent.is_some() || args.sidecar || args.remote.is_some() {
-        bail!("Manifest definition required with these options or flags")
-    } else if let Some(output) = args.output {
-        if output.is_file() || output.extension().is_some() {
-            bail!("Output must be a folder for this option.")
+
+        Commands::Create {
+            input,
+            source_type,
+            manifest,
+            manifest_json,
+            ingredients,
+            output,
+            archive,
+            sidecar,
+            remote,
+            force,
+        } => {
+            handle_create_command(
+                input,
+                source_type,
+                manifest.as_ref(),
+                manifest_json.as_ref(),
+                ingredients,
+                output,
+                *archive,
+                *sidecar,
+                remote.as_ref(),
+                *force,
+            )?;
         }
-        if output.exists() {
-            if args.force {
-                remove_dir_all(&output)?;
-            } else {
-                bail!("Output already exists; use -f/force to force write");
-            }
+
+        Commands::Edit {
+            parent,
+            input,
+            manifest,
+            manifest_json,
+            ingredients,
+            output,
+            archive,
+            sidecar,
+            remote,
+            force,
+        } => {
+            handle_edit_command(
+                parent,
+                input.as_ref(),
+                manifest.as_ref(),
+                manifest_json.as_ref(),
+                ingredients,
+                output,
+                *archive,
+                *sidecar,
+                remote.as_ref(),
+                *force,
+            )?;
         }
-        create_dir_all(&output)?;
-        if args.ingredient {
-            let report = Ingredient::from_file_with_folder(&args.path, &output)
-                .map_err(special_errs)?
-                .to_string();
-            File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
-            println!("Ingredient report written to the directory {:?}", &output);
-        } else {
-            let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
-            validate_cawg(&mut reader)?;
-            reader.to_folder(&output)?;
-            let report = reader.to_string();
-            if args.detailed {
-                // for a detailed report first call the above to generate the thumbnails
-                // then call this to add the detailed report
-                let detailed = format!("{reader:#?}");
-                File::create(output.join("detailed.json"))?.write_all(&detailed.into_bytes())?;
-            }
-            File::create(output.join("manifest_store.json"))?.write_all(&report.into_bytes())?;
-            println!("Manifest report written to the directory {:?}", &output);
+
+        Commands::Update {
+            input,
+            manifest,
+            manifest_json,
+            output,
+            archive,
+            sidecar,
+            remote,
+            force,
+        } => {
+            handle_update_command(
+                input,
+                manifest.as_ref(),
+                manifest_json.as_ref(),
+                output,
+                *archive,
+                *sidecar,
+                remote.as_ref(),
+                *force,
+            )?;
         }
-    } else if args.ingredient {
-        println!(
-            "{}",
-            Ingredient::from_file(&args.path).map_err(special_errs)?
-        )
-    } else if args.detailed {
-        let mut reader = reader_from_args(&args)?;
-        validate_cawg(&mut reader)?;
-        println!("{reader:#?}");
-    } else if let Some(Commands::Fragment {
-        fragments_glob: Some(fg),
-    }) = &args.command
-    {
-        let mut stores = verify_fragmented(&args.path, fg)?;
-        if stores.len() == 1 {
-            validate_cawg(&mut stores[0])?;
-            println!("{}", stores[0]);
-        } else {
-            for store in &mut stores {
-                validate_cawg(store)?;
-            }
-            println!("{} Init manifests validated", stores.len());
+
+        Commands::Resume {
+            archive: archive_path,
+            ingredients,
+            output,
+            archive_output,
+            sidecar,
+            remote,
+            force,
+        } => {
+            handle_resume_command(
+                archive_path,
+                ingredients,
+                output,
+                *archive_output,
+                *sidecar,
+                remote.as_ref(),
+                *force,
+            )?;
         }
-    } else {
-        let mut reader = reader_from_args(&args)?;
-        validate_cawg(&mut reader)?;
-        println!("{reader}");
+
+        Commands::Config { action } => {
+            handle_config_command(&args, action)?;
+        }
+
+        Commands::Fragment {
+            input,
+            manifest,
+            fragments_glob,
+            output,
+            force,
+        } => {
+            handle_fragment_command(input, manifest, fragments_glob, output, *force)?;
+        }
     }
 
     Ok(())
