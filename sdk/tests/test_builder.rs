@@ -58,14 +58,6 @@ fn test_parent_manifest_timestamp_assertion() {
     }
 
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
-    Settings::from_toml(
-        &toml::toml! {
-            [builder]
-            add_timestamp_assertion_to_parent = true
-        }
-        .to_string(),
-    )
-    .unwrap();
 
     let mut child_image = Cursor::new(Vec::new());
 
@@ -82,6 +74,15 @@ fn test_parent_manifest_timestamp_assertion() {
     child_image.rewind().unwrap();
 
     let mut parent_image = Cursor::new(Vec::new());
+
+    Settings::from_toml(
+        &toml::toml! {
+            [builder]
+            timestamp_assertion_fetch_scope = "parent"
+        }
+        .to_string(),
+    )
+    .unwrap();
 
     let mut builder = Builder::new();
     builder.set_intent(BuilderIntent::Update);

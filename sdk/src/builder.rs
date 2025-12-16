@@ -44,7 +44,7 @@ use crate::{
     jumbf::labels::manifest_label_from_uri,
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
-    settings::{self, Settings},
+    settings::{self, builder::TimeStampFetchScope, Settings},
     store::Store,
     utils::{hash_utils::hash_to_b64, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
@@ -311,6 +311,13 @@ pub struct Builder {
     /// A builder should construct a created, opened or updated manifest.
     #[deprecated(note = "Use set_intent() to set or intent() to get the builder intent")]
     pub intent: Option<BuilderIntent>,
+
+    /// Manifest labels to fetch timestamps for.
+    ///
+    /// Examples of a manifest label may include:
+    /// - `contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf`
+    /// - `urn:c2pa:fa479510-2a7d-c165-7b26-488a267f4c6a`
+    pub timestamp_manifest_labels: HashSet<String>,
 
     /// Container for binary assets (like thumbnails).
     #[serde(skip)]
@@ -596,6 +603,27 @@ impl Builder {
 
         self.add_assertion(Actions::LABEL, &actions)?;
         Ok(self)
+    }
+
+    /// Request a trusted timestamp for manifests with the given label.
+    ///
+    /// This only records the label on the builder. During signing, any matching manifest(s) will
+    /// have a [`TimeStamp`] assertion generated using the configured timestamp authority
+    /// ([`Signer::time_authority_url`]) if a timestamp for that manifest does not already exist.
+    ///
+    /// If [`Settings::builder::timestamp_assertion_fetch_scope`] is specified, the manifest labels specified
+    /// here and the manifest labels obtained from the setting's scope will be merged and fetched.
+    ///
+    /// Examples of a manifest label may include:
+    /// - `contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf`
+    /// - `urn:c2pa:fa479510-2a7d-c165-7b26-488a267f4c6a`
+    ///
+    /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
+    /// [`TimeStamp`]: crate::assertions::TimeStamp
+    /// [`Settings::builder::timestamp_assertion_fetch_scope`]: crate::settings::builder::BuilderSettings::timestamp_assertion_fetch_scope
+    pub fn add_timestamp(&mut self, manifest_label: impl Into<String>) -> &mut Self {
+        self.timestamp_manifest_labels.insert(manifest_label.into());
+        self
     }
 
     /// Adds an [`Ingredient`] to the manifest with JSON and a stream.
@@ -1431,73 +1459,93 @@ impl Builder {
     }
 
     #[async_generic(async_signature(
-        &mut self,
+        &self,
         time_authority_url: &str,
         store: &mut Store,
         http_resolver: &impl AsyncHttpResolver,
     ))]
-    fn maybe_add_timestamp_to_parent(
-        &mut self,
+    fn maybe_add_timestamp(
+        &self,
         time_authority_url: &str,
         store: &mut Store,
         http_resolver: &impl SyncHttpResolver,
     ) -> Result<()> {
-        if !self.settings.builder.add_timestamp_assertion_to_parent {
+        if self
+            .settings
+            .builder
+            .timestamp_assertion_fetch_scope
+            .is_none()
+            && self.timestamp_manifest_labels.is_empty()
+        {
             return Ok(());
         }
 
         let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        if let Some(parent_claim_uri) = provenance_claim.parent_claim_uri()? {
-            let parent_claim_id =
-                manifest_label_from_uri(&parent_claim_uri).ok_or(Error::ClaimEncoding)?;
+        let timestamp_assertions = provenance_claim.timestamp_assertions();
+        let mut timestamp_assertion = if !timestamp_assertions.is_empty() {
+            // There can only be one timestamp assertion per the spec.
+            let timestamp_assertion =
+                TimeStamp::from_assertion(timestamp_assertions[0].assertion())?;
+            timestamp_assertion
+        } else {
+            TimeStamp::new()
+        };
 
-            // First check if a timestamp assertion already exists.
-            let timestamp_assertions = provenance_claim.timestamp_assertions();
-            let mut timestamp_assertion = if !timestamp_assertions.is_empty() {
-                // There can only be one timestamp assertion per the spec.
-                let timestamp_assertion =
-                    TimeStamp::from_assertion(timestamp_assertions[0].assertion())?;
-                if timestamp_assertion
-                    .get_timestamp(&parent_claim_id)
-                    .is_some()
-                {
-                    return Ok(());
+        let mut claim_uris = self.timestamp_manifest_labels.clone();
+        match self.settings.builder.timestamp_assertion_fetch_scope {
+            Some(TimeStampFetchScope::All) => {
+                for claim in store.claims() {
+                    claim_uris.insert(claim.uri());
                 }
+            }
+            Some(TimeStampFetchScope::Parent) => {
+                if let Some(parent_claim_uri) = provenance_claim.parent_claim_uri()? {
+                    claim_uris.insert(parent_claim_uri);
+                }
+            }
+            None => {}
+        }
 
-                timestamp_assertion
-            } else {
-                TimeStamp::new()
-            };
+        for manifest_label in &self.timestamp_manifest_labels {
+            if let Some(claim) = store.get_claim(manifest_label) {
+                claim_uris.insert(claim.uri());
+            }
+        }
 
-            match store.get_cose_sign1_signature(&parent_claim_id)? {
-                Some(signature) => {
-                    if _sync {
-                        timestamp_assertion.refresh_timestamp(
+        for claim_uri in &claim_uris {
+            let manifest_label = manifest_label_from_uri(claim_uri).ok_or(Error::ClaimEncoding)?;
+
+            if timestamp_assertion.get_timestamp(&manifest_label).is_some() {
+                continue;
+            }
+
+            if let Some(claim) = store.get_claim(&manifest_label) {
+                let signature = claim.cose_sign1()?.signature;
+                if _sync {
+                    timestamp_assertion.refresh_timestamp(
+                        time_authority_url,
+                        &manifest_label,
+                        &signature,
+                        http_resolver,
+                    )?;
+                } else {
+                    timestamp_assertion
+                        .refresh_timestamp_async(
                             time_authority_url,
-                            &parent_claim_id,
+                            &manifest_label,
                             &signature,
                             http_resolver,
-                        )?;
-                    } else {
-                        timestamp_assertion
-                            .refresh_timestamp_async(
-                                time_authority_url,
-                                &parent_claim_id,
-                                &signature,
-                                http_resolver,
-                            )
-                            .await?;
-                    }
+                        )
+                        .await?;
                 }
-                None => return Err(Error::ClaimMissingSignatureBox),
             }
+        }
 
-            let claim = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-            if claim.timestamp_assertions().is_empty() {
-                claim.add_assertion(&timestamp_assertion)?;
-            } else {
-                claim.replace_assertion(timestamp_assertion.to_assertion()?)?;
-            }
+        let claim = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        if claim.timestamp_assertions().is_empty() {
+            claim.add_assertion(&timestamp_assertion)?;
+        } else {
+            claim.replace_assertion(timestamp_assertion.to_assertion()?)?;
         }
 
         Ok(())
@@ -1687,18 +1735,10 @@ impl Builder {
         // add timestamp if conditions allow
         if let Some(timestamp_authority_url) = signer.time_authority_url() {
             if _sync {
-                self.maybe_add_timestamp_to_parent(
-                    &timestamp_authority_url,
-                    &mut store,
-                    &http_resolver,
-                )?;
+                self.maybe_add_timestamp(&timestamp_authority_url, &mut store, &http_resolver)?;
             } else {
-                self.maybe_add_timestamp_to_parent_async(
-                    &timestamp_authority_url,
-                    &mut store,
-                    &http_resolver,
-                )
-                .await?
+                self.maybe_add_timestamp_async(&timestamp_authority_url, &mut store, &http_resolver)
+                    .await?
             }
         }
 

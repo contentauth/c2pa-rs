@@ -470,8 +470,8 @@ pub struct BuilderSettings {
     /// Whether to generate a C2PA archive (instead of zip) when writing the manifest builder.
     /// This will eventually become the default behavior.
     pub generate_c2pa_archive: Option<bool>,
-    /// Whether to auto-generate a [`TimeStamp`] assertion for parent of the manifest if one does not already
-    /// exist.
+    /// Whether to auto-generate a [`TimeStamp`] assertion for [`TimeStampFetchScope`] of the manifest if one
+    /// does not already exist.
     ///
     /// Useful when a manifest was signed offline and you want to attach a trusted timestamp to it later.
     ///
@@ -479,13 +479,26 @@ pub struct BuilderSettings {
     /// [`Signer::time_authority_url`]. If the signer is acquired from settings via [`Settings::signer`],
     /// the URL can be set in [`SignerSettings`].
     ///
-    /// The default value is false.
+    /// The default value is None.
     ///
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
     /// [`Settings::signer`]: crate::settings::signer
     /// [`SignerSettings`]: crate::settings::signer::SignerSettings
-    pub add_timestamp_assertion_to_parent: bool,
+    pub timestamp_assertion_fetch_scope: Option<TimeStampFetchScope>,
+}
+
+/// The scope of manifests to fetch timestamps for.
+///
+/// See [`BuilderSettings::timestamp_assertion_fetch_scope`] for more information.
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum TimeStampFetchScope {
+    /// Fetch timestamps for only the parent manifest.
+    Parent,
+    /// Fetch timestmaps for all manifests in the manifest store.
+    All,
 }
 
 /// The scope of which manifests to fetch for OCSP.

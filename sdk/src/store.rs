@@ -486,25 +486,6 @@ impl Store {
         placeholder
     }
 
-    /// Returns the `signature` field of the `COSE_Sign1_Tagged` structure found in the claim signature
-    /// box of the manifest corresponding to the `manifest_id`.
-    ///
-    /// This function will return `Ok(None)` if there is no claim corresponding to the `manifest_id`.
-    pub fn get_cose_sign1_signature(&self, manifest_id: &str) -> Result<Option<Vec<u8>>> {
-        match self.get_claim(manifest_id) {
-            Some(claim) => {
-                let sig = claim.signature_val();
-                let data = claim.data()?;
-                let mut validation_log =
-                    StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-
-                let sign1 = parse_cose_sign1(sig, &data, &mut validation_log)?;
-                Ok(Some(sign1.signature))
-            }
-            None => Ok(None),
-        }
-    }
-
     /// Return OCSP info if available
     // Currently only called from manifest_store behind a feature flag but this is allowable
     // anywhere so allow dead code here for future uses to compile
