@@ -32,7 +32,7 @@ use crate::{
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
-    maybe_send::MaybeSend,
+    maybe_send_sync::MaybeSend,
 };
 
 // initialize asset handlers

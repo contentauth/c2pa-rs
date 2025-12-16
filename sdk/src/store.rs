@@ -74,7 +74,7 @@ use crate::{
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
-    maybe_send::MaybeSend,
+    maybe_send_sync::MaybeSend,
     settings::{builder::OcspFetchScope, Settings},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
@@ -1674,12 +1674,6 @@ impl Store {
                         }
                     }
 
-                    // if this ingredient is the hash binding claim (update manifest)
-                    // then we have to check the binding here
-                    if ingredient.label() == svi.binding_claim {
-                        Claim::verify_hash_binding(ingredient, asset_data, svi, validation_log)?;
-                    }
-
                     Claim::verify_claim(
                         ingredient,
                         asset_data,
@@ -1896,12 +1890,6 @@ impl Store {
                                 ),
                             )?;
                         }
-                    }
-
-                    // if this ingredient is the hash binding claim (update manifest)
-                    // then we have to check the binding here
-                    if ingredient.label() == svi.binding_claim {
-                        Claim::verify_hash_binding(ingredient, asset_data, svi, validation_log)?;
                     }
 
                     Claim::verify_claim_async(
