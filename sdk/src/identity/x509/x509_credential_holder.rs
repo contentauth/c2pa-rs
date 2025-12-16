@@ -56,7 +56,7 @@ impl CredentialHolder for X509CredentialHolder {
         // TO DO: Check signing cert (see signing_cert_valid in c2pa-rs's cose_sign).
 
         let mut sp_cbor: Vec<u8> = vec![];
-        serde_cbor::to_writer(&mut sp_cbor, signer_payload)
+        c2pa_cbor::to_writer(&mut sp_cbor, signer_payload)
             .map_err(|e| IdentityBuilderError::CborGenerationError(e.to_string()))?;
 
         sign(

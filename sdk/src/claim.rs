@@ -554,7 +554,7 @@ impl Claim {
 
     // Deserializer that maps V1/V2 Claim object into our internal Claim representation.  Note:  Our Claim
     // structure is not the Claim from the spec but an amalgamation that allows us to represent any version
-    pub fn from_value(claim_value: serde_cbor::Value, label: &str, data: &[u8]) -> Result<Self> {
+    pub fn from_value(claim_value: c2pa_cbor::Value, label: &str, data: &[u8]) -> Result<Self> {
         // populate claim from the map
         // parse possible fields to figure out which version of the claim is possible.
         let claim_version = if map_cbor_to_type::<Vec<HashedUri>>("assertions", &claim_value)
@@ -604,9 +604,9 @@ impl Claim {
             ];
 
             // make sure only V1 fields are present
-            if let serde_cbor::Value::Map(m) = &claim_value {
+            if let c2pa_cbor::Value::Map(m) = &claim_value {
                 for v in m.keys() {
-                    if let serde_cbor::Value::Text(t) = v {
+                    if let c2pa_cbor::Value::Text(t) = v {
                         if !V1_FIELDS.contains(&t.as_str()) {
                             return Err(Error::ClaimDecoding(format!(
                                 "unknown V1 claim field: {t}"
@@ -702,9 +702,9 @@ impl Claim {
             ];
 
             // make sure only V2 fields are present
-            if let serde_cbor::Value::Map(m) = &claim_value {
+            if let c2pa_cbor::Value::Map(m) = &claim_value {
                 for v in m.keys() {
-                    if let serde_cbor::Value::Text(t) = v {
+                    if let c2pa_cbor::Value::Text(t) = v {
                         if !V2_FIELDS.contains(&t.as_str()) {
                             return Err(Error::ClaimDecoding(format!(
                                 "unknown V2 claim field: {t}",
@@ -1479,7 +1479,7 @@ impl Claim {
 
         // serialize to cbor
         let db_cbor =
-            serde_cbor::to_vec(&new_db).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
+            c2pa_cbor::to_vec(&new_db).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
         // get the index for the new assertion
         let mut index = 0;
@@ -1530,7 +1530,7 @@ impl Claim {
         let mut uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
         uri.add_salt(salt);
 
-        let db: DataBox = serde_cbor::from_slice(databox_cbor)
+        let db: DataBox = c2pa_cbor::from_slice(databox_cbor)
             .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
         // add data box  to data box store
@@ -3544,7 +3544,7 @@ impl Claim {
     pub fn data(&self) -> Result<Vec<u8>> {
         match self.original_bytes {
             Some(ref ob) => Ok(ob.clone()),
-            None => Ok(serde_cbor::ser::to_vec(&self).map_err(|_err| Error::ClaimEncoding)?),
+            None => Ok(c2pa_cbor::ser::to_vec(&self).map_err(|_err| Error::ClaimEncoding)?),
         }
     }
 
@@ -3554,7 +3554,7 @@ impl Claim {
 
     /// Create claim from binary data (not including assertions).
     pub fn from_data(label: &str, data: &[u8]) -> Result<Claim> {
-        let claim_value: serde_cbor::Value = serde_cbor::from_slice(data)
+        let claim_value: c2pa_cbor::Value = c2pa_cbor::from_slice(data)
             .map_err(|err| Error::ClaimDecoding(format!("claim_cbor: {err}")))?;
 
         Claim::from_value(claim_value, label, data)
@@ -3592,7 +3592,7 @@ impl Claim {
                             AssertionData::Cbor(x) => {
                                 // some types are not translatable to json so explicitly convert
                                 let buf: Vec<u8> = Vec::new();
-                                let mut from = serde_cbor::Deserializer::from_slice(x);
+                                let mut from = c2pa_cbor::Deserializer::from_slice(x);
                                 let mut to = serde_json::Serializer::new(buf);
 
                                 serde_transcode::transcode(&mut from, &mut to)
@@ -3682,7 +3682,7 @@ impl Claim {
                             AssertionData::Cbor(x) => {
                                 // some types are not translatable to json so explicitly convert
                                 let buf: Vec<u8> = Vec::new();
-                                let mut from = serde_cbor::Deserializer::from_slice(x);
+                                let mut from = c2pa_cbor::Deserializer::from_slice(x);
                                 let mut to = serde_json::Serializer::new(buf);
 
                                 serde_transcode::transcode(&mut from, &mut to)

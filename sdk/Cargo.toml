@@ -167,7 +167,7 @@ rsa = { version = "0.9.10", features = ["pem", "sha2", "std"], optional = true }
 schemars = { version = "1.0.4", optional = true }
 serde = { version = "1.0.225", features = ["derive"] }
 serde_bytes = "0.11.14"
-serde_cbor = { package = "c2pa_cbor", path = "../c2pa_cbor" }
+c2pa_cbor = { path = "../c2pa_cbor" }
 serde_derive = "1.0.197"
 serde_json = { version = "1.0.117", features = ["preserve_order"] }
 serde_with = "3.15.1"

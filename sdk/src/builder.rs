@@ -155,7 +155,7 @@ fn default_vec<T>() -> Vec<T> {
 #[serde(untagged)]
 pub enum AssertionData {
     #[cfg_attr(feature = "json_schema", schemars(skip))]
-    Cbor(serde_cbor::Value),
+    Cbor(c2pa_cbor::Value),
     Json(serde_json::Value),
 }
 
@@ -198,7 +198,7 @@ impl<'de> Deserialize<'de> for AssertionDefinition {
             Some(ManifestAssertionKind::Json) => AssertionData::Json(helper.data),
             Some(ManifestAssertionKind::Cbor) | None => {
                 let cbor_val =
-                    serde_cbor::value::to_value(helper.data).map_err(serde::de::Error::custom)?;
+                    c2pa_cbor::value::to_value(helper.data).map_err(serde::de::Error::custom)?;
                 AssertionData::Cbor(cbor_val)
             }
             _ => {
@@ -238,7 +238,7 @@ impl AssertionDefinition {
                 ))
             }),
             AssertionData::Cbor(value) => {
-                serde_cbor::value::from_value(value.clone()).map_err(|e| {
+                c2pa_cbor::value::from_value(value.clone()).map_err(|e| {
                     Error::AssertionDecoding(AssertionDecodeError::from_err(
                         self.label.to_owned(),
                         None,
@@ -667,7 +667,7 @@ impl Builder {
         let created = false;
         self.definition.assertions.push(AssertionDefinition {
             label: label.into(),
-            data: AssertionData::Cbor(serde_cbor::value::to_value(data)?),
+            data: AssertionData::Cbor(c2pa_cbor::value::to_value(data)?),
             kind: None, // defaults to cbor
             created,
         });
@@ -1295,7 +1295,7 @@ impl Builder {
                     ),
                     AssertionData::Cbor(value) => add_assertion(
                         &mut claim,
-                        &UserCbor::new(manifest_assertion.label(), serde_cbor::to_vec(value)?),
+                        &UserCbor::new(manifest_assertion.label(), c2pa_cbor::to_vec(value)?),
                         manifest_assertion.created(),
                     ),
                 },

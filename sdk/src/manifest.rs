@@ -834,7 +834,7 @@ pub(crate) mod tests {
         const LABEL: &str = "org.cai.test";
         const DATA: &str = r#"{ "l1":"some data", "l2":"some other data" }"#;
         let json: serde_json::Value = serde_json::from_str(DATA).unwrap();
-        let data = serde_cbor::to_vec(&json).unwrap();
+        let data = c2pa_cbor::to_vec(&json).unwrap();
         let cbor = UserCbor::new(LABEL, data);
         let mut manifest = test_manifest();
         manifest.add_assertion(&cbor).expect("add_assertion");
