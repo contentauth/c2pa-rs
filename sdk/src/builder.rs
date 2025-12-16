@@ -1460,13 +1460,13 @@ impl Builder {
 
     #[async_generic(async_signature(
         &self,
-        time_authority_url: &str,
+        tsa_url: &str,
         store: &mut Store,
         http_resolver: &impl AsyncHttpResolver,
     ))]
     fn maybe_add_timestamp(
         &self,
-        time_authority_url: &str,
+        tsa_url: &str,
         store: &mut Store,
         http_resolver: &impl SyncHttpResolver,
     ) -> Result<()> {
@@ -1528,7 +1528,7 @@ impl Builder {
                 let signature = claim.cose_sign1()?.signature;
                 if _sync {
                     timestamp_assertion.refresh_timestamp(
-                        time_authority_url,
+                        tsa_url,
                         &manifest_label,
                         &signature,
                         http_resolver,
@@ -1536,7 +1536,7 @@ impl Builder {
                 } else {
                     timestamp_assertion
                         .refresh_timestamp_async(
-                            time_authority_url,
+                            tsa_url,
                             &manifest_label,
                             &signature,
                             http_resolver,
@@ -1738,11 +1738,11 @@ impl Builder {
         let mut store = self.to_store(&self.settings)?;
 
         // add timestamp if conditions allow
-        if let Some(timestamp_authority_url) = signer.time_authority_url() {
+        if let Some(tsa_url) = signer.time_authority_url() {
             if _sync {
-                self.maybe_add_timestamp(&timestamp_authority_url, &mut store, &http_resolver)?;
+                self.maybe_add_timestamp(&tsa_url, &mut store, &http_resolver)?;
             } else {
-                self.maybe_add_timestamp_async(&timestamp_authority_url, &mut store, &http_resolver)
+                self.maybe_add_timestamp_async(&tsa_url, &mut store, &http_resolver)
                     .await?
             }
         }

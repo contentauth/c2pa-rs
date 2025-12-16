@@ -65,27 +65,22 @@ impl TimeStamp {
     // [`Store::get_cose_sign1_signature`][crate::store::Store::get_cose_sign1_structure].
     #[async_generic(async_signature(
         &mut self,
-        time_authority_url: &str,
+        tsa_url: &str,
         manifest_id: &str,
         signature: &[u8],
         http_resolver: &impl AsyncHttpResolver,
     ))]
     pub(crate) fn refresh_timestamp(
         &mut self,
-        time_authority_url: &str,
+        tsa_url: &str,
         manifest_id: &str,
         signature: &[u8],
         http_resolver: &impl SyncHttpResolver,
     ) -> Result<()> {
         let timestamp_token = if _sync {
-            TimeStamp::send_timestamp_token_request(time_authority_url, signature, http_resolver)?
+            TimeStamp::send_timestamp_token_request(tsa_url, signature, http_resolver)?
         } else {
-            TimeStamp::send_timestamp_token_request_async(
-                time_authority_url,
-                signature,
-                http_resolver,
-            )
-            .await?
+            TimeStamp::send_timestamp_token_request_async(tsa_url, signature, http_resolver).await?
         };
 
         self.0
@@ -94,18 +89,18 @@ impl TimeStamp {
         Ok(())
     }
 
-    /// Send a timestamp token request to the `time_authority_url` with the given `message`.
+    /// Send a timestamp token request to the `tsa_url` with the given `message`.
     ///
     /// This function will verify the structure of the returned response but not the trust.
     ///
     /// See [`TimeStamp::refresh_timestamp`] for more information.
     #[async_generic(async_signature(
-        time_authority_url: &str,
+        tsa_url: &str,
         message: &[u8],
         http_resolver: &impl AsyncHttpResolver,
     ))]
     pub(crate) fn send_timestamp_token_request(
-        time_authority_url: &str,
+        tsa_url: &str,
         message: &[u8],
         http_resolver: &impl SyncHttpResolver,
     ) -> Result<Vec<u8>> {
@@ -114,7 +109,7 @@ impl TimeStamp {
 
         let bytes = if _sync {
             crate::crypto::time_stamp::default_rfc3161_request(
-                time_authority_url,
+                tsa_url,
                 headers,
                 &body,
                 message,
@@ -122,7 +117,7 @@ impl TimeStamp {
             )
         } else {
             crate::crypto::time_stamp::default_rfc3161_request_async(
-                time_authority_url,
+                tsa_url,
                 headers,
                 &body,
                 message,
