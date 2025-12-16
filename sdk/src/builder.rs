@@ -1480,17 +1480,6 @@ impl Builder {
             return Ok(());
         }
 
-        let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let timestamp_assertions = provenance_claim.timestamp_assertions();
-        let mut timestamp_assertion = if !timestamp_assertions.is_empty() {
-            // There can only be one timestamp assertion per the spec.
-            let timestamp_assertion =
-                TimeStamp::from_assertion(timestamp_assertions[0].assertion())?;
-            timestamp_assertion
-        } else {
-            TimeStamp::new()
-        };
-
         let mut claim_uris = self.timestamp_manifest_labels.clone();
         match self.settings.builder.timestamp_assertion_fetch_scope {
             Some(TimeStampFetchScope::All) => {
@@ -1499,6 +1488,7 @@ impl Builder {
                 }
             }
             Some(TimeStampFetchScope::Parent) => {
+                let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
                 if let Some(parent_claim_uri) = provenance_claim.parent_claim_uri()? {
                     claim_uris.insert(parent_claim_uri);
                 }
@@ -1511,6 +1501,17 @@ impl Builder {
                 claim_uris.insert(claim.uri());
             }
         }
+
+        let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let timestamp_assertions = provenance_claim.timestamp_assertions();
+        let mut timestamp_assertion = if !timestamp_assertions.is_empty() {
+            // There can only be one timestamp assertion per the spec.
+            let timestamp_assertion =
+                TimeStamp::from_assertion(timestamp_assertions[0].assertion())?;
+            timestamp_assertion
+        } else {
+            TimeStamp::new()
+        };
 
         for claim_uri in &claim_uris {
             let manifest_label = manifest_label_from_uri(claim_uri).ok_or(Error::ClaimEncoding)?;
