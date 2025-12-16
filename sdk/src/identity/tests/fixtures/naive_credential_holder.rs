@@ -49,7 +49,7 @@ impl CredentialHolder for NaiveCredentialHolder {
         // Naive implementation simply serializes SignerPayload
         // in CBOR format and calls it a "signature."
         let mut result: Vec<u8> = vec![];
-        ciborium::into_writer(signer_payload, &mut result)?;
+        serde_cbor::to_writer(&mut result, signer_payload)?;
         Ok(result)
     }
 }
@@ -72,7 +72,7 @@ impl AsyncCredentialHolder for NaiveAsyncCredentialHolder {
         // Naive implementation simply serializes SignerPayload
         // in CBOR format and calls it a "signature."
         let mut result: Vec<u8> = vec![];
-        ciborium::into_writer(signer_payload, &mut result)?;
+        serde_cbor::to_writer(&mut result, signer_payload)?;
         Ok(result)
     }
 }
@@ -92,7 +92,7 @@ impl SignatureVerifier for NaiveSignatureVerifier {
         _status_tracker: &mut StatusTracker,
     ) -> Result<Self::Output, ValidationError<Self::Error>> {
         let mut signer_payload_cbor: Vec<u8> = vec![];
-        ciborium::into_writer(signer_payload, &mut signer_payload_cbor)
+        serde_cbor::to_writer(&mut signer_payload_cbor, signer_payload)
             .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
 
         if signer_payload_cbor != signature {

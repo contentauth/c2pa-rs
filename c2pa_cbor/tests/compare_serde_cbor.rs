@@ -1,3 +1,10 @@
+//! Performance comparison tests between c2pa_cbor and original serde_cbor.
+//! These tests are disabled by default since serde_cbor is aliased to c2pa_cbor.
+//! To enable: add serde_cbor = "0.11" to dev-dependencies and run:
+//! cargo test --features compare_serde_cbor
+
+#![cfg(feature = "compare_serde_cbor")]
+
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};

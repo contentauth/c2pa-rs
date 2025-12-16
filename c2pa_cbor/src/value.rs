@@ -315,14 +315,8 @@ impl Value {
     }
 }
 
-// Implement Eq and Ord for Value to allow it to be used as a map key
+// Implement Eq, PartialOrd, and Ord for Value to allow it to be used as a map key
 impl Eq for Value {}
-
-impl PartialOrd for Value {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
 
 impl Ord for Value {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
@@ -331,44 +325,54 @@ impl Ord for Value {
         use Value::*;
 
         match (self, other) {
+            // Null is only equal to Null
             (Null, Null) => Ordering::Equal,
             (Null, _) => Ordering::Less,
             (_, Null) => Ordering::Greater,
 
+            // Bool comparison
             (Bool(a), Bool(b)) => a.cmp(b),
             (Bool(_), _) => Ordering::Less,
             (_, Bool(_)) => Ordering::Greater,
 
+            // Integer comparison
             (Integer(a), Integer(b)) => a.cmp(b),
             (Integer(_), _) => Ordering::Less,
             (_, Integer(_)) => Ordering::Greater,
 
+            // Float comparison - NaN is treated as equal to NaN for ordering purposes
             (Float(a), Float(b)) => {
-                // Handle NaN and infinite values
-                match (a.is_nan(), b.is_nan()) {
-                    (true, true) => Ordering::Equal,
-                    (true, false) => Ordering::Greater, // NaN is considered greater
-                    (false, true) => Ordering::Less,
-                    (false, false) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
+                if a.is_nan() && b.is_nan() {
+                    Ordering::Equal
+                } else if a.is_nan() {
+                    Ordering::Greater // NaN sorts last
+                } else if b.is_nan() {
+                    Ordering::Less
+                } else {
+                    a.partial_cmp(b).unwrap_or(Ordering::Equal)
                 }
             }
             (Float(_), _) => Ordering::Less,
             (_, Float(_)) => Ordering::Greater,
 
+            // Bytes comparison
             (Bytes(a), Bytes(b)) => a.cmp(b),
             (Bytes(_), _) => Ordering::Less,
             (_, Bytes(_)) => Ordering::Greater,
 
+            // Text comparison
             (Text(a), Text(b)) => a.cmp(b),
             (Text(_), _) => Ordering::Less,
             (_, Text(_)) => Ordering::Greater,
 
+            // Array comparison
             (Array(a), Array(b)) => a.cmp(b),
             (Array(_), _) => Ordering::Less,
             (_, Array(_)) => Ordering::Greater,
 
+            // Map comparison
             (Map(a), Map(b)) => {
-                // Compare maps by converting to sorted vectors
+                // Compare maps by converting to sorted vectors and comparing
                 let a_vec: Vec<_> = a.iter().collect();
                 let b_vec: Vec<_> = b.iter().collect();
                 a_vec.cmp(&b_vec)
@@ -376,10 +380,18 @@ impl Ord for Value {
             (Map(_), _) => Ordering::Less,
             (_, Map(_)) => Ordering::Greater,
 
-            (Tag(tag_a, val_a), Tag(tag_b, val_b)) => {
-                tag_a.cmp(tag_b).then_with(|| val_a.cmp(val_b))
-            }
+            // Tag comparison
+            (Tag(tag_a, val_a), Tag(tag_b, val_b)) => match tag_a.cmp(tag_b) {
+                Ordering::Equal => val_a.cmp(val_b),
+                other => other,
+            },
         }
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
