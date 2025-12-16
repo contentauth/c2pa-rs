@@ -14,4 +14,8 @@ serde_bytes = "0.11"
 [dev-dependencies]
 serde_json = "1.0"
 serde-transcode = "1.1"
-serde_cbor = "0.11"
+
+[features]
+# Feature to enable comparison tests against original serde_cbor.
+# Requires adding serde_cbor = "0.11" to dev-dependencies manually.
+compare_serde_cbor = []
