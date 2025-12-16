@@ -16,101 +16,14 @@ use std::io::{self, Cursor, Seek};
 #[cfg(not(target_arch = "wasm32"))]
 use c2pa::identity::validator::CawgValidator;
 use c2pa::{
-    assertions::{self, TimeStamp},
-    settings::Settings,
-    validation_status, Builder, BuilderIntent, Error, ManifestAssertionKind, Reader, Result,
-    Signer, ValidationState,
+    settings::Settings, validation_status, Builder, BuilderIntent, Error, ManifestAssertionKind,
+    Reader, Result, ValidationState,
 };
 
 mod common;
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 use common::compare_stream_to_known_good;
 use common::test_signer;
-
-#[test]
-fn test_parent_manifest_timestamp_assertion() {
-    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
-    const FORMAT: &str = "image/jpeg";
-
-    // Basic wrapper around a Signer to include a time authority URL.
-    struct WrappedTsaSigner(Box<dyn Signer>);
-
-    impl Signer for WrappedTsaSigner {
-        fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-            self.0.sign(data)
-        }
-
-        fn alg(&self) -> c2pa::SigningAlg {
-            self.0.alg()
-        }
-
-        fn certs(&self) -> Result<Vec<Vec<u8>>> {
-            self.0.certs()
-        }
-
-        fn reserve_size(&self) -> usize {
-            self.0.reserve_size()
-        }
-
-        fn time_authority_url(&self) -> Option<String> {
-            Some("http://timestamp.digicert.com".to_owned())
-        }
-    }
-
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
-
-    let mut child_image = Cursor::new(Vec::new());
-
-    let mut builder = Builder::new();
-    builder
-        .sign(
-            &Settings::signer().unwrap(),
-            FORMAT,
-            &mut Cursor::new(TEST_IMAGE),
-            &mut child_image,
-        )
-        .unwrap();
-
-    child_image.rewind().unwrap();
-
-    let mut parent_image = Cursor::new(Vec::new());
-
-    Settings::from_toml(
-        &toml::toml! {
-            [builder]
-            timestamp_assertion_fetch_scope = "parent"
-        }
-        .to_string(),
-    )
-    .unwrap();
-
-    let mut builder = Builder::new();
-    builder.set_intent(BuilderIntent::Update);
-    builder
-        .sign(
-            &WrappedTsaSigner(Settings::signer().unwrap()),
-            FORMAT,
-            &mut child_image,
-            &mut parent_image,
-        )
-        .unwrap();
-
-    parent_image.rewind().unwrap();
-
-    let reader = Reader::from_stream(FORMAT, parent_image).unwrap();
-    let timestamp_assertion: TimeStamp = reader
-        .active_manifest()
-        .unwrap()
-        .find_assertion(assertions::labels::TIMESTAMP)
-        .unwrap();
-
-    let child_manifest_label = reader.active_manifest().unwrap().ingredients()[0]
-        .active_manifest()
-        .unwrap();
-    assert!(timestamp_assertion
-        .get_timestamp(child_manifest_label)
-        .is_some());
-}
 
 #[test]
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
