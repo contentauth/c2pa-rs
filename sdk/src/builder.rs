@@ -1480,7 +1480,7 @@ impl Builder {
             return Ok(());
         }
 
-        let mut claim_uris = self.timestamp_manifest_labels.clone();
+        let mut claim_uris = HashSet::new();
         match self.settings.builder.timestamp_assertion_fetch_scope {
             Some(TimeStampFetchScope::All) => {
                 for claim in store.claims() {
@@ -1517,6 +1517,10 @@ impl Builder {
             let manifest_label = manifest_label_from_uri(claim_uri).ok_or(Error::ClaimEncoding)?;
 
             if timestamp_assertion.get_timestamp(&manifest_label).is_some() {
+                continue;
+            }
+
+            if *claim_uri == provenance_claim.uri() {
                 continue;
             }
 
