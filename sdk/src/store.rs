@@ -3081,6 +3081,7 @@ impl Store {
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
 
+                output_stream.flush()?;
                 output_stream.rewind()?;
 
                 let verify_after_sign = settings.verify.verify_after_sign;
@@ -3353,6 +3354,7 @@ impl Store {
             }
         }
 
+        output_stream.flush()?;
         Ok((sig, jumbf_bytes))
     }
 
