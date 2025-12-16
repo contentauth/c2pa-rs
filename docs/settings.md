@@ -56,6 +56,7 @@ Here's the JSON with all default values:
     "merkle_tree_max_proofs": 5,
     "backing_store_memory_threshold_in_mb": 512,
     "decode_identity_assertions": true
+    "allowed_network_hosts": null
   },
   "verify": {
     "verify_after_reading": true,
@@ -110,7 +111,7 @@ Here's the JSON with all default values:
 The top-level `version` property is a number specifying the settings format version. The only supported value currently is `1`.
 All other properties are optional.
 
-NOTES: 
+NOTES:
 
 - If you do not specify a value, the SDK will use the default value, if any.
 - If you specify a value of `null`, then the property will be set to `null`, not the default.
@@ -215,7 +216,7 @@ Remote signers receive POST requests with the data to be signed as the request b
 
 ### core
 
-The `core` object specifies core features and performance settings. 
+The `core` object specifies core features and performance settings.
 
 | Property | Type | Description | Default value |
 | --- | --- | --- | --- |
@@ -223,11 +224,11 @@ The `core` object specifies core features and performance settings.
 | `core.merkle_tree_max_proofs` | Number | Maximum Merkle tree proofs when validating | 5 |
 | `core.backing_store_memory_threshold_in_mb` | Number | Memory threshold before using disk storage (MB) | 512 |
 | `core.decode_identity_assertions` | Boolean | Whether to decode CAWG identity assertions | true |
-
+| `core.allowed_network_hosts` | Array | List of allowed network host patterns |  |
 
 ### signer
 
-The `signer` object specifies configuration for the primary C2PA signer. Can be `null`, a `local` object, or a `remote` object with values as described below. 
+The `signer` object specifies configuration for the primary C2PA signer. Can be `null`, a `local` object, or a `remote` object with values as described below.
 
 When both `signer` and `cawg_x509_signer` are configured, the system creates a dual signer that:
 
@@ -271,7 +272,7 @@ For certificate properties, use PEM format strings with `\n` for line breaks.
 
 ### verify
 
-The `verify` object specifies verification behavior. 
+The `verify` object specifies verification behavior.
 
 | Property | Type | Description | Default value |
 | --- | --- | --- | --- |

@@ -17,8 +17,10 @@ To use the library, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.45.2"
+c2pa = "0.72.0"
 ```
+
+NOTE: The version above is just a placeholder.  Find the latest version at https://crates.io/crates/c2pa.
 
 To read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
 
@@ -27,7 +29,7 @@ To read or write a manifest file, add the `file_io` dependency to your `Cargo.to
 Add the `add_thumbnails` dependency to generate thumbnails for JPEG and PNG files. For example:
 
 ```
-c2pa = { version = "0.45.2", features = ["file_io", "add_thumbnails"] }
+c2pa = { version = "0.72.0", features = ["file_io", "add_thumbnails"] }
 ```
 
 ## Features
@@ -39,7 +41,7 @@ You can enable any of the following features:
 - **rust_native_crypto**: Use Rust native cryptography.
 - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
 - **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
-- **file_io**: Enables APIs that use filesystem I/O.
+- **file_io**: Enables APIs that use file system I/O.
 - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
 - **pdf**: Enables basic PDF read support.
 - **http_ureq**: Enables `ureq` for sync HTTP requests.

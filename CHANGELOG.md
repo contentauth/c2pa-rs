@@ -5,7 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+As of December 2025 and until the 1.0.0 version is released, the CAI team will only make minor version changes (incrementing the `x` in `0.x.0`) if breaking changes are made. Features will now result in a patch version change (incrementing the `y` in `0.x.y`). This brings us into closer compliance with typical SemVer practice (and follows the default behavior of [`release-plz`](https://release-plz.dev/docs/config#the-features_always_increment_minor-field).
+
 ## [Unreleased]
+
+## [0.73.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.72.1...c2pa-v0.73.0)
+_04 December 2025_
+
+### Added
+
+* Restricted HTTP resolvers ([#1630](https://github.com/contentauth/c2pa-rs/pull/1630))
+
+## [0.72.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.72.0...c2pa-v0.72.1)
+_04 December 2025_
+
+### Added
+
+* Check if stream matches input format via file signature/structure ([#1528](https://github.com/contentauth/c2pa-rs/pull/1528))
+* Use MaybeSend to simplify code ([#1639](https://github.com/contentauth/c2pa-rs/pull/1639))
+
+### Documented
+
+* Add doc for CLI settings, misc copy edits ([#1636](https://github.com/contentauth/c2pa-rs/pull/1636))
+
+### Fixed
+
+* Set wasm-bindgen-cli version in CI ([#1644](https://github.com/contentauth/c2pa-rs/pull/1644))
+* Fix the timestamp cert chain validation to be independent of the order ([#1600](https://github.com/contentauth/c2pa-rs/pull/1600))
+* RFC 3161 fractional seconds ([#1640](https://github.com/contentauth/c2pa-rs/pull/1640))
+* Stack overflow and hang due to cyclic ingredients ([#1576](https://github.com/contentauth/c2pa-rs/pull/1576))
+* Allow untrusted failure code to be a `Valid` validation state ([#1623](https://github.com/contentauth/c2pa-rs/pull/1623))
+* Remove unmaintained `json5` dependency and other unused `config` crate sub-dependencies ([#1611](https://github.com/contentauth/c2pa-rs/pull/1611))
+
+### Other
+
+* Remove direct dependency on `windows-core` ([#1616](https://github.com/contentauth/c2pa-rs/pull/1616))
+
+### Updated dependencies
+
+* Bump lopdf from 0.31.0 to 0.38.0 ([#1359](https://github.com/contentauth/c2pa-rs/pull/1359))
+* Bump quick-xml from 0.37.5 to 0.38.3 ([#1575](https://github.com/contentauth/c2pa-rs/pull/1575))
 
 ## [0.72.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.71.3...c2pa-v0.72.0)
 _17 November 2025_
