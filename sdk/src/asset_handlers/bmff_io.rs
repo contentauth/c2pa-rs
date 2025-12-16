@@ -1328,11 +1328,50 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     Ok(())
 }
 
+fn get_uuid_box_purpose<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+    box_info: &atree::Node<BoxInfo>,
+) -> Result<(String, u64)> {
+    if box_info.data.box_type == BoxType::UuidBox {
+        let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
+
+        // set reader to start of box contents
+        skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
+
+        // Fullbox => 8 bits for version 24 bits for flags
+        let (_version, _flags) = read_box_header_ext(reader)?;
+        data_len -= 4;
+
+        // get the purpose
+        let mut purpose_bytes = Vec::with_capacity(64);
+        loop {
+            let mut buf = [0; 1];
+            reader.read_exact(&mut buf)?;
+            data_len -= 1;
+            if buf[0] == 0x00 {
+                break;
+            } else {
+                purpose_bytes.push(buf[0]);
+            }
+        }
+
+        let purpose = String::from_utf8_lossy(&purpose_bytes);
+
+        return Ok((purpose.to_string(), data_len));
+    }
+
+    Err(Error::C2PAValidation(
+        "C2PA UUID box does not contain a purpose".to_string(),
+    ))
+}
+
 fn get_uuid_token(
+    reader: &mut dyn CAIRead,
     bmff_tree: &Arena<BoxInfo>,
     bmff_map: &HashMap<String, Vec<Token>>,
     uuid: &[u8; 16],
-) -> Option<Token> {
+    purpose: Option<&[&str]>,
+) -> Result<Token> {
     if let Some(uuid_list) = bmff_map.get("/uuid") {
         for uuid_token in uuid_list {
             let box_info = &bmff_tree[*uuid_token];
@@ -1342,13 +1381,27 @@ fn get_uuid_token(
                 if let Some(found_uuid) = &box_info.data.user_type {
                     // make sure uuids match
                     if vec_compare(uuid, found_uuid) {
-                        return Some(*uuid_token);
+                        // if C2PA_UUID also check against purpose if present
+                        if vec_compare(&C2PA_UUID, uuid) {
+                            let (box_purpose, _) = get_uuid_box_purpose(reader, box_info)?;
+
+                            // if there is a purpose, match it
+                            if let Some(target_purposes) = purpose {
+                                for target_purpose in target_purposes {
+                                    if box_purpose == *target_purpose {
+                                        return Ok(*uuid_token);
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+                        return Ok(*uuid_token);
                     }
                 }
             }
         }
     }
-    None
+    Err(Error::NotFound)
 }
 
 #[allow(dead_code)]
@@ -1397,33 +1450,10 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                 if let Some(uuid) = &box_info.data.user_type {
                     // make sure it is a C2PA ContentProvenanceBox box
                     if vec_compare(&C2PA_UUID, uuid) {
-                        let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
-
-                        // set reader to start of box contents
-                        skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
-
-                        // Fullbox => 8 bits for version 24 bits for flags
-                        let (_version, _flags) = read_box_header_ext(reader)?;
-                        data_len -= 4;
-
-                        // get the purpose
-                        let mut purpose = Vec::with_capacity(64);
-                        loop {
-                            let mut buf = [0; 1];
-                            reader.read_exact(&mut buf)?;
-                            data_len -= 1;
-                            if buf[0] == 0x00 {
-                                break;
-                            } else {
-                                purpose.push(buf[0]);
-                            }
-                        }
+                        let (purpose, mut data_len) = get_uuid_box_purpose(reader, box_info)?;
 
                         // is the purpose manifest?
-                        if vec_compare(&purpose, MANIFEST.as_bytes())
-                            || vec_compare(&purpose, ORIGINAL.as_bytes())
-                            || vec_compare(&purpose, UPDATE.as_bytes())
-                        {
+                        if purpose == MANIFEST || purpose == ORIGINAL || purpose == UPDATE {
                             // offset to first aux uuid with purpose merkle
                             let mut buf = [0u8; 8];
                             reader.read_exact(&mut buf)?;
@@ -1436,21 +1466,21 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             skip_bytes_to(reader, box_info.data.offset)?;
                             let box_bytes = Some(reader.read_to_vec(box_info.data.size)?);
 
-                            if purpose == MANIFEST.as_bytes() {
+                            if purpose == MANIFEST {
                                 manifest_bytes = Some(manifest);
                                 manifest_box_offset = Some(box_info.data.offset);
                                 manifest_box_bytes = box_bytes;
                                 manifest_store_cnt += 1;
                                 // offset to first aux uuid
                                 first_aux_uuid_offset = u64::from_be_bytes(buf);
-                            } else if purpose == ORIGINAL.as_bytes() {
+                            } else if purpose == ORIGINAL {
                                 original_bytes = Some(manifest);
                                 manifest_box_offset = Some(box_info.data.offset);
                                 manifest_box_bytes = box_bytes;
                                 manifest_store_cnt += 1;
                                 // offset to first aux uuid
                                 first_aux_uuid_offset = u64::from_be_bytes(buf);
-                            } else if purpose == UPDATE.as_bytes() {
+                            } else if purpose == UPDATE {
                                 update_bytes = Some(manifest);
                                 update_box_offset = Some(box_info.data.offset);
                                 update_box_bytes = box_bytes;
@@ -1460,7 +1490,7 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             if manifest_store_cnt > 1 || update_store_cnt > 1 {
                                 return Err(Error::TooManyManifestStores);
                             }
-                        } else if vec_compare(&purpose, MERKLE.as_bytes()) {
+                        } else if purpose == MERKLE {
                             let merkle = reader.read_to_vec(data_len)?;
 
                             // use this method since it will strip trailing zeros padding if there
@@ -1812,14 +1842,19 @@ impl CAIWriter for BmffIO {
         let ftyp_size = ftyp_info.size;
 
         // get position to insert c2pa
-        let (c2pa_start, c2pa_length) =
-            if let Some(c2pa_token) = get_uuid_token(&bmff_tree, &bmff_map, &C2PA_UUID) {
-                let uuid_info = &bmff_tree[c2pa_token].data;
+        let (c2pa_start, c2pa_length) = if let Ok(c2pa_token) = get_uuid_token(
+            input_stream,
+            &bmff_tree,
+            &bmff_map,
+            &C2PA_UUID,
+            Some(&["manifest", "original"]),
+        ) {
+            let uuid_info = &bmff_tree[c2pa_token].data;
 
-                (uuid_info.offset, Some(uuid_info.size))
-            } else {
-                ((ftyp_offset + ftyp_size), None)
-            };
+            (uuid_info.offset, Some(uuid_info.size))
+        } else {
+            ((ftyp_offset + ftyp_size), None)
+        };
 
         let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
         let merkle_data: &[u8] = &[]; // not yet supported
@@ -1958,14 +1993,18 @@ impl CAIWriter for BmffIO {
 
         // get position of c2pa manifest
         let (c2pa_start, c2pa_length) =
-            if let Some(c2pa_token) = get_uuid_token(&bmff_tree, &bmff_map, &C2PA_UUID) {
-                let uuid_info = &bmff_tree[c2pa_token].data;
+            match get_uuid_token(input_stream, &bmff_tree, &bmff_map, &C2PA_UUID, None) {
+                Ok(c2pa_token) => {
+                    let uuid_info = &bmff_tree[c2pa_token].data;
 
-                (uuid_info.offset, Some(uuid_info.size))
-            } else {
-                input_stream.rewind()?;
-                std::io::copy(input_stream, output_stream)?;
-                return Ok(()); // no box to remove, propagate source to output
+                    (uuid_info.offset, Some(uuid_info.size))
+                }
+                Err(Error::NotFound) => {
+                    input_stream.rewind()?;
+                    std::io::copy(input_stream, output_stream)?;
+                    return Ok(()); // no box to remove, propagate source to output
+                }
+                Err(e) => return Err(e),
             };
 
         let (start, end) = if let Some(c2pa_length) = c2pa_length {
@@ -2192,12 +2231,13 @@ impl RemoteRefEmbed for BmffIO {
 
                 // get position to insert xmp
                 let (xmp_start, xmp_length) =
-                    if let Some(c2pa_token) = get_uuid_token(&bmff_tree, &bmff_map, &XMP_UUID) {
-                        let uuid_info = &bmff_tree[c2pa_token].data;
+                    match get_uuid_token(input_stream, &bmff_tree, &bmff_map, &XMP_UUID, None) {
+                        Ok(c2pa_token) => {
+                            let uuid_info = &bmff_tree[c2pa_token].data;
 
-                        (uuid_info.offset, Some(uuid_info.size))
-                    } else {
-                        ((ftyp_offset + ftyp_size), None)
+                            (uuid_info.offset, Some(uuid_info.size))
+                        }
+                        Err(_) => ((ftyp_offset + ftyp_size), None),
                     };
 
                 let mut new_xmp_box: Vec<u8> = Vec::with_capacity(xmp.len() * 2);
