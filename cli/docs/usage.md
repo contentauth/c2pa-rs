@@ -200,7 +200,17 @@ Enable trust support by using the `trust` subcommand, as follows:
 c2patool [path] trust [OPTIONS]
 ```
 
-When the `trust` subcommand is supplied, should c2patool encounter a problem with validating any of the claims in the asset, its JSON output will contain a `validation_status` field whose value is an array of objects, each describing a validation problem.
+When the `trust` subcommand is supplied, if C2PA Tool encounters a problem with validating any of the claims in the asset, the JSON output will contain a `validation_status` field whose value is an array of objects, each describing a validation problem; for example:
+
+```
+  "validation_status": [
+    {
+      "code": "signingCredential.untrusted",
+      "url": "self#jumbf=/c2pa/urn:c2pa:47febb04-4913-4a14-a1ac-5437b29fa302:adobe/c2pa.signature",
+      "explanation": "signing certificate untrusted"
+    }
+  ],
+```
 
 ### Additional options
 
@@ -232,11 +242,41 @@ c2patool sample/C.jpg trust \
   --trust_config https://server.com/store.cfg
 ```
 
-### Using the Verify known certificate list
+### Using the C2PA trust list
 
-**IMPORTANT:** The C2PA intends to publish an official trust list. Until that time, the [C2PA Verify tool uses a temporary known certificate list](https://opensource.contentauthenticity.org/docs/verify-known-cert-list). These lists are subject to change, and will be deprecated when C2PA publishes its trust list.
+The [C2PA trust list](https://opensource.contentauthenticity.org/docs/conformance#c2pa-trust-lists) is the list of X.509 certificate trust anchors (either root or subordinate certification authorities) that issue certificates to conforming generator products under the C2PA Certificate Policy.
 
-To configure C2PA tool to use the Verify temporary known certificate list, set the following environment variables on your system:
+To configure C2PA Tool to use the C2PA trust list, specify these values as CLI arguments, for example:
+
+```shell
+c2patool sample/C.jpg trust \
+  --trust_anchors='https://raw.githubusercontent.com/c2pa-org/conformance-public/refs/heads/main/trust-list/C2PA-TRUST-LIST.pem' \
+  --allowed_list='?' \
+  --trust_config='?'
+```
+
+Alternatively, set the following environment variables on your system:
+
+```shell
+export C2PATOOL_TRUST_ANCHORS='https://raw.githubusercontent.com/c2pa-org/conformance-public/refs/heads/main/trust-list/C2PA-TRUST-LIST.pem'
+export C2PATOOL_ALLOWED_LIST='?'
+export C2PATOOL_TRUST_CONFIG='?'
+```
+
+### Using the interim trust list
+
+**IMPORTANT:** The [interim trust list](https://opensource.contentauthenticity.org/docs/verify-known-cert-list) will be frozen as of 1 Jan 2026.  You're encouraged to use the C2PA trust list instead.
+
+To configure C2PA tool to use the interim trust list, specify these values as CLI arguments, for example:
+
+```shell
+c2patool sample/C.jpg trust \
+  --trust_anchors='https://contentcredentials.org/trust/anchors.pem' \
+  --allowed_list='https://contentcredentials.org/trust/allowed.sha256.txt' \
+  --trust_config='https://contentcredentials.org/trust/store.cfg'
+```
+
+Alternatively, set the following environment variables on your system:
 
 ```shell
 export C2PATOOL_TRUST_ANCHORS='https://contentcredentials.org/trust/anchors.pem'
@@ -252,16 +292,7 @@ You can then run:
 c2patool sample/C.jpg trust
 ```
 
-You can also specify these values as CLI arguments instead:
-
-```shell
-c2patool sample/C.jpg trust \
-  --trust_anchors='https://contentcredentials.org/trust/anchors.pem' \
-  --allowed_list='https://contentcredentials.org/trust/allowed.sha256.txt' \
-  --trust_config='https://contentcredentials.org/trust/store.cfg'
-```
-
-**Note:** This sample image should show a `signingCredential.untrusted` validation status since the test signing certificate used to sign them is not contained on the trust lists above.
+This sample image should show a `signingCredential.untrusted` validation status since the test signing certificate is not contained on the trust lists above.
 
 ## Adding a manifest to fragmented BMFF content
 
