@@ -1,0 +1,46 @@
+use c2pa_cbor as serde_cbor;
+
+#[test]
+fn test_value_module_compat() {
+    // Test value::to_value and value::from_value
+    let val = serde_cbor::value::to_value(vec![1, 2, 3]).unwrap();
+    let back: Vec<i32> = serde_cbor::value::from_value(val).unwrap();
+    assert_eq!(back, vec![1, 2, 3]);
+}
+
+#[test]
+fn test_ser_module_compat() {
+    // Test ser::to_vec and ser::to_vec_packed
+    let data = vec![1u8, 2, 3];
+    let bytes = serde_cbor::ser::to_vec(&data).unwrap();
+    let bytes2 = serde_cbor::ser::to_vec_packed(&data).unwrap();
+    assert_eq!(bytes, bytes2);
+}
+
+#[test]
+fn test_deserializer_from_slice() {
+    // Test Deserializer::from_slice
+    let data = vec![1u8, 2, 3];
+    let bytes = serde_cbor::ser::to_vec(&data).unwrap();
+    let decoded: Vec<u8> =
+        serde::Deserialize::deserialize(&mut serde_cbor::Deserializer::from_slice(&bytes)).unwrap();
+    assert_eq!(decoded, data);
+}
+
+#[test]
+fn test_encoder_into_inner() {
+    // Test Encoder::into_inner with owned writer
+    let buf = Vec::new();
+    let mut enc = serde_cbor::Encoder::new(buf);
+    enc.encode(&42).unwrap();
+    let result = enc.into_inner();
+    assert!(!result.is_empty());
+}
+
+#[test]
+fn test_tags_module() {
+    // Test tags::Tagged
+    let tagged = serde_cbor::tags::Tagged::new(Some(123), "test");
+    assert_eq!(tagged.tag, Some(123));
+    assert_eq!(tagged.value, "test");
+}

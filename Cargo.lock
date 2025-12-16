@@ -438,6 +438,7 @@ dependencies = [
  "byteorder",
  "byteordered",
  "bytes",
+ "c2pa_cbor",
  "c2pa_macros",
  "chrono",
  "ciborium",
@@ -501,7 +502,6 @@ dependencies = [
  "serde-transcode",
  "serde-wasm-bindgen",
  "serde_bytes",
- "serde_cbor",
  "serde_derive",
  "serde_json",
  "serde_with",
@@ -540,6 +540,17 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
+]
+
+[[package]]
+name = "c2pa_cbor"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde-transcode",
+ "serde_bytes",
+ "serde_cbor",
+ "serde_json",
 ]
 
 [[package]]
