@@ -608,10 +608,10 @@ impl Builder {
     /// Request a trusted timestamp for manifests with the given label.
     ///
     /// This only records the label on the builder. During signing, any matching manifest(s) will
-    /// have a [`TimeStamp`] assertion generated using the configured timestamp authority
+    /// have a [`TimeStamp`] assertion generated using the configured timestamping authority
     /// ([`Signer::time_authority_url`]) if a timestamp for that manifest does not already exist.
     ///
-    /// If [`Settings::builder::timestamp_assertion_fetch_scope`] is specified, the manifest labels specified
+    /// If [`BuilderSettings::timestamp_assertion_fetch_scope`] is specified, the manifest labels specified
     /// here and the manifest labels obtained from the setting's scope will be merged and fetched.
     ///
     /// Examples of a manifest label may include:
@@ -620,7 +620,7 @@ impl Builder {
     ///
     /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
     /// [`TimeStamp`]: crate::assertions::TimeStamp
-    /// [`Settings::builder::timestamp_assertion_fetch_scope`]: crate::settings::builder::BuilderSettings::timestamp_assertion_fetch_scope
+    /// [`BuilderSettings::timestamp_assertion_fetch_scope`]: crate::settings::builder::BuilderSettings::timestamp_assertion_fetch_scope
     pub fn add_timestamp(&mut self, manifest_label: impl Into<String>) -> &mut Self {
         self.timestamp_manifest_labels.insert(manifest_label.into());
         self
@@ -1458,6 +1458,13 @@ impl Builder {
         Ok(self)
     }
 
+    /// Creates and adds a [`TimeStamp`] assertion to the provenance claim of the given store. The claims
+    /// that are timestamped depends on the value of [`Builder::timestamp_manifest_labels`] and
+    /// [`BuilderSettings::timestamp_assertion_fetch_scope`]. If neither are specified, this function
+    /// will do nothing.
+    ///
+    /// [`TimeStamp`]: crate::assertions::TimeStamp
+    /// [`BuilderSettings::timestamp_assertion_fetch_scope`]: crate::settings::builder::BuilderSettings::timestamp_assertion_fetch_scope
     #[async_generic(async_signature(
         &self,
         tsa_url: &str,
