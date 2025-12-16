@@ -381,21 +381,15 @@ pub unsafe extern "C" fn c2pa_version() -> *mut c_char {
     to_c_string(version)
 }
 
-/// Sets up file logging.
-/// The logger will append any logged text to the end of the log_file provided.
+/// Sets up stream logging.
+/// The logger will write any logged text to the provided stream.
 ///
 /// # Safety
-/// Reads from NULL-terminated C strings.
+/// The stream pointer must be valid and remain valid for the lifetime of the logger.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_init_file_logging(log_file: *const c_char) -> c_int {
-    let log_file = from_cstr_or_return_int!(log_file);
-    
-    // Attempt to open the log file, return -1 if it fails (e.g., parent directory doesn't exist)
-    let log_file_handle = match fern::log_file(log_file) {
-        Ok(handle) => handle,
-        Err(_) => return -1,
-    };
-    
+pub unsafe extern "C" fn c2pa_init_stream_logging(stream: *mut C2paStream) -> c_int {
+    check_or_return_int!(stream);
+
     let result = Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
@@ -407,8 +401,8 @@ pub unsafe extern "C" fn c2pa_init_file_logging(log_file: *const c_char) -> c_in
         })
         .level(log::LevelFilter::Info)
         .chain(std::io::stdout())
-        // Log to a file
-        .chain(log_file_handle)
+        // Log to the provided stream
+        .chain(fern::Output::writer(Box::new(&mut (*stream)), "\n"))
         .apply();
 
     if result.is_ok() {
@@ -2014,6 +2008,10 @@ mod tests {
 
     #[test]
     fn builder_edit_intent_and_sign() {
+        let log_vec = Vec::new();
+        let mut log_stream = TestC2paStream::new(log_vec).into_c_stream();
+        unsafe { c2pa_init_stream_logging(&mut log_stream) };
+
         // Use an already-signed image as the source for editing
         let signed_source_image = include_bytes!(fixture_path!("C.jpg"));
         let mut source_stream = TestC2paStream::from_bytes(signed_source_image.to_vec());
@@ -2064,8 +2062,18 @@ mod tests {
         // and no "empty" source type appears in the JSON
         assert!(!json_content.contains("digitalsourcetype/empty"));
 
+        // Check that the log stream contains data by seeking to the end
+        use std::io::{Seek, SeekFrom};
+        let stream_size = log_stream.seek(SeekFrom::End(0)).unwrap();
+        assert!(
+            stream_size > 0,
+            "Log stream should contain logging data, but has {} bytes",
+            stream_size
+        );
+
         TestC2paStream::drop_c_stream(source_stream);
         TestC2paStream::drop_c_stream(read_stream);
+        TestC2paStream::drop_c_stream(log_stream);
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
             c2pa_builder_free(builder);
@@ -2149,10 +2157,6 @@ mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_c2pa_sign_file_null_source_path() {
-        let log_path_str = "c2pa_test.log";
-        let log_path = CString::new(log_path_str).unwrap();
-        unsafe { c2pa_init_file_logging(log_path.as_ptr()) };
-
         let dest_path = CString::new("/tmp/output.jpg").unwrap();
         let manifest = CString::new("{}").unwrap();
         let signer_info = C2paSignerInfo {
@@ -2174,12 +2178,6 @@ mod tests {
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: source_path");
-
-        use std::fs;
-        let content = fs::read(log_path_str);
-        assert!(content.is_ok());
-        assert!(content.unwrap().is_empty());
-        let _ = fs::remove_file(log_path_str);
     }
 
     #[test]
