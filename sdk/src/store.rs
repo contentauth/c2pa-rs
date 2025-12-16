@@ -3778,6 +3778,7 @@ impl Store {
                 if let Some(parent_uri) = ingredient.c2pa_manifest() {
                     let parent_label = manifest_label_from_uri(&parent_uri.url())?;
                     if let Some(parent) = self.get_claim(&parent_label) {
+                        // recurse until we find
                         if parent.update_manifest() {
                             self.get_hash_binding_manifest(parent);
                         } else if !parent.hash_assertions().is_empty() {
