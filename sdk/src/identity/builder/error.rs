@@ -40,8 +40,8 @@ pub enum IdentityBuilderError {
     InternalError(String),
 }
 
-impl From<serde_cbor::Error> for IdentityBuilderError {
-    fn from(err: serde_cbor::Error) -> Self {
+impl From<c2pa_cbor::Error> for IdentityBuilderError {
+    fn from(err: c2pa_cbor::Error) -> Self {
         Self::CborGenerationError(err.to_string())
     }
 }
@@ -62,7 +62,7 @@ mod tests {
         wasm_bindgen_test
     )]
     fn impl_from_ciborium_err() {
-        let ciborium_err = serde_cbor::Error::Io(std::io::Error::other("test error"));
+        let ciborium_err = c2pa_cbor::Error::Io(std::io::Error::other("test error"));
         let builder_err: IdentityBuilderError = ciborium_err.into();
 
         assert!(builder_err
