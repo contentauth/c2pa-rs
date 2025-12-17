@@ -3551,7 +3551,6 @@ impl Store {
 
     /// Load store from a stream
     #[async_generic]
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_stream(
         format: &str,
         mut stream: impl Read + Seek + MaybeSend,
@@ -3599,7 +3598,6 @@ impl Store {
 
     /// Load store from a manifest data and stream
     #[async_generic]
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
         format: &str,

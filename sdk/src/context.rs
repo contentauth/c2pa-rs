@@ -1,8 +1,29 @@
+use std::sync::OnceLock;
+
 use crate::{
-    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
+    http::{
+        restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
+        SyncGenericResolver, SyncHttpResolver,
+    },
     settings::Settings,
     AsyncSigner, Error, Result, Signer,
 };
+
+/// Internal state for sync HTTP resolver selection.
+enum SyncResolverState {
+    /// User-provided custom resolver.
+    Custom(Box<dyn SyncHttpResolver>),
+    /// Default resolver with lazy initialization.
+    Default(OnceLock<RestrictedResolver<SyncGenericResolver>>),
+}
+
+/// Internal state for async HTTP resolver selection.
+enum AsyncResolverState {
+    /// User-provided custom resolver.
+    Custom(Box<dyn AsyncHttpResolver>),
+    /// Default resolver with lazy initialization.
+    Default(OnceLock<RestrictedResolver<AsyncGenericResolver>>),
+}
 
 /// A trait for types that can be converted into Settings
 pub trait IntoSettings {
@@ -48,8 +69,8 @@ impl IntoSettings for serde_json::Value {
 
 pub struct Context {
     settings: Settings,
-    http_resolver: Option<Box<dyn SyncHttpResolver>>,
-    http_resolver_async: Option<Box<dyn AsyncHttpResolver>>,
+    sync_resolver: SyncResolverState,
+    async_resolver: AsyncResolverState,
     signer: Option<Box<dyn Signer>>,
     _signer_async: Option<Box<dyn AsyncSigner>>,
 }
@@ -58,8 +79,8 @@ impl Default for Context {
     fn default() -> Self {
         Self {
             settings: crate::settings::get_settings().unwrap_or_default(),
-            http_resolver: None,
-            http_resolver_async: None,
+            sync_resolver: SyncResolverState::Default(OnceLock::new()),
+            async_resolver: AsyncResolverState::Default(OnceLock::new()),
             #[cfg(test)]
             signer: Some(crate::utils::test_signer::test_signer(
                 crate::SigningAlg::Ps256,
@@ -102,34 +123,46 @@ impl Context {
 
     /// Use the provided sync resolver in this context
     pub fn with_resolver<T: SyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
-        self.http_resolver = Some(Box::new(resolver));
+        self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
         self
     }
 
     /// Use the provided async resolver in this context
     pub fn with_resolver_async<T: AsyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
-        self.http_resolver_async = Some(Box::new(resolver));
+        self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
         self
     }
 
     /// Returns a reference to the sync resolver.
+    ///
+    /// The default resolver is a `SyncGenericResolver` wrapped with `RestrictedResolver`
+    /// to apply host filtering from the settings.
     pub fn resolver(&self) -> &dyn SyncHttpResolver {
-        use std::sync::OnceLock;
-        static DEFAULT: OnceLock<SyncGenericResolver> = OnceLock::new();
-        self.http_resolver
-            .as_ref()
-            .map(|r| r.as_ref())
-            .unwrap_or(DEFAULT.get_or_init(SyncGenericResolver::new))
+        match &self.sync_resolver {
+            SyncResolverState::Custom(resolver) => resolver.as_ref(),
+            SyncResolverState::Default(once_lock) => once_lock.get_or_init(|| {
+                let inner = SyncGenericResolver::new();
+                let mut resolver = RestrictedResolver::new(inner);
+                resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
+                resolver
+            }),
+        }
     }
 
     /// Returns a reference to the async resolver.
+    ///
+    /// The default resolver is an `AsyncGenericResolver` wrapped with `RestrictedResolver`
+    /// to apply host filtering from the settings.
     pub fn resolver_async(&self) -> &dyn AsyncHttpResolver {
-        use std::sync::OnceLock;
-        static DEFAULT: OnceLock<AsyncGenericResolver> = OnceLock::new();
-        self.http_resolver_async
-            .as_ref()
-            .map(|r| r.as_ref())
-            .unwrap_or(DEFAULT.get_or_init(AsyncGenericResolver::new))
+        match &self.async_resolver {
+            AsyncResolverState::Custom(resolver) => resolver.as_ref(),
+            AsyncResolverState::Default(once_lock) => once_lock.get_or_init(|| {
+                let inner = AsyncGenericResolver::new();
+                let mut resolver = RestrictedResolver::new(inner);
+                resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
+                resolver
+            }),
+        }
     }
 
     /// Use the provided signer in this context

@@ -67,6 +67,14 @@ pub trait SyncHttpResolver {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError>;
+
+    /// Returns true if the given URI is allowed by this resolver's policy.
+    ///
+    /// Default implementation allows all URIs. Override this method to implement
+    /// host filtering or other URI-based access control.
+    fn is_uri_allowed(&self, _uri: &http::Uri) -> bool {
+        true
+    }
 }
 
 /// A resolver for non-blocking (async) HTTP requests.
@@ -81,6 +89,14 @@ pub trait AsyncHttpResolver {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError>;
+
+    /// Returns true if the given URI is allowed by this resolver's policy.
+    ///
+    /// Default implementation allows all URIs. Override this method to implement
+    /// host filtering or other URI-based access control.
+    fn is_uri_allowed(&self, _uri: &http::Uri) -> bool {
+        true
+    }
 }
 
 /// A generic resolver for [`SyncHttpResolver`].
@@ -91,8 +107,15 @@ pub trait AsyncHttpResolver {
 /// * `reqwest_blocking` - use [`reqwest::blocking::Client`].
 /// * `wasi` (WASI-only) - use [`wasi::http::outgoing_handler::handle`].
 ///
+/// This resolver is a pure HTTP client wrapper with no domain-specific logic.
+/// For host filtering or other access control, wrap this with [`RestrictedResolver`].
+///
 /// Note that WASM (non-WASI) does not have a built-in [`SyncHttpResolver`].
-pub struct SyncGenericResolver(sync_resolver::Impl);
+///
+/// [`RestrictedResolver`]: restricted::RestrictedResolver
+pub struct SyncGenericResolver {
+    inner: sync_resolver::Impl,
+}
 
 impl SyncGenericResolver {
     /// Create a new [`SyncGenericResolver`] with an auto-specified [`SyncHttpResolver`].
@@ -103,7 +126,9 @@ impl SyncGenericResolver {
     /// * If the platform is WASM.
     /// * If the platform is WASI and `http_wasi` isn't enabled.
     pub fn new() -> Self {
-        Self(sync_resolver::new())
+        Self {
+            inner: sync_resolver::new(),
+        }
     }
 }
 
@@ -118,7 +143,7 @@ impl SyncHttpResolver for SyncGenericResolver {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        self.0.http_resolve(request)
+        self.inner.http_resolve(request)
     }
 }
 
@@ -128,7 +153,14 @@ impl SyncHttpResolver for SyncGenericResolver {
 /// enabled features:
 /// * `reqwest` - use [`reqwest::Client`].
 /// * `wstd` (WASI-only) - use [`wstd::http::Client`].
-pub struct AsyncGenericResolver(async_resolver::Impl);
+///
+/// This resolver is a pure HTTP client wrapper with no domain-specific logic.
+/// For host filtering or other access control, wrap this with [`RestrictedResolver`].
+///
+/// [`RestrictedResolver`]: restricted::RestrictedResolver
+pub struct AsyncGenericResolver {
+    inner: async_resolver::Impl,
+}
 
 impl AsyncGenericResolver {
     /// Create a new [`AsyncGenericResolver`] with an auto-specified [`AsyncHttpResolver`].
@@ -138,7 +170,9 @@ impl AsyncGenericResolver {
     /// * If `http_reqwest` isn't enabled.
     /// * If the platform is WASI and `http_wstd` isn't enabled.
     pub fn new() -> Self {
-        Self(async_resolver::new())
+        Self {
+            inner: async_resolver::new(),
+        }
     }
 }
 
@@ -155,7 +189,7 @@ impl AsyncHttpResolver for AsyncGenericResolver {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        self.0.http_resolve_async(request).await
+        self.inner.http_resolve_async(request).await
     }
 }
 
@@ -184,8 +218,10 @@ pub enum HttpResolverError {
 
     /// The remote URI is blocked by the allowed list.
     ///
-    /// The allowed list is normally set in a [`RestrictedResolver`], but can also be
-    /// managed in settings via [`Core::allowed_network_hosts`].
+    /// The allowed list can be set via:
+    /// - [`SyncGenericResolver::set_allowed_hosts`] / [`AsyncGenericResolver::set_allowed_hosts`]
+    /// - [`RestrictedResolver`] (for wrapping custom resolvers)
+    /// - SDK settings via [`Core::allowed_network_hosts`]
     ///
     /// [`RestrictedResolver`]: restricted::RestrictedResolver
     /// [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts

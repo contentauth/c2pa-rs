@@ -14,14 +14,22 @@
 //! HTTP request restriction layer.
 //!
 //! This module provides a [`RestrictedResolver`] that wraps an existing [`SyncHttpResolver`]
-//! or [`AsyncHttpResolver`]. The SDK can also manage an allowed list for you via the
-//! [`Core::allowed_network_hosts`] setting.
+//! or [`AsyncHttpResolver`] to enforce host filtering.
+//!
+//! Note: The built-in [`SyncGenericResolver`] and [`AsyncGenericResolver`] already support
+//! host filtering natively. You only need [`RestrictedResolver`] if you want to wrap a
+//! custom resolver implementation with host filtering.
+//!
+//! The SDK can also manage an allowed list for you via the [`Core::allowed_network_hosts`] setting.
 //!
 //! # Why restrict network requests?
 //! In some environments, you may not want the SDK to talk to arbitrary hosts. Restricting
 //! network requests help to:
 //! - Reduce SSRF-style risks (e.g. requests to internal services).
 //! - Constrain requests to a small, trusted set of domains.
+//!
+//! [`SyncGenericResolver`]: crate::http::SyncGenericResolver
+//! [`AsyncGenericResolver`]: crate::http::AsyncGenericResolver
 //!
 //! # OCSP and other dynamic endpoints
 //! Some protocols used by the SDK (like OCSP or CRLs) discover endpoints from certificate
@@ -68,7 +76,7 @@ impl<T> RestrictedResolver<T> {
     }
 
     /// Creates a new `RestrictedResolver` with the specified allowed list.
-    #[allow(dead_code)] // TODO: temp until http module is public
+    #[allow(dead_code)] // Public API, not used internally
     pub fn with_allowed_hosts(inner: T, allowed_hosts: Vec<HostPattern>) -> Self {
         Self {
             inner,
@@ -82,6 +90,7 @@ impl<T> RestrictedResolver<T> {
     }
 
     /// Returns a reference to the allowed list.
+    #[allow(dead_code)] // Public API, not used internally
     pub fn allowed_hosts(&self) -> Option<&[HostPattern]> {
         self.allowed_hosts.as_deref()
     }
@@ -92,16 +101,19 @@ impl<T: SyncHttpResolver> SyncHttpResolver for RestrictedResolver<T> {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        if self
-            .allowed_hosts()
-            .is_none_or(|hosts| is_uri_allowed(hosts, request.uri()))
-        {
-            self.inner.http_resolve(request)
-        } else {
-            Err(HttpResolverError::UriDisallowed {
+        if !self.is_uri_allowed(request.uri()) {
+            return Err(HttpResolverError::UriDisallowed {
                 uri: request.uri().to_string(),
-            })
+            });
         }
+        self.inner.http_resolve(request)
+    }
+
+    fn is_uri_allowed(&self, uri: &Uri) -> bool {
+        self.allowed_hosts
+            .as_ref()
+            .map(|hosts| is_uri_allowed(hosts, uri))
+            .unwrap_or(true) // None means allow all
     }
 }
 
@@ -112,16 +124,19 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RestrictedResolver<T> {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        if self
-            .allowed_hosts()
-            .is_none_or(|hosts| is_uri_allowed(hosts, request.uri()))
-        {
-            self.inner.http_resolve_async(request).await
-        } else {
-            Err(HttpResolverError::UriDisallowed {
+        if !self.is_uri_allowed(request.uri()) {
+            return Err(HttpResolverError::UriDisallowed {
                 uri: request.uri().to_string(),
-            })
+            });
         }
+        self.inner.http_resolve_async(request).await
+    }
+
+    fn is_uri_allowed(&self, uri: &Uri) -> bool {
+        self.allowed_hosts
+            .as_ref()
+            .map(|hosts| is_uri_allowed(hosts, uri))
+            .unwrap_or(true) // None means allow all
     }
 }
 
@@ -266,7 +281,7 @@ impl<'de> Deserialize<'de> for HostPattern {
 }
 
 /// Returns true if the given URI matches at least one of the [`HostPattern`]s.
-fn is_uri_allowed(patterns: &[HostPattern], uri: &Uri) -> bool {
+pub(crate) fn is_uri_allowed(patterns: &[HostPattern], uri: &Uri) -> bool {
     for pattern in patterns {
         if pattern.matches(uri) {
             return true;
@@ -496,5 +511,70 @@ mod test {
 
         let uri = Uri::from_static("https://contentauthenticity.org");
         assert!(!pattern.matches(&uri));
+    }
+
+    #[test]
+    fn test_restricted_generic_resolver() {
+        use crate::http::{HttpResolverError, SyncGenericResolver, SyncHttpResolver};
+
+        let inner = SyncGenericResolver::new();
+        let mut resolver = RestrictedResolver::new(inner);
+
+        // Set allowed hosts to only allow localhost
+        resolver.set_allowed_hosts(Some(vec!["127.0.0.1".into()]));
+
+        // Request to localhost should work (though it will fail to connect in this test)
+        let request = http::Request::get("http://127.0.0.1/test")
+            .body(vec![])
+            .unwrap();
+        let result = resolver.http_resolve(request);
+        // We expect a connection error, not a UriDisallowed error
+        assert!(!matches!(
+            result,
+            Err(HttpResolverError::UriDisallowed { .. })
+        ));
+
+        // Request to external host should be blocked
+        let request = http::Request::get("http://example.com/test")
+            .body(vec![])
+            .unwrap();
+        let result = resolver.http_resolve(request);
+        assert!(matches!(
+            result,
+            Err(HttpResolverError::UriDisallowed { .. })
+        ));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_restricted_async_generic_resolver() {
+        use crate::http::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
+
+        let inner = AsyncGenericResolver::new();
+        let mut resolver = RestrictedResolver::new(inner);
+
+        // Set allowed hosts to only allow localhost
+        resolver.set_allowed_hosts(Some(vec!["127.0.0.1".into()]));
+
+        // Request to localhost should work (though it will fail to connect in this test)
+        let request = http::Request::get("http://127.0.0.1/test")
+            .body(vec![])
+            .unwrap();
+        let result = resolver.http_resolve_async(request).await;
+        // We expect a connection error, not a UriDisallowed error
+        assert!(!matches!(
+            result,
+            Err(HttpResolverError::UriDisallowed { .. })
+        ));
+
+        // Request to external host should be blocked
+        let request = http::Request::get("http://example.com/test")
+            .body(vec![])
+            .unwrap();
+        let result = resolver.http_resolve_async(request).await;
+        assert!(matches!(
+            result,
+            Err(HttpResolverError::UriDisallowed { .. })
+        ));
     }
 }

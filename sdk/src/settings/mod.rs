@@ -263,12 +263,9 @@ pub struct Core {
     ///   - `http://192.0.2.1` (port omitted)
     ///   - `http://192.0.2.2:8080` (different IP address)
     ///
-    /// These settings are consumed by [`RestrictedResolver`]. For information on when the SDK might perform a
-    /// network requests, see ["When do network requests occur?"]
-    ///
-    /// ["When do network requests occur?"]: crate::http#when-do-network-requests-occur
-    /// [`HostPattern`]: crate::http::restricted::HostPattern
-    /// [`RestrictedResolver`]: crate::http::restricted::RestrictedResolver
+    /// These settings are applied by the SDK's HTTP resolvers to restrict network requests.
+    /// When network requests occur depends on the operations being performed (reading manifests,
+    /// validating credentials, timestamping, etc.).
     pub allowed_network_hosts: Option<Vec<HostPattern>>,
 }
 
