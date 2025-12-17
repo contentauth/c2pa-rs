@@ -1842,18 +1842,20 @@ impl CAIWriter for BmffIO {
         let ftyp_size = ftyp_info.size;
 
         // get position to insert c2pa primary manifest store
-        let (c2pa_start, c2pa_length) = if let Ok(c2pa_token) = get_uuid_token(
+        let (c2pa_start, c2pa_length) = match get_uuid_token(
             input_stream,
             &bmff_tree,
             &bmff_map,
             &C2PA_UUID,
             Some(&[MANIFEST, ORIGINAL]),
         ) {
-            let uuid_info = &bmff_tree[c2pa_token].data;
+            Ok(c2pa_token) => {
+                let uuid_info = &bmff_tree[c2pa_token].data;
 
-            (uuid_info.offset, Some(uuid_info.size))
-        } else {
-            ((ftyp_offset + ftyp_size), None)
+                (uuid_info.offset, Some(uuid_info.size))
+            }
+            Err(Error::NotFound) => ((ftyp_offset + ftyp_size), None),
+            Err(e) => return Err(e),
         };
 
         let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
@@ -2237,7 +2239,8 @@ impl RemoteRefEmbed for BmffIO {
 
                             (uuid_info.offset, Some(uuid_info.size))
                         }
-                        Err(_) => ((ftyp_offset + ftyp_size), None),
+                        Err(Error::NotFound) => ((ftyp_offset + ftyp_size), None),
+                        Err(e) => return Err(e),
                     };
 
                 let mut new_xmp_box: Vec<u8> = Vec::with_capacity(xmp.len() * 2);
