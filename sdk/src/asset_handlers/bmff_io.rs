@@ -1841,13 +1841,13 @@ impl CAIWriter for BmffIO {
         let ftyp_offset = ftyp_info.offset;
         let ftyp_size = ftyp_info.size;
 
-        // get position to insert c2pa
+        // get position to insert c2pa primary manifest store
         let (c2pa_start, c2pa_length) = if let Ok(c2pa_token) = get_uuid_token(
             input_stream,
             &bmff_tree,
             &bmff_map,
             &C2PA_UUID,
-            Some(&["manifest", "original"]),
+            Some(&[MANIFEST, ORIGINAL]),
         ) {
             let uuid_info = &bmff_tree[c2pa_token].data;
 
