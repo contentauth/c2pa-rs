@@ -869,13 +869,14 @@ fn main() -> Result<()> {
             let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
             validate_cawg(&mut reader)?;
             reader.to_folder(&output)?;
-            let _report = reader.to_string();
+            let report = reader.to_string();
             if args.detailed {
                 // for a detailed report first call the above to generate the thumbnails
                 // then call this to add the detailed report
                 let detailed = format!("{reader:#?}");
                 File::create(output.join("detailed.json"))?.write_all(&detailed.into_bytes())?;
             }
+            File::create(output.join("manifest_store.json"))?.write_all(&report.into_bytes())?;
             println!("Manifest report written to the directory {:?}", &output);
         }
     } else if args.ingredient {

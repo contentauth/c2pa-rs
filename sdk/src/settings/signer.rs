@@ -103,12 +103,9 @@ impl SignerSettings {
                 private_key,
                 tsa_url,
                 referenced_assertions: _,
-            } => create_signer::from_keys(
-                sign_cert.as_bytes(),
-                private_key.as_bytes(),
-                alg,
-                tsa_url.to_owned(),
-            ),
+            } => {
+                create_signer::from_keys(sign_cert.as_bytes(), private_key.as_bytes(), alg, tsa_url)
+            }
             SignerSettings::Remote {
                 url,
                 alg,
