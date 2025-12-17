@@ -190,11 +190,11 @@ use std::fs::File;
 fn main() -> Result<()> {
     // Configure context
     let context = Context::new()
-        .with_settings(r#"{"verify": {"remote_manifest_fetch": false}}"#)?;
+        .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
     
     // Create reader with context
     let stream = File::open("path/to/image.jpg")?;
-    let reader = Reader::from_context(context)
+    let reader = Reader::new(context)
         .with_stream("image/jpeg", stream)?;
     
     println!("{}", reader.json());
@@ -204,31 +204,26 @@ fn main() -> Result<()> {
 
 ### Using Context with Builder
 
-`Builder` uses Context to configure signing operations. The Context automatically creates a signer from settings when needed:
+`Builder` uses Context to configure signing operations:
 
 ```rust
-use c2pa::{Context, Builder, Result};
+use c2pa::{Context, Builder, settings::Settings, Result};
 use std::io::Cursor;
-use serde_json::json;
 
 fn main() -> Result<()> {
     // Configure context with signer settings
     let context = Context::new()
-        .with_settings(json!({
-            "builder": {
-                "claim_generator_info": {"name": "My App"},
-                "intent": "edit"
-            }
-        }))?;
+        .with_settings(include_str!("config.toml"))?;
     
-    // Create builder with context and inline JSON definition
-    let mut builder = Builder::from_context(context)
-        .with_definition(json!({"title": "My Image"}))?;
+    // Create builder with context
+    let mut builder = Builder::from_context(context);
+    builder.with_json(r#"{"title": "My Image"}"#)?;
     
-    // Save with automatic signer from context
+    // Get signer from settings and sign
+    let signer = Settings::signer()?;
     let mut source = std::fs::File::open("source.jpg")?;
     let mut dest = Cursor::new(Vec::new());
-    builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+    builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
     
     Ok(())
 }
@@ -236,43 +231,40 @@ fn main() -> Result<()> {
 
 ### Configuring a Signer
 
-**In most cases, you don't need to explicitly set a signer on the Context.** Instead, configure signer settings in your configuration, and the Context will create the signer automatically when you call `save_to_stream()` or `save_to_file()`.
+**In most cases, you don't need to explicitly set a signer on the Context.** Instead, configure signer settings in your configuration file, and create the signer from those settings when needed.
 
 #### Method 1: From Settings (Recommended)
 
-Configure signer settings in JSON:
+Configure signer settings in TOML or JSON:
 
-```json
-{
-  "signer": {
-    "local": {
-      "alg": "ps256",
-      "sign_cert": "path/to/cert.pem",
-      "private_key": "path/to/key.pem",
-      "tsa_url": "http://timestamp.example.com"
-    }
-  }
-}
+```toml
+[signer.local]
+alg = "ps256"
+sign_cert = "path/to/cert.pem"
+private_key = "path/to/key.pem"
+tsa_url = "http://timestamp.example.com"  # optional
 ```
 
-Then use it with the Builder:
+Then create the signer from settings:
 
 ```rust
-use c2pa::{Context, Builder, Result};
-use serde_json::json;
+use c2pa::{Context, Builder, settings::Settings, Result};
 
 fn main() -> Result<()> {
     // Configure context with signer settings
     let context = Context::new()
-        .with_settings(include_str!("config.json"))?;
+        .with_settings(include_str!("config.toml"))?;
     
-    let mut builder = Builder::from_context(context)
-        .with_definition(json!({"title": "My Image"}))?;
+    let mut builder = Builder::from_context(context);
+    builder.with_json(r#"{"title": "My Image"}"#)?;
     
-    // Signer is created automatically from context's settings
+    // Create signer from the settings
+    let signer = Settings::signer()?;
+    
+    // Use the signer to sign
     let mut source = std::fs::File::open("source.jpg")?;
     let mut dest = std::fs::File::create("signed.jpg")?;
-    builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+    builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
     
     Ok(())
 }
@@ -356,7 +348,7 @@ use c2pa::{Context, Reader};
 
 let context = Context::new()
     .with_settings(include_str!("settings.toml"))?;
-let reader = Reader::from_context(context)
+let reader = Reader::new(context)
     .with_stream("image/jpeg", stream)?;
 ```
 
