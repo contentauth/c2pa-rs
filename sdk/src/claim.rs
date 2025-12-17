@@ -2794,7 +2794,7 @@ impl Claim {
                         Ok(_a) => {
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                "data hash valid",
+                                "BMFF hash valid",
                                 "verify_internal"
                             )
                             .validation_status(validation_status::ASSERTION_BMFFHASH_MATCH)
@@ -2882,7 +2882,7 @@ impl Claim {
                         Ok(_a) => {
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                "data hash valid",
+                                "boxes hash valid",
                                 "verify_internal"
                             )
                             .validation_status(validation_status::ASSERTION_BOXHASH_MATCH)
