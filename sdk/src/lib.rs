@@ -48,15 +48,12 @@
 //! # }
 //! ```
 
-//! ## Example: Adding a signed Manifest to an Asset
-//!
-//! ## Adding a manifest to a file
+//! ## Adding a signed manifest to a file
 //!
 //! ```ignore-wasm32
 //! # use c2pa::Result;
 //! use std::io::Cursor;
-//!
-//! use c2pa::{settings::Settings, Builder, SigningAlg};
+//! use c2pa::{Context, Builder, settings::Settings};
 //! use serde::Serialize;
 //!
 //! #[derive(Serialize)]
@@ -65,17 +62,20 @@
 //! }
 //!
 //! # fn main() -> Result<()> {
-//! {
-//!     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-//!     let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
-//!     builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+//! // Create context with signer configuration
+//! let context = Context::new()
+//!     .with_settings(include_str!("../tests/fixtures/test_settings.toml"))?;
 //!
-//!     // embed a manifest using the signer
-//!     let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
-//!     let mut dest = Cursor::new(Vec::new());
-//!     let signer = Settings::signer()?;
-//!     let _c2pa_data = builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
-//! }
+//! // Build manifest
+//! let mut builder = Builder::from_context(context);
+//! builder.with_json(r#"{"title": "Test"}"#)?;
+//! builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+//!
+//! // Get signer from settings and sign
+//! let signer = Settings::signer()?;
+//! let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
+//! let mut dest = Cursor::new(Vec::new());
+//! let _c2pa_data = builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
 //! # Ok(())
 //! # }
 //! ```

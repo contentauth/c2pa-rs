@@ -25,7 +25,10 @@ enum AsyncResolverState {
     Default(OnceLock<RestrictedResolver<AsyncGenericResolver>>),
 }
 
-/// A trait for types that can be converted into Settings
+/// A trait for types that can be converted into Settings.
+///
+/// This trait allows multiple types to be used as configuration sources,
+/// including JSON/TOML strings, serde_json::Value, or Settings directly.
 pub trait IntoSettings {
     /// Convert this type into Settings
     fn into_settings(self) -> Result<Settings>;
@@ -67,6 +70,95 @@ impl IntoSettings for serde_json::Value {
     }
 }
 
+/// Context holds the configuration and dependencies for C2PA operations.
+///
+/// Context replaces the global Settings pattern with a more flexible, thread-safe approach.
+/// It encapsulates:
+/// - **Settings**: Configuration options for C2PA operations
+/// - **HTTP Resolvers**: Customizable sync and async HTTP resolvers for fetching remote manifests
+/// - **Signer**: The cryptographic signer used to sign manifests
+///
+/// # Creating a Signer
+///
+/// There are two ways to provide a signer to a Context:
+///
+/// 1. **From Settings** (recommended): Configure signer settings in your configuration,
+///    then call [`Settings::signer()`](crate::settings::Settings::signer) to create it:
+///
+/// ```toml
+/// [signer.local]
+/// alg = "ps256"
+/// sign_cert = "path/to/cert.pem"
+/// private_key = "path/to/key.pem"
+/// ```
+///
+/// ```ignore
+/// # use c2pa::{Context, settings::Settings, Result};
+/// # fn main() -> Result<()> {
+/// let context = Context::new()
+///     .with_settings(include_str!("config.toml"))?;
+///
+/// // Create signer from the settings
+/// let signer = Settings::signer()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// 2. **Custom Signer**: Use [`with_signer()`](Context::with_signer) to provide a custom signer
+///    directly. This is useful for HSMs, remote signing services, or custom signing logic.
+///
+/// # Usage with Builder and Reader
+///
+/// Both [`Builder`](crate::Builder) and [`Reader`](crate::Reader) can be created with a Context:
+///
+/// ```ignore
+/// # use c2pa::{Context, Builder, Reader, Result};
+/// # fn main() -> Result<()> {
+/// // Create a Context with settings
+/// let context = Context::new()
+///     .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+///
+/// // Use with Builder
+/// let mut builder = Builder::from_context(context);
+///
+/// // Get signer from context (created from settings)
+/// let signer = builder.context.signer()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// # Examples
+///
+/// ## Basic usage with default settings
+///
+/// ```
+/// # use c2pa::Context;
+/// let context = Context::new();
+/// ```
+///
+/// ## Configure with JSON settings
+///
+/// ```
+/// # use c2pa::{Context, Result};
+/// # fn main() -> Result<()> {
+/// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Configure with TOML settings
+///
+/// ```
+/// # use c2pa::{Context, Result};
+/// # fn main() -> Result<()> {
+/// let toml = r#"
+///     [verify]
+///     verify_after_sign = true
+/// "#;
+/// let context = Context::new().with_settings(toml)?;
+/// # Ok(())
+/// # }
+/// ```
 pub struct Context {
     settings: Settings,
     sync_resolver: SyncResolverState,
@@ -101,33 +193,89 @@ impl std::fmt::Debug for Context {
 }
 
 impl Context {
+    /// Creates a new Context with default settings.
+    ///
+    /// The default Context will load settings from environment variables or configuration
+    /// files if available, and use default HTTP resolvers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::Context;
+    /// let context = Context::new();
+    /// ```
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// use the provided settings in this context
+    /// Configure this Context with the provided settings.
+    ///
+    /// Settings can be provided as a Settings struct, JSON string, TOML string, or serde_json::Value.
+    ///
+    /// # Arguments
+    ///
+    /// * `settings` - Any type that implements `IntoSettings`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Result};
+    /// # fn main() -> Result<()> {
+    /// // From JSON string
+    /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_settings<S: IntoSettings>(mut self, settings: S) -> Result<Self> {
         self.settings = settings.into_settings()?;
         Ok(self)
     }
 
     /// Returns a reference to the settings.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::Context;
+    /// let context = Context::new();
+    /// let settings = context.settings();
+    /// ```
     pub fn settings(&self) -> &Settings {
         &self.settings
     }
 
     /// Returns a mutable reference to the settings.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::Context;
+    /// let mut context = Context::new();
+    /// context.settings_mut().verify.verify_after_sign = true;
+    /// ```
     pub fn settings_mut(&mut self) -> &mut Settings {
         &mut self.settings
     }
 
-    /// Use the provided sync resolver in this context
+    /// Configure this Context with a custom synchronous HTTP resolver.
+    ///
+    /// Custom resolvers can be used to add authentication, caching, logging, or mock network calls in tests.
+    ///
+    /// # Arguments
+    ///
+    /// * `resolver` - Any type implementing `SyncHttpResolver`
     pub fn with_resolver<T: SyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
         self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
         self
     }
 
-    /// Use the provided async resolver in this context
+    /// Configure this Context with a custom asynchronous HTTP resolver.
+    ///
+    /// Async resolvers are used for asynchronous operations like fetching remote manifests.
+    ///
+    /// # Arguments
+    ///
+    /// * `resolver` - Any type implementing `AsyncHttpResolver`
     pub fn with_resolver_async<T: AsyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
         self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
         self
@@ -165,13 +313,73 @@ impl Context {
         }
     }
 
-    /// Use the provided signer in this context
+    /// Configure this Context with a custom cryptographic signer.
+    ///
+    /// **Note:** In most cases, you don't need to call this method. Instead, configure signer
+    /// settings in your configuration file, and the Context will create the signer automatically
+    /// from those settings when you call [`signer()`](Context::signer).
+    ///
+    /// Use this method when you need custom control over signer creation, such as:
+    /// - Using a hardware security module (HSM)
+    /// - Implementing custom signing logic
+    /// - Using a remote signing service with custom authentication
+    ///
+    /// # Arguments
+    ///
+    /// * `signer` - Any type implementing `Signer`
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use c2pa::{Context, create_signer, SigningAlg, Result};
+    /// # fn main() -> Result<()> {
+    /// // Explicitly create and set a signer
+    /// let signer = create_signer::from_files(
+    ///     "path/to/cert.pem",
+    ///     "path/to/key.pem",
+    ///     SigningAlg::Ps256,
+    ///     None
+    /// )?;
+    ///
+    /// let context = Context::new().with_signer(signer);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_signer<T: Signer + 'static>(mut self, signer: T) -> Self {
         self.signer = Some(Box::new(signer));
         self
     }
 
-    /// Returns a reference to the signer.
+    /// Returns a reference to the signer configured with [`with_signer()`](Context::with_signer).
+    ///
+    /// **Note:** This method returns the signer that was explicitly set using `with_signer()`.
+    /// If you want to create a signer from settings, use [`Settings::signer()`](crate::settings::Settings::signer) instead.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the configured signer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::MissingSignerSettings`] if no signer was set with `with_signer()`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use c2pa::{Context, create_signer, SigningAlg, Result};
+    /// # fn main() -> Result<()> {
+    /// let signer = create_signer::from_files(
+    ///     "path/to/cert.pem",
+    ///     "path/to/key.pem",
+    ///     SigningAlg::Ps256,
+    ///     None
+    /// )?;
+    ///
+    /// let context = Context::new().with_signer(signer);
+    /// let signer_ref = context.signer()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn signer(&self) -> Result<&dyn Signer> {
         self.signer
             .as_ref()
