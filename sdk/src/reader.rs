@@ -1149,10 +1149,10 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
     use std::io::Cursor;
-    #[cfg(target_os = "wasi")]
-    use crate::settings::Settings;
 
     use super::*;
+    #[cfg(target_os = "wasi")]
+    use crate::settings::Settings;
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
