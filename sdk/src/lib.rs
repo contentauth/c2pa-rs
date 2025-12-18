@@ -53,7 +53,7 @@
 //! ```ignore-wasm32
 //! # use c2pa::Result;
 //! use std::io::Cursor;
-//! use c2pa::{Context, Builder, settings::Settings};
+//! use c2pa::{Context, Builder};
 //! use serde::Serialize;
 //!
 //! #[derive(Serialize)]
@@ -71,11 +71,10 @@
 //! builder.with_json(r#"{"title": "Test"}"#)?;
 //! builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!
-//! // Get signer from settings and sign
-//! let signer = Settings::signer()?;
+//! // Save with automatic signer from context (created from settings)
 //! let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
 //! let mut dest = Cursor::new(Vec::new());
-//! let _c2pa_data = builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
+//! let _c2pa_data = builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
 //! # Ok(())
 //! # }
 //! ```

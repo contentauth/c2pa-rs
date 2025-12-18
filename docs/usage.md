@@ -194,7 +194,7 @@ fn main() -> Result<()> {
     
     // Create reader with context
     let stream = File::open("path/to/image.jpg")?;
-    let reader = Reader::new(context)
+    let reader = Reader::from_context(context)
         .with_stream("image/jpeg", stream)?;
     
     println!("{}", reader.json());
@@ -204,26 +204,25 @@ fn main() -> Result<()> {
 
 ### Using Context with Builder
 
-`Builder` uses Context to configure signing operations:
+`Builder` uses Context to configure signing operations. The Context automatically creates a signer from settings when needed:
 
 ```rust
-use c2pa::{Context, Builder, settings::Settings, Result};
+use c2pa::{Context, Builder, Result};
 use std::io::Cursor;
 
 fn main() -> Result<()> {
     // Configure context with signer settings
     let context = Context::new()
-        .with_settings(include_str!("config.toml"))?;
+        .with_settings(r#"{"signer": {"local": {"alg": "ps256"}}}"#)?;
     
     // Create builder with context
     let mut builder = Builder::from_context(context);
     builder.with_json(r#"{"title": "My Image"}"#)?;
     
-    // Get signer from settings and sign
-    let signer = Settings::signer()?;
+    // Save with automatic signer from context
     let mut source = std::fs::File::open("source.jpg")?;
     let mut dest = Cursor::new(Vec::new());
-    builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
+    builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
     
     Ok(())
 }
@@ -231,40 +230,42 @@ fn main() -> Result<()> {
 
 ### Configuring a Signer
 
-**In most cases, you don't need to explicitly set a signer on the Context.** Instead, configure signer settings in your configuration file, and create the signer from those settings when needed.
+**In most cases, you don't need to explicitly set a signer on the Context.** Instead, configure signer settings in your configuration, and the Context will create the signer automatically when you call `save_to_stream()` or `save_to_file()`.
 
 #### Method 1: From Settings (Recommended)
 
-Configure signer settings in TOML or JSON:
+Configure signer settings in JSON:
 
-```toml
-[signer.local]
-alg = "ps256"
-sign_cert = "path/to/cert.pem"
-private_key = "path/to/key.pem"
-tsa_url = "http://timestamp.example.com"  # optional
+```json
+{
+  "signer": {
+    "local": {
+      "alg": "ps256",
+      "sign_cert": "path/to/cert.pem",
+      "private_key": "path/to/key.pem",
+      "tsa_url": "http://timestamp.example.com"
+    }
+  }
+}
 ```
 
-Then create the signer from settings:
+Then use it with the Builder:
 
 ```rust
-use c2pa::{Context, Builder, settings::Settings, Result};
+use c2pa::{Context, Builder, Result};
 
 fn main() -> Result<()> {
     // Configure context with signer settings
     let context = Context::new()
-        .with_settings(include_str!("config.toml"))?;
+        .with_settings(include_str!("config.json"))?;
     
     let mut builder = Builder::from_context(context);
     builder.with_json(r#"{"title": "My Image"}"#)?;
     
-    // Create signer from the settings
-    let signer = Settings::signer()?;
-    
-    // Use the signer to sign
+    // Signer is created automatically from context's settings
     let mut source = std::fs::File::open("source.jpg")?;
     let mut dest = std::fs::File::create("signed.jpg")?;
-    builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
+    builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
     
     Ok(())
 }
@@ -348,7 +349,7 @@ use c2pa::{Context, Reader};
 
 let context = Context::new()
     .with_settings(include_str!("settings.toml"))?;
-let reader = Reader::new(context)
+let reader = Reader::from_context(context)
     .with_stream("image/jpeg", stream)?;
 ```
 

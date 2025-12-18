@@ -25,6 +25,15 @@ enum AsyncResolverState {
     Default(OnceLock<RestrictedResolver<AsyncGenericResolver>>),
 }
 
+/// Internal state for signer selection.
+enum SignerState {
+    /// User-provided custom signer.
+    Custom(Box<dyn Signer>),
+    /// Signer created from context's settings with lazy initialization.
+    /// The Result is cached so we only attempt creation once.
+    FromSettings(OnceLock<Result<Box<dyn Signer>>>),
+}
+
 /// A trait for types that can be converted into Settings.
 ///
 /// This trait allows multiple types to be used as configuration sources,
@@ -83,7 +92,7 @@ impl IntoSettings for serde_json::Value {
 /// There are two ways to provide a signer to a Context:
 ///
 /// 1. **From Settings** (recommended): Configure signer settings in your configuration,
-///    then call [`Settings::signer()`](crate::settings::Settings::signer) to create it:
+///    and the Context will create the signer automatically when you call [`signer()`](Context::signer):
 ///
 /// ```toml
 /// [signer.local]
@@ -93,13 +102,15 @@ impl IntoSettings for serde_json::Value {
 /// ```
 ///
 /// ```ignore
-/// # use c2pa::{Context, settings::Settings, Result};
+/// # use c2pa::{Context, Builder, Result};
 /// # fn main() -> Result<()> {
 /// let context = Context::new()
 ///     .with_settings(include_str!("config.toml"))?;
 ///
-/// // Create signer from the settings
-/// let signer = Settings::signer()?;
+/// let builder = Builder::from_context(context);
+///
+/// // Signer is created automatically from context's settings
+/// let signer = builder.context().signer()?;
 /// # Ok(())
 /// # }
 /// ```
@@ -119,10 +130,10 @@ impl IntoSettings for serde_json::Value {
 ///     .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
 ///
 /// // Use with Builder
-/// let mut builder = Builder::from_context(context);
+/// let builder = Builder::from_context(context);
 ///
-/// // Get signer from context (created from settings)
-/// let signer = builder.context.signer()?;
+/// // Get signer from context (created automatically from settings)
+/// let signer = builder.context().signer()?;
 /// # Ok(())
 /// # }
 /// ```
@@ -163,7 +174,7 @@ pub struct Context {
     settings: Settings,
     sync_resolver: SyncResolverState,
     async_resolver: AsyncResolverState,
-    signer: Option<Box<dyn Signer>>,
+    signer: SignerState,
     _signer_async: Option<Box<dyn AsyncSigner>>,
 }
 
@@ -174,11 +185,11 @@ impl Default for Context {
             sync_resolver: SyncResolverState::Default(OnceLock::new()),
             async_resolver: AsyncResolverState::Default(OnceLock::new()),
             #[cfg(test)]
-            signer: Some(crate::utils::test_signer::test_signer(
+            signer: SignerState::Custom(crate::utils::test_signer::test_signer(
                 crate::SigningAlg::Ps256,
             )),
             #[cfg(not(test))]
-            signer: None,
+            signer: SignerState::FromSettings(OnceLock::new()),
             _signer_async: None,
         }
     }
@@ -346,24 +357,53 @@ impl Context {
     /// # }
     /// ```
     pub fn with_signer<T: Signer + 'static>(mut self, signer: T) -> Self {
-        self.signer = Some(Box::new(signer));
+        self.signer = SignerState::Custom(Box::new(signer));
         self
     }
 
-    /// Returns a reference to the signer configured with [`with_signer()`](Context::with_signer).
+    /// Returns a reference to the signer.
     ///
-    /// **Note:** This method returns the signer that was explicitly set using `with_signer()`.
-    /// If you want to create a signer from settings, use [`Settings::signer()`](crate::settings::Settings::signer) instead.
+    /// If a signer was explicitly set via [`with_signer()`](Context::with_signer), returns that signer.
+    /// Otherwise, creates a signer from this Context's settings on first access (lazy initialization).
+    ///
+    /// The signer is created from the `signer` field in this Context's Settings, which should contain
+    /// either local signer configuration (certificate and private key) or remote signer configuration
+    /// (URL and certificate).
     ///
     /// # Returns
     ///
-    /// A reference to the configured signer.
+    /// A reference to the signer.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MissingSignerSettings`] if no signer was set with `with_signer()`.
+    /// Returns [`Error::MissingSignerSettings`] if:
+    /// - No signer was explicitly set with `with_signer()`
+    /// - No signer configuration is present in this Context's settings
+    /// - The signer configuration in settings is invalid
     ///
     /// # Examples
+    ///
+    /// ## Creating from settings (recommended)
+    ///
+    /// ```ignore
+    /// # use c2pa::{Context, Result};
+    /// # fn main() -> Result<()> {
+    /// let toml = r#"
+    ///     [signer.local]
+    ///     alg = "ps256"
+    ///     sign_cert = "path/to/cert.pem"
+    ///     private_key = "path/to/key.pem"
+    /// "#;
+    ///
+    /// let context = Context::new().with_settings(toml)?;
+    ///
+    /// // Signer is created automatically from context's settings
+    /// let signer = context.signer()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// ## Using a custom signer
     ///
     /// ```ignore
     /// # use c2pa::{Context, create_signer, SigningAlg, Result};
@@ -381,10 +421,31 @@ impl Context {
     /// # }
     /// ```
     pub fn signer(&self) -> Result<&dyn Signer> {
-        self.signer
-            .as_ref()
-            .ok_or_else(|| crate::Error::MissingSignerSettings)
-            .map(|s| s.as_ref())
+        match &self.signer {
+            SignerState::Custom(signer) => Ok(signer.as_ref()),
+            SignerState::FromSettings(once_lock) => {
+                let result = once_lock.get_or_init(|| {
+                    // Create signer from this context's settings
+                    if let Some(signer_settings) = &self.settings.signer {
+                        let c2pa_signer = signer_settings.clone().c2pa_signer()?;
+
+                        // Check for CAWG x509 wrapper
+                        if let Some(cawg_settings) = &self.settings.cawg_x509_signer {
+                            cawg_settings.clone().cawg_signer(c2pa_signer)
+                        } else {
+                            Ok(c2pa_signer)
+                        }
+                    } else {
+                        Err(Error::MissingSignerSettings)
+                    }
+                });
+                match result {
+                    Ok(boxed) => Ok(boxed.as_ref()),
+                    Err(Error::MissingSignerSettings) => Err(Error::MissingSignerSettings),
+                    Err(_) => Err(Error::MissingSignerSettings), // Treat all errors as missing settings
+                }
+            }
+        }
     }
 
     // pub fn signer_async(&self) -> Result<&dyn crate::signer::AsyncSigner> {
@@ -441,5 +502,73 @@ mod tests {
         let invalid_json = r#"{"verify": {"verify_after_sign": "#;
         let result = Context::new().with_settings(invalid_json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_signer_from_settings() {
+        // Create a context with signer settings from the test_settings.toml file
+        let toml = include_str!("../tests/fixtures/test_settings.toml");
+        let context = Context::new().with_settings(toml).unwrap();
+
+        // Verify that signer can be created from the settings
+        let signer = context.signer();
+        assert!(signer.is_ok(), "Signer should be created from settings");
+
+        // Verify the signer has the expected algorithm
+        let signer = signer.unwrap();
+        assert!(
+            signer.alg() == crate::SigningAlg::Ps256,
+            "Signer from settings should have Ps256 algorithm"
+        );
+
+        // Call signer() again to verify caching works (should return same signer)
+        let signer2 = context.signer();
+        assert!(signer2.is_ok(), "Cached signer should be returned");
+    }
+
+    #[test]
+    fn test_signer_missing_settings() {
+        // In test mode, Default provides a test signer, so we need to explicitly
+        // create a context with FromSettings and empty settings
+        let mut context = Context {
+            settings: Settings::default(),
+            sync_resolver: SyncResolverState::Default(OnceLock::new()),
+            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            signer: SignerState::FromSettings(OnceLock::new()),
+            _signer_async: None,
+        };
+
+        // Update settings to ensure no signer configuration
+        context.settings.signer = None;
+        context.settings.cawg_x509_signer = None;
+
+        // Verify that signer() returns an error when no signer settings are present
+        let result = context.signer();
+        assert!(
+            result.is_err(),
+            "Should error when no signer settings present"
+        );
+        // Verify it's the expected error type
+        assert!(
+            matches!(result, Err(Error::MissingSignerSettings)),
+            "Expected MissingSignerSettings error, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_custom_signer() {
+        // Create a custom test signer
+        let custom_signer = crate::utils::test_signer::test_signer(crate::SigningAlg::Es256);
+
+        // Create a context with the custom signer
+        let context = Context::new().with_signer(custom_signer);
+
+        // Verify the custom signer is returned with the expected algorithm
+        let signer = context.signer().unwrap();
+        assert!(
+            signer.alg() == crate::SigningAlg::Es256,
+            "Custom signer should have Es256 algorithm"
+        );
     }
 }

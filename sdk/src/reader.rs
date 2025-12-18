@@ -119,6 +119,9 @@ pub struct Reader {
     context: Context,
 }
 
+type ValidationFn =
+    dyn Fn(&str, &crate::ManifestAssertion, &mut StatusTracker) -> Option<serde_json::Value>;
+
 impl Reader {
     /// Create a new Reader with a default Context.
     ///
@@ -145,7 +148,7 @@ impl Reader {
     /// ```
     /// # use c2pa::{Context, Reader, Result};
     /// # fn main() -> Result<()> {
-    /// let context = Context::new().with_settings(r#"{"verify": {"remote_manifest_fetch": true}}"#)?;
+    /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
     /// let reader = Reader::from_context(context);
     /// # Ok(())
     /// # }
@@ -866,65 +869,10 @@ impl Reader {
         claim: &Claim,
         active_claim: &mut Claim,
     ) -> Result<()> {
-        let mut visited = std::collections::HashSet::new();
-        let mut path = Vec::new();
-        Self::collect_ingredient_claims_for_store_impl(
-            store,
-            claim,
-            active_claim,
-            &mut visited,
-            &mut path,
-        )
-    }
-
-    /// Uses the similar cycle detection strategy as Store::get_claim_referenced_manifests_impl
-    fn collect_ingredient_claims_for_store_impl(
-        store: &Store,
-        claim: &Claim,
-        active_claim: &mut Claim,
-        visited: &mut std::collections::HashSet<String>,
-        path: &mut Vec<String>,
-    ) -> Result<()> {
-        Self::collect_ingredient_claims_impl(store, claim, active_claim, visited, path)
-    }
-
-    /// Shared implementation for recursively collecting ingredient claims.
-    ///
-    /// Uses path-based cycle detection similar to Store::get_claim_referenced_manifests_impl:
-    /// - `visited`: Claims that have been fully processed (allows DAG convergence)
-    /// - `path`: Current traversal path to detect and skip cycles
-    fn collect_ingredient_claims_impl(
-        store: &Store,
-        claim: &Claim,
-        active_claim: &mut Claim,
-        visited: &mut std::collections::HashSet<String>,
-        path: &mut Vec<String>,
-    ) -> Result<()> {
-        let claim_label = claim.label();
-
-        if visited.contains(claim_label) {
-            return Ok(());
-        }
-
-        // Check for cycle: is this claim already in our current path?
-        // If so, skip it silently (validation should have already caught this when enabled)
-        if path.iter().any(|p| p == claim_label) {
-            return Ok(());
-        }
-
-        path.push(claim_label.to_string());
-
         for ingredient in claim.claim_ingredients() {
-            let ingredient_label = ingredient.label();
-
-            if let Some(ingredient_claim) = store.get_claim(ingredient_label) {
-                Self::collect_ingredient_claims_impl(
-                    store,
-                    ingredient_claim,
-                    active_claim,
-                    visited,
-                    path,
-                )?;
+            if let Some(ingredient_claim) = store.get_claim(ingredient.label()) {
+                // First, recursively collect any ingredients this claim references
+                Self::collect_ingredient_claims_for_store(store, ingredient_claim, active_claim)?;
 
                 // Then add this ingredient claim to the primary claim
                 active_claim.replace_ingredient_or_insert(
@@ -933,13 +881,6 @@ impl Reader {
                 );
             }
         }
-
-        // Mark as fully processed
-        visited.insert(claim_label.to_string());
-
-        // Remove from current path
-        path.pop();
-
         Ok(())
     }
 
@@ -1086,31 +1027,16 @@ impl Reader {
                 builder.definition.instance_id = manifest.instance_id().to_owned();
                 builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
                 builder.definition.redactions = manifest.redactions.take();
-                let ingredients = std::mem::take(&mut manifest.ingredients);
+                let ingredients = std::mem::take(&mut manifest.ingredients); //manifest.ingredients.drain(..).collect::<Vec<_>>();
                 for mut ingredient in ingredients {
                     if let Some(active_manifest) = ingredient.active_manifest() {
-                        let ingredient_claim = self.store.get_claim(active_manifest);
+                        let ingredient_claim = self.store.remove_claim(active_manifest);
                         if let Some(claim) = ingredient_claim {
                             // recreate an ingredient store to get the jumbf data
-                            // ... recursively collect all nested ingredient claims
-                            let ingredient_store = {
-                                let mut ingredient_store = Store::new();
-                                let mut active_claim = claim.clone();
-
-                                // Recursion happens here for claims collection - re-embed nested claims from store
-                                Self::collect_ingredient_claims_for_store(
-                                    &self.store,
-                                    claim,
-                                    &mut active_claim,
-                                )?;
-
-                                // Add the main claim with all nested ingredients
-                                ingredient_store.commit_claim(active_claim)?;
-                                ingredient_store
-                            };
+                            let mut ingredient_store = Store::new();
+                            ingredient_store.commit_claim(claim.clone())?;
                             let jumbf = ingredient_store.to_jumbf_internal(0)?;
-                            // Add manifest_data to the ingredient's own resources
-                            let manifest_data_ref = ingredient.resources_mut().add_with(
+                            let manifest_data_ref = manifest.resources_mut().add_with(
                                 "manifest_data",
                                 "application/c2pa",
                                 jumbf,
@@ -1163,14 +1089,7 @@ impl Reader {
                 let mut active_claim = claim.clone();
 
                 // Recursively collect all ingredient claims and add them to primary_claim
-                let mut visited = std::collections::HashSet::new();
-                let mut path = Vec::new();
-                self.collect_ingredient_claims_recursive(
-                    claim,
-                    &mut active_claim,
-                    &mut visited,
-                    &mut path,
-                )?;
+                self.collect_ingredient_claims_recursive(claim, &mut active_claim)?;
 
                 // Add the main claim last
                 store.commit_claim(active_claim)?;
@@ -1188,10 +1107,20 @@ impl Reader {
         &self,
         claim: &Claim,
         active_claim: &mut Claim,
-        visited: &mut std::collections::HashSet<String>,
-        path: &mut Vec<String>,
     ) -> Result<()> {
-        Self::collect_ingredient_claims_impl(&self.store, claim, active_claim, visited, path)
+        for ingredient in claim.claim_ingredients() {
+            if let Some(ingredient_claim) = self.store.get_claim(ingredient.label()) {
+                // First, recursively collect any ingredients this claim references
+                self.collect_ingredient_claims_recursive(ingredient_claim, active_claim)?;
+
+                // Then add this ingredient claim to the primary claim
+                active_claim.replace_ingredient_or_insert(
+                    ingredient_claim.label().to_string(),
+                    ingredient_claim.clone(),
+                );
+            }
+        }
+        Ok(())
     }
 }
 

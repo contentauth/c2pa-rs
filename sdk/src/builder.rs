@@ -114,35 +114,6 @@ fn default_format() -> String {
     "application/octet-stream".to_owned()
 }
 
-// TryFrom implementations for ManifestDefinition
-
-/// Implement TryFrom for &str (JSON string)
-impl TryFrom<&str> for ManifestDefinition {
-    type Error = Error;
-
-    fn try_from(value: &str) -> Result<Self> {
-        serde_json::from_str(value).map_err(Error::JsonError)
-    }
-}
-
-/// Implement TryFrom for String
-impl TryFrom<String> for ManifestDefinition {
-    type Error = Error;
-
-    fn try_from(value: String) -> Result<Self> {
-        value.as_str().try_into()
-    }
-}
-
-/// Implement TryFrom for serde_json::Value
-impl TryFrom<serde_json::Value> for ManifestDefinition {
-    type Error = Error;
-
-    fn try_from(value: serde_json::Value) -> Result<Self> {
-        serde_json::from_value(value).map_err(Error::JsonError)
-    }
-}
-
 fn default_vec<T>() -> Vec<T> {
     Vec::new()
 }
@@ -395,6 +366,32 @@ impl Builder {
         &self.context
     }
 
+    /// Returns a mutable reference to the [`Context`] used by this [`Builder`].
+    ///
+    /// This allows modification of settings and other context configuration after
+    /// the builder has been created.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Builder, Result};
+    /// # fn main() -> Result<()> {
+    /// let context = Context::new();
+    /// let mut builder = Builder::from_context(context);
+    ///
+    /// // Modify settings
+    /// builder
+    ///     .context_mut()
+    ///     .settings_mut()
+    ///     .verify
+    ///     .verify_after_sign = false;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn context_mut(&mut self) -> &mut Context {
+        &mut self.context
+    }
+
     /// Sets the [`BuilderIntent`] for this [`Builder`].
     ///
     /// An intent lets the API know what kind of manifest to create.
@@ -443,47 +440,17 @@ impl Builder {
         })
     }
 
-    /// Sets the [`ManifestDefinition`] for this [`Builder`].
-    ///
-    /// This method accepts anything that can be converted into a [`ManifestDefinition`],
-    /// including JSON strings, [`ManifestDefinition`] objects, and [`serde_json::Value`]s.
-    ///
+    /// Sets the [`ManifestDefinition`] for this [`Builder`] from a JSON string.
     /// # Arguments
-    /// * `definition` - Anything that can be converted into a [`ManifestDefinition`]:
-    ///   - A JSON string: `r#"{"title": "My Image"}"#`
-    ///   - A `ManifestDefinition` object
-    ///   - A `serde_json::Value`
-    ///
+    /// * `json` - A JSON string representing the [`ManifestDefinition`].
     /// # Returns
-    /// * The modified [`Builder`].
-    ///
+    /// * A mutable reference to the [`Builder`].
     /// # Errors
-    /// * Returns an [`Error`] if the definition cannot be converted.
-    ///
+    /// * Returns an [`Error`] if the JSON is malformed or incorrect.
     /// # Notes
     /// * This will overwrite any existing definition in the [`Builder`].
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use c2pa::{Builder, ManifestDefinition, Context, Result};
-    /// # fn main() -> Result<()> {
-    /// // From JSON string
-    /// let builder = Builder::new().with_definition(r#"{"title": "My Image"}"#)?;
-    ///
-    /// // From ManifestDefinition
-    /// let mut def = ManifestDefinition::default();
-    /// def.title = Some("My Image".to_string());
-    /// let builder = Builder::new().with_definition(def)?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn with_definition<D>(mut self, definition: D) -> Result<Self>
-    where
-        D: TryInto<ManifestDefinition>,
-        Error: From<D::Error>,
-    {
-        self.definition = definition.try_into()?;
+    pub fn with_json(&mut self, json: &str) -> Result<&mut Self> {
+        self.definition = serde_json::from_str(json).map_err(Error::JsonError)?;
         Ok(self)
     }
 
@@ -962,6 +929,7 @@ impl Builder {
             // we should be able to call Reader::from_stream and then convert to Builder
             // but we need to disable validation since we are not signing yet
             // so we will read the store directly here
+            //crate::Reader::from_stream("application/c2pa", stream).and_then(|r| r.into_builder())
             let mut context = Context::new();
             context.settings_mut().verify.verify_after_reading = false;
 
@@ -1733,18 +1701,11 @@ impl Builder {
     /// # use c2pa::{Context, Builder, Result};
     /// # use std::io::Cursor;
     /// # fn main() -> Result<()> {
-    /// use serde_json::json;
-    ///
     /// // Create context with signer configuration
-    /// let context = Context::new().with_settings(json!({
-    ///     "builder": {
-    ///         "claim_generator_info": {"name": "My App"},
-    ///         "intent": "edit"
-    ///     }
-    /// }))?;
+    /// let context = Context::new().with_settings(r#"{"signer": {"local": {"alg": "ps256"}}}"#)?;
     ///
-    /// let mut builder = Builder::from_context(context)
-    ///     .with_definition(json!({"title": "My Image"}))?;
+    /// let mut builder = Builder::from_context(context);
+    /// builder.with_json(r#"{"title": "My Image"}"#)?;
     ///
     /// let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
     /// let mut dest = Cursor::new(Vec::new());
@@ -1953,15 +1914,10 @@ impl Builder {
     /// ```no_run
     /// # use c2pa::{Context, Builder, Result};
     /// # fn main() -> Result<()> {
-    /// use serde_json::json;
+    /// let context = Context::new().with_settings(r#"{"signer": {"local": {"alg": "ps256"}}}"#)?;
     ///
-    /// let context = Context::new()
-    ///     .with_settings(json!({
-    ///         "builder": {"claim_generator_info": {"name": "My App"}}
-    ///     }))?;
-    ///
-    /// let mut builder = Builder::from_context(context)
-    ///     .with_definition(json!({"title": "My Image"}))?;
+    /// let mut builder = Builder::from_context(context);
+    /// builder.with_json(r#"{"title": "My Image"}"#)?;
     ///
     /// // Save with automatic signer from context
     /// builder.save_to_file("tests/fixtures/C.jpg", "output.jpg")?;
@@ -2053,7 +2009,9 @@ impl Builder {
         let mut store = Store::new();
         store.commit_claim(claim)?;
 
+        //store.to_jumbf_internal(1000)
         store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
+        //store.get_box_hashed_embeddable_manifest(signer.as_ref(), settings)
     }
 }
 
@@ -3853,56 +3811,5 @@ mod tests {
         println!("\nreader2:{reader2}");
         assert_eq!(reader2.active_manifest().unwrap().ingredients().len(), 1);
         Ok(())
-    }
-
-    #[test]
-    fn update_manifest_to_update_manifest() {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
-
-        let mut child_image = Cursor::new(Vec::new());
-
-        let mut builder = Builder::new();
-        builder
-            .sign(
-                &Settings::signer().unwrap(),
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE),
-                &mut child_image,
-            )
-            .unwrap();
-
-        child_image.rewind().unwrap();
-
-        let mut parent_image = Cursor::new(Vec::new());
-
-        let mut builder = Builder::new();
-        builder.set_intent(BuilderIntent::Update);
-        builder
-            .sign(
-                &Settings::signer().unwrap(),
-                "image/jpeg",
-                &mut child_image,
-                &mut parent_image,
-            )
-            .unwrap();
-
-        parent_image.rewind().unwrap();
-
-        let mut parent_parent_image = Cursor::new(Vec::new());
-
-        let mut builder = Builder::new();
-        builder.set_intent(BuilderIntent::Update);
-        builder
-            .sign(
-                &Settings::signer().unwrap(),
-                "image/jpeg",
-                &mut parent_image,
-                &mut parent_parent_image,
-            )
-            .unwrap();
-
-        parent_parent_image.rewind().unwrap();
-
-        Reader::from_stream("image/jpeg", parent_parent_image).unwrap();
     }
 }
