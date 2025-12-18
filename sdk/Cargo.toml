@@ -48,6 +48,8 @@ rust_native_crypto = [
     "dep:rsa",
     "dep:spki",
 ]
+embed_cawg_interim_trust_list = ["dep:cawg-roots"]
+embed_c2pa_trust_list = ["dep:c2pa-roots"]
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364
 # Enables default http features for sync and async http resolvers.
@@ -109,6 +111,8 @@ byteordered = "0.6.0"
 chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
 ciborium = "0.2.2"
 toml = "0.8.23"
+c2pa-roots = {path = "../../trust-lists/c2pa-roots", optional = true}
+cawg-roots = {path = "../../trust-lists/cawg-roots", optional = true}
 config = { version = "0.14.0", default-features = false, features = [
     "json",
     "toml",

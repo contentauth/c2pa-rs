@@ -566,8 +566,20 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             version: VERSION,
-            trust: Default::default(),
-            cawg_trust: Default::default(),
+            trust: Trust {
+                #[cfg(not(feature = "embed_c2pa_trust_list"))]
+                trust_anchors: None,
+                #[cfg(feature = "embed_c2pa_trust_list")]
+                trust_anchors: Some(c2pa_roots::ROOTS_PEM.to_owned()),
+                ..Default::default()
+            },
+            cawg_trust: Trust {
+                #[cfg(not(feature = "embed_cawg_interim_trust_list"))]
+                trust_anchors: None,
+                #[cfg(feature = "embed_cawg_interim_trust_list")]
+                trust_anchors: Some(cawg_roots::INTERIM_TRUST_LIST_PEM.to_owned()),
+                ..Default::default()
+            },
             core: Default::default(),
             verify: Default::default(),
             builder: Default::default(),

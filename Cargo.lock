@@ -447,7 +447,9 @@ dependencies = [
  "byteorder",
  "byteordered",
  "bytes",
+ "c2pa-roots",
  "c2pa_macros",
+ "cawg-roots",
  "chrono",
  "ciborium",
  "codspeed-criterion-compat",
@@ -552,6 +554,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "c2pa-roots"
+version = "0.1.0"
+
+[[package]]
 name = "c2pa_macros"
 version = "0.73.0"
 dependencies = [
@@ -593,6 +599,10 @@ name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
+
+[[package]]
+name = "cawg-roots"
+version = "0.1.0"
 
 [[package]]
 name = "cbc"
