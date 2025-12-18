@@ -170,6 +170,7 @@ pub use claim_generator_info::ClaimGeneratorInfo;
 // pub use dynamic_assertion::{
 //     AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
 // };
+pub use content_credential::ContentCredential;
 pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
 #[doc(inline)]
@@ -197,6 +198,7 @@ pub(crate) mod builder;
 pub(crate) mod callback_signer;
 pub(crate) mod claim;
 pub(crate) mod claim_generator_info;
+pub(crate) mod content_credential;
 pub(crate) mod cose_validator;
 pub(crate) mod error;
 pub(crate) mod external_manifest;
