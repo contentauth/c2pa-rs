@@ -1215,4 +1215,72 @@ pub mod tests {
         assert!(!v3_decoded.is_v2_compatible());
         assert!(v3_decoded.is_v3_compatible());
     }
+
+    #[test]
+    fn test_from_stream() {
+        use std::io::Cursor;
+
+        // Create a simple test stream with minimal valid data
+        let test_data = vec![0u8; 1024]; // Empty/minimal data
+        let stream = Cursor::new(test_data);
+
+        let context = Context::default();
+        let relationship = Relationship::ComponentOf;
+        let format = "image/jpeg";
+
+        let result = Ingredient::from_stream(relationship.clone(), format, stream, &context);
+
+        // Should succeed even with no C2PA data
+        assert!(result.is_ok());
+
+        let (ingredient, manifest_bytes) = result.unwrap();
+
+        // Verify basic properties
+        assert_eq!(ingredient.version, 3);
+        assert_eq!(ingredient.relationship, relationship);
+        assert_eq!(ingredient.format, Some(format.to_owned()));
+
+        // With no actual C2PA data, manifest_bytes should be None
+        assert!(manifest_bytes.is_none());
+    }
+
+    #[test]
+    fn test_from_stream_with_c2pa_data() {
+        use std::io::Cursor;
+
+        // Use a test image that contains C2PA data
+        const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/CA.jpg");
+        let stream = Cursor::new(TEST_IMAGE);
+
+        let context = Context::default();
+        let relationship = Relationship::ParentOf;
+        let format = "image/jpeg";
+
+        let result = Ingredient::from_stream(relationship.clone(), format, stream, &context);
+
+        // Should succeed with C2PA data present
+        assert!(result.is_ok());
+
+        let (ingredient, manifest_bytes) = result.unwrap();
+
+        // Verify basic properties
+        assert_eq!(ingredient.version, 3);
+        assert_eq!(ingredient.relationship, relationship);
+        assert_eq!(ingredient.format, Some(format.to_owned()));
+
+        // With C2PA data, manifest_bytes should be present
+        assert!(manifest_bytes.is_some());
+        let manifest_data = manifest_bytes.unwrap();
+        assert!(!manifest_data.is_empty());
+
+        // Verify that validation results were populated
+        assert!(ingredient.validation_results.is_some());
+
+        // Verify that active_manifest and claim_signature are populated
+        assert!(ingredient.active_manifest.is_some());
+        assert!(ingredient.claim_signature.is_some());
+
+        // Verify instance_id is populated from the store
+        assert!(ingredient.instance_id.is_some());
+    }
 }
