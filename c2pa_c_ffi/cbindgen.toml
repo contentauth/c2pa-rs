@@ -26,7 +26,7 @@ include_guard = "c2pa_bindings_h"
 
 after_includes = """
 
-#if C2PA_DYNAMIC_LOADING
+#if defined(C2PA_DYNAMIC_LOADING) && C2PA_DYNAMIC_LOADING
     #define C2PA_API
 #else
     #if defined(_WIN32) || defined(_WIN64)
