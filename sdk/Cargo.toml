@@ -49,6 +49,7 @@ rust_native_crypto = [
     "dep:spki",
 ]
 embed_cawg_interim_trust_list = ["dep:cawg-roots"]
+embed_c2pa_interim_trust_list = ["dep:c2pa-roots", "c2pa-roots/interim_roots"]
 embed_c2pa_trust_list = ["dep:c2pa-roots"]
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364

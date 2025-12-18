@@ -570,14 +570,22 @@ impl Default for Settings {
                 #[cfg(not(feature = "embed_c2pa_trust_list"))]
                 trust_anchors: None,
                 #[cfg(feature = "embed_c2pa_trust_list")]
-                trust_anchors: Some(c2pa_roots::ROOTS_PEM.to_owned()),
+                trust_anchors: Some(c2pa_roots::ROOTS_PEM.join("\n")),
+                #[cfg(not(feature = "embed_c2pa_interim_trust_list"))]
+                user_anchors: None,
+                #[cfg(feature = "embed_c2pa_interim_trust_list")]
+                user_anchors: Some(c2pa_roots::INTERIM_ROOTS_PEM.join("\n")),
                 ..Default::default()
             },
             cawg_trust: Trust {
                 #[cfg(not(feature = "embed_cawg_interim_trust_list"))]
                 trust_anchors: None,
                 #[cfg(feature = "embed_cawg_interim_trust_list")]
-                trust_anchors: Some(cawg_roots::INTERIM_TRUST_LIST_PEM.to_owned()),
+                trust_anchors: Some(cawg_roots::INTERIM_ROOTS_PEM.join("\n")),
+                #[cfg(not(feature = "embed_cawg_interim_trust_list"))]
+                allowed_list: None,
+                #[cfg(feature = "embed_cawg_interim_trust_list")]
+                allowed_list: Some(cawg_roots::INTERIM_END_ENTITIES_PEM.join("\n")),
                 ..Default::default()
             },
             core: Default::default(),
