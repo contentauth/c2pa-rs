@@ -345,6 +345,53 @@ impl Builder {
         }
     }
 
+    /// Returns a reference to the [`Context`] used by this [`Builder`].
+    ///
+    /// This allows access to settings, signers, and other context configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Builder, Result};
+    /// # fn main() -> Result<()> {
+    /// let context = Context::new();
+    /// let builder = Builder::from_context(context);
+    ///
+    /// // Access settings
+    /// let settings = builder.context().settings();
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn context(&self) -> &Context {
+        &self.context
+    }
+
+    /// Returns a mutable reference to the [`Context`] used by this [`Builder`].
+    ///
+    /// This allows modification of settings and other context configuration after
+    /// the builder has been created.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Builder, Result};
+    /// # fn main() -> Result<()> {
+    /// let context = Context::new();
+    /// let mut builder = Builder::from_context(context);
+    ///
+    /// // Modify settings
+    /// builder
+    ///     .context_mut()
+    ///     .settings_mut()
+    ///     .verify
+    ///     .verify_after_sign = false;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn context_mut(&mut self) -> &mut Context {
+        &mut self.context
+    }
+
     /// Sets the [`BuilderIntent`] for this [`Builder`].
     ///
     /// An intent lets the API know what kind of manifest to create.
@@ -895,7 +942,7 @@ impl Builder {
                 &mut validation_log,
                 &context,
             )?;
-            let mut reader = Reader::new(context);
+            let mut reader = Reader::from_context(context);
             reader.with_store(store, &mut validation_log)?;
             reader.into_builder()
         })
@@ -1624,6 +1671,87 @@ impl Builder {
         }
     }
 
+    /// Save a signed manifest to a stream using the signer from this builder's context.
+    ///
+    /// This is a convenience method that automatically gets the signer from the builder's
+    /// context and signs the manifest. The signer is created from the context's settings
+    /// if not explicitly set with [`Context::with_signer()`].
+    ///
+    /// This provides a simpler alternative to [`sign()`](Self::sign) when you want to use
+    /// the context's configured signer rather than providing an explicit signer.
+    ///
+    /// **Note**: This method is only available for synchronous signing. For async signing,
+    /// use [`sign_async()`](Self::sign_async) with an explicit async signer.
+    ///
+    /// # Arguments
+    /// * `format` - The format of the stream.
+    /// * `source` - The source stream from which to read.
+    /// * `dest` - The destination stream to write.
+    ///
+    /// # Returns
+    /// * The bytes of c2pa_manifest that was embedded.
+    ///
+    /// # Errors
+    /// * Returns [`Error::MissingSignerSettings`] if no signer is configured in the context.
+    /// * Returns an [`Error`] if the manifest cannot be signed.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use c2pa::{Context, Builder, Result};
+    /// # use std::io::Cursor;
+    /// # fn main() -> Result<()> {
+    /// // Create context with signer configuration
+    /// let context = Context::new().with_settings(r#"{"signer": {"local": {"alg": "ps256"}}}"#)?;
+    ///
+    /// let mut builder = Builder::from_context(context);
+    /// builder.with_json(r#"{"title": "My Image"}"#)?;
+    ///
+    /// let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
+    /// let mut dest = Cursor::new(Vec::new());
+    ///
+    /// // Save with automatic signer from context
+    /// builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn save_to_stream<R, W>(
+        &mut self,
+        format: &str,
+        source: &mut R,
+        dest: &mut W,
+    ) -> Result<Vec<u8>>
+    where
+        R: Read + Seek + Send,
+        W: Write + Read + Seek + Send,
+    {
+        let format = format_to_mime(format);
+        self.definition.format.clone_from(&format);
+        // todo:: read instance_id from xmp from stream ?
+        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+
+        #[cfg(feature = "file_io")]
+        #[allow(deprecated)]
+        if let Some(base_path) = &self.base_path {
+            self.resources.set_base_path(base_path);
+        }
+
+        self.maybe_add_parent(&format, source)?;
+
+        // generate thumbnail if we don't already have one
+        #[cfg(feature = "add_thumbnails")]
+        self.maybe_add_thumbnail(&format, source)?;
+
+        // convert the manifest to a store
+        let mut store = self.to_store()?;
+
+        // Get signer from context
+        let signer = self.context.signer()?;
+
+        // sign and write our store to to the output image file
+        store.save_to_stream(&format, source, dest, signer, &self.context)
+    }
+
     #[cfg(feature = "file_io")]
     // Internal utility to set format and title based on destination filename.
     //
@@ -1756,6 +1884,74 @@ impl Builder {
             self.sign_async(signer, &format, &mut source, &mut dest)
                 .await
         }
+    }
+
+    /// Save a signed manifest to a file using the signer from this builder's context.
+    ///
+    /// This is a convenience method that automatically gets the signer from the builder's
+    /// context and signs the manifest. The signer is created from the context's settings
+    /// if not explicitly set with [`Context::with_signer()`].
+    ///
+    /// This provides a simpler alternative to [`sign_file()`](Self::sign_file) when you want
+    /// to use the context's configured signer rather than providing an explicit signer.
+    ///
+    /// **Note**: This method is only available for synchronous signing. For async signing,
+    /// use [`sign_file_async()`](Self::sign_file_async) with an explicit async signer.
+    ///
+    /// # Arguments
+    /// * `source` - Path to the source file.
+    /// * `dest` - Path to the destination file (must not exist).
+    ///
+    /// # Returns
+    /// * The bytes of c2pa_manifest that was embedded.
+    ///
+    /// # Errors
+    /// * Returns [`Error::MissingSignerSettings`] if no signer is configured in the context.
+    /// * Returns an [`Error`] if the manifest cannot be signed or destination file already exists.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use c2pa::{Context, Builder, Result};
+    /// # fn main() -> Result<()> {
+    /// let context = Context::new().with_settings(r#"{"signer": {"local": {"alg": "ps256"}}}"#)?;
+    ///
+    /// let mut builder = Builder::from_context(context);
+    /// builder.with_json(r#"{"title": "My Image"}"#)?;
+    ///
+    /// // Save with automatic signer from context
+    /// builder.save_to_file("tests/fixtures/C.jpg", "output.jpg")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "file_io")]
+    pub fn save_to_file<S, D>(&mut self, source: S, dest: D) -> Result<Vec<u8>>
+    where
+        S: AsRef<std::path::Path>,
+        D: AsRef<std::path::Path>,
+    {
+        let source = source.as_ref();
+        let dest = dest.as_ref();
+
+        self.set_asset_from_dest(dest)?;
+
+        // formats must match but allow extensions to be slightly different (i.e. .jpeg vs .jpg)s
+        let format = crate::format_from_path(source).ok_or(crate::Error::UnsupportedType)?;
+        let format_dest = crate::format_from_path(dest).ok_or(crate::Error::UnsupportedType)?;
+        if format != format_dest {
+            return Err(crate::Error::BadParam(
+                "Source and destination file formats must match".to_string(),
+            ));
+        }
+        let mut source = std::fs::File::open(source)?;
+
+        let mut dest = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(dest)?;
+        self.save_to_stream(&format, &mut source, &mut dest)
     }
 
     /// Converts a manifest into a composed manifest with the specified format.

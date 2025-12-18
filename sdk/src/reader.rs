@@ -123,12 +123,37 @@ type ValidationFn =
     dyn Fn(&str, &crate::ManifestAssertion, &mut StatusTracker) -> Option<serde_json::Value>;
 
 impl Reader {
-    /// Create a new Reader with the given Context
+    /// Create a new Reader with a default Context.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::Reader;
+    /// let reader = Reader::new();
+    /// ```
+    pub fn new() -> Self {
+        Self::from_context(Context::new())
+    }
+
+    /// Create a new Reader with the given Context.
+    ///
     /// # Arguments
     /// * `context` - The Context to use for the Reader
+    ///
     /// # Returns
     /// A new Reader
-    pub fn new(context: Context) -> Self {
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Reader, Result};
+    /// # fn main() -> Result<()> {
+    /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+    /// let reader = Reader::from_context(context);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_context(context: Context) -> Self {
         Self {
             context,
             store: Store::new(),
@@ -195,11 +220,9 @@ impl Reader {
     #[async_generic]
     pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
         if _sync {
-            Reader::new(Context::new()).with_stream(format, stream)
+            Reader::new().with_stream(format, stream)
         } else {
-            Reader::new(Context::new())
-                .with_stream_async(format, stream)
-                .await
+            Reader::new().with_stream_async(format, stream).await
         }
     }
 
@@ -292,7 +315,7 @@ impl Reader {
         stream: impl Read + Seek + MaybeSend,
     ) -> Result<Reader> {
         let context = Context::new();
-        let mut reader = Reader::new(context);
+        let mut reader = Reader::from_context(context);
 
         let mut validation_log = StatusTracker::default();
 
@@ -339,7 +362,7 @@ impl Reader {
         mut stream: impl Read + Seek + MaybeSend,
         mut fragment: impl Read + Seek + MaybeSend,
     ) -> Result<Self> {
-        let mut reader = Reader::new(Context::new());
+        let mut reader = Reader::new();
 
         let mut validation_log = StatusTracker::default();
 
@@ -378,7 +401,7 @@ impl Reader {
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
-        let mut reader = Reader::new(Context::new());
+        let mut reader = Reader::new();
 
         let mut validation_log = StatusTracker::default();
 
@@ -1202,7 +1225,7 @@ pub mod tests {
 
         let mut source = Cursor::new(IMAGE_WITH_MANIFEST);
 
-        let reader = Reader::new(context).with_stream("image/jpeg", &mut source)?;
+        let reader = Reader::from_context(context).with_stream("image/jpeg", &mut source)?;
 
         assert_eq!(reader.remote_url(), None);
         assert!(reader.is_embedded());
