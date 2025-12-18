@@ -649,6 +649,27 @@ impl Action {
         self
     }
 
+    /// Adds an ingredient HashedUri to the action.
+    pub(crate) fn add_ingredient(mut self, ingredient: HashedUri) -> Result<Self> {
+        match &mut self.parameters {
+            Some(params) => match &mut params.ingredients {
+                Some(ingredients) => {
+                    ingredients.push(ingredient);
+                }
+                None => {
+                    params.ingredients = Some(vec![ingredient]);
+                }
+            },
+            None => {
+                self.parameters = Some(ActionParameters {
+                    ingredients: Some(vec![ingredient]),
+                    ..Default::default()
+                });
+            }
+        }
+        Ok(self)
+    }
+
     /// Adds an ingredient id to the action.
     pub fn add_ingredient_id(mut self, ingredient_id: &str) -> Result<Self> {
         if let Some(Value::Array(mut ids)) = self.get_parameter(INGREDIENT_IDS) {
