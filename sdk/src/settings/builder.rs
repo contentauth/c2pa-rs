@@ -558,4 +558,153 @@ pub mod tests {
 
         assert!(actions_settings.validate().is_ok());
     }
+
+    #[test]
+    fn test_claim_generator_info_try_from() {
+        // Test basic conversion
+        let settings = ClaimGeneratorInfoSettings {
+            name: "Test Generator".to_string(),
+            version: Some("1.0.0".to_string()),
+            icon: None,
+            operating_system: None,
+            other: HashMap::new(),
+        };
+        let info = ClaimGeneratorInfo::try_from(settings).unwrap();
+        assert_eq!(info.name, "Test Generator");
+        assert_eq!(info.version, Some("1.0.0".to_string()));
+
+        // Test with auto OS detection
+        let settings = ClaimGeneratorInfoSettings {
+            name: "Test Generator".to_string(),
+            version: None,
+            icon: None,
+            operating_system: Some(ClaimGeneratorInfoOperatingSystem::Auto),
+            other: HashMap::new(),
+        };
+        let info = ClaimGeneratorInfo::try_from(settings).unwrap();
+        let os = info.operating_system.unwrap();
+        assert!(os.contains(consts::ARCH) && os.contains(consts::OS));
+
+        // Test with custom OS, icon, and other fields
+        let icon_ref = ResourceRef::new("image/png".to_string(), "icon.png".to_string());
+        let mut other = HashMap::new();
+        other.insert("custom".to_string(), serde_json::json!("value"));
+        let settings = ClaimGeneratorInfoSettings {
+            name: "Test Generator".to_string(),
+            version: Some("2.0.0".to_string()),
+            icon: Some(icon_ref.clone()),
+            operating_system: Some(ClaimGeneratorInfoOperatingSystem::Other(
+                "x86_64-pc-windows-msvc".to_string(),
+            )),
+            other,
+        };
+        let info = ClaimGeneratorInfo::try_from(settings).unwrap();
+        assert_eq!(
+            info.operating_system,
+            Some("x86_64-pc-windows-msvc".to_string())
+        );
+        assert!(matches!(info.icon, Some(UriOrResource::ResourceRef(_))));
+        assert_eq!(info.other.len(), 1);
+
+        // Test reference conversion
+        let settings = ClaimGeneratorInfoSettings {
+            name: "Test Generator".to_string(),
+            version: Some("1.5.0".to_string()),
+            icon: None,
+            operating_system: None,
+            other: HashMap::new(),
+        };
+        let info = ClaimGeneratorInfo::try_from(&settings).unwrap();
+        assert_eq!(info.name, "Test Generator");
+        assert_eq!(settings.name, "Test Generator"); // Original still valid
+    }
+
+    #[test]
+    fn test_action_template_try_from() {
+        // Test basic conversion
+        let settings = ActionTemplateSettings {
+            action: "c2pa.created".to_string(),
+            software_agent: None,
+            software_agent_index: None,
+            source_type: None,
+            icon: None,
+            description: None,
+            template_parameters: None,
+        };
+        let template = ActionTemplate::try_from(settings).unwrap();
+        assert_eq!(template.action, "c2pa.created");
+        assert!(template.software_agent.is_none());
+
+        // Test with software agent and parameters
+        let mut params = HashMap::new();
+        params.insert("param1".to_string(), serde_json::json!("value1"));
+        let software_agent = ClaimGeneratorInfoSettings {
+            name: "Test Agent".to_string(),
+            version: Some("1.0.0".to_string()),
+            icon: None,
+            operating_system: None,
+            other: HashMap::new(),
+        };
+        let settings = ActionTemplateSettings {
+            action: "c2pa.edited".to_string(),
+            software_agent: Some(software_agent),
+            software_agent_index: Some(0),
+            source_type: Some(DigitalSourceType::TrainedAlgorithmicMedia),
+            icon: None,
+            description: Some("Test template".to_string()),
+            template_parameters: Some(params),
+        };
+        let template = ActionTemplate::try_from(settings).unwrap();
+        assert_eq!(template.action, "c2pa.edited");
+        assert!(template.software_agent.is_some());
+        assert!(template.template_parameters.is_some());
+    }
+
+    #[test]
+    fn test_action_try_from() {
+        // Test basic conversion
+        let settings = ActionSettings {
+            action: "c2pa.opened".to_string(),
+            when: None,
+            software_agent: None,
+            software_agent_index: None,
+            changes: None,
+            parameters: None,
+            source_type: None,
+            related: None,
+            reason: None,
+            description: None,
+        };
+        let action = Action::try_from(settings).unwrap();
+        assert_eq!(action.action, "c2pa.opened");
+        assert!(action.software_agent.is_none());
+
+        // Test with software agent and other fields
+        let software_agent = ClaimGeneratorInfoSettings {
+            name: "Editor Pro".to_string(),
+            version: Some("2.0.0".to_string()),
+            icon: None,
+            operating_system: Some(ClaimGeneratorInfoOperatingSystem::Auto),
+            other: HashMap::new(),
+        };
+        let settings = ActionSettings {
+            action: "c2pa.edited".to_string(),
+            when: None,
+            software_agent: Some(software_agent),
+            software_agent_index: None,
+            changes: None,
+            parameters: None,
+            source_type: Some(DigitalSourceType::CompositeWithTrainedAlgorithmicMedia),
+            related: None,
+            reason: Some("Privacy concerns".to_string()),
+            description: Some("Edited with filters".to_string()),
+        };
+        let action = Action::try_from(settings).unwrap();
+        assert_eq!(action.action, "c2pa.edited");
+        assert!(matches!(
+            action.software_agent,
+            Some(SoftwareAgent::ClaimGeneratorInfo(_))
+        ));
+        assert_eq!(action.reason, Some("Privacy concerns".to_string()));
+    }
 }
