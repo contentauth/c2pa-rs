@@ -551,8 +551,11 @@ mod tests {
         // Verify it's the expected error type
         assert!(
             matches!(result, Err(Error::MissingSignerSettings)),
-            "Expected MissingSignerSettings error, got: {:?}",
-            result
+            "Expected MissingSignerSettings error, got: {}",
+            match result {
+                Ok(_) => "Ok(Signer)".to_string(),
+                Err(ref e) => format!("Err({:?})", e),
+            }
         );
     }
 
