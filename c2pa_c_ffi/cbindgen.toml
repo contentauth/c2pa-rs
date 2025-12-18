@@ -30,21 +30,21 @@ after_includes = """
     #define C2PA_API
 #else
     #if defined(_WIN32) || defined(_WIN64)
-        #if C2PA_DLL
-            #if __GNUC__
+        #if defined(C2PA_DLL) && C2PA_DLL
+            #if defined(__GNUC__) && __GNUC__
                 #define C2PA_API __attribute__((dllexport))
             #else
                 #define C2PA_API __declspec(dllexport)
             #endif
         #else
-            #if __GNUC__
+            #if defined(__GNUC__) && __GNUC__
                 #define C2PA_API __attribute__((dllimport))
             #else
                 #define C2PA_API __declspec(dllimport)
             #endif
         #endif
     #else
-        #if __GNUC__
+        #if defined(__GNUC__) && __GNUC__
             #define C2PA_API __attribute__((visibility("default")))
         #else
             #define C2PA_API
