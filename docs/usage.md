@@ -323,13 +323,93 @@ tsa_url = "http://..."     # Optional: timestamp authority URL
 
 For advanced use cases, you can provide custom HTTP resolvers to control how remote manifests are fetched. Custom resolvers are useful for adding authentication, caching, logging, or mocking network calls in tests.
 
-### Thread Safety
+### Thread Safety and Sharing Context
 
-Context is designed to be used safely across threads. While Context itself doesn't implement `Clone`, you can:
+Context is thread-safe and can be shared efficiently across multiple threads, builders, and readers using `Arc<Context>`.
 
-1. Create separate contexts for different threads
-2. Use `Arc<Context>` to share a context across threads (for read-only access)
-3. Pass contexts by reference where appropriate
+#### Sharing Context Across Multiple Builders/Readers
+
+When you need to use the same context configuration for multiple operations, you can wrap it in an `Arc` and clone the Arc (which is cheap - just incrementing a reference count):
+
+```rust
+use c2pa::{Context, Builder, Reader, Result};
+use std::sync::Arc;
+
+fn main() -> Result<()> {
+    // Create a shared context once
+    let ctx = Arc::new(Context::new()
+        .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
+    
+    // Share it across multiple builders
+    let builder1 = Builder::from_shared_context(&ctx);
+    let builder2 = Builder::from_shared_context(&ctx);
+    
+    // Share it across multiple readers
+    let reader1 = Reader::from_shared_context(&ctx);
+    let reader2 = Reader::from_shared_context(&ctx);
+    
+    Ok(())
+}
+```
+
+#### Multi-threaded Usage
+
+Context is `Send + Sync`, making it safe to share across threads using `Arc`:
+
+```rust
+use c2pa::{Context, Builder, Result};
+use std::sync::Arc;
+use std::thread;
+
+fn main() -> Result<()> {
+    // Create shared context
+    let ctx = Arc::new(Context::new()
+        .with_settings(include_str!("config.toml"))?);
+    
+    // Spawn multiple threads, each with a clone of the Arc
+    let mut handles = vec![];
+    for i in 0..4 {
+        let ctx = Arc::clone(&ctx);
+        let handle = thread::spawn(move || {
+            let mut builder = Builder::from_shared_context(&ctx);
+            builder.with_json(&format!(r#"{{"title": "Image {}"}}"#, i)).unwrap();
+            // ... perform signing operations
+        });
+        handles.push(handle);
+    }
+    
+    for handle in handles {
+        handle.join().unwrap();
+    }
+    
+    Ok(())
+}
+```
+
+See the `test_multithreaded_context_sharing` test in `sdk/src/builder.rs` for a working example.
+
+#### Single-use vs. Shared Context
+
+Use the regular constructors when you don't need to share:
+
+```rust
+// Single-use context (most common case)
+let builder = Builder::new();  // Creates its own context internally
+let reader = Reader::new();     // Creates its own context internally
+
+// Or with custom settings
+let context = Context::new().with_settings(my_settings)?;
+let builder = Builder::from_context(context);  // Takes ownership
+```
+
+Use `from_shared_context` when you need to reuse the same context:
+
+```rust
+// Shared context (when reusing configuration)
+let ctx = Arc::new(Context::new().with_settings(my_settings)?);
+let builder1 = Builder::from_shared_context(&ctx);  // Clones the Arc
+let builder2 = Builder::from_shared_context(&ctx);  // Clones the Arc
+```
 
 ### Migration from Global Settings
 

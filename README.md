@@ -39,6 +39,7 @@ The library enables a desktop, mobile, or embedded application to:
 * Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.  See [Using the CAWG identity assertion](docs/cawg-id.md) for more information.
 * Embed manifests in [supported file formats](docs/supported-formats.md).
 * Parse and validate manifests found in [supported file formats](docs/supported-formats.md).
+* Share configuration efficiently across multiple operations and threads using `Arc<Context>`.
 
 The library supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_hard_bindings).
 
