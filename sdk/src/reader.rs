@@ -19,6 +19,7 @@ use std::fs::{read, File};
 use std::{
     collections::{HashMap, HashSet},
     io::{Read, Seek, Write},
+    rc::Rc,
 };
 
 use async_generic::async_generic;
@@ -116,7 +117,7 @@ pub struct Reader {
     assertion_values: HashMap<String, Value>,
 
     #[serde(skip)]
-    context: Context,
+    context: Rc<Context>,
 }
 
 type ValidationFn =
@@ -137,6 +138,9 @@ impl Reader {
 
     /// Create a new Reader with the given Context.
     ///
+    /// This method takes ownership of the Context and wraps it in an Arc internally.
+    /// Use this for single-use contexts where you don't need to share the context.
+    ///
     /// # Arguments
     /// * `context` - The Context to use for the Reader
     ///
@@ -148,14 +152,51 @@ impl Reader {
     /// ```
     /// # use c2pa::{Context, Reader, Result};
     /// # fn main() -> Result<()> {
-    /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
-    /// let reader = Reader::from_context(context);
+    /// // Simple single-use case - no Arc needed!
+    /// let reader = Reader::from_context(
+    ///     Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?,
+    /// );
     /// # Ok(())
     /// # }
     /// ```
     pub fn from_context(context: Context) -> Self {
         Self {
-            context,
+            context: Rc::new(context),
+            store: Store::new(),
+            assertion_values: HashMap::new(),
+            ..Default::default()
+        }
+    }
+
+    /// Create a new Reader with a shared Context.
+    ///
+    /// This method allows sharing a single Context across multiple builders or readers.
+    /// The Rc is cloned internally, so you pass a reference.
+    ///
+    /// # Arguments
+    /// * `context` - A reference to an `Rc<Context>` to share.
+    ///
+    /// # Returns
+    /// A new Reader
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Reader, Result};
+    /// # use std::rc::Rc;
+    /// # fn main() -> Result<()> {
+    /// // Create a shared context once
+    /// let ctx = Rc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
+    ///
+    /// // Share it across multiple readers
+    /// let reader1 = Reader::from_shared_context(&ctx);
+    /// let reader2 = Reader::from_shared_context(&ctx);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_shared_context(context: &Rc<Context>) -> Self {
+        Self {
+            context: Rc::clone(context),
             store: Store::new(),
             assertion_values: HashMap::new(),
             ..Default::default()

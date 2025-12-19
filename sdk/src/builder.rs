@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::{
     collections::{HashMap, HashSet},
     io::{Read, Seek, Write},
+    rc::Rc,
 };
 
 use async_generic::async_generic;
@@ -313,7 +314,7 @@ pub struct Builder {
 
     // Contains the builder context
     #[serde(skip)]
-    context: Context,
+    context: Rc<Context>,
 }
 
 impl AsRef<Builder> for Builder {
@@ -328,19 +329,68 @@ impl Builder {
     /// * A new [`Builder`].
     pub fn new() -> Self {
         Self {
-            context: Context::new(),
+            context: Rc::new(Context::new()),
             ..Default::default()
         }
     }
 
     /// Creates a new [`Builder`] struct from a [`Context`].
+    ///
+    /// This method takes ownership of the Context and wraps it in an Arc internally.
+    /// Use this for single-use contexts where you don't need to share the context.
+    ///
     /// # Arguments
     /// * `context` - The [`Context`] to use for this [`Builder`].
+    ///
     /// # Returns
     /// * A new [`Builder`].
+    ///
+    /// # Example
+    /// ```
+    /// # use c2pa::{Context, Builder, Result};
+    /// # fn main() -> Result<()> {
+    /// // Simple single-use case - no Arc needed!
+    /// let builder = Builder::from_context(
+    ///     Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?,
+    /// );
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn from_context(context: Context) -> Self {
         Self {
-            context,
+            context: Rc::new(context),
+            ..Default::default()
+        }
+    }
+
+    /// Creates a new [`Builder`] struct from a shared [`Context`].
+    ///
+    /// This method allows sharing a single Context across multiple builders or readers.
+    /// The Rc is cloned internally, so you pass a reference.
+    ///
+    /// # Arguments
+    /// * `context` - A reference to an `Rc<Context>` to share.
+    ///
+    /// # Returns
+    /// * A new [`Builder`].
+    ///
+    /// # Example
+    /// ```
+    /// # use c2pa::{Context, Builder, Result};
+    /// # use std::rc::Rc;
+    /// # fn main() -> Result<()> {
+    /// // Create a shared context once
+    /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
+    ///
+    /// // Share it across multiple builders
+    /// let builder1 = Builder::from_shared_context(&ctx);
+    /// let builder2 = Builder::from_shared_context(&ctx);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_shared_context(context: &Rc<Context>) -> Self {
+        Self {
+            context: Rc::clone(context),
             ..Default::default()
         }
     }
@@ -382,8 +432,9 @@ impl Builder {
     /// * A mutable reference to the [`Builder`].
     #[allow(deprecated)]
     pub fn set_intent(&mut self, intent: BuilderIntent) -> &mut Self {
-        self.context.settings_mut().builder.intent = Some(intent.clone());
-        self.intent = Some(intent); // self.intent is deprecated but keep in sync for now
+        // Note: We can't modify context.settings anymore since Context is in an Arc
+        // The intent is stored in the Builder itself
+        self.intent = Some(intent);
         self
     }
 
@@ -409,7 +460,7 @@ impl Builder {
     pub fn from_json(json: &str) -> Result<Self> {
         Ok(Self {
             definition: serde_json::from_str(json).map_err(Error::JsonError)?,
-            context: Context::new(),
+            context: Rc::new(Context::new()),
             ..Default::default()
         })
     }
@@ -3784,6 +3835,46 @@ mod tests {
         let reader2 = Reader::from_stream(format, dest2)?;
         println!("\nreader2:{reader2}");
         assert_eq!(reader2.active_manifest().unwrap().ingredients().len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_shared_context() -> Result<()> {
+        use std::rc::Rc;
+
+        // Create a context with custom settings once
+        let ctx =
+            Rc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": false}}"#)?);
+
+        // Share it across multiple builders
+        let mut builder1 = Builder::from_shared_context(&ctx);
+        builder1.with_json(r#"{"title": "First Image"}"#)?;
+
+        let mut builder2 = Builder::from_shared_context(&ctx);
+        builder2.with_json(r#"{"title": "Second Image"}"#)?;
+
+        // Both builders share the same context settings
+        assert_eq!(
+            builder1.context().settings().verify.verify_after_sign,
+            builder2.context().settings().verify.verify_after_sign
+        );
+        assert!(!builder1.context().settings().verify.verify_after_sign);
+
+        // Context is immutable - this is the expected behavior
+        // If you need different settings, create a different Context
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_single_use_context() -> Result<()> {
+        // Single-use context - no Arc needed!
+        let builder = Builder::from_context(
+            Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?,
+        );
+
+        assert!(builder.context().settings().verify.verify_after_sign);
+
         Ok(())
     }
 }
