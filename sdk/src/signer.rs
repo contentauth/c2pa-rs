@@ -305,6 +305,56 @@ impl Signer for Box<dyn Signer> {
     }
 }
 
+impl Signer for Box<dyn Signer + Send + Sync> {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        (**self).sign(data)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        (**self).alg()
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        (**self).certs()
+    }
+
+    fn reserve_size(&self) -> usize {
+        (**self).reserve_size()
+    }
+
+    fn ocsp_val(&self) -> Option<Vec<u8>> {
+        (**self).ocsp_val()
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        (**self).direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        (**self).dynamic_assertions()
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        (**self).time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        (**self).timestamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        (**self).timestamp_request_body(message)
+    }
+
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        (**self).send_timestamp_request(message)
+    }
+
+    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
+        (**self).raw_signer()
+    }
+}
+
 impl RawSigner for Box<dyn Signer> {
     fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
         Ok(self.as_ref().sign(data)?)
@@ -414,7 +464,7 @@ impl AsyncSigner for BoxedAsyncSigner {
 }
 
 #[allow(dead_code)] // Not used in all configurations.
-pub(crate) struct RawSignerWrapper(pub(crate) Box<dyn RawSigner>);
+pub(crate) struct RawSignerWrapper(pub(crate) Box<dyn RawSigner + Send + Sync>);
 
 impl Signer for RawSignerWrapper {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {

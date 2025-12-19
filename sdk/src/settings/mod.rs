@@ -625,7 +625,7 @@ impl Settings {
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
     #[inline]
-    pub fn signer() -> Result<Box<dyn Signer>> {
+    pub fn signer() -> Result<Box<dyn Signer + Send + Sync>> {
         SignerSettings::signer()
     }
 }

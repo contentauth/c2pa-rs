@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::{
     collections::{HashMap, HashSet},
     io::{Read, Seek, Write},
-    rc::Rc,
+    sync::Arc,
 };
 
 use async_generic::async_generic;
@@ -314,7 +314,7 @@ pub struct Builder {
 
     // Contains the builder context
     #[serde(skip)]
-    context: Rc<Context>,
+    context: Arc<Context>,
 }
 
 impl AsRef<Builder> for Builder {
@@ -329,7 +329,7 @@ impl Builder {
     /// * A new [`Builder`].
     pub fn new() -> Self {
         Self {
-            context: Rc::new(Context::new()),
+            context: Arc::new(Context::new()),
             ..Default::default()
         }
     }
@@ -358,7 +358,7 @@ impl Builder {
     /// ```
     pub fn from_context(context: Context) -> Self {
         Self {
-            context: Rc::new(context),
+            context: Arc::new(context),
             ..Default::default()
         }
     }
@@ -388,9 +388,9 @@ impl Builder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_shared_context(context: &Rc<Context>) -> Self {
+    pub fn from_shared_context(context: &Arc<Context>) -> Self {
         Self {
-            context: Rc::clone(context),
+            context: Arc::clone(context),
             ..Default::default()
         }
     }
@@ -460,7 +460,7 @@ impl Builder {
     pub fn from_json(json: &str) -> Result<Self> {
         Ok(Self {
             definition: serde_json::from_str(json).map_err(Error::JsonError)?,
-            context: Rc::new(Context::new()),
+            context: Arc::new(Context::new()),
             ..Default::default()
         })
     }
@@ -3840,11 +3840,11 @@ mod tests {
 
     #[test]
     fn test_shared_context() -> Result<()> {
-        use std::rc::Rc;
+        use std::sync::Arc;
 
         // Create a context with custom settings once
         let ctx =
-            Rc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": false}}"#)?);
+            Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": false}}"#)?);
 
         // Share it across multiple builders
         let mut builder1 = Builder::from_shared_context(&ctx);

@@ -44,7 +44,7 @@ impl SignerInfo {
     }
 
     /// Create a signer from the SignerInfo
-    pub fn signer(&self) -> Result<Box<dyn Signer>> {
+    pub fn signer(&self) -> Result<Box<dyn Signer + Send + Sync>> {
         create_signer::from_keys(
             &self.sign_cert,
             &self.private_key,

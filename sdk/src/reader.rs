@@ -19,7 +19,7 @@ use std::fs::{read, File};
 use std::{
     collections::{HashMap, HashSet},
     io::{Read, Seek, Write},
-    rc::Rc,
+    sync::Arc,
 };
 
 use async_generic::async_generic;
@@ -117,7 +117,7 @@ pub struct Reader {
     assertion_values: HashMap<String, Value>,
 
     #[serde(skip)]
-    context: Rc<Context>,
+    context: Arc<Context>,
 }
 
 type ValidationFn =
@@ -161,7 +161,7 @@ impl Reader {
     /// ```
     pub fn from_context(context: Context) -> Self {
         Self {
-            context: Rc::new(context),
+            context: Arc::new(context),
             store: Store::new(),
             assertion_values: HashMap::new(),
             ..Default::default()
@@ -170,11 +170,11 @@ impl Reader {
 
     /// Create a new Reader with a shared Context.
     ///
-    /// This method allows sharing a single Context across multiple builders or readers.
-    /// The Rc is cloned internally, so you pass a reference.
+    /// This method allows sharing a single Context across multiple builders or readers,
+    /// even across threads. The Arc is cloned internally, so you pass a reference.
     ///
     /// # Arguments
-    /// * `context` - A reference to an `Rc<Context>` to share.
+    /// * `context` - A reference to an `Arc<Context>` to share.
     ///
     /// # Returns
     /// A new Reader
@@ -183,20 +183,20 @@ impl Reader {
     ///
     /// ```
     /// # use c2pa::{Context, Reader, Result};
-    /// # use std::rc::Rc;
+    /// # use std::sync::Arc;
     /// # fn main() -> Result<()> {
     /// // Create a shared context once
-    /// let ctx = Rc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
+    /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
     ///
-    /// // Share it across multiple readers
+    /// // Share it across multiple readers (even across threads!)
     /// let reader1 = Reader::from_shared_context(&ctx);
     /// let reader2 = Reader::from_shared_context(&ctx);
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_shared_context(context: &Rc<Context>) -> Self {
+    pub fn from_shared_context(context: &Arc<Context>) -> Self {
         Self {
-            context: Rc::clone(context),
+            context: Arc::clone(context),
             store: Store::new(),
             assertion_values: HashMap::new(),
             ..Default::default()
