@@ -70,7 +70,7 @@ A future lower level API will wrap the Claim and Store structures providing a si
 
 ## Asset objects (not directly related to the above)
 
-An Asset object creates a semi-persistent layer over the asset_io traits. Currently we parse entire asset every time we need to access information about it. We have separate passes for XMP, JUMBF, Offset/box generation & etc..
+An Asset object creates a persistent layer over the asset_io traits. Currently we parse entire asset every time we need to access information about it. We have separate passes for XMP, JUMBF, Offset/box generation & etc..
 
 - The details of file i/o, in memory, streamed, or remote web access are handled here. 
 - This will parse the asset, extract XMP, and C2PA data and allow 
