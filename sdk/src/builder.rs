@@ -3877,4 +3877,81 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_builder_is_send_sync() {
+        // Compile-time assertion that Builder is Send + Sync
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+
+        assert_send::<Builder>();
+        assert_sync::<Builder>();
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))] // WASM doesn't support threads
+    fn test_send_builder_between_threads() -> Result<()> {
+        use std::{sync::Arc, thread};
+
+        // Create a builder in the main thread
+        let ctx = Arc::new(Context::new());
+        let mut builder = Builder::from_shared_context(&ctx);
+        builder.with_json(r#"{"title": "Created in main thread"}"#)?;
+
+        // Send the builder to another thread (tests Send trait)
+        let handle = thread::spawn(move || {
+            // Modify the builder in the spawned thread
+            builder.definition.title = Some("Modified in spawned thread".to_string());
+            builder
+        });
+
+        // Receive the builder back
+        let builder = handle.join().unwrap();
+        assert_eq!(
+            builder.definition.title,
+            Some("Modified in spawned thread".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))] // WASM doesn't support threads
+    fn test_multithreaded_context_sharing() -> Result<()> {
+        use std::{sync::Arc, thread};
+
+        // Create a shared context once
+        let ctx =
+            Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": false}}"#)?);
+
+        // Spawn multiple threads, each creating a builder with the shared context
+        let mut handles = vec![];
+        for i in 0..4 {
+            let ctx = Arc::clone(&ctx);
+            let handle = thread::spawn(move || {
+                let mut builder = Builder::from_shared_context(&ctx);
+                builder
+                    .with_json(&format!(r#"{{"title": "Image {}"}}"#, i))
+                    .unwrap();
+
+                // Verify the context settings are accessible
+                assert!(!builder.context().settings().verify.verify_after_sign);
+                assert_eq!(builder.definition.title, Some(format!("Image {}", i)));
+
+                i // Return the thread number for verification
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete and verify they ran
+        let mut results = vec![];
+        for handle in handles {
+            results.push(handle.join().unwrap());
+        }
+
+        // Verify all threads completed successfully
+        assert_eq!(results, vec![0, 1, 2, 3]);
+
+        Ok(())
+    }
 }

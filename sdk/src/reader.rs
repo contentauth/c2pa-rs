@@ -1479,4 +1479,14 @@ pub mod tests {
         //Err(Error::NotImplemented("foo".to_string()))
         Ok(())
     }
+
+    #[test]
+    fn test_reader_is_send_sync() {
+        // Compile-time assertion that Reader is Send + Sync
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+
+        assert_send::<Reader>();
+        assert_sync::<Reader>();
+    }
 }
