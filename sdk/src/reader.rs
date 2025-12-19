@@ -14,10 +14,6 @@
 //! The Reader provides a way to read a manifest store from an asset.
 //! It also performs validation on the manifest store.
 
-// Context is Send + Sync through explicit trait bounds, but Clippy can't automatically
-// verify this through the enum variants containing trait objects
-#![cfg_attr(not(target_arch = "wasm32"), allow(clippy::arc_with_non_send_sync))]
-
 #[cfg(feature = "file_io")]
 use std::fs::{read, File};
 use std::{
