@@ -21,11 +21,11 @@ use crate::{
         AsyncRawSigner, SigningAlg,
     },
     signer::RawSignerWrapper,
-    AsyncSigner, Result, Signer,
+    AsyncSigner, BoxedSigner, Result,
 };
 
 /// Creates a [`Signer`] instance for testing purposes using test credentials.
-pub(crate) fn test_signer(alg: SigningAlg) -> Box<dyn Signer + Send + Sync> {
+pub(crate) fn test_signer(alg: SigningAlg) -> BoxedSigner {
     let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
     Box::new(RawSignerWrapper(
@@ -38,7 +38,7 @@ pub(crate) fn test_signer(alg: SigningAlg) -> Box<dyn Signer + Send + Sync> {
 pub(crate) fn test_cawg_signer(
     alg: SigningAlg,
     referenced_assertions: &[&str],
-) -> Result<Box<dyn Signer + Send + Sync>> {
+) -> Result<BoxedSigner> {
     let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
     let c2pa_raw_signer =

@@ -190,6 +190,14 @@ pub use utils::mime::format_from_path;
 #[doc(inline)]
 pub use validation_results::{ValidationResults, ValidationState};
 
+// Type alias for boxed signers with conditional Send + Sync bounds
+// On WASM (single-threaded), Send + Sync are not required
+// On other platforms, they enable thread-safe sharing with Arc
+#[cfg(not(target_arch = "wasm32"))]
+pub type BoxedSigner = Box<dyn Signer + Send + Sync>;
+#[cfg(target_arch = "wasm32")]
+pub type BoxedSigner = Box<dyn Signer>;
+
 // Internal modules
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;

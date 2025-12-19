@@ -13,7 +13,7 @@
 
 #![deny(missing_docs)]
 
-//! The `create_signer` module provides a way to obtain a [`Signer`]
+//! The `create_signer` module provides a way to obtain a [`Signer`](crate::Signer)
 //! instance for each signing format supported by this crate.
 #[cfg(feature = "file_io")]
 use std::path::Path;
@@ -22,10 +22,10 @@ use crate::{
     crypto::raw_signature::{signer_from_cert_chain_and_private_key, SigningAlg},
     error::Result,
     signer::RawSignerWrapper,
-    Signer,
+    BoxedSigner,
 };
 
-/// Creates a [`Signer`] instance using signing certificate and private key
+/// Creates a [`Signer`](crate::Signer) instance using signing certificate and private key
 /// as byte slices.
 ///
 /// The signing certificate and private key are passed to the underlying
@@ -42,13 +42,13 @@ pub fn from_keys(
     pkey: &[u8],
     alg: SigningAlg,
     tsa_url: Option<String>,
-) -> Result<Box<dyn Signer + Send + Sync>> {
+) -> Result<BoxedSigner> {
     Ok(Box::new(RawSignerWrapper(
         signer_from_cert_chain_and_private_key(signcert, pkey, alg, tsa_url)?,
     )))
 }
 
-/// Creates a [`Signer`] instance using signing certificate and
+/// Creates a [`Signer`](crate::Signer) instance using signing certificate and
 /// private key files.
 ///
 /// # Arguments
@@ -63,7 +63,7 @@ pub fn from_files<P: AsRef<Path>>(
     pkey_path: P,
     alg: SigningAlg,
     tsa_url: Option<String>,
-) -> Result<Box<dyn Signer + Send + Sync>> {
+) -> Result<BoxedSigner> {
     let cert_chain = std::fs::read(signcert_path)?;
     let private_key = std::fs::read(pkey_path)?;
 
