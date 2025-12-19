@@ -11,10 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// Context is Send + Sync through explicit trait bounds, but Clippy can't automatically
-// verify this through the enum variants containing trait objects
-#![cfg_attr(not(target_arch = "wasm32"), allow(clippy::arc_with_non_send_sync))]
-
 #[cfg(feature = "file_io")]
 use std::path::{Path, PathBuf};
 use std::{
