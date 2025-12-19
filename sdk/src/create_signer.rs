@@ -42,7 +42,7 @@ pub fn from_keys(
     pkey: &[u8],
     alg: SigningAlg,
     tsa_url: Option<String>,
-) -> Result<Box<dyn Signer>> {
+) -> Result<Box<dyn Signer + Send + Sync>> {
     Ok(Box::new(RawSignerWrapper(
         signer_from_cert_chain_and_private_key(signcert, pkey, alg, tsa_url)?,
     )))
@@ -63,7 +63,7 @@ pub fn from_files<P: AsRef<Path>>(
     pkey_path: P,
     alg: SigningAlg,
     tsa_url: Option<String>,
-) -> Result<Box<dyn Signer>> {
+) -> Result<Box<dyn Signer + Send + Sync>> {
     let cert_chain = std::fs::read(signcert_path)?;
     let private_key = std::fs::read(pkey_path)?;
 

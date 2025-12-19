@@ -12,7 +12,7 @@ use crate::{
 /// Internal state for sync HTTP resolver selection.
 enum SyncResolverState {
     /// User-provided custom resolver.
-    Custom(Box<dyn SyncHttpResolver>),
+    Custom(Box<dyn SyncHttpResolver + Send + Sync>),
     /// Default resolver with lazy initialization.
     Default(OnceLock<RestrictedResolver<SyncGenericResolver>>),
 }
@@ -20,7 +20,7 @@ enum SyncResolverState {
 /// Internal state for async HTTP resolver selection.
 enum AsyncResolverState {
     /// User-provided custom resolver.
-    Custom(Box<dyn AsyncHttpResolver>),
+    Custom(Box<dyn AsyncHttpResolver + Send + Sync>),
     /// Default resolver with lazy initialization.
     Default(OnceLock<RestrictedResolver<AsyncGenericResolver>>),
 }
@@ -28,10 +28,10 @@ enum AsyncResolverState {
 /// Internal state for signer selection.
 enum SignerState {
     /// User-provided custom signer.
-    Custom(Box<dyn Signer>),
+    Custom(Box<dyn Signer + Send + Sync>),
     /// Signer created from context's settings with lazy initialization.
     /// The Result is cached so we only attempt creation once.
-    FromSettings(OnceLock<Result<Box<dyn Signer>>>),
+    FromSettings(OnceLock<Result<Box<dyn Signer + Send + Sync>>>),
 }
 
 /// A trait for types that can be converted into Settings.
@@ -178,6 +178,13 @@ pub struct Context {
     _signer_async: Option<Box<dyn AsyncSigner>>,
 }
 
+// Safety: Context is Send + Sync because:
+// - All trait objects (Signer, HttpResolver) now require Send + Sync bounds
+// - Settings is Send + Sync
+// - OnceLock is Send + Sync
+unsafe impl Send for Context {}
+unsafe impl Sync for Context {}
+
 impl Default for Context {
     fn default() -> Self {
         Self {
@@ -275,7 +282,7 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `SyncHttpResolver`
-    pub fn with_resolver<T: SyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
+    pub fn with_resolver<T: SyncHttpResolver + Send + Sync + 'static>(mut self, resolver: T) -> Self {
         self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
         self
     }
@@ -287,7 +294,7 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `AsyncHttpResolver`
-    pub fn with_resolver_async<T: AsyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
+    pub fn with_resolver_async<T: AsyncHttpResolver + Send + Sync + 'static>(mut self, resolver: T) -> Self {
         self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
         self
     }
@@ -356,7 +363,7 @@ impl Context {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_signer<T: Signer + 'static>(mut self, signer: T) -> Self {
+    pub fn with_signer<T: Signer + Send + Sync + 'static>(mut self, signer: T) -> Self {
         self.signer = SignerState::Custom(Box::new(signer));
         self
     }
