@@ -29,7 +29,7 @@ use signer::SignerSettings;
 
 use crate::{
     crypto::base64, http::restricted::HostPattern, settings::builder::BuilderSettings, Error,
-    Result, Signer,
+    Result,
 };
 
 const VERSION: u32 = 1;
@@ -625,7 +625,7 @@ impl Settings {
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
     #[inline]
-    pub fn signer() -> Result<Box<dyn Signer + Send + Sync>> {
+    pub fn signer() -> Result<crate::BoxedSigner> {
         SignerSettings::signer()
     }
 }

@@ -9,10 +9,26 @@ use crate::{
     AsyncSigner, Error, Result, Signer,
 };
 
+// Type aliases for boxed trait objects with conditional Send + Sync bounds
+#[cfg(not(target_arch = "wasm32"))]
+type BoxedSigner = Box<dyn Signer + Send + Sync>;
+#[cfg(target_arch = "wasm32")]
+type BoxedSigner = Box<dyn Signer>;
+
+#[cfg(not(target_arch = "wasm32"))]
+type BoxedSyncResolver = Box<dyn SyncHttpResolver + Send + Sync>;
+#[cfg(target_arch = "wasm32")]
+type BoxedSyncResolver = Box<dyn SyncHttpResolver>;
+
+#[cfg(not(target_arch = "wasm32"))]
+type BoxedAsyncResolver = Box<dyn AsyncHttpResolver + Send + Sync>;
+#[cfg(target_arch = "wasm32")]
+type BoxedAsyncResolver = Box<dyn AsyncHttpResolver>;
+
 /// Internal state for sync HTTP resolver selection.
 enum SyncResolverState {
     /// User-provided custom resolver.
-    Custom(Box<dyn SyncHttpResolver + Send + Sync>),
+    Custom(BoxedSyncResolver),
     /// Default resolver with lazy initialization.
     Default(OnceLock<RestrictedResolver<SyncGenericResolver>>),
 }
@@ -20,7 +36,7 @@ enum SyncResolverState {
 /// Internal state for async HTTP resolver selection.
 enum AsyncResolverState {
     /// User-provided custom resolver.
-    Custom(Box<dyn AsyncHttpResolver + Send + Sync>),
+    Custom(BoxedAsyncResolver),
     /// Default resolver with lazy initialization.
     Default(OnceLock<RestrictedResolver<AsyncGenericResolver>>),
 }
@@ -28,10 +44,10 @@ enum AsyncResolverState {
 /// Internal state for signer selection.
 enum SignerState {
     /// User-provided custom signer.
-    Custom(Box<dyn Signer + Send + Sync>),
+    Custom(BoxedSigner),
     /// Signer created from context's settings with lazy initialization.
     /// The Result is cached so we only attempt creation once.
-    FromSettings(OnceLock<Result<Box<dyn Signer + Send + Sync>>>),
+    FromSettings(OnceLock<Result<BoxedSigner>>),
 }
 
 /// A trait for types that can be converted into Settings.
@@ -178,11 +194,14 @@ pub struct Context {
     _signer_async: Option<Box<dyn AsyncSigner>>,
 }
 
-// Safety: Context is Send + Sync because:
-// - All trait objects (Signer, HttpResolver) now require Send + Sync bounds
+// Safety: Context is Send + Sync on non-WASM targets because:
+// - All trait objects (Signer, HttpResolver) have MaybeSend + MaybeSync bounds
 // - Settings is Send + Sync
 // - OnceLock is Send + Sync
+// On WASM targets, these impls are not needed as WASM is single-threaded
+#[cfg(not(target_arch = "wasm32"))]
 unsafe impl Send for Context {}
+#[cfg(not(target_arch = "wasm32"))]
 unsafe impl Sync for Context {}
 
 impl Default for Context {
@@ -282,7 +301,17 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `SyncHttpResolver`
-    pub fn with_resolver<T: SyncHttpResolver + Send + Sync + 'static>(mut self, resolver: T) -> Self {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_resolver<T: SyncHttpResolver + Send + Sync + 'static>(
+        mut self,
+        resolver: T,
+    ) -> Self {
+        self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn with_resolver<T: SyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
         self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
         self
     }
@@ -294,7 +323,17 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `AsyncHttpResolver`
-    pub fn with_resolver_async<T: AsyncHttpResolver + Send + Sync + 'static>(mut self, resolver: T) -> Self {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_resolver_async<T: AsyncHttpResolver + Send + Sync + 'static>(
+        mut self,
+        resolver: T,
+    ) -> Self {
+        self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn with_resolver_async<T: AsyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
         self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
         self
     }
@@ -363,7 +402,14 @@ impl Context {
     /// # Ok(())
     /// # }
     /// ```
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn with_signer<T: Signer + Send + Sync + 'static>(mut self, signer: T) -> Self {
+        self.signer = SignerState::Custom(Box::new(signer));
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn with_signer<T: Signer + 'static>(mut self, signer: T) -> Self {
         self.signer = SignerState::Custom(Box::new(signer));
         self
     }

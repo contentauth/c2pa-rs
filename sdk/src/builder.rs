@@ -369,7 +369,7 @@ impl Builder {
     /// The Rc is cloned internally, so you pass a reference.
     ///
     /// # Arguments
-    /// * `context` - A reference to an `Rc<Context>` to share.
+    /// * `context` - A reference to an `Arc<Context>` to share.
     ///
     /// # Returns
     /// * A new [`Builder`].
@@ -377,7 +377,7 @@ impl Builder {
     /// # Example
     /// ```
     /// # use c2pa::{Context, Builder, Result};
-    /// # use std::rc::Rc;
+    /// # use std::sync::Arc;
     /// # fn main() -> Result<()> {
     /// // Create a shared context once
     /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
