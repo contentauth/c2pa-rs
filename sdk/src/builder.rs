@@ -366,32 +366,6 @@ impl Builder {
         &self.context
     }
 
-    /// Returns a mutable reference to the [`Context`] used by this [`Builder`].
-    ///
-    /// This allows modification of settings and other context configuration after
-    /// the builder has been created.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use c2pa::{Context, Builder, Result};
-    /// # fn main() -> Result<()> {
-    /// let context = Context::new();
-    /// let mut builder = Builder::from_context(context);
-    ///
-    /// // Modify settings
-    /// builder
-    ///     .context_mut()
-    ///     .settings_mut()
-    ///     .verify
-    ///     .verify_after_sign = false;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn context_mut(&mut self) -> &mut Context {
-        &mut self.context
-    }
-
     /// Sets the [`BuilderIntent`] for this [`Builder`].
     ///
     /// An intent lets the API know what kind of manifest to create.
