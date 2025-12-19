@@ -67,14 +67,6 @@ pub trait SyncHttpResolver {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError>;
-
-    /// Returns true if the given URI is allowed by this resolver's policy.
-    ///
-    /// Default implementation allows all URIs. Override this method to implement
-    /// host filtering or other URI-based access control.
-    fn is_uri_allowed(&self, _uri: &http::Uri) -> bool {
-        true
-    }
 }
 
 /// A resolver for non-blocking (async) HTTP requests.
@@ -89,14 +81,6 @@ pub trait AsyncHttpResolver {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError>;
-
-    /// Returns true if the given URI is allowed by this resolver's policy.
-    ///
-    /// Default implementation allows all URIs. Override this method to implement
-    /// host filtering or other URI-based access control.
-    fn is_uri_allowed(&self, _uri: &http::Uri) -> bool {
-        true
-    }
 }
 
 /// A generic resolver for [`SyncHttpResolver`].

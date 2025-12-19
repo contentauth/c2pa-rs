@@ -16,10 +16,6 @@
 //! This module provides a [`RestrictedResolver`] that wraps an existing [`SyncHttpResolver`]
 //! or [`AsyncHttpResolver`] to enforce host filtering.
 //!
-//! Note: The built-in [`SyncGenericResolver`] and [`AsyncGenericResolver`] already support
-//! host filtering natively. You only need [`RestrictedResolver`] if you want to wrap a
-//! custom resolver implementation with host filtering.
-//!
 //! The SDK can also manage an allowed list for you via the [`Core::allowed_network_hosts`] setting.
 //!
 //! # Why restrict network requests?
@@ -94,6 +90,14 @@ impl<T> RestrictedResolver<T> {
     pub fn allowed_hosts(&self) -> Option<&[HostPattern]> {
         self.allowed_hosts.as_deref()
     }
+
+    /// Returns true if the given URI is allowed by this resolver's policy.
+    fn is_uri_allowed(&self, uri: &Uri) -> bool {
+        self.allowed_hosts
+            .as_ref()
+            .map(|hosts| is_uri_allowed(hosts, uri))
+            .unwrap_or(true) // None means allow all
+    }
 }
 
 impl<T: SyncHttpResolver> SyncHttpResolver for RestrictedResolver<T> {
@@ -107,13 +111,6 @@ impl<T: SyncHttpResolver> SyncHttpResolver for RestrictedResolver<T> {
             });
         }
         self.inner.http_resolve(request)
-    }
-
-    fn is_uri_allowed(&self, uri: &Uri) -> bool {
-        self.allowed_hosts
-            .as_ref()
-            .map(|hosts| is_uri_allowed(hosts, uri))
-            .unwrap_or(true) // None means allow all
     }
 }
 
@@ -130,13 +127,6 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RestrictedResolver<T> {
             });
         }
         self.inner.http_resolve_async(request).await
-    }
-
-    fn is_uri_allowed(&self, uri: &Uri) -> bool {
-        self.allowed_hosts
-            .as_ref()
-            .map(|hosts| is_uri_allowed(hosts, uri))
-            .unwrap_or(true) // None means allow all
     }
 }
 
