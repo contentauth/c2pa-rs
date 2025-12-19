@@ -194,13 +194,39 @@ pub struct Context {
     _signer_async: Option<Box<dyn AsyncSigner>>,
 }
 
-// Safety: Context is Send + Sync on non-WASM targets because:
-// - All trait objects (Signer, HttpResolver) have MaybeSend + MaybeSync bounds
-// - Settings is Send + Sync
-// - OnceLock is Send + Sync
-// On WASM targets, these impls are not needed as WASM is single-threaded
+// SAFETY: Context is Send + Sync on non-WASM targets.
+//
+// Rust's compiler cannot automatically prove Send + Sync for Context because it contains
+// enum variants with trait objects (Box<dyn Trait>). The compiler conservatively assumes
+// these might not be Send + Sync even though we've explicitly added those bounds.
+//
+// This manual implementation is safe because ALL fields are Send + Sync:
+//
+// 1. `settings: Settings`
+//    - Derived Send + Sync (contains only Send + Sync types)
+//
+// 2. `sync_resolver: SyncResolverState`
+//    - Custom(Box<dyn SyncHttpResolver + Send + Sync>) - explicitly bounded
+//    - Default(OnceLock<RestrictedResolver<T>>) - Send + Sync when T is Send + Sync
+//
+// 3. `async_resolver: AsyncResolverState`
+//    - Custom(Box<dyn AsyncHttpResolver + Send + Sync>) - explicitly bounded
+//    - Default(OnceLock<RestrictedResolver<T>>) - Send + Sync when T is Send + Sync
+//
+// 4. `signer: SignerState`
+//    - Custom(Box<dyn Signer + Send + Sync>) - explicitly bounded
+//    - FromSettings(OnceLock<Result<Box<dyn Signer + Send + Sync>>>) - explicitly bounded
+//
+// 5. `_signer_async: Option<Box<dyn AsyncSigner>>`
+//    - Currently unused field for future async signer support
+//
+// These impls enable Arc<Context> to be shared across threads without Clippy warnings,
+// which is the intended use case for multi-threaded applications and FFI scenarios.
+//
+// On WASM targets, these impls are not needed as WASM is single-threaded.
 #[cfg(not(target_arch = "wasm32"))]
 unsafe impl Send for Context {}
+
 #[cfg(not(target_arch = "wasm32"))]
 unsafe impl Sync for Context {}
 
