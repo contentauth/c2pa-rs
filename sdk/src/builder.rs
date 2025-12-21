@@ -867,7 +867,6 @@ impl Builder {
             // we should be able to call Reader::from_stream and then convert to Builder
             // but we need to disable validation since we are not signing yet
             // so we will read the store directly here
-            //crate::Reader::from_stream("application/c2pa", stream).and_then(|r| r.into_builder())
             let settings = crate::settings::get_settings().unwrap_or_default();
             let mut http_resolver = RestrictedResolver::new(SyncGenericResolver::new());
             http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
@@ -1814,9 +1813,7 @@ impl Builder {
         let mut store = Store::new();
         store.commit_claim(claim)?;
 
-        //store.to_jumbf_internal(1000)
         store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
-        //store.get_box_hashed_embeddable_manifest(signer.as_ref(), settings)
     }
 }
 
