@@ -850,10 +850,23 @@ impl Reader {
         )
     }
 
-    /// Uses the similar cycle detection strategy as Store::get_claim_referenced_manifests_impl:
+    /// Uses the similar cycle detection strategy as Store::get_claim_referenced_manifests_impl
+    fn collect_ingredient_claims_for_store_impl(
+        store: &Store,
+        claim: &Claim,
+        active_claim: &mut Claim,
+        visited: &mut std::collections::HashSet<String>,
+        path: &mut Vec<String>,
+    ) -> Result<()> {
+        Self::collect_ingredient_claims_impl(store, claim, active_claim, visited, path)
+    }
+
+    /// Shared implementation for recursively collecting ingredient claims.
+    ///
+    /// Uses path-based cycle detection similar to Store::get_claim_referenced_manifests_impl:
     /// - `visited`: Claims that have been fully processed (allows DAG convergence)
     /// - `path`: Current traversal path to detect and skip cycles
-    fn collect_ingredient_claims_for_store_impl(
+    fn collect_ingredient_claims_impl(
         store: &Store,
         claim: &Claim,
         active_claim: &mut Claim,
@@ -868,7 +881,6 @@ impl Reader {
 
         // Check for cycle: is this claim already in our current path?
         // If so, skip it silently (validation should have already caught this when enabled)
-        // If we don't skip, the check seems to be too strict?
         if path.iter().any(|p| p == claim_label) {
             return Ok(());
         }
@@ -879,7 +891,7 @@ impl Reader {
             let ingredient_label = ingredient.label();
 
             if let Some(ingredient_claim) = store.get_claim(ingredient_label) {
-                Self::collect_ingredient_claims_for_store_impl(
+                Self::collect_ingredient_claims_impl(
                     store,
                     ingredient_claim,
                     active_claim,
@@ -1146,9 +1158,6 @@ impl Reader {
 
     /// Recursively collect all ingredient claims and add them to the primary claim
     ///
-    /// Uses path-based cycle detection similar to Store::get_claim_referenced_manifests_impl:
-    /// - `visited`: Claims that have been fully processed (allows DAG convergence)
-    /// - `path`: Current traversal path to detect and skip cycles
     fn collect_ingredient_claims_recursive(
         &self,
         claim: &Claim,
@@ -1156,50 +1165,13 @@ impl Reader {
         visited: &mut std::collections::HashSet<String>,
         path: &mut Vec<String>,
     ) -> Result<()> {
-        let claim_label = claim.label();
-
-        if visited.contains(claim_label) {
-            return Ok(());
-        }
-
-        // Check for cycle: is this claim already in our current path?
-        // If so, skip it silently (validation should have already caught this if enabled)
-        // If not skipped, the check may be too strict (would error existing test)
-        if path.iter().any(|p| p == claim_label) {
-            return Ok(());
-        }
-
-        // Add to current path
-        path.push(claim_label.to_string());
-
-        // Process ingredients
-        for ingredient in claim.claim_ingredients() {
-            let ingredient_label = ingredient.label();
-
-            if let Some(ingredient_claim) = self.store.get_claim(ingredient_label) {
-                // Collect nested ingredients
-                self.collect_ingredient_claims_recursive(
-                    ingredient_claim,
-                    active_claim,
-                    visited,
-                    path,
-                )?;
-
-                // Then add this ingredient claim to the primary claim
-                active_claim.replace_ingredient_or_insert(
-                    ingredient_claim.label().to_string(),
-                    ingredient_claim.clone(),
-                );
-            }
-        }
-
-        // Mark as fully processed
-        visited.insert(claim_label.to_string());
-
-        // Remove from current path
-        path.pop();
-
-        Ok(())
+        Self::collect_ingredient_claims_impl(
+            &self.store,
+            claim,
+            active_claim,
+            visited,
+            path,
+        )
     }
 }
 
