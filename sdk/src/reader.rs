@@ -1009,7 +1009,11 @@ impl Reader {
                                 let mut active_claim = claim.clone();
 
                                 // Recursion happens here for claims collection - re-embed nested claims from store
-                                Self::collect_ingredient_claims_for_store(&self.store, &claim, &mut active_claim)?;
+                                Self::collect_ingredient_claims_for_store(
+                                    &self.store,
+                                    claim,
+                                    &mut active_claim,
+                                )?;
 
                                 // Add the main claim with all nested ingredients
                                 ingredient_store.commit_claim(active_claim)?;

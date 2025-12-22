@@ -4,7 +4,6 @@
 // or the MIT license (http://opensource.org/licenses/MIT),
 // at your option.
 
-
 use std::io::{Cursor, Seek};
 
 use c2pa::{
@@ -72,16 +71,25 @@ fn test_nested_ingredients_reconstruction_from_store() -> Result<()> {
         .expect("Should have active manifest");
 
     // Verify we have ingredients at level 3
-    assert!(!active_manifest.ingredients().is_empty(), "Level 3 should have ingredients");
-    assert_eq!(active_manifest.ingredients().len(), 1, "Level 3 should have exactly 1 ingredient");
+    assert!(
+        !active_manifest.ingredients().is_empty(),
+        "Level 3 should have ingredients"
+    );
+    assert_eq!(
+        active_manifest.ingredients().len(),
+        1,
+        "Level 3 should have exactly 1 ingredient"
+    );
 
     // Get the level 2 ingredient (it will be the parent ingredient)
     let level2_ingredient = &active_manifest.ingredients()[0];
 
     // Verify that the level 2 ingredient has its own nested ingredient (level 1)
-    let level2_active_manifest = level2_ingredient.active_manifest()
+    let level2_active_manifest = level2_ingredient
+        .active_manifest()
         .expect("Level 2 ingredient should have active manifest");
-    let level2_manifest = reader.get_manifest(level2_active_manifest)
+    let level2_manifest = reader
+        .get_manifest(level2_active_manifest)
         .expect("Should be able to get level 2 ingredient's manifest");
 
     assert!(
@@ -186,9 +194,11 @@ fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
     let level2_ingredient = &active_manifest.ingredients()[0];
 
     // Verify nested ingredient is preserved through Reader to Builder conversion
-    let level2_active_manifest = level2_ingredient.active_manifest()
+    let level2_active_manifest = level2_ingredient
+        .active_manifest()
         .expect("Level 2 ingredient should have active manifest");
-    let level2_manifest = reader.get_manifest(level2_active_manifest)
+    let level2_manifest = reader
+        .get_manifest(level2_active_manifest)
         .expect("Should be able to get level 2 ingredient's manifest");
     assert!(
         !level2_manifest.ingredients().is_empty(),
@@ -327,10 +337,14 @@ fn test_deeply_nested_ingredients() -> Result<()> {
         );
 
         if level > 1 {
-            let active_manifest_label = ingredient.active_manifest()
-                .expect(&format!("Ingredient at level {} should have active manifest", level));
-            current_manifest = reader.get_manifest(active_manifest_label)
-                .expect(&format!("Should be able to get manifest at level {}", level));
+            let active_manifest_label = ingredient.active_manifest().expect(&format!(
+                "Ingredient at level {} should have active manifest",
+                level
+            ));
+            current_manifest = reader.get_manifest(active_manifest_label).expect(&format!(
+                "Should be able to get manifest at level {}",
+                level
+            ));
         }
     }
 
@@ -396,4 +410,3 @@ fn test_ingredient_without_nested_ingredients() -> Result<()> {
 
     Ok(())
 }
-
