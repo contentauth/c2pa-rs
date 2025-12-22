@@ -1157,7 +1157,6 @@ impl Reader {
     }
 
     /// Recursively collect all ingredient claims and add them to the primary claim
-    ///
     fn collect_ingredient_claims_recursive(
         &self,
         claim: &Claim,
@@ -1165,13 +1164,7 @@ impl Reader {
         visited: &mut std::collections::HashSet<String>,
         path: &mut Vec<String>,
     ) -> Result<()> {
-        Self::collect_ingredient_claims_impl(
-            &self.store,
-            claim,
-            active_claim,
-            visited,
-            path,
-        )
+        Self::collect_ingredient_claims_impl(&self.store, claim, active_claim, visited, path)
     }
 }
 
