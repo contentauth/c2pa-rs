@@ -7413,7 +7413,8 @@ pub mod tests {
         let http_resolver = SyncGenericResolver::new();
 
         // test adding to actual image
-        let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
+        let (format, mut input_stream, mut output_stream) =
+            create_test_streams("BigBuckBunny_320x180.mp4");
 
         // use Merkle tree with 1024 byte chunks
         crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
