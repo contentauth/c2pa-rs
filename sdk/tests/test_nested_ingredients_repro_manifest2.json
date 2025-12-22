@@ -1,5 +1,5 @@
 {
-  "active_manifest": "urn:c2pa:b7881246-7d0a-42af-bdfc-d3cfc1347108",
+  "active_manifest": "urn:c2pa:f04bd4c4-12d7-46ad-b664-350d9139f806",
   "manifests": {
     "urn:uuid:b5820ce6-3e0f-4e6e-8ad5-e52ccbbe97b6": {
       "claim_generator": "Adobe_Firefly",
@@ -34,11 +34,11 @@
               {
                 "action": "c2pa.opened",
                 "parameters": {
-                  "com.adobe.details": "Gemini Flash",
                   "com.adobe.modelVersion": "nano-banana-2",
                   "com.adobe.digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
                   "com.adobe.type": "remoteProvider.3rdParty",
-                  "com.adobe.modelId": "gemini-flash"
+                  "com.adobe.modelId": "gemini-flash",
+                  "com.adobe.details": "Gemini Flash"
                 }
               }
             ],
@@ -55,7 +55,7 @@
       },
       "label": "urn:uuid:b5820ce6-3e0f-4e6e-8ad5-e52ccbbe97b6"
     },
-    "urn:c2pa:b7881246-7d0a-42af-bdfc-d3cfc1347108": {
+    "urn:c2pa:f04bd4c4-12d7-46ad-b664-350d9139f806": {
       "claim_generator_info": [
         {
           "name": "c2pa-rs testing",
@@ -64,12 +64,12 @@
           "org.contentauth.c2pa_rs": "0.73.1"
         }
       ],
-      "instance_id": "xmp:iid:9934b273-9707-45be-8d7f-baec01c30d8c",
+      "instance_id": "xmp:iid:65ca5d0d-ef89-48fc-b26f-472710fa6de1",
       "ingredients": [
         {
           "title": "Sundae Ice Cream 2",
           "format": "image/png",
-          "instance_id": "xmp:iid:f8341bdd-e461-4e69-9f2f-d3dfd88ce2c2",
+          "instance_id": "xmp:iid:246a4166-f421-4c19-a322-b81b66a9bde4",
           "relationship": "parentOf",
           "active_manifest": "urn:uuid:b5820ce6-3e0f-4e6e-8ad5-e52ccbbe97b6",
           "validation_results": {
@@ -206,7 +206,7 @@
                   "ingredients": [
                     {
                       "url": "self#jumbf=c2pa.assertions/c2pa.ingredient.v3",
-                      "hash": "6zVQfAW1dBA3jx8+IGG8cGwbvBKQnSKnmQZ+8nCLCys="
+                      "hash": "h61ZbawfS5LC9AvnH75qHVujDEllr0pYsKIp53EpJW4="
                     }
                   ]
                 }
@@ -221,7 +221,7 @@
         "common_name": "C2PA Signer",
         "cert_serial_number": "638838410810235485828984295321338730070538954823"
       },
-      "label": "urn:c2pa:b7881246-7d0a-42af-bdfc-d3cfc1347108"
+      "label": "urn:c2pa:f04bd4c4-12d7-46ad-b664-350d9139f806"
     }
   },
   "validation_status": [
@@ -246,37 +246,37 @@
       "success": [
         {
           "code": "signingCredential.trusted",
-          "url": "self#jumbf=/c2pa/urn:c2pa:b7881246-7d0a-42af-bdfc-d3cfc1347108/c2pa.signature",
+          "url": "self#jumbf=/c2pa/urn:c2pa:f04bd4c4-12d7-46ad-b664-350d9139f806/c2pa.signature",
           "explanation": "signing certificate trusted, found in System trust anchors"
         },
         {
           "code": "claimSignature.insideValidity",
-          "url": "self#jumbf=/c2pa/urn:c2pa:b7881246-7d0a-42af-bdfc-d3cfc1347108/c2pa.signature",
+          "url": "self#jumbf=/c2pa/urn:c2pa:f04bd4c4-12d7-46ad-b664-350d9139f806/c2pa.signature",
           "explanation": "claim signature valid"
         },
         {
           "code": "claimSignature.validated",
-          "url": "self#jumbf=/c2pa/urn:c2pa:b7881246-7d0a-42af-bdfc-d3cfc1347108/c2pa.signature",
+          "url": "self#jumbf=/c2pa/urn:c2pa:f04bd4c4-12d7-46ad-b664-350d9139f806/c2pa.signature",
           "explanation": "claim signature valid"
         },
         {
           "code": "assertion.hashedURI.match",
-          "url": "self#jumbf=/c2pa/urn:c2pa:b7881246-7d0a-42af-bdfc-d3cfc1347108/c2pa.assertions/c2pa.hash.data",
+          "url": "self#jumbf=/c2pa/urn:c2pa:f04bd4c4-12d7-46ad-b664-350d9139f806/c2pa.assertions/c2pa.hash.data",
           "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.hash.data"
         },
         {
           "code": "assertion.hashedURI.match",
-          "url": "self#jumbf=/c2pa/urn:c2pa:b7881246-7d0a-42af-bdfc-d3cfc1347108/c2pa.assertions/c2pa.ingredient.v3",
+          "url": "self#jumbf=/c2pa/urn:c2pa:f04bd4c4-12d7-46ad-b664-350d9139f806/c2pa.assertions/c2pa.ingredient.v3",
           "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.ingredient.v3"
         },
         {
           "code": "assertion.hashedURI.match",
-          "url": "self#jumbf=/c2pa/urn:c2pa:b7881246-7d0a-42af-bdfc-d3cfc1347108/c2pa.assertions/c2pa.actions.v2",
+          "url": "self#jumbf=/c2pa/urn:c2pa:f04bd4c4-12d7-46ad-b664-350d9139f806/c2pa.assertions/c2pa.actions.v2",
           "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.actions.v2"
         },
         {
           "code": "assertion.dataHash.match",
-          "url": "self#jumbf=/c2pa/urn:c2pa:b7881246-7d0a-42af-bdfc-d3cfc1347108/c2pa.assertions/c2pa.hash.data",
+          "url": "self#jumbf=/c2pa/urn:c2pa:f04bd4c4-12d7-46ad-b664-350d9139f806/c2pa.assertions/c2pa.hash.data",
           "explanation": "data hash valid"
         }
       ],
@@ -291,7 +291,7 @@
     },
     "ingredientDeltas": [
       {
-        "ingredientAssertionURI": "self#jumbf=/c2pa/urn:c2pa:b7881246-7d0a-42af-bdfc-d3cfc1347108/c2pa.assertions/c2pa.ingredient.v3",
+        "ingredientAssertionURI": "self#jumbf=/c2pa/urn:c2pa:f04bd4c4-12d7-46ad-b664-350d9139f806/c2pa.assertions/c2pa.ingredient.v3",
         "validationDeltas": {
           "success": [
             {

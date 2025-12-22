@@ -1,65 +1,7 @@
 {
-  "active_manifest": "urn:c2pa:2a8ab1ee-d53f-4fa4-aea2-65a7b3a45cc7",
+  "active_manifest": "urn:c2pa:c70d3410-767c-4ff9-ac0a-3b2aef629614",
   "manifests": {
-    "urn:uuid:b5820ce6-3e0f-4e6e-8ad5-e52ccbbe97b6": {
-      "claim_generator": "Adobe_Firefly",
-      "claim_generator_info": [
-        {
-          "name": "Adobe_Firefly",
-          "org.contentauth.c2pa_rs": "0.65.1"
-        }
-      ],
-      "title": "Generated Image",
-      "format": "image/png",
-      "instance_id": "xmp:iid:fbb914da-b2f2-4b62-9015-4881dbf15cf5",
-      "ingredients": [
-        {
-          "title": "Generated Image",
-          "format": "image/png",
-          "instance_id": "xmp:iid:57891936-dc9d-4cd3-bf8f-9337c2e84fbc",
-          "thumbnail": {
-            "format": "image/jpeg",
-            "identifier": "self#jumbf=/c2pa/urn:uuid:b5820ce6-3e0f-4e6e-8ad5-e52ccbbe97b6/c2pa.databoxes/c2pa.data"
-          },
-          "relationship": "parentOf",
-          "active_manifest": "urn:uuid:7b53519d-d98d-4fd4-9823-39121199fe38",
-          "manifest_data": {
-            "format": "application/c2pa",
-            "identifier": "urn-uuid-7b53519d-d98d-4fd4-9823-39121199fe38-manifest_data.c2pa"
-          },
-          "label": "c2pa.ingredient.v2"
-        }
-      ],
-      "assertions": [
-        {
-          "label": "c2pa.actions.v2",
-          "data": {
-            "actions": [
-              {
-                "action": "c2pa.opened",
-                "parameters": {
-                  "com.adobe.type": "remoteProvider.3rdParty",
-                  "com.adobe.digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
-                  "com.adobe.modelVersion": "nano-banana-2",
-                  "com.adobe.modelId": "gemini-flash",
-                  "com.adobe.details": "Gemini Flash"
-                }
-              }
-            ],
-            "allActionsIncluded": true
-          }
-        }
-      ],
-      "signature_info": {
-        "alg": "Ps256",
-        "issuer": "Adobe Inc.",
-        "common_name": "Adobe Firefly C2PA",
-        "cert_serial_number": "413718503961764353137091285004603055550459694885",
-        "time": "2025-12-21T06:28:10+00:00"
-      },
-      "label": "urn:uuid:b5820ce6-3e0f-4e6e-8ad5-e52ccbbe97b6"
-    },
-    "urn:c2pa:2a8ab1ee-d53f-4fa4-aea2-65a7b3a45cc7": {
+    "urn:c2pa:c70d3410-767c-4ff9-ac0a-3b2aef629614": {
       "claim_generator_info": [
         {
           "name": "c2pa-rs testing",
@@ -68,12 +10,12 @@
           "org.contentauth.c2pa_rs": "0.73.1"
         }
       ],
-      "instance_id": "xmp:iid:945ea06d-0ec3-477a-9d60-35c22cb48208",
+      "instance_id": "xmp:iid:1b4ec3b6-8322-4abb-8587-5e58bd5b693f",
       "ingredients": [
         {
           "title": "Sundae Ice Cream 1",
           "format": "image/png",
-          "instance_id": "xmp:iid:727c8568-bbd7-45b0-9d9e-5170bf0281a8",
+          "instance_id": "xmp:iid:67606394-1dfc-427d-a914-1a4c1ac146b5",
           "relationship": "parentOf",
           "active_manifest": "urn:uuid:b5820ce6-3e0f-4e6e-8ad5-e52ccbbe97b6",
           "validation_results": {
@@ -210,7 +152,7 @@
                   "ingredients": [
                     {
                       "url": "self#jumbf=c2pa.assertions/c2pa.ingredient.v3",
-                      "hash": "z6wOgUmJiqqE0twRlUUn2iMxZ09l3AQDjXqNjiMQEkc="
+                      "hash": "2coWuRMpYCLR0nras8+H8RoNMUuYscZWJevQXwyzPH4="
                     }
                   ]
                 }
@@ -225,7 +167,7 @@
         "common_name": "C2PA Signer",
         "cert_serial_number": "638838410810235485828984295321338730070538954823"
       },
-      "label": "urn:c2pa:2a8ab1ee-d53f-4fa4-aea2-65a7b3a45cc7"
+      "label": "urn:c2pa:c70d3410-767c-4ff9-ac0a-3b2aef629614"
     },
     "urn:uuid:7b53519d-d98d-4fd4-9823-39121199fe38": {
       "claim_generator": "Adobe_Firefly",
@@ -247,11 +189,11 @@
               {
                 "action": "c2pa.opened",
                 "parameters": {
-                  "com.adobe.details": "Gemini Flash",
-                  "com.adobe.modelVersion": "nano-banana-2",
+                  "com.adobe.digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
                   "com.adobe.modelId": "gemini-flash",
                   "com.adobe.type": "remoteProvider.3rdParty",
-                  "com.adobe.digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+                  "com.adobe.details": "Gemini Flash",
+                  "com.adobe.modelVersion": "nano-banana-2"
                 }
               }
             ],
@@ -267,6 +209,64 @@
         "time": "2025-12-21T06:28:09+00:00"
       },
       "label": "urn:uuid:7b53519d-d98d-4fd4-9823-39121199fe38"
+    },
+    "urn:uuid:b5820ce6-3e0f-4e6e-8ad5-e52ccbbe97b6": {
+      "claim_generator": "Adobe_Firefly",
+      "claim_generator_info": [
+        {
+          "name": "Adobe_Firefly",
+          "org.contentauth.c2pa_rs": "0.65.1"
+        }
+      ],
+      "title": "Generated Image",
+      "format": "image/png",
+      "instance_id": "xmp:iid:fbb914da-b2f2-4b62-9015-4881dbf15cf5",
+      "ingredients": [
+        {
+          "title": "Generated Image",
+          "format": "image/png",
+          "instance_id": "xmp:iid:57891936-dc9d-4cd3-bf8f-9337c2e84fbc",
+          "thumbnail": {
+            "format": "image/jpeg",
+            "identifier": "self#jumbf=/c2pa/urn:uuid:b5820ce6-3e0f-4e6e-8ad5-e52ccbbe97b6/c2pa.databoxes/c2pa.data"
+          },
+          "relationship": "parentOf",
+          "active_manifest": "urn:uuid:7b53519d-d98d-4fd4-9823-39121199fe38",
+          "manifest_data": {
+            "format": "application/c2pa",
+            "identifier": "urn-uuid-7b53519d-d98d-4fd4-9823-39121199fe38-manifest_data.c2pa"
+          },
+          "label": "c2pa.ingredient.v2"
+        }
+      ],
+      "assertions": [
+        {
+          "label": "c2pa.actions.v2",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.opened",
+                "parameters": {
+                  "com.adobe.details": "Gemini Flash",
+                  "com.adobe.modelId": "gemini-flash",
+                  "com.adobe.type": "remoteProvider.3rdParty",
+                  "com.adobe.modelVersion": "nano-banana-2",
+                  "com.adobe.digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+                }
+              }
+            ],
+            "allActionsIncluded": true
+          }
+        }
+      ],
+      "signature_info": {
+        "alg": "Ps256",
+        "issuer": "Adobe Inc.",
+        "common_name": "Adobe Firefly C2PA",
+        "cert_serial_number": "413718503961764353137091285004603055550459694885",
+        "time": "2025-12-21T06:28:10+00:00"
+      },
+      "label": "urn:uuid:b5820ce6-3e0f-4e6e-8ad5-e52ccbbe97b6"
     }
   },
   "validation_status": [
@@ -286,37 +286,37 @@
       "success": [
         {
           "code": "signingCredential.trusted",
-          "url": "self#jumbf=/c2pa/urn:c2pa:2a8ab1ee-d53f-4fa4-aea2-65a7b3a45cc7/c2pa.signature",
+          "url": "self#jumbf=/c2pa/urn:c2pa:c70d3410-767c-4ff9-ac0a-3b2aef629614/c2pa.signature",
           "explanation": "signing certificate trusted, found in System trust anchors"
         },
         {
           "code": "claimSignature.insideValidity",
-          "url": "self#jumbf=/c2pa/urn:c2pa:2a8ab1ee-d53f-4fa4-aea2-65a7b3a45cc7/c2pa.signature",
+          "url": "self#jumbf=/c2pa/urn:c2pa:c70d3410-767c-4ff9-ac0a-3b2aef629614/c2pa.signature",
           "explanation": "claim signature valid"
         },
         {
           "code": "claimSignature.validated",
-          "url": "self#jumbf=/c2pa/urn:c2pa:2a8ab1ee-d53f-4fa4-aea2-65a7b3a45cc7/c2pa.signature",
+          "url": "self#jumbf=/c2pa/urn:c2pa:c70d3410-767c-4ff9-ac0a-3b2aef629614/c2pa.signature",
           "explanation": "claim signature valid"
         },
         {
           "code": "assertion.hashedURI.match",
-          "url": "self#jumbf=/c2pa/urn:c2pa:2a8ab1ee-d53f-4fa4-aea2-65a7b3a45cc7/c2pa.assertions/c2pa.hash.data",
+          "url": "self#jumbf=/c2pa/urn:c2pa:c70d3410-767c-4ff9-ac0a-3b2aef629614/c2pa.assertions/c2pa.hash.data",
           "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.hash.data"
         },
         {
           "code": "assertion.hashedURI.match",
-          "url": "self#jumbf=/c2pa/urn:c2pa:2a8ab1ee-d53f-4fa4-aea2-65a7b3a45cc7/c2pa.assertions/c2pa.ingredient.v3",
+          "url": "self#jumbf=/c2pa/urn:c2pa:c70d3410-767c-4ff9-ac0a-3b2aef629614/c2pa.assertions/c2pa.ingredient.v3",
           "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.ingredient.v3"
         },
         {
           "code": "assertion.hashedURI.match",
-          "url": "self#jumbf=/c2pa/urn:c2pa:2a8ab1ee-d53f-4fa4-aea2-65a7b3a45cc7/c2pa.assertions/c2pa.actions.v2",
+          "url": "self#jumbf=/c2pa/urn:c2pa:c70d3410-767c-4ff9-ac0a-3b2aef629614/c2pa.assertions/c2pa.actions.v2",
           "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.actions.v2"
         },
         {
           "code": "assertion.dataHash.match",
-          "url": "self#jumbf=/c2pa/urn:c2pa:2a8ab1ee-d53f-4fa4-aea2-65a7b3a45cc7/c2pa.assertions/c2pa.hash.data",
+          "url": "self#jumbf=/c2pa/urn:c2pa:c70d3410-767c-4ff9-ac0a-3b2aef629614/c2pa.assertions/c2pa.hash.data",
           "explanation": "data hash valid"
         }
       ],
@@ -325,7 +325,7 @@
     },
     "ingredientDeltas": [
       {
-        "ingredientAssertionURI": "self#jumbf=/c2pa/urn:c2pa:2a8ab1ee-d53f-4fa4-aea2-65a7b3a45cc7/c2pa.assertions/c2pa.ingredient.v3",
+        "ingredientAssertionURI": "self#jumbf=/c2pa/urn:c2pa:c70d3410-767c-4ff9-ac0a-3b2aef629614/c2pa.assertions/c2pa.ingredient.v3",
         "validationDeltas": {
           "success": [
             {

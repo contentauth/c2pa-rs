@@ -74,8 +74,8 @@ fn test_nested_ingredient_serialization_issue() -> Result<()> {
         "First manifest should contain the ingredient title"
     );
 
-    // ================================== THis is where we start to see issues
-    // Do the exact same thing: create a builder, add that image as ingredient
+    // ================================== This is where we start to see issues
+    // Do the exact same thing: create a Builder, add that image as ingredient
     // (Only difference is the title to differientiate the two test results)
     let mut builder_2 = Builder::new();
     let mut ingredient_stream_2 = Cursor::new(TEST_IMAGE);
@@ -90,7 +90,7 @@ fn test_nested_ingredient_serialization_issue() -> Result<()> {
     )?;
 
     // Serialize the builder to archive
-    //(using c2pa format, didn't check for zip if there is the same issue, but I would think so)
+    // (using c2pa format, didn't check for zip if there is the same issue, but I would think so)
     let mut archive = Cursor::new(Vec::new());
     builder_2.to_archive(&mut archive)?;
 
@@ -100,7 +100,8 @@ fn test_nested_ingredient_serialization_issue() -> Result<()> {
 
     // Sign the reloaded builder
     // Expectation: we should get the EXACT same manifest as the one which was not serialized after signing
-    // (Same structure with the nested ingredients)
+    // Since they should be the same Builder/working store
+    // (Expectation: same structure with the nested ingredients)
     let mut source_2 = Cursor::new(TEST_IMAGE);
     let mut second_signed = Cursor::new(Vec::new());
     reloaded_builder.sign(&test_signer(), format, &mut source_2, &mut second_signed)?;
@@ -116,6 +117,29 @@ fn test_nested_ingredient_serialization_issue() -> Result<()> {
         "tests/test_nested_ingredients_repro_manifest2.json",
         &second_manifest_json
     )?;
+
+    // The issue: we don't get the same manifest store. Original un-serialized store contains 3 manifests.
+    // Serialized-deserialized-signed one lost data and contains only 2.
+    let first_manifest_count = first_reader.manifests().len();
+    let second_manifest_count = second_reader.manifests().len();
+
+    println!("First manifest store has {} manifests", first_manifest_count);
+    println!("Second manifest (serialized-deserialized) store has {} manifests", second_manifest_count);
+
+    // manifests urn:uuid:7b53519d-d98d-4fd4-9823-39121199fe38 and urn:uuid:b5820ce6-3e0f-4e6e-8ad5-e52ccbbe97b6
+    //are related to ingredient data
+    assert_eq!(
+        first_manifest_count, 3,
+        "First manifest store should have 3 manifests"
+    );
+
+    // will fail until bug is fixed
+    // manifest urn:uuid:b5820ce6-3e0f-4e6e-8ad5-e52ccbbe97b6 is there
+    // manifest urn:uuid:7b53519d-d98d-4fd4-9823-39121199fe38 is lost but I think should be there
+    assert_eq!(
+        second_manifest_count, 3,
+        "Second manifest store should have 3 manifests too"
+    );
 
     Ok(())
 }
