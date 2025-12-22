@@ -337,14 +337,15 @@ fn test_deeply_nested_ingredients() -> Result<()> {
         );
 
         if level > 1 {
-            let active_manifest_label = ingredient.active_manifest().expect(&format!(
-                "Ingredient at level {} should have active manifest",
-                level
-            ));
-            current_manifest = reader.get_manifest(active_manifest_label).expect(&format!(
-                "Should be able to get manifest at level {}",
-                level
-            ));
+            let active_manifest_label = ingredient.active_manifest().unwrap_or_else(|| {
+                panic!(
+                    "Ingredient at level {} should have active manifest",
+                    level
+                )
+            });
+            current_manifest = reader.get_manifest(active_manifest_label).unwrap_or_else(|| {
+                panic!("Should be able to get manifest at level {}", level)
+            });
         }
     }
 
