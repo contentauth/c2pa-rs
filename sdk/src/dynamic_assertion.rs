@@ -19,7 +19,11 @@ use async_trait::async_trait;
 
 // Publish PostValidator trait from this module.
 pub use crate::reader::{AsyncPostValidator, PostValidator};
-use crate::{hashed_uri::HashedUri, maybe_send::MaybeSend, Result};
+use crate::{
+    hashed_uri::HashedUri,
+    maybe_send_sync::{MaybeSend, MaybeSync},
+    Result,
+};
 
 /// The type of content that can be returned by a [`DynamicAssertion`] content call.
 pub enum DynamicAssertionContent {
@@ -87,7 +91,7 @@ pub trait DynamicAssertion {
 /// [`Manifest`]: crate::Manifest
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait AsyncDynamicAssertion: Sync + MaybeSend {
+pub trait AsyncDynamicAssertion: MaybeSync + MaybeSend {
     /// Return the preferred label for this assertion.
     ///
     /// Note that the label may be adjusted in case multiple assertions

@@ -74,7 +74,7 @@ fn get_png_chunk_positions<R: Read + Seek + ?Sized>(f: &mut R) -> Result<Vec<Png
     f.read_exact(&mut hdr)?;
     if hdr != PNG_ID {
         return Err(PngError::InvalidFileSignature {
-            reason: format!("invalid header: expected {:02X?}, got {:02X?}", PNG_ID, hdr),
+            reason: format!("invalid header: expected {PNG_ID:02X?}, got {hdr:02X?}"),
         }
         .into());
     }
