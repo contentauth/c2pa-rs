@@ -23,13 +23,20 @@ use std::{
     io::{BufRead, BufReader, Cursor},
 };
 
+use async_generic::async_generic;
 use config::{Config, FileFormat};
+use http::Request;
 use serde_derive::{Deserialize, Serialize};
 use signer::SignerSettings;
 
 use crate::{
-    crypto::base64, http::restricted::HostPattern, settings::builder::BuilderSettings, Error,
-    Result, Signer,
+    crypto::base64,
+    http::{
+        restricted::HostPattern, AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver,
+        SyncHttpResolver,
+    },
+    settings::builder::BuilderSettings,
+    Error, Result, Signer,
 };
 
 const VERSION: u32 = 1;
@@ -560,6 +567,63 @@ impl Settings {
     pub fn signer() -> Result<Box<dyn Signer>> {
         SignerSettings::signer()
     }
+
+    /// Fetches the official C2PA trust anchor list and stores it in [`Trust::trust_anchors`].
+    ///
+    /// This downloads the official C2PA trust anchor list from [`c2pa_roots::C2PA_ROOTS_PEM_URL`].
+    #[async_generic]
+    pub fn fetch_c2pa_trust(&mut self) -> Result<()> {
+        self.trust.trust_anchors = Some(if _sync {
+            fetch_pem(c2pa_roots::C2PA_ROOTS_PEM_URL)?
+        } else {
+            fetch_pem_async(c2pa_roots::C2PA_ROOTS_PEM_URL).await?
+        });
+
+        Ok(())
+    }
+
+    /// Fetches the interim C2PA trust anchor list and stores it in [`Trust::user_anchors`].
+    ///
+    /// This downloads the interim C2PA trust anchor list from [`c2pa_roots::C2PA_INTERIM_ROOTS_PEM_URL`].
+    #[async_generic]
+    pub fn fetch_c2pa_interim_trust(&mut self) -> Result<()> {
+        self.trust.user_anchors = Some(if _sync {
+            fetch_pem(c2pa_roots::C2PA_INTERIM_ROOTS_PEM_URL)?
+        } else {
+            fetch_pem_async(c2pa_roots::C2PA_INTERIM_ROOTS_PEM_URL).await?
+        });
+
+        Ok(())
+    }
+
+    /// Fetches the interim CAWG trust anchor list and end entity list and stores it in
+    /// [`Trust::trust_anchors`] and [`Trust::allowed_list`] respectively.
+    ///
+    /// This downloads the interim CAWG trust anchor list from [`cawg_roots::MOZILLA_SMIME_ROOTS_PEM_URL`] and
+    /// [`cawg_roots::IPTC_OVNP_ROOTS_PEM_URL`] and the interim CAWG end entity list from [`cawg_roots::IPTC_OVNP_END_ENTITIES_PEM_URL`].
+    #[async_generic]
+    pub fn fetch_cawg_interim_trust(&mut self) -> Result<()> {
+        let mozilla_roots = if _sync {
+            fetch_pem(cawg_roots::MOZILLA_SMIME_ROOTS_PEM_URL)?
+        } else {
+            fetch_pem_async(cawg_roots::MOZILLA_SMIME_ROOTS_PEM_URL).await?
+        };
+        let iptc_roots = if _sync {
+            fetch_pem(cawg_roots::IPTC_OVNP_ROOTS_PEM_URL)?
+        } else {
+            fetch_pem_async(cawg_roots::IPTC_OVNP_ROOTS_PEM_URL).await?
+        };
+        let iptc_end_entities = if _sync {
+            fetch_pem(cawg_roots::IPTC_OVNP_END_ENTITIES_PEM_URL)?
+        } else {
+            fetch_pem_async(cawg_roots::IPTC_OVNP_END_ENTITIES_PEM_URL).await?
+        };
+
+        self.cawg_trust.trust_anchors = Some(format!("{iptc_roots}\n{mozilla_roots}"));
+        self.cawg_trust.allowed_list = Some(iptc_end_entities);
+
+        Ok(())
+    }
 }
 
 impl Default for Settings {
@@ -595,6 +659,27 @@ impl SettingsValidate for Settings {
         self.core.validate()?;
         self.builder.validate()
     }
+}
+
+#[async_generic]
+fn fetch_pem(url: &str) -> Result<String> {
+    let http_resolver = if _sync {
+        SyncGenericResolver::new()
+    } else {
+        AsyncGenericResolver::new()
+    };
+
+    let response = if _sync {
+        http_resolver.http_resolve(Request::get(url).body(Vec::new())?)?
+    } else {
+        http_resolver
+            .http_resolve_async(Request::get(url).body(Vec::new())?)
+            .await?
+    };
+
+    let mut pem = String::new();
+    response.into_body().read_to_string(&mut pem)?;
+    Ok(pem)
 }
 
 // Get snapshot of the Settings objects, returns None if there is an error
