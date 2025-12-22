@@ -9,6 +9,27 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.73.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.73.0...c2pa-v0.73.1)
+_19 December 2025_
+
+### Fixed
+
+* Fix case where UUID boxes and BMFF layout confused the insertion ([#1676](https://github.com/contentauth/c2pa-rs/pull/1676))
+* Remove extra hash binding verification for update manifests ([#1659](https://github.com/contentauth/c2pa-rs/pull/1659))
+* Add maybeSync ([#1664](https://github.com/contentauth/c2pa-rs/pull/1664))
+* Address new warnings with Rust 1.92.0 ([#1661](https://github.com/contentauth/c2pa-rs/pull/1661))
+
+### Other
+
+* Replace once_cell Lazy with std LazyLock ([#1666](https://github.com/contentauth/c2pa-rs/pull/1666))
+
+## [0.73.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.72.1...c2pa-v0.73.0)
+_04 December 2025_
+
+### Added
+
+* Restricted HTTP resolvers ([#1630](https://github.com/contentauth/c2pa-rs/pull/1630))
+
 ## [0.72.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.72.0...c2pa-v0.72.1)
 _04 December 2025_
 

@@ -19,7 +19,7 @@ use crate::{
         raw_signature::SigningAlg,
         time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     },
-    maybe_send::MaybeSend,
+    maybe_send_sync::{MaybeSend, MaybeSync},
 };
 
 /// Implementations of the `RawSigner` trait generate a cryptographic signature
@@ -62,7 +62,7 @@ pub trait RawSigner: TimeStampProvider {
 /// Use this trait only when the implementation must be asynchronous.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait AsyncRawSigner: AsyncTimeStampProvider + Sync + MaybeSend {
+pub trait AsyncRawSigner: AsyncTimeStampProvider + MaybeSync + MaybeSend {
     /// Return a raw signature over the original byte slice.
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>, RawSignerError>;
 
