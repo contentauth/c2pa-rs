@@ -1541,6 +1541,63 @@ impl Store {
             store.insert_restored_claim(cai_store_desc_box.label(), claim);
         }
 
+        // Reconstruct nested claim relationships after all claims are loaded
+        // When claims are serialized, nested ingredients are extracted as top-level claims
+        // We need to restore them back into the parent claims' ingredient stores
+        use crate::assertions::Ingredient as IngredientAssertion;
+        let claim_labels: Vec<String> = store
+            .claims()
+            .iter()
+            .map(|c| c.label().to_string())
+            .collect();
+        for label in &claim_labels {
+            if let Some(claim) = store.get_claim(label) {
+                // Find ingredient assertions in this claim
+                let ingredient_refs: Vec<String> = claim
+                    .ingredient_assertions()
+                    .iter()
+                    .filter_map(|ing_assertion| {
+                        // Parse the ingredient assertion to get active_manifest or c2pa_manifest
+                        match IngredientAssertion::from_assertion(ing_assertion.assertion()) {
+                            Ok(ingredient) => {
+                                // Check both active_manifest (v3) and c2pa_manifest (v2)
+                                let hashed_uri = ingredient
+                                    .active_manifest
+                                    .as_ref()
+                                    .or(ingredient.c2pa_manifest.as_ref());
+
+                                if let Some(hashed_uri) = hashed_uri {
+                                    let url = hashed_uri.url();
+                                    // Extract the manifest label from the JUMBF URI
+                                    jumbf::labels::manifest_label_from_uri(&url)
+                                        .map(|l| l.to_string())
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(_) => None,
+                        }
+                    })
+                    .collect();
+
+                if !ingredient_refs.is_empty() {
+                    // Clone the claim for modification
+                    let mut claim_mut = claim.clone();
+                    for ing_ref in &ingredient_refs {
+                        // Check if this referenced claim exists in the store
+                        if let Some(nested_claim) = store.get_claim(ing_ref) {
+                            claim_mut.replace_ingredient_or_insert(
+                                ing_ref.to_string(),
+                                nested_claim.clone(),
+                            );
+                        }
+                    }
+                    // Replace the claim in the store with the updated version
+                    store.claims_map.insert(label.to_string(), claim_mut);
+                }
+            }
+        }
+
         Ok(store)
     }
 
@@ -4194,8 +4251,9 @@ impl Store {
             final_redactions.append(&mut to_both);
         }
 
+        let claims_to_add: Vec<Claim> = i_store_mut.claims().into_iter().cloned().collect();
         claim.add_ingredient_data(
-            i_store_mut.claims().into_iter().cloned().collect(),
+            claims_to_add,
             Some(final_redactions),
             &svi.ingredient_references,
         )?;
