@@ -4358,10 +4358,15 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::io::{Read, Seek, SeekFrom, Write};
-    use std::sync::{atomic::AtomicBool, atomic::Ordering, Arc};
     #[cfg(feature = "file_io")]
     use std::fs;
+    use std::{
+        io::{Read, Seek, SeekFrom, Write},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+    };
 
     use c2pa_macros::c2pa_test_async;
     #[cfg(feature = "file_io")]
@@ -8941,8 +8946,7 @@ pub mod tests {
                 // after data should have been written but wasn't
                 if !self.buffer.is_empty() && !self.flush_called.load(Ordering::SeqCst) {
                     // This is a use-after-free error simulation for the way the FFI layer handles streams
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    return Err(std::io::Error::other(
                         "Simulated use-after-free: attempting to seek with unflushed buffer (similar to accessing freed FFI context)",
                     ));
                 }
@@ -8952,8 +8956,7 @@ pub mod tests {
             fn rewind(&mut self) -> std::io::Result<()> {
                 // Suffer the same troubles as seek
                 if !self.buffer.is_empty() && !self.flush_called.load(Ordering::SeqCst) {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    return Err(std::io::Error::other(
                         "Simulated use-after-free: attempting to rewind with unflushed buffer (similar to accessing freed FFI context)",
                     ));
                 }
@@ -8976,17 +8979,13 @@ pub mod tests {
         let settings = Settings::default();
         let http_resolver = SyncGenericResolver::new();
 
-        let (format, mut input_stream, output_stream) =
-            create_test_streams("earth_apollo17.jpg");
+        let (format, mut input_stream, output_stream) = create_test_streams("earth_apollo17.jpg");
 
         let flush_called = Arc::new(AtomicBool::new(false));
         let dropped = Arc::new(AtomicBool::new(false));
 
-        let mut tracking_stream = FlushTrackingStream::new(
-            output_stream,
-            flush_called.clone(),
-            dropped.clone(),
-        );
+        let mut tracking_stream =
+            FlushTrackingStream::new(output_stream, flush_called.clone(), dropped.clone());
 
         let mut store = Store::with_settings(&settings);
 
@@ -9001,7 +9000,7 @@ pub mod tests {
 
         store
             .save_to_stream(
-                &format,
+                format,
                 &mut input_stream,
                 &mut tracking_stream,
                 signer.as_ref(),
@@ -9042,20 +9041,19 @@ pub mod tests {
                 Self {
                     data: Cursor::new(Vec::new()),
                     // Magic number to detect valid context (not unintialized)
-                    magic: 0xDEADBEEFCAFEBABE,
+                    magic: 0xdeadbeefcafebabe,
                 }
             }
 
             fn mark_freed(&mut self) {
                 // 0xCCCCCCCCCCCCCCCC is a value used by some compilers
                 // to flag uninitialized memory, so we'll do the same here
-                self.magic = 0xCCCCCCCCCCCCCCCC;
+                self.magic = 0xcccccccccccccccc;
             }
 
             fn check_valid(&self) -> std::io::Result<()> {
-                if self.magic != 0xDEADBEEFCAFEBABE {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                if self.magic != 0xdeadbeefcafebabe {
+                    return Err(std::io::Error::other(
                         format!(
                             "Use-after-free detected: StreamContext magic is 0x{:X} (expected 0xDEADBEEFCAFEBABE)",
                             self.magic
@@ -9182,7 +9180,7 @@ pub mod tests {
         // a use-after-free error when trying to rewind the stream,
         // because the stream context is freed before the flush is called
         let result = store.save_to_stream(
-            &format,
+            format,
             &mut input_stream,
             &mut unsafe_stream,
             signer.as_ref(),
@@ -9198,8 +9196,6 @@ pub mod tests {
         );
 
         // Verify that flush was called
-        assert!(
-            flush_called.load(Ordering::SeqCst)
-        );
+        assert!(flush_called.load(Ordering::SeqCst));
     }
 }
