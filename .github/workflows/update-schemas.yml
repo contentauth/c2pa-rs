@@ -1,4 +1,4 @@
-name: Update schemas in contentauth/json-manifest-reference
+name: Update schemas in contentauth/opensource.contentauth.org
 on:
   push:
     tags:
