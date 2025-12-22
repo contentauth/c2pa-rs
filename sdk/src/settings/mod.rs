@@ -341,7 +341,6 @@ pub struct Verify {
     pub ocsp_fetch: bool,
     /// Whether to fetch remote manifests in the following scenarios:
     /// - Constructing a [`Reader`]
-    /// - Constructing an [`Ingredient`]
     /// - Adding an [`Ingredient`] to the [`Builder`]
     ///
     /// The default value is true.

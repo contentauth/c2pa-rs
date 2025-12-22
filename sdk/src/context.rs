@@ -233,7 +233,8 @@ impl Context {
     /// # use c2pa::{Context, Result};
     /// # fn main() -> Result<()> {
     /// // From JSON string
-    /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+    /// let context =
+    ///     Context::new().with_settings(r#"{"verify": {"remote_manifest_fetch": false}}"#)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -484,7 +485,7 @@ mod tests {
     fn test_into_settings_from_toml_str() {
         let toml = r#"
             [verify]
-            verify_after_sign = true
+            remote_manifest_fetch = true
             "#;
         let context = Context::new().with_settings(toml).unwrap();
         assert!(context.settings().verify.verify_after_sign);

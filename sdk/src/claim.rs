@@ -3878,19 +3878,6 @@ impl Claim {
         iter.next()
     }
 
-    // /// returns first instance of an assertion whose label and instance match
-    // pub fn get_assertion_mut(&self, assertion_label: &str, instance: usize) -> Option<&Assertion> {
-    //     let mut iter = self.claim_assertion_store().iter().filter_map(|ca| {
-    //         if ca.label_raw() == assertion_label && ca.instance() == instance {
-    //             Some(ca.assertion())
-    //         } else {
-    //             None
-    //         }
-    //     });
-
-    //     iter.next()
-    // }
-
     /// returns instance of an assertion whose label and instance match
     pub fn get_claim_assertion(
         &self,

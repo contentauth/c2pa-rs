@@ -119,9 +119,6 @@ pub struct Reader {
     context: Context,
 }
 
-type ValidationFn =
-    dyn Fn(&str, &crate::ManifestAssertion, &mut StatusTracker) -> Option<serde_json::Value>;
-
 impl Reader {
     /// Create a new Reader with a default Context.
     ///
@@ -148,7 +145,7 @@ impl Reader {
     /// ```
     /// # use c2pa::{Context, Reader, Result};
     /// # fn main() -> Result<()> {
-    /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+    /// let context = Context::new().with_settings(r#"{"verify": {"remote_manifest_fetch": true}}"#)?;
     /// let reader = Reader::from_context(context);
     /// # Ok(())
     /// # }

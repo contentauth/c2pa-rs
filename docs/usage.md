@@ -190,7 +190,7 @@ use std::fs::File;
 fn main() -> Result<()> {
     // Configure context
     let context = Context::new()
-        .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+        .with_settings(r#"{"verify": {"remote_manifest_fetch": false}}"#)?;
     
     // Create reader with context
     let stream = File::open("path/to/image.jpg")?;
@@ -213,11 +213,11 @@ use std::io::Cursor;
 fn main() -> Result<()> {
     // Configure context with signer settings
     let context = Context::new()
-        .with_settings(r#"{"signer": {"local": {"alg": "ps256"}}}"#)?;
+        .with_settings(r#"{"builder": {"claim_generator_info": {"name": "My App"}, "intent": "edit"}}"#)?;
     
-    // Create builder with context
-    let mut builder = Builder::from_context(context);
-    builder.with_json(r#"{"title": "My Image"}"#)?;
+    // Create builder with context and chain with_json
+    let mut builder = Builder::from_context(context)
+        .with_json(r#"{"title": "My Image"}"#)?;
     
     // Save with automatic signer from context
     let mut source = std::fs::File::open("source.jpg")?;
@@ -259,8 +259,8 @@ fn main() -> Result<()> {
     let context = Context::new()
         .with_settings(include_str!("config.json"))?;
     
-    let mut builder = Builder::from_context(context);
-    builder.with_json(r#"{"title": "My Image"}"#)?;
+    let mut builder = Builder::from_context(context)
+        .with_json(r#"{"title": "My Image"}"#)?;
     
     // Signer is created automatically from context's settings
     let mut source = std::fs::File::open("source.jpg")?;

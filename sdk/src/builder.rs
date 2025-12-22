@@ -418,12 +418,12 @@ impl Builder {
     /// # Arguments
     /// * `json` - A JSON string representing the [`ManifestDefinition`].
     /// # Returns
-    /// * A mutable reference to the [`Builder`].
+    /// * The modified [`Builder`].
     /// # Errors
     /// * Returns an [`Error`] if the JSON is malformed or incorrect.
     /// # Notes
     /// * This will overwrite any existing definition in the [`Builder`].
-    pub fn with_json(&mut self, json: &str) -> Result<&mut Self> {
+    pub fn with_json(mut self, json: &str) -> Result<Self> {
         self.definition = serde_json::from_str(json).map_err(Error::JsonError)?;
         Ok(self)
     }
@@ -1676,10 +1676,12 @@ impl Builder {
     /// # use std::io::Cursor;
     /// # fn main() -> Result<()> {
     /// // Create context with signer configuration
-    /// let context = Context::new().with_settings(r#"{"signer": {"local": {"alg": "ps256"}}}"#)?;
+    /// let context = Context::new().with_settings(
+    ///     r#"{"builder": {"claim_generator_info": {"name": "My App"}, "intent": "edit"}}"#,
+    /// )?;
     ///
-    /// let mut builder = Builder::from_context(context);
-    /// builder.with_json(r#"{"title": "My Image"}"#)?;
+    /// let mut builder = Builder::from_context(context)
+    ///     .with_json(r#"{"title": "My Image"}"#)?;
     ///
     /// let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
     /// let mut dest = Cursor::new(Vec::new());
@@ -1888,10 +1890,11 @@ impl Builder {
     /// ```no_run
     /// # use c2pa::{Context, Builder, Result};
     /// # fn main() -> Result<()> {
-    /// let context = Context::new().with_settings(r#"{"signer": {"local": {"alg": "ps256"}}}"#)?;
+    /// let context = Context::new()
+    ///     ..with_settings(r#"{"builder": {"claim_generator_info": {"name": "My App"}}"#)?;
     ///
-    /// let mut builder = Builder::from_context(context);
-    /// builder.with_json(r#"{"title": "My Image"}"#)?;
+    /// let mut builder = Builder::from_context(context)
+    ///     .with_json(r#"{"title": "My Image"}"#)?;
     ///
     /// // Save with automatic signer from context
     /// builder.save_to_file("tests/fixtures/C.jpg", "output.jpg")?;
