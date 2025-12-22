@@ -667,7 +667,10 @@ pub mod tests {
 
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
-        assert_eq!(settings.cawg_trust, Trust::default());
+        // TODO: CAWG trust is temporarily disabled while we transition to a default trust list
+        let mut default_cawg_trust = Trust::default();
+        default_cawg_trust.verify_trust_list = false;
+        assert_eq!(settings.cawg_trust, default_cawg_trust);
         assert_eq!(settings.verify, Verify::default());
         assert_eq!(settings.builder, BuilderSettings::default());
 
