@@ -70,81 +70,87 @@ impl SignerSettings {
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
     pub fn signer() -> Result<Box<dyn Signer>> {
-        let c2pa_signer = Self::c2pa_signer()?;
+        let signer_info = match Settings::get_value::<Option<SignerSettings>>("signer") {
+            Ok(Some(signer_info)) => signer_info,
+            #[cfg(test)]
+            _ => {
+                return Ok(crate::utils::test_signer::test_signer(SigningAlg::Ps256));
+            }
+            #[cfg(not(test))]
+            _ => {
+                return Err(Error::MissingSignerSettings);
+            }
+        };
+
+        let c2pa_signer = Self::c2pa_signer(signer_info)?;
 
         // TO DISCUSS: What if get_value returns an Err(...)?
         if let Ok(Some(cawg_x509_settings)) =
             Settings::get_value::<Option<SignerSettings>>("cawg_x509_signer")
         {
-            match cawg_x509_settings {
-                SignerSettings::Local {
-                    alg: cawg_alg,
-                    sign_cert: cawg_sign_cert,
-                    private_key: cawg_private_key,
-                    tsa_url: cawg_tsa_url,
-                    referenced_assertions,
-                } => {
-                    let cawg_dual_signer = CawgX509IdentitySigner {
-                        c2pa_signer,
-                        cawg_alg,
-                        cawg_sign_cert,
-                        cawg_private_key,
-                        cawg_tsa_url,
-                        cawg_referenced_assertions: referenced_assertions.unwrap_or_default(),
-                    };
-
-                    Ok(Box::new(cawg_dual_signer))
-                }
-
-                SignerSettings::Remote {
-                    url: _url,
-                    alg: _alg,
-                    sign_cert: _sign_cert,
-                    tsa_url: _tsa_url,
-                    referenced_assertions: _referenced_assertions,
-                } => todo!("Remote CAWG X.509 signing not yet supported"),
-            }
+            cawg_x509_settings.cawg_signer(c2pa_signer)
         } else {
             Ok(c2pa_signer)
         }
     }
 
-    /// Returns a C2PA-only signer from the [`BuilderSettings::signer`] field.
-    fn c2pa_signer() -> Result<Box<dyn Signer>> {
-        let signer_info = Settings::get_value::<Option<SignerSettings>>("signer");
+    /// Returns a c2pa signer using the provided signer settings.
+    pub fn c2pa_signer(self) -> Result<Box<dyn Signer>> {
+        match self {
+            SignerSettings::Local {
+                alg,
+                sign_cert,
+                private_key,
+                tsa_url,
+                referenced_assertions: _,
+            } => {
+                create_signer::from_keys(sign_cert.as_bytes(), private_key.as_bytes(), alg, tsa_url)
+            }
+            SignerSettings::Remote {
+                url,
+                alg,
+                sign_cert,
+                tsa_url,
+                referenced_assertions: _,
+            } => Ok(Box::new(RemoteSigner {
+                url,
+                alg,
+                reserve_size: 10000 + sign_cert.len(),
+                certs: vec![sign_cert.into_bytes()],
+                tsa_url,
+            })),
+        }
+    }
 
-        match signer_info {
-            Ok(Some(signer_info)) => match signer_info {
-                SignerSettings::Local {
-                    alg,
-                    sign_cert,
-                    private_key,
-                    tsa_url,
-                    referenced_assertions: _,
-                } => create_signer::from_keys(
-                    sign_cert.as_bytes(),
-                    private_key.as_bytes(),
-                    alg,
-                    tsa_url.to_owned(),
-                ),
-                SignerSettings::Remote {
-                    url,
-                    alg,
-                    sign_cert,
-                    tsa_url,
-                    referenced_assertions: _,
-                } => Ok(Box::new(RemoteSigner {
-                    url,
-                    alg,
-                    reserve_size: 10000 + sign_cert.len(),
-                    certs: vec![sign_cert.into_bytes()],
-                    tsa_url,
-                })),
-            },
-            #[cfg(test)]
-            _ => Ok(crate::utils::test_signer::test_signer(SigningAlg::Ps256)),
-            #[cfg(not(test))]
-            _ => Err(Error::MissingSignerSettings),
+    /// Returns a CAWG X.509 identity signer that wraps the provided c2pa signer.
+    pub fn cawg_signer(self, c2pa_signer: Box<dyn Signer>) -> Result<Box<dyn Signer>> {
+        match self {
+            SignerSettings::Local {
+                alg: cawg_alg,
+                sign_cert: cawg_sign_cert,
+                private_key: cawg_private_key,
+                tsa_url: cawg_tsa_url,
+                referenced_assertions: cawg_referenced_assertions,
+            } => {
+                let cawg_dual_signer = CawgX509IdentitySigner {
+                    c2pa_signer,
+                    cawg_alg,
+                    cawg_sign_cert,
+                    cawg_private_key,
+                    cawg_tsa_url,
+                    cawg_referenced_assertions: cawg_referenced_assertions.unwrap_or_default(),
+                };
+
+                Ok(Box::new(cawg_dual_signer))
+            }
+
+            SignerSettings::Remote {
+                url: _url,
+                alg: _alg,
+                sign_cert: _sign_cert,
+                tsa_url: _tsa_url,
+                referenced_assertions: _,
+            } => todo!("Remote CAWG X.509 signing not yet supported"),
         }
     }
 }
