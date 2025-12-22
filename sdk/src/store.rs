@@ -8886,7 +8886,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_save_stream_requires_flush() {
+    fn test_stream_context_handling_for_c_ffi_layer() {
         // Building a stream wrapper that simulates C FFI behavior
 
         /// Stream wrapper that simulates the streams like it would be in C FFI layer.
@@ -9026,7 +9026,7 @@ pub mod tests {
 
     /// Another test for stream context issues, with unsafe pointers
     #[test]
-    fn test_save_stream_flush_prevents_use_after_free() {
+    fn test_stream_context_handling_for_c_ffi_layer_no_use_after_free() {
         use std::io::Cursor;
 
         // This struct simulates an FFI stream context that could be freed any time
