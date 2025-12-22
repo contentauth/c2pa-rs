@@ -567,7 +567,10 @@ impl Default for Settings {
         Settings {
             version: VERSION,
             trust: Default::default(),
-            cawg_trust: Default::default(),
+            cawg_trust: Trust {
+                verify_trust_list: false,
+                ..Default::default()
+            },
             core: Default::default(),
             verify: Default::default(),
             builder: Default::default(),
