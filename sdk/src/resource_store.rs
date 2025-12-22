@@ -36,7 +36,7 @@ use crate::{
     error::Error,
     hashed_uri::HashedUri,
     jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
-    maybe_send::MaybeSend,
+    maybe_send_sync::MaybeSend,
     utils::mime::format_to_mime,
     Result,
 };

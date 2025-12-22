@@ -19,7 +19,7 @@ use std::{
 
 use tempfile::NamedTempFile;
 
-use crate::{assertions::BoxMap, error::Result, maybe_send::MaybeSend};
+use crate::{assertions::BoxMap, error::Result, maybe_send_sync::MaybeSend};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HashBlockObjectType {
