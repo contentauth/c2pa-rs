@@ -9,6 +9,14 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.73.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.73.1...c2pa-v0.73.2)
+_22 December 2025_
+
+### Fixed
+
+* Nested ingredient serializing-deserializing (fix for #1685) ([#1686](https://github.com/contentauth/c2pa-rs/pull/1686))
+* Flush stream to finish write operations before rewind for FFI layer improvements ([#1672](https://github.com/contentauth/c2pa-rs/pull/1672))
+
 ## [0.73.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.73.0...c2pa-v0.73.1)
 _19 December 2025_
 
