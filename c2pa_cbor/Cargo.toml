@@ -1,0 +1,21 @@
+[package]
+name = "c2pa_cbor"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "cbor-dos-test"
+path = "oom_test/cbor-dos-test.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+
+[dev-dependencies]
+serde_json = "1.0"
+serde-transcode = "1.1"
+
+[features]
+# Feature to enable comparison tests against original serde_cbor.
+# Requires adding serde_cbor = "0.11" to dev-dependencies manually.
+compare_serde_cbor = []

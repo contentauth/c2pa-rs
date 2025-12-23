@@ -1495,7 +1495,7 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
 
                             // use this method since it will strip trailing zeros padding if there
                             let mut deserializer =
-                                serde_cbor::de::Deserializer::from_slice(&merkle);
+                                c2pa_cbor::de::Deserializer::from_slice(&merkle);
                             let mm: BmffMerkleMap =
                                 serde::Deserialize::deserialize(&mut deserializer)?;
                             merkle_boxes.push(mm);
