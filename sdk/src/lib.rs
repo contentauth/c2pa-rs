@@ -55,6 +55,7 @@
 //!
 //! use c2pa::{Builder, Context};
 //! use serde::Serialize;
+//! use serde_json::json;
 //!
 //! #[derive(Serialize)]
 //! struct Test {
@@ -68,7 +69,7 @@
 //!
 //! // Build manifest
 //! let mut builder = Builder::from_context(context)
-//!     .with_json(r#"{"title": "Test"}"#)?;
+//!     .with_definition(json!({"title": "Test"}))?;
 //! builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!
 //! // Save with automatic signer from context (created from settings)

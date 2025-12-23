@@ -34,45 +34,37 @@ enum SignerState {
     FromSettings(OnceLock<Result<Box<dyn Signer>>>),
 }
 
-/// A trait for types that can be converted into Settings.
-///
-/// This trait allows multiple types to be used as configuration sources,
-/// including JSON/TOML strings, serde_json::Value, or Settings directly.
-pub trait IntoSettings {
-    /// Convert this type into Settings
-    fn into_settings(self) -> Result<Settings>;
-}
+// TryFrom implementations for Settings to support multiple input formats
 
-/// Implement for Settings (passthrough)
-impl IntoSettings for Settings {
-    fn into_settings(self) -> Result<Settings> {
-        Ok(self)
-    }
-}
+/// Implement TryFrom for &str (JSON/TOML string - tries both formats)
+impl TryFrom<&str> for Settings {
+    type Error = Error;
 
-/// Implement for &str (JSON/TOML string - tries both formats)
-impl IntoSettings for &str {
-    fn into_settings(self) -> Result<Settings> {
+    fn try_from(value: &str) -> Result<Self> {
         let mut settings = Settings::default();
         // Try JSON first, then TOML
         settings
-            .update_from_str(self, "json")
-            .or_else(|_| settings.update_from_str(self, "toml"))?;
+            .update_from_str(value, "json")
+            .or_else(|_| settings.update_from_str(value, "toml"))?;
         Ok(settings)
     }
 }
 
-/// Implement for String
-impl IntoSettings for String {
-    fn into_settings(self) -> Result<Settings> {
-        self.as_str().into_settings()
+/// Implement TryFrom for String
+impl TryFrom<String> for Settings {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        value.as_str().try_into()
     }
 }
 
-/// Implement for serde_json::Value
-impl IntoSettings for serde_json::Value {
-    fn into_settings(self) -> Result<Settings> {
-        let json_str = serde_json::to_string(&self).map_err(Error::JsonError)?;
+/// Implement TryFrom for serde_json::Value
+impl TryFrom<serde_json::Value> for Settings {
+    type Error = Error;
+
+    fn try_from(value: serde_json::Value) -> Result<Self> {
+        let json_str = serde_json::to_string(&value).map_err(Error::JsonError)?;
         let mut settings = Settings::default();
         settings.update_from_str(&json_str, "json")?;
         Ok(settings)
@@ -219,27 +211,50 @@ impl Context {
         Self::default()
     }
 
-    /// Configure this Context with the provided settings.
+    /// Configure this Context with custom settings.
     ///
-    /// Settings can be provided as a Settings struct, JSON string, TOML string, or serde_json::Value.
+    /// This method accepts anything that can be converted into [`Settings`],
+    /// including JSON/TOML strings, [`Settings`] objects, and [`serde_json::Value`]s.
     ///
     /// # Arguments
     ///
-    /// * `settings` - Any type that implements `IntoSettings`
+    /// * `settings` - Anything that can be converted into [`Settings`]:
+    ///   - A JSON or TOML string
+    ///   - A `Settings` object
+    ///   - A `serde_json::Value`
     ///
     /// # Examples
     ///
     /// ```
     /// # use c2pa::{Context, Result};
     /// # fn main() -> Result<()> {
+    /// use serde_json::json;
+    ///
+    /// // From JSON value (cleanest for inline settings)
+    /// let context = Context::new()
+    ///     .with_settings(json!({
+    ///         "verify": {"remote_manifest_fetch": false}
+    ///     }))?;
+    ///
+    /// // From TOML string (good for config files)
+    /// let context = Context::new()
+    ///     .with_settings(r#"
+    ///         [verify]
+    ///         remote_manifest_fetch = false
+    ///     "#)?;
+    ///
     /// // From JSON string
-    /// let context =
-    ///     Context::new().with_settings(r#"{"verify": {"remote_manifest_fetch": false}}"#)?;
+    /// let context = Context::new()
+    ///     .with_settings(r#"{"verify": {"remote_manifest_fetch": false}}"#)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_settings<S: IntoSettings>(mut self, settings: S) -> Result<Self> {
-        self.settings = settings.into_settings()?;
+    pub fn with_settings<S>(mut self, settings: S) -> Result<Self>
+    where
+        S: TryInto<Settings>,
+        Error: From<S::Error>,
+    {
+        self.settings = settings.try_into()?;
         Ok(self)
     }
 

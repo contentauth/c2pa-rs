@@ -114,6 +114,35 @@ fn default_format() -> String {
     "application/octet-stream".to_owned()
 }
 
+// TryFrom implementations for ManifestDefinition
+
+/// Implement TryFrom for &str (JSON string)
+impl TryFrom<&str> for ManifestDefinition {
+    type Error = Error;
+
+    fn try_from(value: &str) -> Result<Self> {
+        serde_json::from_str(value).map_err(Error::JsonError)
+    }
+}
+
+/// Implement TryFrom for String
+impl TryFrom<String> for ManifestDefinition {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        value.as_str().try_into()
+    }
+}
+
+/// Implement TryFrom for serde_json::Value
+impl TryFrom<serde_json::Value> for ManifestDefinition {
+    type Error = Error;
+
+    fn try_from(value: serde_json::Value) -> Result<Self> {
+        serde_json::from_value(value).map_err(Error::JsonError)
+    }
+}
+
 fn default_vec<T>() -> Vec<T> {
     Vec::new()
 }
@@ -414,17 +443,47 @@ impl Builder {
         })
     }
 
-    /// Sets the [`ManifestDefinition`] for this [`Builder`] from a JSON string.
+    /// Sets the [`ManifestDefinition`] for this [`Builder`].
+    ///
+    /// This method accepts anything that can be converted into a [`ManifestDefinition`],
+    /// including JSON strings, [`ManifestDefinition`] objects, and [`serde_json::Value`]s.
+    ///
     /// # Arguments
-    /// * `json` - A JSON string representing the [`ManifestDefinition`].
+    /// * `definition` - Anything that can be converted into a [`ManifestDefinition`]:
+    ///   - A JSON string: `r#"{"title": "My Image"}"#`
+    ///   - A `ManifestDefinition` object
+    ///   - A `serde_json::Value`
+    ///
     /// # Returns
     /// * The modified [`Builder`].
+    ///
     /// # Errors
-    /// * Returns an [`Error`] if the JSON is malformed or incorrect.
+    /// * Returns an [`Error`] if the definition cannot be converted.
+    ///
     /// # Notes
     /// * This will overwrite any existing definition in the [`Builder`].
-    pub fn with_json(mut self, json: &str) -> Result<Self> {
-        self.definition = serde_json::from_str(json).map_err(Error::JsonError)?;
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Builder, ManifestDefinition, Context, Result};
+    /// # fn main() -> Result<()> {
+    /// // From JSON string
+    /// let builder = Builder::new().with_definition(r#"{"title": "My Image"}"#)?;
+    ///
+    /// // From ManifestDefinition
+    /// let mut def = ManifestDefinition::default();
+    /// def.title = Some("My Image".to_string());
+    /// let builder = Builder::new().with_definition(def)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_definition<D>(mut self, definition: D) -> Result<Self>
+    where
+        D: TryInto<ManifestDefinition>,
+        Error: From<D::Error>,
+    {
+        self.definition = definition.try_into()?;
         Ok(self)
     }
 
@@ -1675,13 +1734,18 @@ impl Builder {
     /// # use c2pa::{Context, Builder, Result};
     /// # use std::io::Cursor;
     /// # fn main() -> Result<()> {
+    /// use serde_json::json;
+    ///
     /// // Create context with signer configuration
-    /// let context = Context::new().with_settings(
-    ///     r#"{"builder": {"claim_generator_info": {"name": "My App"}, "intent": "edit"}}"#,
-    /// )?;
+    /// let context = Context::new().with_settings(json!({
+    ///     "builder": {
+    ///         "claim_generator_info": {"name": "My App"},
+    ///         "intent": "edit"
+    ///     }
+    /// }))?;
     ///
     /// let mut builder = Builder::from_context(context)
-    ///     .with_json(r#"{"title": "My Image"}"#)?;
+    ///     .with_definition(json!({"title": "My Image"}))?;
     ///
     /// let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
     /// let mut dest = Cursor::new(Vec::new());
@@ -1890,11 +1954,15 @@ impl Builder {
     /// ```no_run
     /// # use c2pa::{Context, Builder, Result};
     /// # fn main() -> Result<()> {
+    /// use serde_json::json;
+    ///
     /// let context = Context::new()
-    ///     ..with_settings(r#"{"builder": {"claim_generator_info": {"name": "My App"}}"#)?;
+    ///     .with_settings(json!({
+    ///         "builder": {"claim_generator_info": {"name": "My App"}}
+    ///     }))?;
     ///
     /// let mut builder = Builder::from_context(context)
-    ///     .with_json(r#"{"title": "My Image"}"#)?;
+    ///     .with_definition(json!({"title": "My Image"}))?;
     ///
     /// // Save with automatic signer from context
     /// builder.save_to_file("tests/fixtures/C.jpg", "output.jpg")?;

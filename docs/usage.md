@@ -209,15 +209,21 @@ fn main() -> Result<()> {
 ```rust
 use c2pa::{Context, Builder, Result};
 use std::io::Cursor;
+use serde_json::json;
 
 fn main() -> Result<()> {
     // Configure context with signer settings
     let context = Context::new()
-        .with_settings(r#"{"builder": {"claim_generator_info": {"name": "My App"}, "intent": "edit"}}"#)?;
+        .with_settings(json!({
+            "builder": {
+                "claim_generator_info": {"name": "My App"},
+                "intent": "edit"
+            }
+        }))?;
     
-    // Create builder with context and chain with_json
+    // Create builder with context and inline JSON definition
     let mut builder = Builder::from_context(context)
-        .with_json(r#"{"title": "My Image"}"#)?;
+        .with_definition(json!({"title": "My Image"}))?;
     
     // Save with automatic signer from context
     let mut source = std::fs::File::open("source.jpg")?;
@@ -253,6 +259,7 @@ Then use it with the Builder:
 
 ```rust
 use c2pa::{Context, Builder, Result};
+use serde_json::json;
 
 fn main() -> Result<()> {
     // Configure context with signer settings
@@ -260,7 +267,7 @@ fn main() -> Result<()> {
         .with_settings(include_str!("config.json"))?;
     
     let mut builder = Builder::from_context(context)
-        .with_json(r#"{"title": "My Image"}"#)?;
+        .with_definition(json!({"title": "My Image"}))?;
     
     // Signer is created automatically from context's settings
     let mut source = std::fs::File::open("source.jpg")?;
