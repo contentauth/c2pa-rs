@@ -32,15 +32,19 @@ use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
-        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User,
-        UserCbor,
+        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail,
+        TimeStamp, User, UserCbor,
     },
     claim::Claim,
     error::{Error, Result},
-    http::{restricted::RestrictedResolver, AsyncGenericResolver, SyncGenericResolver},
+    http::{
+        restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
+        SyncGenericResolver, SyncHttpResolver,
+    },
+    jumbf::labels::manifest_label_from_uri,
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
-    settings::{self, Settings},
+    settings::{self, builder::TimeStampFetchScope, Settings},
     store::Store,
     utils::{hash_utils::hash_to_b64, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
@@ -307,6 +311,13 @@ pub struct Builder {
     /// A builder should construct a created, opened or updated manifest.
     #[deprecated(note = "Use set_intent() to set or intent() to get the builder intent")]
     pub intent: Option<BuilderIntent>,
+
+    /// Manifest labels to fetch timestamps for.
+    ///
+    /// Examples of a manifest label may include:
+    /// - `contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf`
+    /// - `urn:c2pa:fa479510-2a7d-c165-7b26-488a267f4c6a`
+    pub timestamp_manifest_labels: HashSet<String>,
 
     /// Container for binary assets (like thumbnails).
     #[serde(skip)]
@@ -592,6 +603,27 @@ impl Builder {
 
         self.add_assertion(Actions::LABEL, &actions)?;
         Ok(self)
+    }
+
+    /// Request a trusted timestamp for manifests with the given label.
+    ///
+    /// This only records the label on the builder. During signing, any matching manifest(s) will
+    /// have a [`TimeStamp`] assertion generated using the configured timestamping authority
+    /// ([`Signer::time_authority_url`]) if a timestamp for that manifest does not already exist.
+    ///
+    /// If [`BuilderSettings::timestamp_assertion_fetch_scope`] is specified, the manifest labels specified
+    /// here and the manifest labels obtained from the setting's scope will be merged and fetched.
+    ///
+    /// Examples of a manifest label may include:
+    /// - `contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf`
+    /// - `urn:c2pa:fa479510-2a7d-c165-7b26-488a267f4c6a`
+    ///
+    /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
+    /// [`TimeStamp`]: crate::assertions::TimeStamp
+    /// [`BuilderSettings::timestamp_assertion_fetch_scope`]: crate::settings::builder::BuilderSettings::timestamp_assertion_fetch_scope
+    pub fn add_timestamp(&mut self, manifest_label: impl Into<String>) -> &mut Self {
+        self.timestamp_manifest_labels.insert(manifest_label.into());
+        self
     }
 
     /// Adds an [`Ingredient`] to the manifest with JSON and a stream.
@@ -1363,12 +1395,7 @@ impl Builder {
     }
 
     #[cfg(feature = "add_thumbnails")]
-    fn maybe_add_thumbnail<R>(
-        &mut self,
-        format: &str,
-        stream: &mut R,
-        settings: &Settings,
-    ) -> Result<&mut Self>
+    fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
     where
         R: Read + Seek + ?Sized,
     {
@@ -1378,7 +1405,7 @@ impl Builder {
         }
 
         // check settings to see if we should auto generate a thumbnail
-        let auto_thumbnail = settings.builder.thumbnail.enabled;
+        let auto_thumbnail = self.settings.builder.thumbnail.enabled;
 
         if self.definition.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
@@ -1388,7 +1415,7 @@ impl Builder {
                 crate::utils::thumbnail::make_thumbnail_bytes_from_stream(
                     format,
                     &mut stream,
-                    settings,
+                    &self.settings,
                 )?
             {
                 stream.rewind()?;
@@ -1428,6 +1455,111 @@ impl Builder {
             stream.rewind()?;
         }
         Ok(self)
+    }
+
+    /// Creates and adds a [`TimeStamp`] assertion to the provenance claim of the given store. The claims
+    /// that are timestamped depends on the value of [`Builder::timestamp_manifest_labels`] and
+    /// [`BuilderSettings::timestamp_assertion_fetch_scope`]. If neither are specified, this function
+    /// will do nothing.
+    ///
+    /// [`TimeStamp`]: crate::assertions::TimeStamp
+    /// [`BuilderSettings::timestamp_assertion_fetch_scope`]: crate::settings::builder::BuilderSettings::timestamp_assertion_fetch_scope
+    #[async_generic(async_signature(
+        &self,
+        tsa_url: &str,
+        store: &mut Store,
+        http_resolver: &impl AsyncHttpResolver,
+    ))]
+    fn maybe_add_timestamp(
+        &self,
+        tsa_url: &str,
+        store: &mut Store,
+        http_resolver: &impl SyncHttpResolver,
+    ) -> Result<()> {
+        if self
+            .settings
+            .builder
+            .timestamp_assertion_fetch_scope
+            .is_none()
+            && self.timestamp_manifest_labels.is_empty()
+        {
+            return Ok(());
+        }
+
+        let mut claim_uris = HashSet::new();
+        match self.settings.builder.timestamp_assertion_fetch_scope {
+            Some(TimeStampFetchScope::All) => {
+                for claim in store.claims() {
+                    claim_uris.insert(claim.uri());
+                }
+            }
+            Some(TimeStampFetchScope::Parent) => {
+                let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                if let Some(parent_claim_uri) = provenance_claim.parent_claim_uri()? {
+                    claim_uris.insert(parent_claim_uri);
+                }
+            }
+            None => {}
+        }
+
+        for manifest_label in &self.timestamp_manifest_labels {
+            if let Some(claim) = store.get_claim(manifest_label) {
+                claim_uris.insert(claim.uri());
+            }
+        }
+
+        let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let timestamp_assertions = provenance_claim.timestamp_assertions();
+        let mut timestamp_assertion = if !timestamp_assertions.is_empty() {
+            // There can only be one timestamp assertion per the spec.
+            let timestamp_assertion =
+                TimeStamp::from_assertion(timestamp_assertions[0].assertion())?;
+            timestamp_assertion
+        } else {
+            TimeStamp::new()
+        };
+
+        for claim_uri in &claim_uris {
+            let manifest_label = manifest_label_from_uri(claim_uri).ok_or(Error::ClaimEncoding)?;
+
+            if timestamp_assertion.get_timestamp(&manifest_label).is_some() {
+                continue;
+            }
+
+            if *claim_uri == provenance_claim.uri() {
+                continue;
+            }
+
+            if let Some(claim) = store.get_claim(&manifest_label) {
+                let signature = claim.cose_sign1()?.signature;
+                if _sync {
+                    timestamp_assertion.refresh_timestamp(
+                        tsa_url,
+                        &manifest_label,
+                        &signature,
+                        http_resolver,
+                    )?;
+                } else {
+                    timestamp_assertion
+                        .refresh_timestamp_async(
+                            tsa_url,
+                            &manifest_label,
+                            &signature,
+                            http_resolver,
+                        )
+                        .await?;
+                }
+            }
+        }
+
+        let claim = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        if claim.timestamp_assertions().is_empty() {
+            claim.add_assertion(&timestamp_assertion)?;
+        } else {
+            claim.replace_assertion(timestamp_assertion.to_assertion()?)?;
+        }
+
+        Ok(())
     }
 
     // Find an assertion in the manifest.
@@ -1583,14 +1715,13 @@ impl Builder {
         R: Read + Seek + Send,
         W: Write + Read + Seek + Send,
     {
-        let settings = crate::settings::get_settings().unwrap_or_default();
         let http_resolver = if _sync {
             SyncGenericResolver::new()
         } else {
             AsyncGenericResolver::new()
         };
         let mut http_resolver = RestrictedResolver::new(http_resolver);
-        http_resolver.set_allowed_hosts(settings.core.allowed_network_hosts.clone());
+        http_resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
 
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
@@ -1607,17 +1738,41 @@ impl Builder {
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(&format, source, &settings)?;
+        self.maybe_add_thumbnail(&format, source)?;
 
         // convert the manifest to a store
-        let mut store = self.to_store(&settings)?;
+        let mut store = self.to_store(&self.settings)?;
+
+        // add timestamp if conditions allow
+        if let Some(tsa_url) = signer.time_authority_url() {
+            if _sync {
+                self.maybe_add_timestamp(&tsa_url, &mut store, &http_resolver)?;
+            } else {
+                self.maybe_add_timestamp_async(&tsa_url, &mut store, &http_resolver)
+                    .await?
+            }
+        }
 
         // sign and write our store to to the output image file
         if _sync {
-            store.save_to_stream(&format, source, dest, signer, &http_resolver, &settings)
+            store.save_to_stream(
+                &format,
+                source,
+                dest,
+                signer,
+                &http_resolver,
+                &self.settings,
+            )
         } else {
             store
-                .save_to_stream_async(&format, source, dest, signer, &http_resolver, &settings)
+                .save_to_stream_async(
+                    &format,
+                    source,
+                    dest,
+                    signer,
+                    &http_resolver,
+                    &self.settings,
+                )
                 .await
         }
     }
