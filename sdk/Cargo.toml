@@ -109,6 +109,8 @@ byteordered = "0.6.0"
 chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
 ciborium = "0.2.2"
 toml = "0.8.23"
+c2pa-roots = { path = "../../trust-lists/c2pa-roots", default-features = false}
+cawg-roots = { path = "../../trust-lists/cawg-roots", default-features = false}
 config = { version = "0.14.0", default-features = false, features = [
     "json",
     "toml",
