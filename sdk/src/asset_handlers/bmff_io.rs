@@ -69,7 +69,7 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
-static SUPPORTED_TYPES: [&str; 15] = [
+static SUPPORTED_TYPES: [&str; 18] = [
     "avif",
     "heif",
     "heic",
@@ -85,6 +85,9 @@ static SUPPORTED_TYPES: [&str; 15] = [
     "video/mp4",
     "video/quicktime",
     "video/x-m4v",
+    "m4s",
+    "mcfv",
+    "mcfa",
 ];
 
 macro_rules! boxtype {
