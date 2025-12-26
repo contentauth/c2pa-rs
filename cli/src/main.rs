@@ -915,6 +915,7 @@ fn main() -> Result<()> {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use c2pa::{BuilderIntent, DigitalSourceType};
     use tempfile::TempDir;
 
     use super::*;
@@ -946,6 +947,7 @@ pub mod tests {
         let tempdir = tempdirectory().unwrap();
         let output_path = tempdir.path().join("unit_out.jpg");
         let mut builder = Builder::from_json(CONFIG).expect("from_json");
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
         let signer = SignConfig::from_json(CONFIG)
             .unwrap()
