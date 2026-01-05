@@ -213,7 +213,6 @@ jobs:
 
   docs_rs:
     name: Preflight docs.rs build
-    needs: get-features
     runs-on: ubuntu-latest
 
     if: |
@@ -229,25 +228,19 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@nightly-2026-01-04
 
       - name: Build docs.rs
         uses: dtolnay/install@cargo-docs-rs
 
       - name: Preflight docs.rs for c2pa crate
-        env:
-          FEATURES: ${{needs.get-features.outputs.openssl-features}}
-        run: cargo docs-rs -p c2pa --features "$FEATURES"
+        run: cargo +nightly-2026-01-04 docs-rs -p c2pa
 
       - name: Preflight docs.rs for c2pa-c-ffi crate
-        env:
-          FEATURES: ${{needs.get-features.outputs.openssl-features}}
-        run: cargo docs-rs -p c2pa-c-ffi --features "$FEATURES"
+        run: cargo +nightly-2026-01-04 docs-rs -p c2pa-c-ffi
 
       - name: Preflight docs.rs for c2patool crate
-        env:
-          FEATURES: ${{needs.get-features.outputs.openssl-features}}
-        run: cargo docs-rs -p c2patool --features "$FEATURES"
+        run: cargo +nightly-2026-01-04 docs-rs -p c2patool
 
   doc-tests:
     name: Doc tests (requires nightly Rust)
