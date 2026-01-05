@@ -188,7 +188,7 @@ jobs:
         uses: dtolnay/install@cargo-docs-rs
 
       - name: Run cargo-docs-rs
-        run: cargo docs-rs
+        run: cargo docs-rs -p c2pa
         env:
           RUSTDOCFLAGS: -Dwarnings
 
