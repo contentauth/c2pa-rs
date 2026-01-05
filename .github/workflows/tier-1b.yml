@@ -185,9 +185,12 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Build docs.rs
+        uses: dtolnay/install@cargo-docs-rs
+
+      - name: Run cargo-docs-rs
+        run: cargo docs-rs
         env:
           RUSTDOCFLAGS: -Dwarnings
-        uses: dtolnay/install@cargo-docs-rs
 
   unused_deps:
     name: Check for unused dependencies
