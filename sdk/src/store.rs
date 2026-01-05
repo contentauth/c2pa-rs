@@ -8448,8 +8448,7 @@ pub mod tests {
         }
 
         // The actual test starts here...
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = Context::new();
 
         let (format, mut input_stream, output_stream) = create_test_streams("earth_apollo17.jpg");
 
@@ -8459,7 +8458,7 @@ pub mod tests {
         let mut tracking_stream =
             FlushTrackingStream::new(output_stream, flush_called.clone(), dropped.clone());
 
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         let cgi = ClaimGeneratorInfo::new("flush_test");
         let mut claim = Claim::new("test", Some("flush_test"), 1);
@@ -8476,8 +8475,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut tracking_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .expect("save_to_stream should succeed and properly flush the stream");
 
@@ -8629,15 +8627,14 @@ pub mod tests {
         unsafe impl Send for UnsafeStream {}
         unsafe impl Sync for UnsafeStream {}
 
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = Context::new();
 
         let (format, mut input_stream, _) = create_test_streams("earth_apollo17.jpg");
 
         let flush_called = Arc::new(AtomicBool::new(false));
         let mut unsafe_stream = UnsafeStream::new(flush_called.clone());
 
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         let cgi = ClaimGeneratorInfo::new("unsafe_flush_test");
         let mut claim = Claim::new("test", Some("unsafe_flush_test"), 1);
@@ -8656,8 +8653,7 @@ pub mod tests {
             &mut input_stream,
             &mut unsafe_stream,
             signer.as_ref(),
-            &http_resolver,
-            &settings,
+            &context,
         );
 
         // flushing should prevent the lifetimes issues at C FFI level
