@@ -263,12 +263,9 @@ pub struct Core {
     ///   - `http://192.0.2.1` (port omitted)
     ///   - `http://192.0.2.2:8080` (different IP address)
     ///
-    /// These settings are consumed by [`RestrictedResolver`]. For information on when the SDK might perform a
-    /// network requests, see ["When do network requests occur?"]
-    ///
-    /// ["When do network requests occur?"]: crate::http#when-do-network-requests-occur
-    /// [`HostPattern`]: crate::http::restricted::HostPattern
-    /// [`RestrictedResolver`]: crate::http::restricted::RestrictedResolver
+    /// These settings are applied by the SDK's HTTP resolvers to restrict network requests.
+    /// When network requests occur depends on the operations being performed (reading manifests,
+    /// validating credentials, timestamping, etc.).
     pub allowed_network_hosts: Option<Vec<HostPattern>>,
 }
 
@@ -344,7 +341,6 @@ pub struct Verify {
     pub ocsp_fetch: bool,
     /// Whether to fetch remote manifests in the following scenarios:
     /// - Constructing a [`Reader`]
-    /// - Constructing an [`Ingredient`]
     /// - Adding an [`Ingredient`] to the [`Builder`]
     ///
     /// The default value is true.
@@ -474,6 +470,78 @@ impl Settings {
     /// Set the [Settings] from a toml file.
     pub fn from_toml(toml: &str) -> Result<()> {
         Settings::from_string(toml, "toml").map(|_| ())
+    }
+
+    /// Update this `Settings` instance from a string representation.
+    /// This overlays the provided configuration on top of the current settings
+    /// without affecting the global thread-local settings.
+    ///
+    /// # Arguments
+    /// * `settings_str` - The configuration string
+    /// * `format` - The format of the configuration ("json" or "toml")
+    ///
+    /// # Example
+    /// ```
+    /// use c2pa::settings::Settings;
+    ///
+    /// let mut settings = Settings::default();
+    ///
+    /// // Update with TOML
+    /// settings
+    ///     .update_from_str(
+    ///         r#"
+    ///     [verify]
+    ///     verify_after_sign = false
+    /// "#,
+    ///         "toml",
+    ///     )
+    ///     .unwrap();
+    ///
+    /// assert!(!settings.verify.verify_after_sign);
+    ///
+    /// // Update with JSON (can set values to null)
+    /// settings
+    ///     .update_from_str(
+    ///         r#"
+    ///     {
+    ///         "verify": {
+    ///             "verify_after_sign": true
+    ///         }
+    ///     }
+    /// "#,
+    ///         "json",
+    ///     )
+    ///     .unwrap();
+    ///
+    /// assert!(settings.verify.verify_after_sign);
+    /// ```
+    pub fn update_from_str(&mut self, settings_str: &str, format: &str) -> Result<()> {
+        let file_format = match format.to_lowercase().as_str() {
+            "json" => FileFormat::Json,
+            "toml" => FileFormat::Toml,
+            _ => return Err(Error::UnsupportedType),
+        };
+
+        // Convert current settings to Config
+        let current_config = Config::try_from(&*self)
+            .map_err(|e| Error::BadParam(format!("could not convert settings: {}", e)))?;
+
+        // Build new config with the source
+        let merged_config = Config::builder()
+            .add_source(current_config)
+            .add_source(config::File::from_str(settings_str, file_format))
+            .build()
+            .map_err(|e| Error::BadParam(format!("could not merge configuration: {}", e)))?;
+
+        // Deserialize and validate
+        let updated_settings = merged_config
+            .try_deserialize::<Settings>()
+            .map_err(|e| Error::BadParam(e.to_string()))?;
+
+        updated_settings.validate()?;
+
+        *self = updated_settings;
+        Ok(())
     }
 
     /// Set a [Settings] value by path reference. The path is nested names of of the Settings objects
@@ -916,5 +984,128 @@ pub mod tests {
 
         let toml = include_bytes!("../../examples/c2pa.toml");
         Settings::from_toml(std::str::from_utf8(toml).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn test_update_from_str_toml() {
+        let mut settings = Settings::default();
+
+        // Check defaults
+        assert!(settings.verify.verify_after_sign);
+        assert!(settings.verify.verify_trust);
+
+        // Set both to false
+        settings
+            .update_from_str(
+                r#"
+            [verify]
+            verify_after_sign = false
+            verify_trust = false
+        "#,
+                "toml",
+            )
+            .unwrap();
+
+        assert!(!settings.verify.verify_after_sign);
+        assert!(!settings.verify.verify_trust);
+
+        // Override: set one to true, keep other false
+        settings
+            .update_from_str(
+                r#"
+            [verify]
+            verify_after_sign = true
+        "#,
+                "toml",
+            )
+            .unwrap();
+
+        assert!(settings.verify.verify_after_sign);
+        assert!(!settings.verify.verify_trust);
+    }
+
+    #[test]
+    fn test_update_from_str_json() {
+        let mut settings = Settings::default();
+
+        // Check defaults
+        assert!(settings.verify.verify_after_sign);
+        assert!(settings.verify.verify_trust);
+        assert!(settings.builder.created_assertion_labels.is_none());
+
+        // Set both to false and set created_assertion_labels
+        settings
+            .update_from_str(
+                r#"
+            {
+                "verify": {
+                    "verify_after_sign": false,
+                    "verify_trust": false
+                },
+                "builder": {
+                    "created_assertion_labels": ["c2pa.metadata"]
+                }
+            }
+        "#,
+                "json",
+            )
+            .unwrap();
+
+        assert!(!settings.verify.verify_after_sign);
+        assert!(!settings.verify.verify_trust);
+        assert_eq!(
+            settings.builder.created_assertion_labels,
+            Some(vec!["c2pa.metadata".to_string()])
+        );
+
+        // Override: set one to true, keep other false
+        settings
+            .update_from_str(
+                r#"
+            {
+                "verify": {
+                    "verify_after_sign": true
+                }
+            }
+        "#,
+                "json",
+            )
+            .unwrap();
+
+        assert!(settings.verify.verify_after_sign);
+        assert!(!settings.verify.verify_trust);
+        assert_eq!(
+            settings.builder.created_assertion_labels,
+            Some(vec!["c2pa.metadata".to_string()])
+        );
+
+        // Set created_assertion_labels back to null
+        settings
+            .update_from_str(
+                r#"
+            {
+                "builder": {
+                    "created_assertion_labels": null
+                }
+            }
+        "#,
+                "json",
+            )
+            .unwrap();
+
+        assert!(settings.verify.verify_after_sign);
+        assert!(!settings.verify.verify_trust);
+        assert!(settings.builder.created_assertion_labels.is_none());
+    }
+
+    #[test]
+    fn test_update_from_str_invalid() {
+        assert!(Settings::default()
+            .update_from_str("invalid toml { ]", "toml")
+            .is_err());
+        assert!(Settings::default()
+            .update_from_str("{ invalid json }", "json")
+            .is_err());
+        assert!(Settings::default().update_from_str("data", "yaml").is_err());
     }
 }

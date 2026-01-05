@@ -484,11 +484,11 @@ jobs:
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-07-28
+          toolchain: nightly-2025-12-06
           components: rustfmt
 
       - name: Check format
-        run: cargo +nightly-2025-07-28 fmt --all -- --check
+        run: cargo +nightly-2025-12-06 fmt --all -- --check
 
   cargo_doc:
     name: Check docs
