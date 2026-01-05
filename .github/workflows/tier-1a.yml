@@ -234,7 +234,9 @@ jobs:
       - name: Build docs.rs
         uses: dtolnay/install@cargo-docs-rs
 
-      - run: cargo docs-rs
+      - run: cargo docs-rs -p c2pa
+      - run: cargo docs-rs -p c2pa-c-ffi
+      - run: cargo docs-rs -p c2patool
 
   doc-tests:
     name: Doc tests (requires nightly Rust)
