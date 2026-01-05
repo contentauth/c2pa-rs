@@ -962,7 +962,6 @@ impl Builder {
             // we should be able to call Reader::from_stream and then convert to Builder
             // but we need to disable validation since we are not signing yet
             // so we will read the store directly here
-            //crate::Reader::from_stream("application/c2pa", stream).and_then(|r| r.into_builder())
             let mut context = Context::new();
             context.settings_mut().verify.verify_after_reading = false;
 
@@ -2054,9 +2053,7 @@ impl Builder {
         let mut store = Store::new();
         store.commit_claim(claim)?;
 
-        //store.to_jumbf_internal(1000)
         store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
-        //store.get_box_hashed_embeddable_manifest(signer.as_ref(), settings)
     }
 }
 

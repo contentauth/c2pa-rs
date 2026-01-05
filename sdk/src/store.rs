@@ -1533,6 +1533,63 @@ impl Store {
             store.insert_restored_claim(cai_store_desc_box.label(), claim);
         }
 
+        // Reconstruct nested claim relationships after all claims are loaded
+        // When claims are serialized, nested ingredients are extracted as top-level claims
+        // We need to restore them back into the parent claims' ingredient stores
+        use crate::assertions::Ingredient as IngredientAssertion;
+        let claim_labels: Vec<String> = store
+            .claims()
+            .iter()
+            .map(|c| c.label().to_string())
+            .collect();
+        for label in &claim_labels {
+            if let Some(claim) = store.get_claim(label) {
+                // Find ingredient assertions in this claim
+                let ingredient_refs: Vec<String> = claim
+                    .ingredient_assertions()
+                    .iter()
+                    .filter_map(|ing_assertion| {
+                        // Parse the ingredient assertion to get active_manifest or c2pa_manifest
+                        match IngredientAssertion::from_assertion(ing_assertion.assertion()) {
+                            Ok(ingredient) => {
+                                // Check both active_manifest (v3) and c2pa_manifest (v2)
+                                let hashed_uri = ingredient
+                                    .active_manifest
+                                    .as_ref()
+                                    .or(ingredient.c2pa_manifest.as_ref());
+
+                                if let Some(hashed_uri) = hashed_uri {
+                                    let url = hashed_uri.url();
+                                    // Extract the manifest label from the JUMBF URI
+                                    jumbf::labels::manifest_label_from_uri(&url)
+                                        .map(|l| l.to_string())
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(_) => None,
+                        }
+                    })
+                    .collect();
+
+                if !ingredient_refs.is_empty() {
+                    // Clone the claim for modification
+                    let mut claim_mut = claim.clone();
+                    for ing_ref in &ingredient_refs {
+                        // Check if this referenced claim exists in the store
+                        if let Some(nested_claim) = store.get_claim(ing_ref) {
+                            claim_mut.replace_ingredient_or_insert(
+                                ing_ref.to_string(),
+                                nested_claim.clone(),
+                            );
+                        }
+                    }
+                    // Replace the claim in the store with the updated version
+                    store.claims_map.insert(label.to_string(), claim_mut);
+                }
+            }
+        }
+
         Ok(store)
     }
 
@@ -3052,6 +3109,7 @@ impl Store {
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
 
+                output_stream.flush()?;
                 output_stream.rewind()?;
 
                 let verify_after_sign = settings.verify.verify_after_sign;
@@ -3322,6 +3380,7 @@ impl Store {
             }
         }
 
+        output_stream.flush()?;
         Ok((sig, jumbf_bytes))
     }
 
@@ -4084,8 +4143,9 @@ impl Store {
             final_redactions.append(&mut to_both);
         }
 
+        let claims_to_add: Vec<Claim> = i_store_mut.claims().into_iter().cloned().collect();
         claim.add_ingredient_data(
-            i_store_mut.claims().into_iter().cloned().collect(),
+            claims_to_add,
             Some(final_redactions),
             &svi.ingredient_references,
         )?;
@@ -4244,9 +4304,15 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::io::Seek;
     #[cfg(feature = "file_io")]
-    use std::{fs, io::Write};
+    use std::fs;
+    use std::{
+        io::{Read, Seek, SeekFrom, Write},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+    };
 
     use c2pa_macros::c2pa_test_async;
     #[cfg(feature = "file_io")]
@@ -8288,5 +8354,320 @@ pub mod tests {
                 panic!("Failed to load fragment from stream: {e:?}");
             }
         }
+    }
+
+    #[test]
+    fn test_stream_context_handling_for_c_ffi_layer() {
+        // Building a stream wrapper that simulates C FFI behavior
+
+        /// Stream wrapper that simulates the streams like it would be in C FFI layer.
+        /// Needed to repro a use-after-free bug from the FFI layer.
+        struct FlushTrackingStream<T: CAIReadWrite> {
+            inner: T,
+            buffer: Vec<u8>,
+            flush_called: Arc<AtomicBool>,
+            dropped: Arc<AtomicBool>,
+        }
+
+        impl<T: CAIReadWrite> FlushTrackingStream<T> {
+            fn new(inner: T, flush_called: Arc<AtomicBool>, dropped: Arc<AtomicBool>) -> Self {
+                Self {
+                    inner,
+                    buffer: Vec::new(),
+                    flush_called,
+                    dropped,
+                }
+            }
+        }
+
+        impl<T: CAIReadWrite> Read for FlushTrackingStream<T> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.inner.read(buf)
+            }
+        }
+
+        impl<T: CAIReadWrite> Write for FlushTrackingStream<T> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                // Simulate buffering behavior
+                if !self.buffer.is_empty() {
+                    // Write previous buffer first
+                    self.inner.write_all(&self.buffer)?;
+                }
+                // Keep the current write in the buffer
+                self.buffer = buf.to_vec();
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                // Mark that flush was called
+                self.flush_called.store(true, Ordering::SeqCst);
+
+                // Actually write the buffered data
+                if !self.buffer.is_empty() {
+                    self.inner.write_all(&self.buffer)?;
+                    self.buffer.clear();
+                }
+                self.inner.flush()
+            }
+        }
+
+        impl<T: CAIReadWrite> Seek for FlushTrackingStream<T> {
+            fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+                // Check if we're trying to seek without flushing first
+                // Simulates a crash scenario where the stream is accessed
+                // after data should have been written but wasn't
+                if !self.buffer.is_empty() && !self.flush_called.load(Ordering::SeqCst) {
+                    // This is a use-after-free error simulation for the way the FFI layer handles streams
+                    return Err(std::io::Error::other(
+                        "Simulated use-after-free: attempting to seek with unflushed buffer (similar to accessing freed FFI context)",
+                    ));
+                }
+                self.inner.seek(pos)
+            }
+
+            fn rewind(&mut self) -> std::io::Result<()> {
+                // Suffer the same troubles as seek
+                if !self.buffer.is_empty() && !self.flush_called.load(Ordering::SeqCst) {
+                    return Err(std::io::Error::other(
+                        "Simulated use-after-free: attempting to rewind with unflushed buffer (similar to accessing freed FFI context)",
+                    ));
+                }
+                self.inner.rewind()
+            }
+
+            fn stream_position(&mut self) -> std::io::Result<u64> {
+                self.inner.stream_position()
+            }
+        }
+
+        impl<T: CAIReadWrite> Drop for FlushTrackingStream<T> {
+            fn drop(&mut self) {
+                self.dropped.store(true, Ordering::SeqCst);
+                // Dropping without flush frees the context
+            }
+        }
+
+        // The actual test starts here...
+        let settings = Settings::default();
+        let http_resolver = SyncGenericResolver::new();
+
+        let (format, mut input_stream, output_stream) = create_test_streams("earth_apollo17.jpg");
+
+        let flush_called = Arc::new(AtomicBool::new(false));
+        let dropped = Arc::new(AtomicBool::new(false));
+
+        let mut tracking_stream =
+            FlushTrackingStream::new(output_stream, flush_called.clone(), dropped.clone());
+
+        let mut store = Store::with_settings(&settings);
+
+        let cgi = ClaimGeneratorInfo::new("flush_test");
+        let mut claim = Claim::new("test", Some("flush_test"), 1);
+        create_capture_claim(&mut claim).unwrap();
+        claim.add_claim_generator_info(cgi);
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        store.commit_claim(claim).unwrap();
+
+        store
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut tracking_stream,
+                signer.as_ref(),
+                &http_resolver,
+                &settings,
+            )
+            .expect("save_to_stream should succeed and properly flush the stream");
+
+        // Verify that flush was called: if not, we would have crashed on rewind
+        // when used through the C FFI layers with streams
+        assert!(
+            flush_called.load(Ordering::SeqCst),
+            "flush() must be called during save_to_stream to prevent use-after-free in FFI scenarios"
+        );
+
+        // Verify buffer is empty (data was actually written), nothing dangling
+        assert!(
+            tracking_stream.buffer.is_empty(),
+            "buffer should be empty after flush"
+        );
+    }
+
+    /// Another test for stream context issues, with unsafe pointers
+    #[test]
+    fn test_stream_context_handling_for_c_ffi_layer_no_use_after_free() {
+        use std::io::Cursor;
+
+        // This struct simulates an FFI stream context that could be freed any time
+        #[repr(C)]
+        struct StreamContext {
+            data: Cursor<Vec<u8>>,
+            // Used to detect if memory has been freed
+            magic: u64,
+        }
+
+        impl StreamContext {
+            fn new() -> Self {
+                Self {
+                    data: Cursor::new(Vec::new()),
+                    // Magic number to detect valid context (not unintialized)
+                    magic: 0xdeadbeefcafebabe,
+                }
+            }
+
+            fn mark_freed(&mut self) {
+                // 0xCCCCCCCCCCCCCCCC is a value used by some compilers
+                // to flag uninitialized memory, so we'll do the same here
+                self.magic = 0xcccccccccccccccc;
+            }
+
+            fn check_valid(&self) -> std::io::Result<()> {
+                if self.magic != 0xdeadbeefcafebabe {
+                    return Err(std::io::Error::other(
+                        format!(
+                            "Use-after-free detected: StreamContext magic is 0x{:X} (expected 0xDEADBEEFCAFEBABE)",
+                            self.magic
+                        ),
+                    ));
+                }
+                Ok(())
+            }
+        }
+
+        struct UnsafeStream {
+            context: *mut StreamContext,
+            flush_called: Arc<AtomicBool>,
+        }
+
+        impl UnsafeStream {
+            fn new(flush_called: Arc<AtomicBool>) -> Self {
+                let context = Box::into_raw(Box::new(StreamContext::new()));
+                Self {
+                    context,
+                    flush_called,
+                }
+            }
+
+            unsafe fn context_ref(&self) -> &StreamContext {
+                &*self.context
+            }
+
+            unsafe fn context_mut(&mut self) -> &mut StreamContext {
+                &mut *self.context
+            }
+        }
+
+        impl Read for UnsafeStream {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                unsafe {
+                    self.context_ref().check_valid()?;
+                    self.context_mut().data.read(buf)
+                }
+            }
+        }
+
+        impl Write for UnsafeStream {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                unsafe {
+                    self.context_ref().check_valid()?;
+                    self.context_mut().data.write(buf)
+                }
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                unsafe {
+                    self.context_ref().check_valid()?;
+                    self.flush_called.store(true, Ordering::SeqCst);
+                    self.context_mut().data.flush()
+                }
+            }
+        }
+
+        impl Seek for UnsafeStream {
+            fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+                unsafe {
+                    // This is where the crash would happen in the FFI layer
+                    // if the context was freed before flush
+                    self.context_ref().check_valid()?;
+                    self.context_mut().data.seek(pos)
+                }
+            }
+
+            fn rewind(&mut self) -> std::io::Result<()> {
+                unsafe {
+                    self.context_ref().check_valid()?;
+                    self.context_mut().data.rewind()
+                }
+            }
+
+            fn stream_position(&mut self) -> std::io::Result<u64> {
+                unsafe {
+                    self.context_ref().check_valid()?;
+                    self.context_mut().data.stream_position()
+                }
+            }
+        }
+
+        impl Drop for UnsafeStream {
+            fn drop(&mut self) {
+                unsafe {
+                    if !self.context.is_null() {
+                        // Simulate what happens in FFI: if flush wasn't called,
+                        // mark the context as freed aka uninitialized memory
+                        if !self.flush_called.load(Ordering::SeqCst) {
+                            (*self.context).mark_freed();
+                        }
+                        // Clean up the context
+                        drop(Box::from_raw(self.context));
+                    }
+                }
+            }
+        }
+
+        unsafe impl Send for UnsafeStream {}
+        unsafe impl Sync for UnsafeStream {}
+
+        let settings = Settings::default();
+        let http_resolver = SyncGenericResolver::new();
+
+        let (format, mut input_stream, _) = create_test_streams("earth_apollo17.jpg");
+
+        let flush_called = Arc::new(AtomicBool::new(false));
+        let mut unsafe_stream = UnsafeStream::new(flush_called.clone());
+
+        let mut store = Store::with_settings(&settings);
+
+        let cgi = ClaimGeneratorInfo::new("unsafe_flush_test");
+        let mut claim = Claim::new("test", Some("unsafe_flush_test"), 1);
+        create_capture_claim(&mut claim).unwrap();
+        claim.add_claim_generator_info(cgi);
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        store.commit_claim(claim).unwrap();
+
+        // Save to stream: without the flush calls, this triggers
+        // a use-after-free error when trying to rewind the stream,
+        // because the stream context is freed before the flush is called
+        let result = store.save_to_stream(
+            format,
+            &mut input_stream,
+            &mut unsafe_stream,
+            signer.as_ref(),
+            &http_resolver,
+            &settings,
+        );
+
+        // flushing should prevent the lifetimes issues at C FFI level
+        assert!(
+            result.is_ok(),
+            "save_to_stream should succeed. Error: {:?}",
+            result.err()
+        );
+
+        // Verify that flush was called
+        assert!(flush_called.load(Ordering::SeqCst));
     }
 }
