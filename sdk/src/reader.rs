@@ -1553,11 +1553,16 @@ pub mod tests {
 
     #[test]
     fn test_reader_is_send_sync() {
-        // Compile-time assertion that Reader is Send + Sync
-        fn assert_send<T: Send>() {}
-        fn assert_sync<T: Sync>() {}
+        // Compile-time assertion that Reader is Send + Sync on non-WASM
+        // On WASM, MaybeSend/MaybeSync don't require Send + Sync, so these traits
+        // won't be implemented, but that's correct for single-threaded WASM
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            fn assert_send<T: Send>() {}
+            fn assert_sync<T: Sync>() {}
 
-        assert_send::<Reader>();
-        assert_sync::<Reader>();
+            assert_send::<Reader>();
+            assert_sync::<Reader>();
+        }
     }
 }
