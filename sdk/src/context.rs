@@ -27,6 +27,11 @@ type BoxedAsyncResolver = Box<dyn AsyncHttpResolver + Send + Sync>;
 #[cfg(target_arch = "wasm32")]
 type BoxedAsyncResolver = Box<dyn AsyncHttpResolver>;
 
+#[cfg(not(target_arch = "wasm32"))]
+type BoxedAsyncSigner = Box<dyn AsyncSigner + Send + Sync>;
+#[cfg(target_arch = "wasm32")]
+type BoxedAsyncSigner = Box<dyn AsyncSigner>;
+
 /// Internal state for sync HTTP resolver selection.
 enum SyncResolverState {
     /// User-provided custom resolver.
@@ -50,6 +55,15 @@ enum SignerState {
     /// Signer created from context's settings with lazy initialization.
     /// The Result is cached so we only attempt creation once.
     FromSettings(OnceLock<Result<BoxedSigner>>),
+}
+
+/// Internal state for async signer selection.
+enum AsyncSignerState {
+    /// User-provided custom async signer.
+    Custom(BoxedAsyncSigner),
+    /// Async signer created from context's settings with lazy initialization.
+    /// The Result is cached so we only attempt creation once.
+    FromSettings(OnceLock<Result<BoxedAsyncSigner>>),
 }
 
 /// A trait for types that can be converted into Settings.
@@ -193,44 +207,8 @@ pub struct Context {
     sync_resolver: SyncResolverState,
     async_resolver: AsyncResolverState,
     signer: SignerState,
-    _signer_async: Option<Box<dyn AsyncSigner>>,
+    async_signer: AsyncSignerState,
 }
-
-// SAFETY: Context is Send + Sync on non-WASM targets.
-//
-// Rust's compiler cannot automatically prove Send + Sync for Context because it contains
-// enum variants with trait objects (Box<dyn Trait>). The compiler conservatively assumes
-// these might not be Send + Sync even though we've explicitly added those bounds via cfg.
-//
-// This manual implementation is safe because ALL fields are Send + Sync on non-WASM:
-//
-// 1. `settings: Settings`
-//    - Derived Send + Sync (contains only Send + Sync types)
-//
-// 2. `sync_resolver: SyncResolverState`
-//    - Custom(Box<dyn SyncHttpResolver + Send + Sync>) - explicitly bounded on non-WASM
-//    - Default(OnceLock<RestrictedResolver<T>>) - Send + Sync when T is Send + Sync
-//
-// 3. `async_resolver: AsyncResolverState`
-//    - Custom(Box<dyn AsyncHttpResolver + Send + Sync>) - explicitly bounded on non-WASM
-//    - Default(OnceLock<RestrictedResolver<T>>) - Send + Sync when T is Send + Sync
-//
-// 4. `signer: SignerState`
-//    - Custom(Box<dyn Signer + Send + Sync>) - explicitly bounded on non-WASM
-//    - FromSettings(OnceLock<Result<Box<dyn Signer + Send + Sync>>>) - explicitly bounded on non-WASM
-//
-// 5. `_signer_async: Option<Box<dyn AsyncSigner>>`
-//    - Currently unused field for future async signer support
-//
-// These impls enable Arc<Context> to be shared across threads without Clippy warnings,
-// which is the intended use case for multi-threaded applications and FFI scenarios.
-//
-// On WASM targets, these impls are not needed as WASM is single-threaded.
-#[cfg(not(target_arch = "wasm32"))]
-unsafe impl Send for Context {}
-
-#[cfg(not(target_arch = "wasm32"))]
-unsafe impl Sync for Context {}
 
 impl Default for Context {
     fn default() -> Self {
@@ -244,7 +222,7 @@ impl Default for Context {
             )),
             #[cfg(not(test))]
             signer: SignerState::FromSettings(OnceLock::new()),
-            _signer_async: None,
+            async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
         }
     }
 }
@@ -529,17 +507,87 @@ impl Context {
         }
     }
 
-    // pub fn signer_async(&self) -> Result<&dyn crate::signer::AsyncSigner> {
-    //     match self.signer_async.get() {
-    //         Some(s) => Ok(s.as_ref()),
-    //         None => {
-    //             self.signer_async
-    //                 .set(Settings::signer_async()?)
-    //                 .ok();
-    //             Ok(self.signer_async.get().unwrap().as_ref())
-    //         }
-    //     }
-    // }
+    /// Returns a reference to the async signer.
+    ///
+    /// If a custom async signer was set with [`Context::with_async_signer`], it will be returned.
+    /// Otherwise, the async signer will be created from the context's settings on first access
+    /// and cached for future use.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no async signer is configured in settings and no custom signer was provided.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use c2pa::{Context, Result};
+    /// # async fn example() -> Result<()> {
+    /// let context = Context::new();
+    /// let async_signer = context.async_signer()?;
+    /// let signature = async_signer.sign(vec![1, 2, 3]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn async_signer(&self) -> Result<&dyn AsyncSigner> {
+        match &self.async_signer {
+            AsyncSignerState::Custom(signer) => Ok(signer.as_ref()),
+            AsyncSignerState::FromSettings(once_lock) => {
+                let result = once_lock.get_or_init(|| {
+                    // TODO: Implement creating async signer from settings when async signer support is added to Settings
+                    Err(Error::BadParam(
+                        "Async signer not configured in settings".to_string(),
+                    ))
+                });
+                match result {
+                    Ok(boxed) => Ok(boxed.as_ref()),
+                    Err(Error::BadParam(_)) => Err(Error::BadParam(
+                        "Async signer not configured in settings".to_string(),
+                    )),
+                    Err(_) => Err(Error::BadParam(
+                        "Async signer not configured in settings".to_string(),
+                    )),
+                }
+            }
+        }
+    }
+
+    /// Sets a custom async signer for this Context.
+    ///
+    /// This replaces any existing async signer (whether from settings or previously set).
+    ///
+    /// # Arguments
+    ///
+    /// * `signer` - An async signer that implements the [`AsyncSigner`] trait
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use c2pa::{Context, AsyncSigner, SigningAlg, Result};
+    /// # struct MyAsyncSigner;
+    /// # #[async_trait::async_trait]
+    /// # impl AsyncSigner for MyAsyncSigner {
+    /// #     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> { Ok(vec![]) }
+    /// #     fn alg(&self) -> SigningAlg { SigningAlg::Ps256 }
+    /// #     fn certs(&self) -> Result<Vec<Vec<u8>>> { Ok(vec![]) }
+    /// #     fn reserve_size(&self) -> usize { 1024 }
+    /// # }
+    /// # fn main() -> Result<()> {
+    /// let context = Context::new()
+    ///     .with_async_signer(MyAsyncSigner);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_async_signer(mut self, signer: impl AsyncSigner + Send + Sync + 'static) -> Self {
+        self.async_signer = AsyncSignerState::Custom(Box::new(signer));
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn with_async_signer(mut self, signer: impl AsyncSigner + 'static) -> Self {
+        self.async_signer = AsyncSignerState::Custom(Box::new(signer));
+        self
+    }
 }
 
 #[cfg(test)]
@@ -616,7 +664,7 @@ mod tests {
             sync_resolver: SyncResolverState::Default(OnceLock::new()),
             async_resolver: AsyncResolverState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
-            _signer_async: None,
+            async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
         };
 
         // Update settings to ensure no signer configuration
@@ -653,6 +701,59 @@ mod tests {
         assert!(
             signer.alg() == crate::SigningAlg::Es256,
             "Custom signer should have Es256 algorithm"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_custom_async_signer() {
+        use crate::utils::test_signer::async_test_signer;
+
+        // Create a custom async signer using the test utility
+        let custom_async_signer = async_test_signer(crate::SigningAlg::Es256);
+
+        // Create a context with the custom async signer
+        let context = Context::new().with_async_signer(custom_async_signer);
+
+        // Verify the custom async signer is returned with the expected algorithm
+        let async_signer = context.async_signer().unwrap();
+        assert_eq!(
+            async_signer.alg(),
+            crate::SigningAlg::Es256,
+            "Custom async signer should have Es256 algorithm"
+        );
+
+        // Verify we can get certs
+        let certs = async_signer.certs().unwrap();
+        assert!(!certs.is_empty(), "Async signer should have certificates");
+
+        // Test that we can actually call sign
+        let signature = async_signer.sign(vec![1, 2, 3, 4]).await;
+        assert!(signature.is_ok(), "Sign should succeed");
+    }
+
+    #[test]
+    fn test_async_signer_missing_settings() {
+        // Create a context without custom async signer (will try to load from settings)
+        let context = Context {
+            settings: Settings::default(),
+            sync_resolver: SyncResolverState::Default(OnceLock::new()),
+            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            signer: SignerState::FromSettings(OnceLock::new()),
+            async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
+        };
+
+        // Verify that async_signer() returns an error when no async signer settings are present
+        let result = context.async_signer();
+        assert!(
+            result.is_err(),
+            "Should error when no async signer settings present"
+        );
+
+        // Verify it's the expected error type
+        assert!(
+            matches!(result, Err(Error::BadParam(_))),
+            "Expected BadParam error"
         );
     }
 }

@@ -20,7 +20,7 @@ use crate::{
     },
     dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
     http::SyncGenericResolver,
-    maybe_send_sync::MaybeSync,
+    maybe_send_sync::{MaybeSend, MaybeSync},
     Result,
 };
 
@@ -156,7 +156,7 @@ pub(crate) trait ConfigurableSigner: Signer + Sized {
 /// Use this when the implementation is asynchronous.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait AsyncSigner: MaybeSync {
+pub trait AsyncSigner: MaybeSend + MaybeSync {
     /// Returns a new byte array which is a signature over the original.
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>>;
 

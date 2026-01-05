@@ -9,6 +9,29 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+### Added
+
+* Add `Context` API for thread-safe resource sharing with `Arc<Context>` support
+  - New `Context` struct centralizes settings, HTTP resolvers, and signers
+  - `Builder::from_context()` and `Builder::from_shared_context()` for context-based builders
+  - `Reader::from_context()` and `Reader::from_shared_context()` for context-based readers
+  - Implements `Send + Sync` on non-WASM targets for safe multi-threaded usage
+  - `BoxedSigner` and `BoxedAsyncSigner` type aliases now public
+* Add `AsyncSigner` support to `Context` API
+  - `Context::async_signer()` to retrieve async signer
+  - `Context::with_async_signer()` to set custom async signer
+
+### Changed
+
+* **BREAKING**: `AsyncSigner` trait now requires `Send` on non-WASM targets (via `MaybeSend` bound)
+  - Enables `Context` to be `Send + Sync` without unsafe code
+  - Most implementations should already satisfy this bound
+  - If your custom `AsyncSigner` uses non-`Send` types (like `Rc`), replace them with `Send` equivalents (like `Arc`)
+
+### Fixed
+
+* Remove unsafe `Send` and `Sync` implementations from `Context` by properly bounding `AsyncSigner` trait
+
 ## [0.73.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.73.1...c2pa-v0.73.2)
 _22 December 2025_
 
