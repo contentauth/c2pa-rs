@@ -338,14 +338,60 @@ Context is designed to be used safely across threads. While Context itself doesn
 2. Use `Arc<Context>` to share a context across threads (for read-only access)
 3. Pass contexts by reference where appropriate
 
+### When to Use Context Sharing
+
+Understanding when to use shared contexts helps optimize your application:
+
+**Use single-use Context (no Arc needed):**
+- Single signing operation
+- Single reading operation
+- Each operation has different configuration needs
+
+```rust
+// Simple case - no Arc needed
+let builder = Builder::new();
+let reader = Reader::new();
+```
+
+**Use shared Context (with Arc):**
+- Multiple builders or readers using the same configuration
+- Signing and reading with the same settings
+- Multi-threaded operations
+- Web servers handling multiple requests with shared configuration
+
+```rust
+use std::sync::Arc;
+
+// Shared configuration
+let ctx = Arc::new(Context::new().with_settings(config)?);
+let builder1 = Builder::from_shared_context(&ctx);
+let builder2 = Builder::from_shared_context(&ctx);
+```
+
 ### Migration from Global Settings
 
-If you're migrating from the older global Settings pattern:
+The Context API replaces the older global Settings pattern. If you're migrating existing code, here's how Settings and Context work together.
+
+#### Backwards Compatibility
+
+**Settings still works:** The Settings type and its configuration format remain unchanged. All your existing settings files (JSON or TOML) work with Context without modification.
+
+**Key differences:**
+
+| Aspect | Old Global Settings | New Context API |
+|--------|---------------------|-----------------|
+| Scope | Global, affects all operations | Per-operation, explicitly passed |
+| Thread Safety | Not thread-safe | Thread-safe, shareable with Arc |
+| Configuration | Set once globally | Can have multiple configurations |
+| Testability | Difficult (global state) | Easy (isolated contexts) |
+
+#### Migration Examples
 
 **Old approach (deprecated):**
 ```rust
 use c2pa::settings::Settings;
 
+// Global settings affect all operations
 Settings::from_toml(include_str!("settings.toml"))?;
 let reader = Reader::from_stream("image/jpeg", stream)?;
 ```
@@ -354,11 +400,73 @@ let reader = Reader::from_stream("image/jpeg", stream)?;
 ```rust
 use c2pa::{Context, Reader};
 
+// Explicit context per operation
 let context = Context::new()
     .with_settings(include_str!("settings.toml"))?;
 let reader = Reader::from_context(context)
     .with_stream("image/jpeg", stream)?;
 ```
+
+**Multiple configurations (previously impossible):**
+```rust
+use c2pa::{Context, Builder};
+
+// Development signer for testing
+let dev_ctx = Context::new()
+    .with_settings(include_str!("dev_settings.toml"))?;
+let dev_builder = Builder::from_context(dev_ctx);
+
+// Production signer for real signing
+let prod_ctx = Context::new()
+    .with_settings(include_str!("prod_settings.toml"))?;
+let prod_builder = Builder::from_context(prod_ctx);
+```
+
+#### How Context Uses Settings Internally
+
+Context wraps a `Settings` instance and uses it to:
+
+1. **Create signers automatically** - When you call `context.signer()` or `builder.save_to_stream()`, the Context creates a signer from the `signer` field in Settings (if present).
+
+2. **Configure HTTP resolvers** - The Context creates default HTTP resolvers (for fetching remote manifests) and applies the `core.allowed_network_hosts` setting from Settings.
+
+3. **Control verification** - The `verify` settings control how manifests are validated.
+
+4. **Configure builder behavior** - The `builder` settings control thumbnail generation, actions, and other manifest creation options.
+
+The Settings format hasn't changed - only how you provide those settings:
+
+```rust
+// Settings can be created and passed to Context
+let settings = Settings::default();
+settings.verify.verify_after_sign = true;
+let context = Context::new().with_settings(settings)?;
+
+// Or passed directly as JSON/TOML strings
+let context = Context::new()
+    .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+```
+
+#### Global Settings Still Available (Legacy)
+
+For backwards compatibility, the global Settings pattern still works, but is not recommended for new code:
+
+```rust
+use c2pa::settings::Settings;
+
+// Global settings (legacy approach - not recommended)
+Settings::from_toml(include_str!("settings.toml"))?;
+
+// Builder/Reader without explicit Context will use global Settings
+let builder = Builder::new();  // Uses global Settings internally
+```
+
+**Why Context is better:**
+- Explicit dependencies (no hidden global state)
+- Multiple configurations in the same application
+- Thread-safe sharing with Arc
+- Easier to test (pass mock contexts)
+- FFI-friendly (contexts can be passed across language boundaries)
 
 ## Example code
 
