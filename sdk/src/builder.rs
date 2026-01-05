@@ -3915,11 +3915,11 @@ mod tests {
             Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": false}}"#)?);
 
         // Share it across multiple builders
-        let builder1 = Builder::from_shared_context(&ctx)
-            .with_definition(r#"{"title": "First Image"}"#)?;
+        let builder1 =
+            Builder::from_shared_context(&ctx).with_definition(r#"{"title": "First Image"}"#)?;
 
-        let builder2 = Builder::from_shared_context(&ctx)
-            .with_definition(r#"{"title": "Second Image"}"#)?;
+        let builder2 =
+            Builder::from_shared_context(&ctx).with_definition(r#"{"title": "Second Image"}"#)?;
 
         // Both builders share the same context settings
         assert_eq!(
@@ -3998,7 +3998,7 @@ mod tests {
             let ctx = Arc::clone(&ctx);
             let handle = thread::spawn(move || {
                 let builder = Builder::from_shared_context(&ctx)
-                    .with_definition(&format!(r#"{{"title": "Image {}"}}"#, i))
+                    .with_definition(format!(r#"{{"title": "Image {}"}}"#, i))
                     .unwrap();
 
                 // Verify the context settings are accessible
