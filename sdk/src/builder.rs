@@ -3854,4 +3854,55 @@ mod tests {
         assert_eq!(reader2.active_manifest().unwrap().ingredients().len(), 1);
         Ok(())
     }
+
+    #[test]
+    fn update_manifest_to_update_manifest() {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+
+        let mut child_image = Cursor::new(Vec::new());
+
+        let mut builder = Builder::new();
+        builder
+            .sign(
+                &Settings::signer().unwrap(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut child_image,
+            )
+            .unwrap();
+
+        child_image.rewind().unwrap();
+
+        let mut parent_image = Cursor::new(Vec::new());
+
+        let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Update);
+        builder
+            .sign(
+                &Settings::signer().unwrap(),
+                "image/jpeg",
+                &mut child_image,
+                &mut parent_image,
+            )
+            .unwrap();
+
+        parent_image.rewind().unwrap();
+
+        let mut parent_parent_image = Cursor::new(Vec::new());
+
+        let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Update);
+        builder
+            .sign(
+                &Settings::signer().unwrap(),
+                "image/jpeg",
+                &mut parent_image,
+                &mut parent_parent_image,
+            )
+            .unwrap();
+
+        parent_parent_image.rewind().unwrap();
+
+        Reader::from_stream("image/jpeg", parent_parent_image).unwrap();
+    }
 }
