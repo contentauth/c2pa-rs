@@ -185,6 +185,8 @@ jobs:
         uses: dtolnay/rust-toolchain@nightly
 
       - name: Build docs.rs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
         uses: dtolnay/install@cargo-docs-rs
 
   unused_deps:
