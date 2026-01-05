@@ -95,9 +95,7 @@ impl SignerSettings {
     }
 
     /// Returns a c2pa signer using the provided signer settings.
-
     pub fn c2pa_signer(self) -> Result<BoxedSigner> {
-
         match self {
             SignerSettings::Local {
                 alg,
@@ -125,9 +123,7 @@ impl SignerSettings {
     }
 
     /// Returns a CAWG X.509 identity signer that wraps the provided c2pa signer.
-
     pub fn cawg_signer(self, c2pa_signer: BoxedSigner) -> Result<BoxedSigner> {
-
         match self {
             SignerSettings::Local {
                 alg: cawg_alg,
