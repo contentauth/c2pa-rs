@@ -13,9 +13,9 @@ use crate::{
 // These use cfg attributes because MaybeSend/MaybeSync can't be used as
 // trait object bounds - the compiler can't verify them for dyn Trait
 #[cfg(not(target_arch = "wasm32"))]
-type BoxedSigner = Box<dyn Signer + Send + Sync>;
+pub type BoxedSigner = Box<dyn Signer + Send + Sync>;
 #[cfg(target_arch = "wasm32")]
-type BoxedSigner = Box<dyn Signer>;
+pub type BoxedSigner = Box<dyn Signer>;
 
 #[cfg(not(target_arch = "wasm32"))]
 type BoxedSyncResolver = Box<dyn SyncHttpResolver + Send + Sync>;
