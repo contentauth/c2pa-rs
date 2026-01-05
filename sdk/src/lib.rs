@@ -138,11 +138,16 @@ pub mod dynamic_assertion;
 /// The http module contains generic traits for configuring sync and async http resolvers.
 pub(crate) mod http;
 
+const TEST: &str = "test";
+
 /// The `identity` module provides support for the [CAWG identity assertion](https://cawg.io/identity).
 #[doc(hidden)]
 pub mod identity;
 
 /// The jumbf_io module contains the definitions for the JUMBF data in assets.
+/// [`TEST`].
+///
+/// [`TEST`]: crate::TEST
 pub mod jumbf_io;
 
 /// The settings module provides a way to configure the C2PA SDK.
