@@ -21,7 +21,7 @@ use crate::{
     http::{SyncGenericResolver, SyncHttpResolver},
     identity::{builder::IdentityAssertionBuilder, x509::X509CredentialHolder},
     settings::{Settings, SettingsValidate},
-    BoxedSigner, Error, Result, Signer, SigningAlg,
+    Error, Result, Signer, SigningAlg,
 };
 
 /// Settings for configuring a local or remote [`Signer`].
@@ -69,7 +69,7 @@ impl SignerSettings {
     /// Returns the constructed signer from the [Settings::signer] field.
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
-    pub fn signer() -> Result<BoxedSigner> {
+    pub fn signer() -> Result<Box<dyn Signer>> {
         let signer_info = match Settings::get_value::<Option<SignerSettings>>("signer") {
             Ok(Some(signer_info)) => signer_info,
             #[cfg(test)]
@@ -95,7 +95,7 @@ impl SignerSettings {
     }
 
     /// Returns a c2pa signer using the provided signer settings.
-    pub fn c2pa_signer(self) -> Result<BoxedSigner> {
+    pub fn c2pa_signer(self) -> Result<Box<dyn Signer>> {
         match self {
             SignerSettings::Local {
                 alg,
@@ -123,7 +123,7 @@ impl SignerSettings {
     }
 
     /// Returns a CAWG X.509 identity signer that wraps the provided c2pa signer.
-    pub fn cawg_signer(self, c2pa_signer: BoxedSigner) -> Result<BoxedSigner> {
+    pub fn cawg_signer(self, c2pa_signer: Box<dyn Signer>) -> Result<Box<dyn Signer>> {
         match self {
             SignerSettings::Local {
                 alg: cawg_alg,
@@ -162,7 +162,7 @@ impl SettingsValidate for SignerSettings {
 }
 
 struct CawgX509IdentitySigner {
-    c2pa_signer: BoxedSigner,
+    c2pa_signer: Box<dyn Signer>,
     cawg_alg: SigningAlg,
     cawg_sign_cert: String,
     cawg_private_key: String,

@@ -9,26 +9,10 @@ use crate::{
     AsyncSigner, Error, Result, Signer,
 };
 
-// Type aliases for boxed trait objects with conditional Send + Sync bounds
-#[cfg(not(target_arch = "wasm32"))]
-type BoxedSigner = Box<dyn Signer + Send + Sync>;
-#[cfg(target_arch = "wasm32")]
-type BoxedSigner = Box<dyn Signer>;
-
-#[cfg(not(target_arch = "wasm32"))]
-type BoxedSyncResolver = Box<dyn SyncHttpResolver + Send + Sync>;
-#[cfg(target_arch = "wasm32")]
-type BoxedSyncResolver = Box<dyn SyncHttpResolver>;
-
-#[cfg(not(target_arch = "wasm32"))]
-type BoxedAsyncResolver = Box<dyn AsyncHttpResolver + Send + Sync>;
-#[cfg(target_arch = "wasm32")]
-type BoxedAsyncResolver = Box<dyn AsyncHttpResolver>;
-
 /// Internal state for sync HTTP resolver selection.
 enum SyncResolverState {
     /// User-provided custom resolver.
-    Custom(BoxedSyncResolver),
+    Custom(Box<dyn SyncHttpResolver>),
     /// Default resolver with lazy initialization.
     Default(OnceLock<RestrictedResolver<SyncGenericResolver>>),
 }
@@ -36,7 +20,7 @@ enum SyncResolverState {
 /// Internal state for async HTTP resolver selection.
 enum AsyncResolverState {
     /// User-provided custom resolver.
-    Custom(BoxedAsyncResolver),
+    Custom(Box<dyn AsyncHttpResolver>),
     /// Default resolver with lazy initialization.
     Default(OnceLock<RestrictedResolver<AsyncGenericResolver>>),
 }
@@ -44,51 +28,43 @@ enum AsyncResolverState {
 /// Internal state for signer selection.
 enum SignerState {
     /// User-provided custom signer.
-    Custom(BoxedSigner),
+    Custom(Box<dyn Signer>),
     /// Signer created from context's settings with lazy initialization.
     /// The Result is cached so we only attempt creation once.
-    FromSettings(OnceLock<Result<BoxedSigner>>),
+    FromSettings(OnceLock<Result<Box<dyn Signer>>>),
 }
 
-/// A trait for types that can be converted into Settings.
-///
-/// This trait allows multiple types to be used as configuration sources,
-/// including JSON/TOML strings, serde_json::Value, or Settings directly.
-pub trait IntoSettings {
-    /// Convert this type into Settings
-    fn into_settings(self) -> Result<Settings>;
-}
+// TryFrom implementations for Settings to support multiple input formats
 
-/// Implement for Settings (passthrough)
-impl IntoSettings for Settings {
-    fn into_settings(self) -> Result<Settings> {
-        Ok(self)
-    }
-}
+/// Implement TryFrom for &str (JSON/TOML string - tries both formats)
+impl TryFrom<&str> for Settings {
+    type Error = Error;
 
-/// Implement for &str (JSON/TOML string - tries both formats)
-impl IntoSettings for &str {
-    fn into_settings(self) -> Result<Settings> {
+    fn try_from(value: &str) -> Result<Self> {
         let mut settings = Settings::default();
         // Try JSON first, then TOML
         settings
-            .update_from_str(self, "json")
-            .or_else(|_| settings.update_from_str(self, "toml"))?;
+            .update_from_str(value, "json")
+            .or_else(|_| settings.update_from_str(value, "toml"))?;
         Ok(settings)
     }
 }
 
-/// Implement for String
-impl IntoSettings for String {
-    fn into_settings(self) -> Result<Settings> {
-        self.as_str().into_settings()
+/// Implement TryFrom for String
+impl TryFrom<String> for Settings {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        value.as_str().try_into()
     }
 }
 
-/// Implement for serde_json::Value
-impl IntoSettings for serde_json::Value {
-    fn into_settings(self) -> Result<Settings> {
-        let json_str = serde_json::to_string(&self).map_err(Error::JsonError)?;
+/// Implement TryFrom for serde_json::Value
+impl TryFrom<serde_json::Value> for Settings {
+    type Error = Error;
+
+    fn try_from(value: serde_json::Value) -> Result<Self> {
+        let json_str = serde_json::to_string(&value).map_err(Error::JsonError)?;
         let mut settings = Settings::default();
         settings.update_from_str(&json_str, "json")?;
         Ok(settings)
@@ -194,42 +170,6 @@ pub struct Context {
     _signer_async: Option<Box<dyn AsyncSigner>>,
 }
 
-// SAFETY: Context is Send + Sync on non-WASM targets.
-//
-// Rust's compiler cannot automatically prove Send + Sync for Context because it contains
-// enum variants with trait objects (Box<dyn Trait>). The compiler conservatively assumes
-// these might not be Send + Sync even though we've explicitly added those bounds.
-//
-// This manual implementation is safe because ALL fields are Send + Sync:
-//
-// 1. `settings: Settings`
-//    - Derived Send + Sync (contains only Send + Sync types)
-//
-// 2. `sync_resolver: SyncResolverState`
-//    - Custom(Box<dyn SyncHttpResolver + Send + Sync>) - explicitly bounded
-//    - Default(OnceLock<RestrictedResolver<T>>) - Send + Sync when T is Send + Sync
-//
-// 3. `async_resolver: AsyncResolverState`
-//    - Custom(Box<dyn AsyncHttpResolver + Send + Sync>) - explicitly bounded
-//    - Default(OnceLock<RestrictedResolver<T>>) - Send + Sync when T is Send + Sync
-//
-// 4. `signer: SignerState`
-//    - Custom(Box<dyn Signer + Send + Sync>) - explicitly bounded
-//    - FromSettings(OnceLock<Result<Box<dyn Signer + Send + Sync>>>) - explicitly bounded
-//
-// 5. `_signer_async: Option<Box<dyn AsyncSigner>>`
-//    - Currently unused field for future async signer support
-//
-// These impls enable Arc<Context> to be shared across threads without Clippy warnings,
-// which is the intended use case for multi-threaded applications and FFI scenarios.
-//
-// On WASM targets, these impls are not needed as WASM is single-threaded.
-#[cfg(not(target_arch = "wasm32"))]
-unsafe impl Send for Context {}
-
-#[cfg(not(target_arch = "wasm32"))]
-unsafe impl Sync for Context {}
-
 impl Default for Context {
     fn default() -> Self {
         Self {
@@ -271,26 +211,50 @@ impl Context {
         Self::default()
     }
 
-    /// Configure this Context with the provided settings.
+    /// Configure this Context with custom settings.
     ///
-    /// Settings can be provided as a Settings struct, JSON string, TOML string, or serde_json::Value.
+    /// This method accepts anything that can be converted into [`Settings`],
+    /// including JSON/TOML strings, [`Settings`] objects, and [`serde_json::Value`]s.
     ///
     /// # Arguments
     ///
-    /// * `settings` - Any type that implements `IntoSettings`
+    /// * `settings` - Anything that can be converted into [`Settings`]:
+    ///   - A JSON or TOML string
+    ///   - A `Settings` object
+    ///   - A `serde_json::Value`
     ///
     /// # Examples
     ///
     /// ```
     /// # use c2pa::{Context, Result};
     /// # fn main() -> Result<()> {
+    /// use serde_json::json;
+    ///
+    /// // From JSON value (cleanest for inline settings)
+    /// let context = Context::new()
+    ///     .with_settings(json!({
+    ///         "verify": {"remote_manifest_fetch": false}
+    ///     }))?;
+    ///
+    /// // From TOML string (good for config files)
+    /// let context = Context::new()
+    ///     .with_settings(r#"
+    ///         [verify]
+    ///         remote_manifest_fetch = false
+    ///     "#)?;
+    ///
     /// // From JSON string
-    /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+    /// let context = Context::new()
+    ///     .with_settings(r#"{"verify": {"remote_manifest_fetch": false}}"#)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_settings<S: IntoSettings>(mut self, settings: S) -> Result<Self> {
-        self.settings = settings.into_settings()?;
+    pub fn with_settings<S>(mut self, settings: S) -> Result<Self>
+    where
+        S: TryInto<Settings>,
+        Error: From<S::Error>,
+    {
+        self.settings = settings.try_into()?;
         Ok(self)
     }
 
@@ -327,16 +291,6 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `SyncHttpResolver`
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_resolver<T: SyncHttpResolver + Send + Sync + 'static>(
-        mut self,
-        resolver: T,
-    ) -> Self {
-        self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
-        self
-    }
-
-    #[cfg(target_arch = "wasm32")]
     pub fn with_resolver<T: SyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
         self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
         self
@@ -349,16 +303,6 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `AsyncHttpResolver`
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_resolver_async<T: AsyncHttpResolver + Send + Sync + 'static>(
-        mut self,
-        resolver: T,
-    ) -> Self {
-        self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
-        self
-    }
-
-    #[cfg(target_arch = "wasm32")]
     pub fn with_resolver_async<T: AsyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
         self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
         self
@@ -428,13 +372,6 @@ impl Context {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_signer<T: Signer + Send + Sync + 'static>(mut self, signer: T) -> Self {
-        self.signer = SignerState::Custom(Box::new(signer));
-        self
-    }
-
-    #[cfg(target_arch = "wasm32")]
     pub fn with_signer<T: Signer + 'static>(mut self, signer: T) -> Self {
         self.signer = SignerState::Custom(Box::new(signer));
         self
@@ -563,7 +500,7 @@ mod tests {
     fn test_into_settings_from_toml_str() {
         let toml = r#"
             [verify]
-            verify_after_sign = true
+            remote_manifest_fetch = true
             "#;
         let context = Context::new().with_settings(toml).unwrap();
         assert!(context.settings().verify.verify_after_sign);
