@@ -213,6 +213,8 @@ jobs:
 
   docs_rs:
     name: Preflight docs.rs build
+    needs: get-features
+    runs-on: ubuntu-latest
 
     if: |
       github.event_name != 'pull_request' ||
@@ -221,8 +223,6 @@ jobs:
       github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release')
-
-    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
@@ -234,9 +234,20 @@ jobs:
       - name: Build docs.rs
         uses: dtolnay/install@cargo-docs-rs
 
-      - run: cargo docs-rs -p c2pa
-      - run: cargo docs-rs -p c2pa-c-ffi
-      - run: cargo docs-rs -p c2patool
+      - name: Preflight docs.rs for c2pa crate
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: cargo docs-rs -p c2pa --features "$FEATURES"
+
+      - name: Preflight docs.rs for c2pa-c-ffi crate
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: cargo docs-rs -p c2pa-c-ffi --features "$FEATURES"
+
+      - name: Preflight docs.rs for c2patool crate
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: cargo docs-rs -p c2patool --features "$FEATURES"
 
   doc-tests:
     name: Doc tests (requires nightly Rust)
