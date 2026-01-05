@@ -21,7 +21,7 @@ use serde_cbor::Value;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, region_of_interest::RegionOfInterest, Actor, AssertionMetadata},
-    error::Result,
+    error::{Error, Result},
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
     ClaimGeneratorInfo, HashedUri,
@@ -775,6 +775,7 @@ impl Actions {
     ///
     /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
     pub const LABEL: &'static str = labels::ACTIONS;
+    pub const LABEL_VERSIONED: &'static str = "c2pa.actions.v2";
     pub const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
     /// Creates a new [`Actions`] assertion struct.
@@ -850,6 +851,34 @@ impl Actions {
         self
     }
 
+    /// Adds an [`Action`] to this assertion's list of actions.
+    pub fn add_action_checked(mut self, action: Action) -> Result<Self> {
+        let action_name = action.action();
+        if action_name.is_empty() {
+            return Err(Error::AssertionSpecificError(
+                "Action must have a non-empty action label".to_string(),
+            ));
+        }
+        if V2_DEPRECATED_ACTIONS.contains(&action_name) {
+            return Err(Error::VersionCompatibility(format!(
+                "Action '{action_name}' is deprecated in C2PA v2"
+            )));
+        }
+        if action_name == c2pa_action::OPENED || action_name == c2pa_action::CREATED {
+            let existing_action = self.actions.iter().find(|a| a.action() == action_name);
+            if existing_action.is_some() {
+                return Err(Error::AssertionSpecificError(format!(
+                    "Only one '{action_name}' action is allowed"
+                )));
+            }
+            // always insert as first action
+            self.actions.insert(0, action);
+            return Ok(self);
+        }
+        self.actions.push(action);
+        Ok(self)
+    }
+
     /// Sets [`AssertionMetadata`] for the action.
     pub fn add_metadata(mut self, metadata: AssertionMetadata) -> Self {
         self.metadata = Some(metadata);
@@ -882,7 +911,7 @@ impl AssertionBase for Actions {
     }
 
     fn label(&self) -> &str {
-        "c2pa.actions.v2"
+        Self::LABEL_VERSIONED
     }
 
     fn to_assertion(&self) -> Result<Assertion> {
