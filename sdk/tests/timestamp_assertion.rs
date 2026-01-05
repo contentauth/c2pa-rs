@@ -67,8 +67,9 @@ fn timestamp_assertion_parent_scope() {
 
     Settings::from_toml(
         &toml::toml! {
-            [builder]
-            timestamp_assertion_fetch_scope = "parent"
+            [builder.auto_timestamp_assertion]
+            enabled = true
+            fetch_scope = "parent"
         }
         .to_string(),
     )
@@ -126,8 +127,9 @@ fn timestamp_assertion_all_scope() {
 
     Settings::from_toml(
         &toml::toml! {
-            [builder]
-            timestamp_assertion_fetch_scope = "all"
+            [builder.auto_timestamp_assertion]
+            enabled = true
+            fetch_scope = "all"
         }
         .to_string(),
     )
@@ -220,5 +222,107 @@ fn timestamp_assertion_explicit_builder() {
         .unwrap();
     assert!(timestamp_assertion
         .get_timestamp(child_manifest_label)
+        .is_some());
+}
+
+// Sign a manifest with a child ingredient and timestamp assertion it, then sign the parent manifest
+// again and skip timestamping all existing timestamped manifests.
+#[test]
+fn timestamp_assertion_skip_existing() {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+
+    let mut child_image = Cursor::new(Vec::new());
+
+    let mut builder = Builder::new();
+    builder
+        .sign(
+            &Settings::signer().unwrap(),
+            FORMAT,
+            &mut Cursor::new(TEST_IMAGE),
+            &mut child_image,
+        )
+        .unwrap();
+
+    Settings::from_toml(
+        &toml::toml! {
+            [builder.auto_timestamp_assertion]
+            enabled = true
+            fetch_scope = "all"
+        }
+        .to_string(),
+    )
+    .unwrap();
+
+    child_image.rewind().unwrap();
+
+    let mut parent_image = Cursor::new(Vec::new());
+
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Update);
+    builder
+        .sign(
+            &WrappedTsaSigner(Settings::signer().unwrap()),
+            FORMAT,
+            &mut child_image,
+            &mut parent_image,
+        )
+        .unwrap();
+
+    parent_image.rewind().unwrap();
+
+    let reader = Reader::from_stream(FORMAT, &mut parent_image).unwrap();
+    let timestamp_assertion: TimeStamp = reader
+        .active_manifest()
+        .unwrap()
+        .find_assertion(assertions::labels::TIMESTAMP)
+        .unwrap();
+
+    let child_manifest_label = reader.active_manifest().unwrap().ingredients()[0]
+        .active_manifest()
+        .unwrap();
+    assert!(timestamp_assertion
+        .get_timestamp(child_manifest_label)
+        .is_some());
+
+    parent_image.rewind().unwrap();
+
+    Settings::from_toml(
+        &toml::toml! {
+            [builder.auto_timestamp_assertion]
+            skip_existing = true
+        }
+        .to_string(),
+    )
+    .unwrap();
+
+    let mut parent_parent_image = Cursor::new(Vec::new());
+
+    // Sign it one last time to ensure the previous manifest isn't timestamped again.
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Update);
+    builder
+        .sign(
+            &WrappedTsaSigner(Settings::signer().unwrap()),
+            FORMAT,
+            &mut parent_image,
+            &mut parent_parent_image,
+        )
+        .unwrap();
+
+    parent_parent_image.rewind().unwrap();
+
+    let reader = Reader::from_stream(FORMAT, parent_parent_image).unwrap();
+    let timestamp_assertion: TimeStamp = reader
+        .active_manifest()
+        .unwrap()
+        .find_assertion(assertions::labels::TIMESTAMP)
+        .unwrap();
+    assert_eq!(timestamp_assertion.0.len(), 1);
+
+    let parent_manifest_label = reader.active_manifest().unwrap().ingredients()[0]
+        .active_manifest()
+        .unwrap();
+    assert!(timestamp_assertion
+        .get_timestamp(parent_manifest_label)
         .is_some());
 }

@@ -31,7 +31,7 @@ use crate::{
 ///
 /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#timestamp_assertion>
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
-pub struct TimeStamp(HashMap<String, ByteBuf>);
+pub struct TimeStamp(pub HashMap<String, ByteBuf>);
 
 impl TimeStamp {
     /// Label prefix for an [`TimeStamp`] assertion.
