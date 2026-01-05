@@ -171,22 +171,6 @@ jobs:
         run: |
           cargo +nightly-2025-12-06 test -Z direct-minimal-versions --all-targets --features "$FEATURES"
 
-  docs_rs:
-    name: Preflight docs.rs build
-    needs: get-features
-    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly
-
-      - name: Build docs.rs
-        uses: dtolnay/install@cargo-docs-rs
-
   unused_deps:
     name: Check for unused dependencies
     needs: get-features

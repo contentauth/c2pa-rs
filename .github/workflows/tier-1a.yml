@@ -211,6 +211,24 @@ jobs:
           verbose: true
           files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
 
+  docs_rs:
+    name: Preflight docs.rs build
+    needs: get-features
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Build docs.rs
+        uses: dtolnay/install@cargo-docs-rs
+
+      - run: cargo docs-rs
+
   doc-tests:
     name: Doc tests (requires nightly Rust)
     needs: get-features
