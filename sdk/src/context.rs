@@ -769,9 +769,11 @@ mod tests {
 
     #[test]
     fn test_custom_sync_resolver() {
-        use crate::http::SyncHttpResolver;
-        use http::{Request, Response};
         use std::io::Read;
+
+        use http::{Request, Response};
+
+        use crate::http::SyncHttpResolver;
 
         // Create a mock sync resolver
         struct MockSyncResolver;
@@ -782,11 +784,13 @@ mod tests {
                 _request: Request<Vec<u8>>,
             ) -> Result<Response<Box<dyn Read>>, crate::http::HttpResolverError> {
                 // Return a mock response
-                Ok(Response::builder()
-                    .status(200)
-                    .body(Box::new(std::io::Cursor::new(b"mock response".to_vec()))
-                        as Box<dyn Read>)
-                    .unwrap())
+                Ok(
+                    Response::builder()
+                        .status(200)
+                        .body(Box::new(std::io::Cursor::new(b"mock response".to_vec()))
+                            as Box<dyn Read>)
+                        .unwrap(),
+                )
             }
         }
 
@@ -815,10 +819,12 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_custom_async_resolver() {
-        use crate::http::AsyncHttpResolver;
+        use std::io::Read;
+
         use async_trait::async_trait;
         use http::{Request, Response};
-        use std::io::Read;
+
+        use crate::http::AsyncHttpResolver;
 
         // Create a mock async resolver
         struct MockAsyncResolver;
@@ -832,8 +838,10 @@ mod tests {
                 // Return a mock response
                 Ok(Response::builder()
                     .status(200)
-                    .body(Box::new(std::io::Cursor::new(b"mock async response".to_vec()))
-                        as Box<dyn Read>)
+                    .body(
+                        Box::new(std::io::Cursor::new(b"mock async response".to_vec()))
+                            as Box<dyn Read>,
+                    )
                     .unwrap())
             }
         }
@@ -876,7 +884,13 @@ mod tests {
         // without making real HTTP requests, but we verify the resolver is created
         // with the allowed hosts configuration
         assert_eq!(
-            context.settings().core.allowed_network_hosts.as_ref().unwrap().len(),
+            context
+                .settings()
+                .core
+                .allowed_network_hosts
+                .as_ref()
+                .unwrap()
+                .len(),
             2,
             "Should have 2 allowed hosts configured"
         );
