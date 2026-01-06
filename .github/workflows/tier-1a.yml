@@ -211,6 +211,28 @@ jobs:
           verbose: true
           files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
 
+  docs_rs:
+    name: Preflight docs.rs build
+    runs-on: ubuntu-latest
+
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+      contains(github.event.pull_request.labels.*.name, 'check-release')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Preflight docs.rs
+        run: DOCS_RS=1 cargo +nightly doc --no-deps --all-features
+
   doc-tests:
     name: Doc tests (requires nightly Rust)
     needs: get-features
@@ -484,11 +506,11 @@ jobs:
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-07-28
+          toolchain: nightly-2025-12-06
           components: rustfmt
 
       - name: Check format
-        run: cargo +nightly-2025-07-28 fmt --all -- --check
+        run: cargo +nightly-2025-12-06 fmt --all -- --check
 
   cargo-deny:
     name: License / vulnerability audit

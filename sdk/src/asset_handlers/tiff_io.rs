@@ -202,8 +202,7 @@ impl TiffStructure {
                 if first_ifd_offset != 8 {
                     return Err(TiffError::InvalidFileSignature {
                         reason: format!(
-                            "invalid header signature: expected first IFD offset for BigTiff to be \"8\", found \"{}\"",
-                            first_ifd_offset
+                            "invalid header signature: expected first IFD offset for BigTiff to be \"8\", found \"{first_ifd_offset}\""
                         ),
                     }.into());
                 }
@@ -212,9 +211,7 @@ impl TiffStructure {
                 if reserved != 0 {
                     return Err(TiffError::InvalidFileSignature {
                         reason: format!(
-                            "invalid header signature: expected bytes after first IFD offset for BigTiff to be \"0\", found \"{}\"",
-                            reserved
-                        ),
+                            "invalid header signature: expected bytes after first IFD offset for BigTiff to be \"0\", found \"{reserved}\""),
                     }.into());
                 }
                 true
@@ -222,9 +219,7 @@ impl TiffStructure {
             magic => {
                 return Err(TiffError::InvalidFileSignature {
                     reason: format!(
-                        "invalid header signature: expected magic \"2A\" (TIFF) \"2B\" (BigTIFF), found \"{:02X}\"",
-                        magic
-                    ),
+                        "invalid header signature: expected magic \"2A\" (TIFF) \"2B\" (BigTIFF), found \"{magic:02X}\""),
                 }.into());
             }
         };
