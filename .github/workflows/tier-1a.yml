@@ -230,8 +230,18 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
-      - name: Preflight docs.rs
-        run: DOCS_RS=1 cargo +nightly doc --no-deps --all-features
+      - name: Install cargo-docs-rs
+        uses: dtolnay/install@cargo-docs-rs
+
+      - name: Preflight c2pa-rs docs.rs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo docs-rs -p c2pa
+
+      - name: Preflight c2pa-c-ffi docs.rs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo docs-rs -p c2pa-c-ffi
 
   doc-tests:
     name: Doc tests (requires nightly Rust)
