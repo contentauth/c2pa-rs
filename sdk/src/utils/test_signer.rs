@@ -20,12 +20,12 @@ use crate::{
         async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
         AsyncRawSigner, SigningAlg,
     },
-    signer::RawSignerWrapper,
-    AsyncSigner, Result, Signer,
+    signer::{BoxedAsyncSigner, BoxedSigner, RawSignerWrapper},
+    AsyncSigner, Result,
 };
 
 /// Creates a [`Signer`] instance for testing purposes using test credentials.
-pub(crate) fn test_signer(alg: SigningAlg) -> Box<dyn Signer> {
+pub(crate) fn test_signer(alg: SigningAlg) -> BoxedSigner {
     let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
     Box::new(RawSignerWrapper(
@@ -38,7 +38,7 @@ pub(crate) fn test_signer(alg: SigningAlg) -> Box<dyn Signer> {
 pub(crate) fn test_cawg_signer(
     alg: SigningAlg,
     referenced_assertions: &[&str],
-) -> Result<Box<dyn Signer>> {
+) -> Result<BoxedSigner> {
     let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
     let c2pa_raw_signer =
@@ -56,12 +56,6 @@ pub(crate) fn test_cawg_signer(
     ia_signer.add_identity_assertion(iab);
     Ok(Box::new(ia_signer))
 }
-
-#[cfg(not(target_arch = "wasm32"))]
-type BoxedAsyncSigner = Box<dyn AsyncSigner + Sync + Send>;
-
-#[cfg(target_arch = "wasm32")]
-type BoxedAsyncSigner = Box<dyn AsyncSigner>;
 
 /// Creates an [`AsyncSigner`] instance for testing purposes using test credentials.
 #[allow(dead_code)]

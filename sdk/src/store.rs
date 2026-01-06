@@ -3783,7 +3783,6 @@ impl Store {
                 }
             }
         }
-
         None
     }
 

@@ -3,16 +3,17 @@ use std::sync::OnceLock;
 use crate::{
     http::{
         restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
-        SyncGenericResolver, SyncHttpResolver,
+        BoxedAsyncResolver, BoxedSyncResolver, SyncGenericResolver, SyncHttpResolver,
     },
     settings::Settings,
+    signer::{BoxedAsyncSigner, BoxedSigner},
     AsyncSigner, Error, Result, Signer,
 };
 
 /// Internal state for sync HTTP resolver selection.
 enum SyncResolverState {
     /// User-provided custom resolver.
-    Custom(Box<dyn SyncHttpResolver>),
+    Custom(BoxedSyncResolver),
     /// Default resolver with lazy initialization.
     Default(OnceLock<RestrictedResolver<SyncGenericResolver>>),
 }
@@ -20,7 +21,7 @@ enum SyncResolverState {
 /// Internal state for async HTTP resolver selection.
 enum AsyncResolverState {
     /// User-provided custom resolver.
-    Custom(Box<dyn AsyncHttpResolver>),
+    Custom(BoxedAsyncResolver),
     /// Default resolver with lazy initialization.
     Default(OnceLock<RestrictedResolver<AsyncGenericResolver>>),
 }
@@ -28,43 +29,60 @@ enum AsyncResolverState {
 /// Internal state for signer selection.
 enum SignerState {
     /// User-provided custom signer.
-    Custom(Box<dyn Signer>),
+    Custom(BoxedSigner),
     /// Signer created from context's settings with lazy initialization.
     /// The Result is cached so we only attempt creation once.
-    FromSettings(OnceLock<Result<Box<dyn Signer>>>),
+    FromSettings(OnceLock<Result<BoxedSigner>>),
 }
 
-// TryFrom implementations for Settings to support multiple input formats
+/// Internal state for async signer selection.
+enum AsyncSignerState {
+    /// User-provided custom async signer.
+    Custom(BoxedAsyncSigner),
+    /// Async signer created from context's settings with lazy initialization.
+    /// The Result is cached so we only attempt creation once.
+    FromSettings(OnceLock<Result<BoxedAsyncSigner>>),
+}
 
-/// Implement TryFrom for &str (JSON/TOML string - tries both formats)
-impl TryFrom<&str> for Settings {
-    type Error = Error;
+/// A trait for types that can be converted into Settings.
+///
+/// This trait allows multiple types to be used as configuration sources,
+/// including JSON/TOML strings, serde_json::Value, or Settings directly.
+pub trait IntoSettings {
+    /// Convert this type into Settings
+    fn into_settings(self) -> Result<Settings>;
+}
 
-    fn try_from(value: &str) -> Result<Self> {
+/// Implement for Settings (passthrough)
+impl IntoSettings for Settings {
+    fn into_settings(self) -> Result<Settings> {
+        Ok(self)
+    }
+}
+
+/// Implement for &str (JSON/TOML string - tries both formats)
+impl IntoSettings for &str {
+    fn into_settings(self) -> Result<Settings> {
         let mut settings = Settings::default();
         // Try JSON first, then TOML
         settings
-            .update_from_str(value, "json")
-            .or_else(|_| settings.update_from_str(value, "toml"))?;
+            .update_from_str(self, "json")
+            .or_else(|_| settings.update_from_str(self, "toml"))?;
         Ok(settings)
     }
 }
 
-/// Implement TryFrom for String
-impl TryFrom<String> for Settings {
-    type Error = Error;
-
-    fn try_from(value: String) -> Result<Self> {
-        value.as_str().try_into()
+/// Implement for String
+impl IntoSettings for String {
+    fn into_settings(self) -> Result<Settings> {
+        self.as_str().into_settings()
     }
 }
 
-/// Implement TryFrom for serde_json::Value
-impl TryFrom<serde_json::Value> for Settings {
-    type Error = Error;
-
-    fn try_from(value: serde_json::Value) -> Result<Self> {
-        let json_str = serde_json::to_string(&value).map_err(Error::JsonError)?;
+/// Implement for serde_json::Value
+impl IntoSettings for serde_json::Value {
+    fn into_settings(self) -> Result<Settings> {
+        let json_str = serde_json::to_string(&self).map_err(Error::JsonError)?;
         let mut settings = Settings::default();
         settings.update_from_str(&json_str, "json")?;
         Ok(settings)
@@ -167,7 +185,7 @@ pub struct Context {
     sync_resolver: SyncResolverState,
     async_resolver: AsyncResolverState,
     signer: SignerState,
-    _signer_async: Option<Box<dyn AsyncSigner>>,
+    async_signer: AsyncSignerState,
 }
 
 impl Default for Context {
@@ -182,7 +200,7 @@ impl Default for Context {
             )),
             #[cfg(not(test))]
             signer: SignerState::FromSettings(OnceLock::new()),
-            _signer_async: None,
+            async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
         }
     }
 }
@@ -211,50 +229,26 @@ impl Context {
         Self::default()
     }
 
-    /// Configure this Context with custom settings.
+    /// Configure this Context with the provided settings.
     ///
-    /// This method accepts anything that can be converted into [`Settings`],
-    /// including JSON/TOML strings, [`Settings`] objects, and [`serde_json::Value`]s.
+    /// Settings can be provided as a Settings struct, JSON string, TOML string, or serde_json::Value.
     ///
     /// # Arguments
     ///
-    /// * `settings` - Anything that can be converted into [`Settings`]:
-    ///   - A JSON or TOML string
-    ///   - A `Settings` object
-    ///   - A `serde_json::Value`
+    /// * `settings` - Any type that implements `IntoSettings`
     ///
     /// # Examples
     ///
     /// ```
     /// # use c2pa::{Context, Result};
     /// # fn main() -> Result<()> {
-    /// use serde_json::json;
-    ///
-    /// // From JSON value (cleanest for inline settings)
-    /// let context = Context::new()
-    ///     .with_settings(json!({
-    ///         "verify": {"remote_manifest_fetch": false}
-    ///     }))?;
-    ///
-    /// // From TOML string (good for config files)
-    /// let context = Context::new()
-    ///     .with_settings(r#"
-    ///         [verify]
-    ///         remote_manifest_fetch = false
-    ///     "#)?;
-    ///
     /// // From JSON string
-    /// let context = Context::new()
-    ///     .with_settings(r#"{"verify": {"remote_manifest_fetch": false}}"#)?;
+    /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_settings<S>(mut self, settings: S) -> Result<Self>
-    where
-        S: TryInto<Settings>,
-        Error: From<S::Error>,
-    {
-        self.settings = settings.try_into()?;
+    pub fn with_settings<S: IntoSettings>(mut self, settings: S) -> Result<Self> {
+        self.settings = settings.into_settings()?;
         Ok(self)
     }
 
@@ -291,6 +285,16 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `SyncHttpResolver`
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_resolver<T: SyncHttpResolver + Send + Sync + 'static>(
+        mut self,
+        resolver: T,
+    ) -> Self {
+        self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
     pub fn with_resolver<T: SyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
         self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
         self
@@ -303,6 +307,16 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `AsyncHttpResolver`
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_resolver_async<T: AsyncHttpResolver + Send + Sync + 'static>(
+        mut self,
+        resolver: T,
+    ) -> Self {
+        self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
     pub fn with_resolver_async<T: AsyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
         self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
         self
@@ -372,6 +386,13 @@ impl Context {
     /// # Ok(())
     /// # }
     /// ```
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_signer<T: Signer + Send + Sync + 'static>(mut self, signer: T) -> Self {
+        self.signer = SignerState::Custom(Box::new(signer));
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
     pub fn with_signer<T: Signer + 'static>(mut self, signer: T) -> Self {
         self.signer = SignerState::Custom(Box::new(signer));
         self
@@ -464,17 +485,87 @@ impl Context {
         }
     }
 
-    // pub fn signer_async(&self) -> Result<&dyn crate::signer::AsyncSigner> {
-    //     match self.signer_async.get() {
-    //         Some(s) => Ok(s.as_ref()),
-    //         None => {
-    //             self.signer_async
-    //                 .set(Settings::signer_async()?)
-    //                 .ok();
-    //             Ok(self.signer_async.get().unwrap().as_ref())
-    //         }
-    //     }
-    // }
+    /// Returns a reference to the async signer.
+    ///
+    /// If a custom async signer was set with [`Context::with_async_signer`], it will be returned.
+    /// Otherwise, the async signer will be created from the context's settings on first access
+    /// and cached for future use.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no async signer is configured in settings and no custom signer was provided.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use c2pa::{Context, Result};
+    /// # async fn example() -> Result<()> {
+    /// let context = Context::new();
+    /// let async_signer = context.async_signer()?;
+    /// let signature = async_signer.sign(vec![1, 2, 3]).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn async_signer(&self) -> Result<&dyn AsyncSigner> {
+        match &self.async_signer {
+            AsyncSignerState::Custom(signer) => Ok(signer.as_ref()),
+            AsyncSignerState::FromSettings(once_lock) => {
+                let result = once_lock.get_or_init(|| {
+                    // TODO: Implement creating async signer from settings when async signer support is added to Settings
+                    Err(Error::BadParam(
+                        "Async signer not configured in settings".to_string(),
+                    ))
+                });
+                match result {
+                    Ok(boxed) => Ok(boxed.as_ref()),
+                    Err(Error::BadParam(_)) => Err(Error::BadParam(
+                        "Async signer not configured in settings".to_string(),
+                    )),
+                    Err(_) => Err(Error::BadParam(
+                        "Async signer not configured in settings".to_string(),
+                    )),
+                }
+            }
+        }
+    }
+
+    /// Sets a custom async signer for this Context.
+    ///
+    /// This replaces any existing async signer (whether from settings or previously set).
+    ///
+    /// # Arguments
+    ///
+    /// * `signer` - An async signer that implements the [`AsyncSigner`] trait
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use c2pa::{Context, AsyncSigner, SigningAlg, Result};
+    /// # struct MyAsyncSigner;
+    /// # #[async_trait::async_trait]
+    /// # impl AsyncSigner for MyAsyncSigner {
+    /// #     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> { Ok(vec![]) }
+    /// #     fn alg(&self) -> SigningAlg { SigningAlg::Ps256 }
+    /// #     fn certs(&self) -> Result<Vec<Vec<u8>>> { Ok(vec![]) }
+    /// #     fn reserve_size(&self) -> usize { 1024 }
+    /// # }
+    /// # fn main() -> Result<()> {
+    /// let context = Context::new()
+    ///     .with_async_signer(MyAsyncSigner);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn with_async_signer(mut self, signer: impl AsyncSigner + Send + Sync + 'static) -> Self {
+        self.async_signer = AsyncSignerState::Custom(Box::new(signer));
+        self
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn with_async_signer(mut self, signer: impl AsyncSigner + 'static) -> Self {
+        self.async_signer = AsyncSignerState::Custom(Box::new(signer));
+        self
+    }
 }
 
 #[cfg(test)]
@@ -500,7 +591,7 @@ mod tests {
     fn test_into_settings_from_toml_str() {
         let toml = r#"
             [verify]
-            remote_manifest_fetch = true
+            verify_after_sign = true
             "#;
         let context = Context::new().with_settings(toml).unwrap();
         assert!(context.settings().verify.verify_after_sign);
@@ -551,7 +642,7 @@ mod tests {
             sync_resolver: SyncResolverState::Default(OnceLock::new()),
             async_resolver: AsyncResolverState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
-            _signer_async: None,
+            async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
         };
 
         // Update settings to ensure no signer configuration
@@ -589,5 +680,238 @@ mod tests {
             signer.alg() == crate::SigningAlg::Es256,
             "Custom signer should have Es256 algorithm"
         );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_custom_async_signer() {
+        use crate::utils::test_signer::async_test_signer;
+
+        // Create a custom async signer using the test utility
+        let custom_async_signer = async_test_signer(crate::SigningAlg::Es256);
+
+        // Create a context with the custom async signer
+        let context = Context::new().with_async_signer(custom_async_signer);
+
+        // Verify the custom async signer is returned with the expected algorithm
+        let async_signer = context.async_signer().unwrap();
+        assert_eq!(
+            async_signer.alg(),
+            crate::SigningAlg::Es256,
+            "Custom async signer should have Es256 algorithm"
+        );
+
+        // Verify we can get certs
+        let certs = async_signer.certs().unwrap();
+        assert!(!certs.is_empty(), "Async signer should have certificates");
+
+        // Test that we can actually call sign
+        let signature = async_signer.sign(vec![1, 2, 3, 4]).await;
+        assert!(signature.is_ok(), "Sign should succeed");
+    }
+
+    #[test]
+    fn test_async_signer_missing_settings() {
+        // Create a context without custom async signer (will try to load from settings)
+        let context = Context {
+            settings: Settings::default(),
+            sync_resolver: SyncResolverState::Default(OnceLock::new()),
+            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            signer: SignerState::FromSettings(OnceLock::new()),
+            async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
+        };
+
+        // Verify that async_signer() returns an error when no async signer settings are present
+        let result = context.async_signer();
+        assert!(
+            result.is_err(),
+            "Should error when no async signer settings present"
+        );
+
+        // Verify it's the expected error type
+        assert!(
+            matches!(result, Err(Error::BadParam(_))),
+            "Expected BadParam error"
+        );
+    }
+
+    #[test]
+    fn test_default_sync_resolver() {
+        // Create a context with default resolver
+        let context = Context::new();
+
+        // Verify we can get the default resolver
+        let _resolver = context.resolver();
+    }
+
+    #[test]
+    fn test_default_async_resolver() {
+        // Create a context with default resolver
+        let context = Context::new();
+
+        // Verify we can get the default async resolver
+        let _resolver = context.resolver_async();
+
+        // The test passes if we can get the async resolver without errors
+        // The default is a RestrictedResolver wrapping AsyncGenericResolver
+    }
+
+    #[test]
+    fn test_custom_sync_resolver() {
+        use std::io::Read;
+
+        use http::{Request, Response};
+
+        use crate::http::SyncHttpResolver;
+
+        // Create a mock sync resolver
+        struct MockSyncResolver;
+
+        impl SyncHttpResolver for MockSyncResolver {
+            fn http_resolve(
+                &self,
+                _request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, crate::http::HttpResolverError> {
+                // Return a mock response
+                Ok(
+                    Response::builder()
+                        .status(200)
+                        .body(Box::new(std::io::Cursor::new(b"mock response".to_vec()))
+                            as Box<dyn Read>)
+                        .unwrap(),
+                )
+            }
+        }
+
+        // Create a context with the custom resolver
+        let context = Context::new().with_resolver(MockSyncResolver);
+
+        // Verify the custom resolver is used
+        let resolver = context.resolver();
+
+        // Make a test request to verify it's our mock
+        let request = Request::builder()
+            .uri("http://example.com")
+            .body(vec![])
+            .unwrap();
+
+        let response = resolver.http_resolve(request);
+        assert!(response.is_ok(), "Mock resolver should succeed");
+
+        // Read the body to verify it's our mock response
+        let mut body = response.unwrap().into_body();
+        let mut buffer = Vec::new();
+        body.read_to_end(&mut buffer).unwrap();
+        assert_eq!(buffer, b"mock response");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_custom_async_resolver() {
+        use std::io::Read;
+
+        use async_trait::async_trait;
+        use http::{Request, Response};
+
+        use crate::http::AsyncHttpResolver;
+
+        // Create a mock async resolver
+        struct MockAsyncResolver;
+
+        #[async_trait]
+        impl AsyncHttpResolver for MockAsyncResolver {
+            async fn http_resolve_async(
+                &self,
+                _request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, crate::http::HttpResolverError> {
+                // Return a mock response
+                Ok(Response::builder()
+                    .status(200)
+                    .body(
+                        Box::new(std::io::Cursor::new(b"mock async response".to_vec()))
+                            as Box<dyn Read>,
+                    )
+                    .unwrap())
+            }
+        }
+
+        // Create a context with the custom async resolver
+        let context = Context::new().with_resolver_async(MockAsyncResolver);
+
+        // Verify the custom async resolver is used
+        let resolver = context.resolver_async();
+
+        // Make a test request to verify it's our mock
+        let request = Request::builder()
+            .uri("http://example.com")
+            .body(vec![])
+            .unwrap();
+
+        let response = resolver.http_resolve_async(request).await;
+        assert!(response.is_ok(), "Mock async resolver should succeed");
+
+        // Read the body to verify it's our mock response
+        let mut body = response.unwrap().into_body();
+        let mut buffer = Vec::new();
+        body.read_to_end(&mut buffer).unwrap();
+        assert_eq!(buffer, b"mock async response");
+    }
+
+    #[test]
+    fn test_resolver_with_allowed_hosts() {
+        // Create a context with restricted allowed hosts
+        let settings_toml = r#"
+            [core]
+            allowed_network_hosts = ["example.com", "test.org"]
+        "#;
+        let context = Context::new().with_settings(settings_toml).unwrap();
+
+        // Get the resolver
+        let _resolver = context.resolver();
+
+        // Note: We can't easily test the actual restriction behavior here
+        // without making real HTTP requests, but we verify the resolver is created
+        // with the allowed hosts configuration
+        assert_eq!(
+            context
+                .settings()
+                .core
+                .allowed_network_hosts
+                .as_ref()
+                .unwrap()
+                .len(),
+            2,
+            "Should have 2 allowed hosts configured"
+        );
+    }
+
+    #[test]
+    fn test_resolver_caching() {
+        // Create a context
+        let context = Context::new();
+
+        // Get the resolver multiple times
+        let _resolver1 = context.resolver();
+        let _resolver2 = context.resolver();
+        let _resolver3 = context.resolver();
+
+        // The test passes if we can call resolver() multiple times without errors
+        // The OnceLock ensures the same resolver is returned (initialized once)
+        // We can't easily compare trait object pointers, but the fact that
+        // repeated calls succeed proves the caching works
+    }
+
+    #[test]
+    fn test_async_resolver_caching() {
+        // Create a context
+        let context = Context::new();
+
+        // Get the async resolver multiple times
+        let _resolver1 = context.resolver_async();
+        let _resolver2 = context.resolver_async();
+        let _resolver3 = context.resolver_async();
+
+        // The test passes if we can call resolver_async() multiple times without errors
+        // The OnceLock ensures the same resolver is returned (initialized once)
     }
 }

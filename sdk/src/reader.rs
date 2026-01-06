@@ -19,6 +19,7 @@ use std::fs::{read, File};
 use std::{
     collections::{HashMap, HashSet},
     io::{Read, Seek, Write},
+    sync::Arc,
 };
 
 use async_generic::async_generic;
@@ -116,11 +117,11 @@ pub struct Reader {
     assertion_values: HashMap<String, Value>,
 
     #[serde(skip)]
-    context: Context,
+    context: Arc<Context>,
 }
 
 impl Reader {
-    /// Create a new Reader with a default Context.
+    /// Create a new Reader with a default [`Context`].
     ///
     /// # Examples
     ///
@@ -132,10 +133,13 @@ impl Reader {
         Self::from_context(Context::new())
     }
 
-    /// Create a new Reader with the given Context.
+    /// Create a new Reader with the given [`Context`].
+    ///
+    /// This method takes ownership of the [`Context`] and wraps it in an [`Arc`] internally.
+    /// Use this for single-use contexts where you don't need to share the context.
     ///
     /// # Arguments
-    /// * `context` - The Context to use for the Reader
+    /// * `context` - The [`Context`] to use for the Reader
     ///
     /// # Returns
     /// A new Reader
@@ -145,26 +149,63 @@ impl Reader {
     /// ```
     /// # use c2pa::{Context, Reader, Result};
     /// # fn main() -> Result<()> {
-    /// let context = Context::new().with_settings(r#"{"verify": {"remote_manifest_fetch": true}}"#)?;
-    /// let reader = Reader::from_context(context);
+    /// // Simple single-use case - no Arc needed!
+    /// let reader = Reader::from_context(
+    ///     Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?,
+    /// );
     /// # Ok(())
     /// # }
     /// ```
     pub fn from_context(context: Context) -> Self {
         Self {
-            context,
+            context: Arc::new(context),
             store: Store::new(),
             assertion_values: HashMap::new(),
             ..Default::default()
         }
     }
 
-    /// Add manifest store from a stream to the Reader
+    /// Create a new Reader with a shared [`Context`].
+    ///
+    /// This method allows sharing a single [`Context`] across multiple builders or readers,
+    /// even across threads. The [`Arc`] is cloned internally, so you pass a reference.
+    ///
+    /// # Arguments
+    /// * `context` - A reference to an [`Arc<Context>`] to share.
+    ///
+    /// # Returns
+    /// A new [`Reader`]
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Reader, Result};
+    /// # use std::sync::Arc;
+    /// # fn main() -> Result<()> {
+    /// // Create a shared Context once
+    /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
+    ///
+    /// // Share it across multiple Readers (even across threads!)
+    /// let reader1 = Reader::from_shared_context(&ctx);
+    /// let reader2 = Reader::from_shared_context(&ctx);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_shared_context(context: &Arc<Context>) -> Self {
+        Self {
+            context: Arc::clone(context),
+            store: Store::new(),
+            assertion_values: HashMap::new(),
+            ..Default::default()
+        }
+    }
+
+    /// Add manifest store from a stream to the [`Reader`]
     /// # Arguments
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
     /// # Returns
-    /// The updated Reader.
+    /// The updated [`Reader`] with the added manifest store.
     #[async_generic]
     pub fn with_stream(
         mut self,
@@ -191,25 +232,10 @@ impl Reader {
     ///
     /// # Arguments
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
-    /// * `stream` - The stream to read from.  Must implement the Read and Seek traits. (NOTE: Explain Send trait, required for both sync & async?).
-    ///
+    /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
+    ///   Send trait is required for sync operations and Sync trait is required for async operations.
     /// # Returns
     /// A [`Reader`] for the manifest store.
-    ///
-    /// # Errors
-    /// Returns an [`Error`] when the manifest data cannot be read.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
-    ///
-    /// # Example
-    /// This example reads from a memory buffer and prints out the JSON manifest data.
-    /// ```no_run
-    /// use std::io::Cursor;
-    ///
-    /// use c2pa::Reader;
-    /// let mut stream = Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
-    /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
-    /// println!("{}", reader.json());
-    /// ```
-    ///
     /// # Note
     /// [CAWG identity] assertions require async calls for validation.
     ///
@@ -1508,5 +1534,20 @@ pub mod tests {
         println!("{reader}");
         //Err(Error::NotImplemented("foo".to_string()))
         Ok(())
+    }
+
+    #[test]
+    fn test_reader_is_send_sync() {
+        // Compile-time assertion that Reader is Send + Sync on non-WASM
+        // On WASM, MaybeSend/MaybeSync don't require Send + Sync, so these traits
+        // won't be implemented, but that's correct for single-threaded WASM
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            fn assert_send<T: Send>() {}
+            fn assert_sync<T: Sync>() {}
+
+            assert_send::<Reader>();
+            assert_sync::<Reader>();
+        }
     }
 }
