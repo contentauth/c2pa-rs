@@ -230,6 +230,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@nightly
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
       - name: Install cargo-docs-rs
         uses: dtolnay/install@cargo-docs-rs
 
