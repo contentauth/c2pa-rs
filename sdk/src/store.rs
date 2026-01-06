@@ -3775,7 +3775,7 @@ impl Store {
                     if let Some(parent) = self.get_claim(&parent_label) {
                         // recurse until we find
                         if parent.update_manifest() {
-                            self.get_hash_binding_manifest(parent);
+                            return self.get_hash_binding_manifest(parent);
                         } else if !parent.hash_assertions().is_empty() {
                             return Some(parent.label().to_owned());
                         }

@@ -390,7 +390,7 @@ G/dZR0Qj3j0T5F9GX719XpmzYbVFKIKPTsKF
 -----END PRIVATE KEY-----
 """
 # Time stamp authority URL for signing.
-#tsa_url = "http://timestamp.digicert.com"
+tsa_url = "http://timestamp.digicert.com"
 
 # # Alternatively, you can specify a remote signer, which is also loaded
 # # via `Settings::signer`.

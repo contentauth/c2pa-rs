@@ -354,9 +354,9 @@ let reader = Reader::new();
 ```
 
 **Use shared Context (with Arc):**
+- Multi-threaded operations
 - Multiple builders or readers using the same configuration
 - Signing and reading with the same settings
-- Multi-threaded operations
 - Web servers handling multiple requests with shared configuration
 
 ```rust
@@ -370,7 +370,7 @@ let builder2 = Builder::from_shared_context(&ctx);
 
 ### Migration from Global Settings
 
-The Context API replaces the older global Settings pattern. If you're migrating existing code, here's how Settings and Context work together.
+The Context API replaces the older global settings pattern. If you're migrating existing code, here's how Settings and Context work together.
 
 #### Backwards Compatibility
 
@@ -407,7 +407,7 @@ let reader = Reader::from_context(context)
     .with_stream("image/jpeg", stream)?;
 ```
 
-**Multiple configurations (previously impossible):**
+**Multiple configurations (impossible with global settings):**
 ```rust
 use c2pa::{Context, Builder};
 
