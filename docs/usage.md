@@ -234,11 +234,11 @@ fn main() -> Result<()> {
 }
 ```
 
-### Configuring a Signer
+### Configuring a signer
 
 **In most cases, you don't need to explicitly set a signer on the Context.** Instead, configure signer settings in your configuration, and the Context will create the signer automatically when you call `save_to_stream()` or `save_to_file()`.
 
-#### Method 1: From Settings (Recommended)
+#### Method 1: From Settings (recommended)
 
 Configure signer settings in JSON:
 
@@ -278,7 +278,7 @@ fn main() -> Result<()> {
 }
 ```
 
-#### Method 2: Custom Signer (Advanced)
+#### Method 2: Custom signer (advanced)
 
 For advanced use cases like HSMs or custom signing logic, you can create and set a custom signer:
 
@@ -304,7 +304,7 @@ fn main() -> Result<()> {
 }
 ```
 
-#### Signer Configuration Options
+#### Signer configuration options
 
 The `signer` field in settings supports two types:
 
@@ -326,11 +326,11 @@ sign_cert = "cert.pem"     # Certificate for verification
 tsa_url = "http://..."     # Optional: timestamp authority URL
 ```
 
-### Custom HTTP Resolvers
+### Custom HTTP resolvers
 
 For advanced use cases, you can provide custom HTTP resolvers to control how remote manifests are fetched. Custom resolvers are useful for adding authentication, caching, logging, or mocking network calls in tests.
 
-### Thread Safety
+### Thread safety
 
 Context is designed to be used safely across threads. While Context itself doesn't implement `Clone`, you can:
 
@@ -338,7 +338,7 @@ Context is designed to be used safely across threads. While Context itself doesn
 2. Use `Arc<Context>` to share a context across threads (for read-only access)
 3. Pass contexts by reference where appropriate
 
-### When to Use Context Sharing
+### When to use Context sharing
 
 Understanding when to use shared contexts helps optimize your application:
 
@@ -368,11 +368,11 @@ let builder1 = Builder::from_shared_context(&ctx);
 let builder2 = Builder::from_shared_context(&ctx);
 ```
 
-### Migration from Global Settings
+### Migration from global Settings
 
 The Context API replaces the older global settings pattern. If you're migrating existing code, here's how Settings and Context work together.
 
-#### Backwards Compatibility
+#### Backwards compatibility
 
 **Settings still works:** The Settings type and its configuration format remain unchanged. All your existing settings files (JSON or TOML) work with Context without modification.
 
@@ -385,7 +385,7 @@ The Context API replaces the older global settings pattern. If you're migrating 
 | Configuration | Set once globally | Can have multiple configurations |
 | Testability | Difficult (global state) | Easy (isolated contexts) |
 
-#### Migration Examples
+#### Migration examples
 
 **Old approach (deprecated):**
 ```rust
@@ -422,7 +422,7 @@ let prod_ctx = Context::new()
 let prod_builder = Builder::from_context(prod_ctx);
 ```
 
-#### How Context Uses Settings Internally
+#### How Context uses Settings internally
 
 Context wraps a `Settings` instance and uses it to:
 
@@ -447,7 +447,7 @@ let context = Context::new()
     .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
 ```
 
-#### Global Settings Still Available (Legacy)
+#### Global Settings still available (legacy)
 
 For backwards compatibility, the global Settings pattern still works, but is not recommended for new code:
 

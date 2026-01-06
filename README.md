@@ -55,7 +55,7 @@ This is a beta release (version 0.x.x) of the project. The minor version number 
 
 NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes) for more information.
 
-### Context API for Configuration
+### Context API for configuration
 
 The library uses a `Context` structure to configure C2PA operations, replacing the older global Settings pattern:
 
