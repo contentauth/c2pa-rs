@@ -20,6 +20,7 @@ use std::{
 
 use async_generic::async_generic;
 use chrono::{DateTime, Utc};
+use coset::CoseSign1;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -1049,6 +1050,17 @@ impl Claim {
     ///  get signature of the claim
     pub fn signature_val(&self) -> &Vec<u8> {
         &self.signature_val
+    }
+
+    /// Returns the `COSE_Sign1_Tagged` structure found in the claim signature box.
+    pub fn cose_sign1(&self) -> Result<CoseSign1> {
+        let sig = self.signature_val();
+        let data = self.data()?;
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        let sign1 = parse_cose_sign1(sig, &data, &mut validation_log)?;
+        Ok(sign1)
     }
 
     /// get claim generator
