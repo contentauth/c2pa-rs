@@ -121,6 +121,7 @@ pub struct Manifest {
     /// The [`CoseSign1::signature`] value.
     ///
     /// [`CoseSign1::signature`]: coset::CoseSign1::signature
+    #[serde(skip)]
     signature: Option<Vec<u8>>,
 
     /// Indicates where a generated manifest goes
