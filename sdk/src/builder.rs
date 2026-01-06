@@ -1607,7 +1607,7 @@ impl Builder {
                     continue;
                 }
 
-                // Then check timestmap assertions.
+                // Then check timestamp assertions.
                 let timestamp_assertions = claim.timestamp_assertions();
                 for timestamp_assertion in timestamp_assertions {
                     let timestamp_assertion =
