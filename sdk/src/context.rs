@@ -742,7 +742,6 @@ mod tests {
 
         // Verify we can get the default resolver
         let _resolver = context.resolver();
-
     }
 
     #[test]
