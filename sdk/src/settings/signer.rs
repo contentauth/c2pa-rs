@@ -253,11 +253,7 @@ impl Signer for CawgX509IdentitySigner {
 
         // Add roles if configured
         if !self.cawg_roles.is_empty() {
-            let roles: Vec<&str> = self
-                .cawg_roles
-                .iter()
-                .map(|s| s.as_str())
-                .collect();
+            let roles: Vec<&str> = self.cawg_roles.iter().map(|s| s.as_str()).collect();
             iab.add_roles(&roles);
         }
 
