@@ -35,6 +35,25 @@ use crate::{
     validation_status, Result,
 };
 
+/// Given a COSE signature, retrieve the `sigTst` header from it.
+///
+/// Return the raw unprotected value and `sigTst` version if available.
+pub(crate) fn get_cose_tst_info(sign1: &coset::CoseSign1) -> Option<(&Value, TimeStampStorage)> {
+    sign1
+        .unprotected
+        .rest
+        .iter()
+        .find_map(|x: &(Label, Value)| {
+            if x.0 == Label::Text("sigTst2".to_string()) {
+                Some((&x.1, TimeStampStorage::V2_sigTst2_CTT))
+            } else if x.0 == Label::Text("sigTst".to_string()) {
+                Some((&x.1, TimeStampStorage::V1_sigTst))
+            } else {
+                None
+            }
+        })
+}
+
 /// Given a COSE signature, retrieve the `sigTst` header from it and validate
 /// the information within it.
 ///
@@ -47,20 +66,7 @@ pub(crate) fn validate_cose_tst_info(
     validation_log: &mut StatusTracker,
     settings: &Settings,
 ) -> Result<TstInfo, CoseError> {
-    let Some((sigtst, tss)) = &sign1
-        .unprotected
-        .rest
-        .iter()
-        .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("sigTst2".to_string()) {
-                Some((x.1.clone(), TimeStampStorage::V2_sigTst2_CTT))
-            } else if x.0 == Label::Text("sigTst".to_string()) {
-                Some((x.1.clone(), TimeStampStorage::V1_sigTst))
-            } else {
-                None
-            }
-        })
-    else {
+    let Some((sigtst, tss)) = get_cose_tst_info(sign1) else {
         return Err(CoseError::NoTimeStampToken);
     };
 

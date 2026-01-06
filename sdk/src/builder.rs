@@ -36,6 +36,7 @@ use crate::{
         TimeStamp, User, UserCbor,
     },
     claim::Claim,
+    crypto::cose,
     error::{Error, Result},
     http::{
         restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
@@ -1497,12 +1498,6 @@ impl Builder {
             }
         }
 
-        for manifest_label in &self.timestamp_manifest_labels {
-            if let Some(claim) = store.get_claim(manifest_label) {
-                claim_uris.insert(claim.uri());
-            }
-        }
-
         let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let timestamp_assertions = provenance_claim.timestamp_assertions();
         let mut timestamp_assertion = if !timestamp_assertions.is_empty() {
@@ -1517,8 +1512,18 @@ impl Builder {
         // If `skip_existing` is enabled, only timestamp claims in `claim_uris` that aren't already timestampped.
         if self.settings.builder.auto_timestamp_assertion.skip_existing {
             for claim in &store.claims() {
-                // TODO: check COSE timestamp, and iterate manifest labels in exisitng timestamp assertions
+                if claim.uri() == provenance_claim.uri() {
+                    continue;
+                }
 
+                // First we check the claim timestamp.
+                let cose_sign1 = claim.cose_sign1()?;
+                if cose::get_cose_tst_info(&cose_sign1).is_some() {
+                    claim_uris.remove(&claim.uri());
+                    continue;
+                }
+
+                // Then check timestmap assertions.
                 let timestamp_assertions = claim.timestamp_assertions();
                 for timestamp_assertion in timestamp_assertions {
                     let timestamp_assertion =
@@ -1529,6 +1534,14 @@ impl Builder {
                         }
                     }
                 }
+            }
+        }
+
+        // The `auto_timestamp_assertion.skip_existing` setting shouldn't affect explicit timestamps,
+        // so we do it here.
+        for manifest_label in &self.timestamp_manifest_labels {
+            if let Some(claim) = store.get_claim(manifest_label) {
+                claim_uris.insert(claim.uri());
             }
         }
 
