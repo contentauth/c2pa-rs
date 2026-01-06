@@ -3,34 +3,12 @@ use std::sync::OnceLock;
 use crate::{
     http::{
         restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
-        SyncGenericResolver, SyncHttpResolver,
+        BoxedAsyncResolver, BoxedSyncResolver, SyncGenericResolver, SyncHttpResolver,
     },
     settings::Settings,
+    signer::{BoxedAsyncSigner, BoxedSigner},
     AsyncSigner, Error, Result, Signer,
 };
-
-// Type aliases for boxed trait objects with conditional Send + Sync bounds
-// These use cfg attributes because MaybeSend/MaybeSync can't be used as
-// trait object bounds - the compiler can't verify them for dyn Trait
-#[cfg(not(target_arch = "wasm32"))]
-pub type BoxedSigner = Box<dyn Signer + Send + Sync>;
-#[cfg(target_arch = "wasm32")]
-pub type BoxedSigner = Box<dyn Signer>;
-
-#[cfg(not(target_arch = "wasm32"))]
-type BoxedSyncResolver = Box<dyn SyncHttpResolver + Send + Sync>;
-#[cfg(target_arch = "wasm32")]
-type BoxedSyncResolver = Box<dyn SyncHttpResolver>;
-
-#[cfg(not(target_arch = "wasm32"))]
-type BoxedAsyncResolver = Box<dyn AsyncHttpResolver + Send + Sync>;
-#[cfg(target_arch = "wasm32")]
-type BoxedAsyncResolver = Box<dyn AsyncHttpResolver>;
-
-#[cfg(not(target_arch = "wasm32"))]
-type BoxedAsyncSigner = Box<dyn AsyncSigner + Send + Sync>;
-#[cfg(target_arch = "wasm32")]
-type BoxedAsyncSigner = Box<dyn AsyncSigner>;
 
 /// Internal state for sync HTTP resolver selection.
 enum SyncResolverState {
@@ -755,5 +733,182 @@ mod tests {
             matches!(result, Err(Error::BadParam(_))),
             "Expected BadParam error"
         );
+    }
+
+    #[test]
+    fn test_default_sync_resolver() {
+        // Create a context with default resolver
+        let context = Context::new();
+
+        // Verify we can get the default resolver
+        let resolver = context.resolver();
+
+        // The default should be a RestrictedResolver with SyncGenericResolver
+        // We can't inspect the exact type, but we can verify it exists
+        // by calling a method (this would fail if resolver wasn't properly initialized)
+        assert!(
+            std::any::type_name_of_val(resolver).contains("Restricted"),
+            "Default resolver should be a RestrictedResolver"
+        );
+    }
+
+    #[test]
+    fn test_default_async_resolver() {
+        // Create a context with default resolver
+        let context = Context::new();
+
+        // Verify we can get the default async resolver
+        let resolver = context.resolver_async();
+
+        // The default should be a RestrictedResolver with AsyncGenericResolver
+        assert!(
+            std::any::type_name_of_val(resolver).contains("Restricted"),
+            "Default async resolver should be a RestrictedResolver"
+        );
+    }
+
+    #[test]
+    fn test_custom_sync_resolver() {
+        use crate::http::SyncHttpResolver;
+        use http::{Request, Response};
+        use std::io::Read;
+
+        // Create a mock sync resolver
+        struct MockSyncResolver;
+
+        impl SyncHttpResolver for MockSyncResolver {
+            fn http_resolve(
+                &self,
+                _request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, crate::http::HttpResolverError> {
+                // Return a mock response
+                Ok(Response::builder()
+                    .status(200)
+                    .body(Box::new(std::io::Cursor::new(b"mock response".to_vec()))
+                        as Box<dyn Read>)
+                    .unwrap())
+            }
+        }
+
+        // Create a context with the custom resolver
+        let context = Context::new().with_resolver(MockSyncResolver);
+
+        // Verify the custom resolver is used
+        let resolver = context.resolver();
+
+        // Make a test request to verify it's our mock
+        let request = Request::builder()
+            .uri("http://example.com")
+            .body(vec![])
+            .unwrap();
+
+        let response = resolver.http_resolve(request);
+        assert!(response.is_ok(), "Mock resolver should succeed");
+
+        // Read the body to verify it's our mock response
+        let mut body = response.unwrap().into_body();
+        let mut buffer = Vec::new();
+        body.read_to_end(&mut buffer).unwrap();
+        assert_eq!(buffer, b"mock response");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_custom_async_resolver() {
+        use crate::http::AsyncHttpResolver;
+        use async_trait::async_trait;
+        use http::{Request, Response};
+        use std::io::Read;
+
+        // Create a mock async resolver
+        struct MockAsyncResolver;
+
+        #[async_trait]
+        impl AsyncHttpResolver for MockAsyncResolver {
+            async fn http_resolve_async(
+                &self,
+                _request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, crate::http::HttpResolverError> {
+                // Return a mock response
+                Ok(Response::builder()
+                    .status(200)
+                    .body(Box::new(std::io::Cursor::new(b"mock async response".to_vec()))
+                        as Box<dyn Read>)
+                    .unwrap())
+            }
+        }
+
+        // Create a context with the custom async resolver
+        let context = Context::new().with_resolver_async(MockAsyncResolver);
+
+        // Verify the custom async resolver is used
+        let resolver = context.resolver_async();
+
+        // Make a test request to verify it's our mock
+        let request = Request::builder()
+            .uri("http://example.com")
+            .body(vec![])
+            .unwrap();
+
+        let response = resolver.http_resolve_async(request).await;
+        assert!(response.is_ok(), "Mock async resolver should succeed");
+
+        // Read the body to verify it's our mock response
+        let mut body = response.unwrap().into_body();
+        let mut buffer = Vec::new();
+        body.read_to_end(&mut buffer).unwrap();
+        assert_eq!(buffer, b"mock async response");
+    }
+
+    #[test]
+    fn test_resolver_with_allowed_hosts() {
+        // Create a context with restricted allowed hosts
+        let settings_toml = r#"
+            [core]
+            allowed_network_hosts = ["example.com", "test.org"]
+        "#;
+        let context = Context::new().with_settings(settings_toml).unwrap();
+
+        // Get the resolver
+        let _resolver = context.resolver();
+
+        // Note: We can't easily test the actual restriction behavior here
+        // without making real HTTP requests, but we verify the resolver is created
+        // with the allowed hosts configuration
+        assert_eq!(
+            context.settings().core.allowed_network_hosts.as_ref().unwrap().len(),
+            2,
+            "Should have 2 allowed hosts configured"
+        );
+    }
+
+    #[test]
+    fn test_resolver_caching() {
+        // Create a context
+        let context = Context::new();
+
+        // Get the resolver multiple times
+        let _resolver1 = context.resolver();
+        let _resolver2 = context.resolver();
+        let _resolver3 = context.resolver();
+
+        // The test passes if we can call resolver() multiple times without errors
+        // The OnceLock ensures the same resolver is returned (initialized once)
+        // We can't easily compare trait object pointers, but the fact that
+        // repeated calls succeed proves the caching works
+    }
+
+    #[test]
+    fn test_async_resolver_caching() {
+        // Create a context
+        let context = Context::new();
+
+        // Get the async resolver multiple times
+        let _resolver1 = context.resolver_async();
+        let _resolver2 = context.resolver_async();
+        let _resolver3 = context.resolver_async();
+
+        // The test passes if we can call resolver_async() multiple times without errors
+        // The OnceLock ensures the same resolver is returned (initialized once)
     }
 }

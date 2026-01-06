@@ -166,7 +166,8 @@ pub use assertions::Relationship;
 pub use builder::{Builder, BuilderIntent, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
-pub use context::{BoxedSigner, Context};
+pub use context::Context;
+pub use signer::{BoxedAsyncSigner, BoxedSigner};
 pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
 #[doc(inline)]

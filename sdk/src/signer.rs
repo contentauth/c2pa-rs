@@ -24,6 +24,27 @@ use crate::{
     Result,
 };
 
+// Type aliases for boxed trait objects with conditional Send + Sync bounds
+// These are the canonical definitions used throughout the codebase
+
+/// Type alias for a boxed [`Signer`] with conditional Send + Sync bounds.
+/// On non-WASM targets, the signer is Send + Sync for thread-safe usage.
+#[cfg(not(target_arch = "wasm32"))]
+pub type BoxedSigner = Box<dyn Signer + Send + Sync>;
+
+/// Type alias for a boxed [`Signer`] without Send + Sync bounds (WASM only).
+#[cfg(target_arch = "wasm32")]
+pub type BoxedSigner = Box<dyn Signer>;
+
+/// Type alias for a boxed [`AsyncSigner`] with conditional Send + Sync bounds.
+/// On non-WASM targets, the signer is Send + Sync for thread-safe usage.
+#[cfg(not(target_arch = "wasm32"))]
+pub type BoxedAsyncSigner = Box<dyn AsyncSigner + Send + Sync>;
+
+/// Type alias for a boxed [`AsyncSigner`] without Send + Sync bounds (WASM only).
+#[cfg(target_arch = "wasm32")]
+pub type BoxedAsyncSigner = Box<dyn AsyncSigner>;
+
 /// The `Signer` trait generates a cryptographic signature over a byte array.
 ///
 /// This trait exists to allow the signature mechanism to be extended.
@@ -255,57 +276,9 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
     }
 }
 
-impl Signer for Box<dyn Signer> {
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        (**self).sign(data)
-    }
-
-    fn alg(&self) -> SigningAlg {
-        (**self).alg()
-    }
-
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        (**self).certs()
-    }
-
-    fn reserve_size(&self) -> usize {
-        (**self).reserve_size()
-    }
-
-    fn ocsp_val(&self) -> Option<Vec<u8>> {
-        (**self).ocsp_val()
-    }
-
-    fn direct_cose_handling(&self) -> bool {
-        (**self).direct_cose_handling()
-    }
-
-    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
-        (**self).dynamic_assertions()
-    }
-
-    fn time_authority_url(&self) -> Option<String> {
-        (**self).time_authority_url()
-    }
-
-    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
-        (**self).timestamp_request_headers()
-    }
-
-    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        (**self).timestamp_request_body(message)
-    }
-
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        (**self).send_timestamp_request(message)
-    }
-
-    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
-        (**self).raw_signer()
-    }
-}
-
-impl Signer for Box<dyn Signer + Send + Sync> {
+// Generic implementation for Box<T> where T implements Signer
+// This covers Box<dyn Signer>, Box<dyn Signer + Send + Sync>, and concrete types
+impl<T: ?Sized + Signer> Signer for Box<T> {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
         (**self).sign(data)
     }
@@ -404,16 +377,11 @@ impl TimeStampProvider for Box<dyn Signer> {
     }
 }
 
-// Type alias for boxed AsyncSigner that handles Send bounds conditionally
-#[cfg(not(target_arch = "wasm32"))]
-type BoxedAsyncSigner = Box<dyn AsyncSigner + Send + Sync>;
-
-#[cfg(target_arch = "wasm32")]
-type BoxedAsyncSigner = Box<dyn AsyncSigner>;
-
+// Generic implementation for Box<T> where T implements AsyncSigner
+// This covers Box<dyn AsyncSigner>, Box<dyn AsyncSigner + Send + Sync>, and concrete types
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl AsyncSigner for BoxedAsyncSigner {
+impl<T: ?Sized + AsyncSigner> AsyncSigner for Box<T> {
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
         (**self).sign(data).await
     }
