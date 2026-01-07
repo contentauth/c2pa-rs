@@ -2411,44 +2411,9 @@ impl Claim {
                 if action.action() == c2pa_action::TRANSCODED
                     || action.action() == c2pa_action::REPACKAGED
                 {
-                    let Some(params) = action.parameters() else {
-                        log_item!(
-                            label.clone(),
-                            "opened, placed and removed items must have parameters",
-                            "verify_actions"
-                        )
-                        .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure(
-                            validation_log,
-                            Error::ValidationRule(
-                                "opened, placed and removed items must have parameters".into(),
-                            ),
-                        )?;
-                        continue; // Skip the parameter-dependent checks below
-                    };
-
-                    let mut parent_tested = None; // on exists if action actually pointed to an ingredient
-                    if let Some(h) = &params.ingredient {
-                        // can we find a reference in the ingredient list
-                        // is it referenced from this manifest
-                        if claim.ingredient_assertions().iter().any(|i| {
-                            if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                if let Some(target_label) = assertion_label_from_uri(&h.url()) {
-                                    return target_label == i.label()
-                                        && ingredient.relationship == Relationship::ParentOf;
-                                }
-                            }
-                            false
-                        }) {
-                            parent_tested = Some(true);
-                        }
-
-                        match parent_tested {
-                            Some(v) => parent_tested = Some(v),
-                            None => parent_tested = Some(false),
-                        }
-                    } else if let Some(h_vec) = &params.ingredients {
-                        for h in h_vec {
+                    if let Some(params) = action.parameters() {
+                        let mut parent_tested = None; // on exists if action actually pointed to an ingredient
+                        if let Some(h) = &params.ingredient {
                             // can we find a reference in the ingredient list
                             // is it referenced from this manifest
                             if claim.ingredient_assertions().iter().any(|i| {
@@ -2462,27 +2427,51 @@ impl Claim {
                             }) {
                                 parent_tested = Some(true);
                             }
+
+                            match parent_tested {
+                                Some(v) => parent_tested = Some(v),
+                                None => parent_tested = Some(false),
+                            }
+                        } else if let Some(h_vec) = &params.ingredients {
+                            for h in h_vec {
+                                // can we find a reference in the ingredient list
+                                // is it referenced from this manifest
+                                if claim.ingredient_assertions().iter().any(|i| {
+                                    if let Ok(ingredient) = Ingredient::from_assertion(i.assertion())
+                                    {
+                                        if let Some(target_label) =
+                                            assertion_label_from_uri(&h.url())
+                                        {
+                                            return target_label == i.label()
+                                                && ingredient.relationship == Relationship::ParentOf;
+                                        }
+                                    }
+                                    false
+                                }) {
+                                    parent_tested = Some(true);
+                                }
+                            }
+                            match parent_tested {
+                                Some(v) => parent_tested = Some(v),
+                                None => parent_tested = Some(false),
+                            }
                         }
-                        match parent_tested {
-                            Some(v) => parent_tested = Some(v),
-                            None => parent_tested = Some(false),
+                        // will only exist if we actual tested for an ingredient
+                        if let Some(false) = parent_tested {
+                            log_item!(
+                                label.clone(),
+                                "action must have valid ingredient with ParentOf relationship",
+                                "verify_actions"
+                            )
+                            .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
+                            .failure_no_throw(
+                                validation_log,
+                                Error::ValidationRule(
+                                    "action must have valid ingredient with ParentOf relationship"
+                                        .into(),
+                                ),
+                            );
                         }
-                    }
-                    // will only exist if we actual tested for an ingredient
-                    if let Some(false) = parent_tested {
-                        log_item!(
-                            label.clone(),
-                            "action must have valid ingredient with ParentOf relationship",
-                            "verify_actions"
-                        )
-                        .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure_no_throw(
-                            validation_log,
-                            Error::ValidationRule(
-                                "action must have valid ingredient with ParentOf relationship"
-                                    .into(),
-                            ),
-                        );
                     }
                 }
 
