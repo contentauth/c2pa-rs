@@ -450,7 +450,8 @@ dependencies = [
  "c2pa_macros",
  "chrono",
  "ciborium",
- "codspeed-criterion-compat",
+ "codspeed-criterion-compat 3.0.5",
+ "codspeed-criterion-compat 4.2.1",
  "config",
  "console_log",
  "const-hex",
@@ -755,11 +756,29 @@ dependencies = [
  "colored",
  "glob",
  "libc",
- "nix",
+ "nix 0.29.0",
  "serde",
  "serde_json",
  "statrs",
  "uuid",
+]
+
+[[package]]
+name = "codspeed"
+version = "4.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f0d98d97fd75ca4489a1a0997820a6521531085e7c8a98941bd0e1264d567dd"
+dependencies = [
+ "anyhow",
+ "cc",
+ "colored",
+ "getrandom 0.2.16",
+ "glob",
+ "libc",
+ "nix 0.30.1",
+ "serde",
+ "serde_json",
+ "statrs",
 ]
 
 [[package]]
@@ -768,9 +787,22 @@ version = "3.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78f6c1c6bed5fd84d319e8b0889da051daa361c79b7709c9394dfe1a882bba67"
 dependencies = [
- "codspeed",
- "codspeed-criterion-compat-walltime",
+ "codspeed 3.0.5",
+ "codspeed-criterion-compat-walltime 3.0.5",
  "colored",
+]
+
+[[package]]
+name = "codspeed-criterion-compat"
+version = "4.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d16fe2db207123f7b3a3b5cfff0c22f99469f7534145f3573f57f4c8a5653c2c"
+dependencies = [
+ "clap",
+ "codspeed 4.2.1",
+ "codspeed-criterion-compat-walltime 4.2.1",
+ "colored",
+ "regex",
 ]
 
 [[package]]
@@ -783,7 +815,32 @@ dependencies = [
  "cast",
  "ciborium",
  "clap",
- "codspeed",
+ "codspeed 3.0.5",
+ "criterion-plot",
+ "is-terminal",
+ "itertools 0.10.5",
+ "num-traits",
+ "once_cell",
+ "oorandom",
+ "regex",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "tinytemplate",
+ "walkdir",
+]
+
+[[package]]
+name = "codspeed-criterion-compat-walltime"
+version = "4.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b035c7f9846b143aeabb3833f5b584023eb97b43ecbff3d997db74c4372df2bd"
+dependencies = [
+ "anes",
+ "cast",
+ "ciborium",
+ "clap",
+ "codspeed 4.2.1",
  "criterion-plot",
  "is-terminal",
  "itertools 0.10.5",
@@ -2485,6 +2542,18 @@ name = "nix"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
 dependencies = [
  "bitflags",
  "cfg-if",
