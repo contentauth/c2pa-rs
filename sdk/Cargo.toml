@@ -164,7 +164,7 @@ rasn-ocsp = "0.26.0"
 rasn-pkix = "0.26.0"
 regex = "1.11"
 riff = "2.0.0"
-rsa = { version = "0.9.7", features = ["pem", "sha2", "std"], optional = true }
+rsa = { version = "0.9.10", features = ["pem", "sha2", "std"], optional = true }
 schemars = { version = "1.0.4", optional = true }
 serde = { version = "1.0.225", features = ["derive"] }
 serde_bytes = "0.11.14"
@@ -233,7 +233,7 @@ p521 = { version = "0.13.3", features = [
     "ecdsa",
 ] }
 pkcs1 = "0.7.5"
-rsa = { version = "0.9.6", features = ["sha2"] }
+rsa = { version = "0.9.10", features = ["sha2"] }
 spki = "0.7.3"
 
 [target.'cfg(any(target_os = "wasi", not(target_arch = "wasm32")))'.dependencies]
