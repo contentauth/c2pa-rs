@@ -964,3 +964,230 @@ pub mod validation_codes {
         }
     }
 }
+
+#[cfg(test)]
+pub mod tests {
+    use crate::validation_status::{
+        ASSERTION_DATAHASH_MISMATCH, CLAIM_MALFORMED, CLAIM_SIGNATURE_INSIDE_VALIDITY,
+        CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
+    };
+
+    use super::*;
+
+    #[test]
+    fn trusted_state() {
+        let mut validation_results = ValidationResults::default();
+
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(SIGNING_CREDENTIAL_TRUSTED).set_kind(LogKind::Success),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Trusted
+        );
+    }
+
+    #[test]
+    fn not_trusted_state_with_failure() {
+        let mut validation_results = ValidationResults::default();
+
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(SIGNING_CREDENTIAL_TRUSTED).set_kind(LogKind::Success),
+        );
+
+        validation_results.add_status(ValidationStatus::new_failure(SIGNING_CREDENTIAL_UNTRUSTED));
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Valid
+        );
+    }
+
+    #[test]
+    fn not_trusted_state_with_failure_delta() {
+        let mut validation_results = ValidationResults::default();
+
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(SIGNING_CREDENTIAL_TRUSTED).set_kind(LogKind::Success),
+        );
+
+        validation_results.add_status(
+            ValidationStatus::new_failure(SIGNING_CREDENTIAL_UNTRUSTED).set_ingredient_uri("1"),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Valid
+        );
+    }
+
+    #[test]
+    fn valid_state() {
+        let mut validation_results = ValidationResults::default();
+
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Valid
+        );
+    }
+
+    #[test]
+    fn valid_state_with_untrusted_delta() {
+        let mut validation_results = ValidationResults::default();
+
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+
+        validation_results.add_status(
+            ValidationStatus::new_failure(SIGNING_CREDENTIAL_UNTRUSTED).set_ingredient_uri("1"),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Valid
+        );
+    }
+
+    #[test]
+    fn not_valid_state_with_failure() {
+        let mut validation_results = ValidationResults::default();
+
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+
+        validation_results.add_status(ValidationStatus::new_failure(CLAIM_MALFORMED));
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Invalid
+        );
+    }
+
+    #[test]
+    fn valid_state_with_failure_delta_and_untrusted_delta() {
+        let mut validation_results = ValidationResults::default();
+
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+
+        validation_results.add_status(
+            ValidationStatus::new_failure(SIGNING_CREDENTIAL_UNTRUSTED).set_ingredient_uri("1"),
+        );
+        validation_results.add_status(
+            ValidationStatus::new_failure(ASSERTION_DATAHASH_MISMATCH).set_ingredient_uri("1"),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Invalid
+        );
+    }
+
+    #[test]
+    fn not_valid_state_with_failure_delta() {
+        let mut validation_results = ValidationResults::default();
+
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+
+        validation_results.add_status(
+            ValidationStatus::new_failure(ASSERTION_DATAHASH_MISMATCH).set_ingredient_uri("1"),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Invalid
+        );
+    }
+
+    #[test]
+    fn not_valid_state_with_no_inside_validity() {
+        let mut validation_results = ValidationResults::default();
+
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Invalid
+        );
+    }
+
+    #[test]
+    fn not_valid_state_with_no_validated() {
+        let mut validation_results = ValidationResults::default();
+
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Invalid
+        );
+    }
+
+    #[test]
+    fn invalid_state() {
+        let mut validation_results = ValidationResults::default();
+
+        validation_results.add_status(ValidationStatus::new_failure(ASSERTION_DATAHASH_MISMATCH));
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Invalid
+        );
+    }
+
+    #[test]
+    fn invalid_state_with_nothing() {
+        let validation_results = ValidationResults::default();
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Invalid
+        );
+    }
+}
