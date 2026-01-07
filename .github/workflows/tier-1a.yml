@@ -246,6 +246,11 @@ jobs:
           RUSTDOCFLAGS: -Dwarnings
         run: cargo docs-rs -p c2pa-c-ffi
 
+      - name: Preflight c2patool cargo docs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc -p c2patool --no-deps --all-features
+
   doc-tests:
     name: Doc tests (requires nightly Rust)
     needs: get-features
