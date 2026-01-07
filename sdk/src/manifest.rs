@@ -244,8 +244,6 @@ impl Manifest {
 
     /// Returns the signature field of the `COSE_Sign1_Tagged` structure found in the
     /// claim signature box.
-    ///
-    /// If the `Manifest` was created from a [`Reader`], this value will never be `None`.
     pub fn signature(&self) -> Option<&[u8]> {
         self.signature.as_deref()
     }
@@ -382,7 +380,10 @@ impl Manifest {
             format: claim.format().map(|s| s.to_owned()),
             instance_id: claim.instance_id().to_owned(),
             label: Some(claim.label().to_owned()),
-            signature: Some(claim.cose_sign1()?.signature),
+            signature: claim
+                .cose_sign1()
+                .ok()
+                .map(|cose_sign1| cose_sign1.signature),
             ..Default::default()
         };
 
