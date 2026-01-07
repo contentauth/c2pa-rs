@@ -967,12 +967,11 @@ pub mod validation_codes {
 
 #[cfg(test)]
 pub mod tests {
+    use super::*;
     use crate::validation_status::{
         ASSERTION_DATAHASH_MISMATCH, CLAIM_MALFORMED, CLAIM_SIGNATURE_INSIDE_VALIDITY,
         CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
     };
-
-    use super::*;
 
     #[test]
     fn trusted_state() {
