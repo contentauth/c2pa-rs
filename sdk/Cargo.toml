@@ -302,7 +302,7 @@ criterion = { package = "codspeed-criterion-compat", version = "4.2.1" }
 # WASM/WASI doesn't support default criterion features.
 # https://github.com/bheisler/criterion.rs/blob/4c19e913b84e6a7e4a8470cb0f766796886ed891/book/src/user_guide/wasi.md
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-criterion = { package = "codspeed-criterion-compat", version = "3.0.5", default-features = false }
+criterion = { package = "codspeed-criterion-compat", version = "4.2.1", default-features = false }
 
 [[bench]]
 name = "sign"
