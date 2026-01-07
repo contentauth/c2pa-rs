@@ -228,7 +228,7 @@ impl ValidationResults {
                     deltas.iter().all(|idv| {
                         let deltas = idv.validation_deltas();
                         deltas.failure().is_empty()
-                            || deltas.failure().iter().any(|status| {
+                            || deltas.failure().iter().all(|status| {
                                 status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
                             })
                     })
