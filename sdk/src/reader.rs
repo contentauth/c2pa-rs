@@ -1095,7 +1095,9 @@ impl Reader {
     /// # Errors
     /// Returns an [`Error`] if there is no active manifest.
     pub fn into_builder(mut self) -> Result<crate::Builder> {
-        let mut builder = crate::Builder::new();
+        // Preserve the Reader's context in the new Builder
+        let context = self.context;
+        let mut builder = crate::Builder::from_shared_context(&context);
         if let Some(label) = &self.active_manifest {
             if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
                 builder.definition.vendor = parts.cgi.clone();
@@ -1276,6 +1278,7 @@ pub mod tests {
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    #[cfg(feature = "fetch_remote_manifests")]
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
     const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACA.jpg");
 
