@@ -19,6 +19,7 @@ use std::fs::{read, File};
 use std::{
     collections::{HashMap, HashSet},
     io::{Read, Seek, Write},
+    sync::Arc,
 };
 
 use async_generic::async_generic;
@@ -33,14 +34,13 @@ use serde_with::skip_serializing_none;
 use crate::utils::io_utils::uri_to_path;
 use crate::{
     claim::Claim,
+    context::Context,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
-    http::{AsyncGenericResolver, SyncGenericResolver},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     jumbf_io, log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
-    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
     utils::hash_utils::hash_to_b64,
@@ -48,6 +48,18 @@ use crate::{
     validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
     Ingredient, Manifest, ManifestAssertion, Relationship,
 };
+
+/// MaybeSend allows for no Send bound on wasm32 targets
+/// todo: move this to a common module
+#[cfg(not(target_arch = "wasm32"))]
+pub trait MaybeSend: Send {}
+#[cfg(target_arch = "wasm32")]
+pub trait MaybeSend {}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send> MaybeSend for T {}
+#[cfg(target_arch = "wasm32")]
+impl<T> MaybeSend for T {}
 
 /// A trait for post-validation of manifest assertions.
 pub trait PostValidator {
@@ -97,126 +109,143 @@ pub struct Reader {
 
     #[serde(skip)]
     /// We keep this around so we can generate a detailed report if needed
-    store: Store,
+    pub(crate) store: Store,
 
     #[serde(skip)]
     /// Map to hold post-validation assertion values for reports
     /// the key is an assertion uri and the value is the assertion value
     assertion_values: HashMap<String, Value>,
+
+    #[serde(skip)]
+    context: Arc<Context>,
 }
 
-type ValidationFn =
-    dyn Fn(&str, &crate::ManifestAssertion, &mut StatusTracker) -> Option<serde_json::Value>;
-
 impl Reader {
+    /// Create a new Reader with a default [`Context`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::Reader;
+    /// let reader = Reader::new();
+    /// ```
+    pub fn new() -> Self {
+        Self::from_context(Context::new())
+    }
+
+    /// Create a new Reader with the given [`Context`].
+    ///
+    /// This method takes ownership of the [`Context`] and wraps it in an [`Arc`] internally.
+    /// Use this for single-use contexts where you don't need to share the context.
+    ///
+    /// # Arguments
+    /// * `context` - The [`Context`] to use for the Reader
+    ///
+    /// # Returns
+    /// A new Reader
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Reader, Result};
+    /// # fn main() -> Result<()> {
+    /// // Simple single-use case - no Arc needed!
+    /// let reader = Reader::from_context(
+    ///     Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?,
+    /// );
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_context(context: Context) -> Self {
+        Self {
+            context: Arc::new(context),
+            store: Store::new(),
+            assertion_values: HashMap::new(),
+            ..Default::default()
+        }
+    }
+
+    /// Create a new Reader with a shared [`Context`].
+    ///
+    /// This method allows sharing a single [`Context`] across multiple builders or readers,
+    /// even across threads. The [`Arc`] is cloned internally, so you pass a reference.
+    ///
+    /// # Arguments
+    /// * `context` - A reference to an [`Arc<Context>`] to share.
+    ///
+    /// # Returns
+    /// A new [`Reader`]
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Reader, Result};
+    /// # use std::sync::Arc;
+    /// # fn main() -> Result<()> {
+    /// // Create a shared Context once
+    /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
+    ///
+    /// // Share it across multiple Readers (even across threads!)
+    /// let reader1 = Reader::from_shared_context(&ctx);
+    /// let reader2 = Reader::from_shared_context(&ctx);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_shared_context(context: &Arc<Context>) -> Self {
+        Self {
+            context: Arc::clone(context),
+            store: Store::new(),
+            assertion_values: HashMap::new(),
+            ..Default::default()
+        }
+    }
+
+    /// Add manifest store from a stream to the [`Reader`]
+    /// # Arguments
+    /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
+    /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
+    /// # Returns
+    /// The updated [`Reader`] with the added manifest store.
+    #[async_generic]
+    pub fn with_stream(
+        mut self,
+        format: &str,
+        mut stream: impl Read + Seek + MaybeSend,
+    ) -> Result<Self> {
+        let mut validation_log = StatusTracker::default();
+        stream.rewind()?; // Ensure stream is at the start
+        let store = if _sync {
+            Store::from_stream(format, stream, &mut validation_log, &self.context)
+        } else {
+            Store::from_stream_async(format, stream, &mut validation_log, &self.context).await
+        }?;
+
+        if _sync {
+            self.with_store(store, &mut validation_log)
+        } else {
+            self.with_store_async(store, &mut validation_log).await
+        }?;
+        Ok(self)
+    }
+
     /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
     ///
     /// # Arguments
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
-    /// * `stream` - The stream to read from.  Must implement the Read and Seek traits. (NOTE: Explain Send trait, required for both sync & async?).
-    ///
+    /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
+    ///   Send trait is required for sync operations and Sync trait is required for async operations.
     /// # Returns
     /// A [`Reader`] for the manifest store.
-    ///
-    /// # Errors
-    /// Returns an [`Error`] when the manifest data cannot be read.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
-    ///
-    /// # Example
-    /// This example reads from a memory buffer and prints out the JSON manifest data.
-    /// ```no_run
-    /// use std::io::Cursor;
-    ///
-    /// use c2pa::Reader;
-    /// let mut stream = Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
-    /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
-    /// println!("{}", reader.json());
-    /// ```
-    ///
     /// # Note
     /// [CAWG identity] assertions require async calls for validation.
     ///
     /// [CAWG identity]: https://cawg.io/identity/
     #[async_generic]
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_stream(format: &str, mut stream: impl Read + Seek + Send) -> Result<Reader> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = if _sync {
-            SyncGenericResolver::new()
-        } else {
-            AsyncGenericResolver::new()
-        };
-        // TODO: passing verify is redundant with settings
-        let verify = settings.verify.verify_after_reading;
-
-        let mut validation_log = StatusTracker::default();
-        stream.rewind()?; // Ensure stream is at the start
-        let store = if _sync {
-            Store::from_stream(
-                format,
-                stream,
-                verify,
-                &mut validation_log,
-                &http_resolver,
-                &settings,
-            )
-        } else {
-            Store::from_stream_async(
-                format,
-                stream,
-                verify,
-                &mut validation_log,
-                &http_resolver,
-                &settings,
-            )
-            .await
-        }?;
-
+    pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
         if _sync {
-            Self::from_store(store, &mut validation_log, &settings)
+            Reader::new().with_stream(format, stream)
         } else {
-            Self::from_store_async(store, &mut validation_log, &settings).await
-        }
-    }
-
-    #[async_generic]
-    #[cfg(target_arch = "wasm32")]
-    pub fn from_stream(format: &str, mut stream: impl Read + Seek) -> Result<Reader> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = if _sync {
-            SyncGenericResolver::new()
-        } else {
-            AsyncGenericResolver::new()
-        };
-        // TODO: passing verify is redundant with settings
-        let verify = settings.verify.verify_after_reading;
-
-        let mut validation_log = StatusTracker::default();
-
-        let store = if _sync {
-            Store::from_stream(
-                format,
-                &mut stream,
-                verify,
-                &mut validation_log,
-                &http_resolver,
-                &settings,
-            )
-        } else {
-            Store::from_stream_async(
-                format,
-                &mut stream,
-                verify,
-                &mut validation_log,
-                &http_resolver,
-                &settings,
-            )
-            .await
-        }?;
-
-        if _sync {
-            Self::from_store(store, &mut validation_log, &settings)
-        } else {
-            Self::from_store_async(store, &mut validation_log, &settings).await
+            Reader::new().with_stream_async(format, stream).await
         }
     }
 
@@ -306,43 +335,37 @@ impl Reader {
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
         format: &str,
-        stream: impl Read + Seek + Send,
+        stream: impl Read + Seek + MaybeSend,
     ) -> Result<Reader> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = if _sync {
-            SyncGenericResolver::new()
-        } else {
-            AsyncGenericResolver::new()
-        };
+        let context = Context::new();
+        let mut reader = Reader::from_context(context);
 
         let mut validation_log = StatusTracker::default();
-
-        let verify = settings.verify.verify_after_reading;
 
         let store = if _sync {
             Store::from_manifest_data_and_stream(
                 c2pa_data,
                 format,
                 stream,
-                verify,
                 &mut validation_log,
-                &http_resolver,
-                &settings,
+                &reader.context,
             )
         } else {
             Store::from_manifest_data_and_stream_async(
                 c2pa_data,
                 format,
                 stream,
-                verify,
                 &mut validation_log,
-                &http_resolver,
-                &settings,
+                &reader.context,
             )
             .await
         }?;
-
-        Self::from_store(store, &mut validation_log, &settings)
+        if _sync {
+            reader.with_store(store, &mut validation_log)
+        } else {
+            reader.with_store_async(store, &mut validation_log).await
+        }?;
+        Ok(reader)
     }
 
     /// Create a [`Reader`] from an initial segment and a fragment stream.
@@ -359,15 +382,10 @@ impl Reader {
     #[async_generic]
     pub fn from_fragment(
         format: &str,
-        mut stream: impl Read + Seek + Send,
-        mut fragment: impl Read + Seek + Send,
+        mut stream: impl Read + Seek + MaybeSend,
+        mut fragment: impl Read + Seek + MaybeSend,
     ) -> Result<Self> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = if _sync {
-            SyncGenericResolver::new()
-        } else {
-            AsyncGenericResolver::new()
-        };
+        let mut reader = Reader::new();
 
         let mut validation_log = StatusTracker::default();
 
@@ -377,8 +395,7 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
-                &http_resolver,
-                &settings,
+                &reader.context,
             )
         } else {
             Store::load_fragment_from_stream_async(
@@ -386,13 +403,17 @@ impl Reader {
                 &mut stream,
                 &mut fragment,
                 &mut validation_log,
-                &http_resolver,
-                &settings,
+                &reader.context,
             )
             .await
         }?;
 
-        Self::from_store(store, &mut validation_log, &settings)
+        if _sync {
+            reader.with_store(store, &mut validation_log)
+        } else {
+            reader.with_store_async(store, &mut validation_log).await
+        }?;
+        Ok(reader)
     }
 
     /// Loads a [`Reader`]` from an initial segment and fragments.  This
@@ -403,10 +424,8 @@ impl Reader {
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = SyncGenericResolver::new();
+        let mut reader = Reader::new();
 
-        let verify = settings.verify.verify_after_reading;
         let mut validation_log = StatusTracker::default();
 
         let asset_type = jumbf_io::get_supported_file_extension(path.as_ref())
@@ -418,12 +437,13 @@ impl Reader {
             &asset_type,
             &mut init_segment,
             fragments,
-            verify,
             &mut validation_log,
-            &http_resolver,
-            &settings,
+            &reader.context,
         ) {
-            Ok(store) => Self::from_store(store, &mut validation_log, &settings),
+            Ok(store) => {
+                reader.with_store(store, &mut validation_log)?;
+                Ok(reader)
+            }
             Err(e) => Err(e),
         }
     }
@@ -572,13 +592,13 @@ impl Reader {
 
     /// Get the [`ValidationState`] of the manifest store.
     pub fn validation_state(&self) -> ValidationState {
-        let settings = crate::settings::get_settings().unwrap_or_default();
+        let context = Context::new();
 
         if let Some(validation_results) = self.validation_results() {
             return validation_results.validation_state();
         }
 
-        let verify_trust = settings.verify.verify_trust;
+        let verify_trust = context.settings().verify.verify_trust;
         match self.validation_status() {
             Some(status) => {
                 // if there are any errors, the state is invalid unless the only error is an untrusted credential
@@ -662,7 +682,7 @@ impl Reader {
     pub fn resource_to_stream(
         &self,
         uri: &str,
-        stream: impl Write + Read + Seek + Send,
+        stream: impl Write + Read + Seek + MaybeSend,
     ) -> Result<usize> {
         // get the manifest referenced by the uri, or the active one if None
         // add logic to search for local or absolute uri identifiers
@@ -726,7 +746,9 @@ impl Reader {
     #[cfg(feature = "file_io")]
     pub fn to_folder<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
         std::fs::create_dir_all(&path)?;
-        std::fs::write(path.as_ref().join("manifest.json"), self.json())?;
+        std::fs::write(path.as_ref().join("manifest_store.json"), self.json())?;
+        let c2pa_data = self.store.to_jumbf_internal(0)?;
+        std::fs::write(path.as_ref().join("manifest_data.c2pa"), c2pa_data)?;
         for manifest in self.manifests.values() {
             let resources = manifest.resources();
             for (uri, data) in resources.resources() {
@@ -743,11 +765,11 @@ impl Reader {
     }
 
     #[async_generic()]
-    pub(crate) fn from_store(
+    pub(crate) fn with_store(
+        &mut self,
         store: Store,
         validation_log: &mut StatusTracker,
-        settings: &Settings,
-    ) -> Result<Self> {
+    ) -> Result<&Self> {
         let active_manifest = store.provenance_label();
         let mut manifests = HashMap::new();
         let mut options = StoreOptions::default();
@@ -760,7 +782,7 @@ impl Reader {
                     manifest_label,
                     &mut options,
                     validation_log,
-                    settings,
+                    self.context.settings(),
                 )
             } else {
                 Manifest::from_store_async(
@@ -768,7 +790,7 @@ impl Reader {
                     manifest_label,
                     &mut options,
                     validation_log,
-                    settings,
+                    self.context.settings(),
                 )
                 .await
             };
@@ -804,7 +826,6 @@ impl Reader {
         missing.retain(|item| !options.redacted_assertions.contains(item));
 
         // Add any remaining redacted assertions to the validation results
-        // todo: figure out what to do here!
         for uri in &redacted {
             log_item!(uri.clone(), "assertion not redacted", "Reader::from_store")
                 .validation_status(ASSERTION_NOT_REDACTED)
@@ -818,15 +839,14 @@ impl Reader {
         }
 
         let validation_state = validation_results.validation_state();
-        Ok(Self {
-            active_manifest,
-            manifests,
-            validation_status: validation_results.validation_errors(),
-            validation_results: Some(validation_results),
-            validation_state: Some(validation_state),
-            store,
-            assertion_values: HashMap::new(),
-        })
+
+        self.active_manifest = active_manifest;
+        self.manifests = manifests;
+        self.validation_status = validation_results.validation_errors();
+        self.validation_results = Some(validation_results);
+        self.validation_state = Some(validation_state);
+        self.store = store;
+        Ok(self)
     }
 
     /// Populate manifest_data references for all ingredients in a manifest
@@ -872,10 +892,65 @@ impl Reader {
         claim: &Claim,
         active_claim: &mut Claim,
     ) -> Result<()> {
+        let mut visited = std::collections::HashSet::new();
+        let mut path = Vec::new();
+        Self::collect_ingredient_claims_for_store_impl(
+            store,
+            claim,
+            active_claim,
+            &mut visited,
+            &mut path,
+        )
+    }
+
+    /// Uses the similar cycle detection strategy as Store::get_claim_referenced_manifests_impl
+    fn collect_ingredient_claims_for_store_impl(
+        store: &Store,
+        claim: &Claim,
+        active_claim: &mut Claim,
+        visited: &mut std::collections::HashSet<String>,
+        path: &mut Vec<String>,
+    ) -> Result<()> {
+        Self::collect_ingredient_claims_impl(store, claim, active_claim, visited, path)
+    }
+
+    /// Shared implementation for recursively collecting ingredient claims.
+    ///
+    /// Uses path-based cycle detection similar to Store::get_claim_referenced_manifests_impl:
+    /// - `visited`: Claims that have been fully processed (allows DAG convergence)
+    /// - `path`: Current traversal path to detect and skip cycles
+    fn collect_ingredient_claims_impl(
+        store: &Store,
+        claim: &Claim,
+        active_claim: &mut Claim,
+        visited: &mut std::collections::HashSet<String>,
+        path: &mut Vec<String>,
+    ) -> Result<()> {
+        let claim_label = claim.label();
+
+        if visited.contains(claim_label) {
+            return Ok(());
+        }
+
+        // Check for cycle: is this claim already in our current path?
+        // If so, skip it silently (validation should have already caught this when enabled)
+        if path.iter().any(|p| p == claim_label) {
+            return Ok(());
+        }
+
+        path.push(claim_label.to_string());
+
         for ingredient in claim.claim_ingredients() {
-            if let Some(ingredient_claim) = store.get_claim(ingredient.label()) {
-                // First, recursively collect any ingredients this claim references
-                Self::collect_ingredient_claims_for_store(store, ingredient_claim, active_claim)?;
+            let ingredient_label = ingredient.label();
+
+            if let Some(ingredient_claim) = store.get_claim(ingredient_label) {
+                Self::collect_ingredient_claims_impl(
+                    store,
+                    ingredient_claim,
+                    active_claim,
+                    visited,
+                    path,
+                )?;
 
                 // Then add this ingredient claim to the primary claim
                 active_claim.replace_ingredient_or_insert(
@@ -884,6 +959,13 @@ impl Reader {
                 );
             }
         }
+
+        // Mark as fully processed
+        visited.insert(claim_label.to_string());
+
+        // Remove from current path
+        path.pop();
+
         Ok(())
     }
 
@@ -1030,16 +1112,31 @@ impl Reader {
                 builder.definition.instance_id = manifest.instance_id().to_owned();
                 builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
                 builder.definition.redactions = manifest.redactions.take();
-                let ingredients = std::mem::take(&mut manifest.ingredients); //manifest.ingredients.drain(..).collect::<Vec<_>>();
+                let ingredients = std::mem::take(&mut manifest.ingredients);
                 for mut ingredient in ingredients {
                     if let Some(active_manifest) = ingredient.active_manifest() {
-                        let ingredient_claim = self.store.remove_claim(active_manifest);
+                        let ingredient_claim = self.store.get_claim(active_manifest);
                         if let Some(claim) = ingredient_claim {
                             // recreate an ingredient store to get the jumbf data
-                            let mut ingredient_store = Store::new();
-                            ingredient_store.commit_claim(claim.clone())?;
+                            // ... recursively collect all nested ingredient claims
+                            let ingredient_store = {
+                                let mut ingredient_store = Store::new();
+                                let mut active_claim = claim.clone();
+
+                                // Recursion happens here for claims collection - re-embed nested claims from store
+                                Self::collect_ingredient_claims_for_store(
+                                    &self.store,
+                                    claim,
+                                    &mut active_claim,
+                                )?;
+
+                                // Add the main claim with all nested ingredients
+                                ingredient_store.commit_claim(active_claim)?;
+                                ingredient_store
+                            };
                             let jumbf = ingredient_store.to_jumbf_internal(0)?;
-                            let manifest_data_ref = manifest.resources_mut().add_with(
+                            // Add manifest_data to the ingredient's own resources
+                            let manifest_data_ref = ingredient.resources_mut().add_with(
                                 "manifest_data",
                                 "application/c2pa",
                                 jumbf,
@@ -1092,7 +1189,14 @@ impl Reader {
                 let mut active_claim = claim.clone();
 
                 // Recursively collect all ingredient claims and add them to primary_claim
-                self.collect_ingredient_claims_recursive(claim, &mut active_claim)?;
+                let mut visited = std::collections::HashSet::new();
+                let mut path = Vec::new();
+                self.collect_ingredient_claims_recursive(
+                    claim,
+                    &mut active_claim,
+                    &mut visited,
+                    &mut path,
+                )?;
 
                 // Add the main claim last
                 store.commit_claim(active_claim)?;
@@ -1110,20 +1214,10 @@ impl Reader {
         &self,
         claim: &Claim,
         active_claim: &mut Claim,
+        visited: &mut std::collections::HashSet<String>,
+        path: &mut Vec<String>,
     ) -> Result<()> {
-        for ingredient in claim.claim_ingredients() {
-            if let Some(ingredient_claim) = self.store.get_claim(ingredient.label()) {
-                // First, recursively collect any ingredients this claim references
-                self.collect_ingredient_claims_recursive(ingredient_claim, active_claim)?;
-
-                // Then add this ingredient claim to the primary claim
-                active_claim.replace_ingredient_or_insert(
-                    ingredient_claim.label().to_string(),
-                    ingredient_claim.clone(),
-                );
-            }
-        }
-        Ok(())
+        Self::collect_ingredient_claims_impl(&self.store, claim, active_claim, visited, path)
     }
 }
 
@@ -1177,6 +1271,8 @@ pub mod tests {
     use std::io::Cursor;
 
     use super::*;
+    #[cfg(target_os = "wasi")]
+    use crate::settings::Settings;
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
@@ -1215,6 +1311,23 @@ pub mod tests {
         let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
         assert_eq!(reader.remote_url(), None);
         assert!(reader.is_embedded());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reader_new_with_stream() -> Result<()> {
+        const TEST_SETTINGS: &str = include_str!("../tests/fixtures/test_settings.toml");
+        let context = Context::new().with_settings(TEST_SETTINGS)?;
+
+        let mut source = Cursor::new(IMAGE_WITH_MANIFEST);
+
+        let reader = Reader::from_context(context).with_stream("image/jpeg", &mut source)?;
+
+        assert_eq!(reader.remote_url(), None);
+        assert!(reader.is_embedded());
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        assert!(reader.active_manifest().is_some());
 
         Ok(())
     }
@@ -1330,7 +1443,9 @@ pub mod tests {
 
         let temp_dir = tempdirectory().unwrap();
         reader.to_folder(temp_dir.path())?;
-        let path = temp_dir_path(&temp_dir, "manifest.json");
+        let path = temp_dir_path(&temp_dir, "manifest_store.json");
+        assert!(path.exists());
+        let path = temp_dir_path(&temp_dir, "manifest_data.c2pa");
         assert!(path.exists());
         Ok(())
     }
@@ -1419,5 +1534,20 @@ pub mod tests {
         println!("{reader}");
         //Err(Error::NotImplemented("foo".to_string()))
         Ok(())
+    }
+
+    #[test]
+    fn test_reader_is_send_sync() {
+        // Compile-time assertion that Reader is Send + Sync on non-WASM
+        // On WASM, MaybeSend/MaybeSync don't require Send + Sync, so these traits
+        // won't be implemented, but that's correct for single-threaded WASM
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            fn assert_send<T: Send>() {}
+            fn assert_sync<T: Sync>() {}
+
+            assert_send::<Reader>();
+            assert_sync::<Reader>();
+        }
     }
 }
