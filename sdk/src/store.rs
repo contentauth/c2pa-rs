@@ -477,15 +477,69 @@ impl Store {
     }
 
     // Returns placeholder that will be searched for and replaced
-    // with actual signature data.
-    fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
+    // with actual signature data. Creates a valid COSE_Sign1 structure
+    // with placeholder signature bytes that can be found and replaced.
+    fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Result<Vec<u8>> {
+        use coset::{iana, CoseSign1Builder, HeaderBuilder, TaggedCborSerializable};
+
+        // Get the algorithm from the claim, or default to PS256
+        let alg = match claim.alg() {
+            "sha256" => iana::Algorithm::PS256,
+            "sha384" => iana::Algorithm::PS384,
+            "sha512" => iana::Algorithm::PS512,
+            _ => iana::Algorithm::PS256,
+        };
+
+        // Create minimal valid headers for an unsigned structure
+        let protected = HeaderBuilder::new().algorithm(alg).build();
+
+        // Generate the searchable placeholder bytes
         let placeholder_str = format!("signature placeholder:{}", claim.label());
-        let mut placeholder = sha256(placeholder_str.as_bytes());
+        let placeholder_hash = sha256(placeholder_str.as_bytes());
 
-        use std::cmp::max;
-        placeholder.resize(max(placeholder.len(), min_reserve_size), 0);
+        // Start with a reasonable guess for signature size
+        let mut sig_size = min_reserve_size.saturating_sub(20); // Account for CBOR overhead
 
-        placeholder
+        // Iterate to find exact signature size that produces target total size
+        for _ in 0..10 {
+            let mut placeholder_sig = placeholder_hash.clone();
+            placeholder_sig.resize(sig_size, 0);
+
+            let mut sign1 = CoseSign1Builder::new()
+                .protected(protected.clone())
+                .payload(vec![])
+                .build();
+
+            sign1.signature = placeholder_sig;
+
+            let result = sign1
+                .clone()
+                .to_tagged_vec()
+                .map_err(|_| Error::JumbfCreationError)?;
+
+            if result.len() == min_reserve_size {
+                return Ok(result);
+            } else if result.len() < min_reserve_size {
+                sig_size += min_reserve_size - result.len();
+            } else {
+                sig_size -= result.len() - min_reserve_size;
+            }
+        }
+
+        // If we couldn't hit exact size after iterations, return closest
+        let mut placeholder_sig = placeholder_hash;
+        placeholder_sig.resize(sig_size, 0);
+
+        let mut sign1 = CoseSign1Builder::new()
+            .protected(protected)
+            .payload(vec![])
+            .build();
+
+        sign1.signature = placeholder_sig;
+
+        sign1
+            .to_tagged_vec()
+            .map_err(|_| Error::JumbfCreationError)
     }
 
     fn get_cose_sign1_signature(&self, manifest_id: &str) -> Option<Vec<u8>> {
@@ -1070,7 +1124,7 @@ impl Store {
                     let mut sigb = CAISignatureBox::new();
                     let signed_data = match claim.signature_val().is_empty() {
                         false => claim.signature_val().clone(), // existing claims have sig values
-                        true => Store::sign_claim_placeholder(claim, min_reserve_size), /* empty is the new sig to be replaced */
+                        true => Store::sign_claim_placeholder(claim, min_reserve_size)?, /* empty is the new sig to be replaced */
                     };
 
                     let sigc = JUMBFCBORContentBox::new(signed_data);
@@ -2610,7 +2664,7 @@ impl Store {
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
 
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size())?;
 
         self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
     }
@@ -2643,7 +2697,7 @@ impl Store {
             .sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
             .await?;
 
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size())?;
 
         self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
     }
@@ -2673,7 +2727,7 @@ impl Store {
 
         // sign contents
         let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size())?;
 
         if sig_placeholder.len() != sig.len() {
             return Err(Error::CoseSigboxTooSmall);
@@ -2712,7 +2766,7 @@ impl Store {
         let sig = self
             .sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
             .await?;
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size())?;
 
         if sig_placeholder.len() != sig.len() {
             return Err(Error::CoseSigboxTooSmall);
@@ -2979,7 +3033,7 @@ impl Store {
         // sign the claim
         let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = temp_store.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size())?;
 
         match temp_store.finish_save(jumbf_bytes, &dest_path, sig, &sig_placeholder) {
             Ok(_) => Ok(()),
@@ -3093,7 +3147,7 @@ impl Store {
             self.sign_claim_async(pc, signer, signer.reserve_size(), settings)
                 .await
         }?;
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size())?;
 
         intermediate_stream.rewind()?;
         match self.finish_save_stream(

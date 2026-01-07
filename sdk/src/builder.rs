@@ -1050,20 +1050,21 @@ impl Builder {
         let mut stream = stream;
         Self::old_from_archive(&mut stream).or_else(|_| {
             // if the old method fails, try the new method
-            // Archives contain unsigned working stores (signed with BoxHash placeholder)
+            // Archives contain unsigned working stores (signed with valid but unsigned COSE_Sign1 placeholders)
 
             let mut validation_log = crate::status_tracker::StatusTracker::default();
             stream.rewind()?; // Ensure stream is at the start
 
-            // Create a temporary context with verify_after_reading disabled, since archives
-            // contain placeholder signatures that will fail CBOR parsing during verification.
+            // Create a temporary context with verify_after_reading disabled.
+            // Archives contain valid COSE_Sign1 structures with placeholder signatures
+            // that will fail validation (but parse correctly as CBOR).
             // The user's context settings will be preserved for the Builder.
             let mut no_verify_settings = context.settings().clone();
             no_verify_settings.verify.verify_after_reading = false;
 
             let temp_context = Context::new().with_settings(no_verify_settings)?;
 
-            // Load the store without verification to avoid CBOR parsing errors on placeholder signatures
+            // Load the store without verification to skip placeholder signature validation
             let store = Store::from_stream(
                 "application/c2pa",
                 &mut stream,
