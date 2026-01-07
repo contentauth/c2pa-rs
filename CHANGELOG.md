@@ -9,6 +9,27 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.74.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.73.2...c2pa-v0.74.0)
+_07 January 2026_
+
+### Added
+
+* [**breaking**] Store `Context` as `Arc` for shared context and threading support ([#1680](https://github.com/contentauth/c2pa-rs/pull/1680))
+* Add CAWG roles support to SignerSettings ([#1700](https://github.com/contentauth/c2pa-rs/pull/1700))
+* Adds `Context` to contain settings, HTTPS resolvers, and signers ([#1631](https://github.com/contentauth/c2pa-rs/pull/1631))
+
+### Fixed
+
+* Hard binding recursive search for nested update manifests ([#1693](https://github.com/contentauth/c2pa-rs/pull/1693))
+
+### Other
+
+* Update `codspeed-criterion-compat` to 4.2.1 ([#1702](https://github.com/contentauth/c2pa-rs/pull/1702))
+
+### Updated dependencies
+
+* Bump rsa from 0.9.9 to 0.9.10 ([#1698](https://github.com/contentauth/c2pa-rs/pull/1698))
+
 ## [0.73.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.73.1...c2pa-v0.73.2)
 _22 December 2025_
 
