@@ -550,7 +550,10 @@ impl Settings {
     /// For example "core.hash_alg" would set settings.core.hash_alg value. The nesting can be arbitrarily
     /// deep based on the [Settings] definition.
     #[allow(unused)]
-    pub(crate) fn set_value<T: Into<config::Value>>(value_path: &str, value: T) -> Result<()> {
+    pub(crate) fn set_global_value<T: Into<config::Value>>(
+        value_path: &str,
+        value: T,
+    ) -> Result<()> {
         let c = SETTINGS.take();
 
         let update_config = Config::builder()
@@ -577,13 +580,14 @@ impl Settings {
         }
     }
 
-    /// Get a [Settings] value by path reference. The path is nested names of of the [Settings] objects
+    /// Get a [Settings] value by path reference from the global thread-local settings.
+    /// The path is nested names of of the [Settings] objects
     /// separated by "." notation.
     ///
     /// For example "core.hash_alg" would get the settings.core.hash_alg value. The nesting can be arbitrarily
     /// deep based on the [Settings] definition.
     #[allow(unused)]
-    fn get_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
+    fn get_global_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
         SETTINGS.with_borrow(|current_settings| {
             let update_config = Config::builder()
                 .add_source(current_settings.clone())
@@ -628,6 +632,140 @@ impl Settings {
     pub fn signer() -> Result<crate::BoxedSigner> {
         SignerSettings::signer()
     }
+
+    /// Sets a value at the specified path in this Settings instance using the builder pattern.
+    ///
+    /// The path uses dot notation to navigate nested structures.
+    /// For example: "verify.verify_trust", "core.hash_alg", "builder.thumbnail.enabled"
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - A dot-separated path to the setting (e.g., "verify.verify_trust")
+    /// * `value` - Any value that can be converted into a config::Value
+    ///
+    /// # Returns
+    ///
+    /// The updated Settings instance (for chaining)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The path is invalid
+    /// - The value type doesn't match the expected type
+    /// - Validation fails after the change
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::settings::Settings;
+    /// # fn main() -> c2pa::Result<()> {
+    /// let settings = Settings::default()
+    ///     .with_value("verify.verify_trust", true)?
+    ///     .with_value("core.hash_alg", "sha512")?
+    ///     .with_value("core.max_memory_usage", 50_000_000u32)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_value<T: Into<config::Value>>(self, path: &str, value: T) -> Result<Self> {
+        // Convert self to Config
+        let config = Config::try_from(&self).map_err(|e| Error::OtherError(Box::new(e)))?;
+
+        // Apply the override
+        let updated_config = Config::builder()
+            .add_source(config)
+            .set_override(path, value)
+            .map_err(|e| Error::BadParam(format!("Invalid path '{}': {}", path, e)))?
+            .build()
+            .map_err(|e| Error::OtherError(Box::new(e)))?;
+
+        // Deserialize back to Settings
+        let updated_settings = updated_config
+            .try_deserialize::<Settings>()
+            .map_err(|e| Error::BadParam(format!("Invalid value for '{}': {}", path, e)))?;
+
+        // Validate the updated settings
+        updated_settings.validate()?;
+
+        Ok(updated_settings)
+    }
+
+    /// Sets a value at the specified path, modifying this Settings instance in place.
+    ///
+    /// This is a mutable alternative to [`with_value`](Settings::with_value).
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - A dot-separated path to the setting
+    /// * `value` - Any value that can be converted into a config::Value
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The path is invalid
+    /// - The value type doesn't match the expected type
+    /// - Validation fails after the change
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::settings::Settings;
+    /// # fn main() -> c2pa::Result<()> {
+    /// let mut settings = Settings::default();
+    /// settings.set_value("verify.verify_trust", false)?;
+    /// settings.set_value("core.hash_alg", "sha384")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn set_value<T: Into<config::Value>>(&mut self, path: &str, value: T) -> Result<()> {
+        *self = std::mem::take(self).with_value(path, value)?;
+        Ok(())
+    }
+
+    /// Gets a value at the specified path from this Settings instance.
+    ///
+    /// The path uses dot notation to navigate nested structures.
+    /// The return type is inferred from context or can be specified explicitly.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - A dot-separated path to the setting
+    ///
+    /// # Type Parameters
+    ///
+    /// * `T` - The expected type of the value (must implement Deserialize)
+    ///
+    /// # Returns
+    ///
+    /// The value at the specified path
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The path doesn't exist
+    /// - The value can't be deserialized to type T
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::settings::Settings;
+    /// # fn main() -> c2pa::Result<()> {
+    /// let settings = Settings::default();
+    ///
+    /// // Type can be inferred
+    /// let verify_trust: bool = settings.get_value("verify.verify_trust")?;
+    ///
+    /// // Or specified explicitly
+    /// let hash_alg = settings.get_value::<String>("core.hash_alg")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn get_value<'de, T: serde::de::Deserialize<'de>>(&self, path: &str) -> Result<T> {
+        let config = Config::try_from(self).map_err(|e| Error::OtherError(Box::new(e)))?;
+
+        config
+            .get::<T>(path)
+            .map_err(|e| Error::BadParam(format!("Failed to get value at '{}': {}", path, e)))
+    }
 }
 
 impl Default for Settings {
@@ -671,47 +809,22 @@ pub(crate) fn get_settings() -> Option<Settings> {
     SETTINGS.with_borrow(|config| config.clone().try_deserialize::<Settings>().ok())
 }
 
-// Load settings from configuration file
-#[allow(unused)]
-#[deprecated = "use `Settings::from_file`"]
-#[cfg(feature = "file_io")]
-pub(crate) fn load_settings_from_file<P: AsRef<Path>>(settings_path: P) -> Result<()> {
-    Settings::from_file(settings_path)?;
-    Ok(())
-}
-
-/// Load settings from string representation of the configuration. Format of configuration must be supplied.
-#[allow(unused)]
-pub fn load_settings_from_str(settings_str: &str, format: &str) -> Result<()> {
-    Settings::from_string(settings_str, format).map(|_| ())
-}
-
 // Save the current configuration to a json file.
-#[allow(unused)]
-#[cfg(feature = "file_io")]
-pub(crate) fn save_settings_as_json<P: AsRef<Path>>(settings_path: P) -> Result<()> {
-    let settings =
-        get_settings().ok_or(Error::OtherError("could not get current settings".into()))?;
 
-    let settings_json = serde_json::to_string_pretty(&settings).map_err(Error::JsonError)?;
-
-    std::fs::write(settings_path, settings_json.as_bytes()).map_err(Error::IoError)
-}
-
-/// See [Settings::set_value] for more information.
-#[allow(unused)]
+/// See [Settings::set_global_value] for more information.
+#[cfg(test)]
 pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value: T) -> Result<()> {
-    Settings::set_value(value_path, value)
+    Settings::set_global_value(value_path, value)
 }
 
-/// See [Settings::get_value] for more information.
-#[allow(unused)]
+/// See [Settings::get_global_value] for more information.
+#[cfg(test)]
 fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
-    Settings::get_value(value_path)
+    Settings::get_global_value(value_path)
 }
 
 /// Reset all settings back to default values.
-#[allow(unused)]
+#[cfg(test)]
 // #[deprecated = "use `Settings::reset` instead"]
 pub fn reset_default_settings() -> Result<()> {
     Settings::reset()
@@ -725,6 +838,16 @@ pub mod tests {
     use super::*;
     #[cfg(feature = "file_io")]
     use crate::utils::io_utils::tempdirectory;
+
+    #[cfg(feature = "file_io")]
+    fn save_settings_as_json<P: AsRef<Path>>(settings_path: P) -> Result<()> {
+        let settings =
+            get_settings().ok_or(Error::OtherError("could not get current settings".into()))?;
+
+        let settings_json = serde_json::to_string_pretty(&settings).map_err(Error::JsonError)?;
+
+        std::fs::write(settings_path, settings_json.as_bytes()).map_err(Error::IoError)
+    }
 
     #[test]
     fn test_get_defaults() {
@@ -798,10 +921,10 @@ pub mod tests {
         let ts = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
         // test updating values
-        Settings::set_value("core.merkle_tree_chunk_size_in_kb", 10).unwrap();
-        Settings::set_value("verify.remote_manifest_fetch", false).unwrap();
-        Settings::set_value("builder.thumbnail.enabled", false).unwrap();
-        Settings::set_value(
+        Settings::set_global_value("core.merkle_tree_chunk_size_in_kb", 10).unwrap();
+        Settings::set_global_value("verify.remote_manifest_fetch", false).unwrap();
+        Settings::set_global_value("builder.thumbnail.enabled", false).unwrap();
+        Settings::set_global_value(
             "trust.user_anchors",
             Some(String::from_utf8(ts.to_vec()).unwrap()),
         )
@@ -1107,5 +1230,89 @@ pub mod tests {
             .update_from_str("{ invalid json }", "json")
             .is_err());
         assert!(Settings::default().update_from_str("data", "yaml").is_err());
+    }
+
+    #[test]
+    fn test_instance_with_value() {
+        // Test builder pattern with with_value
+        let settings = Settings::default()
+            .with_value("verify.verify_trust", false)
+            .unwrap()
+            .with_value("core.merkle_tree_chunk_size_in_kb", 1024i64)
+            .unwrap()
+            .with_value("builder.thumbnail.enabled", false)
+            .unwrap();
+
+        assert!(!settings.verify.verify_trust);
+        assert_eq!(settings.core.merkle_tree_chunk_size_in_kb, Some(1024));
+        assert!(!settings.builder.thumbnail.enabled);
+    }
+
+    #[test]
+    fn test_instance_set_value() {
+        // Test mutable set_value
+        let mut settings = Settings::default();
+
+        settings.set_value("verify.verify_trust", true).unwrap();
+        settings
+            .set_value("core.merkle_tree_chunk_size_in_kb", 2048i64)
+            .unwrap();
+        settings
+            .set_value("builder.thumbnail.enabled", false)
+            .unwrap();
+
+        assert!(settings.verify.verify_trust);
+        assert_eq!(settings.core.merkle_tree_chunk_size_in_kb, Some(2048));
+        assert!(!settings.builder.thumbnail.enabled);
+    }
+
+    #[test]
+    fn test_instance_get_value() {
+        let mut settings = Settings::default();
+        settings.verify.verify_trust = false;
+        settings.core.merkle_tree_chunk_size_in_kb = Some(512);
+
+        // Test type inference
+        let verify_trust: bool = settings.get_value("verify.verify_trust").unwrap();
+        assert!(!verify_trust);
+
+        // Test explicit type
+        let chunk_size = settings
+            .get_value::<Option<usize>>("core.merkle_tree_chunk_size_in_kb")
+            .unwrap();
+        assert_eq!(chunk_size, Some(512));
+    }
+
+    #[test]
+    fn test_instance_methods_with_context() {
+        // Test that instance methods work with Context
+        use crate::Context;
+
+        let settings = Settings::default()
+            .with_value("verify.verify_after_sign", true)
+            .unwrap()
+            .with_value("verify.verify_trust", true)
+            .unwrap();
+
+        let _context = Context::new().with_settings(settings).unwrap();
+
+        // If we get here without errors, the integration works
+    }
+
+    #[test]
+    fn test_instance_value_error_handling() {
+        // Test invalid type (trying to set string to bool field)
+        let mut settings = Settings::default();
+        let result = settings.set_value("verify.verify_trust", "not a bool");
+        assert!(result.is_err());
+
+        // Test get non-existent path
+        let settings = Settings::default();
+        let result = settings.get_value::<bool>("does.not.exist");
+        assert!(result.is_err());
+
+        // Test with_value on invalid type
+        let result = Settings::default().with_value("verify.verify_trust", "not a bool");
+        assert!(result.is_err());
     }
 }

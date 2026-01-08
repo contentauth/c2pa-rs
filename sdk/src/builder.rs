@@ -3500,10 +3500,14 @@ mod tests {
             ..Default::default()
         };
 
-        let mut builder = Builder {
-            definition,
-            ..Default::default()
-        };
+        let settings = Settings::default()
+            .with_value("verify.verify_timestamp_trust", false)
+            .unwrap();
+        let context = Context::default().with_settings(settings).unwrap();
+
+        let mut builder = Builder::from_context(context)
+            .with_definition(definition)
+            .unwrap();
 
         let parent_json = json!({
             "title": "Parent Test",

@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 use std::{
     collections::{HashMap, HashSet},
     io::{Cursor, Read, Seek},
-    vec,
 };
 
 use async_generic::async_generic;
@@ -2126,13 +2125,12 @@ impl Store {
 
                 // save the valid timestamps stored in the StoreValidationInfo
                 // we only use valid timestamps, otherwise just ignore
-                let mut adjusted_settings = settings.clone();
-                let original_trust_val = adjusted_settings.verify.verify_timestamp_trust;
+                let mut verify_trust = settings.verify.verify_timestamp_trust;
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
                         if rc.version() == 1 {
                             // no trust checks for leagacy timestamps
-                            adjusted_settings.verify.verify_timestamp_trust = false;
+                            verify_trust = false;
                         }
 
                         if let Ok(tst_info) = verify_time_stamp(
@@ -2140,12 +2138,11 @@ impl Store {
                             rc.signature_val(),
                             &self.ctp,
                             validation_log,
-                            &adjusted_settings,
+                            verify_trust,
                         ) {
                             svi.timestamps.insert(rc.label().to_owned(), tst_info);
                         }
                     }
-                    adjusted_settings.verify.verify_timestamp_trust = original_trust_val;
                 }
             }
 

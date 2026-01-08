@@ -19,7 +19,6 @@ use std::{
 };
 
 use async_generic::async_generic;
-use chrono::{DateTime, Utc};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -1802,30 +1801,30 @@ impl Claim {
         }
     }
 
-    /// Return the signing date and time for this claim, if there is one.
-    pub fn signing_time(&self) -> Option<DateTime<Utc>> {
-        if let Some(validation_data) = self.signature_info() {
-            validation_data.date
-        } else {
-            None
-        }
-    }
+    // /// Return the signing date and time for this claim, if there is one.
+    // pub fn signing_time(&self) -> Option<DateTime<Utc>> {
+    //     if let Some(validation_data) = self.signature_info() {
+    //         validation_data.date
+    //     } else {
+    //         None
+    //     }
+    // }
 
-    /// Return the signing issuer for this claim, if there is one.
-    pub fn signing_issuer(&self) -> Option<String> {
-        if let Some(validation_data) = self.signature_info() {
-            validation_data.issuer_org
-        } else {
-            None
-        }
-    }
+    // /// Return the signing issuer for this claim, if there is one.
+    // pub fn signing_issuer(&self) -> Option<String> {
+    //     if let Some(validation_data) = self.signature_info() {
+    //         validation_data.issuer_org
+    //     } else {
+    //         None
+    //     }
+    // }
 
-    /// Return the cert's serial number, if there is one.
-    pub fn signing_cert_serial(&self) -> Option<String> {
-        self.signature_info()
-            .and_then(|validation_info| validation_info.cert_serial_number)
-            .map(|serial| serial.to_string())
-    }
+    // /// Return the cert's serial number, if there is one.
+    // pub fn signing_cert_serial(&self) -> Option<String> {
+    //     self.signature_info()
+    //         .and_then(|validation_info| validation_info.cert_serial_number)
+    //         .map(|serial| serial.to_string())
+    // }
 
     /// Return information about the signature
     #[async_generic]
@@ -1835,14 +1834,10 @@ impl Claim {
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
-        // TODO: I believe we validate at an earlier point in the code, making this unecessary
-        let mut settings = crate::settings::get_settings().unwrap_or_default();
-        settings.verify.verify_timestamp_trust = false;
-
         if _sync {
-            Some(get_signing_info(sig, &data, &mut validation_log, &settings))
+            Some(get_signing_info(sig, &data, &mut validation_log, false))
         } else {
-            Some(get_signing_info_async(sig, &data, &mut validation_log, &settings).await)
+            Some(get_signing_info_async(sig, &data, &mut validation_log, false).await)
         }
     }
 
@@ -2041,7 +2036,12 @@ impl Claim {
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
-        let vi = get_signing_info(sig, &data, &mut validation_log, settings);
+        let vi = get_signing_info(
+            sig,
+            &data,
+            &mut validation_log,
+            settings.verify.verify_timestamp_trust,
+        );
 
         Ok(vi.cert_chain)
     }

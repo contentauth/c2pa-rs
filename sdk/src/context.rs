@@ -191,6 +191,8 @@ pub struct Context {
 impl Default for Context {
     fn default() -> Self {
         Self {
+            // This is for backwards compatibility with the global settings pattern
+            // TODO: Remove this when we drop global settings support
             settings: crate::settings::get_settings().unwrap_or_default(),
             sync_resolver: SyncResolverState::Default(OnceLock::new()),
             async_resolver: AsyncResolverState::Default(OnceLock::new()),
@@ -227,6 +229,31 @@ impl Context {
     /// ```
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Consume this context and wrap it in an `Arc` for sharing between components.
+    ///
+    /// This is equivalent to `Arc::new(self)` or `Arc::from(self)`, but more discoverable
+    /// and chainable with the builder pattern.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Result};
+    /// # use std::sync::Arc;
+    /// # fn main() -> Result<()> {
+    /// let context = Context::new()
+    ///     .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?
+    ///     .into_shared();
+    ///
+    /// // Now context is Arc<Context> and can be shared
+    /// let builder = c2pa::Builder::from_shared_context(&context);
+    /// let reader = c2pa::Reader::from_shared_context(&context);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn into_shared(self) -> std::sync::Arc<Self> {
+        self.into()
     }
 
     /// Configure this Context with the provided settings.
