@@ -11,6 +11,36 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! HTTP abstraction layer.
+//!
+//! This module defines generic traits and helpers for performing HTTP requests
+//! without hard-wiring a specific HTTP client. It allows host applications to
+//! plug in their own HTTP implementation, restrict where the SDK may connect,
+//! or disable networking entirely.
+//!
+//! # When do network requests occur?
+//!
+//! The SDK may issue HTTP/S requests in the following scenarios:
+//! - [`Reader`]:
+//!     - Fetching remote manifests
+//!     - Validating CAWG identity assertions
+//!     - Fetching OCSP revocation status
+//! - [`Builder`]:
+//!     - Fetching ingredient remote manifests
+//!     - Fetching timestamps
+//!     - Fetching [`TimeStamp`] assertions
+//!     - Fetching OCSP staples
+//!     - Fetching [`CertificateStatus`] assertions
+//!
+//! Network requests may also be issued during the signing process, such as when
+//! [`SignerSettings::Remote`] is specified.
+//!
+//! [`Reader`]: crate::Reader
+//! [`Builder`]: crate::Builder
+//! [`TimeStamp`]: crate::assertions::TimeStamp
+//! [`CertificateStatus`]: crate::assertions::CertificateStatus
+//! [`SignerSettings::Remote`]: crate::settings::signer::SignerSettings::Remote
+
 use std::io::{self, Read};
 
 use async_trait::async_trait;
@@ -18,11 +48,34 @@ use http::{Request, Response};
 
 use crate::Result;
 
+// Type aliases for boxed HTTP resolvers with conditional Send + Sync bounds
+// These are the canonical definitions used throughout the codebase
+
+/// Type alias for a boxed [`SyncHttpResolver`] with conditional Send + Sync bounds.
+/// On non-WASM targets, the resolver is Send + Sync for thread-safe usage.
+#[cfg(not(target_arch = "wasm32"))]
+pub type BoxedSyncResolver = Box<dyn SyncHttpResolver + Send + Sync>;
+
+/// Type alias for a boxed [`SyncHttpResolver`] without Send + Sync bounds (WASM only).
+#[cfg(target_arch = "wasm32")]
+pub type BoxedSyncResolver = Box<dyn SyncHttpResolver>;
+
+/// Type alias for a boxed [`AsyncHttpResolver`] with conditional Send + Sync bounds.
+/// On non-WASM targets, the resolver is Send + Sync for thread-safe usage.
+#[cfg(not(target_arch = "wasm32"))]
+pub type BoxedAsyncResolver = Box<dyn AsyncHttpResolver + Send + Sync>;
+
+/// Type alias for a boxed [`AsyncHttpResolver`] without Send + Sync bounds (WASM only).
+#[cfg(target_arch = "wasm32")]
+pub type BoxedAsyncResolver = Box<dyn AsyncHttpResolver>;
+
 mod reqwest;
 mod ureq;
 mod wasi;
 
-// Since we use `http::Request` and `http::Response` we also expose the `http` crate.
+pub mod restricted;
+
+// Since we expose `http::Request` and `http::Response` in the public API, we also expose the `http` crate.
 pub use http;
 
 /// A resolver for sync (blocking) HTTP requests.
@@ -59,8 +112,15 @@ pub trait AsyncHttpResolver {
 /// * `reqwest_blocking` - use [`reqwest::blocking::Client`].
 /// * `wasi` (WASI-only) - use [`wasi::http::outgoing_handler::handle`].
 ///
+/// This resolver is a pure HTTP client wrapper with no domain-specific logic.
+/// For host filtering or other access control, wrap this with [`RestrictedResolver`].
+///
 /// Note that WASM (non-WASI) does not have a built-in [`SyncHttpResolver`].
-pub struct SyncGenericResolver(sync_resolver::Impl);
+///
+/// [`RestrictedResolver`]: restricted::RestrictedResolver
+pub struct SyncGenericResolver {
+    inner: sync_resolver::Impl,
+}
 
 impl SyncGenericResolver {
     /// Create a new [`SyncGenericResolver`] with an auto-specified [`SyncHttpResolver`].
@@ -71,7 +131,9 @@ impl SyncGenericResolver {
     /// * If the platform is WASM.
     /// * If the platform is WASI and `http_wasi` isn't enabled.
     pub fn new() -> Self {
-        Self(sync_resolver::new())
+        Self {
+            inner: sync_resolver::new(),
+        }
     }
 }
 
@@ -86,7 +148,7 @@ impl SyncHttpResolver for SyncGenericResolver {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        self.0.http_resolve(request)
+        self.inner.http_resolve(request)
     }
 }
 
@@ -96,7 +158,14 @@ impl SyncHttpResolver for SyncGenericResolver {
 /// enabled features:
 /// * `reqwest` - use [`reqwest::Client`].
 /// * `wstd` (WASI-only) - use [`wstd::http::Client`].
-pub struct AsyncGenericResolver(async_resolver::Impl);
+///
+/// This resolver is a pure HTTP client wrapper with no domain-specific logic.
+/// For host filtering or other access control, wrap this with [`RestrictedResolver`].
+///
+/// [`RestrictedResolver`]: restricted::RestrictedResolver
+pub struct AsyncGenericResolver {
+    inner: async_resolver::Impl,
+}
 
 impl AsyncGenericResolver {
     /// Create a new [`AsyncGenericResolver`] with an auto-specified [`AsyncHttpResolver`].
@@ -106,7 +175,9 @@ impl AsyncGenericResolver {
     /// * If `http_reqwest` isn't enabled.
     /// * If the platform is WASI and `http_wstd` isn't enabled.
     pub fn new() -> Self {
-        Self(async_resolver::new())
+        Self {
+            inner: async_resolver::new(),
+        }
     }
 }
 
@@ -123,7 +194,7 @@ impl AsyncHttpResolver for AsyncGenericResolver {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        self.0.http_resolve_async(request).await
+        self.inner.http_resolve_async(request).await
     }
 }
 
@@ -149,6 +220,18 @@ pub enum HttpResolverError {
     /// Note this often occurs when the http-related features are improperly enabled.
     #[error("the async http resolver is not implemented")]
     AsyncHttpResolverNotImplemented,
+
+    /// The remote URI is blocked by the allowed list.
+    ///
+    /// The allowed list can be set via:
+    /// - [`SyncGenericResolver::set_allowed_hosts`] / [`AsyncGenericResolver::set_allowed_hosts`]
+    /// - [`RestrictedResolver`] (for wrapping custom resolvers)
+    /// - SDK settings via [`Core::allowed_network_hosts`]
+    ///
+    /// [`RestrictedResolver`]: restricted::RestrictedResolver
+    /// [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+    #[error("remote URI \"{uri}\" is not permitted by the allowed list")]
+    UriDisallowed { uri: String },
 
     /// An error occured from the underlying HTTP resolver.
     #[error("an error occurred from the underlying http resolver")]

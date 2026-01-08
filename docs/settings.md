@@ -1,10 +1,45 @@
 # Configuring settings
 
-You can configure SDK settings using a JSON file that controls many aspects of the library's behavior. This definition works the same in all programming languages and platforms.
+You can configure SDK settings using a JSON or TOML file that controls many aspects of the library's behavior. This definition works the same in all programming languages and platforms.
 
 This document describes the complete JSON schema and available options.
 
-NOTE: If you don't specify a value for a property, then the SDK will use the default value.  If you specify a value of `null`, then the property will be set to `null`, not the default.
+NOTE: If you don't specify a value for a property, then the SDK will use the default value. If you specify a value of `null`, then the property will be set to `null`, not the default.
+
+## Using Settings with Context
+
+**The recommended approach** is to use the `Context` API, which wraps Settings and provides thread-safe, explicit configuration:
+
+```rust
+use c2pa::{Context, Builder, Result};
+
+fn main() -> Result<()> {
+    // Create a Context with settings from a file
+    let context = Context::new()
+        .with_settings(include_str!("settings.json"))?;
+    
+    let builder = Builder::from_context(context);
+    // ... use builder
+    Ok(())
+}
+```
+
+The Context API:
+- Is thread-safe and can be shared with `Arc<Context>`
+- Allows multiple configurations in one application
+- Makes dependencies explicit (no hidden global state)
+- Automatically creates signers from settings when needed
+
+**For backwards compatibility**, you can still use global Settings (not recommended for new code):
+
+```rust
+use c2pa::settings::Settings;
+
+Settings::from_string(include_str!("settings.json"), "json")?;
+// Operations will use global settings
+```
+
+See [Using Context for configuration](usage.md#using-context-for-configuration) for more details.
 
 ## Overview
 
@@ -23,11 +58,32 @@ The configuration JSON has the following top-level structure:
 }
 ```
 
-### Specifying settings file
+### Settings file format
 
-To specify the settings file use [`Settings::from_string`](https://docs.rs/c2pa/latest/c2pa/settings/struct.Settings.html#method.from_string) and specify the format as `"json"`. For example:
+Settings can be provided in JSON or TOML format. The SDK will automatically detect the format when you use `Context::with_settings()`:
 
-```rs
+```rust
+// JSON format
+let context = Context::new()
+    .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+
+// TOML format
+let context = Context::new()
+    .with_settings(r#"
+        [verify]
+        verify_after_sign = true
+    "#)?;
+
+// From file
+let context = Context::new()
+    .with_settings(include_str!("settings.json"))?;
+```
+
+**Legacy approach** using global Settings (not recommended):
+
+```rust
+use c2pa::settings::Settings;
+
 Settings::from_string(include_str!("fixtures/test_settings.json"), "json")?;
 ```
 
@@ -56,6 +112,7 @@ Here's the JSON with all default values:
     "merkle_tree_max_proofs": 5,
     "backing_store_memory_threshold_in_mb": 512,
     "decode_identity_assertions": true
+    "allowed_network_hosts": null
   },
   "verify": {
     "verify_after_reading": true,
@@ -110,7 +167,7 @@ Here's the JSON with all default values:
 The top-level `version` property is a number specifying the settings format version. The only supported value currently is `1`.
 All other properties are optional.
 
-NOTES: 
+NOTES:
 
 - If you do not specify a value, the SDK will use the default value, if any.
 - If you specify a value of `null`, then the property will be set to `null`, not the default.
@@ -215,7 +272,7 @@ Remote signers receive POST requests with the data to be signed as the request b
 
 ### core
 
-The `core` object specifies core features and performance settings. 
+The `core` object specifies core features and performance settings.
 
 | Property | Type | Description | Default value |
 | --- | --- | --- | --- |
@@ -223,11 +280,11 @@ The `core` object specifies core features and performance settings.
 | `core.merkle_tree_max_proofs` | Number | Maximum Merkle tree proofs when validating | 5 |
 | `core.backing_store_memory_threshold_in_mb` | Number | Memory threshold before using disk storage (MB) | 512 |
 | `core.decode_identity_assertions` | Boolean | Whether to decode CAWG identity assertions | true |
-
+| `core.allowed_network_hosts` | Array | List of allowed network host patterns |  |
 
 ### signer
 
-The `signer` object specifies configuration for the primary C2PA signer. Can be `null`, a `local` object, or a `remote` object with values as described below. 
+The `signer` object specifies configuration for the primary C2PA signer. Can be `null`, a `local` object, or a `remote` object with values as described below.
 
 When both `signer` and `cawg_x509_signer` are configured, the system creates a dual signer that:
 
@@ -271,7 +328,7 @@ For certificate properties, use PEM format strings with `\n` for line breaks.
 
 ### verify
 
-The `verify` object specifies verification behavior. 
+The `verify` object specifies verification behavior.
 
 | Property | Type | Description | Default value |
 | --- | --- | --- | --- |
