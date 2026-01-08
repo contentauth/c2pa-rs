@@ -256,7 +256,7 @@ fn finalize_identity_assertion(
     };
 
     let mut assertion_cbor: Vec<u8> = vec![];
-    ciborium::into_writer(&ia, &mut assertion_cbor)
+    c2pa_cbor::to_writer(&mut assertion_cbor, &ia)
         .map_err(|e| crate::Error::BadParam(e.to_string()))?;
     // TO DO: Think through how errors map into crate::Error.
 
@@ -270,7 +270,7 @@ fn finalize_identity_assertion(
         ia.pad1 = vec![0u8; assertion_size - assertion_cbor.len() - 15];
 
         assertion_cbor.clear();
-        ciborium::into_writer(&ia, &mut assertion_cbor)
+        c2pa_cbor::to_writer(&mut assertion_cbor, &ia)
             .map_err(|e| crate::Error::BadParam(e.to_string()))?;
         // TO DO: Think through how errors map into crate::Error.
 
@@ -280,7 +280,7 @@ fn finalize_identity_assertion(
         ]));
 
         assertion_cbor.clear();
-        ciborium::into_writer(&ia, &mut assertion_cbor)
+        c2pa_cbor::to_writer(&mut assertion_cbor, &ia)
             .map_err(|e| crate::Error::BadParam(e.to_string()))?;
         // TO DO: Think through how errors map into crate::Error.
 

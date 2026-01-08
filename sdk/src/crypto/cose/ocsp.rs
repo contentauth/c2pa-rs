@@ -13,8 +13,7 @@
 
 use async_generic::async_generic;
 use chrono::{DateTime, Utc};
-use ciborium::value::Value;
-use coset::{CoseSign1, Label};
+use coset::{cbor::value::Value, CoseSign1, Label};
 
 use crate::{
     context::Context,
