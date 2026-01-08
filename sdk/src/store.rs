@@ -41,6 +41,7 @@ use crate::{
         check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssertion, ClaimAssetData,
         RemoteManifest,
     },
+    context::Context,
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
     crypto::{
@@ -91,6 +92,7 @@ use crate::{
 };
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
+#[cfg(feature = "fetch_remote_manifests")]
 const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
 pub(crate) struct ManifestHashes {
@@ -133,8 +135,7 @@ struct ManifestInfo<'a> {
 
 impl Default for Store {
     fn default() -> Self {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        Self::with_settings(&settings)
+        Self::with_context(&Context::new())
     }
 }
 
@@ -154,8 +155,9 @@ impl Store {
     }
 
     /// Create a new, empty claims store with the specified settings.
-    pub fn with_settings(settings: &Settings) -> Self {
+    pub fn with_context(context: &Context) -> Self {
         let mut store = Store::new();
+        let settings = context.settings();
 
         // load the trust handler settings, don't worry about status as these are checked during setting generation
         if let Some(ta) = &settings.trust.trust_anchors {
@@ -541,16 +543,8 @@ impl Store {
     // Currently only called from manifest_store behind a feature flag but this is allowable
     // anywhere so allow dead code here for future uses to compile
     #[allow(dead_code)]
-    #[async_generic(async_signature(
-        &self,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
-    ))]
-    pub fn get_ocsp_status(
-        &self,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
-    ) -> Option<String> {
+    #[async_generic]
+    pub fn get_ocsp_status(&self, context: &Context) -> Option<String> {
         let claim = self
             .provenance_claim()
             .ok_or(Error::ProvenanceMissing)
@@ -570,8 +564,7 @@ impl Store {
                 None,
                 None,
                 &mut validation_log,
-                http_resolver,
-                settings,
+                context,
             )
         } else {
             check_ocsp_status_async(
@@ -581,8 +574,7 @@ impl Store {
                 None,
                 None,
                 &mut validation_log,
-                http_resolver,
-                settings,
+                context,
             )
             .await
         };
@@ -1195,12 +1187,12 @@ impl Store {
     }
 
     #[inline]
-    pub fn from_jumbf_with_settings(
+    pub fn from_jumbf_with_context(
         buffer: &[u8],
         validation_log: &mut StatusTracker,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Store> {
-        Self::from_jumbf_impl(Store::with_settings(settings), buffer, validation_log)
+        Self::from_jumbf_impl(Store::with_context(context), buffer, validation_log)
     }
 
     fn from_jumbf_impl(
@@ -1617,9 +1609,9 @@ impl Store {
         svi: &StoreValidationInfo,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<()> {
+        let settings = context.settings();
         // walk the ingredients
         for i in claim.ingredient_assertions() {
             // allow for zero out ingredient assertions
@@ -1789,8 +1781,7 @@ impl Store {
                         check_ingredient_trust,
                         &store.ctp,
                         validation_log,
-                        http_resolver,
-                        settings,
+                        context,
                     )?;
 
                     // recurse nested ingredients
@@ -1800,8 +1791,7 @@ impl Store {
                         svi,
                         asset_data,
                         validation_log,
-                        http_resolver,
-                        settings,
+                        context,
                     )?;
                 } else {
                     log_item!(label.clone(), "ingredient not found", "ingredient_checks")
@@ -1835,9 +1825,9 @@ impl Store {
         svi: &StoreValidationInfo<'_>,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<()> {
+        let settings = context.settings();
         // walk the ingredients
         for i in claim.ingredient_assertions() {
             // allow for zero out ingredient assertions
@@ -2007,8 +1997,7 @@ impl Store {
                         check_ingredient_trust,
                         &store.ctp,
                         validation_log,
-                        http_resolver,
-                        settings,
+                        context,
                     )
                     .await?;
 
@@ -2019,8 +2008,7 @@ impl Store {
                         svi,
                         asset_data,
                         validation_log,
-                        http_resolver,
-                        settings,
+                        context,
                     ))
                     .await?;
                 } else {
@@ -2194,16 +2182,14 @@ impl Store {
         store: &Store,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
 
     ))]
     pub fn verify_store(
         store: &Store,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<()> {
         let claim = match store.provenance_claim() {
             Some(c) => c,
@@ -2217,7 +2203,12 @@ impl Store {
         };
 
         // get info needed to complete validation
-        let svi = store.get_store_validation_info(claim, asset_data, validation_log, settings)?;
+        let svi = store.get_store_validation_info(
+            claim,
+            asset_data,
+            validation_log,
+            context.settings(),
+        )?;
 
         if _sync {
             // verify the provenance claim
@@ -2228,19 +2219,10 @@ impl Store {
                 true,
                 &store.ctp,
                 validation_log,
-                http_resolver,
-                settings,
+                context,
             )?;
 
-            Store::ingredient_checks(
-                store,
-                claim,
-                &svi,
-                asset_data,
-                validation_log,
-                http_resolver,
-                settings,
-            )?;
+            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log, context)?;
         } else {
             Claim::verify_claim_async(
                 claim,
@@ -2249,21 +2231,12 @@ impl Store {
                 true,
                 &store.ctp,
                 validation_log,
-                http_resolver,
-                settings,
+                context,
             )
             .await?;
 
-            Store::ingredient_checks_async(
-                store,
-                claim,
-                &svi,
-                asset_data,
-                validation_log,
-                http_resolver,
-                settings,
-            )
-            .await?;
+            Store::ingredient_checks_async(store, claim, &svi, asset_data, validation_log, context)
+                .await?;
         }
 
         Ok(())
@@ -2628,14 +2601,14 @@ impl Store {
         signer: &dyn Signer,
         format: &str,
         asset_reader: Option<&mut dyn CAIRead>,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Vec<u8>> {
         let mut jumbf_bytes =
             self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
 
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
 
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
@@ -2659,7 +2632,7 @@ impl Store {
         signer: &dyn AsyncSigner,
         format: &str,
         asset_reader: Option<&mut dyn CAIRead>,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Vec<u8>> {
         let mut jumbf_bytes =
             self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
@@ -2667,7 +2640,7 @@ impl Store {
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self
-            .sign_claim_async(pc, signer, signer.reserve_size(), settings)
+            .sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
             .await?;
 
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
@@ -2680,7 +2653,7 @@ impl Store {
     pub fn get_box_hashed_embeddable_manifest(
         &mut self,
         signer: &dyn Signer,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
@@ -2699,7 +2672,7 @@ impl Store {
         let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         // sign contents
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -2717,7 +2690,7 @@ impl Store {
     pub async fn get_box_hashed_embeddable_manifest_async(
         &mut self,
         signer: &dyn AsyncSigner,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
@@ -2737,7 +2710,7 @@ impl Store {
 
         // sign contents
         let sig = self
-            .sign_claim_async(pc, signer, signer.reserve_size(), settings)
+            .sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
             .await?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
@@ -2924,7 +2897,7 @@ impl Store {
         fragments: &Vec<std::path::PathBuf>,
         output_path: &Path,
         signer: &dyn Signer,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<()> {
         match get_supported_file_extension(asset_path) {
             Some(ext) => {
@@ -2949,15 +2922,14 @@ impl Store {
         let jumbf = self.to_jumbf(signer)?;
 
         // use temp store so mulitple calls across renditions will work (the Store is not finalized this way)
-        let mut temp_store =
-            Store::from_jumbf_with_settings(&jumbf, &mut validation_log, settings)?;
+        let mut temp_store = Store::from_jumbf_with_context(&jumbf, &mut validation_log, context)?;
 
         let mut jumbf_bytes = temp_store.start_save_bmff_fragmented(
             asset_path,
             fragments,
             output_path,
             signer.reserve_size(),
-            settings,
+            context.settings(),
         )?;
 
         let mut preliminary_claim = PartialClaim::default();
@@ -3006,7 +2978,7 @@ impl Store {
 
         // sign the claim
         let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = temp_store.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+        let sig = temp_store.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         match temp_store.finish_save(jumbf_bytes, &dest_path, sig, &sig_placeholder) {
@@ -3032,8 +3004,7 @@ impl Store {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         signer: &dyn AsyncSigner,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ))]
     pub(crate) fn save_to_stream(
         &mut self,
@@ -3041,9 +3012,9 @@ impl Store {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         signer: &dyn Signer,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Vec<u8>> {
+        let settings = context.settings();
         let dynamic_assertions = signer.dynamic_assertions();
 
         let da_uris = if _sync {
@@ -3152,16 +3123,14 @@ impl Store {
                             self,
                             &mut crate::claim::ClaimAssetData::Stream(output_stream, format),
                             &mut validation_log,
-                            http_resolver,
-                            settings,
+                            context,
                         )?;
                     } else {
                         Store::verify_store_async(
                             self,
                             &mut crate::claim::ClaimAssetData::Stream(output_stream, format),
                             &mut validation_log,
-                            http_resolver,
-                            settings,
+                            context,
                         )
                         .await?;
                     }
@@ -3444,32 +3413,27 @@ impl Store {
         &mut self,
         asset_path: &'_ Path,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<()> {
         Store::verify_store(
             self,
             &mut ClaimAssetData::Path(asset_path),
             validation_log,
-            http_resolver,
-            settings,
+            context,
         )
     }
 
     // fetch remote manifest if possible
     #[cfg(feature = "fetch_remote_manifests")]
-    #[async_generic(async_signature(
-        url: &str,
-        http_resolver: &impl AsyncHttpResolver
-    ))]
-    fn fetch_remote_manifest(url: &str, http_resolver: &impl SyncHttpResolver) -> Result<Vec<u8>> {
+    #[async_generic]
+    fn fetch_remote_manifest(url: &str, context: &Context) -> Result<Vec<u8>> {
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
 
         let request = http::Request::get(url).body(Vec::new())?;
         let response = if _sync {
-            http_resolver.http_resolve(request)
+            context.resolver().http_resolve(request)
         } else {
-            http_resolver.http_resolve_async(request).await
+            context.resolver_async().http_resolve_async(request).await
         };
 
         match response {
@@ -3508,26 +3472,18 @@ impl Store {
     }
 
     /// Handles remote manifests when file_io/fetch_remote_manifests feature is enabled
-    #[async_generic(async_signature(
-        ext_ref: &str,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings
-    ))]
-    fn handle_remote_manifest(
-        ext_ref: &str,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
-    ) -> Result<Vec<u8>> {
+    #[async_generic]
+    fn handle_remote_manifest(ext_ref: &str, _context: &Context) -> Result<Vec<u8>> {
         // verify provenance path is remote url
         if Store::is_valid_remote_url(ext_ref) {
             #[cfg(feature = "fetch_remote_manifests")]
             {
                 // Everything except browser wasm if fetch_remote_manifests is enabled
-                if settings.verify.remote_manifest_fetch {
+                if _context.settings().verify.remote_manifest_fetch {
                     if _sync {
-                        Store::fetch_remote_manifest(ext_ref, http_resolver)
+                        Store::fetch_remote_manifest(ext_ref, _context)
                     } else {
-                        Store::fetch_remote_manifest_async(ext_ref, http_resolver).await
+                        Store::fetch_remote_manifest_async(ext_ref, _context).await
                     }
                 } else {
                     Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
@@ -3553,14 +3509,12 @@ impl Store {
     #[async_generic(async_signature(
         asset_type: &str,
         stream: &mut dyn CAIRead,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings
+        context: &Context
     ))]
     pub fn load_jumbf_from_stream(
         asset_type: &str,
         stream: &mut dyn CAIRead,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<(Vec<u8>, Option<String>)> {
         match load_jumbf_from_stream(asset_type, stream) {
             Ok(manifest_bytes) => Ok((manifest_bytes, None)),
@@ -3571,10 +3525,9 @@ impl Store {
                         .provenance
                 {
                     let jumbf = if _sync {
-                        Store::handle_remote_manifest(&ext_ref, http_resolver, settings)?
+                        Store::handle_remote_manifest(&ext_ref, context)?
                     } else {
-                        Store::handle_remote_manifest_async(&ext_ref, http_resolver, settings)
-                            .await?
+                        Store::handle_remote_manifest_async(&ext_ref, context).await?
                     };
                     Ok((jumbf, Some(ext_ref)))
                 } else {
@@ -3592,11 +3545,7 @@ impl Store {
     /// in_path -  path to source file
     /// validation_log - optional vec to contain addition info about the asset
     #[cfg(feature = "file_io")]
-    pub fn load_jumbf_from_path(
-        in_path: &Path,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
-    ) -> Result<Vec<u8>> {
+    pub fn load_jumbf_from_path(in_path: &Path, context: &Context) -> Result<Vec<u8>> {
         let external_manifest = in_path.with_extension(MANIFEST_STORE_EXT);
         let external_exists = external_manifest.exists();
 
@@ -3622,7 +3571,7 @@ impl Store {
                     )
                     .provenance
                     {
-                        Store::handle_remote_manifest(&ext_ref, http_resolver, settings)
+                        Store::handle_remote_manifest(&ext_ref, context)
                     } else {
                         Err(Error::JumbfNotFound)
                     }
@@ -3660,26 +3609,17 @@ impl Store {
     }
 
     /// Load store from a stream
-    #[async_generic(async_signature(
-        format: &str,
-        mut stream: impl Read + Seek + MaybeSend,
-        verify: bool,
-        validation_log: &mut StatusTracker,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
-    ))]
+    #[async_generic]
     pub fn from_stream(
         format: &str,
         mut stream: impl Read + Seek + MaybeSend,
-        verify: bool,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Self> {
         let (manifest_bytes, remote_url) = if _sync {
-            Store::load_jumbf_from_stream(format, &mut stream, http_resolver, settings)
+            Store::load_jumbf_from_stream(format, &mut stream, context)
         } else {
-            Store::load_jumbf_from_stream_async(format, &mut stream, http_resolver, settings).await
+            Store::load_jumbf_from_stream_async(format, &mut stream, context).await
         }
         .inspect_err(|e| {
             log_item!("asset", "error loading file", "load_from_asset")
@@ -3691,20 +3631,16 @@ impl Store {
                 &manifest_bytes,
                 format,
                 &mut stream,
-                verify,
                 validation_log,
-                http_resolver,
-                settings,
+                context,
             )
         } else {
             Self::from_manifest_data_and_stream_async(
                 &manifest_bytes,
                 format,
                 &mut stream,
-                verify,
                 validation_log,
-                http_resolver,
-                settings,
+                context,
             )
             .await
         };
@@ -3720,53 +3656,30 @@ impl Store {
     }
 
     /// Load store from a manifest data and stream
-    #[async_generic(async_signature(
-        c2pa_data: &[u8],
-        format: &str,
-        mut stream: impl Read + Seek + MaybeSend,
-        verify: bool,
-        validation_log: &mut StatusTracker,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
-    ))]
+    #[async_generic]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
         format: &str,
         mut stream: impl Read + Seek + MaybeSend,
-        verify: bool,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Self> {
         stream.rewind()?;
 
         // First we convert the JUMBF into a usable store.
-        let store = Store::from_jumbf_with_settings(c2pa_data, validation_log, settings)
+        let store = Store::from_jumbf_with_context(c2pa_data, validation_log, context)
             .inspect_err(|e| {
                 log_item!("asset", "error loading file", "load_from_asset")
                     .failure_no_throw(validation_log, e);
             })?;
 
-        if verify {
+        if context.settings().verify.verify_after_reading {
             stream.rewind()?;
             let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
             if _sync {
-                Store::verify_store(
-                    &store,
-                    &mut asset_data,
-                    validation_log,
-                    http_resolver,
-                    settings,
-                )
+                Store::verify_store(&store, &mut asset_data, validation_log, context)
             } else {
-                Store::verify_store_async(
-                    &store,
-                    &mut asset_data,
-                    validation_log,
-                    http_resolver,
-                    settings,
-                )
-                .await
+                Store::verify_store_async(&store, &mut asset_data, validation_log, context).await
             }?;
         }
         Ok(store)
@@ -3783,19 +3696,11 @@ impl Store {
         asset_type: &str,
         init_segment: &mut dyn CAIRead,
         fragments: &Vec<PathBuf>,
-        verify: bool,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Store> {
-        let store = Self::from_stream(
-            asset_type,
-            &mut *init_segment,
-            verify,
-            validation_log,
-            http_resolver,
-            settings,
-        )?;
+        let verify = context.settings().verify.verify_after_reading;
+        let store = Self::from_stream(asset_type, &mut *init_segment, validation_log, context)?;
 
         // verify the store
         if verify {
@@ -3805,8 +3710,7 @@ impl Store {
                 &store,
                 &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
                 validation_log,
-                http_resolver,
-                settings,
+                context,
             )?;
         }
 
@@ -3824,47 +3728,32 @@ impl Store {
         mut stream: impl Read + Seek + MaybeSend,
         mut fragment: impl Read + Seek + MaybeSend,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ))]
     pub fn load_fragment_from_stream(
         format: &str,
         mut stream: impl Read + Seek + MaybeSend,
         mut fragment: impl Read + Seek + MaybeSend,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Store> {
         let manifest_bytes = if _sync {
-            Store::load_jumbf_from_stream(format, &mut stream, http_resolver, settings)?.0
+            Store::load_jumbf_from_stream(format, &mut stream, context)?.0
         } else {
-            Store::load_jumbf_from_stream_async(format, &mut stream, http_resolver, settings)
+            Store::load_jumbf_from_stream_async(format, &mut stream, context)
                 .await?
                 .0
         };
 
-        let store = Store::from_jumbf_with_settings(&manifest_bytes, validation_log, settings)?;
-        let verify = settings.verify.verify_after_reading;
+        let store = Store::from_jumbf_with_context(&manifest_bytes, validation_log, context)?;
+        let verify = context.settings().verify.verify_after_reading;
 
         if verify {
             let mut fragment = ClaimAssetData::StreamFragment(&mut stream, &mut fragment, format);
             if _sync {
-                Store::verify_store(
-                    &store,
-                    &mut fragment,
-                    validation_log,
-                    http_resolver,
-                    settings,
-                )
+                Store::verify_store(&store, &mut fragment, validation_log, context)
             } else {
-                Store::verify_store_async(
-                    &store,
-                    &mut fragment,
-                    validation_log,
-                    http_resolver,
-                    settings,
-                )
-                .await
+                Store::verify_store_async(&store, &mut fragment, validation_log, context).await
             }?;
         };
         Ok(store)
@@ -3886,7 +3775,7 @@ impl Store {
                     if let Some(parent) = self.get_claim(&parent_label) {
                         // recurse until we find
                         if parent.update_manifest() {
-                            self.get_hash_binding_manifest(parent);
+                            return self.get_hash_binding_manifest(parent);
                         } else if !parent.hash_assertions().is_empty() {
                             return Some(parent.label().to_owned());
                         }
@@ -4077,7 +3966,7 @@ impl Store {
         claim: &mut Claim,
         data: &[u8],
         redactions: Option<Vec<String>>,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Store> {
         // constants for ingredient conflict reasons
         const CONFLICTING_MANIFEST: usize = 1; // Conflicts with another C2PA Manifest
@@ -4086,7 +3975,7 @@ impl Store {
         let mut to_remove_from_incoming = Vec::new();
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let i_store = Store::from_jumbf_with_settings(data, &mut report, settings)?;
+        let i_store = Store::from_jumbf_with_context(data, &mut report, context)?;
 
         let empty_store = Store::default();
 
@@ -4111,7 +4000,10 @@ impl Store {
 
         // resolve conflicts
         // for 2.x perform ingredients conflict handling by making new label if needed
-        let skip_resolution = settings.verify.skip_ingredient_conflict_resolution;
+        let skip_resolution = context
+            .settings()
+            .verify
+            .skip_ingredient_conflict_resolution;
 
         if claim.version() > 1 && !skip_resolution {
             // if the hashes match then the values are OK to add so remove form conflict list
@@ -4233,7 +4125,7 @@ impl Store {
         }
 
         // make necessary changes to the incoming store
-        let mut i_store_mut = Store::from_jumbf_with_settings(data, &mut report, settings)?;
+        let mut i_store_mut = Store::from_jumbf_with_context(data, &mut report, context)?;
         let mut final_redactions = Vec::new();
         if let Some(mut redactions) = redactions {
             final_redactions.append(&mut redactions);
@@ -4272,19 +4164,17 @@ impl Store {
         &self,
         manifest_labels: Vec<String>,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ))]
     pub fn get_ocsp_response_ders(
         &self,
         manifest_labels: Vec<String>,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Vec<(String, Vec<u8>)>> {
         let mut oscp_response_ders = Vec::new();
 
-        let mut adjusted_settings = settings.clone();
+        let mut adjusted_settings = context.settings().clone();
         let original_trust_val = adjusted_settings.verify.verify_timestamp_trust;
 
         for manifest_label in manifest_labels {
@@ -4305,8 +4195,7 @@ impl Store {
                         &self.ctp,
                         None,
                         validation_log,
-                        http_resolver,
-                        settings,
+                        context,
                     )?
                     .ocsp_der
                 } else {
@@ -4316,8 +4205,7 @@ impl Store {
                         &self.ctp,
                         None,
                         validation_log,
-                        http_resolver,
-                        settings,
+                        context,
                     )
                     .await?
                     .ocsp_der
@@ -4454,8 +4342,6 @@ pub mod tests {
         assertions::{Action, Actions, Uuid},
         claim::AssertionStoreJsonFormat,
         crypto::raw_signature::SigningAlg,
-        http::{AsyncGenericResolver, SyncGenericResolver},
-        settings::Settings,
         status_tracker::{LogItem, StatusTracker},
         utils::{
             patch::patch_bytes,
@@ -4496,14 +4382,13 @@ pub mod tests {
 
     #[test]
     fn test_jumbf_generation() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = Context::new();
 
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v1_unit_test");
@@ -4522,8 +4407,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -4531,15 +4415,8 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         // should not have any
         assert!(!report.has_any_error());
@@ -4572,14 +4449,13 @@ pub mod tests {
 
     #[test]
     fn test_claim_v2_generation() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = Context::new();
 
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
@@ -4598,8 +4474,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -4607,15 +4482,8 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         // should not have any
         assert!(!report.has_any_error());
@@ -4648,15 +4516,14 @@ pub mod tests {
 
     #[test]
     fn test_bad_claim_v2_generation() {
-        let mut settings = Settings::default();
-        settings.verify.verify_after_sign = false;
-        let http_resolver = SyncGenericResolver::new();
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_after_sign = false;
 
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
@@ -4679,8 +4546,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -4688,14 +4554,7 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let _new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        );
+        let _new_store = Store::from_stream(format, &mut output_stream, &mut report, &context);
 
         // should have action errors
         assert!(report.has_any_error());
@@ -4708,15 +4567,14 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     #[ignore = "we need to make this work again"]
     fn test_unknown_asset_type_generation() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         // test adding to actual image
         let (_format, mut input_stream, mut output_stream) =
             create_test_streams("unsupported_type.txt");
         let format = "text/plain";
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -4740,8 +4598,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -4750,10 +4607,8 @@ pub mod tests {
         let new_store = Store::from_stream(
             format,
             &mut output_stream,
-            true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
-            &http_resolver,
-            &settings,
+            &context,
         )
         .unwrap();
 
@@ -4788,8 +4643,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_detects_unverifiable_signature() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         struct BadSigner {}
 
@@ -4815,7 +4669,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         let claim = create_test_claim().unwrap();
 
@@ -4834,8 +4688,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 &signer,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap_err();
     }
@@ -4845,14 +4698,13 @@ pub mod tests {
     fn test_sign_with_expired_cert() {
         use crate::{create_signer, crypto::raw_signature::SigningAlg};
 
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = Context::new();
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         let claim = create_test_claim().unwrap();
 
@@ -4868,8 +4720,7 @@ pub mod tests {
             &mut input_stream,
             &mut output_stream,
             &signer,
-            &http_resolver,
-            &settings,
+            &context,
         );
         assert!(r.is_err());
         assert_eq!(
@@ -4881,8 +4732,9 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_jumbf_replacement_generation() {
+        let context = Context::new();
         // Create claims store.
-        let mut store = Store::with_settings(&Settings::default());
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -4916,8 +4768,7 @@ pub mod tests {
     #[c2pa_test_async]
     //#[ignore] // this is not generating the expected error. Needs investigation.
     async fn test_jumbf_generation_async() -> Result<()> {
-        let settings = Settings::default();
-        let http_resolver = AsyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         // Verify after sign is causing UnreferencedManifest errors here, since the manifests don't reference each other.
         //no_verify_after_sign();
@@ -4928,7 +4779,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = crate::utils::test::create_test_claim()?;
@@ -4954,8 +4805,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 &signer,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .await?;
         store.commit_claim(claim_capture)?;
@@ -4967,8 +4817,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut temp_stream,
                 &signer,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .await?;
         store.commit_claim(claim2)?;
@@ -4980,8 +4829,7 @@ pub mod tests {
                 &mut temp_stream,
                 &mut output_stream,
                 &signer,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .await
             .unwrap();
@@ -5005,15 +4853,8 @@ pub mod tests {
         let mut report = StatusTracker::default();
 
         output_stream.rewind()?;
-        let _new_store = Store::from_stream_async(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .await?;
+        let _new_store =
+            Store::from_stream_async(format, &mut output_stream, &mut report, &context).await?;
 
         assert!(!report.has_any_error());
         Ok(())
@@ -5021,15 +4862,14 @@ pub mod tests {
 
     #[test]
     fn test_png_jumbf_generation() {
-        let mut settings = Settings::default();
-        settings.verify.verify_after_sign = false;
-        let http_resolver = SyncGenericResolver::new();
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_after_sign = false;
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5053,8 +4893,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 &signer,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -5067,8 +4906,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut temp_stream,
                 &signer,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -5081,8 +4919,7 @@ pub mod tests {
                 &mut temp_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -5093,15 +4930,8 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         // can  we get by the ingredient data back
         let _some_binary_data: Vec<u8> = vec![
@@ -5308,13 +5138,12 @@ pub mod tests {
     */
     #[test]
     fn test_wav_jumbf_generation() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.wav");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5338,8 +5167,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
         store.commit_claim(claim_capture).unwrap();
@@ -5351,8 +5179,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut temp_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
         store.commit_claim(claim2).unwrap();
@@ -5363,8 +5190,7 @@ pub mod tests {
                 &mut temp_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -5381,15 +5207,8 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5421,13 +5240,12 @@ pub mod tests {
 
     #[test]
     fn test_avi_jumbf_generation() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let (format, mut input_stream, mut output_stream) = create_test_streams("test.avi");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5451,8 +5269,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 &signer,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
         store.commit_claim(claim_capture).unwrap();
@@ -5464,8 +5281,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut temp_stream,
                 &signer,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
         store.commit_claim(claim2).unwrap();
@@ -5477,8 +5293,7 @@ pub mod tests {
                 &mut temp_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -5495,15 +5310,8 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5535,13 +5343,12 @@ pub mod tests {
 
     #[test]
     fn test_webp_jumbf_generation() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.webp");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5565,8 +5372,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 &signer,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
         store.commit_claim(claim_capture).unwrap();
@@ -5578,8 +5384,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut temp_stream,
                 &signer,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
         store.commit_claim(claim2).unwrap();
@@ -5591,8 +5396,7 @@ pub mod tests {
                 &mut temp_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -5609,15 +5413,8 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5649,13 +5446,12 @@ pub mod tests {
 
     #[test]
     fn test_heic() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.heic");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5671,8 +5467,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -5680,15 +5475,8 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5711,13 +5499,12 @@ pub mod tests {
 
     #[test]
     fn test_avif() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.avif");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5733,8 +5520,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -5742,15 +5528,8 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5773,13 +5552,12 @@ pub mod tests {
 
     #[test]
     fn test_heif() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.heif");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5795,8 +5573,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -5804,15 +5581,8 @@ pub mod tests {
 
         // read from new stream
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         // dump store and compare to original
         for claim in new_store.claims() {
@@ -5844,16 +5614,10 @@ pub mod tests {
     #[test]
     #[ignore = "This is not generating the expected error. Needs investigation."]
     fn test_manifest_bad_sig() {
+        let context = Context::new();
         let (format, mut input_stream, _output_stream) = create_test_streams("CIE-sig-CA.jpg");
         let tracker = &mut StatusTracker::default();
-        let result = Store::from_stream(
-            format,
-            &mut input_stream,
-            true,
-            tracker,
-            &SyncGenericResolver::new(),
-            &Settings::default(),
-        );
+        let result = Store::from_stream(format, &mut input_stream, tracker, &context);
         assert!(result.is_ok());
         println!("Error report: {tracker:?}");
         assert!(tracker.has_error(Error::AssertionInvalidRedaction));
@@ -5861,17 +5625,11 @@ pub mod tests {
 
     #[test]
     fn test_unsupported_type_without_external_manifest() {
+        let context = Context::new();
         let (format, mut input_stream, _output_stream) =
             create_test_streams("unsupported_type.txt");
         let mut report = StatusTracker::default();
-        let result = Store::from_stream(
-            format,
-            &mut input_stream,
-            true,
-            &mut report,
-            &SyncGenericResolver::new(),
-            &Settings::default(),
-        );
+        let result = Store::from_stream(format, &mut input_stream, &mut report, &context);
         assert!(matches!(result, Err(Error::UnsupportedType)));
         println!("Error report: {report:?}");
         assert!(!report.logged_items().is_empty());
@@ -5884,14 +5642,7 @@ pub mod tests {
         // test bad jumbf
         let (format, mut input_stream, _output_stream) = create_test_streams("prerelease.jpg");
         let mut report = StatusTracker::default();
-        let _r = Store::from_stream(
-            format,
-            &mut input_stream,
-            true,
-            &mut report,
-            &SyncGenericResolver::new(),
-            &Settings::default(),
-        );
+        let _r = Store::from_stream(format, &mut input_stream, &mut report, &Context::new());
 
         // error report
         println!("Error report: {report:?}");
@@ -5905,15 +5656,7 @@ pub mod tests {
         // test bad jumbf
         let (format, mut input_stream, _output_stream) = create_test_streams("XCA.jpg");
         let mut report = StatusTracker::default();
-        Store::from_stream(
-            format,
-            &mut input_stream,
-            true,
-            &mut report,
-            &SyncGenericResolver::new(),
-            &Settings::default(),
-        )
-        .unwrap();
+        Store::from_stream(format, &mut input_stream, &mut report, &Context::new()).unwrap();
 
         // error report
         println!("Error report: {report:?}");
@@ -5945,14 +5688,7 @@ pub mod tests {
     fn test_old_manifest() {
         let (format, mut input_stream, _output_stream) = create_test_streams("prerelease.jpg");
         let mut report = StatusTracker::default();
-        let _r = Store::from_stream(
-            format,
-            &mut input_stream,
-            true,
-            &mut report,
-            &SyncGenericResolver::new(),
-            &Settings::default(),
-        );
+        let _r = Store::from_stream(format, &mut input_stream, &mut report, &Context::new());
 
         println!("Error report: {report:?}");
 
@@ -5970,8 +5706,7 @@ pub mod tests {
     fn test_verifiable_credentials() {
         use crate::utils::test::create_test_store_v1;
 
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
@@ -5988,8 +5723,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -5998,10 +5732,8 @@ pub mod tests {
         let restored_store = Store::from_stream(
             format,
             &mut output_stream,
-            true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
-            &http_resolver,
-            &settings,
+            &context,
         )
         .unwrap();
 
@@ -6022,8 +5754,7 @@ pub mod tests {
     fn test_data_box_creation() {
         use crate::utils::test::create_test_store_v1;
 
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
@@ -6040,8 +5771,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -6050,10 +5780,8 @@ pub mod tests {
         let restored_store = Store::from_stream(
             format,
             &mut output_stream,
-            true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
-            &http_resolver,
-            &settings,
+            &context,
         )
         .unwrap();
 
@@ -6089,14 +5817,7 @@ pub mod tests {
         let mut patched_stream = std::io::Cursor::new(data);
 
         let mut report = StatusTracker::default();
-        let _r = Store::from_stream(
-            format,
-            &mut patched_stream,
-            true,
-            &mut report,
-            &SyncGenericResolver::new(),
-            &Settings::default(),
-        ); // errs are in report
+        let _r = Store::from_stream(format, &mut patched_stream, &mut report, &Context::new()); // errs are in report
         println!("report: {report:?}");
         report
     }
@@ -6105,8 +5826,7 @@ pub mod tests {
     fn test_update_manifest_v1() {
         use crate::{hashed_uri::HashedUri, utils::test::create_test_store_v1};
 
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
@@ -6122,23 +5842,15 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         // read back in
         output_stream.rewind().unwrap();
-        let restored_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let restored_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -6151,7 +5863,7 @@ pub mod tests {
             &mut claim,
             &load_jumbf_from_stream(format, &mut output_stream).unwrap(),
             None,
-            &settings,
+            &context,
         )
         .unwrap();
 
@@ -6177,22 +5889,14 @@ pub mod tests {
                 &mut output_stream,
                 &mut output_stream2,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let um_store = Store::from_stream(
-            format,
-            &mut output_stream2,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let um_store =
+            Store::from_stream(format, &mut output_stream2, &mut report, &context).unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6211,8 +5915,7 @@ pub mod tests {
             utils::test::create_test_store_v1, ClaimGeneratorInfo, ValidationResults,
         };
 
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let signer = test_signer(SigningAlg::Ps256);
 
@@ -6230,8 +5933,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -6240,15 +5942,8 @@ pub mod tests {
         output_stream.rewind().unwrap();
         let ingredient_vec = output_stream.get_ref().clone();
         let mut ingredient_stream = Cursor::new(ingredient_vec);
-        let restored_store = Store::from_stream(
-            format,
-            &mut ingredient_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let restored_store =
+            Store::from_stream(format, &mut ingredient_stream, &mut report, &context).unwrap();
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -6261,15 +5956,10 @@ pub mod tests {
         claim.add_claim_generator_info(cgi);
 
         ingredient_stream.rewind().unwrap();
-        let (manifest_bytes, _) = Store::load_jumbf_from_stream(
-            format,
-            &mut ingredient_stream,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let (manifest_bytes, _) =
+            Store::load_jumbf_from_stream(format, &mut ingredient_stream, &context).unwrap();
         let mut new_store =
-            Store::load_ingredient_to_claim(&mut claim, &manifest_bytes, None, &settings).unwrap();
+            Store::load_ingredient_to_claim(&mut claim, &manifest_bytes, None, &context).unwrap();
 
         let ingredient_hashes = new_store.get_manifest_box_hashes(pc);
         let parent_hashed_uri = HashedUri::new(
@@ -6330,8 +6020,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut output_stream2,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -6339,15 +6028,8 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let um_store = Store::from_stream(
-            format,
-            &mut output_stream2,
-            true,
-            &mut um_report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let um_store =
+            Store::from_stream(format, &mut output_stream2, &mut um_report, &context).unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6366,8 +6048,7 @@ pub mod tests {
             ValidationResults,
         };
 
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let signer = test_signer(SigningAlg::Ps256);
 
@@ -6377,15 +6058,8 @@ pub mod tests {
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
         // read in the store
-        let mut store = Store::from_stream(
-            format,
-            &mut input_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let mut store =
+            Store::from_stream(format, &mut input_stream, &mut report, &context).unwrap();
         let pc = store.provenance_claim().unwrap();
 
         // create a new update manifest
@@ -6442,8 +6116,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -6451,15 +6124,8 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream.rewind().unwrap();
-        let mut um_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut um_report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let mut um_store =
+            Store::from_stream(format, &mut output_stream, &mut um_report, &context).unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6529,8 +6195,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut output_stream2,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -6539,15 +6204,9 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let collapsed_store = Store::from_stream(
-            format,
-            &mut output_stream2,
-            true,
-            &mut collapsed_report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let collapsed_store =
+            Store::from_stream(format, &mut output_stream2, &mut collapsed_report, &context)
+                .unwrap();
 
         let cm = collapsed_store.provenance_claim().unwrap();
         assert!(!cm.update_manifest());
@@ -6563,15 +6222,8 @@ pub mod tests {
         let (format, mut input_stream, _output_stream) = create_test_streams("update_manifest.jpg");
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let restored_store = Store::from_stream(
-            format,
-            &mut input_stream,
-            true,
-            &mut report,
-            &SyncGenericResolver::new(),
-            &Settings::default(),
-        )
-        .unwrap();
+        let restored_store =
+            Store::from_stream(format, &mut input_stream, &mut report, &Context::new()).unwrap();
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be an update manifest
@@ -6585,8 +6237,7 @@ pub mod tests {
             utils::test::create_test_store_v1, ClaimGeneratorInfo, ValidationResults,
         };
 
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let signer = test_signer(SigningAlg::Ps256);
 
@@ -6604,8 +6255,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -6614,15 +6264,8 @@ pub mod tests {
         output_stream.rewind().unwrap();
         let ingredient_vec = output_stream.get_ref().clone();
         let mut ingredient_stream = Cursor::new(ingredient_vec.clone());
-        let restored_store = Store::from_stream(
-            format,
-            &mut ingredient_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let restored_store =
+            Store::from_stream(format, &mut ingredient_stream, &mut report, &context).unwrap();
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -6640,15 +6283,14 @@ pub mod tests {
         let (manifest_bytes, _) = Store::load_jumbf_from_stream(
             format,
             &mut Cursor::new(ingredient_vec.clone()),
-            &http_resolver,
-            &settings,
+            &context,
         )
         .unwrap();
         let mut redacted_store = Store::load_ingredient_to_claim(
             &mut claim,
             &manifest_bytes,
             Some(vec![redacted_uri]),
-            &settings,
+            &context,
         )
         .unwrap();
 
@@ -6702,8 +6344,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut output_stream2,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -6711,15 +6352,8 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let um_store = Store::from_stream(
-            format,
-            &mut output_stream2,
-            true,
-            &mut um_report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let um_store =
+            Store::from_stream(format, &mut output_stream2, &mut um_report, &context).unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6738,24 +6372,19 @@ pub mod tests {
         // load ingredient with redaction
         output_stream2.rewind().unwrap();
         let (redacted_manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut output_stream2, &http_resolver, &settings)
-                .unwrap();
-        Store::load_ingredient_to_claim(&mut new_claim, &redacted_manifest_bytes, None, &settings)
+            Store::load_jumbf_from_stream(format, &mut output_stream2, &context).unwrap();
+        Store::load_ingredient_to_claim(&mut new_claim, &redacted_manifest_bytes, None, &context)
             .unwrap();
 
         // load original ingredient without redaction
-        let (original_manifest_bytes, _) = Store::load_jumbf_from_stream(
-            format,
-            &mut Cursor::new(ingredient_vec),
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let (original_manifest_bytes, _) =
+            Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec), &context)
+                .unwrap();
         let _conflict_store = Store::load_ingredient_to_claim(
             &mut new_claim,
             &original_manifest_bytes,
             None,
-            &settings,
+            &context,
         )
         .unwrap();
 
@@ -6773,8 +6402,7 @@ pub mod tests {
             utils::test::create_test_store_v1, ClaimGeneratorInfo, ValidationResults,
         };
 
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = Context::new();
 
         let signer = test_signer(SigningAlg::Ps256);
 
@@ -6792,8 +6420,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -6802,15 +6429,8 @@ pub mod tests {
         output_stream.rewind().unwrap();
         let ingredient_vec = output_stream.get_ref().clone();
         let mut ingredient_stream = Cursor::new(ingredient_vec.clone());
-        let restored_store = Store::from_stream(
-            format,
-            &mut ingredient_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let restored_store =
+            Store::from_stream(format, &mut ingredient_stream, &mut report, &context).unwrap();
 
         let pc = restored_store.provenance_claim().unwrap();
 
@@ -6829,8 +6449,7 @@ pub mod tests {
         let (manifest_bytes, _) = Store::load_jumbf_from_stream(
             format,
             &mut Cursor::new(ingredient_vec.clone()),
-            &http_resolver,
-            &settings,
+            &context,
         )
         .unwrap();
 
@@ -6838,7 +6457,7 @@ pub mod tests {
             &mut claim,
             &manifest_bytes,
             Some(vec![redacted_uri]),
-            &settings,
+            &context,
         )
         .unwrap();
 
@@ -6892,8 +6511,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut output_stream2,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -6901,15 +6519,8 @@ pub mod tests {
 
         // read back in store with update manifest
         output_stream2.rewind().unwrap();
-        let um_store = Store::from_stream(
-            format,
-            &mut output_stream2,
-            true,
-            &mut um_report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let um_store =
+            Store::from_stream(format, &mut output_stream2, &mut um_report, &context).unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -6926,14 +6537,10 @@ pub mod tests {
         new_claim.add_claim_generator_info(cgi);
 
         // load original ingredient without redaction
-        let (original_manifest_bytes, _) = Store::load_jumbf_from_stream(
-            format,
-            &mut Cursor::new(ingredient_vec),
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
-        Store::load_ingredient_to_claim(&mut new_claim, &original_manifest_bytes, None, &settings)
+        let (original_manifest_bytes, _) =
+            Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec), &context)
+                .unwrap();
+        Store::load_ingredient_to_claim(&mut new_claim, &original_manifest_bytes, None, &context)
             .unwrap();
 
         // the confict_store is adjusted to remove the conflicting claim
@@ -6946,9 +6553,8 @@ pub mod tests {
         output_stream2.rewind().unwrap();
 
         let (redacted_manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut output_stream2, &http_resolver, &settings)
-                .unwrap();
-        Store::load_ingredient_to_claim(&mut new_claim, &redacted_manifest_bytes, None, &settings)
+            Store::load_jumbf_from_stream(format, &mut output_stream2, &context).unwrap();
+        Store::load_ingredient_to_claim(&mut new_claim, &redacted_manifest_bytes, None, &context)
             .unwrap();
 
         // the confict_store is adjusted to remove the conflicting claim
@@ -6966,8 +6572,7 @@ pub mod tests {
             utils::test::create_test_store_v1, ClaimGeneratorInfo, ValidationResults,
         };
 
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = Context::new();
 
         let signer = test_signer(SigningAlg::Ps256);
 
@@ -6985,23 +6590,15 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         // read back in
         output_stream.rewind().unwrap();
-        let restored_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let restored_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
         let pc = restored_store.provenance_claim().unwrap();
 
         // should be a regular manifest
@@ -7022,7 +6619,7 @@ pub mod tests {
             &mut claim,
             &ingredient_vec,
             Some(vec![redacted_uri]),
-            &settings,
+            &context,
         )
         .unwrap();
 
@@ -7076,8 +6673,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut op_output,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -7085,15 +6681,8 @@ pub mod tests {
 
         // read back in store with update manifest
         op_output.rewind().unwrap();
-        let um_store = Store::from_stream(
-            format,
-            &mut op_output,
-            true,
-            &mut um_report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let um_store =
+            Store::from_stream(format, &mut op_output, &mut um_report, &context).unwrap();
 
         let um = um_store.provenance_claim().unwrap();
 
@@ -7115,7 +6704,7 @@ pub mod tests {
             &mut claim2,
             &ingredient_vec,
             Some(vec![redacted_uri2]),
-            &settings,
+            &context,
         )
         .unwrap();
 
@@ -7169,8 +6758,7 @@ pub mod tests {
                 &mut output_stream,
                 &mut op2_output,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -7186,7 +6774,7 @@ pub mod tests {
             &mut new_claim,
             &load_jumbf_from_stream(format, &mut op_output).unwrap(),
             None,
-            &settings,
+            &context,
         )
         .unwrap();
 
@@ -7196,7 +6784,7 @@ pub mod tests {
             &mut new_claim,
             &load_jumbf_from_stream(format, &mut op2_output).unwrap(),
             None,
-            &settings,
+            &context,
         )
         .unwrap();
 
@@ -7260,18 +6848,12 @@ pub mod tests {
 
     #[test]
     fn test_display() {
+        let context = Context::new();
         let (format, mut input_stream, _output_stream) = create_test_streams("CA.jpg");
 
         let mut report = StatusTracker::default();
-        let store = Store::from_stream(
-            format,
-            &mut input_stream,
-            true,
-            &mut report,
-            &SyncGenericResolver::new(),
-            &Settings::default(),
-        )
-        .expect("from_stream");
+        let store = Store::from_stream(format, &mut input_stream, &mut report, &context)
+            .expect("from_stream");
 
         assert!(!report.has_any_error());
         println!("store = {store}");
@@ -7281,14 +6863,7 @@ pub mod tests {
     fn test_no_alg() {
         let (format, mut input_stream, _output_stream) = create_test_streams("no_alg.jpg");
         let mut report = StatusTracker::default();
-        let _store = Store::from_stream(
-            format,
-            &mut input_stream,
-            true,
-            &mut report,
-            &SyncGenericResolver::new(),
-            &Settings::default(),
-        );
+        let _store = Store::from_stream(format, &mut input_stream, &mut report, &Context::new());
 
         assert!(report.has_status(ALGORITHM_UNSUPPORTED));
     }
@@ -7312,37 +6887,26 @@ pub mod tests {
 
     #[test]
     fn test_legacy_ingredient_hash() {
+        let context = Context::new();
         // test 1.0 ingredient hash
-        let (format, mut input_stream, _output_stream) =
+        let (format, input_stream, _output_stream) =
             create_test_streams("legacy_ingredient_hash.jpg");
         let mut report = StatusTracker::default();
-        let store = Store::from_stream(
-            format,
-            &mut input_stream,
-            true,
-            &mut report,
-            &SyncGenericResolver::new(),
-            &Settings::default(),
-        )
-        .expect("from_stream");
+        let store =
+            Store::from_stream(format, input_stream, &mut report, &context).expect("from_stream");
         println!("store = {store}");
     }
 
     #[test]
     #[ignore = "this test is not generating the expected errors - the test image cert has expired"]
     fn test_bmff_legacy() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_trust = false;
+
         let (format, mut input_stream, _output_stream) = create_test_streams("legacy.mp4");
         // test 1.0 bmff hash
         let mut report = StatusTracker::default();
-        let store = Store::from_stream(
-            format,
-            &mut input_stream,
-            true,
-            &mut report,
-            &SyncGenericResolver::new(),
-            &Settings::default(),
-        );
+        let store = Store::from_stream(format, &mut input_stream, &mut report, &context);
         println!("store = {report:#?}");
         // expect action error
         assert!(store.is_err());
@@ -7354,6 +6918,7 @@ pub mod tests {
 
     #[test]
     fn test_bmff_fragments() {
+        let context = Context::new();
         let init_stream_path = fixture_path("dashinit.mp4");
         let segment_stream_path = fixture_path("dash1.m4s");
 
@@ -7368,8 +6933,7 @@ pub mod tests {
             init_stream,
             segment_stream,
             &mut report,
-            &SyncGenericResolver::new(),
-            &Settings::default(),
+            &context,
         )
         .expect("load_from_asset");
         println!("store = {store}");
@@ -7377,14 +6941,13 @@ pub mod tests {
 
     #[test]
     fn test_bmff_jumbf_generation() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7399,8 +6962,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -7408,15 +6970,8 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7425,14 +6980,13 @@ pub mod tests {
 
     #[test]
     fn test_bmff_jumbf_generation_claim_v1() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = crate::utils::test::create_test_claim_v1().unwrap();
@@ -7447,8 +7001,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -7456,15 +7009,8 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7473,8 +7019,7 @@ pub mod tests {
 
     #[test]
     fn test_jumbf_generation_with_bmffv3_fixed_block_size() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) =
@@ -7484,7 +7029,7 @@ pub mod tests {
         crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7499,8 +7044,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -7508,15 +7052,8 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7525,8 +7062,7 @@ pub mod tests {
 
     #[test]
     fn test_jumbf_generation_with_bmffv3_fixed_block_size_no_proof() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
@@ -7535,7 +7071,7 @@ pub mod tests {
         crate::settings::set_settings_value("core.merkle_tree_max_proofs", 0).unwrap();
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7550,8 +7086,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -7559,15 +7094,8 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7576,8 +7104,7 @@ pub mod tests {
 
     #[test]
     fn test_jumbf_generation_with_bmffv3_fixed_block_size_stream() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
@@ -7586,7 +7113,7 @@ pub mod tests {
         crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7601,8 +7128,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -7610,15 +7136,8 @@ pub mod tests {
 
         // can we read back in
         output_stream.set_position(0);
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         assert!(!report.has_any_error());
 
@@ -7627,14 +7146,14 @@ pub mod tests {
 
     #[test]
     fn test_bmff_jumbf_stream_generation() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_after_reading = false;
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7650,8 +7169,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -7660,40 +7178,31 @@ pub mod tests {
         output_stream.set_position(0);
 
         let (manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut input_stream, &http_resolver, &settings)
-                .unwrap();
+            Store::load_jumbf_from_stream(format, &mut input_stream, &context).unwrap();
 
         let _new_store = {
             Store::from_manifest_data_and_stream(
                 &manifest_bytes,
                 format,
                 &mut output_stream,
-                false,
                 &mut report,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap()
         };
-        println!("report = {report:?}");
+        println!("report = {report:#?}");
         assert!(!report.has_any_error());
     }
 
     #[test]
     fn test_removed_jumbf() {
+        let context = Context::new();
         let (format, mut input_stream, _output_stream) = create_test_streams("no_manifest.jpg");
 
         let mut report = StatusTracker::default();
 
         // can we read back in
-        let result = Store::from_stream(
-            format,
-            &mut input_stream,
-            true,
-            &mut report,
-            &SyncGenericResolver::new(),
-            &Settings::default(),
-        );
+        let result = Store::from_stream(format, &mut input_stream, &mut report, &context);
 
         assert!(result.is_err());
         assert!(matches!(result, Err(Error::JumbfNotFound)));
@@ -7745,11 +7254,10 @@ pub mod tests {
         use crate::utils::test::{run_file_test, TestFileSetup};
 
         run_file_test(file_name, |setup: &TestFileSetup| {
-            let settings = Settings::default();
-            let http_resolver = SyncGenericResolver::new();
+            let context = crate::context::Context::new();
 
             // Create claims store.
-            let mut store = Store::with_settings(&settings);
+            let mut store = Store::with_context(&context);
 
             // Create a new claim.
             let mut claim = create_test_claim().unwrap();
@@ -7771,8 +7279,7 @@ pub mod tests {
                     &mut input_stream,
                     &mut output_stream,
                     signer.as_ref(),
-                    &http_resolver,
-                    &settings,
+                    &context,
                 )
                 .unwrap();
 
@@ -7796,10 +7303,8 @@ pub mod tests {
                 &saved_manifest,
                 format,
                 &mut validation_stream,
-                true,
                 &mut validation_log,
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
         });
@@ -7822,14 +7327,13 @@ pub mod tests {
 
     #[test]
     fn test_user_guid_external_manifest_embedded() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         // Create test streams from fixture
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -7854,8 +7358,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -7879,25 +7382,22 @@ pub mod tests {
             &saved_manifest,
             format,
             &mut output_stream,
-            true,
             &mut validation_log,
-            &http_resolver,
-            &settings,
+            &context,
         )
         .unwrap();
     }
 
     #[c2pa_test_async]
     async fn test_jumbf_generation_stream() {
-        let settings = Settings::default();
-        let http_resolver = AsyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
         // convert buffer to cursor with Read/Write/Seek capability
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7915,8 +7415,7 @@ pub mod tests {
                 &mut buf_io,
                 &mut result_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .await
             .unwrap();
@@ -7926,16 +7425,10 @@ pub mod tests {
 
         // make sure we can read from new file
         let mut report = StatusTracker::default();
-        let _new_store = Store::from_stream_async(
-            "image/jpeg",
-            &mut result_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .await
-        .unwrap();
+        let _new_store =
+            Store::from_stream_async("image/jpeg", &mut result_stream, &mut report, &context)
+                .await
+                .unwrap();
 
         assert!(!report.has_any_error());
         // std::fs::write("target/test.jpg", result).unwrap();
@@ -7943,14 +7436,13 @@ pub mod tests {
 
     #[test]
     fn test_tiff_jumbf_generation() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         // Create test streams from fixture
         let (format, mut input_stream, mut output_stream) = create_test_streams("TUSCANY.TIF");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7966,8 +7458,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut output_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -7977,15 +7468,8 @@ pub mod tests {
 
         // read from new file
         output_stream.rewind().unwrap();
-        let new_store = Store::from_stream(
-            format,
-            &mut output_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
 
         assert!(!report.has_any_error());
 
@@ -8020,15 +7504,14 @@ pub mod tests {
     #[c2pa_test_async]
     #[cfg(feature = "file_io")]
     async fn test_boxhash_embeddable_manifest_async() {
-        let settings = Settings::default();
-        let http_resolver = AsyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         // test adding to actual image
         let ap = fixture_path("boxhash.jpg");
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -8046,7 +7529,7 @@ pub mod tests {
 
         // get the embeddable manifest
         let em = store
-            .get_box_hashed_embeddable_manifest_async(&signer, &settings)
+            .get_box_hashed_embeddable_manifest_async(&signer, &context)
             .await
             .unwrap();
 
@@ -8086,16 +7569,10 @@ pub mod tests {
         out_stream.rewind().unwrap();
 
         let mut report = StatusTracker::default();
-        let _new_store = Store::from_stream_async(
-            "image/jpeg",
-            &mut out_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .await
-        .unwrap();
+        let _new_store =
+            Store::from_stream_async("image/jpeg", &mut out_stream, &mut report, &context)
+                .await
+                .unwrap();
 
         assert!(!report.has_any_error());
     }
@@ -8103,15 +7580,14 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_boxhash_embeddable_manifest() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         // test adding to actual image
         let ap = fixture_path("boxhash.jpg");
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -8129,7 +7605,7 @@ pub mod tests {
 
         // get the embeddable manifest
         let em = store
-            .get_box_hashed_embeddable_manifest(signer.as_ref(), &settings)
+            .get_box_hashed_embeddable_manifest(signer.as_ref(), &context)
             .unwrap();
 
         // get composed version for embedding to JPEG
@@ -8168,15 +7644,8 @@ pub mod tests {
         out_stream.rewind().unwrap();
 
         let mut report = StatusTracker::default();
-        let _new_store = Store::from_stream(
-            "image/jpeg",
-            &mut out_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let _new_store =
+            Store::from_stream("image/jpeg", &mut out_stream, &mut report, &context).unwrap();
 
         assert!(!report.has_any_error());
     }
@@ -8184,8 +7653,7 @@ pub mod tests {
     #[c2pa_test_async]
     #[cfg(feature = "file_io")]
     async fn test_datahash_embeddable_manifest_async() {
-        let settings = Settings::default();
-        let http_resolver = AsyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         // test adding to actual image
         use std::io::SeekFrom;
@@ -8196,7 +7664,7 @@ pub mod tests {
         let signer = async_test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -8239,7 +7707,7 @@ pub mod tests {
                 &signer,
                 "jpeg",
                 Some(&mut output_file),
-                &settings,
+                &context,
             )
             .await
             .unwrap();
@@ -8250,16 +7718,10 @@ pub mod tests {
 
         output_file.rewind().unwrap();
         let mut report = StatusTracker::default();
-        let _new_store = Store::from_stream_async(
-            "image/jpeg",
-            &mut output_file,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .await
-        .unwrap();
+        let _new_store =
+            Store::from_stream_async("image/jpeg", &mut output_file, &mut report, &context)
+                .await
+                .unwrap();
 
         assert!(!report.has_any_error());
     }
@@ -8267,8 +7729,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_datahash_embeddable_manifest() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         // test adding to actual image
 
@@ -8279,7 +7740,7 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -8322,7 +7783,7 @@ pub mod tests {
                 signer.as_ref(),
                 "jpeg",
                 Some(&mut output_file),
-                &settings,
+                &context,
             )
             .unwrap();
 
@@ -8332,15 +7793,8 @@ pub mod tests {
 
         output_file.rewind().unwrap();
         let mut report = StatusTracker::default();
-        let _new_store = Store::from_stream(
-            "image/jpeg",
-            &mut output_file,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let _new_store =
+            Store::from_stream("image/jpeg", &mut output_file, &mut report, &context).unwrap();
 
         assert!(!report.has_any_error());
     }
@@ -8348,8 +7802,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_datahash_embeddable_manifest_user_hashed() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         use std::io::SeekFrom;
 
@@ -8364,7 +7817,7 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -8403,7 +7856,7 @@ pub mod tests {
 
         // get the embeddable manifest, using user hashing
         let cm = store
-            .get_data_hashed_embeddable_manifest(&dh, signer.as_ref(), "jpeg", None, &settings)
+            .get_data_hashed_embeddable_manifest(&dh, signer.as_ref(), "jpeg", None, &context)
             .unwrap();
 
         // path in new composed manifest
@@ -8412,23 +7865,15 @@ pub mod tests {
 
         output_file.rewind().unwrap();
         let mut report = StatusTracker::default();
-        let _new_store = Store::from_stream(
-            "image/jpeg",
-            &mut output_file,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let _new_store =
+            Store::from_stream("image/jpeg", &mut output_file, &mut report, &context).unwrap();
 
         assert!(!report.has_any_error());
     }
 
     #[test]
     fn test_dynamic_assertions() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         #[derive(Serialize)]
         struct TestAssertion {
@@ -8521,7 +7966,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -8534,14 +7979,7 @@ pub mod tests {
         let mut result_stream = Cursor::new(result);
 
         store
-            .save_to_stream(
-                "jpeg",
-                &mut buf_io,
-                &mut result_stream,
-                &signer,
-                &http_resolver,
-                &settings,
-            )
+            .save_to_stream("jpeg", &mut buf_io, &mut result_stream, &signer, &context)
             .unwrap();
 
         // rewind the result stream to read from it
@@ -8549,15 +7987,8 @@ pub mod tests {
 
         // make sure we can read from new file
         let mut report = StatusTracker::default();
-        let new_store = Store::from_stream(
-            "image/jpeg",
-            &mut result_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .unwrap();
+        let new_store =
+            Store::from_stream("image/jpeg", &mut result_stream, &mut report, &context).unwrap();
 
         println!("new_store: {new_store}");
 
@@ -8569,8 +8000,7 @@ pub mod tests {
     async fn test_async_dynamic_assertions() {
         use async_trait::async_trait;
 
-        let settings = Settings::default();
-        let http_resolver = AsyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         #[derive(Serialize)]
         struct TestAssertion {
@@ -8667,7 +8097,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -8680,14 +8110,7 @@ pub mod tests {
         let mut result_stream = Cursor::new(result);
 
         store
-            .save_to_stream_async(
-                "jpeg",
-                &mut buf_io,
-                &mut result_stream,
-                &signer,
-                &http_resolver,
-                &settings,
-            )
+            .save_to_stream_async("jpeg", &mut buf_io, &mut result_stream, &signer, &context)
             .await
             .unwrap();
 
@@ -8695,16 +8118,9 @@ pub mod tests {
 
         // make sure we can read from new file
         let mut report = StatusTracker::default();
-        let new_store = Store::from_stream_async(
-            "jpeg",
-            &mut result_stream,
-            true,
-            &mut report,
-            &http_resolver,
-            &settings,
-        )
-        .await
-        .unwrap();
+        let new_store = Store::from_stream_async("jpeg", &mut result_stream, &mut report, &context)
+            .await
+            .unwrap();
 
         println!("new_store: {new_store}");
 
@@ -8714,8 +8130,7 @@ pub mod tests {
             &new_store,
             &mut ClaimAssetData::Bytes(&result, "jpg"),
             &mut report,
-            &http_resolver,
-            &settings,
+            &context,
         )
         .await
         .unwrap();
@@ -8727,8 +8142,8 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_fragmented_jumbf_generation() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let mut context = crate::context::Context::new();
+        context.settings_mut().verify.verify_after_reading = false;
 
         // test adding to actual image
 
@@ -8755,7 +8170,7 @@ pub mod tests {
                     }
 
                     // Create claims store.
-                    let mut store = Store::with_settings(&settings);
+                    let mut store = Store::with_context(&context);
 
                     // Create a new claim.
                     let claim = create_test_claim().unwrap();
@@ -8775,7 +8190,7 @@ pub mod tests {
                             &fragments,
                             new_output_path.as_path(),
                             signer.as_ref(),
-                            &settings,
+                            &context,
                         )
                         .unwrap();
 
@@ -8794,8 +8209,7 @@ pub mod tests {
                             &mut init_stream,
                             &mut fragment_stream,
                             &mut validation_log,
-                            &http_resolver,
-                            &settings,
+                            &context,
                         )
                         .unwrap();
                         init_stream.seek(std::io::SeekFrom::Start(0)).unwrap();
@@ -8808,16 +8222,13 @@ pub mod tests {
                         output_fragments.push(new_output_path.join(entry.file_name().unwrap()));
                     }
 
-                    //let mut reader = Cursor::new(init_stream);
                     let mut validation_log = StatusTracker::default();
                     let _manifest = Store::load_from_file_and_fragments(
                         "mp4",
                         &mut init_stream,
                         &output_fragments,
-                        false,
                         &mut validation_log,
-                        &http_resolver,
-                        &settings,
+                        &context,
                     )
                     .unwrap();
 
@@ -8832,19 +8243,22 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_bogus_cert() {
         use crate::builder::{Builder, BuilderIntent};
+
         let png = include_bytes!("../tests/fixtures/libpng-test.png"); // Randomly generated local Ed25519
         let ed25519 = include_bytes!("../tests/fixtures/certs/ed25519.pem");
         let certs = include_bytes!("../tests/fixtures/certs/es256.pub");
-        let mut builder = Builder::new();
+
+        let mut context = Context::new();
+        // bypass auto signature checks
+        context.settings_mut().verify.verify_after_sign = false;
+        context.settings_mut().verify.verify_trust = false;
+
+        let mut builder = Builder::from_context(context);
         builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
         let signer =
             crate::create_signer::from_keys(certs, ed25519, SigningAlg::Ed25519, None).unwrap();
         let mut dst = Cursor::new(Vec::new());
-
-        // bypass auto sig check
-        crate::settings::set_settings_value("verify.verify_after_sign", false).unwrap();
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         builder
             .sign(&signer, "image/png", &mut Cursor::new(png), &mut dst)
@@ -8858,8 +8272,7 @@ pub mod tests {
     #[test]
     /// Test that we can we load a store from JUMBF and then convert it back to the identical JUMBF.
     fn test_from_and_to_jumbf() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         // test adding to actual image
         let ap = fixture_path("C.jpg");
@@ -8868,12 +8281,12 @@ pub mod tests {
         let format = "image/jpeg";
 
         let (manifest_bytes, _remote_url) =
-            Store::load_jumbf_from_stream(format, &mut stream, &http_resolver, &settings).unwrap();
+            Store::load_jumbf_from_stream(format, &mut stream, &context).unwrap();
 
-        let store = Store::from_jumbf_with_settings(
+        let store = Store::from_jumbf_with_context(
             &manifest_bytes,
             &mut StatusTracker::default(),
-            &settings,
+            &context,
         )
         .unwrap();
 
@@ -8886,6 +8299,7 @@ pub mod tests {
 
     #[c2pa_test_async]
     async fn test_store_load_fragment_from_stream_async() {
+        let context = crate::context::Context::new();
         // Use the dash fixtures that are known to work with fragment loading
         // These are the same files used in test_bmff_fragments
         let init_segment = include_bytes!("../tests/fixtures/dashinit.mp4");
@@ -8903,8 +8317,7 @@ pub mod tests {
             &mut init_stream,
             &mut fragment_stream,
             &mut validation_log,
-            &AsyncGenericResolver::new(),
-            &Settings::default(),
+            &context,
         )
         .await;
 
@@ -9035,8 +8448,7 @@ pub mod tests {
         }
 
         // The actual test starts here...
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = Context::new();
 
         let (format, mut input_stream, output_stream) = create_test_streams("earth_apollo17.jpg");
 
@@ -9046,7 +8458,7 @@ pub mod tests {
         let mut tracking_stream =
             FlushTrackingStream::new(output_stream, flush_called.clone(), dropped.clone());
 
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         let cgi = ClaimGeneratorInfo::new("flush_test");
         let mut claim = Claim::new("test", Some("flush_test"), 1);
@@ -9063,8 +8475,7 @@ pub mod tests {
                 &mut input_stream,
                 &mut tracking_stream,
                 signer.as_ref(),
-                &http_resolver,
-                &settings,
+                &context,
             )
             .expect("save_to_stream should succeed and properly flush the stream");
 
@@ -9216,15 +8627,14 @@ pub mod tests {
         unsafe impl Send for UnsafeStream {}
         unsafe impl Sync for UnsafeStream {}
 
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = Context::new();
 
         let (format, mut input_stream, _) = create_test_streams("earth_apollo17.jpg");
 
         let flush_called = Arc::new(AtomicBool::new(false));
         let mut unsafe_stream = UnsafeStream::new(flush_called.clone());
 
-        let mut store = Store::with_settings(&settings);
+        let mut store = Store::with_context(&context);
 
         let cgi = ClaimGeneratorInfo::new("unsafe_flush_test");
         let mut claim = Claim::new("test", Some("unsafe_flush_test"), 1);
@@ -9243,8 +8653,7 @@ pub mod tests {
             &mut input_stream,
             &mut unsafe_stream,
             signer.as_ref(),
-            &http_resolver,
-            &settings,
+            &context,
         );
 
         // flushing should prevent the lifetimes issues at C FFI level

@@ -178,8 +178,6 @@ pub mod tests {
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
         crypto::raw_signature::SigningAlg,
-        http::SyncGenericResolver,
-        settings::Settings,
         status_tracker::{ErrorBehavior, StatusTracker},
         store::Store,
         utils::{
@@ -191,8 +189,7 @@ pub mod tests {
 
     #[test]
     fn c2pa_io_parse() {
-        let settings = Settings::default();
-        let http_resolver = SyncGenericResolver::new();
+        let context = crate::context::Context::new();
 
         let path = fixture_path("C.jpg");
 
@@ -215,10 +212,8 @@ pub mod tests {
             &manifest,
             "image/jpeg",
             &stream,
-            true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
-            &http_resolver,
-            &settings,
+            &context,
         )
         .expect("loading store");
 
