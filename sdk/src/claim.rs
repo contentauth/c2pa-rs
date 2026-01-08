@@ -35,11 +35,12 @@ use crate::{
             self, ACTIONS, ASSERTION_METADATA, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL,
             DATABOX_STORE, METADATA_LABEL_REGEX,
         },
-        Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient,
-        Metadata, Relationship, V2_DEPRECATED_ACTIONS,
+        Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash,
+        Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
+    context::Context,
     cose_validator::{
         get_signing_cert_serial_num, get_signing_info, get_signing_info_async, verify_cose,
         verify_cose_async,
@@ -55,7 +56,6 @@ use crate::{
     },
     error::{Error, Result},
     hashed_uri::HashedUri,
-    http::{AsyncHttpResolver, SyncHttpResolver},
     jumbf::{
         self,
         boxes::{
@@ -1155,6 +1155,28 @@ impl Claim {
         self.update_manifest = is_update_manifest;
     }
 
+    /// Adds an action to the claim.
+    ///
+    /// If an Actions assertion already exists, the action is added to it.
+    /// If not, a new Actions assertion is created and added to the claim.
+    /// If multiple exist, this will update the first one found.
+    pub fn add_action(&mut self, action: Action) -> Result<&mut Self> {
+        match self.get_assertion(Actions::LABEL_VERSIONED, 0) {
+            None => {
+                let actions = Actions::new().add_action_checked(action)?;
+                self.add_assertion(&actions)?;
+            }
+            Some(a) => {
+                let actions = Actions::from_assertion(a)?;
+
+                let actions = actions.add_action_checked(action)?;
+
+                self.replace_assertion(actions.to_assertion()?)?;
+            }
+        };
+        Ok(self)
+    }
+
     pub fn add_claim_generator_info(&mut self, info: ClaimGeneratorInfo) -> &mut Self {
         match self.claim_generator_info.as_mut() {
             Some(cgi) => cgi.push(info),
@@ -1353,8 +1375,11 @@ impl Claim {
             if labels::HASH_LABELS.contains(&base_label) || add_as_created_assertion {
                 ClaimAssertionType::Created
             } else if let Some(created_assertions) = {
-                let settings = crate::settings::get_settings().unwrap_or_default();
-                settings.builder.created_assertion_labels
+                Context::new()
+                    .settings()
+                    .builder
+                    .created_assertion_labels
+                    .clone()
             } {
                 if created_assertions.iter().any(|label| label == base_label) {
                     ClaimAssertionType::Created
@@ -1824,7 +1849,6 @@ impl Claim {
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
-    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn verify_claim_async(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
@@ -1832,9 +1856,9 @@ impl Claim {
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<()> {
+        let settings = context.settings();
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val().clone();
         let additional_bytes: Vec<u8> = Vec::new();
@@ -1884,8 +1908,7 @@ impl Claim {
             svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
-            http_resolver,
-            settings,
+            context,
         )
         .await?;
 
@@ -1918,14 +1941,13 @@ impl Claim {
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val();
         let additional_bytes: Vec<u8> = Vec::new();
 
-        let mut adjusted_settings = settings.clone();
+        let mut adjusted_settings = context.settings().clone();
         if claim.version() == 1 {
             adjusted_settings.verify.verify_timestamp_trust = false;
         }
@@ -1986,8 +2008,7 @@ impl Claim {
             svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
-            http_resolver,
-            &adjusted_settings,
+            context,
         )?;
 
         let verified = verify_cose(
@@ -2773,7 +2794,7 @@ impl Claim {
                         Ok(_a) => {
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                "data hash valid",
+                                "BMFF hash valid",
                                 "verify_internal"
                             )
                             .validation_status(validation_status::ASSERTION_BMFFHASH_MATCH)
@@ -2861,7 +2882,7 @@ impl Claim {
                         Ok(_a) => {
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                "data hash valid",
+                                "boxes hash valid",
                                 "verify_internal"
                             )
                             .validation_status(validation_status::ASSERTION_BOXHASH_MATCH)
@@ -3922,6 +3943,18 @@ impl Claim {
         }
     }
 
+    // Returns a HashedUri to the claim thumbnail assertion, if it exists.
+    pub fn thumbnail(&self) -> Option<HashedUri> {
+        self.assertions()
+            .iter()
+            .find(|hashed_uri| hashed_uri.url().contains(CLAIM_THUMBNAIL))
+            .map(|t| {
+                // convert to absolute
+                let url = crate::jumbf::labels::to_absolute_uri(self.label(), &t.url());
+                HashedUri::new(url, t.alg(), &t.hash())
+            })
+    }
+
     /// Checks whether or not ocsp values are present in claim
     pub fn has_ocsp_vals(&self) -> bool {
         if !self.certificate_status_assertions().is_empty() {
@@ -3946,16 +3979,7 @@ impl Claim {
 }
 
 #[allow(dead_code, clippy::too_many_arguments)]
-#[async_generic(async_signature(
-    sign1: &coset::CoseSign1,
-    data: &[u8],
-    ctp: &CertificateTrustPolicy,
-    ocsp_responses: Option<&Vec<Vec<u8>>>,
-    tst_info: Option<&TstInfo>,
-    validation_log: &mut StatusTracker,
-    http_resolver: &impl AsyncHttpResolver,
-    settings: &Settings,
-))]
+#[async_generic]
 pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
     data: &[u8],
@@ -3963,12 +3987,11 @@ pub(crate) fn check_ocsp_status(
     ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
-    http_resolver: &impl SyncHttpResolver,
-    settings: &Settings,
+    context: &Context,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
 
-    let fetch_policy = if settings.verify.ocsp_fetch {
+    let fetch_policy = if context.settings().verify.ocsp_fetch {
         OcspFetchPolicy::FetchAllowed
     } else {
         OcspFetchPolicy::DoNotFetch
@@ -3983,8 +4006,7 @@ pub(crate) fn check_ocsp_status(
             ocsp_responses,
             tst_info,
             validation_log,
-            http_resolver,
-            settings,
+            context,
         )?)
     } else {
         Ok(crate::crypto::cose::check_ocsp_status_async(
@@ -3995,8 +4017,7 @@ pub(crate) fn check_ocsp_status(
             ocsp_responses,
             tst_info,
             validation_log,
-            http_resolver,
-            settings,
+            context,
         )
         .await?)
     }
