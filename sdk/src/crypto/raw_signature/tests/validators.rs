@@ -231,21 +231,24 @@ fn ps512() {
 
 // Argh. Different Oid types across different crates, so we have to construct
 // our own constants here.
-const RSA_OID: Oid = bcder::Oid(OctetString::from_static(&[
+const RSA_OID: Oid<OctetString> = bcder::Oid(OctetString::from_static(&[
     42, 134, 72, 134, 247, 13, 1, 1, 1,
 ]));
 
-const SHA256_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 1]));
+const SHA256_OID: Oid<OctetString> =
+    bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 1]));
 
-const SHA384_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 2]));
+const SHA384_OID: Oid<OctetString> =
+    bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 2]));
 
-const SHA512_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 3]));
+const SHA512_OID: Oid<OctetString> =
+    bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 3]));
 
 #[cfg_attr(
     any(feature = "rust_native_crypto", target_arch = "wasm32"),
     allow(unused)
 )]
-const SHA1_OID: Oid = bcder::Oid(OctetString::from_static(&[43, 14, 3, 2, 26]));
+const SHA1_OID: Oid<OctetString> = bcder::Oid(OctetString::from_static(&[43, 14, 3, 2, 26]));
 
 #[test]
 #[cfg_attr(

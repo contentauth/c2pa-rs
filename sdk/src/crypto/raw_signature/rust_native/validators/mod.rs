@@ -91,9 +91,9 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
 }
 
 /// Select validator based on signing algorithm and hash type or EC curve.
-pub(crate) fn validator_for_sig_and_hash_algs(
-    sig_alg: &Oid,
-    hash_alg: &Oid,
+pub(crate) fn validator_for_sig_and_hash_algs<T: AsRef<[u8]>>(
+    sig_alg: &Oid<T>,
+    hash_alg: &Oid<T>,
 ) -> Option<Box<dyn RawSignatureValidator>> {
     // Handle legacy RSA.
     if sig_alg.as_ref() == RSA_OID.as_bytes() {
@@ -394,17 +394,17 @@ mod tests {
 
     // Argh. Different Oid types across different crates, so we have to construct
     // our own constants here.
-    const RSA_OID: Oid = bcder::Oid(OctetString::from_static(&[
+    const RSA_OID: Oid<OctetString> = bcder::Oid(OctetString::from_static(&[
         42, 134, 72, 134, 247, 13, 1, 1, 1,
     ]));
 
-    const SHA256_OID: Oid =
+    const SHA256_OID: Oid<OctetString> =
         bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 1]));
 
-    const SHA384_OID: Oid =
+    const SHA384_OID: Oid<OctetString> =
         bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 2]));
 
-    const SHA512_OID: Oid =
+    const SHA512_OID: Oid<OctetString> =
         bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 3]));
 
     #[test]
