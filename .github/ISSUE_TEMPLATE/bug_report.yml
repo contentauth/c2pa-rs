@@ -19,7 +19,6 @@ body:
     attributes:
       label: If Other, please specify
       description: Which component are you using?
-      placeholder: e.g., Python bindings, Java SDK, etc.
   - type: input
     id: version
     attributes:
