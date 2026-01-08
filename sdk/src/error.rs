@@ -412,6 +412,13 @@ pub enum Error {
 /// A specialized `Result` type for C2PA toolkit operations.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// Implement `From<Infallible>` to support infallible conversions (like ManifestDefinition -> ManifestDefinition)
+impl From<std::convert::Infallible> for Error {
+    fn from(never: std::convert::Infallible) -> Self {
+        match never {}
+    }
+}
+
 impl From<CoseError> for Error {
     fn from(err: CoseError) -> Self {
         match err {

@@ -39,6 +39,7 @@ The library enables a desktop, mobile, or embedded application to:
 * Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.  See [Using the CAWG identity assertion](docs/cawg-id.md) for more information.
 * Embed manifests in [supported file formats](docs/supported-formats.md).
 * Parse and validate manifests found in [supported file formats](docs/supported-formats.md).
+* Share configuration efficiently across multiple operations and threads through contexts using `Arc<Context>`.
 
 The library supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_hard_bindings).
 
@@ -52,7 +53,18 @@ This is a beta release (version 0.x.x) of the project. The minor version number 
 
 ### New API
 
-NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes) for more information. 
+NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes) for more information.
+
+### Context API for configuration
+
+The library uses a `Context` structure to configure C2PA operations, replacing the older global Settings pattern:
+
+- **Thread-safe configuration**: Context is `Send + Sync` and can be safely shared across threads using `Arc<Context>`
+- **Multiple configurations**: Unlike global settings, you can have multiple Context instances with different configurations
+- **Backwards compatible**: All existing Settings (JSON/TOML) files work unchanged with Context
+- **Automatic signer creation**: Signers are created automatically from settings when needed
+
+See [Using Context for configuration](docs/usage.md#using-context-for-configuration) for details. 
 
 ## Installation
 
