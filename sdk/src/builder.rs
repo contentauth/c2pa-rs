@@ -994,59 +994,35 @@ impl Builder {
         Ok(())
     }
 
-    /// Unpacks an archive stream into a Builder.
+    /// Add manifest store from an archive stream to the [`Builder`].
     ///
-    /// # Arguments
-    /// * `stream` - A stream from which to read the archive.
-    ///
-    /// The stream may either be in the old zip-based archive format, or in the new
-    /// application/c2pa JUMBF format.  The function will try to read it
-    /// using the old method first, and if that fails, it will try the new method
-    /// # Returns
-    /// * A new Builder.
-    /// # Errors
-    /// * Returns an [`Error`] if the archive cannot be read.
-    pub fn from_archive(stream: impl Read + Seek + Send) -> Result<Self> {
-        Self::from_archive_with_context(stream, Context::new())
-    }
-
-    /// Create a [`Builder`] from an archive stream with a custom [`Context`].
-    ///
-    /// This method allows you to provide a custom [`Context`] with specific trust anchors,
-    /// verification settings, or other configuration when loading a Builder from an archive.
-    ///
-    /// Note: Archives contain unsigned working stores, so validation is skipped regardless
-    /// of the Context's `verify_after_reading` setting.
+    /// Archives contain unsigned working stores (signed with BoxHash placeholder),
+    /// so validation is skipped regardless of the Context's `verify_after_reading` setting.
     ///
     /// # Arguments
     /// * `stream` - The stream to read the archive from.
-    /// * `context` - The [`Context`] to use for loading the archive.
     ///
     /// # Returns
-    /// * A new Builder with the specified context.
+    /// The updated [`Builder`] with the loaded archive content.
     ///
     /// # Errors
-    /// * Returns an [`Error`] if the archive cannot be read.
+    /// Returns an [`Error`] if the archive cannot be read.
     ///
     /// # Example
     /// ```
     /// # use c2pa::{Builder, Context, Result};
     /// # use std::io::Cursor;
     /// # fn main() -> Result<()> {
-    /// // Create a context with custom trust settings
+    /// // Load builder from archive with custom context
     /// let context = Context::new().with_settings(r#"{"trust": {"trust_anchors": "..."}}"#)?;
     ///
-    /// // Load builder from archive with custom context
     /// # let archive_data = vec![]; // placeholder
     /// # let stream = Cursor::new(archive_data);
-    /// let builder = Builder::from_archive_with_context(stream, context)?;
+    /// let builder = Builder::from_context(context).with_archive(stream)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_archive_with_context(
-        stream: impl Read + Seek + Send,
-        context: Context,
-    ) -> Result<Self> {
+    pub fn with_archive(self, stream: impl Read + Seek + Send) -> Result<Self> {
         let mut stream = stream;
         Self::old_from_archive(&mut stream).or_else(|_| {
             // if the old method fails, try the new method
@@ -1058,7 +1034,7 @@ impl Builder {
             // Create a temporary context with verify_after_reading disabled, since archives
             // contain placeholder signatures that will fail CBOR parsing during verification.
             // The user's context settings will be preserved for the Builder.
-            let mut no_verify_settings = context.settings().clone();
+            let mut no_verify_settings = self.context.settings().clone();
             no_verify_settings.verify.verify_after_reading = false;
 
             let temp_context = Context::new().with_settings(no_verify_settings)?;
@@ -1072,10 +1048,39 @@ impl Builder {
             )?;
 
             // Now use the user's original context for the Reader and Builder
-            let mut reader = Reader::from_context(context);
+            let mut reader = Reader::from_shared_context(&self.context);
             reader.with_store(store, &mut validation_log)?;
             reader.into_builder()
         })
+    }
+
+    /// Create a [`Builder`] from an archive stream.
+    ///
+    /// Archives contain unsigned working stores (signed with BoxHash placeholder),
+    /// so validation is skipped.
+    ///
+    /// # Arguments
+    /// * `stream` - The stream to read the archive from.
+    ///
+    /// # Returns
+    /// A new Builder with default context.
+    ///
+    /// # Errors
+    /// Returns an [`Error`] if the archive cannot be read.
+    ///
+    /// # Example
+    /// ```
+    /// # use c2pa::{Builder, Result};
+    /// # use std::io::Cursor;
+    /// # fn main() -> Result<()> {
+    /// # let archive_data = vec![]; // placeholder
+    /// # let stream = Cursor::new(archive_data);
+    /// let builder = Builder::from_archive(stream)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_archive(stream: impl Read + Seek + Send) -> Result<Self> {
+        Builder::new().with_archive(stream)
     }
 
     // Convert a Manifest into a Claim
@@ -3861,12 +3866,11 @@ mod tests {
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive)?;
 
-        // Load from archive
+        // Load from archive with custom context
         archive.rewind()?;
         let context = Context::new();
-        // Create a new context with default settings
 
-        let loaded_builder = Builder::from_archive_with_context(archive, context)?;
+        let loaded_builder = Builder::from_context(context).with_archive(archive)?;
 
         // Verify the manifest data was loaded with the correct title
         assert_eq!(
