@@ -1259,7 +1259,7 @@ impl Builder {
                     // are resolved to their hashed URIs.
                     self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
-                    claim.add_assertion(&actions)
+                    add_assertion(&mut claim, &actions, manifest_assertion.created())
                 }
                 #[allow(deprecated)]
                 CreativeWork::LABEL => {
