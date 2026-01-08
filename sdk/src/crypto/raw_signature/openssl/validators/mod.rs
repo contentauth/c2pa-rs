@@ -43,9 +43,9 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
     }
 }
 
-pub(crate) fn validator_for_sig_and_hash_algs<T: AsRef<[u8]>>(
+pub(crate) fn validator_for_sig_and_hash_algs<T: AsRef<[u8]>, U: AsRef<[u8]>>(
     sig_alg: &Oid<T>,
-    hash_alg: &Oid<T>,
+    hash_alg: &Oid<U>,
 ) -> Option<Box<dyn RawSignatureValidator>> {
     if sig_alg.as_ref() == RSA_OID.as_bytes() {
         if hash_alg.as_ref() == SHA1_OID.as_bytes() {

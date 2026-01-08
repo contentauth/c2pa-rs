@@ -362,8 +362,8 @@ fn sha1() {
 }
 
 #[allow(dead_code)]
-fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> bcder::Oid {
-    const TEST_FAIL: Oid = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
+fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> bcder::Oid<OctetString> {
+    const TEST_FAIL: Oid<OctetString> = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
 
     let asn1_oid_str = asn1_oid.to_id_string();
 
@@ -401,6 +401,6 @@ fn test_get_by_sig_and_alg() {
     assert!(validator_for_sig_and_hash_algs(&ed25519_oid, &sha512).is_some());
 
     // test negative case
-    const TEST_FAIL: Oid = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
+    const TEST_FAIL: Oid<OctetString> = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
     assert!(validator_for_sig_and_hash_algs(&TEST_FAIL, &sha512).is_none());
 }

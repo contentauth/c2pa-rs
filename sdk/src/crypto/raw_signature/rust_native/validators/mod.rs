@@ -91,9 +91,9 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
 }
 
 /// Select validator based on signing algorithm and hash type or EC curve.
-pub(crate) fn validator_for_sig_and_hash_algs<T: AsRef<[u8]>>(
+pub(crate) fn validator_for_sig_and_hash_algs<T: AsRef<[u8]>, U: AsRef<[u8]>>(
     sig_alg: &Oid<T>,
-    hash_alg: &Oid<T>,
+    hash_alg: &Oid<U>,
 ) -> Option<Box<dyn RawSignatureValidator>> {
     // Handle legacy RSA.
     if sig_alg.as_ref() == RSA_OID.as_bytes() {

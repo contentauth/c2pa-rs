@@ -93,9 +93,9 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
 ///
 /// Which validators are available may vary depending on the platform and
 /// which crate features were enabled.
-pub(crate) fn validator_for_sig_and_hash_algs<T: AsRef<[u8]>>(
+pub(crate) fn validator_for_sig_and_hash_algs<T: AsRef<[u8]>, U: AsRef<[u8]>>(
     sig_alg: &Oid<T>,
-    hash_alg: &Oid<T>,
+    hash_alg: &Oid<U>,
 ) -> Option<Box<dyn RawSignatureValidator>> {
     // TO REVIEW: Do we need any of the RSA-PSS algorithms for this use case?
     #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
