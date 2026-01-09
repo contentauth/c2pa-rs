@@ -41,14 +41,14 @@ use crate::{
     headers: Option<Vec<(String, String)>>,
     data: &[u8],
     message: &[u8],
-    http_resolver: &impl AsyncHttpResolver,
+    http_resolver: &(impl AsyncHttpResolver + ?Sized),
 ))]
 pub fn default_rfc3161_request(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     data: &[u8],
     message: &[u8],
-    http_resolver: &impl SyncHttpResolver,
+    http_resolver: &(impl SyncHttpResolver + ?Sized),
 ) -> Result<Vec<u8>, TimeStampError> {
     let request = Constructed::decode(
         bcder::decode::SliceSource::new(data),
@@ -75,9 +75,22 @@ pub fn default_rfc3161_request(
 
     // Make sure the time stamp is valid before we return it.
     if _sync {
-        verify_time_stamp(&ts, message, &ctp, &mut local_log, &settings)?;
+        verify_time_stamp(
+            &ts,
+            message,
+            &ctp,
+            &mut local_log,
+            settings.verify.verify_timestamp_trust,
+        )?;
     } else {
-        verify_time_stamp_async(&ts, message, &ctp, &mut local_log, &settings).await?;
+        verify_time_stamp_async(
+            &ts,
+            message,
+            &ctp,
+            &mut local_log,
+            settings.verify.verify_timestamp_trust,
+        )
+        .await?;
     }
 
     Ok(ts)
@@ -87,13 +100,13 @@ pub fn default_rfc3161_request(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     timestamp_request: &TimeStampReq,
-    http_resolver: &impl AsyncHttpResolver,
+    http_resolver: &(impl AsyncHttpResolver + ?Sized),
 ))]
 fn time_stamp_request_http(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     timestamp_request: &TimeStampReq,
-    http_resolver: &impl SyncHttpResolver,
+    http_resolver: &(impl SyncHttpResolver + ?Sized),
 ) -> Result<Vec<u8>, TimeStampError> {
     // This function exists to work around a bug in serialization of
     // TimeStampResp so we just return the data directly.
