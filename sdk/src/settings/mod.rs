@@ -635,7 +635,10 @@ impl Default for Settings {
         Settings {
             version: VERSION,
             trust: Default::default(),
-            cawg_trust: Default::default(),
+            cawg_trust: Trust {
+                verify_trust_list: false,
+                ..Default::default()
+            },
             core: Default::default(),
             verify: Default::default(),
             builder: Default::default(),
@@ -732,7 +735,12 @@ pub mod tests {
 
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
-        assert_eq!(settings.cawg_trust, Trust::default());
+        // TODO: CAWG trust is temporarily disabled while we transition to a default trust list
+        let default_cawg_trust = Trust {
+            verify_trust_list: false,
+            ..Default::default()
+        };
+        assert_eq!(settings.cawg_trust, default_cawg_trust);
         assert_eq!(settings.verify, Verify::default());
         assert_eq!(settings.builder, BuilderSettings::default());
 
