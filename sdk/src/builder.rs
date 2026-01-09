@@ -1468,10 +1468,18 @@ impl Builder {
         Ok(())
     }
 
-    // Convert a Manifest into a Store
+    /// Converts the `Builder` into a [`Store`].
+    ///
+    /// This functioin calls [`Builder::to_claim`] internally. Use [`Builder::to_store_with_claim`]
+    /// if the [`Claim`] is constructed manually.
     fn to_store(&self) -> Result<Store> {
         let claim = self.to_claim()?;
+        self.to_store_with_claim(claim)
+    }
 
+    /// Converts the `Builder` into a [`Store`] with the specified [`Claim`], usually obtained
+    /// by calling [`Builder::to_claim`].
+    fn to_store_with_claim(&self, claim: Claim) -> Result<Store> {
         let mut store = Store::with_context(&self.context);
 
         // if this can be an update manifest, then set the update_manifest flag
@@ -1551,14 +1559,16 @@ impl Builder {
     /// that are timestamped depends on the value of [`Builder::timestamp_manifest_labels`] and
     /// [`TimeStampSettings::enabled`]. If neither are specified, this function will do nothing.
     ///
+    /// Note this function should be called before the provenance claim is committed to the store.
+    ///
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     /// [`TimeStampSettings::enabled`]: crate::settings::builder::TimeStampSettings::enabled
     #[async_generic(async_signature(
         &self,
         tsa_url: &str,
-        store: &mut Store,
+        provenance_claim: &mut Claim,
     ))]
-    fn maybe_add_timestamp(&self, tsa_url: &str, store: &mut Store) -> Result<()> {
+    fn maybe_add_timestamp(&self, tsa_url: &str, provenance_claim: &mut Claim) -> Result<()> {
         let settings = self.context().settings();
 
         if !settings.builder.auto_timestamp_assertion.enabled
@@ -1570,19 +1580,17 @@ impl Builder {
         let mut claim_uris = HashSet::new();
         match settings.builder.auto_timestamp_assertion.fetch_scope {
             TimeStampFetchScope::All => {
-                for claim in store.claims() {
+                for claim in provenance_claim.claim_ingredients() {
                     claim_uris.insert(claim.uri());
                 }
             }
             TimeStampFetchScope::Parent => {
-                let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
                 if let Some(parent_claim_uri) = provenance_claim.parent_claim_uri()? {
                     claim_uris.insert(parent_claim_uri);
                 }
             }
         }
 
-        let provenance_claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let timestamp_assertions = provenance_claim.timestamp_assertions();
         let mut timestamp_assertion = if !timestamp_assertions.is_empty() {
             // There can only be one timestamp assertion per the spec.
@@ -1595,11 +1603,7 @@ impl Builder {
 
         // If `skip_existing` is enabled, only timestamp claims in `claim_uris` that aren't already timestampped.
         if settings.builder.auto_timestamp_assertion.skip_existing {
-            for claim in &store.claims() {
-                if claim.uri() == provenance_claim.uri() {
-                    continue;
-                }
-
+            for claim in &provenance_claim.claim_ingredients() {
                 // First we check the claim timestamp.
                 let cose_sign1 = claim.cose_sign1()?;
                 if cose::get_cose_tst_info(&cose_sign1).is_some() {
@@ -1613,7 +1617,9 @@ impl Builder {
                     let timestamp_assertion =
                         TimeStamp::from_assertion(timestamp_assertion.assertion())?;
                     for timestamped_manifest_label in timestamp_assertion.0.keys() {
-                        if let Some(claim) = store.get_claim(timestamped_manifest_label) {
+                        if let Some(claim) =
+                            provenance_claim.claim_ingredient(timestamped_manifest_label)
+                        {
                             claim_uris.remove(&claim.uri());
                         }
                     }
@@ -1624,7 +1630,7 @@ impl Builder {
         // The `auto_timestamp_assertion.skip_existing` setting shouldn't affect explicit timestamps,
         // so we do it here.
         for manifest_label in &self.timestamp_manifest_labels {
-            if let Some(claim) = store.get_claim(manifest_label) {
+            if let Some(claim) = provenance_claim.claim_ingredient(manifest_label) {
                 claim_uris.insert(claim.uri());
             }
         }
@@ -1637,13 +1643,7 @@ impl Builder {
                 continue;
             }
 
-            // If the manifest to sign is the active manifest, ignore it since it will be signed
-            // and embedded in the COSE later on.
-            if *claim_uri == provenance_claim.uri() {
-                continue;
-            }
-
-            if let Some(claim) = store.get_claim(&manifest_label) {
+            if let Some(claim) = provenance_claim.claim_ingredient(&manifest_label) {
                 let signature = claim.cose_sign1()?.signature;
                 if _sync {
                     timestamp_assertion.refresh_timestamp(
@@ -1666,11 +1666,10 @@ impl Builder {
         }
 
         if !claim_uris.is_empty() {
-            let claim = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-            if claim.timestamp_assertions().is_empty() {
-                claim.add_assertion(&timestamp_assertion)?;
+            if provenance_claim.timestamp_assertions().is_empty() {
+                provenance_claim.add_assertion(&timestamp_assertion)?;
             } else {
-                claim.replace_assertion(timestamp_assertion.to_assertion()?)?;
+                provenance_claim.replace_assertion(timestamp_assertion.to_assertion()?)?;
             }
         }
 
@@ -1851,17 +1850,17 @@ impl Builder {
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
 
-        // convert the manifest to a store
-        let mut store = self.to_store()?;
+        let mut claim = self.to_claim()?;
 
-        // add timestamp if conditions allow
         if let Some(tsa_url) = signer.time_authority_url() {
             if _sync {
-                self.maybe_add_timestamp(&tsa_url, &mut store)?;
+                self.maybe_add_timestamp(&tsa_url, &mut claim)?;
             } else {
-                self.maybe_add_timestamp_async(&tsa_url, &mut store).await?
+                self.maybe_add_timestamp_async(&tsa_url, &mut claim).await?
             }
         }
+
+        let mut store = self.to_store_with_claim(claim)?;
 
         // sign and write our store to to the output image file
         if _sync {
