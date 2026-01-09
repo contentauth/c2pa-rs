@@ -565,6 +565,8 @@ pub struct BuilderSettings {
     /// This will eventually become the default behavior.
     pub generate_c2pa_archive: Option<bool>,
     /// Settings for configuring auto-generation of the [`TimeStamp`] assertion.
+    ///
+    /// [`TimeStamp`]: crate::assertions::TimeStamp
     pub auto_timestamp_assertion: TimeStampSettings,
 }
 
