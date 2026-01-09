@@ -9,6 +9,23 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.74.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.74.0...c2pa-v0.74.1)
+_09 January 2026_
+
+### Added
+
+* Add `Manifest::signature` to get Cose_Sign1 signature ([#1699](https://github.com/contentauth/c2pa-rs/pull/1699))
+
+### Fixed
+
+* Allow actions assertions to be created assertions ([#1703](https://github.com/contentauth/c2pa-rs/pull/1703))
+
+### Updated dependencies
+
+* Bump rasn from 0.26.6 to 0.28.1 ([#1621](https://github.com/contentauth/c2pa-rs/pull/1621))
+* Bump rand_chacha from 0.3.1 to 0.9.0 ([#1619](https://github.com/contentauth/c2pa-rs/pull/1619))
+* Bump mockall from 0.13.1 to 0.14.0 ([#1708](https://github.com/contentauth/c2pa-rs/pull/1708))
+
 ## [0.74.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.73.2...c2pa-v0.74.0)
 _07 January 2026_
 

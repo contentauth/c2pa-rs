@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.11](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.10...c2patool-v0.26.11)
+_09 January 2026_
+
+### Updated dependencies
+
+* Bump mockall from 0.13.1 to 0.14.0 ([#1708](https://github.com/contentauth/c2pa-rs/pull/1708))
+
 ## [0.26.10](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.9...c2patool-v0.26.10)
 _07 January 2026_
 
