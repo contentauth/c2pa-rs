@@ -1259,7 +1259,7 @@ impl Builder {
                     // are resolved to their hashed URIs.
                     self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
-                    claim.add_assertion(&actions)
+                    add_assertion(&mut claim, &actions, manifest_assertion.created())
                 }
                 #[allow(deprecated)]
                 CreativeWork::LABEL => {
@@ -4025,5 +4025,50 @@ mod tests {
         assert_eq!(results, vec![0, 1, 2, 3]);
 
         Ok(())
+    }
+
+    #[test]
+    fn actions_created_assertion() {
+        let mut dest = Cursor::new(Vec::new());
+        Builder::new()
+            .with_definition(
+                json!({
+                  "assertions": [
+                    {
+                      "label": "c2pa.actions",
+                      "data": {
+                        "actions": [
+                          {
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                          }
+                        ]
+                      },
+                      "created": true
+                    }
+                  ]
+                })
+                .to_string(),
+            )
+            .unwrap()
+            .sign(
+                &Settings::signer().unwrap(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut dest,
+            )
+            .unwrap();
+
+        dest.rewind().unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut dest).unwrap();
+        let active_manifest = reader.active_manifest().unwrap();
+
+        let actions_assertion = active_manifest
+            .assertions()
+            .iter()
+            .find(|assertion| assertion.label().starts_with(Actions::LABEL))
+            .unwrap();
+        assert!(actions_assertion.created());
     }
 }
