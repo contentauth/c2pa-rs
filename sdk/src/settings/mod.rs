@@ -607,21 +607,154 @@ impl Settings {
             SETTINGS.set(default_settings);
             Ok(())
         } else {
-            Err(Error::OtherError("could not save settings".into()))
+            Err(Error::OtherError("could not reset settings".into()))
         }
     }
 
-    /// Serializes the [Settings] into a toml string.
+    /// Creates a new Settings instance with default values.
+    ///
+    /// This is the starting point for the builder pattern. Use with `.with_json()`,
+    /// `.with_toml()`, or `.with_value()` to configure settings without touching
+    /// global state.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::settings::Settings;
+    /// # use c2pa::Context;
+    /// # fn main() -> c2pa::Result<()> {
+    /// let settings = Settings::new().with_json(r#"{"verify": {"verify_trust": true}}"#)?;
+    /// let context = Context::new().with_settings(settings)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Load settings from JSON string using the builder pattern.
+    ///
+    /// This does NOT update global settings. It overlays the JSON configuration
+    /// on top of the current Settings instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `json` - JSON string containing settings configuration
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::settings::Settings;
+    /// # fn main() -> c2pa::Result<()> {
+    /// let settings = Settings::new().with_json(r#"{"verify": {"verify_trust": true}}"#)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_json(self, json: &str) -> Result<Self> {
+        self.with_string(json, "json")
+    }
+
+    /// Load settings from TOML string using the builder pattern.
+    ///
+    /// This does NOT update global settings. It overlays the TOML configuration
+    /// on top of the current Settings instance. For the legacy behavior that
+    /// updates globals, use `Settings::from_toml()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `toml` - TOML string containing settings configuration
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::settings::Settings;
+    /// # fn main() -> c2pa::Result<()> {
+    /// let settings = Settings::new().with_toml(
+    ///     r#"
+    ///         [verify]
+    ///         verify_trust = true
+    ///     "#,
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_toml(self, toml: &str) -> Result<Self> {
+        self.with_string(toml, "toml")
+    }
+
+    /// Load settings from a file using the builder pattern.
+    ///
+    /// The file format (JSON or TOML) is inferred from the file extension.
+    /// This does NOT update global settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the settings file
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use c2pa::settings::Settings;
+    /// # fn main() -> c2pa::Result<()> {
+    /// let settings = Settings::new().with_file("config.toml")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "file_io")]
+    pub fn with_file<P: AsRef<Path>>(self, path: P) -> Result<Self> {
+        let path = path.as_ref();
+        let ext = path
+            .extension()
+            .ok_or(Error::BadParam(
+                "settings file must have json or toml extension".into(),
+            ))?
+            .to_str()
+            .ok_or(Error::BadParam("invalid settings file name".into()))?;
+        let setting_buf = std::fs::read(path).map_err(Error::IoError)?;
+        self.with_string(&String::from_utf8_lossy(&setting_buf), ext)
+    }
+
+    /// Load settings from string representation (builder pattern helper).
+    ///
+    /// This overlays the parsed configuration on top of the current Settings
+    /// instance without touching global state.
+    fn with_string(self, settings_str: &str, format: &str) -> Result<Self> {
+        let f = match format.to_lowercase().as_str() {
+            "json" => FileFormat::Json,
+            "toml" => FileFormat::Toml,
+            _ => return Err(Error::UnsupportedType),
+        };
+
+        // Convert current settings to Config
+        let current_config = Config::try_from(&self).map_err(|e| Error::OtherError(Box::new(e)))?;
+
+        // Parse new config and overlay it on current
+        let updated_config = Config::builder()
+            .add_source(current_config)
+            .add_source(config::File::from_str(settings_str, f))
+            .build()
+            .map_err(|_e| Error::BadParam("could not parse configuration".into()))?;
+
+        // Deserialize back to Settings
+        let settings = updated_config
+            .try_deserialize::<Settings>()
+            .map_err(|e| Error::BadParam(e.to_string()))?;
+
+        // Validate
+        settings.validate()?;
+
+        Ok(settings)
+    }
+
+    /// Serializes the global [Settings] into a toml string.
     pub fn to_toml() -> Result<String> {
-        let settings =
-            get_settings().ok_or(Error::OtherError("could not get current settings".into()))?;
+        let settings = get_global_settings();
         Ok(toml::to_string(&settings)?)
     }
 
-    /// Serializes the [Settings] into a pretty (formatted) toml string.
+    /// Serializes the global [Settings] into a pretty (formatted) toml string.
     pub fn to_pretty_toml() -> Result<String> {
-        let settings =
-            get_settings().ok_or(Error::OtherError("could not get current settings".into()))?;
+        let settings = get_global_settings();
         Ok(toml::to_string_pretty(&settings)?)
     }
 
@@ -803,10 +936,16 @@ impl SettingsValidate for Settings {
     }
 }
 
-// Get snapshot of the Settings objects, returns None if there is an error
+/// Get a snapshot of the global Settings, always returns a valid Settings object.
+/// If the global settings cannot be deserialized, returns default Settings.
 #[allow(unused)]
-pub(crate) fn get_settings() -> Option<Settings> {
-    SETTINGS.with_borrow(|config| config.clone().try_deserialize::<Settings>().ok())
+pub(crate) fn get_global_settings() -> Settings {
+    SETTINGS.with_borrow(|config| {
+        config
+            .clone()
+            .try_deserialize::<Settings>()
+            .unwrap_or_default()
+    })
 }
 
 // Save the current configuration to a json file.
@@ -838,11 +977,11 @@ pub mod tests {
     use super::*;
     #[cfg(feature = "file_io")]
     use crate::utils::io_utils::tempdirectory;
+    use crate::{utils::test::test_settings, SigningAlg};
 
     #[cfg(feature = "file_io")]
     fn save_settings_as_json<P: AsRef<Path>>(settings_path: P) -> Result<()> {
-        let settings =
-            get_settings().ok_or(Error::OtherError("could not get current settings".into()))?;
+        let settings = get_global_settings();
 
         let settings_json = serde_json::to_string_pretty(&settings).map_err(Error::JsonError)?;
 
@@ -851,7 +990,7 @@ pub mod tests {
 
     #[test]
     fn test_get_defaults() {
-        let settings = get_settings().unwrap();
+        let settings = get_global_settings();
 
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
@@ -965,7 +1104,7 @@ pub mod tests {
         save_settings_as_json(&op).unwrap();
 
         Settings::from_file(&op).unwrap();
-        let settings = get_settings().unwrap();
+        let settings = get_global_settings();
 
         assert_eq!(settings, Settings::default());
 
@@ -987,7 +1126,7 @@ pub mod tests {
             Settings::from_string(settings_str, "json").map(|_| ())
         }
         .unwrap();
-        let settings = get_settings().unwrap();
+        let settings = get_global_settings();
 
         assert_eq!(settings, Settings::default());
 
@@ -1314,5 +1453,88 @@ pub mod tests {
         // Test with_value on invalid type
         let result = Settings::default().with_value("verify.verify_trust", "not a bool");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_test_settings() {
+        // Test that test_settings loads correctly
+        let settings = test_settings();
+
+        // Verify it has trust anchors (test fixture includes multiple root CAs)
+        assert!(
+            settings.trust.trust_anchors.is_some(),
+            "test_settings should include trust anchors"
+        );
+        assert!(
+            !settings.trust.trust_anchors.as_ref().unwrap().is_empty(),
+            "test_settings trust_anchors should not be empty"
+        );
+
+        // Verify it has a signer configured
+        assert!(
+            settings.signer.is_some(),
+            "test_settings should include a signer"
+        );
+
+        // Verify we have a local signer with valid configuration
+        if let Some(SignerSettings::Local { alg, .. }) = &settings.signer {
+            // Just verify we have an algorithm set (validates the structure loaded correctly)
+            assert!(
+                matches!(
+                    alg,
+                    SigningAlg::Ps256
+                        | SigningAlg::Es256
+                        | SigningAlg::Es384
+                        | SigningAlg::Es512
+                        | SigningAlg::Ed25519
+                ),
+                "test_settings should have a valid signing algorithm"
+            );
+        } else {
+            panic!("test_settings should have a Local signer configured");
+        }
+    }
+
+    #[test]
+    fn test_builder_pattern() {
+        // Test Settings::new() with builder pattern
+        let settings = Settings::new()
+            .with_json(r#"{"verify": {"verify_trust": false}}"#)
+            .unwrap();
+        assert!(!settings.verify.verify_trust);
+
+        // Test chaining with_json and with_value
+        let settings = Settings::new()
+            .with_json(r#"{"verify": {"verify_after_reading": false}}"#)
+            .unwrap()
+            .with_value("verify.verify_trust", true)
+            .unwrap();
+        assert!(!settings.verify.verify_after_reading);
+        assert!(settings.verify.verify_trust);
+
+        // Test with_toml
+        let settings = Settings::new()
+            .with_toml(
+                r#"
+                [verify]
+                verify_trust = false
+                verify_after_sign = false
+                "#,
+            )
+            .unwrap();
+        assert!(!settings.verify.verify_trust);
+        assert!(!settings.verify.verify_after_sign);
+
+        // Test that it doesn't update globals
+        let original_global = get_global_settings();
+        let _settings = Settings::new()
+            .with_json(r#"{"verify": {"verify_trust": false}}"#)
+            .unwrap();
+        let after_global = get_global_settings();
+        // Global settings should be unchanged
+        assert_eq!(
+            original_global.verify.verify_trust, after_global.verify.verify_trust,
+            "Builder pattern should not modify global settings"
+        );
     }
 }

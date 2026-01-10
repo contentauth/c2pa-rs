@@ -76,8 +76,8 @@ unsafe fn safe_slice_from_raw_parts(
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 use c2pa::{
-    assertions::DataHash, identity::validator::CawgValidator, settings::Settings,
-    Builder as C2paBuilder, CallbackSigner, Reader as C2paReader, SigningAlg,
+    assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
+    CallbackSigner, Reader as C2paReader, Settings, SigningAlg,
 };
 use scopeguard::guard;
 use tokio::runtime::Runtime; // cawg validator requires async

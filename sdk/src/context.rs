@@ -191,9 +191,7 @@ pub struct Context {
 impl Default for Context {
     fn default() -> Self {
         Self {
-            // This is for backwards compatibility with the global settings pattern
-            // TODO: Remove this when we drop global settings support
-            settings: crate::settings::get_settings().unwrap_or_default(),
+            settings: Settings::default(),
             sync_resolver: SyncResolverState::Default(OnceLock::new()),
             async_resolver: AsyncResolverState::Default(OnceLock::new()),
             #[cfg(test)]
@@ -247,8 +245,8 @@ impl Context {
     ///     .into_shared();
     ///
     /// // Now context is Arc<Context> and can be shared
-    /// let builder = c2pa::Builder::from_shared_context(&context);
-    /// let reader = c2pa::Reader::from_shared_context(&context);
+    /// let builder = c2pa::Builder::new().with_shared_context(&context);
+    /// let reader = c2pa::Reader::new().with_shared_context(&context);
     /// # Ok(())
     /// # }
     /// ```

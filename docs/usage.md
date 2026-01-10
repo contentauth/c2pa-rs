@@ -168,7 +168,7 @@ fn main() -> Result<()> {
 #### From Settings struct
 
 ```rust
-use c2pa::{Context, settings::Settings, Result};
+use c2pa::{Context, Settings, Result};
 
 fn main() -> Result<()> {
     let mut settings = Settings::default();
@@ -389,7 +389,7 @@ The Context API replaces the older global settings pattern. If you're migrating 
 
 **Old approach (deprecated):**
 ```rust
-use c2pa::settings::Settings;
+use c2pa::Settings;
 
 // Global settings affect all operations
 Settings::from_toml(include_str!("settings.toml"))?;
@@ -452,7 +452,7 @@ let context = Context::new()
 For backwards compatibility, the global Settings pattern still works, but is not recommended for new code:
 
 ```rust
-use c2pa::settings::Settings;
+use c2pa::Settings;
 
 // Global settings (legacy approach - not recommended)
 Settings::from_toml(include_str!("settings.toml"))?;

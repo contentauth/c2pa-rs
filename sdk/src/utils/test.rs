@@ -138,6 +138,65 @@ pub fn setup_logger() {
     });
 }
 
+/// Returns Settings configured for testing.
+///
+/// This loads the standard test settings from `tests/fixtures/test_settings.toml`,
+/// which includes trust anchors, signer configuration, and verification settings
+/// appropriate for testing.
+///
+/// # Panics
+///
+/// Panics if test settings cannot be loaded.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::utils::test::test_settings;
+///
+/// // Use directly with Context
+/// let context = Context::new().with_settings(test_settings())?;
+///
+/// // Or modify for specific test needs
+/// let mut settings = test_settings();
+/// settings.verify.verify_trust = false;
+/// let context = Context::new().with_settings(settings)?;
+/// ```
+#[allow(clippy::expect_used)]
+pub fn test_settings() -> crate::Settings {
+    crate::Settings::new()
+        .with_toml(include_str!("../../tests/fixtures/test_settings.toml"))
+        .expect("built-in test_settings.toml should be valid")
+}
+
+/// Creates a Context configured with standard test settings.
+///
+/// This is equivalent to `Context::new().with_settings(test_settings())`.
+/// Use this for most tests that need a configured context.
+///
+/// # Panics
+///
+/// Panics if test settings cannot be loaded.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::utils::test::test_context;
+///
+/// // Single use
+/// let builder = Builder::new().with_context(test_context());
+///
+/// // Shared across multiple components
+/// let ctx = test_context().into_shared();
+/// let builder1 = Builder::new().with_shared_context(&ctx);
+/// let builder2 = Builder::new().with_shared_context(&ctx);
+/// ```
+#[allow(clippy::expect_used)]
+pub fn test_context() -> Context {
+    Context::new()
+        .with_settings(test_settings())
+        .expect("test_settings should always be valid")
+}
+
 /// Create new C2PA compatible UUID
 pub(crate) fn gen_c2pa_uuid() -> String {
     let guid = uuid::Uuid::new_v4();
@@ -327,7 +386,7 @@ pub fn create_test_claim_v1() -> Result<Claim> {
 /// Creates a store with an unsigned claim for testing
 pub fn create_test_store() -> Result<Store> {
     // Create claims store.
-    let mut store = Store::with_context(&Context::new());
+    let mut store = Store::from_context(&Context::new());
 
     let claim = create_test_claim()?;
     store.commit_claim(claim).unwrap();
@@ -337,7 +396,7 @@ pub fn create_test_store() -> Result<Store> {
 /// Creates a store with an unsigned v1 claim for testing
 pub fn create_test_store_v1() -> Result<Store> {
     // Create claims store.
-    let mut store = Store::with_context(&Context::new());
+    let mut store = Store::from_context(&Context::new());
 
     let claim = create_test_claim_v1()?;
     store.commit_claim(claim).unwrap();

@@ -134,7 +134,7 @@ struct ManifestInfo<'a> {
 
 impl Default for Store {
     fn default() -> Self {
-        Self::with_context(&Context::new())
+        Self::from_context(&Context::new())
     }
 }
 
@@ -154,7 +154,7 @@ impl Store {
     }
 
     /// Create a new, empty claims store with the specified settings.
-    pub fn with_context(context: &Context) -> Self {
+    pub fn from_context(context: &Context) -> Self {
         let mut store = Store::new();
         let settings = context.settings();
 
@@ -1191,7 +1191,7 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
-        Self::from_jumbf_impl(Store::with_context(context), buffer, validation_log)
+        Self::from_jumbf_impl(Store::from_context(context), buffer, validation_log)
     }
 
     fn from_jumbf_impl(
@@ -4385,7 +4385,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v1_unit_test");
@@ -4452,7 +4452,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
@@ -4520,7 +4520,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
@@ -4571,7 +4571,7 @@ pub mod tests {
             create_test_streams("unsupported_type.txt");
         let format = "text/plain";
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -4666,7 +4666,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         let claim = create_test_claim().unwrap();
 
@@ -4701,7 +4701,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         let claim = create_test_claim().unwrap();
 
@@ -4731,7 +4731,7 @@ pub mod tests {
     fn test_jumbf_replacement_generation() {
         let context = Context::new();
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -4776,7 +4776,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = crate::utils::test::create_test_claim()?;
@@ -4866,7 +4866,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5140,7 +5140,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.wav");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5242,7 +5242,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("test.avi");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5345,7 +5345,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.webp");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5448,7 +5448,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.heic");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5501,7 +5501,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.avif");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5554,7 +5554,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.heif");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -6944,7 +6944,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -6983,7 +6983,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = crate::utils::test::create_test_claim_v1().unwrap();
@@ -7014,6 +7014,7 @@ pub mod tests {
         println!("store = {new_store}");
     }
 
+    #[cfg(feature = "file_io")]
     #[test]
     fn test_jumbf_generation_with_bmffv3_fixed_block_size() {
         let context = crate::context::Context::new();
@@ -7026,7 +7027,7 @@ pub mod tests {
         crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7068,7 +7069,7 @@ pub mod tests {
         crate::settings::set_settings_value("core.merkle_tree_max_proofs", 0).unwrap();
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7110,7 +7111,7 @@ pub mod tests {
         crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7150,7 +7151,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7254,7 +7255,7 @@ pub mod tests {
             let context = crate::context::Context::new();
 
             // Create claims store.
-            let mut store = Store::with_context(&context);
+            let mut store = Store::from_context(&context);
 
             // Create a new claim.
             let mut claim = create_test_claim().unwrap();
@@ -7330,7 +7331,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -7394,7 +7395,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7439,7 +7440,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("TUSCANY.TIF");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7508,7 +7509,7 @@ pub mod tests {
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -7584,7 +7585,7 @@ pub mod tests {
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -7661,7 +7662,7 @@ pub mod tests {
         let signer = async_test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -7737,7 +7738,7 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -7814,7 +7815,7 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -7963,7 +7964,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -8094,7 +8095,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -8167,7 +8168,7 @@ pub mod tests {
                     }
 
                     // Create claims store.
-                    let mut store = Store::with_context(&context);
+                    let mut store = Store::from_context(&context);
 
                     // Create a new claim.
                     let claim = create_test_claim().unwrap();
@@ -8250,7 +8251,7 @@ pub mod tests {
         context.settings_mut().verify.verify_after_sign = false;
         context.settings_mut().verify.verify_trust = false;
 
-        let mut builder = Builder::from_context(context);
+        let mut builder = Builder::new().with_context(context);
         builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
         let signer =
@@ -8455,7 +8456,7 @@ pub mod tests {
         let mut tracking_stream =
             FlushTrackingStream::new(output_stream, flush_called.clone(), dropped.clone());
 
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         let cgi = ClaimGeneratorInfo::new("flush_test");
         let mut claim = Claim::new("test", Some("flush_test"), 1);
@@ -8631,7 +8632,7 @@ pub mod tests {
         let flush_called = Arc::new(AtomicBool::new(false));
         let mut unsafe_stream = UnsafeStream::new(flush_called.clone());
 
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         let cgi = ClaimGeneratorInfo::new("unsafe_flush_test");
         let mut claim = Claim::new("test", Some("unsafe_flush_test"), 1);

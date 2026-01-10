@@ -33,7 +33,7 @@ The Context API:
 **For backwards compatibility**, you can still use global Settings (not recommended for new code):
 
 ```rust
-use c2pa::settings::Settings;
+use c2pa::Settings;
 
 Settings::from_string(include_str!("settings.json"), "json")?;
 // Operations will use global settings
@@ -82,7 +82,7 @@ let context = Context::new()
 **Legacy approach** using global Settings (not recommended):
 
 ```rust
-use c2pa::settings::Settings;
+use c2pa::Settings;
 
 Settings::from_string(include_str!("fixtures/test_settings.json"), "json")?;
 ```

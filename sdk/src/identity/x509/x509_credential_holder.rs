@@ -112,7 +112,7 @@ mod tests {
 
         // Use the context when creating the Builder
         let definition = serde_json::from_str(&manifest_json()).unwrap();
-        let mut builder = Builder::from_shared_context(&context);
+        let mut builder = Builder::new().with_shared_context(&context);
         builder.definition = definition;
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
@@ -146,7 +146,8 @@ mod tests {
         // Read back the Manifest that was generated using the same context
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_shared_context(&context)
+        let manifest_store = Reader::new()
+            .with_shared_context(&context)
             .with_stream(format, &mut dest)
             .unwrap();
         assert_eq!(manifest_store.validation_status(), None);

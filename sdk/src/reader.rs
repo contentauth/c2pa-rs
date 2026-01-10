@@ -130,7 +130,12 @@ impl Reader {
     /// let reader = Reader::new();
     /// ```
     pub fn new() -> Self {
-        Self::from_context(Context::new())
+        Self {
+            context: Arc::new(Context::new()),
+            store: Store::new(),
+            assertion_values: HashMap::new(),
+            ..Default::default()
+        }
     }
 
     /// Create a new Reader with the given [`Context`].
@@ -156,6 +161,10 @@ impl Reader {
     /// # Ok(())
     /// # }
     /// ```
+    #[deprecated(
+        since = "0.75.0",
+        note = "Use `Reader::new().with_context(context)` instead"
+    )]
     pub fn from_context(context: Context) -> Self {
         Self {
             context: Arc::new(context),
@@ -163,6 +172,33 @@ impl Reader {
             assertion_values: HashMap::new(),
             ..Default::default()
         }
+    }
+
+    /// Sets the [`Context`] for this [`Reader`] using the builder pattern.
+    ///
+    /// This method takes ownership of the [`Context`] and wraps it in an [`Arc`] internally.
+    /// Use this for single-use contexts where you don't need to share the context.
+    ///
+    /// # Arguments
+    /// * `context` - The [`Context`] to use for the Reader
+    ///
+    /// # Returns
+    /// The modified Reader
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Reader, Result};
+    /// # fn main() -> Result<()> {
+    /// let settings = c2pa::Settings::new().with_json(r#"{"verify": {"verify_after_sign": true}}"#)?;
+    /// let context = Context::new().with_settings(settings)?;
+    /// let reader = Reader::new().with_context(context);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_context(mut self, context: Context) -> Self {
+        self.context = Arc::new(context);
+        self
     }
 
     /// Create a new Reader with a shared [`Context`].
@@ -186,11 +222,15 @@ impl Reader {
     /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
     ///
     /// // Share it across multiple Readers (even across threads!)
-    /// let reader1 = Reader::from_shared_context(&ctx);
-    /// let reader2 = Reader::from_shared_context(&ctx);
+    /// let reader1 = Reader::new().with_shared_context(&ctx);
+    /// let reader2 = Reader::new().with_shared_context(&ctx);
     /// # Ok(())
     /// # }
     /// ```
+    #[deprecated(
+        since = "0.75.0",
+        note = "Use `Reader::new().with_shared_context(context)` instead"
+    )]
     pub fn from_shared_context(context: &Arc<Context>) -> Self {
         Self {
             context: Arc::clone(context),
@@ -198,6 +238,37 @@ impl Reader {
             assertion_values: HashMap::new(),
             ..Default::default()
         }
+    }
+
+    /// Sets a shared [`Context`] for this [`Reader`] using the builder pattern.
+    ///
+    /// This method allows sharing a single [`Context`] across multiple builders or readers,
+    /// even across threads. The [`Arc`] is cloned internally, so you pass a reference.
+    ///
+    /// # Arguments
+    /// * `context` - A reference to an [`Arc<Context>`] to share.
+    ///
+    /// # Returns
+    /// The modified [`Reader`]
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Reader, Result};
+    /// # use std::sync::Arc;
+    /// # fn main() -> Result<()> {
+    /// // Create a shared Context once
+    /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
+    ///
+    /// // Share it across multiple Readers (even across threads!)
+    /// let reader1 = Reader::new().with_shared_context(&ctx);
+    /// let reader2 = Reader::new().with_shared_context(&ctx);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_shared_context(mut self, context: &Arc<Context>) -> Self {
+        self.context = Arc::clone(context);
+        self
     }
 
     /// Add manifest store from a stream to the [`Reader`]
@@ -242,10 +313,19 @@ impl Reader {
     /// [CAWG identity]: https://cawg.io/identity/
     #[async_generic]
     pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_global_settings();
+        let context = Context::new().with_settings(settings)?;
+
         if _sync {
-            Reader::new().with_stream(format, stream)
+            Reader::new()
+                .with_context(context)
+                .with_stream(format, stream)
         } else {
-            Reader::new().with_stream_async(format, stream).await
+            Reader::new()
+                .with_context(context)
+                .with_stream_async(format, stream)
+                .await
         }
     }
 
@@ -337,8 +417,10 @@ impl Reader {
         format: &str,
         stream: impl Read + Seek + MaybeSend,
     ) -> Result<Reader> {
-        let context = Context::new();
-        let mut reader = Reader::from_context(context);
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_global_settings();
+        let context = Context::new().with_settings(settings)?;
+        let mut reader = Reader::new().with_context(context);
 
         let mut validation_log = StatusTracker::default();
 
@@ -385,7 +467,10 @@ impl Reader {
         mut stream: impl Read + Seek + MaybeSend,
         mut fragment: impl Read + Seek + MaybeSend,
     ) -> Result<Self> {
-        let mut reader = Reader::new();
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_global_settings();
+        let context = Context::new().with_settings(settings)?;
+        let mut reader = Reader::new().with_context(context);
 
         let mut validation_log = StatusTracker::default();
 
@@ -424,7 +509,10 @@ impl Reader {
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
-        let mut reader = Reader::new();
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_global_settings();
+        let context = Context::new().with_settings(settings)?;
+        let mut reader = Reader::new().with_context(context);
 
         let mut validation_log = StatusTracker::default();
 
@@ -1095,7 +1183,8 @@ impl Reader {
     /// # Errors
     /// Returns an [`Error`] if there is no active manifest.
     pub fn into_builder(mut self) -> Result<crate::Builder> {
-        let mut builder = crate::Builder::new();
+        // Legacy behavior: use from_json to get global settings for backward compatibility
+        let mut builder = crate::Builder::from_json("{}")?;
         if let Some(label) = &self.active_manifest {
             if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
                 builder.definition.vendor = parts.cgi.clone();
@@ -1271,21 +1360,23 @@ pub mod tests {
     use std::io::Cursor;
 
     use super::*;
-    #[cfg(target_os = "wasi")]
-    use crate::settings::Settings;
+    use crate::utils::test::test_context;
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    #[cfg(feature = "fetch_remote_manifests")]
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
     const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACA.jpg");
 
     #[test]
     // Verify that we can convert a Reader back into a Builder re-sign and the read it back again
     fn test_into_builder() -> Result<()> {
-        crate::settings::Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        let context = test_context().into_shared();
         let mut source = Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST);
         let format = "image/jpeg";
-        let reader = Reader::from_stream(format, &mut source)?;
+        let reader = Reader::new()
+            .with_shared_context(&context)
+            .with_stream(format, &mut source)?;
         println!("{reader}");
 
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
@@ -1294,11 +1385,12 @@ pub mod tests {
 
         source.set_position(0);
         let mut dest = Cursor::new(Vec::new());
-        let signer = crate::settings::Settings::signer()?;
-        builder.sign(&signer, format, &mut source, &mut dest)?;
+        builder.save_to_stream(format, &mut source, &mut dest)?;
 
         dest.set_position(0);
-        let reader2 = Reader::from_stream(format, &mut dest)?;
+        let reader2 = Reader::new()
+            .with_shared_context(&context)
+            .with_stream(format, &mut dest)?;
         println!("{reader2}");
 
         assert_eq!(reader2.validation_state(), ValidationState::Trusted);
@@ -1317,12 +1409,13 @@ pub mod tests {
 
     #[test]
     fn test_reader_new_with_stream() -> Result<()> {
-        const TEST_SETTINGS: &str = include_str!("../tests/fixtures/test_settings.toml");
-        let context = Context::new().with_settings(TEST_SETTINGS)?;
+        let context = test_context();
 
         let mut source = Cursor::new(IMAGE_WITH_MANIFEST);
 
-        let reader = Reader::from_context(context).with_stream("image/jpeg", &mut source)?;
+        let reader = Reader::new()
+            .with_context(context)
+            .with_stream("image/jpeg", &mut source)?;
 
         assert_eq!(reader.remote_url(), None);
         assert!(reader.is_embedded());
@@ -1366,11 +1459,10 @@ pub mod tests {
 
     #[test]
     fn test_reader_trusted() -> Result<()> {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
-        let reader =
-            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
+        let context = Context::new();
+        let reader = Reader::new()
+            .with_context(context)
+            .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         Ok(())
     }
@@ -1379,10 +1471,13 @@ pub mod tests {
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_from_file_nested_errors() -> Result<()> {
         // disable trust check so that the status is Valid vs Trusted
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
-        let reader =
-            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
+        let settings = crate::Settings::default()
+            .with_value("verify.verify_trust", false)
+            .unwrap();
+        let context = Context::new().with_settings(settings).unwrap();
+        let reader = Reader::new()
+            .with_context(context)
+            .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         println!("{reader}");
         assert_eq!(reader.validation_status(), None);
         assert_eq!(reader.validation_state(), ValidationState::Valid);

@@ -12,11 +12,14 @@
 // each license.
 
 //! Example App showing how to work archive and restore Builders and ingredients.
-use std::io::{Cursor, Read, Seek};
+use std::{
+    io::{Cursor, Read, Seek},
+    sync::Arc,
+};
 
 use anyhow::Result;
 use c2pa::{
-    settings::Settings, validation_results::ValidationState, Builder, DigitalSourceType, Reader,
+    validation_results::ValidationState, Builder, Context, DigitalSourceType, Reader, Settings,
 };
 use serde_json::json;
 
@@ -40,11 +43,11 @@ fn manifest_def(title: &str, format: &str) -> String {
 /// Capture an ingredient from a stream and return the resulting manifest store as a Vec<u8>
 ///
 /// This can be constructed using existing methods with a few tricks
-fn capture_ingredient<R>(format: &str, stream: &mut R) -> Result<Vec<u8>>
+fn capture_ingredient<R>(format: &str, stream: &mut R, context: &Arc<Context>) -> Result<Vec<u8>>
 where
     R: Read + Seek + Send,
 {
-    let mut builder = Builder::new();
+    let mut builder = Builder::new().with_shared_context(context);
 
     // we need to manually add the ingredient stream since it has a different format than the output .c2pa
     builder.add_ingredient_from_stream(
@@ -70,12 +73,8 @@ where
     // sign a c2pa only manifest store by using a null input stream and application/c2pa as the format.
     let mut null_stream = Cursor::new([]);
     let mut output = Cursor::new(Vec::new());
-    builder.sign(
-        &Settings::signer()?,
-        "application/c2pa",
-        &mut null_stream,
-        &mut output,
-    )?;
+    let signer = context.signer()?;
+    builder.sign(signer, "application/c2pa", &mut null_stream, &mut output)?;
 
     Ok(output.into_inner())
 }
@@ -87,16 +86,20 @@ fn main() -> Result<()> {
 
     let mut ingredient_source = Cursor::new(INGREDIENT_IMAGE);
 
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let settings =
+        Settings::new().with_json(include_str!("../tests/fixtures/test_settings.json"))?;
+    let context = Context::new().with_settings(settings)?.into_shared();
 
     // Here we capture an ingredient with its validation into a c2pa_data object.
-    let ingredient_c2pa = capture_ingredient(FORMAT, &mut ingredient_source)?;
+    let ingredient_c2pa = capture_ingredient(FORMAT, &mut ingredient_source, &context)?;
     // The ingredient_c2pa can be saved to a file, blob storage, a database, or wherever you want to keep it.
     // For this example we will just keep it in memory and add it to a new manifest
 
     // Now create a new builder and set the intent to create a new manifest store
     // We will add the ingredient as a componentOf relationship
-    let mut builder = Builder::from_json(&manifest_def("Builder Sample", FORMAT))?;
+    let mut builder = Builder::new()
+        .with_shared_context(&context)
+        .with_definition(manifest_def("Builder Sample", FORMAT))?;
     builder.set_intent(c2pa::BuilderIntent::Create(DigitalSourceType::Empty));
 
     // Now add our saved ingredient as a c2pa stream.
@@ -132,17 +135,20 @@ fn main() -> Result<()> {
     // unpack the manifest builder from the archived stream
     archive.rewind()?;
     let mut builder = Builder::from_archive(&mut archive)?;
+    // Update the builder to use our shared context (with signer settings)
+    builder = builder.with_shared_context(&context);
 
     // Now we will sign a new image that will reference the previously captured ingredient
-    let signer = Settings::signer()?;
     let mut source = Cursor::new(SOURCE_IMAGE);
     let mut dest = Cursor::new(Vec::new());
-    builder.sign(&signer, FORMAT, &mut source, &mut dest)?;
+    builder.save_to_stream(FORMAT, &mut source, &mut dest)?;
 
     // read and validate the signed manifest store
     dest.rewind()?;
 
-    let reader = Reader::from_stream(FORMAT, &mut dest)?;
+    let reader = Reader::new()
+        .with_shared_context(&context)
+        .with_stream(FORMAT, &mut dest)?;
     println!("{}", reader.json());
     assert_eq!(reader.validation_state(), ValidationState::Trusted);
     assert_eq!(
