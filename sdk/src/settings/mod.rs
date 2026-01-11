@@ -615,7 +615,7 @@ impl Settings {
     ///
     /// This is the starting point for the builder pattern. Use with `.with_json()`,
     /// `.with_toml()`, or `.with_value()` to configure settings without touching
-    /// thread local state.
+    /// thread-local state.
     ///
     /// # Examples
     ///
@@ -634,7 +634,7 @@ impl Settings {
 
     /// Load settings from JSON string using the builder pattern.
     ///
-    /// This does NOT update thread local settings. It overlays the JSON configuration
+    /// This does NOT update thread-local settings. It overlays the JSON configuration
     /// on top of the current Settings instance.
     ///
     /// # Arguments
@@ -656,9 +656,9 @@ impl Settings {
 
     /// Load settings from TOML string using the builder pattern.
     ///
-    /// This does NOT update thread local settings. It overlays the TOML configuration
+    /// This does NOT update thread-local settings. It overlays the TOML configuration
     /// on top of the current Settings instance. For the legacy behavior that
-    /// updates thread locals, use `Settings::from_toml()`.
+    /// updates thread-locals, use `Settings::from_toml()`.
     ///
     /// # Arguments
     ///
@@ -685,7 +685,7 @@ impl Settings {
     /// Load settings from a file using the builder pattern.
     ///
     /// The file format (JSON or TOML) is inferred from the file extension.
-    /// This does NOT update thread local settings.
+    /// This does NOT update thread-local settings.
     ///
     /// # Arguments
     ///
@@ -717,7 +717,7 @@ impl Settings {
     /// Load settings from string representation (builder pattern helper).
     ///
     /// This overlays the parsed configuration on top of the current Settings
-    /// instance without touching thread local state.
+    /// instance without touching thread-local state.
     fn with_string(self, settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
@@ -746,13 +746,13 @@ impl Settings {
         Ok(settings)
     }
 
-    /// Serializes the thread local [Settings] into a toml string.
+    /// Serializes the thread-local [Settings] into a toml string.
     pub fn to_toml() -> Result<String> {
         let settings = get_thread_local_settings();
         Ok(toml::to_string(&settings)?)
     }
 
-    /// Serializes the thread local [Settings] into a pretty (formatted) toml string.
+    /// Serializes the thread-local [Settings] into a pretty (formatted) toml string.
     pub fn to_pretty_toml() -> Result<String> {
         let settings = get_thread_local_settings();
         Ok(toml::to_string_pretty(&settings)?)
@@ -936,8 +936,8 @@ impl SettingsValidate for Settings {
     }
 }
 
-/// Get a snapshot of the thread local Settings, always returns a valid Settings object.
-/// If the thread local settings cannot be deserialized, returns default Settings.
+/// Get a snapshot of the thread-local Settings, always returns a valid Settings object.
+/// If the thread-local settings cannot be deserialized, returns default Settings.
 #[allow(unused)]
 pub(crate) fn get_thread_local_settings() -> Settings {
     SETTINGS.with_borrow(|config| {
@@ -1525,13 +1525,13 @@ pub mod tests {
         assert!(!settings.verify.verify_trust);
         assert!(!settings.verify.verify_after_sign);
 
-        // Test that it doesn't update thread locals
+        // Test that it doesn't update thread-locals
         let original = get_thread_local_settings();
         let _settings = Settings::new()
             .with_json(r#"{"verify": {"verify_trust": false}}"#)
             .unwrap();
         let after = get_thread_local_settings();
-        // thread local settings should be unchanged
+        // thread-local settings should be unchanged
         assert_eq!(
             original.verify.verify_trust, after.verify.verify_trust,
             "Builder pattern should not modify thread_local settings"
