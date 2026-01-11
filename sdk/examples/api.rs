@@ -17,7 +17,7 @@ use std::io::{Cursor, Seek};
 use anyhow::Result;
 use c2pa::{
     crypto::raw_signature::SigningAlg, settings::Settings, validation_results::ValidationState,
-    Builder, CallbackSigner, Reader,
+    Builder, CallbackSigner, Context, Reader,
 };
 use serde_json::json;
 
@@ -90,7 +90,9 @@ fn main() -> Result<()> {
 
     let json = manifest_def(title, format);
 
-    let mut builder = Builder::from_json(&json)?.with_shared_context(&context);
+    let mut builder = Builder::new()
+        .with_shared_context(&context)
+        .with_definition(json.as_str())?;
     builder.add_ingredient_from_stream(
         json!({
             "title": parent_name,
@@ -146,7 +148,9 @@ fn main() -> Result<()> {
     // read and validate the signed manifest store
     dest.rewind()?;
 
-    let reader = Reader::from_stream(format, &mut dest)?;
+    let reader = Reader::new()
+        .with_shared_context(&context)
+        .with_stream(format, &mut dest)?;
 
     // extract a thumbnail image from the ManifestStore
     let mut thumbnail = Cursor::new(Vec::new());
