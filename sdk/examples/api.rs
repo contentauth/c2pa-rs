@@ -84,13 +84,13 @@ fn main() -> Result<()> {
     }
     .to_string();
 
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-
-    Settings::from_toml(&modified_core)?;
+    let mut settings = Settings::new().with_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    settings = settings.with_toml(&modified_core)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
 
     let json = manifest_def(title, format);
 
-    let mut builder = Builder::from_json(&json)?;
+    let mut builder = Builder::from_json(&json)?.with_shared_context(&context);
     builder.add_ingredient_from_stream(
         json!({
             "title": parent_name,

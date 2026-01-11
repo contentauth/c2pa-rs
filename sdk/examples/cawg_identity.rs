@@ -65,14 +65,15 @@ mod cawg {
         }
 
         // load our cawg signing settings
-        Settings::from_toml(include_str!(
+        let settings = Settings::new().with_toml(include_str!(
             "../tests/fixtures/test_settings_with_cawg_signing.toml"
         ))?;
+        let context = Context::new().with_settings(settings)?.into_shared();
 
-        // get the signer from settings
-        let signer = Settings::signer()?;
+        // get the signer from context
+        let signer = context.signer()?;
 
-        let mut builder = Builder::from_json(&manifest_def())?;
+        let mut builder = Builder::from_json(&manifest_def())?.with_shared_context(&context);
         builder.set_intent(c2pa::BuilderIntent::Create(
             DigitalSourceType::DigitalCapture,
         ));

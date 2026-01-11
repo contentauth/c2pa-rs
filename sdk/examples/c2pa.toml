@@ -25,10 +25,10 @@ remote_manifest_fetch = true
 
 # Configuration for a signer.
 #
-# The signer can be retrieved via the `Settings::signer` function.
+# The signer can be retrieved via the `Context::signer` function.
 [signer]
 
-# A signer can be loaded in the API with the function `Settings::signer`.
+# A signer can be loaded in the API with the function `Context::signer`.
 [signer.local]
 # Algorithm to use for signing.
 alg = "ps256"
@@ -40,7 +40,7 @@ private_key = ""
 tsa_url = ""
 
 # # Alternatively, you can specify a remote signer, which is also loaded
-# # via `Settings::signer`.
+# # via `Context::signer`.
 # #
 # # Note that you may not specify both a local and remote signer at the same time.
 # [signer.remote]
