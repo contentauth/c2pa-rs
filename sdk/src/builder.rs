@@ -352,55 +352,17 @@ impl AsRef<Builder> for Builder {
     }
 }
 
-// this is a temporary warning to help users migrate to the new Context API
-#[allow(clippy::panic)]
-fn check_for_global_settings_misuse() {
-    let global = crate::settings::get_global_settings();
-    let default = crate::Settings::default();
-
-    // If global settings differ from default, they've been explicitly configured
-    if global != default {
-        let message = "\n╔══════════════════════════════════════════════════════════════════╗\n\
-             ║ GLOBAL SETTINGS CONFIGURED BUT NOT USED                          ║\n\
-             ╚══════════════════════════════════════════════════════════════════╝\n\n\
-             You have configured global settings, but Builder::new() creates a\n\
-             pure context that ignores them. Your settings will be ignored!\n\n\
-             MIGRATION REQUIRED:\n\n\
-             OLD (incorrect):\n\
-             Settings::from_toml(toml_str)?;\n\
-             let builder = Builder::new();  // ❌ Ignores your settings!\n\n\
-             NEW (correct):\n\
-             let settings = Settings::new().with_toml(toml_str)?;\n\
-             let context = Context::new().with_settings(settings)?;\n\
-             let builder = Builder::new().with_context(context);  // ✅\n\n\
-             Or use the legacy method that respects global settings:\n\
-             Settings::from_toml(toml_str)?;\n\
-             let builder = Builder::from_json(json_str)?;  // Uses globals\n\n";
-
-        #[cfg(debug_assertions)]
-        {
-            panic!("{}", message);
-        }
-
-        #[cfg(not(debug_assertions))]
-        {
-            use std::sync::Once;
-            static WARN_ONCE: Once = Once::new();
-            WARN_ONCE.call_once(|| {
-                eprintln!("⚠️  WARNING {}", message);
-            });
-        }
-    }
-}
-
 impl Builder {
     /// Creates a new [`Builder`] struct.
     /// # Returns
     /// * A new [`Builder`].
     pub fn new() -> Self {
-        check_for_global_settings_misuse();
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        // at some point we should remove this and require a Context to be passed in.
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings).unwrap_or_default();
         Self {
-            context: Arc::new(Context::new()),
+            context: Arc::new(context),
             ..Default::default()
         }
     }
@@ -594,7 +556,7 @@ impl Builder {
     /// * Returns an [`Error`] if the JSON is malformed or incorrect.
     pub fn from_json(json: &str) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_global_settings();
+        let settings = crate::settings::get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
 
         Ok(Self {
@@ -1125,7 +1087,7 @@ impl Builder {
             // so we will read the store directly here
 
             // Legacy behavior: explicitly get global settings for backward compatibility
-            let settings = crate::settings::get_global_settings();
+            let settings = crate::settings::get_thread_local_settings();
             let mut context = Context::new().with_settings(settings)?;
             context.settings_mut().verify.verify_after_reading = false;
 
@@ -4179,20 +4141,20 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    #[should_panic(expected = "GLOBAL SETTINGS CONFIGURED BUT NOT USED")]
-    #[cfg(debug_assertions)]
-    fn test_builder_new_panics_with_global_settings_in_debug() {
-        // Clean slate
-        crate::settings::reset_default_settings().unwrap();
+    // #[test]
+    // #[should_panic(expected = "GLOBAL SETTINGS CONFIGURED BUT NOT USED")]
+    // #[cfg(debug_assertions)]
+    // fn test_builder_new_panics_with_global_settings_in_debug() {
+    //     // Clean slate
+    //     crate::settings::reset_default_settings().unwrap();
 
-        // Set global settings
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))
-            .expect("should load settings");
+    //     // Set global settings
+    //     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))
+    //         .expect("should load settings");
 
-        // This should panic in debug mode
-        let _builder = Builder::new();
-    }
+    //     // This should panic in debug mode
+    //     let _builder = Builder::new();
+    // }
 
     #[test]
     fn test_builder_new_succeeds_without_global_settings() {

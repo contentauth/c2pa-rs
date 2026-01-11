@@ -111,7 +111,7 @@ The default operation of C2PA signing is to embed a C2PA manifest store into an 
 
 ## Using Context for configuration
 
-The C2PA library uses a `Context` structure to configure operations. Context replaces the older global Settings pattern with a more flexible, thread-safe approach.
+The C2PA library uses a `Context` structure to configure operations. Context replaces the older thread-local Settings pattern with a more flexible, thread-safe approach.
 
 ### What is Context?
 
@@ -368,9 +368,9 @@ let builder1 = Builder::from_shared_context(&ctx);
 let builder2 = Builder::from_shared_context(&ctx);
 ```
 
-### Migration from global Settings
+### Migration from thread-local Settings
 
-The Context API replaces the older global settings pattern. If you're migrating existing code, here's how Settings and Context work together.
+The Context API replaces the older thread-local settings pattern. If you're migrating existing code, here's how Settings and Context work together.
 
 #### Backwards compatibility
 
@@ -382,8 +382,8 @@ The Context API replaces the older global settings pattern. If you're migrating 
 |--------|---------------------|-----------------|
 | Scope | Global, affects all operations | Per-operation, explicitly passed |
 | Thread Safety | Not thread-safe | Thread-safe, shareable with Arc |
-| Configuration | Set once globally | Can have multiple configurations |
-| Testability | Difficult (global state) | Easy (isolated contexts) |
+| Configuration | Set once per thread | Can have multiple configurations |
+| Testability | Difficult (thread-local state) | Easy (isolated contexts) |
 
 #### Migration examples
 
@@ -407,7 +407,7 @@ let reader = Reader::from_context(context)
     .with_stream("image/jpeg", stream)?;
 ```
 
-**Multiple configurations (impossible with global settings):**
+**Multiple configurations (impossible with thread-local settings):**
 ```rust
 use c2pa::{Context, Builder};
 
@@ -447,22 +447,22 @@ let context = Context::new()
     .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
 ```
 
-#### Global Settings still available (legacy)
+#### Thread-local Settings still available (legacy)
 
-For backwards compatibility, the global Settings pattern still works, but is not recommended for new code:
+For backwards compatibility, the thread-local Settings pattern still works, but is not recommended for new code:
 
 ```rust
 use c2pa::Settings;
 
-// Global settings (legacy approach - not recommended)
+// Thread-local settings (legacy approach - not recommended)
 Settings::from_toml(include_str!("settings.toml"))?;
 
-// Builder/Reader without explicit Context will use global Settings
-let builder = Builder::new();  // Uses global Settings internally
+// Builder/Reader without explicit Context will use thread-local Settings
+let builder = Builder::new();  // Uses thread-local Settings internally
 ```
 
 **Why Context is better:**
-- Explicit dependencies (no hidden global state)
+- Explicit dependencies (no hidden thread-local state)
 - Multiple configurations in the same application
 - Thread-safe sharing with Arc
 - Easier to test (pass mock contexts)

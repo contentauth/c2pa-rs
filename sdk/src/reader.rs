@@ -190,7 +190,7 @@ impl Reader {
     /// ```
     /// # use c2pa::{Context, Reader, Result};
     /// # fn main() -> Result<()> {
-    /// let settings = c2pa::Settings::new().with_json(r#"{"verify": {"verify_after_sign": true}}"#)?;
+    /// let settings = c2pa::Settings::new().with_value("verify.verify_after_sign", true)?;
     /// let context = Context::new().with_settings(settings)?;
     /// let reader = Reader::new().with_context(context);
     /// # Ok(())
@@ -314,7 +314,7 @@ impl Reader {
     #[async_generic]
     pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_global_settings();
+        let settings = crate::settings::get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
 
         if _sync {
@@ -418,7 +418,7 @@ impl Reader {
         stream: impl Read + Seek + MaybeSend,
     ) -> Result<Reader> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_global_settings();
+        let settings = crate::settings::get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
         let mut reader = Reader::new().with_context(context);
 
@@ -468,7 +468,7 @@ impl Reader {
         mut fragment: impl Read + Seek + MaybeSend,
     ) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_global_settings();
+        let settings = crate::settings::get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
         let mut reader = Reader::new().with_context(context);
 
@@ -510,7 +510,7 @@ impl Reader {
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_global_settings();
+        let settings = crate::settings::get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
         let mut reader = Reader::new().with_context(context);
 
@@ -1184,7 +1184,7 @@ impl Reader {
     /// Returns an [`Error`] if there is no active manifest.
     pub fn into_builder(mut self) -> Result<crate::Builder> {
         // Legacy behavior: use from_json to get global settings for backward compatibility
-        let mut builder = crate::Builder::from_json("{}")?;
+        let mut builder = crate::Builder::new();
         if let Some(label) = &self.active_manifest {
             if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
                 builder.definition.vendor = parts.cgi.clone();

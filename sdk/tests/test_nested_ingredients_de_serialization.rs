@@ -26,7 +26,7 @@ fn test_nested_ingredients_reconstruction_from_store() -> Result<()> {
 
     // Top level of nesting
     let mut level1_output = Cursor::new(Vec::new());
-    let mut builder = Builder::from_json("{}")?;
+    let mut builder = Builder::new();
     builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     builder.sign(
         &Settings::signer()?,
@@ -39,7 +39,7 @@ fn test_nested_ingredients_reconstruction_from_store() -> Result<()> {
     // When using Edit intent, the source automatically becomes the parent ingredient
     level1_output.rewind()?;
     let mut level2_output = Cursor::new(Vec::new());
-    let mut builder = Builder::from_json("{}")?;
+    let mut builder = Builder::new();
     builder.set_intent(BuilderIntent::Edit);
     builder.sign(
         &Settings::signer()?,
@@ -52,7 +52,7 @@ fn test_nested_ingredients_reconstruction_from_store() -> Result<()> {
     // When using Edit intent, the source automatically becomes the parent ingredient
     level2_output.rewind()?;
     let mut level3_output = Cursor::new(Vec::new());
-    let mut builder = Builder::from_json("{}")?;
+    let mut builder = Builder::new();
     builder.set_intent(BuilderIntent::Edit);
     builder.sign(
         &Settings::signer()?,
@@ -121,7 +121,7 @@ fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
 
     // Create a 3-level ingredient hierarchy
     let mut level1_output = Cursor::new(Vec::new());
-    let mut builder = Builder::from_json("{}")?;
+    let mut builder = Builder::new();
     builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     builder.sign(
         &Settings::signer()?,
@@ -133,7 +133,7 @@ fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
     base_image.rewind()?;
     level1_output.rewind()?;
     let mut level2_output = Cursor::new(Vec::new());
-    let mut builder = Builder::from_json("{}")?;
+    let mut builder = Builder::new();
     builder.set_intent(BuilderIntent::Edit);
     builder.add_ingredient_from_stream(
         serde_json::json!({"title": "L1"}).to_string(),
@@ -150,7 +150,7 @@ fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
     base_image.rewind()?;
     level2_output.rewind()?;
     let mut level3_output = Cursor::new(Vec::new());
-    let mut builder = Builder::from_json("{}")?;
+    let mut builder = Builder::new();
     builder.set_intent(BuilderIntent::Edit);
     builder.add_ingredient_from_stream(
         serde_json::json!({"title": "L2"}).to_string(),
@@ -218,7 +218,7 @@ fn test_ingredient_manifest_data_includes_nested_ingredients() -> Result<()> {
 
     // Create a 2-level hierarchy
     let mut level1_output = Cursor::new(Vec::new());
-    let mut builder = Builder::from_json("{}")?;
+    let mut builder = Builder::new();
     builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     builder.sign(
         &Settings::signer()?,
@@ -230,7 +230,7 @@ fn test_ingredient_manifest_data_includes_nested_ingredients() -> Result<()> {
     base_image.rewind()?;
     level1_output.rewind()?;
     let mut level2_output = Cursor::new(Vec::new());
-    let mut builder = Builder::from_json("{}")?;
+    let mut builder = Builder::new();
     builder.set_intent(BuilderIntent::Edit);
     builder.add_ingredient_from_stream(
         serde_json::json!({"title": "Test ingredient"}).to_string(),
@@ -281,7 +281,7 @@ fn test_deeply_nested_ingredients() -> Result<()> {
 
     // Create a deeper ingredient hierarchy (5 levels)
     let mut current_output = Cursor::new(Vec::new());
-    let mut builder = Builder::from_json("{}")?;
+    let mut builder = Builder::new();
     builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     builder.sign(
         &Settings::signer()?,
@@ -295,7 +295,7 @@ fn test_deeply_nested_ingredients() -> Result<()> {
         base_image.rewind()?;
         current_output.rewind()?;
         let mut next_output = Cursor::new(Vec::new());
-        let mut builder = Builder::from_json("{}")?;
+        let mut builder = Builder::new();
         builder.set_intent(BuilderIntent::Edit);
         builder.add_ingredient_from_stream(
             serde_json::json!({"title": format!("Level {}", level)}).to_string(),
@@ -359,7 +359,7 @@ fn test_ingredient_without_nested_ingredients() -> Result<()> {
 
     // Create a 2-level hierarchy (level 1 has no ingredients)
     let mut level1_output = Cursor::new(Vec::new());
-    let mut builder = Builder::from_json("{}")?;
+    let mut builder = Builder::new();
     builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     builder.sign(
         &Settings::signer()?,
@@ -371,7 +371,7 @@ fn test_ingredient_without_nested_ingredients() -> Result<()> {
     base_image.rewind()?;
     level1_output.rewind()?;
     let mut level2_output = Cursor::new(Vec::new());
-    let mut builder = Builder::from_json("{}")?;
+    let mut builder = Builder::new();
     builder.set_intent(BuilderIntent::Edit);
     builder.add_ingredient_from_stream(
         serde_json::json!({"title": "Simple ingredient"}).to_string(),

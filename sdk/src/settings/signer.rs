@@ -74,7 +74,8 @@ impl SignerSettings {
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
     pub fn signer() -> Result<BoxedSigner> {
-        let signer_info = match Settings::get_global_value::<Option<SignerSettings>>("signer") {
+        let signer_info = match Settings::get_thread_local_value::<Option<SignerSettings>>("signer")
+        {
             Ok(Some(signer_info)) => signer_info,
             #[cfg(test)]
             _ => {
@@ -90,7 +91,7 @@ impl SignerSettings {
 
         // TO DISCUSS: What if get_value returns an Err(...)?
         if let Ok(Some(cawg_x509_settings)) =
-            Settings::get_global_value::<Option<SignerSettings>>("cawg_x509_signer")
+            Settings::get_thread_local_value::<Option<SignerSettings>>("cawg_x509_signer")
         {
             cawg_x509_settings.cawg_signer(c2pa_signer)
         } else {

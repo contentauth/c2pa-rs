@@ -474,7 +474,7 @@ impl Settings {
 
     /// Update this `Settings` instance from a string representation.
     /// This overlays the provided configuration on top of the current settings
-    /// without affecting the global thread-local settings.
+    /// without affecting the thread-local settings.
     ///
     /// # Arguments
     /// * `settings_str` - The configuration string
@@ -550,7 +550,7 @@ impl Settings {
     /// For example "core.hash_alg" would set settings.core.hash_alg value. The nesting can be arbitrarily
     /// deep based on the [Settings] definition.
     #[allow(unused)]
-    pub(crate) fn set_global_value<T: Into<config::Value>>(
+    pub(crate) fn set_thread_local_value<T: Into<config::Value>>(
         value_path: &str,
         value: T,
     ) -> Result<()> {
@@ -580,14 +580,14 @@ impl Settings {
         }
     }
 
-    /// Get a [Settings] value by path reference from the global thread-local settings.
+    /// Get a [Settings] value by path reference from the thread-local settings.
     /// The path is nested names of of the [Settings] objects
     /// separated by "." notation.
     ///
     /// For example "core.hash_alg" would get the settings.core.hash_alg value. The nesting can be arbitrarily
     /// deep based on the [Settings] definition.
     #[allow(unused)]
-    fn get_global_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
+    fn get_thread_local_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
         SETTINGS.with_borrow(|current_settings| {
             let update_config = Config::builder()
                 .add_source(current_settings.clone())
@@ -615,7 +615,7 @@ impl Settings {
     ///
     /// This is the starting point for the builder pattern. Use with `.with_json()`,
     /// `.with_toml()`, or `.with_value()` to configure settings without touching
-    /// global state.
+    /// thread local state.
     ///
     /// # Examples
     ///
@@ -634,7 +634,7 @@ impl Settings {
 
     /// Load settings from JSON string using the builder pattern.
     ///
-    /// This does NOT update global settings. It overlays the JSON configuration
+    /// This does NOT update thread local settings. It overlays the JSON configuration
     /// on top of the current Settings instance.
     ///
     /// # Arguments
@@ -656,9 +656,9 @@ impl Settings {
 
     /// Load settings from TOML string using the builder pattern.
     ///
-    /// This does NOT update global settings. It overlays the TOML configuration
+    /// This does NOT update thread local settings. It overlays the TOML configuration
     /// on top of the current Settings instance. For the legacy behavior that
-    /// updates globals, use `Settings::from_toml()`.
+    /// updates thread locals, use `Settings::from_toml()`.
     ///
     /// # Arguments
     ///
@@ -685,7 +685,7 @@ impl Settings {
     /// Load settings from a file using the builder pattern.
     ///
     /// The file format (JSON or TOML) is inferred from the file extension.
-    /// This does NOT update global settings.
+    /// This does NOT update thread local settings.
     ///
     /// # Arguments
     ///
@@ -717,7 +717,7 @@ impl Settings {
     /// Load settings from string representation (builder pattern helper).
     ///
     /// This overlays the parsed configuration on top of the current Settings
-    /// instance without touching global state.
+    /// instance without touching thread local state.
     fn with_string(self, settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
@@ -746,15 +746,15 @@ impl Settings {
         Ok(settings)
     }
 
-    /// Serializes the global [Settings] into a toml string.
+    /// Serializes the thread local [Settings] into a toml string.
     pub fn to_toml() -> Result<String> {
-        let settings = get_global_settings();
+        let settings = get_thread_local_settings();
         Ok(toml::to_string(&settings)?)
     }
 
-    /// Serializes the global [Settings] into a pretty (formatted) toml string.
+    /// Serializes the thread local [Settings] into a pretty (formatted) toml string.
     pub fn to_pretty_toml() -> Result<String> {
-        let settings = get_global_settings();
+        let settings = get_thread_local_settings();
         Ok(toml::to_string_pretty(&settings)?)
     }
 
@@ -936,10 +936,10 @@ impl SettingsValidate for Settings {
     }
 }
 
-/// Get a snapshot of the global Settings, always returns a valid Settings object.
-/// If the global settings cannot be deserialized, returns default Settings.
+/// Get a snapshot of the thread local Settings, always returns a valid Settings object.
+/// If the thread local settings cannot be deserialized, returns default Settings.
 #[allow(unused)]
-pub(crate) fn get_global_settings() -> Settings {
+pub(crate) fn get_thread_local_settings() -> Settings {
     SETTINGS.with_borrow(|config| {
         config
             .clone()
@@ -950,16 +950,16 @@ pub(crate) fn get_global_settings() -> Settings {
 
 // Save the current configuration to a json file.
 
-/// See [Settings::set_global_value] for more information.
+/// See [Settings::set_thread_local_value] for more information.
 #[cfg(test)]
 pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value: T) -> Result<()> {
-    Settings::set_global_value(value_path, value)
+    Settings::set_thread_local_value(value_path, value)
 }
 
-/// See [Settings::get_global_value] for more information.
+/// See [Settings::get_thread_local_value] for more information.
 #[cfg(test)]
 fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
-    Settings::get_global_value(value_path)
+    Settings::get_thread_local_value(value_path)
 }
 
 /// Reset all settings back to default values.
@@ -981,7 +981,7 @@ pub mod tests {
 
     #[cfg(feature = "file_io")]
     fn save_settings_as_json<P: AsRef<Path>>(settings_path: P) -> Result<()> {
-        let settings = get_global_settings();
+        let settings = get_thread_local_settings();
 
         let settings_json = serde_json::to_string_pretty(&settings).map_err(Error::JsonError)?;
 
@@ -990,7 +990,7 @@ pub mod tests {
 
     #[test]
     fn test_get_defaults() {
-        let settings = get_global_settings();
+        let settings = get_thread_local_settings();
 
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
@@ -1060,10 +1060,10 @@ pub mod tests {
         let ts = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
 
         // test updating values
-        Settings::set_global_value("core.merkle_tree_chunk_size_in_kb", 10).unwrap();
-        Settings::set_global_value("verify.remote_manifest_fetch", false).unwrap();
-        Settings::set_global_value("builder.thumbnail.enabled", false).unwrap();
-        Settings::set_global_value(
+        Settings::set_thread_local_value("core.merkle_tree_chunk_size_in_kb", 10).unwrap();
+        Settings::set_thread_local_value("verify.remote_manifest_fetch", false).unwrap();
+        Settings::set_thread_local_value("builder.thumbnail.enabled", false).unwrap();
+        Settings::set_thread_local_value(
             "trust.user_anchors",
             Some(String::from_utf8(ts.to_vec()).unwrap()),
         )
@@ -1104,7 +1104,7 @@ pub mod tests {
         save_settings_as_json(&op).unwrap();
 
         Settings::from_file(&op).unwrap();
-        let settings = get_global_settings();
+        let settings = get_thread_local_settings();
 
         assert_eq!(settings, Settings::default());
 
@@ -1126,7 +1126,7 @@ pub mod tests {
             Settings::from_string(settings_str, "json").map(|_| ())
         }
         .unwrap();
-        let settings = get_global_settings();
+        let settings = get_thread_local_settings();
 
         assert_eq!(settings, Settings::default());
 
@@ -1525,16 +1525,16 @@ pub mod tests {
         assert!(!settings.verify.verify_trust);
         assert!(!settings.verify.verify_after_sign);
 
-        // Test that it doesn't update globals
-        let original_global = get_global_settings();
+        // Test that it doesn't update thread locals
+        let original = get_thread_local_settings();
         let _settings = Settings::new()
             .with_json(r#"{"verify": {"verify_trust": false}}"#)
             .unwrap();
-        let after_global = get_global_settings();
-        // Global settings should be unchanged
+        let after = get_thread_local_settings();
+        // thread local settings should be unchanged
         assert_eq!(
-            original_global.verify.verify_trust, after_global.verify.verify_trust,
-            "Builder pattern should not modify global settings"
+            original.verify.verify_trust, after.verify.verify_trust,
+            "Builder pattern should not modify thread_local settings"
         );
     }
 }

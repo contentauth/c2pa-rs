@@ -157,15 +157,15 @@ fn test_builder_cyclic_ingredient() -> Result<()> {
 
     cyclic_ingredient.rewind()?;
 
-    // Read the manifest without validating so we can test with post-validating the CAWG.
-    let no_verify_settings = Settings::new().with_value("verify.verify_after_reading", false)?;
-    let no_verify_context = Context::new()
-        .with_settings(no_verify_settings)?
-        .into_shared();
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // Read the manifest without validating so we can test with post-validating the CAWG.
+        let no_verify_settings =
+            Settings::new().with_value("verify.verify_after_reading", false)?;
+        let no_verify_context = Context::new().with_settings(no_verify_settings)?;
+
         let mut reader = Reader::new()
-            .with_shared_context(&no_verify_context)
+            .with_context(no_verify_context)
             .with_stream(format, cyclic_ingredient)?;
         // Ideally we'd use a sync path for this. There are limitations for tokio on WASM.
         tokio::runtime::Runtime::new()?.block_on(reader.post_validate_async(&CawgValidator {}))?;

@@ -27,16 +27,16 @@ fn main() -> Result<()> {
 The Context API:
 - Is thread-safe and can be shared with `Arc<Context>`
 - Allows multiple configurations in one application
-- Makes dependencies explicit (no hidden global state)
+- Makes dependencies explicit (no hidden thread-local state)
 - Automatically creates signers from settings when needed
 
-**For backwards compatibility**, you can still use global Settings (not recommended for new code):
+**For backwards compatibility**, you can still use thread-local Settings (not recommended for new code):
 
 ```rust
 use c2pa::Settings;
 
 Settings::from_string(include_str!("settings.json"), "json")?;
-// Operations will use global settings
+// Operations will use thread-local settings (one per thread)
 ```
 
 See [Using Context for configuration](usage.md#using-context-for-configuration) for more details.
@@ -79,7 +79,7 @@ let context = Context::new()
     .with_settings(include_str!("settings.json"))?;
 ```
 
-**Legacy approach** using global Settings (not recommended):
+**Legacy approach** using thread-local Settings (not recommended):
 
 ```rust
 use c2pa::Settings;

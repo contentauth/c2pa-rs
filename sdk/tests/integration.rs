@@ -398,7 +398,7 @@ mod integration_1 {
             let parent_path = fixture_path("ocsp.jpg");
 
             // create a new Manifest
-            let mut builder = Builder::from_json("{}")?;
+            let mut builder = Builder::new()?;
             builder.set_intent(c2pa::BuilderIntent::Update);
 
             // sign and embed into the target file

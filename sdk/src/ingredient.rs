@@ -732,7 +732,7 @@ impl Ingredient {
         options: &dyn IngredientOptions,
     ) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_global_settings();
+        let settings = crate::settings::get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
         Self::from_file_impl(path.as_ref(), options, &context)
     }
@@ -831,7 +831,7 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_global_settings();
+        let settings = crate::settings::get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
@@ -986,7 +986,7 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_global_settings();
+        let settings = crate::settings::get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
         Self::from_stream_async_with_settings(format, stream, &context).await
     }
@@ -1445,7 +1445,7 @@ impl Ingredient {
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_global_settings();
+        let settings = crate::settings::get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
