@@ -524,14 +524,14 @@ impl Settings {
 
         // Convert current settings to Config
         let current_config = Config::try_from(&*self)
-            .map_err(|e| Error::BadParam(format!("could not convert settings: {}", e)))?;
+            .map_err(|e| Error::BadParam(format!("could not convert settings: {e}")))?;
 
         // Build new config with the source
         let merged_config = Config::builder()
             .add_source(current_config)
             .add_source(config::File::from_str(settings_str, file_format))
             .build()
-            .map_err(|e| Error::BadParam(format!("could not merge configuration: {}", e)))?;
+            .map_err(|e| Error::BadParam(format!("could not merge configuration: {e}")))?;
 
         // Deserialize and validate
         let updated_settings = merged_config
