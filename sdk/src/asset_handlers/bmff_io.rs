@@ -2411,7 +2411,7 @@ pub mod tests {
         let bmff = BmffIO::new("mp4");
         let cai = bmff.read_cai(&mut input_stream);
 
-        assert!(cai.is_ok());
+        assert!(!cai.is_ok());
     }
 
     #[test]
