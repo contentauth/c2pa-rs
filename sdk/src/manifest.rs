@@ -92,6 +92,7 @@ pub struct Manifest {
 
     /// A List of ingredients
     #[serde(default = "default_vec::<Ingredient>")]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) ingredients: Vec<Ingredient>,
 
     /// A List of verified credentials
@@ -116,6 +117,12 @@ pub struct Manifest {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
+
+    /// The [`CoseSign1::signature`] value.
+    ///
+    /// [`CoseSign1::signature`]: coset::CoseSign1::signature
+    #[serde(skip)]
+    signature: Option<Vec<u8>>,
 
     /// Indicates where a generated manifest goes
     #[serde(skip)]
@@ -233,6 +240,12 @@ impl Manifest {
 
     pub fn signature_info(&self) -> Option<&SignatureInfo> {
         self.signature_info.as_ref()
+    }
+
+    /// Returns the signature field of the `COSE_Sign1_Tagged` structure found in the
+    /// claim signature box.
+    pub fn signature(&self) -> Option<&[u8]> {
+        self.signature.as_deref()
     }
 
     /// Returns the parent ingredient if it exists.
@@ -367,6 +380,10 @@ impl Manifest {
             format: claim.format().map(|s| s.to_owned()),
             instance_id: claim.instance_id().to_owned(),
             label: Some(claim.label().to_owned()),
+            signature: claim
+                .cose_sign1()
+                .ok()
+                .map(|cose_sign1| cose_sign1.signature),
             ..Default::default()
         };
 

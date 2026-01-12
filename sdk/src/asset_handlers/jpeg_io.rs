@@ -191,8 +191,17 @@ impl CAIReader for JpegIO {
         asset_reader.rewind()?;
         asset_reader.read_to_end(&mut buf).map_err(Error::IoError)?;
 
-        let dimg_opt = DynImage::from_bytes(buf.into())
-            .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
+        let dimg_opt = DynImage::from_bytes(buf.into()).map_err(|err| match err {
+            img_parts::Error::WrongSignature => JpegError::InvalidFileSignature {
+                reason: format!(
+                    "it may be because the stream does not start with \"{} {}\"",
+                    markers::P,
+                    markers::SOI
+                ),
+            }
+            .into(),
+            _ => Error::InvalidAsset("Could not parse input JPEG".to_owned()),
+        })?;
 
         if let Some(dimg) = dimg_opt {
             match dimg {
@@ -1151,6 +1160,12 @@ impl ComposedManifestRef for JpegIO {
 
         Ok(out_stream.into_inner())
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum JpegError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]

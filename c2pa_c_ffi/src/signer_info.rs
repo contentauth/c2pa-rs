@@ -10,7 +10,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::{create_signer, Signer, SigningAlg};
+use c2pa::{create_signer, BoxedSigner, SigningAlg};
 use serde::Deserialize;
 
 use crate::{Error, Result};
@@ -44,7 +44,7 @@ impl SignerInfo {
     }
 
     /// Create a signer from the SignerInfo
-    pub fn signer(&self) -> Result<Box<dyn Signer>> {
+    pub fn signer(&self) -> Result<BoxedSigner> {
         create_signer::from_keys(
             &self.sign_cert,
             &self.private_key,

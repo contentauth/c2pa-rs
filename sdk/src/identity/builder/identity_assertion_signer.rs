@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::cell::RefCell;
+use std::sync::RwLock;
 
 use crate::{
     crypto::raw_signature::{RawSigner, SigningAlg},
@@ -26,17 +26,17 @@ use crate::{
 /// [`Signer`]: crate::Signer
 /// [`Manifest`]: crate::Manifest
 pub struct IdentityAssertionSigner {
-    signer: Box<dyn RawSigner>,
-    identity_assertions: RefCell<Vec<IdentityAssertionBuilder>>,
+    signer: Box<dyn RawSigner + Send + Sync>,
+    identity_assertions: RwLock<Vec<IdentityAssertionBuilder>>,
 }
 
 impl IdentityAssertionSigner {
     /// Create an `IdentityAssertionSigner` wrapping the provided [`RawSigner`]
     /// instance.
-    pub fn new(signer: Box<dyn RawSigner>) -> Self {
+    pub fn new(signer: Box<dyn RawSigner + Send + Sync>) -> Self {
         Self {
             signer,
-            identity_assertions: RefCell::new(vec![]),
+            identity_assertions: RwLock::new(vec![]),
         }
     }
 
@@ -55,7 +55,7 @@ impl IdentityAssertionSigner {
         Self {
             signer: signer_from_cert_chain_and_private_key(&cert_chain, &private_key, alg, None)
                 .unwrap(),
-            identity_assertions: RefCell::new(vec![]),
+            identity_assertions: RwLock::new(vec![]),
         }
     }
 
@@ -69,7 +69,7 @@ impl IdentityAssertionSigner {
     /// [`sign()`]: Self::sign
     pub fn add_identity_assertion(&mut self, iab: IdentityAssertionBuilder) {
         #[allow(clippy::unwrap_used)]
-        let mut identity_assertions = self.identity_assertions.try_borrow_mut().unwrap();
+        let mut identity_assertions = self.identity_assertions.write().unwrap();
         // TO DO: Replace with error handling in the very unlikely case of a panic here.
 
         identity_assertions.push(iab);
@@ -123,7 +123,7 @@ impl Signer for IdentityAssertionSigner {
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         #[allow(clippy::unwrap_used)]
-        let mut identity_assertions = self.identity_assertions.try_borrow_mut().unwrap();
+        let mut identity_assertions = self.identity_assertions.write().unwrap();
         // TO DO: Replace with error handling in the very unlikely case of a panic here.
 
         let ia_clone = identity_assertions.split_off(0);

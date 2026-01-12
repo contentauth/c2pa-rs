@@ -44,6 +44,8 @@ pub struct BmffIO {
     bmff_format: String, // can be used for specialized BMFF cases
 }
 
+const MAX_BOX_DEPTH: usize = 32; // reasonable BMFF box depth, to prevent stack overflow
+
 const HEADER_SIZE: u64 = 8; // 4 byte type + 4 byte size
 const HEADER_SIZE_LARGE: u64 = 16; // 4 byte type + 4 byte size + 8 byte large size
 
@@ -496,7 +498,15 @@ where
     let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
     // build layout of the BMFF structure
-    build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+    let mut rl = 0usize;
+    build_bmff_tree(
+        reader,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+    )?;
 
     // get top level box offsets
     let mut tl_offsets = get_top_level_box_offsets(&bmff_tree, &bmff_map);
@@ -1178,9 +1188,16 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     bmff_tree: &mut Arena<BoxInfo>,
     current_node: &Token,
     bmff_path_map: &mut HashMap<String, Vec<Token>>,
+    recursion_level: &mut usize,
 ) -> Result<()> {
-    let start = reader.stream_position()?;
+    *recursion_level += 1;
+    if *recursion_level > MAX_BOX_DEPTH {
+        return Err(Error::InvalidAsset(
+            "Boxes are too deply nested, unsupported asset".to_string(),
+        ));
+    }
 
+    let start = reader.stream_position()?;
     let mut current = start;
     while current < end {
         // Get box header.
@@ -1278,7 +1295,14 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                 let mut current = reader.stream_position()?;
                 let end = start + s;
                 while current < end {
-                    build_bmff_tree(reader, end, bmff_tree, &new_token, bmff_path_map)?;
+                    build_bmff_tree(
+                        reader,
+                        end,
+                        bmff_tree,
+                        &new_token,
+                        bmff_path_map,
+                        recursion_level,
+                    )?;
                     current = reader.stream_position()?;
                 }
 
@@ -1325,14 +1349,55 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
         current = reader.stream_position()?;
     }
 
+    *recursion_level -= 1;
+
     Ok(())
 }
 
+fn get_uuid_box_purpose<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+    box_info: &atree::Node<BoxInfo>,
+) -> Result<(String, u64)> {
+    if box_info.data.box_type == BoxType::UuidBox {
+        let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
+
+        // set reader to start of box contents
+        skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
+
+        // Fullbox => 8 bits for version 24 bits for flags
+        let (_version, _flags) = read_box_header_ext(reader)?;
+        data_len -= 4;
+
+        // get the purpose
+        let mut purpose_bytes = Vec::with_capacity(64);
+        loop {
+            let mut buf = [0; 1];
+            reader.read_exact(&mut buf)?;
+            data_len -= 1;
+            if buf[0] == 0x00 {
+                break;
+            } else {
+                purpose_bytes.push(buf[0]);
+            }
+        }
+
+        let purpose = String::from_utf8_lossy(&purpose_bytes);
+
+        return Ok((purpose.to_string(), data_len));
+    }
+
+    Err(Error::C2PAValidation(
+        "C2PA UUID box does not contain a purpose".to_string(),
+    ))
+}
+
 fn get_uuid_token(
+    reader: &mut dyn CAIRead,
     bmff_tree: &Arena<BoxInfo>,
     bmff_map: &HashMap<String, Vec<Token>>,
     uuid: &[u8; 16],
-) -> Option<Token> {
+    purpose: Option<&[&str]>,
+) -> Result<Token> {
     if let Some(uuid_list) = bmff_map.get("/uuid") {
         for uuid_token in uuid_list {
             let box_info = &bmff_tree[*uuid_token];
@@ -1342,13 +1407,27 @@ fn get_uuid_token(
                 if let Some(found_uuid) = &box_info.data.user_type {
                     // make sure uuids match
                     if vec_compare(uuid, found_uuid) {
-                        return Some(*uuid_token);
+                        // if C2PA_UUID also check against purpose if present
+                        if vec_compare(&C2PA_UUID, uuid) {
+                            let (box_purpose, _) = get_uuid_box_purpose(reader, box_info)?;
+
+                            // if there is a purpose, match it
+                            if let Some(target_purposes) = purpose {
+                                for target_purpose in target_purposes {
+                                    if box_purpose == *target_purpose {
+                                        return Ok(*uuid_token);
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+                        return Ok(*uuid_token);
                     }
                 }
             }
         }
     }
-    None
+    Err(Error::NotFound)
 }
 
 #[allow(dead_code)]
@@ -1397,33 +1476,10 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                 if let Some(uuid) = &box_info.data.user_type {
                     // make sure it is a C2PA ContentProvenanceBox box
                     if vec_compare(&C2PA_UUID, uuid) {
-                        let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
-
-                        // set reader to start of box contents
-                        skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
-
-                        // Fullbox => 8 bits for version 24 bits for flags
-                        let (_version, _flags) = read_box_header_ext(reader)?;
-                        data_len -= 4;
-
-                        // get the purpose
-                        let mut purpose = Vec::with_capacity(64);
-                        loop {
-                            let mut buf = [0; 1];
-                            reader.read_exact(&mut buf)?;
-                            data_len -= 1;
-                            if buf[0] == 0x00 {
-                                break;
-                            } else {
-                                purpose.push(buf[0]);
-                            }
-                        }
+                        let (purpose, mut data_len) = get_uuid_box_purpose(reader, box_info)?;
 
                         // is the purpose manifest?
-                        if vec_compare(&purpose, MANIFEST.as_bytes())
-                            || vec_compare(&purpose, ORIGINAL.as_bytes())
-                            || vec_compare(&purpose, UPDATE.as_bytes())
-                        {
+                        if purpose == MANIFEST || purpose == ORIGINAL || purpose == UPDATE {
                             // offset to first aux uuid with purpose merkle
                             let mut buf = [0u8; 8];
                             reader.read_exact(&mut buf)?;
@@ -1436,21 +1492,21 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             skip_bytes_to(reader, box_info.data.offset)?;
                             let box_bytes = Some(reader.read_to_vec(box_info.data.size)?);
 
-                            if purpose == MANIFEST.as_bytes() {
+                            if purpose == MANIFEST {
                                 manifest_bytes = Some(manifest);
                                 manifest_box_offset = Some(box_info.data.offset);
                                 manifest_box_bytes = box_bytes;
                                 manifest_store_cnt += 1;
                                 // offset to first aux uuid
                                 first_aux_uuid_offset = u64::from_be_bytes(buf);
-                            } else if purpose == ORIGINAL.as_bytes() {
+                            } else if purpose == ORIGINAL {
                                 original_bytes = Some(manifest);
                                 manifest_box_offset = Some(box_info.data.offset);
                                 manifest_box_bytes = box_bytes;
                                 manifest_store_cnt += 1;
                                 // offset to first aux uuid
                                 first_aux_uuid_offset = u64::from_be_bytes(buf);
-                            } else if purpose == UPDATE.as_bytes() {
+                            } else if purpose == UPDATE {
                                 update_bytes = Some(manifest);
                                 update_box_offset = Some(box_info.data.offset);
                                 update_box_bytes = box_bytes;
@@ -1460,7 +1516,7 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             if manifest_store_cnt > 1 || update_store_cnt > 1 {
                                 return Err(Error::TooManyManifestStores);
                             }
-                        } else if vec_compare(&purpose, MERKLE.as_bytes()) {
+                        } else if purpose == MERKLE {
                             let merkle = reader.read_to_vec(data_len)?;
 
                             // use this method since it will strip trailing zeros padding if there
@@ -1531,12 +1587,35 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
     let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
     // build layout of the BMFF structure
-    build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+    let mut rl = 0usize;
+    build_bmff_tree(
+        reader,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+    )?;
     c2pa_boxes_from_tree_and_map(reader, &bmff_tree, &bmff_map)
 }
 
 impl CAIReader for BmffIO {
     fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        reader.seek(SeekFrom::Start(4))?;
+
+        let mut header = [0u8; 4];
+        reader.read_exact(&mut header)?;
+
+        if header[..4] != *b"ftyp" {
+            return Err(BmffError::InvalidFileSignature {
+                reason: format!(
+                    "invalid BMFF structure: expected box type \"ftyp\" at offset 4, found {}",
+                    String::from_utf8_lossy(&header[..4])
+                ),
+            }
+            .into());
+        }
+
         let c2pa_boxes = read_bmff_c2pa_boxes(reader)?;
 
         // is this an update manifest?
@@ -1668,12 +1747,14 @@ impl CAIWriter for BmffIO {
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         // build layout of the BMFF structure
+        let mut rl = 0usize;
         build_bmff_tree(
             input_stream,
             size,
             &mut bmff_tree,
             &root_token,
             &mut bmff_map,
+            &mut rl,
         )?;
 
         // figure out what state we are in
@@ -1796,15 +1877,22 @@ impl CAIWriter for BmffIO {
         let ftyp_offset = ftyp_info.offset;
         let ftyp_size = ftyp_info.size;
 
-        // get position to insert c2pa
-        let (c2pa_start, c2pa_length) =
-            if let Some(c2pa_token) = get_uuid_token(&bmff_tree, &bmff_map, &C2PA_UUID) {
+        // get position to insert c2pa primary manifest store
+        let (c2pa_start, c2pa_length) = match get_uuid_token(
+            input_stream,
+            &bmff_tree,
+            &bmff_map,
+            &C2PA_UUID,
+            Some(&[MANIFEST, ORIGINAL]),
+        ) {
+            Ok(c2pa_token) => {
                 let uuid_info = &bmff_tree[c2pa_token].data;
 
                 (uuid_info.offset, Some(uuid_info.size))
-            } else {
-                ((ftyp_offset + ftyp_size), None)
-            };
+            }
+            Err(Error::NotFound) => ((ftyp_offset + ftyp_size), None),
+            Err(e) => return Err(e),
+        };
 
         let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
         let merkle_data: &[u8] = &[]; // not yet supported
@@ -1880,12 +1968,14 @@ impl CAIWriter for BmffIO {
 
             let size = stream_len(output_stream)?;
             output_stream.rewind()?;
+            let mut rl = 0usize;
             build_bmff_tree(
                 output_stream,
                 size,
                 &mut output_bmff_tree,
                 &root_token,
                 &mut output_bmff_map,
+                &mut rl,
             )?;
 
             // adjust offsets based on current layout
@@ -1933,24 +2023,30 @@ impl CAIWriter for BmffIO {
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         // build layout of the BMFF structure
+        let mut rl = 0usize;
         build_bmff_tree(
             input_stream,
             size,
             &mut bmff_tree,
             &root_token,
             &mut bmff_map,
+            &mut rl,
         )?;
 
         // get position of c2pa manifest
         let (c2pa_start, c2pa_length) =
-            if let Some(c2pa_token) = get_uuid_token(&bmff_tree, &bmff_map, &C2PA_UUID) {
-                let uuid_info = &bmff_tree[c2pa_token].data;
+            match get_uuid_token(input_stream, &bmff_tree, &bmff_map, &C2PA_UUID, None) {
+                Ok(c2pa_token) => {
+                    let uuid_info = &bmff_tree[c2pa_token].data;
 
-                (uuid_info.offset, Some(uuid_info.size))
-            } else {
-                input_stream.rewind()?;
-                std::io::copy(input_stream, output_stream)?;
-                return Ok(()); // no box to remove, propagate source to output
+                    (uuid_info.offset, Some(uuid_info.size))
+                }
+                Err(Error::NotFound) => {
+                    input_stream.rewind()?;
+                    std::io::copy(input_stream, output_stream)?;
+                    return Ok(()); // no box to remove, propagate source to output
+                }
+                Err(e) => return Err(e),
             };
 
         let (start, end) = if let Some(c2pa_length) = c2pa_length {
@@ -2000,12 +2096,14 @@ impl CAIWriter for BmffIO {
 
         let size = stream_len(output_stream)?;
         output_stream.rewind()?;
+        let mut rl = 0usize;
         build_bmff_tree(
             output_stream,
             size,
             &mut output_bmff_tree,
             &root_token,
             &mut output_bmff_map,
+            &mut rl,
         )?;
 
         // adjust offsets based on current layout
@@ -2045,7 +2143,15 @@ impl AssetPatch for BmffIO {
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         // build layout of the BMFF structure
-        build_bmff_tree(&mut asset, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+        let mut rl = 0usize;
+        build_bmff_tree(
+            &mut asset,
+            size,
+            &mut bmff_tree,
+            &root_token,
+            &mut bmff_map,
+            &mut rl,
+        )?;
 
         // get position to insert c2pa
         let (c2pa_start, c2pa_length) = if let Some(uuid_tokens) = bmff_map.get("/uuid") {
@@ -2160,12 +2266,14 @@ impl RemoteRefEmbed for BmffIO {
                 let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
                 // build layout of the BMFF structure
+                let mut rl = 0usize;
                 build_bmff_tree(
                     input_stream,
                     size,
                     &mut bmff_tree,
                     &root_token,
                     &mut bmff_map,
+                    &mut rl,
                 )?;
 
                 // get ftyp location
@@ -2177,12 +2285,14 @@ impl RemoteRefEmbed for BmffIO {
 
                 // get position to insert xmp
                 let (xmp_start, xmp_length) =
-                    if let Some(c2pa_token) = get_uuid_token(&bmff_tree, &bmff_map, &XMP_UUID) {
-                        let uuid_info = &bmff_tree[c2pa_token].data;
+                    match get_uuid_token(input_stream, &bmff_tree, &bmff_map, &XMP_UUID, None) {
+                        Ok(c2pa_token) => {
+                            let uuid_info = &bmff_tree[c2pa_token].data;
 
-                        (uuid_info.offset, Some(uuid_info.size))
-                    } else {
-                        ((ftyp_offset + ftyp_size), None)
+                            (uuid_info.offset, Some(uuid_info.size))
+                        }
+                        Err(Error::NotFound) => ((ftyp_offset + ftyp_size), None),
+                        Err(e) => return Err(e),
                     };
 
                 let mut new_xmp_box: Vec<u8> = Vec::with_capacity(xmp.len() * 2);
@@ -2247,12 +2357,14 @@ impl RemoteRefEmbed for BmffIO {
 
                 let size = stream_len(output_stream)?;
                 output_stream.rewind()?;
+                let mut rl = 0usize;
                 build_bmff_tree(
                     output_stream,
                     size,
                     &mut output_bmff_tree,
                     &root_token,
                     &mut output_bmff_map,
+                    &mut rl,
                 )?;
 
                 // adjust offsets based on current layout
@@ -2271,6 +2383,12 @@ impl RemoteRefEmbed for BmffIO {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum BmffError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -2282,6 +2400,19 @@ pub mod tests {
         io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
+
+    #[test]
+    fn test_read_deep_nesting() {
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
+        let ap = fixture_path("nested_moov_1000.mp4");
+        let mut input_stream = std::fs::File::open(&ap).unwrap();
+
+        let bmff = BmffIO::new("mp4");
+        let cai = bmff.read_cai(&mut input_stream);
+
+        assert!(cai.is_err());
+    }
 
     #[test]
     fn test_read_mp4() {
