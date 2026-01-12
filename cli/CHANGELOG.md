@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.10](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.9...c2patool-v0.26.10)
+_07 January 2026_
+
+## [0.26.9](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.8...c2patool-v0.26.9)
+_22 December 2025_
+
+## [0.26.8](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.7...c2patool-v0.26.8)
+_19 December 2025_
+
+## [0.26.7](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.6...c2patool-v0.26.7)
+_04 December 2025_
+
+## [0.26.6](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.5...c2patool-v0.26.6)
+_04 December 2025_
+
+### Added
+
+* Support JSON settings in `c2patool` ([#1635](https://github.com/contentauth/c2pa-rs/pull/1635))
+
+### Documented
+
+* Add doc for CLI settings, misc copy edits ([#1636](https://github.com/contentauth/c2pa-rs/pull/1636))
+
 ## [0.26.5](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.4...c2patool-v0.26.5)
 _17 November 2025_
 

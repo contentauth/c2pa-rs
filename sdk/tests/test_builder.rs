@@ -13,9 +13,11 @@
 
 use std::io::{self, Cursor, Seek};
 
+#[cfg(not(target_arch = "wasm32"))]
+use c2pa::identity::validator::CawgValidator;
 use c2pa::{
-    identity::validator::CawgValidator, settings::Settings, validation_status, Builder,
-    BuilderIntent, Error, ManifestAssertionKind, Reader, Result, ValidationState,
+    settings::Settings, validation_status, Builder, BuilderIntent, Error, ManifestAssertionKind,
+    Reader, Result, ValidationState,
 };
 
 mod common;
@@ -159,10 +161,12 @@ fn test_builder_cyclic_ingredient() -> Result<()> {
         }
         .to_string(),
     )?;
-    let mut reader = Reader::from_stream(format, cyclic_ingredient)?;
-    // Ideally we'd use a sync path for this. There are limitations for tokio on WASM.
     #[cfg(not(target_arch = "wasm32"))]
-    tokio::runtime::Runtime::new()?.block_on(reader.post_validate_async(&CawgValidator {}))?;
+    {
+        let mut reader = Reader::from_stream(format, cyclic_ingredient)?;
+        // Ideally we'd use a sync path for this. There are limitations for tokio on WASM.
+        tokio::runtime::Runtime::new()?.block_on(reader.post_validate_async(&CawgValidator {}))?;
+    }
 
     Ok(())
 }

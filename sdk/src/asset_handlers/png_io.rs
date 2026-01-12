@@ -71,10 +71,12 @@ fn get_png_chunk_positions<R: Read + Seek + ?Sized>(f: &mut R) -> Result<Vec<Png
     let mut hdr = [0; 8];
 
     // check PNG signature
-    f.read_exact(&mut hdr)
-        .map_err(|_err| Error::InvalidAsset("PNG invalid".to_string()))?;
+    f.read_exact(&mut hdr)?;
     if hdr != PNG_ID {
-        return Err(Error::InvalidAsset("PNG invalid".to_string()));
+        return Err(PngError::InvalidFileSignature {
+            reason: format!("invalid header: expected {PNG_ID:02X?}, got {hdr:02X?}"),
+        }
+        .into());
     }
 
     loop {
@@ -196,6 +198,7 @@ fn read_string(asset_reader: &mut dyn CAIRead, max_read: u32) -> Result<String> 
 
     Ok(String::from_utf8_lossy(&s).to_string())
 }
+
 pub struct PngIO {}
 
 impl CAIReader for PngIO {
@@ -782,6 +785,12 @@ impl ComposedManifestRef for PngIO {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum PngError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
+}
+
 #[cfg(test)]
 #[allow(clippy::panic)]
 #[allow(clippy::unwrap_used)]
@@ -935,7 +944,7 @@ pub mod tests {
         let mut output_stream = Cursor::new(output);
         assert!(matches!(
             png_io.write_cai(&mut stream, &mut output_stream, &[]),
-            Err(Error::InvalidAsset(_),)
+            Err(Error::PngError(PngError::InvalidFileSignature { .. }))
         ));
     }
 
