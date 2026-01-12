@@ -44,6 +44,8 @@ pub struct BmffIO {
     bmff_format: String, // can be used for specialized BMFF cases
 }
 
+const MAX_BOX_DEPTH: usize = 32; // reasonable BMFF box depth, to prevent stack overflow
+
 const HEADER_SIZE: u64 = 8; // 4 byte type + 4 byte size
 const HEADER_SIZE_LARGE: u64 = 16; // 4 byte type + 4 byte size + 8 byte large size
 
@@ -496,7 +498,15 @@ where
     let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
     // build layout of the BMFF structure
-    build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+    let mut rl = 0usize;
+    build_bmff_tree(
+        reader,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+    )?;
 
     // get top level box offsets
     let mut tl_offsets = get_top_level_box_offsets(&bmff_tree, &bmff_map);
@@ -1178,9 +1188,16 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     bmff_tree: &mut Arena<BoxInfo>,
     current_node: &Token,
     bmff_path_map: &mut HashMap<String, Vec<Token>>,
+    recursion_level: &mut usize,
 ) -> Result<()> {
-    let start = reader.stream_position()?;
+    *recursion_level += 1;
+    if *recursion_level > MAX_BOX_DEPTH {
+        return Err(Error::InvalidAsset(
+            "Boxes are too deply nested, unsupported asset".to_string(),
+        ));
+    }
 
+    let start = reader.stream_position()?;
     let mut current = start;
     while current < end {
         // Get box header.
@@ -1278,7 +1295,14 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                 let mut current = reader.stream_position()?;
                 let end = start + s;
                 while current < end {
-                    build_bmff_tree(reader, end, bmff_tree, &new_token, bmff_path_map)?;
+                    build_bmff_tree(
+                        reader,
+                        end,
+                        bmff_tree,
+                        &new_token,
+                        bmff_path_map,
+                        recursion_level,
+                    )?;
                     current = reader.stream_position()?;
                 }
 
@@ -1324,6 +1348,8 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
         }
         current = reader.stream_position()?;
     }
+
+    *recursion_level -= 1;
 
     Ok(())
 }
@@ -1561,7 +1587,15 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
     let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
     // build layout of the BMFF structure
-    build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+    let mut rl = 0usize;
+    build_bmff_tree(
+        reader,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+    )?;
     c2pa_boxes_from_tree_and_map(reader, &bmff_tree, &bmff_map)
 }
 
@@ -1713,12 +1747,14 @@ impl CAIWriter for BmffIO {
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         // build layout of the BMFF structure
+        let mut rl = 0usize;
         build_bmff_tree(
             input_stream,
             size,
             &mut bmff_tree,
             &root_token,
             &mut bmff_map,
+            &mut rl,
         )?;
 
         // figure out what state we are in
@@ -1932,12 +1968,14 @@ impl CAIWriter for BmffIO {
 
             let size = stream_len(output_stream)?;
             output_stream.rewind()?;
+            let mut rl = 0usize;
             build_bmff_tree(
                 output_stream,
                 size,
                 &mut output_bmff_tree,
                 &root_token,
                 &mut output_bmff_map,
+                &mut rl,
             )?;
 
             // adjust offsets based on current layout
@@ -1985,12 +2023,14 @@ impl CAIWriter for BmffIO {
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         // build layout of the BMFF structure
+        let mut rl = 0usize;
         build_bmff_tree(
             input_stream,
             size,
             &mut bmff_tree,
             &root_token,
             &mut bmff_map,
+            &mut rl,
         )?;
 
         // get position of c2pa manifest
@@ -2056,12 +2096,14 @@ impl CAIWriter for BmffIO {
 
         let size = stream_len(output_stream)?;
         output_stream.rewind()?;
+        let mut rl = 0usize;
         build_bmff_tree(
             output_stream,
             size,
             &mut output_bmff_tree,
             &root_token,
             &mut output_bmff_map,
+            &mut rl,
         )?;
 
         // adjust offsets based on current layout
@@ -2101,7 +2143,15 @@ impl AssetPatch for BmffIO {
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         // build layout of the BMFF structure
-        build_bmff_tree(&mut asset, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+        let mut rl = 0usize;
+        build_bmff_tree(
+            &mut asset,
+            size,
+            &mut bmff_tree,
+            &root_token,
+            &mut bmff_map,
+            &mut rl,
+        )?;
 
         // get position to insert c2pa
         let (c2pa_start, c2pa_length) = if let Some(uuid_tokens) = bmff_map.get("/uuid") {
@@ -2216,12 +2266,14 @@ impl RemoteRefEmbed for BmffIO {
                 let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
                 // build layout of the BMFF structure
+                let mut rl = 0usize;
                 build_bmff_tree(
                     input_stream,
                     size,
                     &mut bmff_tree,
                     &root_token,
                     &mut bmff_map,
+                    &mut rl,
                 )?;
 
                 // get ftyp location
@@ -2305,12 +2357,14 @@ impl RemoteRefEmbed for BmffIO {
 
                 let size = stream_len(output_stream)?;
                 output_stream.rewind()?;
+                let mut rl = 0usize;
                 build_bmff_tree(
                     output_stream,
                     size,
                     &mut output_bmff_tree,
                     &root_token,
                     &mut output_bmff_map,
+                    &mut rl,
                 )?;
 
                 // adjust offsets based on current layout
@@ -2346,6 +2400,19 @@ pub mod tests {
         io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
+
+    #[test]
+    fn test_read_deep_nesting() {
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
+        let ap = fixture_path("nested_moov_1000.mp4");
+        let mut input_stream = std::fs::File::open(&ap).unwrap();
+
+        let bmff = BmffIO::new("mp4");
+        let cai = bmff.read_cai(&mut input_stream);
+
+        assert!(!cai.is_err());
+    }
 
     #[test]
     fn test_read_mp4() {
