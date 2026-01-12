@@ -1295,7 +1295,14 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                 let mut current = reader.stream_position()?;
                 let end = start + s;
                 while current < end {
-                    build_bmff_tree(reader, end, bmff_tree, &new_token, bmff_path_map, recursion_level)?;
+                    build_bmff_tree(
+                        reader,
+                        end,
+                        bmff_tree,
+                        &new_token,
+                        bmff_path_map,
+                        recursion_level,
+                    )?;
                     current = reader.stream_position()?;
                 }
 
