@@ -1601,7 +1601,7 @@ impl Builder {
             TimeStamp::new()
         };
 
-        // If `skip_existing` is enabled, only timestamp claims in `claim_uris` that aren't already timestampped.
+        // If `skip_existing` is enabled, only timestamp claims in `claim_uris` that aren't already timestamped.
         if settings.builder.auto_timestamp_assertion.skip_existing {
             for claim in &provenance_claim.claim_ingredients() {
                 // First we check the claim timestamp.

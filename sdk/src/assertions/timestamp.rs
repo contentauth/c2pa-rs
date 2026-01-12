@@ -55,7 +55,7 @@ impl TimeStamp {
         self.0.get(manifest_id).map(|buf| buf.as_ref())
     }
 
-    /// Refresh the timstamp token for a given manifest id.
+    /// Refresh the timestamp token for a given manifest id.
     ///
     /// The signature is expected to be the `signature` field of the `COSE_Sign1_Tagged` structure
     /// found in the C2PA claim signature box of the manifest corresponding to the `manifest_id`.
