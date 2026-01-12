@@ -126,7 +126,7 @@ ed25519-dalek = { version = "2.1.1", features = [
     "pkcs8",
     "rand_core",
 ] }
-env_logger = "0.10.0"
+env_logger = "0.11.8"
 hex = "0.4.3"
 hex-literal = "1.0.0" # Might be only a dev dependency
 http = "1.3.1"
