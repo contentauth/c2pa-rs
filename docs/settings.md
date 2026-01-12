@@ -18,7 +18,7 @@ fn main() -> Result<()> {
     let context = Context::new()
         .with_settings(include_str!("settings.json"))?;
     
-    let builder = Builder::from_context(context);
+    let builder = Builder::new().with_context(context);
     // ... use builder
     Ok(())
 }

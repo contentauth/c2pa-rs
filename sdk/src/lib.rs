@@ -68,7 +68,8 @@
 //!     Context::new().with_settings(include_str!("../tests/fixtures/test_settings.toml"))?;
 //!
 //! // Build manifest
-//! let mut builder = Builder::from_context(context)
+//! let mut builder = Builder::new()
+//!     .with_context(context)
 //!     .with_definition(json!({"title": "Test"}))?;
 //! builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!

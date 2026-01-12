@@ -194,7 +194,8 @@ fn main() -> Result<()> {
     
     // Create reader with context
     let stream = File::open("path/to/image.jpg")?;
-    let reader = Reader::from_context(context)
+    let reader = Reader::new()
+        .with_context(context)
         .with_stream("image/jpeg", stream)?;
     
     println!("{}", reader.json());
@@ -222,7 +223,8 @@ fn main() -> Result<()> {
         }))?;
     
     // Create builder with context and inline JSON definition
-    let mut builder = Builder::from_context(context)
+    let mut builder = Builder::new()
+        .with_context(context)
         .with_definition(json!({"title": "My Image"}))?;
     
     // Save with automatic signer from context
@@ -266,7 +268,8 @@ fn main() -> Result<()> {
     let context = Context::new()
         .with_settings(include_str!("config.json"))?;
     
-    let mut builder = Builder::from_context(context)
+    let mut builder = Builder::new()
+        .with_context(context)
         .with_definition(json!({"title": "My Image"}))?;
     
     // Signer is created automatically from context's settings
@@ -364,8 +367,8 @@ use std::sync::Arc;
 
 // Shared configuration
 let ctx = Arc::new(Context::new().with_settings(config)?);
-let builder1 = Builder::from_shared_context(&ctx);
-let builder2 = Builder::from_shared_context(&ctx);
+let builder1 = Builder::new().with_shared_context(&ctx);
+let builder2 = Builder::new().with_shared_context(&ctx);
 ```
 
 ### Migration from thread-local Settings
@@ -403,7 +406,8 @@ use c2pa::{Context, Reader};
 // Explicit context per operation
 let context = Context::new()
     .with_settings(include_str!("settings.toml"))?;
-let reader = Reader::from_context(context)
+let reader = Reader::new()
+    .with_context(context)
     .with_stream("image/jpeg", stream)?;
 ```
 
@@ -414,12 +418,12 @@ use c2pa::{Context, Builder};
 // Development signer for testing
 let dev_ctx = Context::new()
     .with_settings(include_str!("dev_settings.toml"))?;
-let dev_builder = Builder::from_context(dev_ctx);
+let dev_builder = Builder::new().with_context(dev_ctx);
 
 // Production signer for real signing
 let prod_ctx = Context::new()
     .with_settings(include_str!("prod_settings.toml"))?;
-let prod_builder = Builder::from_context(prod_ctx);
+let prod_builder = Builder::new().with_context(prod_ctx);
 ```
 
 #### How Context uses Settings internally

@@ -18,17 +18,14 @@
 //!
 //! ```bash
 //! cargo run --example fragmented_cawg -- /path/to/source/init_segment_or_glob  fragment_glob_pattern path/to/destination/folder
+//! cargo run --example fragmented_bmff -- "sdk/tests/fixtures/bunny/bunny_89283bps/BigBuckBunny_2s_init.mp4" "BigBuckBunny_2s*.m4s" target/bunny
 //! ```
 
 mod cawg {
     use std::path::{Path, PathBuf};
 
     use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
-    use c2pa::{
-        Builder,
-        Settings,
-        Signer,
-    };
+    use c2pa::{Builder, Settings, Signer};
     use serde_json::json;
 
     fn manifest_def() -> String {
@@ -77,18 +74,22 @@ mod cawg {
         let source = source.as_ref();
         let glob_pattern = glob_pattern.as_ref().to_path_buf();
         let dest = dest.as_ref();
-        
+
         // Ensure output directory exists
         std::fs::create_dir_all(dest)?;
 
         let settings = Settings::new()
-            .with_toml(include_str!("../tests/fixtures/test_settings_with_cawg_signing.toml"))?
+            .with_toml(include_str!(
+                "../tests/fixtures/test_settings_with_cawg_signing.toml"
+            ))?
             .with_value(
                 "cawg_x509_signer.local.referenced_assertions",
                 vec!["cawg.training-mining"],
             )?;
         let context = c2pa::Context::new().with_settings(settings)?.into_shared();
-        let mut builder = Builder::new().with_shared_context(&context).with_definition(manifest_def())?;
+        let mut builder = Builder::new()
+            .with_shared_context(&context)
+            .with_definition(manifest_def())?;
 
         sign_fragmented(&mut builder, context.signer()?, source, &glob_pattern, dest)
     }

@@ -117,7 +117,7 @@ impl IntoSettings for serde_json::Value {
 /// let context = Context::new()
 ///     .with_settings(include_str!("config.toml"))?;
 ///
-/// let builder = Builder::from_context(context);
+/// let builder = Builder::new().with_context(context);
 ///
 /// // Signer is created automatically from context's settings
 /// let signer = builder.context().signer()?;
@@ -140,7 +140,7 @@ impl IntoSettings for serde_json::Value {
 ///     .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
 ///
 /// // Use with Builder
-/// let builder = Builder::from_context(context);
+/// let builder = Builder::new().with_context(context);
 ///
 /// // Get signer from context (created automatically from settings)
 /// let signer = builder.context().signer()?;

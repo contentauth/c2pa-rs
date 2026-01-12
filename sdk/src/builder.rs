@@ -383,9 +383,8 @@ impl Builder {
     /// # use c2pa::{Context, Builder, Result};
     /// # fn main() -> Result<()> {
     /// // Simple single-use case - no Arc needed!
-    /// let builder = Builder::from_context(
-    ///     Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?,
-    /// );
+    /// let builder = Builder::new()
+    ///     .with_context(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
     /// # Ok(())
     /// # }
     /// ```
@@ -1090,7 +1089,7 @@ impl Builder {
     ///
     /// # let archive_data = vec![]; // placeholder
     /// # let stream = Cursor::new(archive_data);
-    /// let builder = Builder::from_context(context).with_archive(stream)?;
+    /// let builder = Builder::new().with_context(context).with_archive(stream)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -3965,9 +3964,10 @@ mod tests {
     }
 
     #[test]
-    fn test_from_archive_with_context() -> Result<()> {
-        let mut builder =
-            Builder::from_context(Context::new()).with_definition(r#"{"title": "Test Image"}"#)?;
+    fn test_with_arvhive() -> Result<()> {
+        let mut builder = Builder::new()
+            .with_context(Context::new())
+            .with_definition(r#"{"title": "Test Image"}"#)?;
 
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive)?;
@@ -3976,7 +3976,7 @@ mod tests {
         archive.rewind()?;
         let context = Context::new();
 
-        let loaded_builder = Builder::from_context(context).with_archive(archive)?;
+        let loaded_builder = Builder::new().with_context(context).with_archive(archive)?;
 
         // Verify the manifest data was loaded with the correct title
         assert_eq!(

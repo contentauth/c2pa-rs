@@ -18,7 +18,7 @@ use c2pa::Reader;
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
-        let ms = Reader::from_file(&args[1])?;
+        let ms = Reader::new().with_file(&args[1])?;
         println!("{ms}");
     } else {
         println!("Prints a manifest report (requires a file path argument)")

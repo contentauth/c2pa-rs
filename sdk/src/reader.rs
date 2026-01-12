@@ -155,9 +155,8 @@ impl Reader {
     /// # use c2pa::{Context, Reader, Result};
     /// # fn main() -> Result<()> {
     /// // Simple single-use case - no Arc needed!
-    /// let reader = Reader::from_context(
-    ///     Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?,
-    /// );
+    /// let reader = Reader::new()
+    ///     .with_context(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
     /// # Ok(())
     /// # }
     /// ```
@@ -349,7 +348,9 @@ impl Reader {
     /// ```no_run
     /// use c2pa::{Context, Reader};
     /// # fn main() -> c2pa::Result<()> {
-    /// let reader = Reader::from_context(Context::new()).with_file("path/to/file.jpg")?;
+    /// let reader = Reader::new()
+    ///     .with_context(Context::new())
+    ///     .with_file("path/to/file.jpg")?;
     /// # Ok(())
     /// # }
     /// ```
@@ -447,10 +448,17 @@ impl Reader {
     /// [CAWG identity]: https://cawg.io/identity/
     #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
+        // Legacy behavior: explicitly get thread-local settings for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings).unwrap_or_default();
+
         if _sync {
-            Reader::new().with_file(path)
+            Reader::new().with_context(context).with_file(path)
         } else {
-            Reader::new().with_file_async(path).await
+            Reader::new()
+                .with_context(context)
+                .with_file_async(path)
+                .await
         }
     }
 
