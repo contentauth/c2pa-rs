@@ -1,6 +1,8 @@
 # C2PA Rust library
 
-[![CI](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/ci.yml) [![Latest Version](https://img.shields.io/crates/v/c2pa.svg)](https://crates.io/crates/c2pa) [![docs.rs](https://img.shields.io/docsrs/c2pa)](https://docs.rs/c2pa/) [![codecov](https://codecov.io/gh/contentauth/c2pa-rs/branch/main/graph/badge.svg?token=YVHWI19EGN)](https://codecov.io/gh/contentauth/c2pa-rs)
+[![Tier 1A](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-1a.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-1a.yml) [![Tier 1B](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-1b.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-1b.yml) [![Tier 2](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-2.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-2.yml) [![Latest Version](https://img.shields.io/crates/v/c2pa.svg)](https://crates.io/crates/c2pa) [![docs.rs](https://img.shields.io/docsrs/c2pa)](https://docs.rs/c2pa/) [![codecov](https://codecov.io/gh/contentauth/c2pa-rs/branch/main/graph/badge.svg?token=YVHWI19EGN)](https://codecov.io/gh/contentauth/c2pa-rs)
+
+For information on support tiers for CI tests, see [Support tiers for C2PA Rust SDK products](https://github.com/contentauth/c2pa-rs/blob/main/docs/support-tiers.md)
 
 <div style={{display: 'none'}}>
 
@@ -16,7 +18,7 @@ You can also read the documentation directly in GitHub:
 
 - [Usage](https://github.com/contentauth/c2pa-rs/blob/main/docs/usage.md)
 - [Supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md)
-- [Using the CAWG identity assertion](https://github.com/contentauth/c2pa-rs/blob/main/docs/cawg-identity.md)
+- [Using the CAWG identity assertion](https://github.com/contentauth/c2pa-rs/blob/main/docs/cawg-id.md)
 - [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
 - [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md)
 
@@ -34,9 +36,10 @@ The [`c2pa` crate](https://crates.io/crates/c2pa) implements a subset of the [C2
 
 The library enables a desktop, mobile, or embedded application to:
 * Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_manifests).
-* Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.  See [Using the CAWG identity assertion](docs/cawg-identity.md) for more information.
+* Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.  See [Using the CAWG identity assertion](docs/cawg-id.md) for more information.
 * Embed manifests in [supported file formats](docs/supported-formats.md).
 * Parse and validate manifests found in [supported file formats](docs/supported-formats.md).
+* Share configuration efficiently across multiple operations and threads through contexts using `Arc<Context>`.
 
 The library supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_hard_bindings).
 
@@ -50,7 +53,18 @@ This is a beta release (version 0.x.x) of the project. The minor version number 
 
 ### New API
 
-NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes) for more information. 
+NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes) for more information.
+
+### Context API for configuration
+
+The library uses a `Context` structure to configure C2PA operations, replacing the older global Settings pattern:
+
+- **Thread-safe configuration**: Context is `Send + Sync` and can be safely shared across threads using `Arc<Context>`
+- **Multiple configurations**: Unlike global settings, you can have multiple Context instances with different configurations
+- **Backwards compatible**: All existing Settings (JSON/TOML) files work unchanged with Context
+- **Automatic signer creation**: Signers are created automatically from settings when needed
+
+See [Using Context for configuration](docs/usage.md#using-context-for-configuration) for details. 
 
 ## Installation
 

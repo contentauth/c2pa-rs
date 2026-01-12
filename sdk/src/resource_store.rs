@@ -33,10 +33,12 @@ use crate::{
     assertions::{labels, AssetType, EmbeddedData},
     asset_io::CAIRead,
     claim::Claim,
+    error::Error,
     hashed_uri::HashedUri,
     jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
+    maybe_send_sync::MaybeSend,
     utils::mime::format_to_mime,
-    Error, Result,
+    Result,
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -329,7 +331,7 @@ impl ResourceStore {
     pub fn write_stream(
         &self,
         id: &str,
-        mut stream: impl Write + Read + Seek + Send,
+        mut stream: impl Write + Read + Seek + MaybeSend,
     ) -> Result<u64> {
         #[cfg(feature = "file_io")]
         if !self.resources.contains_key(id) {

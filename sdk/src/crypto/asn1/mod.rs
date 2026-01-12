@@ -15,13 +15,14 @@
 
 // Migrating fully from bcder to der will eliminate the need for much of this code.
 
-use std::io::Write;
+use std::{io::Write, str::FromStr};
 
 use bcder::{
     decode::{Constructed, DecodeError, Source},
     encode::{self, PrimitiveContent, Values},
     Captured, Mode, Oid, Tag,
 };
+use chrono::{TimeZone, Timelike};
 // Use der crate for time types to avoid custom date parsing
 use der::{Decode, Encode};
 
@@ -192,15 +193,18 @@ impl PrimitiveContent for GeneralName {
 /// Uses der crate's GeneralizedTime internally for proper time handling
 #[derive(Clone, Debug)]
 pub struct GeneralizedTime {
-    // Store the der type for proper time parsing
+    // Store the der type for proper time parsing (without fractional seconds)
     der_time: der::asn1::GeneralizedTime,
-    // Cache the DER encoding for bcder compatibility
+    // Cache the DER encoding for bcder compatibility (may include fractional seconds)
     der_bytes: Vec<u8>,
+    // Store nanoseconds separately to preserve fractional seconds from RFC 3161
+    // (der::asn1::GeneralizedTime doesn't support fractional seconds per RFC 5280)
+    nanoseconds: u32,
 }
 
 impl PartialEq for GeneralizedTime {
     fn eq(&self, other: &Self) -> bool {
-        self.der_time == other.der_time
+        self.der_time == other.der_time && self.nanoseconds == other.nanoseconds
     }
 }
 
@@ -221,15 +225,152 @@ impl GeneralizedTime {
         Ok(Self {
             der_time,
             der_bytes,
+            nanoseconds: 0, // RFC 5280 GeneralizedTime has no fractional seconds
         })
     }
 
-    /// Parse from DER bytes (for bcder compatibility)
+    /// Parse from DER bytes (for bcder compatibility) - RFC 5280 strict
+    ///
+    /// This enforces RFC 5280 rules: no fractional seconds allowed.
     pub fn from_der_bytes(bytes: &[u8]) -> Result<Self, der::Error> {
         let der_time = der::asn1::GeneralizedTime::from_der(bytes)?;
         Ok(Self {
             der_time,
             der_bytes: bytes.to_vec(),
+            nanoseconds: 0, // RFC 5280 has no fractional seconds
+        })
+    }
+
+    /// Parse from DER bytes allowing fractional seconds (RFC 3161 compliant)
+    ///
+    /// RFC 3161 allows fractional seconds in GeneralizedTime, unlike RFC 5280.
+    /// Format: YYYYMMDDHHmmss[.f*]Z
+    /// Examples:
+    ///   - "20231115183045Z" (no fractional, RFC 5280 compatible)
+    ///   - "20231115183045.5Z" (half second)
+    ///   - "20231115183045.643Z" (643 milliseconds)
+    ///
+    /// Real-world example from test data: "20251121125823.643Z"
+    pub fn from_der_bytes_rfc3161(bytes: &[u8]) -> Result<Self, der::Error> {
+        // First, try the strict RFC 5280 parser (for compatibility with times without fractions)
+        if let Ok(result) = Self::from_der_bytes(bytes) {
+            return Ok(result);
+        }
+
+        // If that fails, manually parse to allow fractional seconds
+        // DER format: Tag (0x18) + Length + Content
+        if bytes.len() < 2 {
+            return Err(der::Tag::GeneralizedTime.length_error());
+        }
+
+        if bytes[0] != 0x18 {
+            // 0x18 = GENERALIZED_TIME tag
+            return Err(der::Tag::GeneralizedTime.value_error());
+        }
+
+        let length = bytes[1] as usize;
+        if bytes.len() != length + 2 {
+            return Err(der::Tag::GeneralizedTime.length_error());
+        }
+
+        let content = &bytes[2..];
+        let time_str =
+            std::str::from_utf8(content).map_err(|_| der::Tag::Utf8String.value_error())?;
+
+        // Parse RFC 3161 format: YYYYMMDDHHmmss[.f*]Z
+        // Minimum length: 15 chars (YYYYMMDDHHmmssZ)
+        if time_str.len() < 15 || !time_str.ends_with('Z') {
+            return Err(der::Tag::GeneralizedTime.value_error());
+        }
+
+        // Extract components
+        let year = time_str
+            .get(0..4)
+            .and_then(|s| s.parse::<i32>().ok())
+            .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
+        let month = time_str
+            .get(4..6)
+            .and_then(|s| s.parse::<u32>().ok())
+            .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
+        let day = time_str
+            .get(6..8)
+            .and_then(|s| s.parse::<u32>().ok())
+            .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
+        let hour = time_str
+            .get(8..10)
+            .and_then(|s| s.parse::<u32>().ok())
+            .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
+        let minute = time_str
+            .get(10..12)
+            .and_then(|s| s.parse::<u32>().ok())
+            .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
+        let second = time_str
+            .get(12..14)
+            .and_then(|s| s.parse::<u32>().ok())
+            .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
+
+        // Parse fractional seconds if present (between position 14 and 'Z')
+        let frac_part = &time_str[14..time_str.len() - 1]; // Everything between seconds and 'Z'
+        let nanoseconds = if !frac_part.is_empty() {
+            // Should start with a dot
+            if !frac_part.starts_with('.') {
+                return Err(der::Tag::GeneralizedTime.value_error());
+            }
+
+            let frac_digits = &frac_part[1..]; // Remove leading dot
+            if frac_digits.is_empty() || frac_digits.len() > 9 {
+                return Err(der::Tag::GeneralizedTime.value_error());
+            }
+
+            // Verify all bytes are ASCII digits
+            if !frac_digits.as_bytes()[0].is_ascii_digit() {
+                return Err(der::Tag::GeneralizedTime.value_error());
+            }
+
+            // Decode the fractional seconds using approach from RustCrypto's x509-tsp
+            // (See: https://github.com/RustCrypto/formats/blob/master/x509-tsp/src/generalized_time_nanos.rs)
+            // Parse as u32, then multiply by appropriate power of 10 to convert to nanoseconds
+            // e.g., ".5" -> 5 * 10^8 = 500000000 nanoseconds
+            //       ".643" -> 643 * 10^6 = 643000000 nanoseconds
+            // TODO: use u32::from_ascii when it stabilizes
+            let fract_str = std::str::from_utf8(frac_digits.as_bytes())
+                .map_err(|_| der::Tag::GeneralizedTime.value_error())?;
+            let fract_num =
+                u32::from_str(fract_str).map_err(|_| der::Tag::GeneralizedTime.value_error())?;
+
+            // Multiply to convert to nanoseconds
+            fract_num
+                .checked_mul(
+                    10_u32.pow(
+                        9 - u32::try_from(frac_digits.len())
+                            .map_err(|_| der::Tag::GeneralizedTime.value_error())?,
+                    ),
+                )
+                .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?
+        } else {
+            0
+        };
+
+        // Create a chrono DateTime
+        let dt = chrono::Utc
+            .with_ymd_and_hms(year, month, day, hour, minute, second)
+            .single()
+            .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?
+            .with_nanosecond(nanoseconds)
+            .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
+
+        // Convert to SystemTime for der crate compatibility
+        let system_time: std::time::SystemTime = dt.into();
+
+        // Create der::asn1::GeneralizedTime (this will lose fractional seconds in re-encoding)
+        let der_time = der::asn1::GeneralizedTime::from_system_time(system_time)
+            .map_err(|_| der::Tag::GeneralizedTime.value_error())?;
+
+        // Store the original DER bytes to preserve fractional seconds
+        Ok(Self {
+            der_time,
+            der_bytes: bytes.to_vec(),
+            nanoseconds, // Store the parsed fractional seconds
         })
     }
 
@@ -243,16 +384,25 @@ impl GeneralizedTime {
         &self.der_time
     }
 
-    /// Parse from bcder Constructed (allows fractional seconds and Z)
+    /// Parse from bcder Constructed (allows fractional seconds and Z per RFC 3161)
+    ///
+    /// RFC 3161 Section 2.4.2 states:
+    /// "The ASN.1 GeneralizedTime syntax can include fraction-of-second details.
+    ///  Such syntax, without the restrictions from [RFC 2459] Section 4.1.2.5.2,
+    ///  where GeneralizedTime is limited to represent the time with a granularity
+    ///  of one second, may be used here."
+    ///
+    /// This means we must accept formats like: "20231115183045.123Z"
+    /// whereas RFC 5280 only allows: "20231115183045Z"
     pub fn take_from_allow_fractional_z<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
-        // Capture the raw DER bytes
+        // Capture the raw DER bytes including tag and length
         let captured = cons.capture_one()?;
         let bytes = captured.as_slice();
 
-        // Parse with der crate - it will properly validate the time format
-        Self::from_der_bytes(bytes).map_err(|_| cons.content_err("invalid GeneralizedTime"))
+        // Try parsing with RFC 3161-compliant parser (allows fractional seconds)
+        Self::from_der_bytes_rfc3161(bytes).map_err(|_| cons.content_err("invalid GeneralizedTime"))
     }
 
     /// Parse from bcder Primitive (no fractional or timezone offsets)
@@ -292,7 +442,20 @@ impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
     fn from(gt: GeneralizedTime) -> Self {
         // Use der's conversion to SystemTime, then to chrono
         let system_time = gt.der_time.to_system_time();
-        system_time.into()
+        let mut dt: chrono::DateTime<chrono::Utc> = system_time.into();
+
+        // Add the fractional seconds that were parsed but not stored in der_time
+        // (der::asn1::GeneralizedTime doesn't support fractional seconds per RFC 5280)
+        if gt.nanoseconds > 0 {
+            // SAFETY: nanoseconds is validated to be < 1_000_000_000 during parsing in
+            // from_der_bytes_rfc3161 (line 350-351). If with_nanosecond returns None here,
+            // it indicates a serious internal error that should never happen.
+            dt = dt
+                .with_nanosecond(gt.nanoseconds)
+                .unwrap_or_else(|| unreachable!("nanoseconds value was validated during parsing"));
+        }
+
+        dt
     }
 }
 
@@ -334,8 +497,8 @@ mod tests {
 
     // Helper to load test certificate
     fn load_test_cert_pem(name: &str) -> Vec<u8> {
-        let path = format!("tests/fixtures/certs/{}", name);
-        std::fs::read(&path).unwrap_or_else(|_| panic!("Failed to read test certificate: {}", path))
+        let path = format!("tests/fixtures/certs/{name}");
+        std::fs::read(&path).unwrap_or_else(|_| panic!("Failed to read test certificate: {path}"))
     }
 
     // Helper to parse PEM and extract DER certificate
@@ -622,13 +785,11 @@ mod tests {
             // Verify we got valid DER data for each cert type
             assert!(
                 !cert_der.is_empty(),
-                "Certificate {} DER should not be empty",
-                cert_name
+                "Certificate {cert_name} DER should not be empty",
             );
             assert_eq!(
                 cert_der[0], 0x30,
-                "Certificate {} should start with SEQUENCE tag",
-                cert_name
+                "Certificate {cert_name} should start with SEQUENCE tag",
             );
         }
 
@@ -943,8 +1104,6 @@ mod tests {
             Tag::CTX_1,
             "First tag should be CTX_1 (0xA1), not SEQUENCE"
         );
-
-        println!("✅ Extensions IMPLICIT tagging validated");
     }
 
     /// Test GeneralName::take_from() with RFC 3161 TstInfo context
@@ -1030,8 +1189,6 @@ mod tests {
             bcder::Tag::take_from(&mut bcder::decode::SliceSource::new(TSA_GENERAL_NAME_DNS))
                 .expect("Failed to read outer tag");
         assert_eq!(tag, Tag::CTX_0, "Outer tag should be [0] for TstInfo.tsa");
-
-        println!("✅ GeneralName in TstInfo context validated");
     }
 
     /// Test from_primitive_no_fractional_or_timezone_offsets via CMS Time
@@ -1075,7 +1232,123 @@ mod tests {
             dt.format("%Y-%m-%d %H:%M:%S").to_string(),
             "2024-01-15 12:00:00"
         );
+    }
 
-        println!("✅ GeneralizedTime from_primitive_no_fractional validated via CMS Time");
+    /// Test RFC 3161 GeneralizedTime with fractional seconds
+    ///
+    /// C2PA manifest with timestamp from freetsa.org: "20251121125823.643Z"
+    ///
+    /// This test validates that we can parse RFC 3161 timestamps that include
+    /// fractional seconds, which are explicitly allowed by RFC 3161 Section 2.4.2:
+    ///
+    /// > "The ASN.1 GeneralizedTime syntax can include fraction-of-second details.
+    /// >  Such syntax, without the restrictions from [RFC 2459] Section 4.1.2.5.2,
+    /// >  where GeneralizedTime is limited to represent the time with a granularity
+    /// >  of one second, may be used here."
+    ///
+    /// The der crate's GeneralizedTime enforces RFC 5280's strict "no fractional"
+    /// rule, so we need custom parsing for RFC 3161 compliance.
+    #[test]
+    fn test_generalized_time_rfc3161_fractional_seconds() {
+        // Timestamp from freetsa.org embedded in C2PA manifest
+        // Tag: 0x18 (GENERALIZED_TIME)
+        // Length: 0x13 (19 bytes)
+        // Content: "20251121125823.643Z" (November 21, 2025, 12:58:23.643 UTC)
+        const TIME_DER_FRACTIONAL: &[u8] = &[
+            0x18, 0x13, // GENERALIZED_TIME, length 19
+            b'2', b'0', b'2', b'5', b'1', b'1', b'2', b'1', // 20251121
+            b'1', b'2', b'5', b'8', b'2', b'3', // 125823
+            b'.', b'6', b'4', b'3', // .643 (fractional)
+            b'Z',
+        ];
+
+        // Example xxd output
+        // $ xxd -s 0x00002e5d -l 21 test.jpeg
+        // 00002e5d: 1813 3230 3235 3131 3231 3132 3538 3233  ..20251121125823
+        // 00002e6d: 2e36 3433 5a                             .643Z
+
+        // This should succeed with the RFC 3161 parser
+        let gen_time = GeneralizedTime::from_der_bytes_rfc3161(TIME_DER_FRACTIONAL)
+            .expect("Failed to parse RFC 3161 GeneralizedTime with fractional seconds");
+
+        // Verify that the original DER bytes are preserved (important for signature validation)
+        assert_eq!(gen_time.as_der_bytes(), TIME_DER_FRACTIONAL);
+
+        // Convert to chrono DateTime
+        let dt: chrono::DateTime<chrono::Utc> = gen_time.into();
+
+        // Verify the parsed time
+        assert_eq!(
+            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2025-11-21 12:58:23"
+        );
+
+        // Verify fractional seconds: .643 seconds = 643 milliseconds = 643,000,000 nanoseconds
+        assert_eq!(dt.timestamp_subsec_millis(), 643);
+        assert_eq!(dt.timestamp_subsec_nanos(), 643_000_000);
+    }
+
+    /// Test that RFC 5280 strict format still works and is compatible
+    ///
+    /// RFC 5280 Section 4.1.2.5.2 requires GeneralizedTime without fractional seconds.
+    /// Our RFC 3161 parser should also handle this format for backward compatibility.
+    #[test]
+    fn test_generalized_time_rfc5280_no_fractional() {
+        // RFC 5280 format (no fractional seconds) - 15 bytes
+        // Format: YYYYMMDDHHmmssZ
+        const TIME_DER_NO_FRACTIONAL: &[u8] = &[
+            0x18, 0x0f, // GENERALIZED_TIME, length 15
+            b'2', b'0', b'2', b'5', b'1', b'1', b'2', b'1', b'1', b'2', b'5', b'8', b'2', b'3',
+            b'Z',
+        ];
+
+        // Should work with both parsers
+        let gen_time_strict = GeneralizedTime::from_der_bytes(TIME_DER_NO_FRACTIONAL)
+            .expect("RFC 5280 parser should handle no-fractional format");
+
+        let gen_time_rfc3161 = GeneralizedTime::from_der_bytes_rfc3161(TIME_DER_NO_FRACTIONAL)
+            .expect("RFC 3161 parser should handle no-fractional format");
+
+        // Both should produce the same result
+        assert_eq!(gen_time_strict, gen_time_rfc3161);
+
+        // Convert to DateTime and verify
+        let dt: chrono::DateTime<chrono::Utc> = gen_time_rfc3161.into();
+        assert_eq!(
+            dt.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2025-11-21 12:58:23"
+        );
+        assert_eq!(dt.timestamp_subsec_nanos(), 0); // No fractional seconds
+    }
+
+    /// Test various fractional second precisions
+    #[test]
+    fn test_generalized_time_fractional_precisions() {
+        let test_cases = vec![
+            ("20230101000000.5Z", 500_000_000u32, "half second"),
+            ("20230101000000.1Z", 100_000_000u32, "one tenth second"),
+            ("20230101000000.999Z", 999_000_000u32, "999 milliseconds"),
+            (
+                "20230101000000.123456789Z",
+                123_456_789u32,
+                "nanosecond precision",
+            ),
+        ];
+
+        for (time_str, expected_nanos, desc) in test_cases {
+            // Construct DER bytes
+            let mut der_bytes = vec![0x18, time_str.len() as u8];
+            der_bytes.extend_from_slice(time_str.as_bytes());
+
+            let gen_time = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+                .unwrap_or_else(|_| panic!("Failed to parse: {desc}"));
+
+            let dt: chrono::DateTime<chrono::Utc> = gen_time.into();
+            assert_eq!(
+                dt.timestamp_subsec_nanos(),
+                expected_nanos,
+                "Mismatch for: {desc}"
+            );
+        }
     }
 }
