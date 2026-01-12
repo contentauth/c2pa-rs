@@ -1259,7 +1259,7 @@ impl Builder {
                     // are resolved to their hashed URIs.
                     self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
 
-                    claim.add_assertion(&actions)
+                    add_assertion(&mut claim, &actions, manifest_assertion.created())
                 }
                 #[allow(deprecated)]
                 CreativeWork::LABEL => {
@@ -4003,12 +4003,12 @@ mod tests {
             let ctx = Arc::clone(&ctx);
             let handle = thread::spawn(move || {
                 let builder = Builder::from_shared_context(&ctx)
-                    .with_definition(format!(r#"{{"title": "Image {}"}}"#, i))
+                    .with_definition(format!(r#"{{"title": "Image {i}"}}"#))
                     .unwrap();
 
                 // Verify the context settings are accessible
                 assert!(!builder.context().settings().verify.verify_after_sign);
-                assert_eq!(builder.definition.title, Some(format!("Image {}", i)));
+                assert_eq!(builder.definition.title, Some(format!("Image {i}")));
 
                 i // Return the thread number for verification
             });
@@ -4025,5 +4025,50 @@ mod tests {
         assert_eq!(results, vec![0, 1, 2, 3]);
 
         Ok(())
+    }
+
+    #[test]
+    fn actions_created_assertion() {
+        let mut dest = Cursor::new(Vec::new());
+        Builder::new()
+            .with_definition(
+                json!({
+                  "assertions": [
+                    {
+                      "label": "c2pa.actions",
+                      "data": {
+                        "actions": [
+                          {
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                          }
+                        ]
+                      },
+                      "created": true
+                    }
+                  ]
+                })
+                .to_string(),
+            )
+            .unwrap()
+            .sign(
+                &Settings::signer().unwrap(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut dest,
+            )
+            .unwrap();
+
+        dest.rewind().unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut dest).unwrap();
+        let active_manifest = reader.active_manifest().unwrap();
+
+        let actions_assertion = active_manifest
+            .assertions()
+            .iter()
+            .find(|assertion| assertion.label().starts_with(Actions::LABEL))
+            .unwrap();
+        assert!(actions_assertion.created());
     }
 }

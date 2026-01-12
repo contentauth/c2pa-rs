@@ -231,21 +231,24 @@ fn ps512() {
 
 // Argh. Different Oid types across different crates, so we have to construct
 // our own constants here.
-const RSA_OID: Oid = bcder::Oid(OctetString::from_static(&[
+const RSA_OID: Oid<OctetString> = bcder::Oid(OctetString::from_static(&[
     42, 134, 72, 134, 247, 13, 1, 1, 1,
 ]));
 
-const SHA256_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 1]));
+const SHA256_OID: Oid<OctetString> =
+    bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 1]));
 
-const SHA384_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 2]));
+const SHA384_OID: Oid<OctetString> =
+    bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 2]));
 
-const SHA512_OID: Oid = bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 3]));
+const SHA512_OID: Oid<OctetString> =
+    bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 3]));
 
 #[cfg_attr(
     any(feature = "rust_native_crypto", target_arch = "wasm32"),
     allow(unused)
 )]
-const SHA1_OID: Oid = bcder::Oid(OctetString::from_static(&[43, 14, 3, 2, 26]));
+const SHA1_OID: Oid<OctetString> = bcder::Oid(OctetString::from_static(&[43, 14, 3, 2, 26]));
 
 #[test]
 #[cfg_attr(
@@ -359,8 +362,8 @@ fn sha1() {
 }
 
 #[allow(dead_code)]
-fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> bcder::Oid {
-    const TEST_FAIL: Oid = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
+fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> bcder::Oid<OctetString> {
+    const TEST_FAIL: Oid<OctetString> = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
 
     let asn1_oid_str = asn1_oid.to_id_string();
 
@@ -398,6 +401,6 @@ fn test_get_by_sig_and_alg() {
     assert!(validator_for_sig_and_hash_algs(&ed25519_oid, &sha512).is_some());
 
     // test negative case
-    const TEST_FAIL: Oid = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
+    const TEST_FAIL: Oid<OctetString> = bcder::Oid(OctetString::from_static(&[0, 0, 0, 0]));
     assert!(validator_for_sig_and_hash_algs(&TEST_FAIL, &sha512).is_none());
 }

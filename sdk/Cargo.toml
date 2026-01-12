@@ -108,7 +108,7 @@ byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
 ciborium = "0.2.2"
-toml = "0.8.23"
+toml = "0.9.10"
 config = { version = "0.14.0", default-features = false, features = [
     "json",
     "toml",
@@ -126,7 +126,7 @@ ed25519-dalek = { version = "2.1.1", features = [
     "pkcs8",
     "rand_core",
 ] }
-env_logger = "0.10.0"
+env_logger = "0.11.8"
 hex = "0.4.3"
 hex-literal = "1.0.0" # Might be only a dev dependency
 http = "1.3.1"
@@ -156,12 +156,12 @@ pkcs8 = "0.10.2"
 png_pong = "0.9.1"
 quick-xml = "0.38.3"
 rand = "0.8.5"
-rand_chacha = "0.3.1"
+rand_chacha = { version = "0.9.0", features = ["os_rng"] }
 range-set = "0.0.11"
-rasn = "0.26.0"
-rasn-cms = "0.26.0"
-rasn-ocsp = "0.26.0"
-rasn-pkix = "0.26.0"
+rasn = "0.28.2"
+rasn-cms = "0.28.2"
+rasn-ocsp = "0.28.2"
+rasn-pkix = "0.28.2"
 regex = "1.11"
 riff = "2.0.0"
 rsa = { version = "0.9.10", features = ["pem", "sha2", "std"], optional = true }
@@ -289,7 +289,7 @@ glob = "0.3.1"
 hex-literal = "1.0.0"
 jumbf = "0.4.0"
 c2pa_macros = { path = "../macros" }
-mockall = "0.13.1"
+mockall = "0.14.0"
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
 wasm-bindgen-test = "0.3.55"
