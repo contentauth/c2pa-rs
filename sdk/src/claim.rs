@@ -2450,13 +2450,15 @@ impl Claim {
                                 // can we find a reference in the ingredient list
                                 // is it referenced from this manifest
                                 if claim.ingredient_assertions().iter().any(|i| {
-                                    if let Ok(ingredient) = Ingredient::from_assertion(i.assertion())
+                                    if let Ok(ingredient) =
+                                        Ingredient::from_assertion(i.assertion())
                                     {
                                         if let Some(target_label) =
                                             assertion_label_from_uri(&h.url())
                                         {
                                             return target_label == i.label()
-                                                && ingredient.relationship == Relationship::ParentOf;
+                                                && ingredient.relationship
+                                                    == Relationship::ParentOf;
                                         }
                                     }
                                     false
@@ -2476,7 +2478,9 @@ impl Claim {
                                 "action must have valid ingredient with ParentOf relationship",
                                 "verify_actions"
                             )
-                            .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
+                            .validation_status(
+                                validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
+                            )
                             .failure_no_throw(
                                 validation_log,
                                 Error::ValidationRule(
