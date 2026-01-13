@@ -47,7 +47,7 @@ fn capture_ingredient<R>(format: &str, stream: &mut R, context: &Arc<Context>) -
 where
     R: Read + Seek + Send,
 {
-    let mut builder = Builder::new().with_shared_context(context);
+    let mut builder = Builder::from_shared_context(context);
 
     // we need to manually add the ingredient stream since it has a different format than the output .c2pa
     builder.add_ingredient_from_stream(
@@ -97,8 +97,7 @@ fn main() -> Result<()> {
 
     // Now create a new builder and set the intent to create a new manifest store
     // We will add the ingredient as a componentOf relationship
-    let mut builder = Builder::new()
-        .with_shared_context(&context)
+    let mut builder = Builder::from_shared_context(&context)
         .with_definition(manifest_def("Builder Sample", FORMAT))?;
     builder.set_intent(c2pa::BuilderIntent::Create(DigitalSourceType::Empty));
 
@@ -134,9 +133,7 @@ fn main() -> Result<()> {
 
     // unpack the manifest builder from the archived stream
     archive.rewind()?;
-    let mut builder = Builder::from_archive(&mut archive)?;
-    // Update the builder to use our shared context (with signer settings)
-    builder = builder.with_shared_context(&context);
+    let mut builder = Builder::from_shared_context(&context).with_archive(&mut archive)?;
 
     // Now we will sign a new image that will reference the previously captured ingredient
     let mut source = Cursor::new(SOURCE_IMAGE);
@@ -146,9 +143,7 @@ fn main() -> Result<()> {
     // read and validate the signed manifest store
     dest.rewind()?;
 
-    let reader = Reader::new()
-        .with_shared_context(&context)
-        .with_stream(FORMAT, &mut dest)?;
+    let reader = Reader::from_shared_context(&context).with_stream(FORMAT, &mut dest)?;
     println!("{}", reader.json());
     assert_eq!(reader.validation_state(), ValidationState::Trusted);
     assert_eq!(

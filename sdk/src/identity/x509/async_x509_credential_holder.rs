@@ -139,8 +139,7 @@ mod tests {
         let mut dest = Cursor::new(Vec::new());
 
         // Use the context when creating the Builder
-        let mut builder = Builder::new()
-            .with_shared_context(&context)
+        let mut builder = Builder::from_shared_context(&context)
             .with_definition(manifest_json())
             .unwrap();
         builder
@@ -177,8 +176,7 @@ mod tests {
         // Read back the Manifest that was generated using the same context
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::new()
-            .with_shared_context(&context)
+        let manifest_store = Reader::from_shared_context(&context)
             .with_stream_async(format, &mut dest)
             .await
             .unwrap();

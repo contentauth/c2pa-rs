@@ -13,12 +13,12 @@
 
 //! Example App that generates a manifest store listing for a given file
 use anyhow::Result;
-use c2pa::Reader;
+use c2pa::{Context, Reader};
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
-        let ms = Reader::new().with_file(&args[1])?;
+        let ms = Reader::from_context(Context::new()).with_file(&args[1])?;
         println!("{ms}");
     } else {
         println!("Prints a manifest report (requires a file path argument)")

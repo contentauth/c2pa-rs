@@ -194,8 +194,7 @@ fn main() -> Result<()> {
     
     // Create reader with context
     let stream = File::open("path/to/image.jpg")?;
-    let reader = Reader::new()
-        .with_context(context)
+    let reader = Reader::from_context(context)
         .with_stream("image/jpeg", stream)?;
     
     println!("{}", reader.json());
@@ -223,8 +222,7 @@ fn main() -> Result<()> {
         }))?;
     
     // Create builder with context and inline JSON definition
-    let mut builder = Builder::new()
-        .with_context(context)
+    let mut builder = Builder::from_context(context)
         .with_definition(json!({"title": "My Image"}))?;
     
     // Save with automatic signer from context
@@ -268,8 +266,7 @@ fn main() -> Result<()> {
     let context = Context::new()
         .with_settings(include_str!("config.json"))?;
     
-    let mut builder = Builder::new()
-        .with_context(context)
+    let mut builder = Builder::from_context(context)
         .with_definition(json!({"title": "My Image"}))?;
     
     // Signer is created automatically from context's settings
@@ -351,9 +348,14 @@ Understanding when to use shared contexts helps optimize your application:
 - Each operation has different configuration needs
 
 ```rust
-// Simple case - no Arc needed
-let builder = Builder::new();
-let reader = Reader::new();
+use c2pa::{Context, Builder, Reader};
+
+// Create context with explicit settings
+let context = Context::new().with_settings(config)?;
+
+// For simple, single-use cases
+let builder = Builder::from_context(context);
+let reader = Reader::from_context(context);
 ```
 
 **Use shared Context (with Arc):**
@@ -367,8 +369,8 @@ use std::sync::Arc;
 
 // Shared configuration
 let ctx = Arc::new(Context::new().with_settings(config)?);
-let builder1 = Builder::new().with_shared_context(&ctx);
-let builder2 = Builder::new().with_shared_context(&ctx);
+let builder1 = Builder::from_shared_context(&ctx);
+let builder2 = Builder::from_shared_context(&ctx);
 ```
 
 ### Migration from thread-local Settings

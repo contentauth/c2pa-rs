@@ -121,23 +121,6 @@ pub struct Reader {
 }
 
 impl Reader {
-    /// Create a new Reader with a default [`Context`].
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use c2pa::Reader;
-    /// let reader = Reader::new();
-    /// ```
-    pub fn new() -> Self {
-        Self {
-            context: Arc::new(Context::new()),
-            store: Store::new(),
-            assertion_values: HashMap::new(),
-            ..Default::default()
-        }
-    }
-
     /// Create a new Reader with the given [`Context`].
     ///
     /// This method takes ownership of the [`Context`] and wraps it in an [`Arc`] internally.
@@ -154,16 +137,11 @@ impl Reader {
     /// ```
     /// # use c2pa::{Context, Reader, Result};
     /// # fn main() -> Result<()> {
-    /// // Simple single-use case - no Arc needed!
-    /// let reader = Reader::new()
-    ///     .with_context(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
+    /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+    /// let reader = Reader::from_context(context);
     /// # Ok(())
     /// # }
     /// ```
-    #[deprecated(
-        since = "0.75.0",
-        note = "Use `Reader::new().with_context(context)` instead"
-    )]
     pub fn from_context(context: Context) -> Self {
         Self {
             context: Arc::new(context),
@@ -171,33 +149,6 @@ impl Reader {
             assertion_values: HashMap::new(),
             ..Default::default()
         }
-    }
-
-    /// Sets the [`Context`] for this [`Reader`] using the builder pattern.
-    ///
-    /// This method takes ownership of the [`Context`] and wraps it in an [`Arc`] internally.
-    /// Use this for single-use contexts where you don't need to share the context.
-    ///
-    /// # Arguments
-    /// * `context` - The [`Context`] to use for the Reader
-    ///
-    /// # Returns
-    /// The modified Reader
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use c2pa::{Context, Reader, Result};
-    /// # fn main() -> Result<()> {
-    /// let settings = c2pa::Settings::new().with_value("verify.verify_after_sign", true)?;
-    /// let context = Context::new().with_settings(settings)?;
-    /// let reader = Reader::new().with_context(context);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn with_context(mut self, context: Context) -> Self {
-        self.context = Arc::new(context);
-        self
     }
 
     /// Create a new Reader with a shared [`Context`].
@@ -221,15 +172,11 @@ impl Reader {
     /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
     ///
     /// // Share it across multiple Readers (even across threads!)
-    /// let reader1 = Reader::new().with_shared_context(&ctx);
-    /// let reader2 = Reader::new().with_shared_context(&ctx);
+    /// let reader1 = Reader::from_shared_context(&ctx);
+    /// let reader2 = Reader::from_shared_context(&ctx);
     /// # Ok(())
     /// # }
     /// ```
-    #[deprecated(
-        since = "0.75.0",
-        note = "Use `Reader::new().with_shared_context(context)` instead"
-    )]
     pub fn from_shared_context(context: &Arc<Context>) -> Self {
         Self {
             context: Arc::clone(context),
@@ -237,37 +184,6 @@ impl Reader {
             assertion_values: HashMap::new(),
             ..Default::default()
         }
-    }
-
-    /// Sets a shared [`Context`] for this [`Reader`] using the builder pattern.
-    ///
-    /// This method allows sharing a single [`Context`] across multiple builders or readers,
-    /// even across threads. The [`Arc`] is cloned internally, so you pass a reference.
-    ///
-    /// # Arguments
-    /// * `context` - A reference to an [`Arc<Context>`] to share.
-    ///
-    /// # Returns
-    /// The modified [`Reader`]
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use c2pa::{Context, Reader, Result};
-    /// # use std::sync::Arc;
-    /// # fn main() -> Result<()> {
-    /// // Create a shared Context once
-    /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
-    ///
-    /// // Share it across multiple Readers (even across threads!)
-    /// let reader1 = Reader::new().with_shared_context(&ctx);
-    /// let reader2 = Reader::new().with_shared_context(&ctx);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn with_shared_context(mut self, context: &Arc<Context>) -> Self {
-        self.context = Arc::clone(context);
-        self
     }
 
     /// Add manifest store from a stream to the [`Reader`]
@@ -317,12 +233,9 @@ impl Reader {
         let context = Context::new().with_settings(settings)?;
 
         if _sync {
-            Reader::new()
-                .with_context(context)
-                .with_stream(format, stream)
+            Reader::from_context(context).with_stream(format, stream)
         } else {
-            Reader::new()
-                .with_context(context)
+            Reader::from_context(context)
                 .with_stream_async(format, stream)
                 .await
         }
@@ -348,9 +261,7 @@ impl Reader {
     /// ```no_run
     /// use c2pa::{Context, Reader};
     /// # fn main() -> c2pa::Result<()> {
-    /// let reader = Reader::new()
-    ///     .with_context(Context::new())
-    ///     .with_file("path/to/file.jpg")?;
+    /// let reader = Reader::from_context(Context::new()).with_file("path/to/file.jpg")?;
     /// # Ok(())
     /// # }
     /// ```
@@ -453,12 +364,9 @@ impl Reader {
         let context = Context::new().with_settings(settings).unwrap_or_default();
 
         if _sync {
-            Reader::new().with_context(context).with_file(path)
+            Reader::from_context(context).with_file(path)
         } else {
-            Reader::new()
-                .with_context(context)
-                .with_file_async(path)
-                .await
+            Reader::from_context(context).with_file_async(path).await
         }
     }
 
@@ -537,9 +445,10 @@ impl Reader {
         stream: impl Read + Seek + MaybeSend,
     ) -> Result<Reader> {
         if _sync {
-            Reader::new().with_manifest_data_and_stream(c2pa_data, format, stream)
+            Reader::from_context(Context::new())
+                .with_manifest_data_and_stream(c2pa_data, format, stream)
         } else {
-            Reader::new()
+            Reader::from_context(Context::new())
                 .with_manifest_data_and_stream_async(c2pa_data, format, stream)
                 .await
         }
@@ -610,9 +519,9 @@ impl Reader {
         fragment: impl Read + Seek + MaybeSend,
     ) -> Result<Self> {
         if _sync {
-            Reader::new().with_fragment(format, stream, fragment)
+            Reader::from_context(Context::new()).with_fragment(format, stream, fragment)
         } else {
-            Reader::new()
+            Reader::from_context(Context::new())
                 .with_fragment_async(format, stream, fragment)
                 .await
         }
@@ -664,7 +573,7 @@ impl Reader {
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
-        Reader::new().with_fragmented_files(path, fragments)
+        Reader::from_context(Context::new()).with_fragmented_files(path, fragments)
     }
 
     /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
@@ -1316,7 +1225,7 @@ impl Reader {
     pub fn into_builder(mut self) -> Result<crate::Builder> {
         // Preserve the Reader's context in the new Builder
         let context = self.context;
-        let mut builder = crate::Builder::new().with_shared_context(&context);
+        let mut builder = crate::Builder::from_shared_context(&context);
         if let Some(label) = &self.active_manifest {
             if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
                 builder.definition.vendor = parts.cgi.clone();
@@ -1506,9 +1415,7 @@ pub mod tests {
         let context = test_context().into_shared();
         let mut source = Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST);
         let format = "image/jpeg";
-        let reader = Reader::new()
-            .with_shared_context(&context)
-            .with_stream(format, &mut source)?;
+        let reader = Reader::from_shared_context(&context).with_stream(format, &mut source)?;
         println!("{reader}");
 
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
@@ -1520,9 +1427,7 @@ pub mod tests {
         builder.save_to_stream(format, &mut source, &mut dest)?;
 
         dest.set_position(0);
-        let reader2 = Reader::new()
-            .with_shared_context(&context)
-            .with_stream(format, &mut dest)?;
+        let reader2 = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
         println!("{reader2}");
 
         assert_eq!(reader2.validation_state(), ValidationState::Trusted);
@@ -1545,9 +1450,7 @@ pub mod tests {
 
         let mut source = Cursor::new(IMAGE_WITH_MANIFEST);
 
-        let reader = Reader::new()
-            .with_context(context)
-            .with_stream("image/jpeg", &mut source)?;
+        let reader = Reader::from_context(context).with_stream("image/jpeg", &mut source)?;
 
         assert_eq!(reader.remote_url(), None);
         assert!(reader.is_embedded());
@@ -1592,8 +1495,7 @@ pub mod tests {
     #[test]
     fn test_reader_trusted() -> Result<()> {
         let context = Context::new();
-        let reader = Reader::new()
-            .with_context(context)
+        let reader = Reader::from_context(context)
             .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         Ok(())
@@ -1607,8 +1509,7 @@ pub mod tests {
             .with_value("verify.verify_trust", false)
             .unwrap();
         let context = Context::new().with_settings(settings).unwrap();
-        let reader = Reader::new()
-            .with_context(context)
+        let reader = Reader::from_context(context)
             .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         println!("{reader}");
         assert_eq!(reader.validation_status(), None);

@@ -97,9 +97,8 @@ fn main() -> Result<()> {
         .with_signer(signer)
         .into_shared();
 
-    let mut builder = Builder::new()
-        .with_shared_context(&context)
-        .with_definition(manifest_def(title, format))?;
+    let mut builder =
+        Builder::from_shared_context(&context).with_definition(manifest_def(title, format))?;
     builder.add_ingredient_from_stream(
         json!({
             "title": parent_name,
@@ -143,9 +142,7 @@ fn main() -> Result<()> {
     // unzip the manifest builder from the archived stream
     archive.rewind()?;
 
-    let mut builder = Builder::new()
-        .with_shared_context(&context)
-        .with_archive(&mut archive)?;
+    let mut builder = Builder::from_shared_context(&context).with_archive(&mut archive)?;
     // sign the ManifestStoreBuilder and write it to the output stream
     let mut dest = Cursor::new(Vec::new());
     builder.save_to_stream(format, &mut source, &mut dest)?;
@@ -153,9 +150,7 @@ fn main() -> Result<()> {
     // read and validate the signed manifest store
     dest.rewind()?;
 
-    let reader = Reader::new()
-        .with_shared_context(&context)
-        .with_stream(format, &mut dest)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
 
     // extract a thumbnail image from the ManifestStore
     let mut thumbnail = Cursor::new(Vec::new());

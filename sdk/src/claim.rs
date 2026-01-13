@@ -19,7 +19,6 @@ use std::{
 };
 
 use async_generic::async_generic;
-use chrono::{DateTime, Utc};
 use coset::CoseSign1;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
@@ -1813,31 +1812,6 @@ impl Claim {
             Err(_) => Vec::new(), //  should never happen bug if it does just give no hash
         }
     }
-
-    // /// Return the signing date and time for this claim, if there is one.
-    // pub fn signing_time(&self) -> Option<DateTime<Utc>> {
-    //     if let Some(validation_data) = self.signature_info() {
-    //         validation_data.date
-    //     } else {
-    //         None
-    //     }
-    // }
-
-    // /// Return the signing issuer for this claim, if there is one.
-    // pub fn signing_issuer(&self) -> Option<String> {
-    //     if let Some(validation_data) = self.signature_info() {
-    //         validation_data.issuer_org
-    //     } else {
-    //         None
-    //     }
-    // }
-
-    // /// Return the cert's serial number, if there is one.
-    // pub fn signing_cert_serial(&self) -> Option<String> {
-    //     self.signature_info()
-    //         .and_then(|validation_info| validation_info.cert_serial_number)
-    //         .map(|serial| serial.to_string())
-    // }
 
     /// Return information about the signature
     #[async_generic]

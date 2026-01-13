@@ -87,9 +87,7 @@ mod cawg {
                 vec!["cawg.training-mining"],
             )?;
         let context = c2pa::Context::new().with_settings(settings)?.into_shared();
-        let mut builder = Builder::new()
-            .with_shared_context(&context)
-            .with_definition(manifest_def())?;
+        let mut builder = Builder::from_shared_context(&context).with_definition(manifest_def())?;
 
         sign_fragmented(&mut builder, context.signer()?, source, &glob_pattern, dest)
     }

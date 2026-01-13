@@ -62,7 +62,7 @@ mod integration_1 {
 
         // let generator = ClaimGeneratorInfo::new("app");
         // create a new Manifest
-        let mut builder = Builder::new().with_shared_context(&context);
+        let mut builder = Builder::from_shared_context(&context);
 
         // allocate actions so we can add them
         let mut actions = Actions::new();
@@ -116,9 +116,7 @@ mod integration_1 {
 
         // read our new file with embedded manifest
         let mut file = std::fs::File::open(&output_path)?;
-        let reader = Reader::new()
-            .with_shared_context(&context)
-            .with_stream("image/jpeg", &mut file)?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
 
         println!("{reader}");
 
@@ -182,7 +180,7 @@ mod integration_1 {
 
         let parent_path = fixture_path("sample1.heic");
 
-        let mut builder = Builder::new().with_shared_context(&context);
+        let mut builder = Builder::from_shared_context(&context);
 
         // sign and embed into the target file
         let context_clone = builder.context().clone();
@@ -191,9 +189,7 @@ mod integration_1 {
 
         // read our new file with embedded manifest
         let mut file = std::fs::File::open(&output_path)?;
-        let reader = Reader::new()
-            .with_shared_context(&context)
-            .with_stream("image/heic", &mut file)?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/heic", &mut file)?;
 
         println!("{reader}");
         // std::fs::copy(&output_path, "test_file.jpg")?; // for debugging to get copy of the file
@@ -221,7 +217,7 @@ mod integration_1 {
         let parent_path = fixture_path("earth_apollo17.jpg");
 
         // create a new Manifest
-        let mut builder = Builder::new().with_shared_context(&context);
+        let mut builder = Builder::from_shared_context(&context);
 
         // allocate references
         let references = AssetReference::new(
@@ -267,7 +263,7 @@ mod integration_1 {
         let parent_path = fixture_path("earth_apollo17.jpg");
 
         // create a new Manifest
-        let mut builder = Builder::new().with_shared_context(&context);
+        let mut builder = Builder::from_shared_context(&context);
 
         // allocate references
         const C2PA_METADATA: &str = r#"{
@@ -311,9 +307,7 @@ mod integration_1 {
 
         // read our new file with embedded manifest
         let mut file = std::fs::File::open(&output_path)?;
-        let reader = Reader::new()
-            .with_shared_context(&context)
-            .with_stream("image/jpeg", &mut file)?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
 
         println!("{reader}");
 
@@ -334,7 +328,7 @@ mod integration_1 {
         let parent_path = fixture_path("earth_apollo17.jpg");
 
         // Create a new Manifest.
-        let mut builder = Builder::new().with_shared_context(&context);
+        let mut builder = Builder::from_shared_context(&context);
 
         // Sign and embed into the target file.
         let signer = context.signer()?;
@@ -342,9 +336,8 @@ mod integration_1 {
 
         // Read back the new file with embedded manifest.
         let mut file = std::fs::File::open(&output_path)?;
-        let mut reader = Reader::new()
-            .with_shared_context(&context)
-            .with_stream("image/jpeg", &mut file)?;
+        let mut reader =
+            Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
 
         reader
             .post_validate_async(&c2pa::identity::validator::CawgValidator {})

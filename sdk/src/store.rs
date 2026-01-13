@@ -8251,7 +8251,7 @@ pub mod tests {
         context.settings_mut().verify.verify_after_sign = false;
         context.settings_mut().verify.verify_trust = false;
 
-        let mut builder = Builder::new().with_context(context);
+        let mut builder = Builder::from_context(context);
         builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
         let signer =

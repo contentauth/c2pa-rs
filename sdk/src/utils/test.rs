@@ -183,12 +183,12 @@ pub fn test_settings() -> crate::Settings {
 /// use crate::utils::test::test_context;
 ///
 /// // Single use
-/// let builder = Builder::new().with_context(test_context());
+/// let builder = Builder::from_context(test_context());
 ///
 /// // Shared across multiple components
 /// let ctx = test_context().into_shared();
-/// let builder1 = Builder::new().with_shared_context(&ctx);
-/// let builder2 = Builder::new().with_shared_context(&ctx);
+/// let builder1 = Builder::from_shared_context(&ctx);
+/// let builder2 = Builder::from_shared_context(&ctx);
 /// ```
 #[allow(clippy::expect_used)]
 pub fn test_context() -> Context {

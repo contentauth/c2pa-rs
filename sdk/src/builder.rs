@@ -135,6 +135,15 @@ impl TryFrom<String> for ManifestDefinition {
     }
 }
 
+/// Implement TryFrom for &String
+impl TryFrom<&String> for ManifestDefinition {
+    type Error = Error;
+
+    fn try_from(value: &String) -> Result<Self> {
+        value.as_str().try_into()
+    }
+}
+
 /// Implement TryFrom for serde_json::Value
 impl TryFrom<serde_json::Value> for ManifestDefinition {
     type Error = Error;
@@ -382,47 +391,16 @@ impl Builder {
     /// ```
     /// # use c2pa::{Context, Builder, Result};
     /// # fn main() -> Result<()> {
-    /// // Simple single-use case - no Arc needed!
-    /// let builder = Builder::new()
-    ///     .with_context(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
+    /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+    /// let builder = Builder::from_context(context);
     /// # Ok(())
     /// # }
     /// ```
-    #[deprecated(
-        since = "0.75.0",
-        note = "Use `Builder::new().with_context(context)` instead"
-    )]
     pub fn from_context(context: Context) -> Self {
         Self {
             context: Arc::new(context),
             ..Default::default()
         }
-    }
-
-    /// Sets the [`Context`] for this [`Builder`] using the builder pattern.
-    ///
-    /// This method takes ownership of the Context and wraps it in an Arc internally.
-    /// Use this for single-use contexts where you don't need to share the context.
-    ///
-    /// # Arguments
-    /// * `context` - The [`Context`] to use for this [`Builder`].
-    ///
-    /// # Returns
-    /// * The modified [`Builder`].
-    ///
-    /// # Example
-    /// ```
-    /// # use c2pa::{Context, Builder, Result};
-    /// # fn main() -> Result<()> {
-    /// let settings = c2pa::Settings::new().with_json(r#"{"verify": {"verify_after_sign": true}}"#)?;
-    /// let context = Context::new().with_settings(settings)?;
-    /// let builder = Builder::new().with_context(context);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn with_context(mut self, context: Context) -> Self {
-        self.context = Arc::new(context);
-        self
     }
 
     /// Creates a new [`Builder`] struct from a shared [`Context`].
@@ -445,50 +423,16 @@ impl Builder {
     /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
     ///
     /// // Share it across multiple builders
-    /// let builder1 = Builder::new().with_shared_context(&ctx);
-    /// let builder2 = Builder::new().with_shared_context(&ctx);
+    /// let builder1 = Builder::from_shared_context(&ctx);
+    /// let builder2 = Builder::from_shared_context(&ctx);
     /// # Ok(())
     /// # }
     /// ```
-    #[deprecated(
-        since = "0.75.0",
-        note = "Use `Builder::new().with_shared_context(context)` instead"
-    )]
     pub fn from_shared_context(context: &Arc<Context>) -> Self {
         Self {
             context: Arc::clone(context),
             ..Default::default()
         }
-    }
-
-    /// Sets a shared [`Context`] for this [`Builder`] using the builder pattern.
-    ///
-    /// This method allows sharing a single Context across multiple builders or readers.
-    /// The Arc is cloned internally, so you pass a reference.
-    ///
-    /// # Arguments
-    /// * `context` - A reference to an `Arc<Context>` to share.
-    ///
-    /// # Returns
-    /// * The modified [`Builder`].
-    ///
-    /// # Example
-    /// ```
-    /// # use c2pa::{Context, Builder, Result};
-    /// # use std::sync::Arc;
-    /// # fn main() -> Result<()> {
-    /// // Create a shared context once
-    /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
-    ///
-    /// // Share it across multiple builders
-    /// let builder1 = Builder::new().with_shared_context(&ctx);
-    /// let builder2 = Builder::new().with_shared_context(&ctx);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn with_shared_context(mut self, context: &Arc<Context>) -> Self {
-        self.context = Arc::clone(context);
-        self
     }
 
     /// Returns a reference to the [`Context`] used by this [`Builder`].
@@ -501,7 +445,7 @@ impl Builder {
     /// # use c2pa::{Context, Builder, Result};
     /// # fn main() -> Result<()> {
     /// let context = Context::new();
-    /// let builder = Builder::new().with_context(context);
+    /// let builder = Builder::from_context(context);
     ///
     /// // Access settings
     /// let settings = builder.context().settings();
@@ -1089,7 +1033,7 @@ impl Builder {
     ///
     /// # let archive_data = vec![]; // placeholder
     /// # let stream = Cursor::new(archive_data);
-    /// let builder = Builder::new().with_context(context).with_archive(stream)?;
+    /// let builder = Builder::from_context(context).with_archive(stream)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -1119,7 +1063,7 @@ impl Builder {
             )?;
 
             // Now use the user's original context for the Reader and Builder
-            let mut reader = Reader::new().with_shared_context(&self.context);
+            let mut reader = Reader::from_shared_context(&self.context);
             reader.with_store(store, &mut validation_log)?;
             reader.into_builder()
         })
@@ -1919,7 +1863,7 @@ impl Builder {
     ///     }
     /// }))?;
     ///
-    /// let mut builder = Builder::new().with_context(context)
+    /// let mut builder = Builder::from_context(context)
     ///     .with_definition(json!({"title": "My Image"}))?;
     ///
     /// let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
@@ -2136,7 +2080,7 @@ impl Builder {
     ///         "builder": {"claim_generator_info": {"name": "My App"}}
     ///     }))?;
     ///
-    /// let mut builder = Builder::new().with_context(context)
+    /// let mut builder = Builder::from_context(context)
     ///     .with_definition(json!({"title": "My Image"}))?;
     ///
     /// // Save with automatic signer from context
@@ -2619,8 +2563,7 @@ mod tests {
         let context = Context::new().with_settings(settings).unwrap();
 
         let mut output = Cursor::new(Vec::new());
-        Builder::new()
-            .with_context(context)
+        Builder::from_context(context)
             .sign(
                 &Settings::signer().unwrap(),
                 "image/jpeg",
@@ -2659,7 +2602,7 @@ mod tests {
 
         let context = Context::new().with_settings(settings).unwrap();
 
-        let mut builder = Builder::new().with_context(context);
+        let mut builder = Builder::from_context(context);
         builder
             .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut Cursor::new(TEST_IMAGE))
             .unwrap();
@@ -2731,7 +2674,7 @@ mod tests {
 
         let context = Context::new().with_settings(settings).unwrap();
 
-        let mut builder = Builder::new().with_context(context);
+        let mut builder = Builder::from_context(context);
         builder
             .add_ingredient_from_stream(
                 json!({
@@ -2831,8 +2774,7 @@ mod tests {
         let context = Context::new().with_settings(settings).unwrap();
 
         let mut output = Cursor::new(Vec::new());
-        Builder::new()
-            .with_context(context)
+        Builder::from_context(context)
             .sign(
                 &Settings::signer().unwrap(),
                 "image/jpeg",
@@ -2880,8 +2822,7 @@ mod tests {
         let context = Context::new().with_settings(settings).unwrap();
 
         let mut output = Cursor::new(Vec::new());
-        Builder::new()
-            .with_context(context)
+        Builder::from_context(context)
             .sign(
                 &Settings::signer().unwrap(),
                 "image/jpeg",
@@ -2945,8 +2886,7 @@ mod tests {
         let context = Context::new().with_settings(settings).unwrap();
 
         let mut output = Cursor::new(Vec::new());
-        Builder::new()
-            .with_context(context)
+        Builder::from_context(context)
             .sign(
                 &Settings::signer().unwrap(),
                 "image/jpeg",
@@ -3654,8 +3594,7 @@ mod tests {
             .unwrap();
         let context = Context::default().with_settings(settings).unwrap();
 
-        let mut builder = Builder::new()
-            .with_context(context)
+        let mut builder = Builder::from_context(context)
             .with_definition(definition)
             .unwrap();
 
@@ -3715,8 +3654,7 @@ mod tests {
 
         let mut input = Cursor::new(TEST_IMAGE);
 
-        let parent = Reader::new()
-            .with_context(context)
+        let parent = Reader::from_context(context)
             .with_stream("image/jpeg", &mut input)
             .expect("from_stream");
         let parent_manifest_label = parent.active_label().unwrap();
@@ -3770,7 +3708,7 @@ mod tests {
         let redacted_uri =
             crate::jumbf::labels::to_assertion_uri(parent_manifest_label, ASSERTION_LABEL);
 
-        let mut builder = Builder::new().with_context(context);
+        let mut builder = Builder::from_context(context);
         builder.set_intent(BuilderIntent::Edit);
         builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
@@ -3965,9 +3903,8 @@ mod tests {
 
     #[test]
     fn test_with_arvhive() -> Result<()> {
-        let mut builder = Builder::new()
-            .with_context(Context::new())
-            .with_definition(r#"{"title": "Test Image"}"#)?;
+        let mut builder =
+            Builder::from_context(Context::new()).with_definition(r#"{"title": "Test Image"}"#)?;
 
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive)?;
@@ -3976,7 +3913,7 @@ mod tests {
         archive.rewind()?;
         let context = Context::new();
 
-        let loaded_builder = Builder::new().with_context(context).with_archive(archive)?;
+        let loaded_builder = Builder::from_context(context).with_archive(archive)?;
 
         // Verify the manifest data was loaded with the correct title
         assert_eq!(
@@ -4059,7 +3996,7 @@ mod tests {
         // We create a new builder, and set the Intent to Edit
         // this tells the builder to capture the source file as a parent ingredient
         // if one is not otherwise added.
-        let mut builder = Builder::new().with_shared_context(&context);
+        let mut builder = Builder::from_shared_context(&context);
         builder.set_intent(BuilderIntent::Edit);
         let signer = &Settings::signer()?;
         // We have a different options here. We can embed the manifest into a destination file
@@ -4074,7 +4011,7 @@ mod tests {
         println!("first: {reader}");
 
         // create a new builder and add our ingredient from the reader.
-        let builder2 = &mut Builder::new().with_shared_context(&context);
+        let builder2 = &mut Builder::from_shared_context(&context);
         builder2.add_ingredient_from_reader(&reader)?;
         assert!(!builder2.definition.ingredients.is_empty());
         println!("\nbuilder2:{builder2}");
@@ -4097,13 +4034,11 @@ mod tests {
             Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": false}}"#)?);
 
         // Share it across multiple builders
-        let builder1 = Builder::new()
-            .with_shared_context(&ctx)
-            .with_definition(r#"{"title": "First Image"}"#)?;
+        let builder1 =
+            Builder::from_shared_context(&ctx).with_definition(r#"{"title": "First Image"}"#)?;
 
-        let builder2 = Builder::new()
-            .with_shared_context(&ctx)
-            .with_definition(r#"{"title": "Second Image"}"#)?;
+        let builder2 =
+            Builder::from_shared_context(&ctx).with_definition(r#"{"title": "Second Image"}"#)?;
 
         // Both builders share the same context settings
         assert_eq!(
@@ -4121,7 +4056,7 @@ mod tests {
     #[test]
     fn test_single_use_context() -> Result<()> {
         // Single-use context - no Arc needed!
-        let builder = Builder::new().with_context(
+        let builder = Builder::from_context(
             Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?,
         );
 
@@ -4152,8 +4087,7 @@ mod tests {
 
         // Create a builder in the main thread
         let ctx = Arc::new(Context::new());
-        let mut builder = Builder::new()
-            .with_shared_context(&ctx)
+        let mut builder = Builder::from_shared_context(&ctx)
             .with_definition(r#"{"title": "Created in main thread"}"#)?;
 
         // Send the builder to another thread (tests Send trait)
@@ -4187,8 +4121,7 @@ mod tests {
         for i in 0..4 {
             let ctx = Arc::clone(&ctx);
             let handle = thread::spawn(move || {
-                let builder = Builder::new()
-                    .with_shared_context(&ctx)
+                let builder = Builder::from_shared_context(&ctx)
                     .with_definition(format!(r#"{{"title": "Image {}"}}"#, i))
                     .unwrap();
 
