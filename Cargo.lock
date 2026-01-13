@@ -512,7 +512,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
- "toml 0.8.23",
+ "toml 0.9.10+spec-1.1.0",
  "ureq",
  "url",
  "uuid",
@@ -572,7 +572,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "toml 0.8.23",
+ "toml 0.9.10+spec-1.1.0",
  "treeline",
  "url",
  "wasi 0.14.7+wasi-0.2.4",
@@ -2315,7 +2315,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "toml 0.8.23",
+ "toml 0.9.10+spec-1.1.0",
 ]
 
 [[package]]
