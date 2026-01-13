@@ -408,8 +408,8 @@ tsa_url = "http://timestamp.digicert.com"
 
 # Configuration for the `Builder`.
 [builder]
-certificate_status_fetch = "all"
-certificate_status_should_override = true
+#certificate_status_fetch = "all"
+#certificate_status_should_override = true
 
 # Claim generator info list.
 [builder.claim_generator_info]
@@ -580,3 +580,5 @@ iMrbvbI8fG7w2Bbl9otNG/cch3DAw5rGAPV7NWkyl3QGuV/wt0MrAPDo
 """
 # Time stamp authority URL for signing.
 tsa_url = "http://timestamp.digicert.com"
+
+referenced_assertions = ["cawg.training-mining"]

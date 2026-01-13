@@ -20,6 +20,7 @@ use std::{
 
 use async_generic::async_generic;
 use chrono::{DateTime, Utc};
+use coset::CoseSign1;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -35,11 +36,12 @@ use crate::{
             self, ACTIONS, ASSERTION_METADATA, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL,
             DATABOX_STORE, METADATA_LABEL_REGEX,
         },
-        Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash, Ingredient,
-        Metadata, Relationship, V2_DEPRECATED_ACTIONS,
+        Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash,
+        Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
+    context::Context,
     cose_validator::{
         get_signing_cert_serial_num, get_signing_info, get_signing_info_async, verify_cose,
         verify_cose_async,
@@ -64,7 +66,8 @@ use crate::{
         labels::{
             assertion_label_from_uri, box_name_from_uri, manifest_label_from_uri,
             manifest_label_to_parts, to_absolute_uri, to_assertion_uri, to_databox_uri,
-            to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
+            to_manifest_uri, to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES,
+            SIGNATURE,
         },
     },
     jumbf_io::get_assetio_handler,
@@ -337,18 +340,13 @@ pub enum AssertionStoreJsonFormat {
 }
 
 /// Remote manifest options. Use 'set_remote_manifest' to generate external manifests.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum RemoteManifest {
-    NoRemote,                // No external manifest (default)
+    #[default]
+    NoRemote, // No external manifest (default)
     SideCar,        // Manifest will be saved as a side car file, output asset is untouched.
     Remote(String), /* Manifest will be saved as a side car file, output asset will contain remote reference */
     EmbedWithRemote(String), /* Manifest will be embedded with a remote reference, sidecar will be generated */
-}
-
-impl Default for RemoteManifest {
-    fn default() -> Self {
-        Self::NoRemote
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -1054,6 +1052,17 @@ impl Claim {
         &self.signature_val
     }
 
+    /// Returns the `COSE_Sign1_Tagged` structure found in the claim signature box.
+    pub fn cose_sign1(&self) -> Result<CoseSign1> {
+        let sig = self.signature_val();
+        let data = self.data()?;
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        let sign1 = parse_cose_sign1(sig, &data, &mut validation_log)?;
+        Ok(sign1)
+    }
+
     /// get claim generator
     pub fn claim_generator(&self) -> Option<&str> {
         self.claim_generator.as_deref()
@@ -1156,6 +1165,28 @@ impl Claim {
 
     pub(crate) fn set_update_manifest(&mut self, is_update_manifest: bool) {
         self.update_manifest = is_update_manifest;
+    }
+
+    /// Adds an action to the claim.
+    ///
+    /// If an Actions assertion already exists, the action is added to it.
+    /// If not, a new Actions assertion is created and added to the claim.
+    /// If multiple exist, this will update the first one found.
+    pub fn add_action(&mut self, action: Action) -> Result<&mut Self> {
+        match self.get_assertion(Actions::LABEL_VERSIONED, 0) {
+            None => {
+                let actions = Actions::new().add_action_checked(action)?;
+                self.add_assertion(&actions)?;
+            }
+            Some(a) => {
+                let actions = Actions::from_assertion(a)?;
+
+                let actions = actions.add_action_checked(action)?;
+
+                self.replace_assertion(actions.to_assertion()?)?;
+            }
+        };
+        Ok(self)
     }
 
     pub fn add_claim_generator_info(&mut self, info: ClaimGeneratorInfo) -> &mut Self {
@@ -1356,8 +1387,11 @@ impl Claim {
             if labels::HASH_LABELS.contains(&base_label) || add_as_created_assertion {
                 ClaimAssertionType::Created
             } else if let Some(created_assertions) = {
-                let settings = crate::settings::get_settings().unwrap_or_default();
-                settings.builder.created_assertion_labels
+                Context::new()
+                    .settings()
+                    .builder
+                    .created_assertion_labels
+                    .clone()
             } {
                 if created_assertions.iter().any(|label| label == base_label) {
                     ClaimAssertionType::Created
@@ -1834,8 +1868,9 @@ impl Claim {
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<()> {
+        let settings = context.settings();
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val().clone();
         let additional_bytes: Vec<u8> = Vec::new();
@@ -1863,19 +1898,31 @@ impl Claim {
             .failure(validation_log, Error::ClaimMissingSignatureBox)?;
         }
 
+        // for V2 and greater claims the label must conform
+        if claim.version() > 1 && manifest_label_to_parts(claim.label()).is_none() {
+            log_item!(
+                to_manifest_uri(claim.label()),
+                "claim box label invalid",
+                "verify_claim_async"
+            )
+            .validation_status(validation_status::CLAIM_MALFORMED)
+            .failure(validation_log, Error::ClaimInvalidContent)?;
+        }
+
         let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
         let certificate_serial_num = get_signing_cert_serial_num(&sign1)?.to_string();
 
         // check certificate revocation
-        check_ocsp_status(
+        check_ocsp_status_async(
             &sign1,
             &data,
             ctp,
             svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
-            settings,
-        )?;
+            context,
+        )
+        .await?;
 
         let verified = verify_cose_async(
             &sig,
@@ -1898,6 +1945,7 @@ impl Claim {
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn verify_claim(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
@@ -1905,11 +1953,16 @@ impl Claim {
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
         validation_log: &mut StatusTracker,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val();
         let additional_bytes: Vec<u8> = Vec::new();
+
+        let mut adjusted_settings = context.settings().clone();
+        if claim.version() == 1 {
+            adjusted_settings.verify.verify_timestamp_trust = false;
+        }
 
         // use the signature uri as the current uri while validating the signature info
         validation_log.push_current_uri(to_signature_uri(claim.label()));
@@ -1931,6 +1984,17 @@ impl Claim {
             )
             .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
             .failure(validation_log, Error::ClaimMissingSignatureBox)?;
+        }
+
+        // for V2 and greater claims the label must conform
+        if claim.version() > 1 && manifest_label_to_parts(claim.label()).is_none() {
+            log_item!(
+                to_manifest_uri(claim.label()),
+                "claim box label invalid",
+                "verify_claim"
+            )
+            .validation_status(validation_status::CLAIM_MALFORMED)
+            .failure(validation_log, Error::ClaimInvalidContent)?;
         }
 
         // If we are validating a claim that has been loaded from a file
@@ -1956,7 +2020,7 @@ impl Claim {
             svi.certificate_statuses.get(&certificate_serial_num),
             svi.timestamps.get(claim.label()),
             validation_log,
-            settings,
+            context,
         )?;
 
         let verified = verify_cose(
@@ -1967,11 +2031,17 @@ impl Claim {
             ctp,
             svi.timestamps.get(claim.label()),
             validation_log,
-            settings,
+            &adjusted_settings,
         );
 
-        let result =
-            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, settings);
+        let result = Claim::verify_internal(
+            claim,
+            asset_data,
+            svi,
+            verified,
+            validation_log,
+            &adjusted_settings,
+        );
         validation_log.pop_current_uri();
         result
     }
@@ -2353,44 +2423,9 @@ impl Claim {
                 if action.action() == c2pa_action::TRANSCODED
                     || action.action() == c2pa_action::REPACKAGED
                 {
-                    let Some(params) = action.parameters() else {
-                        log_item!(
-                            label.clone(),
-                            "opened, placed and removed items must have parameters",
-                            "verify_actions"
-                        )
-                        .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure(
-                            validation_log,
-                            Error::ValidationRule(
-                                "opened, placed and removed items must have parameters".into(),
-                            ),
-                        )?;
-                        continue; // Skip the parameter-dependent checks below
-                    };
-
-                    let mut parent_tested = None; // on exists if action actually pointed to an ingredient
-                    if let Some(h) = &params.ingredient {
-                        // can we find a reference in the ingredient list
-                        // is it referenced from this manifest
-                        if claim.ingredient_assertions().iter().any(|i| {
-                            if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                if let Some(target_label) = assertion_label_from_uri(&h.url()) {
-                                    return target_label == i.label()
-                                        && ingredient.relationship == Relationship::ParentOf;
-                                }
-                            }
-                            false
-                        }) {
-                            parent_tested = Some(true);
-                        }
-
-                        match parent_tested {
-                            Some(v) => parent_tested = Some(v),
-                            None => parent_tested = Some(false),
-                        }
-                    } else if let Some(h_vec) = &params.ingredients {
-                        for h in h_vec {
+                    if let Some(params) = action.parameters() {
+                        let mut parent_tested = None; // on exists if action actually pointed to an ingredient
+                        if let Some(h) = &params.ingredient {
                             // can we find a reference in the ingredient list
                             // is it referenced from this manifest
                             if claim.ingredient_assertions().iter().any(|i| {
@@ -2404,27 +2439,55 @@ impl Claim {
                             }) {
                                 parent_tested = Some(true);
                             }
+
+                            match parent_tested {
+                                Some(v) => parent_tested = Some(v),
+                                None => parent_tested = Some(false),
+                            }
+                        } else if let Some(h_vec) = &params.ingredients {
+                            for h in h_vec {
+                                // can we find a reference in the ingredient list
+                                // is it referenced from this manifest
+                                if claim.ingredient_assertions().iter().any(|i| {
+                                    if let Ok(ingredient) =
+                                        Ingredient::from_assertion(i.assertion())
+                                    {
+                                        if let Some(target_label) =
+                                            assertion_label_from_uri(&h.url())
+                                        {
+                                            return target_label == i.label()
+                                                && ingredient.relationship
+                                                    == Relationship::ParentOf;
+                                        }
+                                    }
+                                    false
+                                }) {
+                                    parent_tested = Some(true);
+                                }
+                            }
+                            match parent_tested {
+                                Some(v) => parent_tested = Some(v),
+                                None => parent_tested = Some(false),
+                            }
                         }
-                        match parent_tested {
-                            Some(v) => parent_tested = Some(v),
-                            None => parent_tested = Some(false),
+                        // will only exist if we actual tested for an ingredient
+                        if let Some(false) = parent_tested {
+                            log_item!(
+                                label.clone(),
+                                "action must have valid ingredient with ParentOf relationship",
+                                "verify_actions"
+                            )
+                            .validation_status(
+                                validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
+                            )
+                            .failure_no_throw(
+                                validation_log,
+                                Error::ValidationRule(
+                                    "action must have valid ingredient with ParentOf relationship"
+                                        .into(),
+                                ),
+                            );
                         }
-                    }
-                    // will only exist if we actual tested for an ingredient
-                    if let Some(false) = parent_tested {
-                        log_item!(
-                            label.clone(),
-                            "action must have valid ingredient with ParentOf relationship",
-                            "verify_actions"
-                        )
-                        .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure_no_throw(
-                            validation_log,
-                            Error::ValidationRule(
-                                "action must have valid ingredient with ParentOf relationship"
-                                    .into(),
-                            ),
-                        );
                     }
                 }
 
@@ -2736,7 +2799,7 @@ impl Claim {
                         Ok(_a) => {
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                "data hash valid",
+                                "BMFF hash valid",
                                 "verify_internal"
                             )
                             .validation_status(validation_status::ASSERTION_BMFFHASH_MATCH)
@@ -2824,7 +2887,7 @@ impl Claim {
                         Ok(_a) => {
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                "data hash valid",
+                                "boxes hash valid",
                                 "verify_internal"
                             )
                             .validation_status(validation_status::ASSERTION_BOXHASH_MATCH)
@@ -3885,6 +3948,18 @@ impl Claim {
         }
     }
 
+    // Returns a HashedUri to the claim thumbnail assertion, if it exists.
+    pub fn thumbnail(&self) -> Option<HashedUri> {
+        self.assertions()
+            .iter()
+            .find(|hashed_uri| hashed_uri.url().contains(CLAIM_THUMBNAIL))
+            .map(|t| {
+                // convert to absolute
+                let url = crate::jumbf::labels::to_absolute_uri(self.label(), &t.url());
+                HashedUri::new(url, t.alg(), &t.hash())
+            })
+    }
+
     /// Checks whether or not ocsp values are present in claim
     pub fn has_ocsp_vals(&self) -> bool {
         if !self.certificate_status_assertions().is_empty() {
@@ -3907,7 +3982,8 @@ impl Claim {
         get_ocsp_der(&sign1).is_some()
     }
 }
-#[allow(dead_code)]
+
+#[allow(dead_code, clippy::too_many_arguments)]
 #[async_generic]
 pub(crate) fn check_ocsp_status(
     sign1: &coset::CoseSign1,
@@ -3916,11 +3992,11 @@ pub(crate) fn check_ocsp_status(
     ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
-    settings: &Settings,
+    context: &Context,
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
 
-    let fetch_policy = if settings.verify.ocsp_fetch {
+    let fetch_policy = if context.settings().verify.ocsp_fetch {
         OcspFetchPolicy::FetchAllowed
     } else {
         OcspFetchPolicy::DoNotFetch
@@ -3935,7 +4011,7 @@ pub(crate) fn check_ocsp_status(
             ocsp_responses,
             tst_info,
             validation_log,
-            settings,
+            context,
         )?)
     } else {
         Ok(crate::crypto::cose::check_ocsp_status_async(
@@ -3946,7 +4022,7 @@ pub(crate) fn check_ocsp_status(
             ocsp_responses,
             tst_info,
             validation_log,
-            settings,
+            context,
         )
         .await?)
     }
@@ -4083,6 +4159,14 @@ pub mod tests {
             1,
         );
         assert!(c4.is_err());
+
+        // bad v2
+        let c5 = Claim::new_with_user_guid(
+            "claim_generator",
+            "urn:blahblah:3fad1ead-8ed5-44d0-873b-ea5f58adea82:acme",
+            2,
+        );
+        assert!(c5.is_err());
     }
 
     #[test]

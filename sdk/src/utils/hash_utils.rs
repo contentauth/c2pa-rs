@@ -20,10 +20,11 @@ use std::{
 
 use range_set::RangeSet;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 // direct sha functions
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
-use crate::{utils::io_utils::stream_len, Error, Result};
+use crate::{crypto::base64::encode, utils::io_utils::stream_len, Error, Result};
 
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
@@ -246,7 +247,12 @@ where
                         continue;
                     }
 
-                    let end = exclusion.start() + exclusion.length() - 1;
+                    let end = exclusion
+                        .start()
+                        .checked_add(exclusion.length())
+                        .ok_or(Error::BadParam("No exclusion range".to_string()))?
+                        .checked_sub(1)
+                        .ok_or(Error::BadParam("No exclusion range".to_string()))?;
                     let exclusion_start = exclusion.start();
                     ranges.remove_range(exclusion_start..=end);
                 }
@@ -309,6 +315,10 @@ where
                 //build final ranges
                 let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
                 for inclusion in hr {
+                    if inclusion.length() == 0 {
+                        continue;
+                    }
+
                     let end = inclusion.start() + inclusion.length() - 1;
                     let inclusion_start = inclusion.start();
 
@@ -472,4 +482,42 @@ pub fn concat_and_hash(alg: &str, left: &[u8], right: Option<&[u8]>) -> Vec<u8> 
     }
 
     hash_by_alg(alg, &temp, None)
+}
+
+/// replace byte arrays with base64 encoded strings
+pub fn hash_to_b64(mut value: Value) -> Value {
+    use std::collections::VecDeque;
+
+    let mut queue = VecDeque::new();
+    queue.push_back(&mut value);
+
+    while let Some(current) = queue.pop_front() {
+        match current {
+            Value::Object(obj) => {
+                for (_, v) in obj.iter_mut() {
+                    if let Value::Array(hash_arr) = v {
+                        if !hash_arr.is_empty() && hash_arr.iter().all(|x| x.is_number()) {
+                            // Pre-allocate with capacity to avoid reallocations
+                            let mut hash_bytes = Vec::with_capacity(hash_arr.len());
+                            // Convert numbers to bytes safely
+                            for n in hash_arr.iter() {
+                                if let Some(num) = n.as_u64() {
+                                    hash_bytes.push(num as u8);
+                                }
+                            }
+                            *v = Value::String(encode(&hash_bytes));
+                        }
+                    }
+                    queue.push_back(v);
+                }
+            }
+            Value::Array(arr) => {
+                for v in arr.iter_mut() {
+                    queue.push_back(v);
+                }
+            }
+            _ => {}
+        }
+    }
+    value
 }

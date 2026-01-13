@@ -25,7 +25,9 @@
 //! The library has a Builder/Reader API that focuses on simplicity
 //! and stream support.
 //!
-//! ## Example: Reading a ManifestStore
+//! # Examples
+//!
+//! ## Reading a manifest
 //!
 //! ```
 //! # use c2pa::Result;
@@ -46,15 +48,14 @@
 //! # }
 //! ```
 //!
-//! ## Example: Adding a Manifest to a file
-//!
-//! ```ignore-wasm32
+//! ## Adding a signed manifest to a file
+//! ```
 //! # use c2pa::Result;
-//! use std::path::PathBuf;
+//! use std::io::Cursor;
 //!
-//! use c2pa::{create_signer, Builder, SigningAlg};
+//! use c2pa::{Builder, Context};
 //! use serde::Serialize;
-//! use tempfile::tempdir;
+//! use serde_json::json;
 //!
 //! #[derive(Serialize)]
 //! struct Test {
@@ -62,30 +63,50 @@
 //! }
 //!
 //! # fn main() -> Result<()> {
-//! #[cfg(feature = "file_io")]
-//! {
-//!     let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
-//!     builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+//! // Create context with signer configuration
+//! let context =
+//!     Context::new().with_settings(include_str!("../tests/fixtures/test_settings.toml"))?;
 //!
-//!     // Create a ps256 signer using certs and key files
-//!     let signer = create_signer::from_files(
-//!         "tests/fixtures/certs/ps256.pub",
-//!         "tests/fixtures/certs/ps256.pem",
-//!         SigningAlg::Ps256,
-//!         None,
-//!     )?;
+//! // Build manifest
+//! let mut builder = Builder::from_context(context)
+//!     .with_definition(json!({"title": "Test"}))?;
+//! builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!
-//!     // embed a manifest using the signer
-//!     std::fs::remove_file("../target/tmp/lib_sign.jpg"); // ensure the file does not exist
-//!     builder.sign_file(
-//!         &*signer,
-//!         "tests/fixtures/C.jpg",
-//!         "../target/tmp/lib_sign.jpg",
-//!     )?;
-//! }
+//! // Save with automatic signer from context (created from settings)
+//! let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
+//! let mut dest = Cursor::new(Vec::new());
+//! let _c2pa_data = builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! # WASM
+//!
+//! The only supported HTTP features for WASM (not WASI) are `http_reqwest`. This means WASM
+//! only supports the async API for network requests.
+//!
+//! ## WASI
+//!
+//! The only supported HTTP features for WASI are `http_wasi` and `http_wstd`. The former
+//! enables sync network requests, while the latter enables async network requests.
+//!
+//! # Features
+//!
+//! You can enable any of the following features:
+//!
+//! - **default_http** *(enabled by default)*: Enables default HTTP features for sync and async HTTP resolvers (`http_req`, `http_reqwest`, `http_wasi`, and `http_std`).
+//! - **openssl** *(enabled by default)*: Use the vendored `openssl` implementation for cryptography.
+//! - **rust_native_crypto**: Use Rust native cryptography.
+//! - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
+//! - **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
+//! - **file_io**: Enables APIs that use filesystem I/O.
+//! - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
+//! - **pdf**: Enables basic PDF read support.
+//! - **http_ureq**: Enables `ureq` for sync HTTP requests.
+//! - **http_reqwest**: Enables `reqwest` for async HTTP requests.
+//! - **http_reqwest_blocking**: Enables the `blocking` feature of `reqwest` for sync HTTP requests.
+//! - **http_wasi**: Enables `wasi` for sync HTTP requests on WASI.
+//! - **http_wstd**: Enables `wstd` for async HTTP requests on WASI.
 
 /// The internal name of the C2PA SDK
 pub const NAME: &str = "c2pa-rs";
@@ -96,6 +117,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 // Public modules
 /// The assertions module contains the definitions for the assertions that are part of the C2PA specification.
 pub mod assertions;
+
+pub mod context;
 
 /// The cose_sign module contains the definitions for the COSE signing algorithms.
 pub mod cose_sign;
@@ -110,6 +133,10 @@ pub mod crypto;
 /// Dynamic assertions are a new feature that allows you to add assertions to a C2PA file as a part of the signing process.
 #[doc(hidden)]
 pub mod dynamic_assertion;
+
+// TODO: pub it when we expose in high-level API
+/// The http module contains generic traits for configuring sync and async http resolvers.
+pub(crate) mod http;
 
 /// The `identity` module provides support for the [CAWG identity assertion](https://cawg.io/identity).
 #[doc(hidden)]
@@ -139,9 +166,7 @@ pub use assertions::Relationship;
 pub use builder::{Builder, BuilderIntent, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
-// pub use dynamic_assertion::{
-//     AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
-// };
+pub use context::Context;
 pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
 #[doc(inline)]
@@ -156,7 +181,7 @@ pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 pub use reader::Reader;
 #[doc(inline)]
 pub use resource_store::{ResourceRef, ResourceStore};
-pub use signer::{AsyncSigner, Signer};
+pub use signer::{AsyncSigner, BoxedAsyncSigner, BoxedSigner, Signer};
 pub use utils::mime::format_from_path;
 #[doc(inline)]
 pub use validation_results::{ValidationResults, ValidationState};
@@ -181,9 +206,8 @@ pub(crate) mod jumbf;
 pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store_report;
-
-#[allow(dead_code)]
-// TODO: Remove this when the feature is released (used in tests only for some builds now)
+/// The maybe_send_sync module contains traits for conditional Send bounds based on target architecture.
+pub(crate) mod maybe_send_sync;
 pub(crate) mod reader;
 pub(crate) mod resource_store;
 pub(crate) mod salt;

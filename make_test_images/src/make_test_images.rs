@@ -81,7 +81,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn get_signer(&self) -> c2pa::Result<Box<dyn Signer>> {
+    pub fn get_signer(&self) -> c2pa::Result<Box<dyn Signer + Send + Sync>> {
         // sign and embed into the target file
         let alg: SigningAlg = self.alg.parse().map_err(|_| c2pa::Error::UnsupportedType)?;
         let tsa_url = self.tsa_url.as_ref().map(|s| s.to_owned());

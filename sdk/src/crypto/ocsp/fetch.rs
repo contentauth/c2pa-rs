@@ -11,12 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// Add these imports and static variables for WASI debugging
-#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
 use std::io::Read;
 
-#[cfg(not(target_arch = "wasm32"))]
 use async_generic::async_generic;
+use http::header;
 use rasn::prelude::*;
 use rasn_pkix::Certificate;
 use x509_parser::{
@@ -25,14 +23,11 @@ use x509_parser::{
     prelude::*,
 };
 
-use crate::crypto::base64;
+use crate::{context::Context, crypto::base64};
 
-/// Retrieve an OCSP response if available.
-///
-/// Checks for an OCSP responder in the end-entity certifricate. If found, it
-/// will attempt to retrieve the raw DER-encoded OCSP response.
-///
-/// Not available on WASM builds.
+const AD_OCSP_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .48 .1);
+const AUTHORITY_INFO_ACCESS_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .1 .1);
+
 // Common types and structures used across all targets
 struct OcspRequestData {
     request_str: String,
@@ -143,31 +138,45 @@ fn process_ocsp_responders(certs: &[Vec<u8>]) -> Option<Vec<OcspRequestData>> {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[async_generic()]
-pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
+/// Retrieve an OCSP response if available.
+///
+/// Checks for an OCSP responder in the end-entity certificate. If found, it
+/// will attempt to retrieve the raw DER-encoded OCSP response.
+#[async_generic]
+pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>], context: &Context) -> Option<Vec<u8>> {
     let requests = process_ocsp_responders(certs)?;
     for request_data in requests {
         let req_url = request_data.url.join(&request_data.request_str).ok()?;
 
-        // fetch OCSP response
-        let request = ureq::get(req_url.as_str());
-        let response = if let Some(host) = request_data.url.host() {
-            request.header("Host", &host.to_string()).call().ok()? // for responders that don't support http 1.0
+        let mut request = http::Request::get(req_url.to_string());
+        if let Some(host) = req_url.host() {
+            // for responders that don't support http 1.0
+            request = request.header(header::HOST, host.to_string());
+        }
+
+        let request = request.body(Vec::new()).ok()?;
+        let response = if _sync {
+            context.resolver().http_resolve(request).ok()?
         } else {
-            request.call().ok()?
+            context
+                .resolver_async()
+                .http_resolve_async(request)
+                .await
+                .ok()?
         };
 
         if response.status() == 200 {
-            let body = response.into_body();
-            let len = body
-                .content_length()
-                .and_then(|s| s.try_into().ok())
+            let len = response
+                .headers()
+                .get(header::CONTENT_LENGTH)
+                .and_then(|content_length| content_length.to_str().ok())
+                .and_then(|content_length| content_length.parse().ok())
                 .unwrap_or(10000);
 
             let mut ocsp_rsp: Vec<u8> = Vec::with_capacity(len);
 
-            body.into_reader()
+            response
+                .into_body()
                 .take(1000000)
                 .read_to_end(&mut ocsp_rsp)
                 .ok()?;
@@ -177,116 +186,3 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
     }
     None
 }
-
-#[cfg(target_os = "wasi")]
-pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
-    use wasi::http::{
-        outgoing_handler,
-        types::{Fields, OutgoingRequest, Scheme},
-    };
-
-    let requests = process_ocsp_responders(certs)?;
-    for request_data in requests {
-        let req_url = request_data.url.join(&request_data.request_str).ok()?;
-
-        // WASI HTTP fetch
-        let authority = req_url.authority();
-        let path_with_query = req_url[url::Position::AfterPort..].to_string();
-        let scheme = match req_url.scheme() {
-            "http" => Scheme::Http,
-            "https" => Scheme::Https,
-            _ => continue,
-        };
-
-        let request = OutgoingRequest::new(Fields::new());
-        request.set_path_with_query(Some(&path_with_query)).ok()?;
-        request.set_authority(Some(&authority)).ok()?;
-        request.set_scheme(Some(&scheme)).ok()?;
-        let resp = outgoing_handler::handle(request, None).ok()?;
-        resp.subscribe().block();
-        let response = resp.get()?.ok()?.ok()?;
-        if response.status() == 200 {
-            let content_length: usize = response
-                .headers()
-                .get("Content-Length")
-                .first()
-                .and_then(|val| if val.is_empty() { None } else { Some(val) })
-                .and_then(|val| std::str::from_utf8(val).ok())
-                .and_then(|str_parsed_header| str_parsed_header.parse().ok())
-                .unwrap_or(10000);
-            let response_body = response.consume().ok()?;
-            let mut stream = response_body.stream().ok()?;
-            let mut buf = Vec::with_capacity(content_length);
-            stream.read_to_end(&mut buf).ok()?;
-            return Some(buf);
-        }
-    }
-    None
-}
-
-#[cfg(target_os = "wasi")]
-pub(crate) async fn fetch_ocsp_response_async(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
-    use wstd::{
-        http::{Client, Request},
-        io::{empty, AsyncRead},
-    };
-
-    let requests = process_ocsp_responders(certs)?;
-    for request_data in requests {
-        let req_url = request_data.url.join(&request_data.request_str).ok()?;
-
-        // WASI async HTTP fetch
-        let request = Request::get(req_url.as_str()).body(empty()).ok()?;
-
-        let mut response = Client::new().send(request).await.ok()?;
-
-        let status = response.status().as_u16();
-        if status != 200 {
-            continue;
-        }
-
-        let content_length = response
-            .headers()
-            .get("Content-Length")
-            .and_then(|val| val.to_str().ok())
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(10000);
-
-        let body = response.body_mut();
-        let mut ocsp_rsp = Vec::with_capacity(content_length);
-        body.read_to_end(&mut ocsp_rsp).await.ok()?;
-
-        return Some(ocsp_rsp);
-    }
-    None
-}
-
-// No sync version of fetch_ocsp_response for wasm-bindgen
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-pub(crate) fn fetch_ocsp_response(_certs: &[Vec<u8>]) -> Option<Vec<u8>> {
-    None
-}
-
-#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-pub(crate) async fn fetch_ocsp_response_async(certs: &[Vec<u8>]) -> Option<Vec<u8>> {
-    use reqwest::Client;
-
-    let requests = process_ocsp_responders(certs)?;
-    for request_data in requests {
-        let req_url = request_data.url.join(&request_data.request_str).ok()?;
-
-        // WASM async HTTP fetch with reqwest
-        let client = Client::new();
-        let response = client.get(req_url.as_str()).send().await.ok()?;
-        if !response.status().is_success() {
-            continue;
-        }
-        let ocsp_rsp = response.bytes().await.ok()?.to_vec();
-
-        return Some(ocsp_rsp);
-    }
-    None
-}
-
-const AD_OCSP_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .48 .1);
-const AUTHORITY_INFO_ACCESS_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .1 .1);

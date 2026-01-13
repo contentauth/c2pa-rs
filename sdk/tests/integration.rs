@@ -22,6 +22,7 @@ mod integration_1 {
         settings::Settings,
         Builder, Ingredient, Reader, Result,
     };
+    use c2pa_macros::c2pa_test_async;
     #[allow(unused)] // different code path for WASI
     use tempfile::{tempdir, TempDir};
 
@@ -142,7 +143,7 @@ mod integration_1 {
         let json = std::fs::read_to_string(manifest_path)?;
 
         let mut builder = Builder::from_json(&json)?;
-        builder.base_path = Some(fixture_path(""));
+        builder.set_base_path(fixture_path(""));
 
         // sign and embed into the target file
         let signer = Settings::signer()?;
@@ -300,9 +301,8 @@ mod integration_1 {
         Ok(())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[cfg(feature = "file_io")]
-    #[tokio::test]
+    #[c2pa_test_async]
     async fn test_cawg_signing_via_settings() -> Result<()> {
         Settings::from_toml(include_str!(
             "../tests/fixtures/test_settings_with_cawg_signing.toml"
@@ -349,44 +349,50 @@ mod integration_1 {
         Ok(())
     }
 
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_certificate_status() -> Result<()> {
-        use c2pa::ValidationState;
+    /*
+    This test is currently invalid.  It is using C2PA 2.2 assertions in 1.4 claims
+    This needs to be rewritten in a way that does not require network calls, or mock
+    them correctly.  Tracking issue: https://github.com/contentauth/c2pa-rs/issues/1581
 
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-        Settings::from_toml(
-            &toml::toml! {
-                [builder]
-                certificate_status_fetch = "all"
-                certificate_status_should_override = true
-            }
-            .to_string(),
-        )?;
+        #[test]
+        #[cfg(feature = "file_io")]
+        fn test_certificate_status() -> Result<()> {
+            use c2pa::ValidationState;
 
-        // set up parent and destination paths
-        let temp_dir = tempdirectory()?;
-        let output_path = temp_dir.path().join("test_file.jpg");
-        let parent_path = fixture_path("ocsp.jpg");
+            Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [builder]
+                    certificate_status_fetch = "all"
+                    certificate_status_should_override = true
+                }
+                .to_string(),
+            )?;
 
-        // create a new Manifest
-        let mut builder = Builder::new();
-        builder.set_intent(c2pa::BuilderIntent::Update);
+            // set up parent and destination paths
+            let temp_dir = tempdirectory()?;
+            let output_path = temp_dir.path().join("test_file.jpg");
+            let parent_path = fixture_path("ocsp.jpg");
 
-        // sign and embed into the target file
-        let signer = Settings::signer()?;
-        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+            // create a new Manifest
+            let mut builder = Builder::new();
+            builder.set_intent(c2pa::BuilderIntent::Update);
 
-        // std::fs::copy(&output_path, "cert_status.jpg")?;
+            // sign and embed into the target file
+            let signer = Settings::signer()?;
+            builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
-        // read our new file with embedded manifest
-        let reader = Reader::from_file(&output_path)?;
-        let reader_json = reader.json();
-        //println!("{reader}");
-        // ensure certificate status assertion was created
-        assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
-        assert_eq!(reader.validation_state(), ValidationState::Trusted);
-        assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
-        Ok(())
-    }
+            // std::fs::copy(&output_path, "cert_status.jpg")?;
+
+            // read our new file with embedded manifest
+            let reader = Reader::from_file(&output_path)?;
+            let reader_json = reader.json();
+            //println!("{reader}");
+            // ensure certificate status assertion was created
+            //assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
+            assert_eq!(reader.validation_state(), ValidationState::Trusted);
+            assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
+            Ok(())
+        }
+    */
 }

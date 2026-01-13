@@ -11,11 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::{self, Cursor};
+use std::io::{self, Cursor, Seek};
 
+#[cfg(not(target_arch = "wasm32"))]
+use c2pa::identity::validator::CawgValidator;
 use c2pa::{
-    settings::Settings, validation_status, Builder, BuilderIntent, ManifestAssertionKind, Reader,
-    Result, ValidationState,
+    settings::Settings, validation_status, Builder, BuilderIntent, Error, ManifestAssertionKind,
+    Reader, Result, ValidationState,
 };
 
 mod common;
@@ -24,7 +26,6 @@ use common::compare_stream_to_known_good;
 use common::test_signer;
 
 #[test]
-#[ignore = "See https://github.com/contentauth/c2pa-rs/blob/dbe0d34e1ab0bed00ba368e940dfef6b56986e5c/sdk/src/builder.rs?plain=1#L1138-L1152:w"]
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 fn test_builder_ca_jpg() -> Result<()> {
     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
@@ -76,6 +77,120 @@ fn test_builder_riff() -> Result<()> {
     builder.definition.claim_version = Some(1); // use v1 for this test
     builder.no_embed = true;
     builder.sign(&Settings::signer()?, format, &mut source, &mut io::empty())?;
+
+    Ok(())
+}
+
+// Constructs a C2PA asset that has an ingredient that references the main asset's active
+// manifest as the ingredients active manifest.
+//
+// Source: https://github.com/contentauth/c2pa-rs/issues/1554
+#[test]
+fn test_builder_cyclic_ingredient() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+    let mut source = Cursor::new(include_bytes!("fixtures/no_manifest.jpg"));
+    let format = "image/jpeg";
+
+    let mut ingredient = Cursor::new(Vec::new());
+
+    // Start by making a basic ingredient.
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
+    builder.sign(&Settings::signer()?, format, &mut source, &mut ingredient)?;
+
+    source.rewind()?;
+    ingredient.rewind()?;
+
+    let mut dest = Cursor::new(Vec::new());
+
+    // Then create an asset with the basic ingredient.
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
+    builder.add_ingredient_from_stream(
+        serde_json::json!({}).to_string(),
+        format,
+        &mut ingredient,
+    )?;
+    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
+
+    dest.rewind()?;
+    ingredient.rewind()?;
+
+    let active_manifest_uri = Reader::from_stream(format, &mut dest)?
+        .active_label()
+        .unwrap()
+        .to_owned();
+    let ingredient_uri = Reader::from_stream(format, ingredient)?
+        .active_label()
+        .unwrap()
+        .to_owned();
+
+    // If they aren't the same number of bytes then we can't reliably substitute the URI.
+    assert_eq!(active_manifest_uri.len(), ingredient_uri.len());
+
+    // Replace the ingredient active manifest with the main active manifest.
+    let mut bytes = dest.into_inner();
+    let old = ingredient_uri.as_bytes();
+    let new = active_manifest_uri.as_bytes();
+
+    let mut i = 0;
+    while i + old.len() <= bytes.len() {
+        if &bytes[i..i + old.len()] == old {
+            bytes[i..i + old.len()].copy_from_slice(new);
+            i += old.len();
+        } else {
+            i += 1;
+        }
+    }
+
+    // Attempt to read the manifest with a cyclical ingredient.
+    let mut cyclic_ingredient = Cursor::new(bytes);
+    assert!(matches!(
+        Reader::from_stream(format, &mut cyclic_ingredient),
+        Err(Error::CyclicIngredients { .. })
+    ));
+
+    cyclic_ingredient.rewind()?;
+
+    // Read the manifest without validating so we can test with post-validating the CAWG.
+    Settings::from_toml(
+        &toml::toml! {
+            [verify]
+            verify_after_reading = false
+        }
+        .to_string(),
+    )?;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut reader = Reader::from_stream(format, cyclic_ingredient)?;
+        // Ideally we'd use a sync path for this. There are limitations for tokio on WASM.
+        tokio::runtime::Runtime::new()?.block_on(reader.post_validate_async(&CawgValidator {}))?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_builder_sidecar_only() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let mut source = Cursor::new(include_bytes!("fixtures/earth_apollo17.jpg"));
+    let format = "image/jpeg";
+
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
+    builder.set_no_embed(true);
+    let c2pa_data = builder.sign(&Settings::signer()?, format, &mut source, &mut io::empty())?;
+
+    let reader1 = Reader::from_manifest_data_and_stream(&c2pa_data, format, &mut source)?;
+    println!("reader1: {reader1}");
+
+    let builder2: Builder = reader1.try_into()?;
+    println!("builder2 {builder2}");
+
+    //    let c2pa_stream = Cursor::new(c2pa_data);
+    //    let reader = Reader::from_stream("application/c2pa", c2pa_stream)?;
+    //    println!("reader: {reader}");
 
     Ok(())
 }
@@ -196,7 +311,7 @@ fn test_builder_embedded_v1_otgp() -> Result<()> {
     dest.set_position(0);
     let reader = Reader::from_stream(format, &mut dest)?;
     // check that the v1 OTGP is embedded and we catch it correct with validation_results
-    assert_ne!(reader.validation_state(), ValidationState::Invalid);
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
     //println!("reader: {}", reader);
     assert_eq!(
         reader.active_manifest().unwrap().ingredients()[0]

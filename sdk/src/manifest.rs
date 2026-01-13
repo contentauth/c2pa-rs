@@ -92,7 +92,8 @@ pub struct Manifest {
 
     /// A List of ingredients
     #[serde(default = "default_vec::<Ingredient>")]
-    ingredients: Vec<Ingredient>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) ingredients: Vec<Ingredient>,
 
     /// A List of verified credentials
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,7 +101,7 @@ pub struct Manifest {
 
     /// A list of assertions
     #[serde(default = "default_vec::<ManifestAssertion>")]
-    assertions: Vec<ManifestAssertion>,
+    pub(crate) assertions: Vec<ManifestAssertion>,
 
     /// A list of assertion hash references.
     #[serde(skip)]
@@ -108,7 +109,7 @@ pub struct Manifest {
 
     /// A list of redactions - URIs to a redacted assertions
     #[serde(skip_serializing_if = "Option::is_none")]
-    redactions: Option<Vec<String>>,
+    pub(crate) redactions: Option<Vec<String>>,
 
     /// Signature data (only used for reporting)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -116,6 +117,12 @@ pub struct Manifest {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
+
+    /// The [`CoseSign1::signature`] value.
+    ///
+    /// [`CoseSign1::signature`]: coset::CoseSign1::signature
+    #[serde(skip)]
+    signature: Option<Vec<u8>>,
 
     /// Indicates where a generated manifest goes
     #[serde(skip)]
@@ -233,6 +240,12 @@ impl Manifest {
 
     pub fn signature_info(&self) -> Option<&SignatureInfo> {
         self.signature_info.as_ref()
+    }
+
+    /// Returns the signature field of the `COSE_Sign1_Tagged` structure found in the
+    /// claim signature box.
+    pub fn signature(&self) -> Option<&[u8]> {
+        self.signature.as_deref()
     }
 
     /// Returns the parent ingredient if it exists.
@@ -367,6 +380,10 @@ impl Manifest {
             format: claim.format().map(|s| s.to_owned()),
             instance_id: claim.instance_id().to_owned(),
             label: Some(claim.label().to_owned()),
+            signature: claim
+                .cose_sign1()
+                .ok()
+                .map(|cose_sign1| cose_sign1.signature),
             ..Default::default()
         };
 
@@ -1333,7 +1350,6 @@ pub(crate) mod tests {
 
     // This is only used for testing obsolete v1 manifest creation code
     const MANIFEST_JSON: &str = r#"{
-
         "claim_version": 1,
         "claim_generator": "test",
         "claim_generator_info": [

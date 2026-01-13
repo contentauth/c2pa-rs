@@ -13,6 +13,8 @@
 
 use std::{collections::HashMap, env::consts};
 
+#[cfg(feature = "json_schema")]
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -32,7 +34,7 @@ use crate::{
 ///
 /// These formats are a combination of types supported in [image-rs](https://docs.rs/image/latest/image/enum.ImageFormat.html)
 /// and types defined by the [IANA registry media type](https://www.iana.org/assignments/media-types/media-types.xhtml) (as defined in the spec).
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThumbnailFormat {
@@ -48,7 +50,7 @@ pub enum ThumbnailFormat {
     Tiff,
 }
 /// Quality of the thumbnail.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThumbnailQuality {
@@ -61,7 +63,7 @@ pub enum ThumbnailQuality {
 }
 
 /// Settings for controlling automatic thumbnail generation.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ThumbnailSettings {
     /// Whether or not to automatically generate thumbnails.
@@ -138,7 +140,7 @@ impl SettingsValidate for ThumbnailSettings {
 }
 
 /// Settings for the auto actions (e.g. created, opened, placed).
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AutoActionSettings {
     /// Whether to enable this auto action or not.
@@ -148,7 +150,7 @@ pub struct AutoActionSettings {
     pub source_type: Option<DigitalSourceType>,
 }
 
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged, rename_all = "lowercase")]
 pub enum ClaimGeneratorInfoOperatingSystem {
@@ -172,7 +174,7 @@ pub enum ClaimGeneratorInfoOperatingSystem {
 }
 
 /// Settings for the claim generator info.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ClaimGeneratorInfoSettings {
     /// A human readable string naming the claim_generator.
@@ -220,8 +222,40 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
     }
 }
 
+impl TryFrom<&ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
+    type Error = Error;
+
+    fn try_from(value: &ClaimGeneratorInfoSettings) -> Result<Self> {
+        Ok(ClaimGeneratorInfo {
+            name: value.name.clone(),
+            version: value.version.clone(),
+            icon: value
+                .icon
+                .as_ref()
+                .map(|icon| UriOrResource::ResourceRef(icon.clone())),
+            operating_system: {
+                value.operating_system.as_ref().map(|os| match os {
+                    ClaimGeneratorInfoOperatingSystem::Auto => {
+                        format!("{}-unknown-{}", consts::ARCH, consts::OS)
+                    }
+                    ClaimGeneratorInfoOperatingSystem::Other(name) => name.clone(),
+                })
+            },
+            other: value
+                .other
+                .iter()
+                .map(|(key, value)| {
+                    serde_json::to_value(value)
+                        .map(|value| (key.clone(), value))
+                        .map_err(|err| err.into())
+                })
+                .collect::<Result<HashMap<String, serde_json::Value>>>()?,
+        })
+    }
+}
+
 /// Settings for an action template.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ActionTemplateSettings {
     /// The label associated with this action. See ([c2pa_action][crate::assertions::actions::c2pa_action]).
@@ -280,6 +314,7 @@ impl TryFrom<ActionTemplateSettings> for ActionTemplate {
 }
 
 /// Settings for an action.
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct ActionSettings {
     /// The label associated with this action. See ([`c2pa_action`]).
@@ -346,7 +381,7 @@ impl TryFrom<ActionSettings> for Action {
 ///
 /// The reason this setting exists only for an [Actions][crate::assertions::Actions] assertion
 /// is because of its mandations and reusable fields.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ActionsSettings {
     /// Whether or not to set the [Actions::all_actions_included][crate::assertions::Actions::all_actions_included]
@@ -386,15 +421,15 @@ impl Default for ActionsSettings {
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
-                enabled: true,
-                source_type: Some(DigitalSourceType::Empty),
+                enabled: false,
+                source_type: None, // Some(DigitalSourceType::Empty),
             },
             auto_opened_action: AutoActionSettings {
-                enabled: true,
+                enabled: false,
                 source_type: None,
             },
             auto_placed_action: AutoActionSettings {
-                enabled: true,
+                enabled: false,
                 source_type: None,
             },
         }
@@ -412,9 +447,12 @@ impl SettingsValidate for ActionsSettings {
 
 // TODO: do more validation on URL fields, cert fields, etc.
 /// Settings for the [Builder][crate::Builder].
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Default)]
 pub struct BuilderSettings {
+    /// The name of the vendor creating the content credential.
+    pub vendor: Option<String>,
+
     /// Claim generator info that is automatically added to the builder.
     ///
     /// Note that this information will prepend any claim generator info
@@ -464,10 +502,14 @@ pub struct BuilderSettings {
     /// See more information on the difference between created vs gathered assertions in the spec here:
     /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_fields>
     pub created_assertion_labels: Option<Vec<String>>,
+
+    /// Whether to generate a C2PA archive (instead of zip) when writing the manifest builder.
+    /// This will eventually become the default behavior.
+    pub generate_c2pa_archive: Option<bool>,
 }
 
 /// The scope of which manifests to fetch for OCSP.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum OcspFetchScope {
@@ -515,5 +557,154 @@ pub mod tests {
         };
 
         assert!(actions_settings.validate().is_ok());
+    }
+
+    #[test]
+    fn test_claim_generator_info_try_from() {
+        // Test basic conversion
+        let settings = ClaimGeneratorInfoSettings {
+            name: "Test Generator".to_string(),
+            version: Some("1.0.0".to_string()),
+            icon: None,
+            operating_system: None,
+            other: HashMap::new(),
+        };
+        let info = ClaimGeneratorInfo::try_from(settings).unwrap();
+        assert_eq!(info.name, "Test Generator");
+        assert_eq!(info.version, Some("1.0.0".to_string()));
+
+        // Test with auto OS detection
+        let settings = ClaimGeneratorInfoSettings {
+            name: "Test Generator".to_string(),
+            version: None,
+            icon: None,
+            operating_system: Some(ClaimGeneratorInfoOperatingSystem::Auto),
+            other: HashMap::new(),
+        };
+        let info = ClaimGeneratorInfo::try_from(settings).unwrap();
+        let os = info.operating_system.unwrap();
+        assert!(os.contains(consts::ARCH) && os.contains(consts::OS));
+
+        // Test with custom OS, icon, and other fields
+        let icon_ref = ResourceRef::new("image/png".to_string(), "icon.png".to_string());
+        let mut other = HashMap::new();
+        other.insert("custom".to_string(), serde_json::json!("value"));
+        let settings = ClaimGeneratorInfoSettings {
+            name: "Test Generator".to_string(),
+            version: Some("2.0.0".to_string()),
+            icon: Some(icon_ref.clone()),
+            operating_system: Some(ClaimGeneratorInfoOperatingSystem::Other(
+                "x86_64-pc-windows-msvc".to_string(),
+            )),
+            other,
+        };
+        let info = ClaimGeneratorInfo::try_from(settings).unwrap();
+        assert_eq!(
+            info.operating_system,
+            Some("x86_64-pc-windows-msvc".to_string())
+        );
+        assert!(matches!(info.icon, Some(UriOrResource::ResourceRef(_))));
+        assert_eq!(info.other.len(), 1);
+
+        // Test reference conversion
+        let settings = ClaimGeneratorInfoSettings {
+            name: "Test Generator".to_string(),
+            version: Some("1.5.0".to_string()),
+            icon: None,
+            operating_system: None,
+            other: HashMap::new(),
+        };
+        let info = ClaimGeneratorInfo::try_from(&settings).unwrap();
+        assert_eq!(info.name, "Test Generator");
+        assert_eq!(settings.name, "Test Generator"); // Original still valid
+    }
+
+    #[test]
+    fn test_action_template_try_from() {
+        // Test basic conversion
+        let settings = ActionTemplateSettings {
+            action: "c2pa.created".to_string(),
+            software_agent: None,
+            software_agent_index: None,
+            source_type: None,
+            icon: None,
+            description: None,
+            template_parameters: None,
+        };
+        let template = ActionTemplate::try_from(settings).unwrap();
+        assert_eq!(template.action, "c2pa.created");
+        assert!(template.software_agent.is_none());
+
+        // Test with software agent and parameters
+        let mut params = HashMap::new();
+        params.insert("param1".to_string(), serde_json::json!("value1"));
+        let software_agent = ClaimGeneratorInfoSettings {
+            name: "Test Agent".to_string(),
+            version: Some("1.0.0".to_string()),
+            icon: None,
+            operating_system: None,
+            other: HashMap::new(),
+        };
+        let settings = ActionTemplateSettings {
+            action: "c2pa.edited".to_string(),
+            software_agent: Some(software_agent),
+            software_agent_index: Some(0),
+            source_type: Some(DigitalSourceType::TrainedAlgorithmicMedia),
+            icon: None,
+            description: Some("Test template".to_string()),
+            template_parameters: Some(params),
+        };
+        let template = ActionTemplate::try_from(settings).unwrap();
+        assert_eq!(template.action, "c2pa.edited");
+        assert!(template.software_agent.is_some());
+        assert!(template.template_parameters.is_some());
+    }
+
+    #[test]
+    fn test_action_try_from() {
+        // Test basic conversion
+        let settings = ActionSettings {
+            action: "c2pa.opened".to_string(),
+            when: None,
+            software_agent: None,
+            software_agent_index: None,
+            changes: None,
+            parameters: None,
+            source_type: None,
+            related: None,
+            reason: None,
+            description: None,
+        };
+        let action = Action::try_from(settings).unwrap();
+        assert_eq!(action.action, "c2pa.opened");
+        assert!(action.software_agent.is_none());
+
+        // Test with software agent and other fields
+        let software_agent = ClaimGeneratorInfoSettings {
+            name: "Editor Pro".to_string(),
+            version: Some("2.0.0".to_string()),
+            icon: None,
+            operating_system: Some(ClaimGeneratorInfoOperatingSystem::Auto),
+            other: HashMap::new(),
+        };
+        let settings = ActionSettings {
+            action: "c2pa.edited".to_string(),
+            when: None,
+            software_agent: Some(software_agent),
+            software_agent_index: None,
+            changes: None,
+            parameters: None,
+            source_type: Some(DigitalSourceType::CompositeWithTrainedAlgorithmicMedia),
+            related: None,
+            reason: Some("Privacy concerns".to_string()),
+            description: Some("Edited with filters".to_string()),
+        };
+        let action = Action::try_from(settings).unwrap();
+        assert_eq!(action.action, "c2pa.edited");
+        assert!(matches!(
+            action.software_agent,
+            Some(SoftwareAgent::ClaimGeneratorInfo(_))
+        ));
+        assert_eq!(action.reason, Some("Privacy concerns".to_string()));
     }
 }

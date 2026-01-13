@@ -17,6 +17,7 @@ use ciborium::value::Value;
 use coset::{CoseSign1, Label};
 
 use crate::{
+    context::Context,
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
@@ -33,7 +34,16 @@ use crate::{
 
 /// Given a COSE signature, extract the OCSP data and validate the status of
 /// that report.
-#[async_generic]
+#[async_generic(async_signature(
+    sign1: &CoseSign1,
+    data: &[u8],
+    fetch_policy: OcspFetchPolicy,
+    ctp: &CertificateTrustPolicy,
+    ocsp_responses: Option<&Vec<Vec<u8>>>,
+    tst_info: Option<&TstInfo>,
+    validation_log: &mut StatusTracker,
+    context: &Context,
+))]
 #[allow(clippy::too_many_arguments)]
 pub fn check_ocsp_status(
     sign1: &CoseSign1,
@@ -43,9 +53,10 @@ pub fn check_ocsp_status(
     ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
-    settings: &Settings,
+    context: &Context,
 ) -> Result<OcspResponse, CoseError> {
-    if settings
+    if context
+        .settings()
         .builder
         .certificate_status_should_override
         .unwrap_or(false)
@@ -60,7 +71,7 @@ pub fn check_ocsp_status(
                         ocsp_response_ders,
                         tst_info,
                         validation_log,
-                        settings,
+                        context.settings(),
                     )
                 } else {
                     process_ocsp_responses_async(
@@ -70,7 +81,7 @@ pub fn check_ocsp_status(
                         ocsp_response_ders,
                         tst_info,
                         validation_log,
-                        settings,
+                        context.settings(),
                     )
                     .await
                 };
@@ -88,7 +99,7 @@ pub fn check_ocsp_status(
                     ctp,
                     tst_info,
                     validation_log,
-                    settings,
+                    context.settings(),
                 )
             } else {
                 check_stapled_ocsp_response_async(
@@ -98,7 +109,7 @@ pub fn check_ocsp_status(
                     ctp,
                     tst_info,
                     validation_log,
-                    settings,
+                    context.settings(),
                 )
                 .await
             }
@@ -113,7 +124,7 @@ pub fn check_ocsp_status(
                         ctp,
                         tst_info,
                         validation_log,
-                        settings,
+                        context,
                     )
                 } else {
                     fetch_and_check_ocsp_response_async(
@@ -122,7 +133,7 @@ pub fn check_ocsp_status(
                         ctp,
                         tst_info,
                         validation_log,
-                        settings,
+                        context,
                     )
                     .await
                 }
@@ -138,7 +149,7 @@ pub fn check_ocsp_status(
                                 ocsp_response_ders,
                                 tst_info,
                                 validation_log,
-                                settings,
+                                context.settings(),
                             )
                         } else {
                             process_ocsp_responses_async(
@@ -148,7 +159,7 @@ pub fn check_ocsp_status(
                                 ocsp_response_ders,
                                 tst_info,
                                 validation_log,
-                                settings,
+                                context.settings(),
                             )
                             .await
                         }
@@ -298,7 +309,7 @@ fn check_stapled_ocsp_response(
             if check_end_entity_certificate_profile(
                 &ocsp_certs[0],
                 ctp,
-                validation_log,
+                &mut current_validation_log,
                 tst_info.as_ref(),
             )
             .is_err()
@@ -313,37 +324,41 @@ fn check_stapled_ocsp_response(
 }
 
 /// Fetches and validates an OCSP response for the given COSE signature.
-#[async_generic()]
-#[allow(unreachable_code)] // wasm-bindgen will immediately return error for synchronous use.
-#[allow(unused_variables)]
+#[async_generic(async_signature(
+    sign1: &CoseSign1,
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    tst_info: Option<&TstInfo>,
+    validation_log: &mut StatusTracker,
+    context: &crate::context::Context,
+))]
 pub(crate) fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
-    _tst_info: Option<&TstInfo>,
+    tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
-    settings: &Settings,
+    context: &crate::context::Context,
 ) -> Result<OcspResponse, CoseError> {
     let certs = cert_chain_from_sign1(sign1)?;
 
-    let ocsp_der: Vec<u8> = if _sync {
-        match crate::crypto::ocsp::fetch_ocsp_response(&certs) {
-            Some(der) => der,
-            None => return Ok(OcspResponse::default()),
-        }
+    let ocsp_der = if _sync {
+        crate::crypto::ocsp::fetch_ocsp_response(&certs, context)
     } else {
-        match crate::crypto::ocsp::fetch_ocsp_response_async(&certs).await {
-            Some(der) => der,
-            None => return Ok(OcspResponse::default()),
-        }
+        crate::crypto::ocsp::fetch_ocsp_response_async(&certs, context).await
     };
 
-    let ocsp_response_der = ocsp_der;
+    let Some(ocsp_response_der) = ocsp_der else {
+        return Ok(OcspResponse::default());
+    };
 
-    let signing_time: Option<DateTime<Utc>> =
-        validate_cose_tst_info(sign1, data, ctp, validation_log, settings)
+    // use supplied override time if provided
+    let signing_time: Option<DateTime<Utc>> = match tst_info {
+        Some(tst_info) => Some(tst_info.gen_time.clone().into()),
+        None => validate_cose_tst_info(sign1, data, ctp, validation_log, context.settings())
             .ok()
-            .map(|tst_info| tst_info.gen_time.clone().into());
+            .map(|tst_info| tst_info.gen_time.clone().into()),
+    };
 
     // Check the OCSP response, but only if it is well-formed.
     // Revocation errors are reported in the validation log.

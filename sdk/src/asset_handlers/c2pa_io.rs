@@ -13,9 +13,12 @@
 
 use std::{fs::File, path::Path};
 
+use serde_bytes::ByteBuf;
+
 use crate::{
+    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
         HashBlockObjectType, HashObjectPositions,
     },
     error::{Error, Result},
@@ -32,6 +35,8 @@ pub struct C2paIO {}
 
 impl CAIReader for C2paIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        asset_reader.rewind()?;
+
         let mut cai_data = Vec::new();
         // read the whole file
         asset_reader.read_to_end(&mut cai_data)?;
@@ -131,6 +136,30 @@ impl AssetIO for C2paIO {
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }
+
+    fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
+        Some(self)
+    }
+}
+
+impl AssetBoxHash for C2paIO {
+    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+        // creates a box map with only a C2PA box.
+        input_stream.rewind()?;
+        let alg = "sha256";
+        let c2pa_box_map = BoxMap {
+            names: vec![C2PA_BOXHASH.to_string()],
+            alg: Some(alg.to_string()),
+            hash: ByteBuf::from(vec![]),
+            excluded: None,
+            pad: ByteBuf::from(vec![]),
+            range_start: 0,
+            range_len: 0,
+        };
+
+        let box_maps = vec![c2pa_box_map];
+        Ok(box_maps)
+    }
 }
 
 impl ComposedManifestRef for C2paIO {
@@ -149,7 +178,6 @@ pub mod tests {
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
         crypto::raw_signature::SigningAlg,
-        settings::Settings,
         status_tracker::{ErrorBehavior, StatusTracker},
         store::Store,
         utils::{
@@ -161,7 +189,7 @@ pub mod tests {
 
     #[test]
     fn c2pa_io_parse() {
-        let settings = Settings::default();
+        let context = crate::context::Context::new();
 
         let path = fixture_path("C.jpg");
 
@@ -184,9 +212,8 @@ pub mod tests {
             &manifest,
             "image/jpeg",
             &stream,
-            true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
-            &settings,
+            &context,
         )
         .expect("loading store");
 
