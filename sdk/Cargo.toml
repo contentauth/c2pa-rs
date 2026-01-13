@@ -114,7 +114,7 @@ config = { version = "0.14.0", default-features = false, features = [
     "toml",
 ] }
 const-hex = "1.14"
-const-oid = { version = "0.9.6", optional = true }
+const-oid = { version = "0.10.1", optional = true }
 coset = "0.4.0"
 der = { version = "0.7.9", features = ["alloc"] }
 extfmt = "0.1.1"
