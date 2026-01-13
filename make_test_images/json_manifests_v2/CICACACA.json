@@ -56,7 +56,7 @@
         }
       ],
       "signature_info": {
-        "alg": "Ps256",
+        "alg": "ps256",
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
         "time": "2025-07-28T05:55:47+00:00"
@@ -221,7 +221,7 @@
         }
       ],
       "signature_info": {
-        "alg": "Ps256",
+        "alg": "ps256",
         "issuer": "C2PA Test Signing Cert",
         "cert_serial_number": "720724073027128164015125666832722375746636448153",
         "time": "2025-07-28T05:55:51+00:00"
