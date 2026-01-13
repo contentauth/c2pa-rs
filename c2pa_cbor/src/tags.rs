@@ -186,64 +186,40 @@ pub fn encode_uint8_array<W: Write>(writer: &mut W, data: &[u8]) -> Result<()> {
     encode_tagged(writer, TAG_UINT8_ARRAY, &data)
 }
 
-/// Helper to encode a uint16 big-endian array (tag 65)
-pub fn encode_uint16be_array<W: Write>(writer: &mut W, data: &[u16]) -> Result<()> {
-    let bytes: Vec<u8> = data.iter().flat_map(|&n| n.to_be_bytes()).collect();
-    encode_tagged(writer, TAG_UINT16BE_ARRAY, &bytes)
+// Macro to generate typed array encoding functions
+macro_rules! define_typed_array_encoder {
+    ($(#[$doc:meta] $name:ident, $tag:ident, $ty:ty, $to_bytes:ident);* $(;)?) => {
+        $(
+            #[$doc]
+            pub fn $name<W: Write>(writer: &mut W, data: &[$ty]) -> Result<()> {
+                let bytes: Vec<u8> = data.iter().flat_map(|&n| n.$to_bytes()).collect();
+                encode_tagged(writer, $tag, &bytes)
+            }
+        )*
+    };
 }
 
-/// Helper to encode a uint32 big-endian array (tag 66)
-pub fn encode_uint32be_array<W: Write>(writer: &mut W, data: &[u32]) -> Result<()> {
-    let bytes: Vec<u8> = data.iter().flat_map(|&n| n.to_be_bytes()).collect();
-    encode_tagged(writer, TAG_UINT32BE_ARRAY, &bytes)
-}
-
-/// Helper to encode a uint64 big-endian array (tag 67)
-pub fn encode_uint64be_array<W: Write>(writer: &mut W, data: &[u64]) -> Result<()> {
-    let bytes: Vec<u8> = data.iter().flat_map(|&n| n.to_be_bytes()).collect();
-    encode_tagged(writer, TAG_UINT64BE_ARRAY, &bytes)
-}
-
-/// Helper to encode a uint16 little-endian array (tag 69)
-pub fn encode_uint16le_array<W: Write>(writer: &mut W, data: &[u16]) -> Result<()> {
-    let bytes: Vec<u8> = data.iter().flat_map(|&n| n.to_le_bytes()).collect();
-    encode_tagged(writer, TAG_UINT16LE_ARRAY, &bytes)
-}
-
-/// Helper to encode a uint32 little-endian array (tag 70)
-pub fn encode_uint32le_array<W: Write>(writer: &mut W, data: &[u32]) -> Result<()> {
-    let bytes: Vec<u8> = data.iter().flat_map(|&n| n.to_le_bytes()).collect();
-    encode_tagged(writer, TAG_UINT32LE_ARRAY, &bytes)
-}
-
-/// Helper to encode a uint64 little-endian array (tag 71)
-pub fn encode_uint64le_array<W: Write>(writer: &mut W, data: &[u64]) -> Result<()> {
-    let bytes: Vec<u8> = data.iter().flat_map(|&n| n.to_le_bytes()).collect();
-    encode_tagged(writer, TAG_UINT64LE_ARRAY, &bytes)
-}
-
-/// Helper to encode a float32 big-endian array (tag 81)
-pub fn encode_float32be_array<W: Write>(writer: &mut W, data: &[f32]) -> Result<()> {
-    let bytes: Vec<u8> = data.iter().flat_map(|&n| n.to_be_bytes()).collect();
-    encode_tagged(writer, TAG_FLOAT32BE_ARRAY, &bytes)
-}
-
-/// Helper to encode a float64 big-endian array (tag 82)
-pub fn encode_float64be_array<W: Write>(writer: &mut W, data: &[f64]) -> Result<()> {
-    let bytes: Vec<u8> = data.iter().flat_map(|&n| n.to_be_bytes()).collect();
-    encode_tagged(writer, TAG_FLOAT64BE_ARRAY, &bytes)
-}
-
-/// Helper to encode a float32 little-endian array (tag 85)
-pub fn encode_float32le_array<W: Write>(writer: &mut W, data: &[f32]) -> Result<()> {
-    let bytes: Vec<u8> = data.iter().flat_map(|&n| n.to_le_bytes()).collect();
-    encode_tagged(writer, TAG_FLOAT32LE_ARRAY, &bytes)
-}
-
-/// Helper to encode a float64 little-endian array (tag 86)
-pub fn encode_float64le_array<W: Write>(writer: &mut W, data: &[f64]) -> Result<()> {
-    let bytes: Vec<u8> = data.iter().flat_map(|&n| n.to_le_bytes()).collect();
-    encode_tagged(writer, TAG_FLOAT64LE_ARRAY, &bytes)
+define_typed_array_encoder! {
+    /// Helper to encode a uint16 big-endian array (tag 65)
+    encode_uint16be_array, TAG_UINT16BE_ARRAY, u16, to_be_bytes;
+    /// Helper to encode a uint32 big-endian array (tag 66)
+    encode_uint32be_array, TAG_UINT32BE_ARRAY, u32, to_be_bytes;
+    /// Helper to encode a uint64 big-endian array (tag 67)
+    encode_uint64be_array, TAG_UINT64BE_ARRAY, u64, to_be_bytes;
+    /// Helper to encode a uint16 little-endian array (tag 69)
+    encode_uint16le_array, TAG_UINT16LE_ARRAY, u16, to_le_bytes;
+    /// Helper to encode a uint32 little-endian array (tag 70)
+    encode_uint32le_array, TAG_UINT32LE_ARRAY, u32, to_le_bytes;
+    /// Helper to encode a uint64 little-endian array (tag 71)
+    encode_uint64le_array, TAG_UINT64LE_ARRAY, u64, to_le_bytes;
+    /// Helper to encode a float32 big-endian array (tag 81)
+    encode_float32be_array, TAG_FLOAT32BE_ARRAY, f32, to_be_bytes;
+    /// Helper to encode a float64 big-endian array (tag 82)
+    encode_float64be_array, TAG_FLOAT64BE_ARRAY, f64, to_be_bytes;
+    /// Helper to encode a float32 little-endian array (tag 85)
+    encode_float32le_array, TAG_FLOAT32LE_ARRAY, f32, to_le_bytes;
+    /// Helper to encode a float64 little-endian array (tag 86)
+    encode_float64le_array, TAG_FLOAT64LE_ARRAY, f64, to_le_bytes;
 }
 
 #[cfg(test)]
