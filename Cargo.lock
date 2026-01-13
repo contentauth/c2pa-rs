@@ -2488,9 +2488,9 @@ dependencies = [
 
 [[package]]
 name = "non-empty-string"
-version = "0.2.4"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55cf0f4060e345ae505219853da9ca1150564158a648a6aa6a528f0d5794bb33"
+checksum = "260010741d90def3ca7c4b5ec0bbe28c26d0c775d3c7d291b38642514136677a"
 dependencies = [
  "delegate",
  "serde",
