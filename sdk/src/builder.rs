@@ -50,6 +50,65 @@ use crate::{
 /// Version of the Builder Archive file
 const ARCHIVE_VERSION: &str = "1";
 
+/// Sanitizes a path to prevent directory traversal attacks.
+///
+/// This function validates that the path:
+/// - Does not contain '..' components
+/// - Does not contain absolute path markers
+/// - Does not escape the intended directory structure
+///
+/// # Arguments
+/// * `path` - The path string to sanitize
+///
+/// # Returns
+/// * The sanitized path if valid
+///
+/// # Errors
+/// * Returns an [`Error::BadParam`] if the path contains dangerous components
+fn sanitize_archive_path(path: &str) -> Result<String> {
+    // Reject empty paths
+    if path.is_empty() {
+        return Err(Error::BadParam("Empty path not allowed".to_string()));
+    }
+
+    // Reject paths that start with '/' (absolute paths)
+    if path.starts_with('/') || path.starts_with('\\') {
+        return Err(Error::BadParam(format!(
+            "Absolute path not allowed: {}",
+            path
+        )));
+    }
+
+    // Check for drive letters on Windows (e.g., "C:")
+    if path.len() >= 2 && path.chars().nth(1) == Some(':') {
+        return Err(Error::BadParam(format!(
+            "Drive letter not allowed: {}",
+            path
+        )));
+    }
+
+    // Split the path and check each component
+    let components: Vec<&str> = path.split(&['/', '\\'][..]).collect();
+
+    for component in &components {
+        // Reject '..' components
+        if *component == ".." {
+            return Err(Error::BadParam(format!(
+                "Path traversal not allowed: {}",
+                path
+            )));
+        }
+
+        // Reject empty components (which could come from '//')
+        if component.is_empty() {
+            continue; // Allow empty components from trailing slashes
+        }
+    }
+
+    // Normalize the path to use forward slashes
+    Ok(path.replace('\\', "/"))
+}
+
 /// Use a ManifestDefinition to define a manifest and to build a `ManifestStore`.
 /// A manifest is a collection of ingredients and assertions
 /// used to define a claim that can be signed and embedded into a file.
@@ -826,6 +885,9 @@ impl Builder {
         id: &str,
         mut stream: impl Read + Seek + Send,
     ) -> Result<&mut Self> {
+        // Sanitize the resource ID to prevent path traversal attacks
+        let _sanitized_id = sanitize_archive_path(id)?;
+
         if self.resources.exists(id) {
             return Err(Error::BadParam(id.to_string())); // todo add specific error
         }
@@ -861,7 +923,8 @@ impl Builder {
                 zip.start_file("resources/", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for (id, data) in self.resources.resources() {
-                    zip.start_file(format!("resources/{id}"), options)
+                    let sanitized_id = sanitize_archive_path(id)?;
+                    zip.start_file(format!("resources/{sanitized_id}"), options)
                         .map_err(|e| Error::OtherError(Box::new(e)))?;
                     zip.write_all(data)?;
                 }
@@ -872,7 +935,8 @@ impl Builder {
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 for ingredient in self.definition.ingredients.iter() {
                     for (id, data) in ingredient.resources().resources() {
-                        zip.start_file(format!("resources/{id}"), options)
+                        let sanitized_id = sanitize_archive_path(id)?;
+                        zip.start_file(format!("resources/{sanitized_id}"), options)
                             .map_err(|e| Error::OtherError(Box::new(e)))?;
                         zip.write_all(data)?;
                     }
@@ -881,7 +945,8 @@ impl Builder {
                         if let Some(manifest_data) = ingredient.manifest_data() {
                             // Convert to valid archive / file path name
                             let manifest_name = manifest_label.replace([':'], "_") + ".c2pa";
-                            zip.start_file(format!("manifests/{manifest_name}"), options)
+                            let sanitized_manifest_name = sanitize_archive_path(&manifest_name)?;
+                            zip.start_file(format!("manifests/{sanitized_manifest_name}"), options)
                                 .map_err(|e| Error::OtherError(Box::new(e)))?;
                             zip.write_all(&manifest_data)?;
                         }
@@ -920,6 +985,9 @@ impl Builder {
                 .map_err(|e| Error::OtherError(Box::new(e)))?;
 
             if file.name().starts_with("resources/") && file.name() != "resources/" {
+                // Validate the full path from the archive to prevent path traversal
+                let _sanitized_path = sanitize_archive_path(file.name())?;
+
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
                 let id = file
@@ -927,6 +995,10 @@ impl Builder {
                     .split('/')
                     .nth(1)
                     .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
+
+                // Additional validation: ensure id itself is safe
+                let _sanitized_id = sanitize_archive_path(id)?;
+
                 //println!("adding resource {}", id);
                 builder.resources.add(id, data)?;
             }
@@ -934,6 +1006,9 @@ impl Builder {
             // Load the c2pa_manifests.
             // Adds the manifest data to any ingredient that has a matching active_manfiest label.
             if file.name().starts_with("manifests/") && file.name() != "manifests/" {
+                // Validate the full path from the archive to prevent path traversal
+                let _sanitized_path = sanitize_archive_path(file.name())?;
+
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
                 let manifest_label = file
@@ -941,6 +1016,10 @@ impl Builder {
                     .split('/')
                     .nth(1)
                     .ok_or(Error::BadParam("Invalid manifest path".to_string()))?;
+
+                // Additional validation: ensure manifest_label is safe
+                let _sanitized_label = sanitize_archive_path(manifest_label)?;
+
                 let manifest_label = manifest_label.replace(['_'], ":");
                 for ingredient in builder.definition.ingredients.iter_mut() {
                     if let Some(active_manifest) = ingredient.active_manifest() {
@@ -954,6 +1033,9 @@ impl Builder {
             // Keep this for temporary unstable api support (un-versioned).
             // Earlier method used numbered library folders instead of manifests.
             if file.name().starts_with("ingredients/") && file.name() != "ingredients/" {
+                // Validate the full path from the archive to prevent path traversal
+                let _sanitized_path = sanitize_archive_path(file.name())?;
+
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
                 let index: usize = file
@@ -964,6 +1046,12 @@ impl Builder {
                     .parse::<usize>()
                     .map_err(|_| Error::BadParam("Invalid ingredient path".to_string()))?;
                 let id = file.name().split('/').nth(2).unwrap_or_default();
+
+                // Additional validation: ensure id is safe
+                if !id.is_empty() {
+                    let _sanitized_id = sanitize_archive_path(id)?;
+                }
+
                 if index >= builder.definition.ingredients.len() {
                     return Err(Error::OtherError(Box::new(std::io::Error::other(format!(
                         "Invalid ingredient index {index}"

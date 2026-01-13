@@ -612,3 +612,51 @@ fn test_metadata_formats_json_manifest() -> Result<()> {
     }
     Ok(())
 }
+
+/// Test that path traversal attempts in archive resources are blocked
+#[test]
+fn test_archive_path_traversal_protection() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
+
+    // Try to add a resource with a path traversal attempt
+    let mut malicious_resource = Cursor::new(b"malicious data");
+    let result = builder.add_resource("../../../etc/passwd", &mut malicious_resource);
+
+    // This should fail with a BadParam error
+    match result {
+        Err(Error::BadParam(msg)) if msg.contains("Path traversal not allowed") => {
+            // Expected error
+        }
+        Err(e) => {
+            panic!("Expected path traversal error, got: {:?}", e);
+        }
+        Ok(_) => {
+            panic!("Path traversal should have been blocked!");
+        }
+    }
+
+    // Also test absolute paths
+    let mut malicious_resource2 = Cursor::new(b"malicious data");
+    let result = builder.add_resource("/etc/passwd", &mut malicious_resource2);
+
+    match result {
+        Err(Error::BadParam(msg)) if msg.contains("Absolute path not allowed") => {
+            // Expected error
+        }
+        Err(e) => {
+            panic!("Expected absolute path error, got: {:?}", e);
+        }
+        Ok(_) => {
+            panic!("Absolute path should have been blocked!");
+        }
+    }
+
+    // Test that valid paths still work
+    let mut valid_resource = Cursor::new(b"valid data");
+    builder.add_resource("valid_resource.txt", &mut valid_resource)?;
+
+    Ok(())
+}
