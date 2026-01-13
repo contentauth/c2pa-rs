@@ -4122,12 +4122,12 @@ mod tests {
             let ctx = Arc::clone(&ctx);
             let handle = thread::spawn(move || {
                 let builder = Builder::from_shared_context(&ctx)
-                    .with_definition(format!(r#"{{"title": "Image {}"}}"#, i))
+                    .with_definition(format!(r#"{{"title": "Image {i}"}}"#))
                     .unwrap();
 
                 // Verify the context settings are accessible
                 assert!(!builder.context().settings().verify.verify_after_sign);
-                assert_eq!(builder.definition.title, Some(format!("Image {}", i)));
+                assert_eq!(builder.definition.title, Some(format!("Image {i}")));
 
                 i // Return the thread number for verification
             });

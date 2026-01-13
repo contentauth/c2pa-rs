@@ -686,7 +686,7 @@ mod tests {
             "Expected MissingSignerSettings error, got: {}",
             match result {
                 Ok(_) => "Ok(Signer)".to_string(),
-                Err(ref e) => format!("Err({:?})", e),
+                Err(ref e) => format!("Err({e:?})"),
             }
         );
     }
