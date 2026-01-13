@@ -1024,12 +1024,12 @@ impl Builder {
     /// Returns an [`Error`] if the archive cannot be read.
     ///
     /// # Example
-    /// ```
+    /// ```no_run
     /// # use c2pa::{Builder, Context, Result};
     /// # use std::io::Cursor;
     /// # fn main() -> Result<()> {
     /// // Load builder from archive with custom context
-    /// let context = Context::new().with_settings(r#"{"trust": {"trust_anchors": "..."}}"#)?;
+    /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_reading": false}}"#)?;
     ///
     /// # let archive_data = vec![]; // placeholder
     /// # let stream = Cursor::new(archive_data);
@@ -1084,7 +1084,7 @@ impl Builder {
     /// Returns an [`Error`] if the archive cannot be read.
     ///
     /// # Example
-    /// ```
+    /// ```no_run
     /// # use c2pa::{Builder, Result};
     /// # use std::io::Cursor;
     /// # fn main() -> Result<()> {

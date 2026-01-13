@@ -794,8 +794,8 @@ impl Settings {
     /// # fn main() -> c2pa::Result<()> {
     /// let settings = Settings::default()
     ///     .with_value("verify.verify_trust", true)?
-    ///     .with_value("core.hash_alg", "sha512")?
-    ///     .with_value("core.max_memory_usage", 50_000_000u32)?;
+    ///     .with_value("core.merkle_tree_max_proofs", 10)?
+    ///     .with_value("core.backing_store_memory_threshold_in_mb", 256)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -845,7 +845,7 @@ impl Settings {
     /// # fn main() -> c2pa::Result<()> {
     /// let mut settings = Settings::default();
     /// settings.set_value("verify.verify_trust", false)?;
-    /// settings.set_value("core.hash_alg", "sha384")?;
+    /// settings.set_value("core.merkle_tree_max_proofs", 10)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -888,7 +888,7 @@ impl Settings {
     /// let verify_trust: bool = settings.get_value("verify.verify_trust")?;
     ///
     /// // Or specified explicitly
-    /// let hash_alg = settings.get_value::<String>("core.hash_alg")?;
+    /// let max_proofs = settings.get_value::<usize>("core.merkle_tree_max_proofs")?;
     /// # Ok(())
     /// # }
     /// ```
