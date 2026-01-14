@@ -2129,4 +2129,122 @@ mod tests {
         let decoded: HashMap<String, u32> = from_slice(&cbor).unwrap();
         assert_eq!(decoded.len(), 0);
     }
+
+    // Additional coverage tests for specific deserialize_any paths
+
+    #[test]
+    fn test_decode_option_with_map() {
+        use std::collections::HashMap;
+
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct Container {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            data: Option<HashMap<String, u32>>,
+        }
+
+        // Test Some(map)
+        let mut map = HashMap::new();
+        map.insert("key".to_string(), 42);
+        let data = Container { data: Some(map) };
+        let encoded = to_vec(&data).unwrap();
+        let decoded: Container = from_slice(&encoded).unwrap();
+        assert_eq!(decoded.data.unwrap().get("key"), Some(&42));
+
+        // Test None
+        let data = Container { data: None };
+        let encoded = to_vec(&data).unwrap();
+        let decoded: Container = from_slice(&encoded).unwrap();
+        assert_eq!(decoded.data, None);
+    }
+
+    #[test]
+    fn test_decode_option_with_array() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct Container {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            items: Option<Vec<i32>>,
+        }
+
+        let data = Container {
+            items: Some(vec![1, 2, 3]),
+        };
+        let encoded = to_vec(&data).unwrap();
+        let decoded: Container = from_slice(&encoded).unwrap();
+        assert_eq!(decoded.items, Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn test_decode_simple_types_coverage() {
+        // Test MAJOR_SIMPLE paths for full coverage
+
+        // Boolean true/false already covered by test_decode_bool_values
+
+        // Test null as None
+        let cbor = vec![0xf6]; // CBOR null
+        let result: Option<String> = from_slice(&cbor).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_decode_indefinite_text_string_multipart() {
+        // Test indefinite text string with multiple chunks
+        let mut cbor = vec![0x7f]; // Start indefinite text
+        cbor.push(0x62); // 2-byte string
+        cbor.extend_from_slice(b"hi");
+        cbor.push(0x63); // 3-byte string
+        cbor.extend_from_slice(b"bye");
+        cbor.push(0xff); // Break
+
+        let result: String = from_slice(&cbor).unwrap();
+        assert_eq!(result, "hibye");
+    }
+
+    #[test]
+    fn test_decode_enum_with_map_variant() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        enum TestEnum {
+            Unit,
+            Data(String),
+        }
+
+        // Test enum variant as map (Data variant)
+        let data = TestEnum::Data("content".to_string());
+        let encoded = to_vec(&data).unwrap();
+        let decoded: TestEnum = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, TestEnum::Data("content".to_string()));
+
+        // Test unit variant
+        let data = TestEnum::Unit;
+        let encoded = to_vec(&data).unwrap();
+        let decoded: TestEnum = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, TestEnum::Unit);
+    }
+
+    #[test]
+    fn test_decode_tagged_recursive() {
+        // Test MAJOR_TAG path that recursively calls deserialize_any
+        // Tag 0 is typically used for date/time strings
+        let mut cbor = vec![0xc0]; // Tag 0
+        cbor.push(0x65); // 5-byte text string
+        cbor.extend_from_slice(b"hello");
+
+        let result: String = from_slice(&cbor).unwrap();
+        assert_eq!(result, "hello");
+    }
+
+    #[test]
+    fn test_decode_newtype_with_map_transparent() {
+        use std::collections::HashMap;
+
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Wrapper(HashMap<String, i32>);
+
+        // Test old transparent format (map encoded directly)
+        let mut map = HashMap::new();
+        map.insert("a".to_string(), 1);
+        let cbor = to_vec(&map).unwrap();
+
+        let decoded: Wrapper = from_slice(&cbor).unwrap();
+        assert_eq!(decoded.0.get("a"), Some(&1));
+    }
 }
