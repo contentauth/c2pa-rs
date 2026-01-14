@@ -9,6 +9,34 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.75.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.74.0...c2pa-v0.75.0)
+_14 January 2026_
+
+### Added
+
+* Deeper integration of Context into the SDK ([#1710](https://github.com/contentauth/c2pa-rs/pull/1710))
+* Multi RIFF AVI (AVIX) support ([#1656](https://github.com/contentauth/c2pa-rs/pull/1656))
+* Add `Manifest::signature` to get Cose_Sign1 signature ([#1699](https://github.com/contentauth/c2pa-rs/pull/1699))
+
+### Fixed
+
+* CAI-10286 - path traversal, zip-slip in from_archive ([#1721](https://github.com/contentauth/c2pa-rs/pull/1721))
+* 1716 fix deeply nested bmff box issue ([#1717](https://github.com/contentauth/c2pa-rs/pull/1717))
+* Fix vulnerability with user supplied exclusions. ([#1715](https://github.com/contentauth/c2pa-rs/pull/1715))
+* Make parameters optional for transcoded and repackaged actions ([#1701](https://github.com/contentauth/c2pa-rs/pull/1701))
+* Allow actions assertions to be created assertions ([#1703](https://github.com/contentauth/c2pa-rs/pull/1703))
+
+### Updated dependencies
+
+* Bump non-empty-string from 0.2.4 to 0.2.6 ([#1720](https://github.com/contentauth/c2pa-rs/pull/1720))
+* Bump id3 from 1.16.1 to 1.16.3 ([#1718](https://github.com/contentauth/c2pa-rs/pull/1718))
+* Bump asn1-rs from 0.6.2 to 0.7.1 ([#1505](https://github.com/contentauth/c2pa-rs/pull/1505))
+* Bump toml from 0.8.23 to 0.9.10+spec-1.1.0 ([#1713](https://github.com/contentauth/c2pa-rs/pull/1713))
+* Bump env_logger from 0.10.2 to 0.11.8 ([#1711](https://github.com/contentauth/c2pa-rs/pull/1711))
+* Bump rasn from 0.26.6 to 0.28.1 ([#1621](https://github.com/contentauth/c2pa-rs/pull/1621))
+* Bump rand_chacha from 0.3.1 to 0.9.0 ([#1619](https://github.com/contentauth/c2pa-rs/pull/1619))
+* Bump mockall from 0.13.1 to 0.14.0 ([#1708](https://github.com/contentauth/c2pa-rs/pull/1708))
+
 ## [0.74.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.73.2...c2pa-v0.74.0)
 _07 January 2026_
 
