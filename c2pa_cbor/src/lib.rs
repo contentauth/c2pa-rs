@@ -2296,4 +2296,113 @@ mod tests {
             Some(&"v".to_string())
         );
     }
+
+    #[test]
+    fn test_decode_by_value_all_types() {
+        use serde::Deserialize;
+
+        use crate::decoder::Decoder;
+
+        // Test deserialize_any paths by consuming decoder (by value)
+        // This should hit the Decoder<R> impl, not &mut Decoder<R>
+
+        // Test MAJOR_UNSIGNED
+        let cbor = to_vec(&42u64).unwrap();
+        let decoder = Decoder::from_slice(&cbor);
+        let val = u64::deserialize(decoder).unwrap();
+        assert_eq!(val, 42);
+
+        // Test MAJOR_NEGATIVE
+        let cbor = to_vec(&-100i64).unwrap();
+        let decoder = Decoder::from_slice(&cbor);
+        let val = i64::deserialize(decoder).unwrap();
+        assert_eq!(val, -100);
+
+        // Test MAJOR_BYTES (definite)
+        let cbor = to_vec(&vec![1u8, 2, 3]).unwrap();
+        let decoder = Decoder::from_slice(&cbor);
+        let val = Vec::<u8>::deserialize(decoder).unwrap();
+        assert_eq!(val, vec![1, 2, 3]);
+
+        // Test MAJOR_TEXT (definite)
+        let cbor = to_vec(&"hello".to_string()).unwrap();
+        let decoder = Decoder::from_slice(&cbor);
+        let val = String::deserialize(decoder).unwrap();
+        assert_eq!(val, "hello");
+
+        // Test MAJOR_ARRAY (definite)
+        let cbor = to_vec(&vec![1u32, 2, 3]).unwrap();
+        let decoder = Decoder::from_slice(&cbor);
+        let val = Vec::<u32>::deserialize(decoder).unwrap();
+        assert_eq!(val, vec![1, 2, 3]);
+
+        // Test MAJOR_MAP (definite)
+        use std::collections::HashMap;
+        let mut map = HashMap::new();
+        map.insert("a".to_string(), 1u32);
+        let cbor = to_vec(&map).unwrap();
+        let decoder = Decoder::from_slice(&cbor);
+        let val = HashMap::<String, u32>::deserialize(decoder).unwrap();
+        assert_eq!(val.get("a"), Some(&1));
+
+        // Test MAJOR_TAG
+        let mut cbor = vec![0xc0]; // Tag 0
+        cbor.push(0x64); // 4-byte text
+        cbor.extend_from_slice(b"test");
+        let decoder = Decoder::from_slice(&cbor);
+        let val = String::deserialize(decoder).unwrap();
+        assert_eq!(val, "test");
+
+        // Test MAJOR_SIMPLE - bool true
+        let cbor = vec![0xf5];
+        let decoder = Decoder::from_slice(&cbor);
+        let val = bool::deserialize(decoder).unwrap();
+        assert!(val);
+
+        // Test MAJOR_SIMPLE - bool false
+        let cbor = vec![0xf4];
+        let decoder = Decoder::from_slice(&cbor);
+        let val = bool::deserialize(decoder).unwrap();
+        assert!(!val);
+
+        // Test MAJOR_SIMPLE - f32
+        let cbor = to_vec(&3.25f32).unwrap();
+        let decoder = Decoder::from_slice(&cbor);
+        let val = f32::deserialize(decoder).unwrap();
+        assert!((val - 3.25).abs() < 0.01);
+
+        // Test MAJOR_SIMPLE - f64
+        let cbor = to_vec(&2.875f64).unwrap();
+        let decoder = Decoder::from_slice(&cbor);
+        let val = f64::deserialize(decoder).unwrap();
+        assert!((val - 2.875).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_decode_enum_by_value() {
+        use serde::Deserialize;
+
+        use crate::decoder::Decoder;
+
+        // Test deserialize_enum with by-value decoder
+        // This hits lines 415-449 in decoder.rs
+
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        enum TestEnum {
+            Unit,
+            Data(String),
+        }
+
+        // Test MAJOR_TEXT path (unit variant)
+        let cbor = to_vec(&TestEnum::Unit).unwrap();
+        let decoder = Decoder::from_slice(&cbor);
+        let val = TestEnum::deserialize(decoder).unwrap();
+        assert_eq!(val, TestEnum::Unit);
+
+        // Test MAJOR_MAP path (variant with data)
+        let cbor = to_vec(&TestEnum::Data("test".to_string())).unwrap();
+        let decoder = Decoder::from_slice(&cbor);
+        let val = TestEnum::deserialize(decoder).unwrap();
+        assert_eq!(val, TestEnum::Data("test".to_string()));
+    }
 }
