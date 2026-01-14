@@ -3197,9 +3197,9 @@ dependencies = [
 
 [[package]]
 name = "range-set"
-version = "0.0.11"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "714bc4849c399f77ab82177e9b4f012e02f3a7d6191023e016334edde5b21050"
+checksum = "2d49e572143755710377fda7cbd3f46e8523b912339759636ab2770abb16c4c3"
 dependencies = [
  "num-traits",
  "smallvec",
