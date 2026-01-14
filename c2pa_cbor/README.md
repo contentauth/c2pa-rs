@@ -16,7 +16,6 @@ A fast, lightweight CBOR (Concise Binary Object Representation) encoder/decoder 
 - ✅ **Full `serde_transcode` support** - handles `#[serde(flatten)]` and other advanced features
 - ✅ **Backward compatible newtype struct handling** - works with existing CBOR data
 - ✅ **Deterministic encoding** - always produces definite-length CBOR (required for C2PA)
-- ✅ **Built-in OOM protection** - default 100MB allocation limit prevents denial-of-service attacks
 
 ## Security
 
@@ -164,27 +163,19 @@ the library automatically buffers entries to produce definite-length CBOR output
 
 This implementation is designed for **speed** with binary byte arrays:
 
-### Speed Characteristics
-- **Encoding**: ~30-35 GB/s for large arrays (virtually memcpy speed)
-- **Decoding**: ~24-29 GB/s for large arrays
-- Small arrays (1KB): ~160ns encode, ~270ns decode
-- Large arrays (1MB): ~30µs encode, ~41µs decode
-- Performance scales linearly with data size
-- Zero-copy design means encoding is just a memcpy after writing the header
 
-### Size Overhead
-Binary byte arrays have minimal overhead:
-- 5 bytes: 1 byte overhead (header only)
-- 1 KB: 3 bytes overhead (header + 2-byte length)
-- 100 KB: 5 bytes overhead (header + 4-byte length)
-- 1 MB: 5 bytes overhead (header + 4-byte length)
+### Performance Highlights
+- **Peak throughput**: 53.6 GB/s encoding, 37.4 GB/s decoding (1MB arrays)
+- **Low latency**: Sub-microsecond for typical structs
+- **Efficient Options**: Skipped None fields add near-zero overhead
+- **Scales linearly**: Performance improves with larger data sizes
 
 ### Key Performance Features
 - ✅ Zero allocations during encoding
 - ✅ Single allocation during decoding
 - ✅ No per-element overhead with `serde_bytes`
 - ✅ Direct memory writes (no intermediate buffers)
-- ✅ Near memory bandwidth performance
+- ✅ Near memory bandwidth performance (50+ GB/s)
 - ✅ **Dual-path architecture**: Zero overhead for normal serialization, automatic buffering only when needed
 
 ## Architecture
@@ -202,8 +193,6 @@ This design ensures:
 - ✅ **C2PA compliance** (required for digital signatures)
 
 The buffering path adds minimal overhead and only activates when necessary, making the library both fast and fully compatible with the serde ecosystem.
-
-
 
 
 ## Migration from serde_cbor
@@ -229,17 +218,6 @@ let decoded = c2pa_cbor::from_slice(&encoded)?;
 - ✅ **Better `serde_transcode` support** - Works seamlessly with JSON-to-CBOR conversion
 - ✅ **Always deterministic** - Produces definite-length CBOR in all cases
 - ✅ **Faster encoding** - Zero-overhead fast path for normal cases
-
-### Compatibility Module
-
-For maximum compatibility, use the `ser` module which matches `serde_cbor`'s API:
-
-```rust
-// Drop-in replacement for serde_cbor::Serializer
-let mut to = c2pa_cbor::ser::Serializer::new(Vec::new());
-value.serialize(&mut to)?;
-let bytes = to.into_inner();
-```
 
 ## API Overview
 

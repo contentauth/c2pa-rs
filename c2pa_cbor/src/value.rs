@@ -1,3 +1,18 @@
+// Copyright 2025 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
+// Portions derived from serde_cbor (https://github.com/pyfisch/cbor)
+
 use std::{collections::BTreeMap, fmt};
 
 use serde::{
@@ -826,5 +841,170 @@ mod tests {
         let bytes = to_vec(&value).unwrap();
         let decoded: Value = from_slice(&bytes).unwrap();
         assert_eq!(value, decoded);
+    }
+
+    #[test]
+    fn test_value_float() {
+        let value = Value::Float(1.23);
+        assert!(value.is_float());
+        assert_eq!(value.as_f64(), Some(1.23));
+
+        let bytes = to_vec(&value).unwrap();
+        let decoded: Value = from_slice(&bytes).unwrap();
+        assert_eq!(value, decoded);
+    }
+
+    #[test]
+    fn test_value_float_special() {
+        // Test NaN
+        let value = Value::Float(f64::NAN);
+        assert!(value.is_float());
+        assert!(value.as_f64().unwrap().is_nan());
+
+        // Test infinity
+        let value = Value::Float(f64::INFINITY);
+        assert_eq!(value.as_f64(), Some(f64::INFINITY));
+
+        let bytes = to_vec(&value).unwrap();
+        let decoded: Value = from_slice(&bytes).unwrap();
+        assert_eq!(decoded.as_f64(), Some(f64::INFINITY));
+    }
+
+    #[test]
+    fn test_value_from_value() {
+        // Test conversion from Value to typed value
+        let value = Value::Integer(42);
+        let num: i32 = from_value(value).unwrap();
+        assert_eq!(num, 42);
+
+        let value = Value::Text("hello".to_string());
+        let s: String = from_value(value).unwrap();
+        assert_eq!(s, "hello");
+
+        let value = Value::Bool(true);
+        let b: bool = from_value(value).unwrap();
+        assert!(b);
+    }
+
+    #[test]
+    fn test_value_to_value() {
+        // Test conversion from typed value to Value
+        let value = to_value(42i32).unwrap();
+        assert_eq!(value, Value::Integer(42));
+
+        let value = to_value("hello").unwrap();
+        assert_eq!(value, Value::Text("hello".to_string()));
+
+        let value = to_value(true).unwrap();
+        assert_eq!(value, Value::Bool(true));
+    }
+
+    #[test]
+    fn test_value_complex_nested() {
+        let mut inner_map = BTreeMap::new();
+        inner_map.insert(Value::Text("nested".to_string()), Value::Bool(true));
+        inner_map.insert(Value::Text("count".to_string()), Value::Integer(10));
+
+        let value = Value::Array(vec![
+            Value::Map(inner_map),
+            Value::Bytes(vec![1, 2, 3]),
+            Value::Null,
+            Value::Float(2.72),
+        ]);
+
+        let bytes = to_vec(&value).unwrap();
+        let decoded: Value = from_slice(&bytes).unwrap();
+        assert_eq!(value, decoded);
+    }
+
+    #[test]
+    fn test_value_nested_arrays() {
+        let value = Value::Array(vec![
+            Value::Array(vec![Value::Integer(1), Value::Integer(2)]),
+            Value::Array(vec![Value::Integer(3), Value::Integer(4)]),
+        ]);
+
+        let bytes = to_vec(&value).unwrap();
+        let decoded: Value = from_slice(&bytes).unwrap();
+        assert_eq!(value, decoded);
+    }
+
+    #[test]
+    fn test_value_accessors() {
+        // Test all the is_* and as_* methods
+        let value = Value::Null;
+        assert!(value.is_null());
+        assert!(!value.is_bool());
+        assert!(!value.is_integer());
+
+        let value = Value::Bool(false);
+        assert!(value.is_bool());
+        assert_eq!(value.as_bool(), Some(false));
+
+        let value = Value::Integer(-100);
+        assert!(value.is_integer());
+        assert_eq!(value.as_i64(), Some(-100));
+
+        let value = Value::Float(1.5);
+        assert!(value.is_float());
+        assert_eq!(value.as_f64(), Some(1.5));
+
+        let value = Value::Bytes(vec![0xab, 0xcd]);
+        assert!(value.is_bytes());
+        assert_eq!(value.as_bytes(), Some(&[0xab, 0xcd][..]));
+
+        let value = Value::Text("test".to_string());
+        assert!(value.is_text());
+        assert_eq!(value.as_str(), Some("test"));
+
+        let value = Value::Array(vec![]);
+        assert!(value.is_array());
+        assert_eq!(value.as_array().unwrap().len(), 0);
+
+        let value = Value::Map(BTreeMap::new());
+        assert!(value.is_map());
+        assert_eq!(value.as_map().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_value_ordering() {
+        // Test that Value implements Ord (for use as BTreeMap keys)
+        let mut values = vec![Value::Integer(3), Value::Integer(1), Value::Integer(2)];
+        values.sort();
+        assert_eq!(
+            values,
+            vec![Value::Integer(1), Value::Integer(2), Value::Integer(3)]
+        );
+
+        // Test NaN handling in ordering
+        let v1 = Value::Float(1.0);
+        let v2 = Value::Float(f64::NAN);
+        let v3 = Value::Float(2.0);
+        assert!(v1 < v3);
+        // NaN should have consistent ordering
+        assert_eq!(v2.cmp(&v2), std::cmp::Ordering::Equal);
+    }
+
+    #[test]
+    fn test_value_struct_serialization() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        struct TestStruct {
+            name: String,
+            count: i32,
+            active: bool,
+        }
+
+        let test = TestStruct {
+            name: "test".to_string(),
+            count: 42,
+            active: true,
+        };
+
+        // Convert to Value and back
+        let value = to_value(&test).unwrap();
+        assert!(value.is_map());
+
+        let decoded: TestStruct = from_value(value).unwrap();
+        assert_eq!(decoded, test);
     }
 }

@@ -1,3 +1,18 @@
+// Copyright 2025 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
+// Portions derived from serde_cbor (https://github.com/pyfisch/cbor)
+
 use std::{fmt, io::Write, marker::PhantomData};
 
 use serde::{
@@ -265,5 +280,257 @@ mod tests {
 
         assert_eq!(tagged.tag, None);
         assert_eq!(tagged.value, 42);
+    }
+
+    // ========== Helper Function Tests ==========
+
+    #[test]
+    fn test_encode_datetime_string() {
+        let mut buf = Vec::new();
+        encode_datetime_string(&mut buf, "2024-01-15T10:30:00Z").unwrap();
+
+        // Should have tag 0
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_DATETIME_STRING);
+
+        // Decode the full value
+        let decoded: String = crate::from_slice(&buf).unwrap();
+        assert_eq!(decoded, "2024-01-15T10:30:00Z");
+    }
+
+    #[test]
+    fn test_encode_epoch_datetime() {
+        let mut buf = Vec::new();
+        let timestamp: i64 = 1705318200;
+        encode_epoch_datetime(&mut buf, timestamp).unwrap();
+
+        // Should have tag 1
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_EPOCH_DATETIME);
+
+        // Decode the full value
+        let decoded: i64 = crate::from_slice(&buf).unwrap();
+        assert_eq!(decoded, timestamp);
+    }
+
+    #[test]
+    fn test_encode_uri() {
+        let mut buf = Vec::new();
+        encode_uri(&mut buf, "https://example.com").unwrap();
+
+        // Should have tag 32
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_URI);
+
+        // Decode the full value
+        let decoded: String = crate::from_slice(&buf).unwrap();
+        assert_eq!(decoded, "https://example.com");
+    }
+
+    #[test]
+    fn test_encode_base64url() {
+        let mut buf = Vec::new();
+        encode_base64url(&mut buf, "hello world").unwrap();
+
+        // Should have tag 33
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_BASE64URL);
+    }
+
+    #[test]
+    fn test_encode_base64() {
+        let mut buf = Vec::new();
+        encode_base64(&mut buf, "test data").unwrap();
+
+        // Should have tag 34
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_BASE64);
+    }
+
+    #[test]
+    fn test_encode_uint8_array() {
+        let data: Vec<u8> = vec![1, 2, 3, 4, 5];
+        let mut buf = Vec::new();
+        encode_uint8_array(&mut buf, &data).unwrap();
+
+        // Should have tag 64
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_UINT8_ARRAY);
+    }
+
+    #[test]
+    fn test_encode_uint16be_array() {
+        let data: Vec<u16> = vec![256, 512, 1024];
+        let mut buf = Vec::new();
+        encode_uint16be_array(&mut buf, &data).unwrap();
+
+        // Should have tag 65
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_UINT16BE_ARRAY);
+
+        // The actual bytes should be big-endian
+        assert!(buf.len() > 2); // tag + header + data
+    }
+
+    #[test]
+    fn test_encode_uint32be_array() {
+        let data: Vec<u32> = vec![100, 200, 300];
+        let mut buf = Vec::new();
+        encode_uint32be_array(&mut buf, &data).unwrap();
+
+        // Should have tag 66
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_UINT32BE_ARRAY);
+    }
+
+    #[test]
+    fn test_encode_uint64be_array() {
+        let data: Vec<u64> = vec![1000, 2000, 3000];
+        let mut buf = Vec::new();
+        encode_uint64be_array(&mut buf, &data).unwrap();
+
+        // Should have tag 67
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_UINT64BE_ARRAY);
+    }
+
+    #[test]
+    fn test_encode_uint16le_array() {
+        let data: Vec<u16> = vec![256, 512, 1024];
+        let mut buf = Vec::new();
+        encode_uint16le_array(&mut buf, &data).unwrap();
+
+        // Should have tag 69
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_UINT16LE_ARRAY);
+    }
+
+    #[test]
+    fn test_encode_uint32le_array() {
+        let data: Vec<u32> = vec![100, 200, 300];
+        let mut buf = Vec::new();
+        encode_uint32le_array(&mut buf, &data).unwrap();
+
+        // Should have tag 70
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_UINT32LE_ARRAY);
+    }
+
+    #[test]
+    fn test_encode_uint64le_array() {
+        let data: Vec<u64> = vec![1000, 2000, 3000];
+        let mut buf = Vec::new();
+        encode_uint64le_array(&mut buf, &data).unwrap();
+
+        // Should have tag 71
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_UINT64LE_ARRAY);
+    }
+
+    #[test]
+    fn test_encode_float32be_array() {
+        let data: Vec<f32> = vec![1.0, 2.5, 3.15];
+        let mut buf = Vec::new();
+        encode_float32be_array(&mut buf, &data).unwrap();
+
+        // Should have tag 81
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_FLOAT32BE_ARRAY);
+    }
+
+    #[test]
+    fn test_encode_float64be_array() {
+        let data: Vec<f64> = vec![1.0, 2.72, 3.15];
+        let mut buf = Vec::new();
+        encode_float64be_array(&mut buf, &data).unwrap();
+
+        // Should have tag 82
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_FLOAT64BE_ARRAY);
+    }
+
+    #[test]
+    fn test_encode_float32le_array() {
+        let data: Vec<f32> = vec![1.0, 2.5, 3.15];
+        let mut buf = Vec::new();
+        encode_float32le_array(&mut buf, &data).unwrap();
+
+        // Should have tag 85
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_FLOAT32LE_ARRAY);
+    }
+
+    #[test]
+    fn test_encode_float64le_array() {
+        let data: Vec<f64> = vec![1.0, 2.72, 3.15];
+        let mut buf = Vec::new();
+        encode_float64le_array(&mut buf, &data).unwrap();
+
+        // Should have tag 86
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_FLOAT64LE_ARRAY);
+    }
+
+    #[test]
+    fn test_encode_tagged_roundtrip() {
+        // Test the generic encode_tagged function
+        let mut buf = Vec::new();
+        encode_tagged(&mut buf, 999, &"custom tagged value").unwrap();
+
+        // Should have tag 999
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, 999);
+
+        // Decode the full value
+        let decoded: String = crate::from_slice(&buf).unwrap();
+        assert_eq!(decoded, "custom tagged value");
+    }
+
+    #[test]
+    fn test_tagged_new() {
+        let tagged = Tagged::new(Some(32), "https://example.com".to_string());
+        assert_eq!(tagged.tag, Some(32));
+        assert_eq!(tagged.value, "https://example.com");
+    }
+
+    #[test]
+    fn test_tagged_serialize_with_tag() {
+        let tagged = Tagged::new(Some(32), "https://example.com".to_string());
+        let cbor = crate::to_vec(&tagged).unwrap();
+
+        // Tagged serializes as a map with tag and value fields
+        // Decode it back as Tagged to verify round-trip
+        let decoded: Tagged<String> = crate::from_slice(&cbor).unwrap();
+        assert_eq!(decoded.tag, Some(32));
+        assert_eq!(decoded.value, "https://example.com");
+    }
+
+    #[test]
+    fn test_tagged_serialize_without_tag() {
+        let tagged = Tagged::new(None, "plain string".to_string());
+        let cbor = crate::to_vec(&tagged).unwrap();
+
+        // Tagged without a tag serializes as just the value
+        // Decode it back as Tagged to verify round-trip
+        let decoded: Tagged<String> = crate::from_slice(&cbor).unwrap();
+        assert_eq!(decoded.tag, None);
+        assert_eq!(decoded.value, "plain string");
     }
 }

@@ -1,5 +1,17 @@
-// Cargo.toml dependencies needed:
-// serde = { version = "1.0", features = ["derive"] }
+// Copyright 2025 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
+// Portions derived from serde_cbor (https://github.com/pyfisch/cbor)
 
 //! # C2PA CBOR Library
 //!
@@ -1247,5 +1259,338 @@ mod tests {
                 msg
             );
         }
+    }
+
+    // ========== Additional Decoder Tests ==========
+
+    #[test]
+    fn test_decoder_all_length_variants() {
+        // Test all length encoding sizes: 0-23, 24, 25, 26, 27
+        // Small (0-23): direct
+        let cbor = vec![0x17]; // 23
+        let val: u64 = from_slice(&cbor).unwrap();
+        assert_eq!(val, 23);
+
+        // 1-byte (24)
+        let cbor = vec![0x18, 100]; // 100
+        let val: u64 = from_slice(&cbor).unwrap();
+        assert_eq!(val, 100);
+
+        // 2-byte (25)
+        let cbor = vec![0x19, 0x01, 0x00]; // 256
+        let val: u64 = from_slice(&cbor).unwrap();
+        assert_eq!(val, 256);
+
+        // 4-byte (26)
+        let cbor = vec![0x1a, 0x00, 0x01, 0x00, 0x00]; // 65536
+        let val: u64 = from_slice(&cbor).unwrap();
+        assert_eq!(val, 65536);
+
+        // 8-byte (27)
+        let cbor = vec![0x1b, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]; // 4294967296
+        let val: u64 = from_slice(&cbor).unwrap();
+        assert_eq!(val, 4294967296);
+    }
+
+    #[test]
+    fn test_decoder_negative_integer_lengths() {
+        // Test negative number with different length encodings
+        let cbor = vec![0x20]; // -1
+        let val: i64 = from_slice(&cbor).unwrap();
+        assert_eq!(val, -1);
+
+        let cbor = vec![0x38, 0xff]; // -256
+        let val: i64 = from_slice(&cbor).unwrap();
+        assert_eq!(val, -256);
+
+        let cbor = vec![0x39, 0x01, 0x00]; // -257
+        let val: i64 = from_slice(&cbor).unwrap();
+        assert_eq!(val, -257);
+    }
+
+    #[test]
+    fn test_decoder_invalid_utf8() {
+        // Invalid UTF-8 in text string
+        let mut cbor = vec![0x64]; // text string, length 4
+        cbor.extend_from_slice(&[0xff, 0xfe, 0xfd, 0xfc]); // invalid UTF-8
+        let result: Result<String> = from_slice(&cbor);
+        assert!(matches!(result, Err(Error::InvalidUtf8)));
+    }
+
+    #[test]
+    fn test_decoder_indefinite_text_wrong_chunk_type() {
+        // Indefinite text string with byte string chunk (invalid)
+        let mut cbor = vec![0x7f]; // indefinite text string start
+        cbor.push(0x42); // byte string chunk instead of text (wrong!)
+        cbor.extend_from_slice(&[0x01, 0x02]);
+        cbor.push(0xff); // break
+
+        let result: Result<String> = from_slice(&cbor);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("text string chunks must be text strings")
+        );
+    }
+
+    #[test]
+    fn test_decoder_indefinite_bytes_wrong_chunk_type() {
+        // Indefinite byte string with text string chunk (invalid)
+        let mut cbor = vec![0x5f]; // indefinite byte string start
+        cbor.push(0x62); // text string chunk instead of bytes (wrong!)
+        cbor.extend_from_slice(&[0x68, 0x69]); // "hi"
+        cbor.push(0xff); // break
+
+        let result: Result<Vec<u8>> = from_slice(&cbor);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("byte string chunks must be byte strings")
+        );
+    }
+
+    #[test]
+    fn test_decoder_allocation_limit_exceeded() {
+        // Try to allocate more than the limit
+        let result: Result<Vec<u8>> =
+            crate::decoder::from_slice_with_limit(&[0x5a, 0xff, 0xff, 0xff, 0xff], 1000);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn test_decoder_from_reader() {
+        let data = to_vec(&42i32).unwrap();
+        let cursor = std::io::Cursor::new(data);
+        let val: i32 = from_reader(cursor).unwrap();
+        assert_eq!(val, 42);
+    }
+
+    #[test]
+    fn test_decoder_from_reader_with_limit() {
+        let data = to_vec(&"hello").unwrap();
+        let cursor = std::io::Cursor::new(data);
+        let val: String = crate::decoder::from_reader_with_limit(cursor, 1000).unwrap();
+        assert_eq!(val, "hello");
+    }
+
+    #[test]
+    fn test_decoder_trailing_bytes_error() {
+        // Valid CBOR followed by extra bytes
+        let mut cbor = to_vec(&42i32).unwrap();
+        cbor.extend_from_slice(&[0x01, 0x02, 0x03]); // extra bytes
+
+        let result: Result<i32> = from_slice(&cbor);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unexpected trailing data")
+        );
+    }
+
+    #[test]
+    fn test_decoder_invalid_simple_value() {
+        // Simple value with reserved info
+        let cbor = vec![0xf8]; // reserved simple value
+        let result: Result<i32> = from_slice(&cbor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decoder_tag_indefinite_error() {
+        // Tag with indefinite length (invalid)
+        let cbor = vec![0xdf]; // tag with indefinite length marker
+        let result: Result<i32> = from_slice(&cbor);
+        assert!(result.is_err());
+    }
+
+    // ========== Additional Encoder Tests ==========
+
+    #[test]
+    fn test_encoder_all_integer_sizes() {
+        // i8
+        let val: i8 = -127;
+        let cbor = to_vec(&val).unwrap();
+        let decoded: i8 = from_slice(&cbor).unwrap();
+        assert_eq!(val, decoded);
+
+        // i16
+        let val: i16 = -30000;
+        let cbor = to_vec(&val).unwrap();
+        let decoded: i16 = from_slice(&cbor).unwrap();
+        assert_eq!(val, decoded);
+
+        // i32
+        let val: i32 = -2000000;
+        let cbor = to_vec(&val).unwrap();
+        let decoded: i32 = from_slice(&cbor).unwrap();
+        assert_eq!(val, decoded);
+
+        // u8
+        let val: u8 = 255;
+        let cbor = to_vec(&val).unwrap();
+        let decoded: u8 = from_slice(&cbor).unwrap();
+        assert_eq!(val, decoded);
+
+        // u16
+        let val: u16 = 65000;
+        let cbor = to_vec(&val).unwrap();
+        let decoded: u16 = from_slice(&cbor).unwrap();
+        assert_eq!(val, decoded);
+
+        // u32
+        let val: u32 = 4000000;
+        let cbor = to_vec(&val).unwrap();
+        let decoded: u32 = from_slice(&cbor).unwrap();
+        assert_eq!(val, decoded);
+    }
+
+    #[test]
+    fn test_encoder_indefinite_array() {
+        use crate::Encoder;
+        let mut buf = Vec::new();
+        let mut enc = Encoder::new(&mut buf);
+
+        // Test indefinite array
+        enc.write_array_indefinite().unwrap();
+        enc.encode(&1).unwrap();
+        enc.encode(&2).unwrap();
+        enc.encode(&3).unwrap();
+        enc.write_break().unwrap();
+
+        // Should decode as [1, 2, 3]
+        let decoded: Vec<i32> = from_slice(&buf).unwrap();
+        assert_eq!(decoded, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_encoder_indefinite_map() {
+        use crate::Encoder;
+        let mut buf = Vec::new();
+        let mut enc = Encoder::new(&mut buf);
+
+        // Test indefinite map
+        enc.write_map_indefinite().unwrap();
+        enc.encode(&"key1").unwrap();
+        enc.encode(&100).unwrap();
+        enc.encode(&"key2").unwrap();
+        enc.encode(&200).unwrap();
+        enc.write_break().unwrap();
+
+        // Should decode as map
+        let decoded: std::collections::HashMap<String, i32> = from_slice(&buf).unwrap();
+        assert_eq!(decoded.get("key1"), Some(&100));
+        assert_eq!(decoded.get("key2"), Some(&200));
+    }
+
+    #[test]
+    fn test_encoder_struct_variant() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        enum TestEnum {
+            StructVariant { x: i32, y: String },
+        }
+
+        let val = TestEnum::StructVariant {
+            x: 42,
+            y: "test".to_string(),
+        };
+        let cbor = to_vec(&val).unwrap();
+        let decoded: TestEnum = from_slice(&cbor).unwrap();
+        assert_eq!(val, decoded);
+    }
+
+    #[test]
+    fn test_encoder_tuple_variant() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        enum TestEnum {
+            TupleVariant(i32, String),
+        }
+
+        let val = TestEnum::TupleVariant(42, "test".to_string());
+        let cbor = to_vec(&val).unwrap();
+        let decoded: TestEnum = from_slice(&cbor).unwrap();
+        assert_eq!(val, decoded);
+    }
+
+    #[test]
+    fn test_encoder_char() {
+        let val = 'A';
+        let cbor = to_vec(&val).unwrap();
+        let decoded: char = from_slice(&cbor).unwrap();
+        assert_eq!(val, decoded);
+
+        let val = '界'; // multi-byte character
+        let cbor = to_vec(&val).unwrap();
+        let decoded: char = from_slice(&cbor).unwrap();
+        assert_eq!(val, decoded);
+    }
+
+    #[test]
+    fn test_encoder_unit_variant() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        enum TestEnum {
+            UnitVariant,
+        }
+
+        let val = TestEnum::UnitVariant;
+        let cbor = to_vec(&val).unwrap();
+        let decoded: TestEnum = from_slice(&cbor).unwrap();
+        assert_eq!(val, decoded);
+    }
+
+    #[test]
+    fn test_encoder_newtype_variant() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        enum TestEnum {
+            NewtypeVariant(String),
+        }
+
+        let val = TestEnum::NewtypeVariant("test".to_string());
+        let cbor = to_vec(&val).unwrap();
+        let decoded: TestEnum = from_slice(&cbor).unwrap();
+        assert_eq!(val, decoded);
+    }
+
+    #[test]
+    fn test_encoder_tuple_struct() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        struct TupleStruct(i32, String, bool);
+
+        let val = TupleStruct(42, "test".to_string(), true);
+        let cbor = to_vec(&val).unwrap();
+        let decoded: TupleStruct = from_slice(&cbor).unwrap();
+        assert_eq!(val, decoded);
+    }
+
+    #[test]
+    fn test_encoder_into_inner() {
+        use crate::Encoder;
+        let buf = Vec::new();
+        let mut enc = Encoder::new(buf);
+        enc.encode(&42).unwrap();
+        let result = enc.into_inner();
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_encoder_f32_precision() {
+        let val: f32 = 3.15;
+        let cbor = to_vec(&val).unwrap();
+        let decoded: f32 = from_slice(&cbor).unwrap();
+        assert!((val - decoded).abs() < 0.00001);
+    }
+
+    #[test]
+    fn test_encoder_to_writer() {
+        let mut buf = Vec::new();
+        to_writer(&mut buf, &42i32).unwrap();
+        let decoded: i32 = from_slice(&buf).unwrap();
+        assert_eq!(decoded, 42);
     }
 }
