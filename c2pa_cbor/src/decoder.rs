@@ -19,6 +19,30 @@ use serde::Deserialize;
 
 use crate::{Error, Result, constants::*};
 
+// Error message constants to reduce binary size
+const ERR_INDEFINITE_UNSIGNED: &str = "Unsigned integer cannot be indefinite";
+const ERR_INDEFINITE_NEGATIVE: &str = "Negative integer cannot be indefinite";
+const ERR_INDEFINITE_TAG: &str = "Tag cannot be indefinite";
+const ERR_INDEFINITE_ENUM: &str = "Enum variant cannot be indefinite length";
+const ERR_INDEFINITE_BYTE_CHUNK: &str = "Indefinite byte string chunks cannot be indefinite";
+const ERR_INDEFINITE_TEXT_CHUNK: &str = "Indefinite text string chunks cannot be indefinite";
+const ERR_WRONG_BYTE_CHUNK: &str = "Indefinite byte string chunks must be byte strings";
+const ERR_WRONG_TEXT_CHUNK: &str = "Indefinite text string chunks must be text strings";
+const ERR_INVALID_CBOR: &str = "Invalid CBOR value";
+const ERR_EXPECTED_BREAK: &str = "Expected break marker";
+const ERR_ENUM_MAP_SIZE: &str = "Enum variant with data must be single-entry map";
+const ERR_INVALID_ENUM: &str = "Invalid CBOR type for enum";
+const ERR_INDEFINITE_OPTION_TEXT: &str = "Text in option must be definite length";
+const ERR_INDEFINITE_OPTION_BYTES: &str = "Bytes in option must be definite length";
+const ERR_INVALID_SIMPLE_OPTION: &str = "Invalid simple type in option";
+const ERR_UNSUPPORTED_OPTION: &str = "Unsupported type in option";
+const ERR_NEWTYPE_TEXT: &str = "Text in newtype must be definite length";
+const ERR_NEWTYPE_ARRAY_LEN: &str = "Expected 1-element array for newtype struct";
+const ERR_NEWTYPE_INDEFINITE: &str = "Indefinite-length array not supported for newtype struct";
+const ERR_OPTION_UNSUPPORTED: &str = "Option deserialization only supports maps and simple types";
+const ERR_EXPECTED_UNIT: &str = "Expected unit variant";
+const ERR_EXPECTED_DATA: &str = "Expected variant with data";
+
 pub struct Decoder<R: Read> {
     reader: R,
     peeked: Option<u8>,
@@ -147,9 +171,72 @@ impl<R: Read> Decoder<R> {
     fn read_break(&mut self) -> Result<()> {
         let byte = self.read_u8()?;
         if byte != BREAK {
-            return Err(Error::Syntax("Expected break marker".to_string()));
+            return Err(Error::Syntax(ERR_EXPECTED_BREAK.to_string()));
         }
         Ok(())
+    }
+
+    /// Read a definite-length byte buffer
+    #[inline]
+    fn read_bytes(&mut self, len: usize) -> Result<Vec<u8>> {
+        let mut buf = self.try_allocate(len)?;
+        self.reader.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+
+    /// Read a definite-length text string
+    #[inline]
+    fn read_text(&mut self, len: usize) -> Result<String> {
+        let buf = self.read_bytes(len)?;
+        String::from_utf8(buf).map_err(|_| Error::InvalidUtf8)
+    }
+
+    /// Read indefinite-length byte string by concatenating chunks
+    #[inline]
+    fn read_indefinite_bytes(&mut self) -> Result<Vec<u8>> {
+        let mut result = Vec::new();
+        loop {
+            if self.is_break()? {
+                self.read_break()?;
+                break;
+            }
+            let initial = self.read_u8()?;
+            let major = initial >> 5;
+            let info = initial & 0x1f;
+            if major != MAJOR_BYTES {
+                return Err(Error::Syntax(ERR_WRONG_BYTE_CHUNK.to_string()));
+            }
+            let len = self
+                .read_length(info)?
+                .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_BYTE_CHUNK.to_string()))?;
+            let chunk = self.read_bytes(len as usize)?;
+            result.extend_from_slice(&chunk);
+        }
+        Ok(result)
+    }
+
+    /// Read indefinite-length text string by concatenating chunks
+    #[inline]
+    fn read_indefinite_text(&mut self) -> Result<String> {
+        let mut result = String::new();
+        loop {
+            if self.is_break()? {
+                self.read_break()?;
+                break;
+            }
+            let initial = self.read_u8()?;
+            let major = initial >> 5;
+            let info = initial & 0x1f;
+            if major != MAJOR_TEXT {
+                return Err(Error::Syntax(ERR_WRONG_TEXT_CHUNK.to_string()));
+            }
+            let len = self
+                .read_length(info)?
+                .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_TEXT_CHUNK.to_string()))?;
+            let chunk = self.read_text(len as usize)?;
+            result.push_str(&chunk);
+        }
+        Ok(result)
     }
 
     pub fn read_tag(&mut self) -> Result<u64> {
@@ -158,19 +245,146 @@ impl<R: Read> Decoder<R> {
         let info = initial & 0x1f;
 
         if major != MAJOR_TAG {
-            return Err(Error::Syntax("Invalid CBOR value".to_string()));
+            return Err(Error::Syntax(ERR_INVALID_CBOR.to_string()));
         }
 
         match self.read_length(info)? {
             Some(tag) => Ok(tag),
-            None => Err(Error::Syntax(
-                "Tag cannot have indefinite length".to_string(),
-            )),
+            None => Err(Error::Syntax(ERR_INDEFINITE_TAG.to_string())),
         }
     }
 
     pub fn decode<'de, T: Deserialize<'de>>(&mut self) -> Result<T> {
         T::deserialize(&mut *self)
+    }
+
+    /// Shared core deserialization logic used by both by-value and by-reference implementations
+    #[inline]
+    fn deserialize_any_impl<'de, V: serde::de::Visitor<'de>>(
+        &mut self,
+        visitor: V,
+    ) -> Result<V::Value> {
+        let initial = self.read_u8()?;
+        let major = initial >> 5;
+        let info = initial & 0x1f;
+
+        match major {
+            MAJOR_UNSIGNED => {
+                let val = self
+                    .read_length(info)?
+                    .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_UNSIGNED.to_string()))?;
+                visitor.visit_u64(val)
+            }
+            MAJOR_NEGATIVE => {
+                let val = self
+                    .read_length(info)?
+                    .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_NEGATIVE.to_string()))?;
+                visitor.visit_i64(-1 - val as i64)
+            }
+            MAJOR_BYTES => match self.read_length(info)? {
+                Some(len) => {
+                    let buf = self.read_bytes(len as usize)?;
+                    visitor.visit_byte_buf(buf)
+                }
+                None => visitor.visit_byte_buf(self.read_indefinite_bytes()?),
+            },
+            MAJOR_TEXT => match self.read_length(info)? {
+                Some(len) => {
+                    let s = self.read_text(len as usize)?;
+                    visitor.visit_string(s)
+                }
+                None => visitor.visit_string(self.read_indefinite_text()?),
+            },
+            MAJOR_ARRAY => {
+                self.check_recursion_depth()?;
+                self.recursion_depth += 1;
+                match self.read_length(info)? {
+                    Some(len) => visitor.visit_seq(SeqAccess {
+                        de: self,
+                        remaining: Some(len as usize),
+                    }),
+                    None => visitor.visit_seq(SeqAccess {
+                        de: self,
+                        remaining: None,
+                    }),
+                }
+                // Note: recursion_depth is decremented in SeqAccess::drop
+            }
+            MAJOR_MAP => {
+                self.check_recursion_depth()?;
+                self.recursion_depth += 1;
+                match self.read_length(info)? {
+                    Some(len) => visitor.visit_map(MapAccess {
+                        de: self,
+                        remaining: Some(len as usize),
+                    }),
+                    None => visitor.visit_map(MapAccess {
+                        de: self,
+                        remaining: None,
+                    }),
+                }
+                // Note: recursion_depth is decremented in MapAccess::drop
+            }
+            MAJOR_TAG => {
+                // Read the tag number
+                let _tag = self
+                    .read_length(info)?
+                    .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_TAG.to_string()))?;
+                // For now, just deserialize the tagged content
+                // The tag information is available but we pass through to the content
+                self.deserialize_any_impl(visitor)
+            }
+            MAJOR_SIMPLE => match info {
+                FALSE => visitor.visit_bool(false),
+                TRUE => visitor.visit_bool(true),
+                NULL => visitor.visit_none(),
+                FLOAT32 => {
+                    let mut buf = [0u8; 4];
+                    self.reader.read_exact(&mut buf)?;
+                    visitor.visit_f32(f32::from_be_bytes(buf))
+                }
+                FLOAT64 => {
+                    let mut buf = [0u8; 8];
+                    self.reader.read_exact(&mut buf)?;
+                    visitor.visit_f64(f64::from_be_bytes(buf))
+                }
+                _ => Err(Error::Syntax(ERR_INVALID_CBOR.to_string())),
+            },
+            _ => Err(Error::Syntax(ERR_INVALID_CBOR.to_string())),
+        }
+    }
+
+    /// Shared enum deserialization logic used by both by-value and by-reference implementations
+    #[inline]
+    fn deserialize_enum_impl<'de, V: serde::de::Visitor<'de>>(
+        &mut self,
+        visitor: V,
+    ) -> Result<V::Value> {
+        let initial = self.read_u8()?;
+        let major = initial >> 5;
+        let info = initial & 0x1f;
+
+        match major {
+            MAJOR_TEXT => {
+                // Unit variant encoded as string
+                let len = self
+                    .read_length(info)?
+                    .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_ENUM.to_string()))?;
+                let mut buf = vec![0u8; len as usize];
+                self.reader.read_exact(&mut buf)?;
+                let s = String::from_utf8(buf).map_err(|_| Error::InvalidUtf8)?;
+                visitor.visit_enum(UnitVariantAccess { variant: s })
+            }
+            MAJOR_MAP => {
+                // Variant with data encoded as {"variant": data}
+                let len = self.read_length(info)?;
+                if len != Some(1) {
+                    return Err(Error::Syntax(ERR_ENUM_MAP_SIZE.to_string()));
+                }
+                visitor.visit_enum(VariantAccess { de: self })
+            }
+            _ => Err(Error::Syntax(ERR_INVALID_ENUM.to_string())),
+        }
     }
 }
 
@@ -237,10 +451,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for Decoder<R> {
                         _ => {
                             // For other types, just delegate to decoder's deserialize_any
                             // but we've already consumed the byte, so reconstruct the value
-                            Err(Error::Syntax(
-                                "Option deserialization only supports maps and simple types"
-                                    .to_string(),
-                            ))
+                            Err(Error::Syntax(ERR_OPTION_UNSUPPORTED.to_string()))
                         }
                     }
                 }
@@ -255,161 +466,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for Decoder<R> {
     }
 
     fn deserialize_any<V: serde::de::Visitor<'de>>(mut self, visitor: V) -> Result<V::Value> {
-        let initial = self.read_u8()?;
-        let major = initial >> 5;
-        let info = initial & 0x1f;
-
-        match major {
-            MAJOR_UNSIGNED => {
-                let val = self.read_length(info)?.ok_or_else(|| {
-                    Error::Syntax("Unsigned integer cannot be indefinite".to_string())
-                })?;
-                visitor.visit_u64(val)
-            }
-            MAJOR_NEGATIVE => {
-                let val = self.read_length(info)?.ok_or_else(|| {
-                    Error::Syntax("Negative integer cannot be indefinite".to_string())
-                })?;
-                visitor.visit_i64(-1 - val as i64)
-            }
-            MAJOR_BYTES => {
-                match self.read_length(info)? {
-                    Some(len) => {
-                        let mut buf = self.try_allocate(len as usize)?;
-                        self.reader.read_exact(&mut buf)?;
-                        visitor.visit_byte_buf(buf)
-                    }
-                    None => {
-                        // Indefinite-length byte string: concatenate chunks until break
-                        let mut result = Vec::new();
-                        loop {
-                            if self.is_break()? {
-                                self.read_break()?;
-                                break;
-                            }
-                            // Each chunk must be a definite-length byte string
-                            let initial = self.read_u8()?;
-                            let major = initial >> 5;
-                            let info = initial & 0x1f;
-                            if major != MAJOR_BYTES {
-                                return Err(Error::Syntax(
-                                    "Indefinite byte string chunks must be byte strings"
-                                        .to_string(),
-                                ));
-                            }
-                            let len = self.read_length(info)?.ok_or_else(|| {
-                                Error::Syntax(
-                                    "Indefinite byte string chunks cannot be indefinite"
-                                        .to_string(),
-                                )
-                            })?;
-                            let mut chunk = self.try_allocate(len as usize)?;
-                            self.reader.read_exact(&mut chunk)?;
-                            result.extend_from_slice(&chunk);
-                        }
-                        visitor.visit_byte_buf(result)
-                    }
-                }
-            }
-            MAJOR_TEXT => {
-                match self.read_length(info)? {
-                    Some(len) => {
-                        let mut buf = self.try_allocate(len as usize)?;
-                        self.reader.read_exact(&mut buf)?;
-                        let s = String::from_utf8(buf).map_err(|_| Error::InvalidUtf8)?;
-                        visitor.visit_string(s)
-                    }
-                    None => {
-                        // Indefinite-length text string: concatenate chunks until break
-                        let mut result = String::new();
-                        loop {
-                            if self.is_break()? {
-                                self.read_break()?;
-                                break;
-                            }
-                            // Each chunk must be a definite-length text string
-                            let initial = self.read_u8()?;
-                            let major = initial >> 5;
-                            let info = initial & 0x1f;
-                            if major != MAJOR_TEXT {
-                                return Err(Error::Syntax(
-                                    "Indefinite text string chunks must be text strings"
-                                        .to_string(),
-                                ));
-                            }
-                            let len = self.read_length(info)?.ok_or_else(|| {
-                                Error::Syntax(
-                                    "Indefinite text string chunks cannot be indefinite"
-                                        .to_string(),
-                                )
-                            })?;
-                            let mut chunk_buf = self.try_allocate(len as usize)?;
-                            self.reader.read_exact(&mut chunk_buf)?;
-                            let chunk =
-                                String::from_utf8(chunk_buf).map_err(|_| Error::InvalidUtf8)?;
-                            result.push_str(&chunk);
-                        }
-                        visitor.visit_string(result)
-                    }
-                }
-            }
-            MAJOR_ARRAY => {
-                self.check_recursion_depth()?;
-                self.recursion_depth += 1;
-                match self.read_length(info)? {
-                    Some(len) => visitor.visit_seq(SeqAccess {
-                        de: &mut self,
-                        remaining: Some(len as usize),
-                    }),
-                    None => visitor.visit_seq(SeqAccess {
-                        de: &mut self,
-                        remaining: None,
-                    }),
-                }
-                // Note: recursion_depth is decremented in SeqAccess::drop
-            }
-            MAJOR_MAP => {
-                self.check_recursion_depth()?;
-                self.recursion_depth += 1;
-                match self.read_length(info)? {
-                    Some(len) => visitor.visit_map(MapAccess {
-                        de: &mut self,
-                        remaining: Some(len as usize),
-                    }),
-                    None => visitor.visit_map(MapAccess {
-                        de: &mut self,
-                        remaining: None,
-                    }),
-                }
-                // Note: recursion_depth is decremented in MapAccess::drop
-            }
-            MAJOR_TAG => {
-                // Read the tag number
-                let _tag = self
-                    .read_length(info)?
-                    .ok_or_else(|| Error::Syntax("Tag cannot be indefinite".to_string()))?;
-                // For now, just deserialize the tagged content
-                // The tag information is available but we pass through to the content
-                self.deserialize_any(visitor)
-            }
-            MAJOR_SIMPLE => match info {
-                FALSE => visitor.visit_bool(false),
-                TRUE => visitor.visit_bool(true),
-                NULL => visitor.visit_none(),
-                FLOAT32 => {
-                    let mut buf = [0u8; 4];
-                    self.reader.read_exact(&mut buf)?;
-                    visitor.visit_f32(f32::from_be_bytes(buf))
-                }
-                FLOAT64 => {
-                    let mut buf = [0u8; 8];
-                    self.reader.read_exact(&mut buf)?;
-                    visitor.visit_f64(f64::from_be_bytes(buf))
-                }
-                _ => Err(Error::Syntax("Invalid CBOR value".to_string())),
-            },
-            _ => Err(Error::Syntax("Invalid CBOR value".to_string())),
-        }
+        self.deserialize_any_impl(visitor)
     }
 
     fn deserialize_enum<V: serde::de::Visitor<'de>>(
@@ -418,34 +475,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for Decoder<R> {
         _variants: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value> {
-        // Peek at what we have
-        let initial = self.read_u8()?;
-        let major = initial >> 5;
-        let info = initial & 0x1f;
-
-        match major {
-            MAJOR_TEXT => {
-                // Unit variant encoded as string
-                let len = self.read_length(info)?.ok_or_else(|| {
-                    Error::Syntax("Enum variant cannot be indefinite length".to_string())
-                })?;
-                let mut buf = vec![0u8; len as usize];
-                self.reader.read_exact(&mut buf)?;
-                let s = String::from_utf8(buf).map_err(|_| Error::InvalidUtf8)?;
-                visitor.visit_enum(UnitVariantAccess { variant: s })
-            }
-            MAJOR_MAP => {
-                // Variant with data encoded as {"variant": data}
-                let len = self.read_length(info)?;
-                if len != Some(1) {
-                    return Err(Error::Syntax(
-                        "Enum variant with data must be single-entry map".to_string(),
-                    ));
-                }
-                visitor.visit_enum(VariantAccess { de: &mut self })
-            }
-            _ => Err(Error::Syntax("Invalid CBOR type for enum".to_string())),
-        }
+        self.deserialize_enum_impl(visitor)
     }
 }
 
@@ -505,161 +535,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for &mut Decoder<R> {
     }
 
     fn deserialize_any<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
-        let initial = self.read_u8()?;
-        let major = initial >> 5;
-        let info = initial & 0x1f;
-
-        match major {
-            MAJOR_UNSIGNED => {
-                let val = self.read_length(info)?.ok_or_else(|| {
-                    Error::Syntax("Unsigned integer cannot be indefinite".to_string())
-                })?;
-                visitor.visit_u64(val)
-            }
-            MAJOR_NEGATIVE => {
-                let val = self.read_length(info)?.ok_or_else(|| {
-                    Error::Syntax("Negative integer cannot be indefinite".to_string())
-                })?;
-                visitor.visit_i64(-1 - val as i64)
-            }
-            MAJOR_BYTES => {
-                match self.read_length(info)? {
-                    Some(len) => {
-                        let mut buf = self.try_allocate(len as usize)?;
-                        self.reader.read_exact(&mut buf)?;
-                        visitor.visit_byte_buf(buf)
-                    }
-                    None => {
-                        // Indefinite-length byte string: concatenate chunks until break
-                        let mut result = Vec::new();
-                        loop {
-                            if self.is_break()? {
-                                self.read_break()?;
-                                break;
-                            }
-                            // Each chunk must be a definite-length byte string
-                            let initial = self.read_u8()?;
-                            let major = initial >> 5;
-                            let info = initial & 0x1f;
-                            if major != MAJOR_BYTES {
-                                return Err(Error::Syntax(
-                                    "Indefinite byte string chunks must be byte strings"
-                                        .to_string(),
-                                ));
-                            }
-                            let len = self.read_length(info)?.ok_or_else(|| {
-                                Error::Syntax(
-                                    "Indefinite byte string chunks cannot be indefinite"
-                                        .to_string(),
-                                )
-                            })?;
-                            let mut chunk = self.try_allocate(len as usize)?;
-                            self.reader.read_exact(&mut chunk)?;
-                            result.extend_from_slice(&chunk);
-                        }
-                        visitor.visit_byte_buf(result)
-                    }
-                }
-            }
-            MAJOR_TEXT => {
-                match self.read_length(info)? {
-                    Some(len) => {
-                        let mut buf = self.try_allocate(len as usize)?;
-                        self.reader.read_exact(&mut buf)?;
-                        let s = String::from_utf8(buf).map_err(|_| Error::InvalidUtf8)?;
-                        visitor.visit_string(s)
-                    }
-                    None => {
-                        // Indefinite-length text string: concatenate chunks until break
-                        let mut result = String::new();
-                        loop {
-                            if self.is_break()? {
-                                self.read_break()?;
-                                break;
-                            }
-                            // Each chunk must be a definite-length text string
-                            let initial = self.read_u8()?;
-                            let major = initial >> 5;
-                            let info = initial & 0x1f;
-                            if major != MAJOR_TEXT {
-                                return Err(Error::Syntax(
-                                    "Indefinite text string chunks must be text strings"
-                                        .to_string(),
-                                ));
-                            }
-                            let len = self.read_length(info)?.ok_or_else(|| {
-                                Error::Syntax(
-                                    "Indefinite text string chunks cannot be indefinite"
-                                        .to_string(),
-                                )
-                            })?;
-                            let mut chunk_buf = self.try_allocate(len as usize)?;
-                            self.reader.read_exact(&mut chunk_buf)?;
-                            let chunk =
-                                String::from_utf8(chunk_buf).map_err(|_| Error::InvalidUtf8)?;
-                            result.push_str(&chunk);
-                        }
-                        visitor.visit_string(result)
-                    }
-                }
-            }
-            MAJOR_ARRAY => {
-                self.check_recursion_depth()?;
-                self.recursion_depth += 1;
-                match self.read_length(info)? {
-                    Some(len) => visitor.visit_seq(SeqAccess {
-                        de: self,
-                        remaining: Some(len as usize),
-                    }),
-                    None => visitor.visit_seq(SeqAccess {
-                        de: self,
-                        remaining: None,
-                    }),
-                }
-                // Note: recursion_depth is decremented in SeqAccess::drop
-            }
-            MAJOR_MAP => {
-                self.check_recursion_depth()?;
-                self.recursion_depth += 1;
-                match self.read_length(info)? {
-                    Some(len) => visitor.visit_map(MapAccess {
-                        de: self,
-                        remaining: Some(len as usize),
-                    }),
-                    None => visitor.visit_map(MapAccess {
-                        de: self,
-                        remaining: None,
-                    }),
-                }
-                // Note: recursion_depth is decremented in MapAccess::drop
-            }
-            MAJOR_TAG => {
-                // Read the tag number
-                let _tag = self
-                    .read_length(info)?
-                    .ok_or_else(|| Error::Syntax("Tag cannot be indefinite".to_string()))?;
-                // For now, just deserialize the tagged content
-                // The tag information is available but we pass through to the content
-                self.deserialize_any(visitor)
-            }
-            MAJOR_SIMPLE => match info {
-                FALSE => visitor.visit_bool(false),
-                TRUE => visitor.visit_bool(true),
-                NULL => visitor.visit_none(),
-                FLOAT32 => {
-                    let mut buf = [0u8; 4];
-                    self.reader.read_exact(&mut buf)?;
-                    visitor.visit_f32(f32::from_be_bytes(buf))
-                }
-                FLOAT64 => {
-                    let mut buf = [0u8; 8];
-                    self.reader.read_exact(&mut buf)?;
-                    visitor.visit_f64(f64::from_be_bytes(buf))
-                }
-                _ => Err(Error::Syntax("Invalid CBOR value".to_string())),
-            },
-            _ => Err(Error::Syntax("Invalid CBOR value".to_string())),
-        }
+        self.deserialize_any_impl(visitor)
     }
 
     fn deserialize_enum<V: serde::de::Visitor<'de>>(
@@ -668,34 +544,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for &mut Decoder<R> {
         _variants: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value> {
-        // Peek at what we have
-        let initial = self.read_u8()?;
-        let major = initial >> 5;
-        let info = initial & 0x1f;
-
-        match major {
-            MAJOR_TEXT => {
-                // Unit variant encoded as string
-                let len = self.read_length(info)?.ok_or_else(|| {
-                    Error::Syntax("Enum variant cannot be indefinite length".to_string())
-                })?;
-                let mut buf = vec![0u8; len as usize];
-                self.reader.read_exact(&mut buf)?;
-                let s = String::from_utf8(buf).map_err(|_| Error::InvalidUtf8)?;
-                visitor.visit_enum(UnitVariantAccess { variant: s })
-            }
-            MAJOR_MAP => {
-                // Variant with data encoded as {"variant": data}
-                let len = self.read_length(info)?;
-                if len != Some(1) {
-                    return Err(Error::Syntax(
-                        "Enum variant with data must be single-entry map".to_string(),
-                    ));
-                }
-                visitor.visit_enum(VariantAccess { de: self })
-            }
-            _ => Err(Error::Syntax("Invalid CBOR type for enum".to_string())),
-        }
+        self.deserialize_enum_impl(visitor)
     }
 
     fn deserialize_newtype_struct<V: serde::de::Visitor<'de>>(
@@ -722,15 +571,13 @@ impl<'de, R: Read> serde::Deserializer<'de> for &mut Decoder<R> {
                 Some(len) => {
                     // Wrong array length for newtype struct
                     Err(Error::Syntax(format!(
-                        "Expected 1-element array for newtype struct, got {} elements",
-                        len
+                        "{}, got {} elements",
+                        ERR_NEWTYPE_ARRAY_LEN, len
                     )))
                 }
                 None => {
                     // Indefinite-length array not supported for newtype struct
-                    Err(Error::Syntax(
-                        "Indefinite-length array not supported for newtype struct".to_string(),
-                    ))
+                    Err(Error::Syntax(ERR_NEWTYPE_INDEFINITE.to_string()))
                 }
             }
         } else {
@@ -749,12 +596,10 @@ impl<'de, R: Read> serde::Deserializer<'de> for &mut Decoder<R> {
                     }),
                 },
                 MAJOR_TEXT => {
-                    let len = self.read_length(info)?.ok_or_else(|| {
-                        Error::Syntax("Text in newtype must be definite length".to_string())
-                    })?;
-                    let mut buf = self.try_allocate(len as usize)?;
-                    self.reader.read_exact(&mut buf)?;
-                    let s = String::from_utf8(buf).map_err(|_| Error::InvalidUtf8)?;
+                    let len = self
+                        .read_length(info)?
+                        .ok_or_else(|| Error::Syntax(ERR_NEWTYPE_TEXT.to_string()))?;
+                    let s = self.read_text(len as usize)?;
                     visitor.visit_newtype_struct(StringDeserializer { value: s })
                 }
                 _ => {
@@ -833,40 +678,41 @@ impl<'de, 'a, R: Read> serde::Deserializer<'de> for PrefetchedDeserializer<'a, R
     fn deserialize_any<V: serde::de::Visitor<'de>>(self, visitor: V) -> Result<V::Value> {
         match self.major {
             MAJOR_UNSIGNED => {
-                let val = self.de.read_length(self.info)?.ok_or_else(|| {
-                    Error::Syntax("Unsigned integer cannot be indefinite".to_string())
-                })?;
+                let val = self
+                    .de
+                    .read_length(self.info)?
+                    .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_UNSIGNED.to_string()))?;
                 visitor.visit_u64(val)
             }
             MAJOR_NEGATIVE => {
-                let val = self.de.read_length(self.info)?.ok_or_else(|| {
-                    Error::Syntax("Negative integer cannot be indefinite".to_string())
-                })?;
+                let val = self
+                    .de
+                    .read_length(self.info)?
+                    .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_NEGATIVE.to_string()))?;
                 visitor.visit_i64(-1 - val as i64)
             }
             MAJOR_TEXT => {
-                let len = self.de.read_length(self.info)?.ok_or_else(|| {
-                    Error::Syntax("Text in option must be definite length".to_string())
-                })?;
-                let mut buf = self.de.try_allocate(len as usize)?;
-                self.de.reader.read_exact(&mut buf)?;
-                let s = String::from_utf8(buf).map_err(|_| Error::InvalidUtf8)?;
+                let len = self
+                    .de
+                    .read_length(self.info)?
+                    .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_OPTION_TEXT.to_string()))?;
+                let s = self.de.read_text(len as usize)?;
                 visitor.visit_string(s)
             }
             MAJOR_BYTES => {
-                let len = self.de.read_length(self.info)?.ok_or_else(|| {
-                    Error::Syntax("Bytes in option must be definite length".to_string())
-                })?;
-                let mut buf = self.de.try_allocate(len as usize)?;
-                self.de.reader.read_exact(&mut buf)?;
+                let len = self
+                    .de
+                    .read_length(self.info)?
+                    .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_OPTION_BYTES.to_string()))?;
+                let buf = self.de.read_bytes(len as usize)?;
                 visitor.visit_byte_buf(buf)
             }
             MAJOR_SIMPLE => match self.info {
                 FALSE => visitor.visit_bool(false),
                 TRUE => visitor.visit_bool(true),
-                _ => Err(Error::Syntax("Invalid simple type in option".to_string())),
+                _ => Err(Error::Syntax(ERR_INVALID_SIMPLE_OPTION.to_string())),
             },
-            _ => Err(Error::Syntax("Unsupported type in option".to_string())),
+            _ => Err(Error::Syntax(ERR_UNSUPPORTED_OPTION.to_string())),
         }
     }
 }
@@ -924,7 +770,7 @@ impl<'de> serde::de::VariantAccess<'de> for UnitOnly {
         self,
         _seed: T,
     ) -> Result<T::Value> {
-        Err(Error::Syntax("Expected unit variant".to_string()))
+        Err(Error::Syntax(ERR_EXPECTED_UNIT.to_string()))
     }
 
     fn tuple_variant<V: serde::de::Visitor<'de>>(
@@ -932,7 +778,7 @@ impl<'de> serde::de::VariantAccess<'de> for UnitOnly {
         _len: usize,
         _visitor: V,
     ) -> Result<V::Value> {
-        Err(Error::Syntax("Expected unit variant".to_string()))
+        Err(Error::Syntax(ERR_EXPECTED_UNIT.to_string()))
     }
 
     fn struct_variant<V: serde::de::Visitor<'de>>(
@@ -940,7 +786,7 @@ impl<'de> serde::de::VariantAccess<'de> for UnitOnly {
         _fields: &'static [&'static str],
         _visitor: V,
     ) -> Result<V::Value> {
-        Err(Error::Syntax("Expected unit variant".to_string()))
+        Err(Error::Syntax(ERR_EXPECTED_UNIT.to_string()))
     }
 }
 
@@ -967,7 +813,7 @@ impl<'de, 'a, R: Read> serde::de::VariantAccess<'de> for VariantAccess<'a, R> {
     type Error = crate::Error;
 
     fn unit_variant(self) -> Result<()> {
-        Err(Error::Syntax("Expected variant with data".to_string()))
+        Err(Error::Syntax(ERR_EXPECTED_DATA.to_string()))
     }
 
     fn newtype_variant_seed<T: serde::de::DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value> {
