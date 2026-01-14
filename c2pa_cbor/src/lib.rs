@@ -2247,4 +2247,53 @@ mod tests {
         let decoded: Wrapper = from_slice(&cbor).unwrap();
         assert_eq!(decoded.0.get("a"), Some(&1));
     }
+
+    #[test]
+    fn test_decode_option_by_value_deserializer() {
+        use std::collections::HashMap;
+
+        use crate::decoder::Decoder;
+
+        // Test the OptionDeserializer path (Decoder<R> by value, not &mut)
+        // This triggers lines 193-255 in decoder.rs
+
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct TestStruct {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            data: Option<HashMap<String, String>>,
+        }
+
+        // Test with Some(map) - triggers definite-length map path
+        let mut map = HashMap::new();
+        map.insert("key".to_string(), "value".to_string());
+        let test = TestStruct { data: Some(map) };
+        let encoded = to_vec(&test).unwrap();
+
+        // Decode using Decoder directly (by value)
+        let mut decoder = Decoder::from_slice(&encoded);
+        let decoded: TestStruct = decoder.decode().unwrap();
+        assert_eq!(
+            decoded.data.as_ref().unwrap().get("key"),
+            Some(&"value".to_string())
+        );
+
+        // Test with indefinite-length map
+        // Manually construct: {_ "data": {_ "k": "v", break}, break}
+        let mut cbor = vec![0xbf]; // indefinite map
+        cbor.extend_from_slice(b"\x64data"); // "data" key
+        cbor.push(0xbf); // indefinite map value
+        cbor.push(0x61); // 1-char key
+        cbor.push(b'k');
+        cbor.push(0x61); // 1-char value
+        cbor.push(b'v');
+        cbor.push(0xff); // break inner map
+        cbor.push(0xff); // break outer map
+
+        let mut decoder = Decoder::from_slice(&cbor);
+        let decoded: TestStruct = decoder.decode().unwrap();
+        assert_eq!(
+            decoded.data.as_ref().unwrap().get("k"),
+            Some(&"v".to_string())
+        );
+    }
 }
