@@ -181,7 +181,8 @@ pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 pub use reader::Reader;
 #[doc(inline)]
 pub use resource_store::{ResourceRef, ResourceStore};
-pub use signer::{AsyncSigner, Signer};
+pub use settings::Settings;
+pub use signer::{AsyncSigner, BoxedAsyncSigner, BoxedSigner, Signer};
 pub use utils::mime::format_from_path;
 #[doc(inline)]
 pub use validation_results::{ValidationResults, ValidationState};

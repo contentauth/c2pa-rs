@@ -130,6 +130,7 @@ impl TimeStamp {
         // make sure it is a good response
         let ctp = CertificateTrustPolicy::passthrough();
         let mut tracker = StatusTracker::default();
+
         if _sync {
             crate::crypto::time_stamp::verify_time_stamp(
                 &bytes,
