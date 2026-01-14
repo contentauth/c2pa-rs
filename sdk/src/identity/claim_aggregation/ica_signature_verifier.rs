@@ -95,10 +95,6 @@ impl SignatureVerifier for IcaSignatureVerifier {
         // tracker to capture the C2PA timestamp informational statuses
         let mut timestamp_tracker = StatusTracker::default();
 
-        // TODO: do we need to pass settings here at all if `ctp` is set to pasthrough anyways?
-        let mut settings = crate::settings::get_settings().unwrap_or_default();
-        settings.verify.verify_timestamp_trust = false;
-
         // todo: since this is calling the C2PA Cose timestamp validator should it follow the C2PA rules?
         // todo: (CAI-8847) since C2PA requires trust lists for TSAs what does that mean for CAWG since it is using
         // the C2PA header's timestamp
@@ -107,7 +103,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
             payload_bytes,
             &local_ctp,
             &mut timestamp_tracker,
-            &settings,
+            false,
         )
         .await
         .inspect(|tst_info| self.save_time_stamp(tst_info, &mut ica_credential, status_tracker))
