@@ -16,8 +16,8 @@ use std::io::{self, Cursor, Seek};
 #[cfg(not(target_arch = "wasm32"))]
 use c2pa::identity::validator::CawgValidator;
 use c2pa::{
-    settings::Settings, validation_status, Builder, BuilderIntent, Error, ManifestAssertionKind,
-    Reader, Result, ValidationState,
+    validation_status, Builder, BuilderIntent, Context, Error, ManifestAssertionKind, Reader,
+    Result, Settings, ValidationState,
 };
 
 mod common;
@@ -25,16 +25,19 @@ mod common;
 use common::compare_stream_to_known_good;
 use common::test_signer;
 
+const TEST_SETTINGS: &str = include_str!("../tests/fixtures/test_settings.toml");
+
 #[test]
 #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
 fn test_builder_ca_jpg() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
 
     const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
 
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
 
     use c2pa::assertions::Action;
@@ -54,8 +57,7 @@ fn test_builder_ca_jpg() -> Result<()> {
 
     let mut dest = Cursor::new(Vec::new());
 
-    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
-
+    builder.save_to_stream(format, &mut source, &mut dest)?;
     // use this to update the known good
     // dest.set_position(0);
     // let reader = Reader::from_stream(format, &mut dest)?;
@@ -68,15 +70,16 @@ fn test_builder_ca_jpg() -> Result<()> {
 // Source: https://github.com/contentauth/c2pa-rs/issues/530
 #[test]
 fn test_builder_riff() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
     let mut source = Cursor::new(include_bytes!("fixtures/sample1.wav"));
     let format = "audio/wav";
 
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
     builder.definition.claim_version = Some(1); // use v1 for this test
     builder.no_embed = true;
-    builder.sign(&Settings::signer()?, format, &mut source, &mut io::empty())?;
+    builder.sign(context.signer()?, format, &mut source, &mut io::empty())?;
 
     Ok(())
 }
@@ -87,7 +90,8 @@ fn test_builder_riff() -> Result<()> {
 // Source: https://github.com/contentauth/c2pa-rs/issues/1554
 #[test]
 fn test_builder_cyclic_ingredient() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
 
     let mut source = Cursor::new(include_bytes!("fixtures/no_manifest.jpg"));
     let format = "image/jpeg";
@@ -95,9 +99,9 @@ fn test_builder_cyclic_ingredient() -> Result<()> {
     let mut ingredient = Cursor::new(Vec::new());
 
     // Start by making a basic ingredient.
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
-    builder.sign(&Settings::signer()?, format, &mut source, &mut ingredient)?;
+    builder.sign(context.signer()?, format, &mut source, &mut ingredient)?;
 
     source.rewind()?;
     ingredient.rewind()?;
@@ -105,14 +109,14 @@ fn test_builder_cyclic_ingredient() -> Result<()> {
     let mut dest = Cursor::new(Vec::new());
 
     // Then create an asset with the basic ingredient.
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
     builder.add_ingredient_from_stream(
         serde_json::json!({}).to_string(),
         format,
         &mut ingredient,
     )?;
-    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
 
     dest.rewind()?;
     ingredient.rewind()?;
@@ -153,17 +157,15 @@ fn test_builder_cyclic_ingredient() -> Result<()> {
 
     cyclic_ingredient.rewind()?;
 
-    // Read the manifest without validating so we can test with post-validating the CAWG.
-    Settings::from_toml(
-        &toml::toml! {
-            [verify]
-            verify_after_reading = false
-        }
-        .to_string(),
-    )?;
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let mut reader = Reader::from_stream(format, cyclic_ingredient)?;
+        // Read the manifest without validating so we can test with post-validating the CAWG.
+        let no_verify_settings =
+            Settings::new().with_value("verify.verify_after_reading", false)?;
+        let no_verify_context = Context::new().with_settings(no_verify_settings)?;
+
+        let mut reader =
+            Reader::from_context(no_verify_context).with_stream(format, cyclic_ingredient)?;
         // Ideally we'd use a sync path for this. There are limitations for tokio on WASM.
         tokio::runtime::Runtime::new()?.block_on(reader.post_validate_async(&CawgValidator {}))?;
     }
@@ -173,14 +175,15 @@ fn test_builder_cyclic_ingredient() -> Result<()> {
 
 #[test]
 fn test_builder_sidecar_only() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
     let mut source = Cursor::new(include_bytes!("fixtures/earth_apollo17.jpg"));
     let format = "image/jpeg";
 
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
     builder.set_no_embed(true);
-    let c2pa_data = builder.sign(&Settings::signer()?, format, &mut source, &mut io::empty())?;
+    let c2pa_data = builder.sign(context.signer()?, format, &mut source, &mut io::empty())?;
 
     let reader1 = Reader::from_manifest_data_and_stream(&c2pa_data, format, &mut source)?;
     println!("reader1: {reader1}");
@@ -200,9 +203,10 @@ fn test_builder_sidecar_only() -> Result<()> {
 #[ignore = "generates a hash error, needs investigation"]
 fn test_builder_fragmented() -> Result<()> {
     use common::tempdirectory;
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
 
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
     let tempdir = tempdirectory().expect("temp dir");
     let output_path = tempdir.path();
@@ -263,18 +267,14 @@ fn test_builder_fragmented() -> Result<()> {
 
 #[test]
 fn test_builder_remote_url_no_embed() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-    //let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
-    let mut builder = Builder::new();
-    builder.set_intent(BuilderIntent::Edit);
+    let mut settings = Settings::new().with_toml(TEST_SETTINGS)?;
     // disable remote fetching for this test
-    Settings::from_toml(
-        &toml::toml! {
-            [verify]
-            remote_manifest_fetch = false
-        }
-        .to_string(),
-    )?;
+    settings = settings.with_value("verify.remote_manifest_fetch", false)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
+
+    //let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
     builder.no_embed = true;
     // very important to use a URL that does not exist, otherwise you may get a JumbfParseError or JumbfNotFound
     builder.set_remote_url("http://this_does_not_exist/foo.jpg");
@@ -285,10 +285,10 @@ fn test_builder_remote_url_no_embed() -> Result<()> {
 
     let mut dest = Cursor::new(Vec::new());
 
-    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
+    builder.save_to_stream(format, &mut source, &mut dest)?;
 
     dest.set_position(0);
-    let reader = Reader::from_stream(format, &mut dest);
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest);
     if let Err(c2pa::Error::RemoteManifestUrl(url)) = reader {
         assert_eq!(url, "http://this_does_not_exist/foo.jpg".to_string());
     } else {
@@ -299,17 +299,18 @@ fn test_builder_remote_url_no_embed() -> Result<()> {
 
 #[test]
 fn test_builder_embedded_v1_otgp() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
 
     let mut source = Cursor::new(include_bytes!("fixtures/XCA.jpg"));
     let format = "image/jpeg";
 
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
     let mut dest = Cursor::new(Vec::new());
-    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
     dest.set_position(0);
-    let reader = Reader::from_stream(format, &mut dest)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
     // check that the v1 OTGP is embedded and we catch it correct with validation_results
     assert_eq!(reader.validation_state(), ValidationState::Trusted);
     //println!("reader: {}", reader);
@@ -418,10 +419,11 @@ fn test_dynamic_assertions_builder() -> Result<()> {
         }
     }
 
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
 
     //let manifest_def = std::fs::read_to_string(fixtures_path("simple_manifest.json"))?;
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
 
     const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
@@ -435,7 +437,9 @@ fn test_dynamic_assertions_builder() -> Result<()> {
 
     dest.set_position(0);
 
-    let reader = Reader::from_stream(format, &mut dest).unwrap();
+    let reader = Reader::from_shared_context(&context)
+        .with_stream(format, &mut dest)
+        .unwrap();
 
     println!("reader: {reader}");
 
@@ -448,7 +452,8 @@ fn test_dynamic_assertions_builder() -> Result<()> {
 fn test_assertion_created_field() -> Result<()> {
     use serde_json::json;
 
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
 
     const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
     let format = "image/jpeg";
@@ -475,7 +480,7 @@ fn test_assertion_created_field() -> Result<()> {
     )
     .to_string();
 
-    let mut builder = Builder::from_json(&definition)?;
+    let mut builder = Builder::from_shared_context(&context).with_definition(&definition)?;
 
     // Add a regular assertion (should default to created = false)
     builder.add_assertion("org.test.regular", &json!({"value": "regular"}))?;
@@ -491,10 +496,10 @@ fn test_assertion_created_field() -> Result<()> {
     // builder.add_assertion("org.test.gathered", &gathered)?;
 
     let mut dest = Cursor::new(Vec::new());
-    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
 
     dest.set_position(0);
-    let reader = Reader::from_stream(format, &mut dest)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
 
     // Verify the manifest was created successfully
     assert_ne!(reader.validation_state(), ValidationState::Invalid);
@@ -539,8 +544,8 @@ fn test_assertion_created_field() -> Result<()> {
 
 #[test]
 fn test_metadata_formats_json_manifest() -> Result<()> {
-    use c2pa::settings::Settings;
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
 
     let manifest_json = r#"
     {
@@ -579,16 +584,16 @@ fn test_metadata_formats_json_manifest() -> Result<()> {
     }
     "#;
 
-    let mut builder = Builder::from_json(manifest_json)?;
+    let mut builder = Builder::from_shared_context(&context).with_definition(manifest_json)?;
     const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
     let mut dest = Cursor::new(Vec::new());
 
-    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
 
     dest.set_position(0);
-    let reader = Reader::from_stream(format, &mut dest)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
 
     for assertion in reader.active_manifest().unwrap().assertions() {
         match assertion.label() {
@@ -610,5 +615,53 @@ fn test_metadata_formats_json_manifest() -> Result<()> {
             _ => {}
         }
     }
+    Ok(())
+}
+
+/// Test that path traversal attempts in archive resources are blocked
+#[test]
+fn test_archive_path_traversal_protection() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+    let mut builder = Builder::new();
+    builder.set_intent(BuilderIntent::Edit);
+
+    // Try to add a resource with a path traversal attempt
+    let mut malicious_resource = Cursor::new(b"malicious data");
+    let result = builder.add_resource("../../../etc/passwd", &mut malicious_resource);
+
+    // This should fail with a BadParam error
+    match result {
+        Err(Error::BadParam(msg)) if msg.contains("Path traversal not allowed") => {
+            // Expected error
+        }
+        Err(e) => {
+            panic!("Expected path traversal error, got: {:?}", e);
+        }
+        Ok(_) => {
+            panic!("Path traversal should have been blocked!");
+        }
+    }
+
+    // Also test absolute paths
+    let mut malicious_resource2 = Cursor::new(b"malicious data");
+    let result = builder.add_resource("/etc/passwd", &mut malicious_resource2);
+
+    match result {
+        Err(Error::BadParam(msg)) if msg.contains("Absolute path not allowed") => {
+            // Expected error
+        }
+        Err(e) => {
+            panic!("Expected absolute path error, got: {:?}", e);
+        }
+        Ok(_) => {
+            panic!("Absolute path should have been blocked!");
+        }
+    }
+
+    // Test that valid paths still work
+    let mut valid_resource = Cursor::new(b"valid data");
+    builder.add_resource("valid_resource.txt", &mut valid_resource)?;
+
     Ok(())
 }
