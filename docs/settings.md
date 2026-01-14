@@ -341,6 +341,8 @@ The `verify` object specifies verification behavior.
 | `verify.skip_ingredient_conflict_resolution` | Boolean | Skip ingredient conflict resolution | false |
 | `verify.strict_v1_validation` | Boolean | Use strict C2PA v1 validation | false |
 
+**WARNING:** Changing any of the `verify.*` settings from `true` to `false` may result in verification behavior that is not fully compliant with the C2PA specification and should generally be avoided.
+
 ## Examples
 
 ### Minimal configuration
