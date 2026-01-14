@@ -111,9 +111,9 @@ mod tests {
         let mut dest = Cursor::new(Vec::new());
 
         // Use the context when creating the Builder
-        let definition = serde_json::from_str(&manifest_json()).unwrap();
-        let mut builder = Builder::from_shared_context(&context);
-        builder.definition = definition;
+        let mut builder = Builder::from_shared_context(&context)
+            .with_definition(manifest_json())
+            .unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();

@@ -418,6 +418,8 @@ pub struct Settings {
 
 impl Settings {
     #[cfg(feature = "file_io")]
+    /// Load thread-local [Settings] from a file.
+    /// to be deprecated - use [Settings::with_file] instead
     pub fn from_file<P: AsRef<Path>>(settings_path: P) -> Result<Self> {
         let ext = settings_path
             .as_ref()
@@ -429,7 +431,9 @@ impl Settings {
         Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext)
     }
 
-    /// Load settings from string representation of the configuration. Format of configuration must be supplied (json or toml).
+    /// Load thread-local [Settings] from string representation of the configuration.
+    /// Format of configuration must be supplied (json or toml).
+    /// to be deprecated - use [Settings::with_json] or [Settings::with_toml] instead
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
@@ -467,7 +471,8 @@ impl Settings {
         }
     }
 
-    /// Set the [Settings] from a toml file.
+    /// Set the thread-local [Settings] from a toml file.
+    /// to be deprecated use [Settings::with_toml] instead
     pub fn from_toml(toml: &str) -> Result<()> {
         Settings::from_string(toml, "toml").map(|_| ())
     }
@@ -600,7 +605,8 @@ impl Settings {
         })
     }
 
-    /// Set [Settings] back to the default values.
+    /// Set the thread-local [Settings] back to the default values.
+    /// to be deprecated
     #[allow(unused)]
     pub(crate) fn reset() -> Result<()> {
         if let Ok(default_settings) = Config::try_from(&Settings::default()) {

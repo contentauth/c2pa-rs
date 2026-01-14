@@ -403,6 +403,7 @@ pub unsafe extern "C" fn c2pa_error_set_last(error_str: *const c_char) -> c_int 
 }
 
 /// Load Settings from a string.
+/// Sets thread-local settings.
 ///
 /// # Errors
 /// Returns -1 if there were errors, otherwise returns 0.
@@ -417,6 +418,7 @@ pub unsafe extern "C" fn c2pa_load_settings(
 ) -> c_int {
     let settings = from_cstr_or_return_int!(settings);
     let format = from_cstr_or_return_int!(format);
+    // we use the legacy from_string function to set thread-local settings for backward compatibility
     let result = Settings::from_string(&settings, &format);
     ok_or_return_int!(result, |_| 0) // returns 0 on success
 }

@@ -331,7 +331,6 @@ impl Reader {
         }
     }
 
-    #[cfg(feature = "file_io")]
     /// Create a manifest store [`Reader`] from a file.
     /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
     ///
@@ -357,11 +356,12 @@ impl Reader {
     /// [CAWG identity] assertions require async calls for validation.
     ///
     /// [CAWG identity]: https://cawg.io/identity/
+    #[cfg(feature = "file_io")]
     #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
         // Legacy behavior: explicitly get thread-local settings for backward compatibility
         let settings = crate::settings::get_thread_local_settings();
-        let context = Context::new().with_settings(settings).unwrap_or_default();
+        let context = Context::new().with_settings(settings)?;
 
         if _sync {
             Reader::from_context(context).with_file(path)

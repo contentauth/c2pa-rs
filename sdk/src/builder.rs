@@ -3902,7 +3902,7 @@ mod tests {
     }
 
     #[test]
-    fn test_with_arvhive() -> Result<()> {
+    fn test_with_archive() -> Result<()> {
         let mut builder =
             Builder::from_context(Context::new()).with_definition(r#"{"title": "Test Image"}"#)?;
 
