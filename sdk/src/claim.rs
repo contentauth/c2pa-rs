@@ -19,7 +19,7 @@ use std::{
 };
 
 use async_generic::async_generic;
-use chrono::{DateTime, Utc};
+use coset::CoseSign1;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -1051,6 +1051,17 @@ impl Claim {
         &self.signature_val
     }
 
+    /// Returns the `COSE_Sign1_Tagged` structure found in the claim signature box.
+    pub fn cose_sign1(&self) -> Result<CoseSign1> {
+        let sig = self.signature_val();
+        let data = self.data()?;
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        let sign1 = parse_cose_sign1(sig, &data, &mut validation_log)?;
+        Ok(sign1)
+    }
+
     /// get claim generator
     pub fn claim_generator(&self) -> Option<&str> {
         self.claim_generator.as_deref()
@@ -1802,31 +1813,6 @@ impl Claim {
         }
     }
 
-    /// Return the signing date and time for this claim, if there is one.
-    pub fn signing_time(&self) -> Option<DateTime<Utc>> {
-        if let Some(validation_data) = self.signature_info() {
-            validation_data.date
-        } else {
-            None
-        }
-    }
-
-    /// Return the signing issuer for this claim, if there is one.
-    pub fn signing_issuer(&self) -> Option<String> {
-        if let Some(validation_data) = self.signature_info() {
-            validation_data.issuer_org
-        } else {
-            None
-        }
-    }
-
-    /// Return the cert's serial number, if there is one.
-    pub fn signing_cert_serial(&self) -> Option<String> {
-        self.signature_info()
-            .and_then(|validation_info| validation_info.cert_serial_number)
-            .map(|serial| serial.to_string())
-    }
-
     /// Return information about the signature
     #[async_generic]
     pub fn signature_info(&self) -> Option<CertificateInfo> {
@@ -1835,14 +1821,10 @@ impl Claim {
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
-        // TODO: I believe we validate at an earlier point in the code, making this unecessary
-        let mut settings = crate::settings::get_settings().unwrap_or_default();
-        settings.verify.verify_timestamp_trust = false;
-
         if _sync {
-            Some(get_signing_info(sig, &data, &mut validation_log, &settings))
+            Some(get_signing_info(sig, &data, &mut validation_log, false))
         } else {
-            Some(get_signing_info_async(sig, &data, &mut validation_log, &settings).await)
+            Some(get_signing_info_async(sig, &data, &mut validation_log, false).await)
         }
     }
 
@@ -2041,7 +2023,12 @@ impl Claim {
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
-        let vi = get_signing_info(sig, &data, &mut validation_log, settings);
+        let vi = get_signing_info(
+            sig,
+            &data,
+            &mut validation_log,
+            settings.verify.verify_timestamp_trust,
+        );
 
         Ok(vi.cert_chain)
     }
@@ -2411,44 +2398,9 @@ impl Claim {
                 if action.action() == c2pa_action::TRANSCODED
                     || action.action() == c2pa_action::REPACKAGED
                 {
-                    let Some(params) = action.parameters() else {
-                        log_item!(
-                            label.clone(),
-                            "opened, placed and removed items must have parameters",
-                            "verify_actions"
-                        )
-                        .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure(
-                            validation_log,
-                            Error::ValidationRule(
-                                "opened, placed and removed items must have parameters".into(),
-                            ),
-                        )?;
-                        continue; // Skip the parameter-dependent checks below
-                    };
-
-                    let mut parent_tested = None; // on exists if action actually pointed to an ingredient
-                    if let Some(h) = &params.ingredient {
-                        // can we find a reference in the ingredient list
-                        // is it referenced from this manifest
-                        if claim.ingredient_assertions().iter().any(|i| {
-                            if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                if let Some(target_label) = assertion_label_from_uri(&h.url()) {
-                                    return target_label == i.label()
-                                        && ingredient.relationship == Relationship::ParentOf;
-                                }
-                            }
-                            false
-                        }) {
-                            parent_tested = Some(true);
-                        }
-
-                        match parent_tested {
-                            Some(v) => parent_tested = Some(v),
-                            None => parent_tested = Some(false),
-                        }
-                    } else if let Some(h_vec) = &params.ingredients {
-                        for h in h_vec {
+                    if let Some(params) = action.parameters() {
+                        let mut parent_tested = None; // on exists if action actually pointed to an ingredient
+                        if let Some(h) = &params.ingredient {
                             // can we find a reference in the ingredient list
                             // is it referenced from this manifest
                             if claim.ingredient_assertions().iter().any(|i| {
@@ -2462,27 +2414,55 @@ impl Claim {
                             }) {
                                 parent_tested = Some(true);
                             }
+
+                            match parent_tested {
+                                Some(v) => parent_tested = Some(v),
+                                None => parent_tested = Some(false),
+                            }
+                        } else if let Some(h_vec) = &params.ingredients {
+                            for h in h_vec {
+                                // can we find a reference in the ingredient list
+                                // is it referenced from this manifest
+                                if claim.ingredient_assertions().iter().any(|i| {
+                                    if let Ok(ingredient) =
+                                        Ingredient::from_assertion(i.assertion())
+                                    {
+                                        if let Some(target_label) =
+                                            assertion_label_from_uri(&h.url())
+                                        {
+                                            return target_label == i.label()
+                                                && ingredient.relationship
+                                                    == Relationship::ParentOf;
+                                        }
+                                    }
+                                    false
+                                }) {
+                                    parent_tested = Some(true);
+                                }
+                            }
+                            match parent_tested {
+                                Some(v) => parent_tested = Some(v),
+                                None => parent_tested = Some(false),
+                            }
                         }
-                        match parent_tested {
-                            Some(v) => parent_tested = Some(v),
-                            None => parent_tested = Some(false),
+                        // will only exist if we actual tested for an ingredient
+                        if let Some(false) = parent_tested {
+                            log_item!(
+                                label.clone(),
+                                "action must have valid ingredient with ParentOf relationship",
+                                "verify_actions"
+                            )
+                            .validation_status(
+                                validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
+                            )
+                            .failure_no_throw(
+                                validation_log,
+                                Error::ValidationRule(
+                                    "action must have valid ingredient with ParentOf relationship"
+                                        .into(),
+                                ),
+                            );
                         }
-                    }
-                    // will only exist if we actual tested for an ingredient
-                    if let Some(false) = parent_tested {
-                        log_item!(
-                            label.clone(),
-                            "action must have valid ingredient with ParentOf relationship",
-                            "verify_actions"
-                        )
-                        .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure_no_throw(
-                            validation_log,
-                            Error::ValidationRule(
-                                "action must have valid ingredient with ParentOf relationship"
-                                    .into(),
-                            ),
-                        );
                     }
                 }
 

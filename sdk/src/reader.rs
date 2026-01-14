@@ -121,18 +121,6 @@ pub struct Reader {
 }
 
 impl Reader {
-    /// Create a new Reader with a default [`Context`].
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use c2pa::Reader;
-    /// let reader = Reader::new();
-    /// ```
-    pub fn new() -> Self {
-        Self::from_context(Context::new())
-    }
-
     /// Create a new Reader with the given [`Context`].
     ///
     /// This method takes ownership of the [`Context`] and wraps it in an [`Arc`] internally.
@@ -149,10 +137,8 @@ impl Reader {
     /// ```
     /// # use c2pa::{Context, Reader, Result};
     /// # fn main() -> Result<()> {
-    /// // Simple single-use case - no Arc needed!
-    /// let reader = Reader::from_context(
-    ///     Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?,
-    /// );
+    /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+    /// let reader = Reader::from_context(context);
     /// # Ok(())
     /// # }
     /// ```
@@ -242,10 +228,16 @@ impl Reader {
     /// [CAWG identity]: https://cawg.io/identity/
     #[async_generic]
     pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings)?;
+
         if _sync {
-            Reader::new().with_stream(format, stream)
+            Reader::from_context(context).with_stream(format, stream)
         } else {
-            Reader::new().with_stream_async(format, stream).await
+            Reader::from_context(context)
+                .with_stream_async(format, stream)
+                .await
         }
     }
 
@@ -339,7 +331,7 @@ impl Reader {
         }
     }
 
-    #[cfg(feature = "file_io")]
+
     /// Create a manifest store [`Reader`] from a file.
     /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
     ///
@@ -365,12 +357,18 @@ impl Reader {
     /// [CAWG identity] assertions require async calls for validation.
     ///
     /// [CAWG identity]: https://cawg.io/identity/
+
+    #[cfg(feature = "file_io")]
     #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
+        // Legacy behavior: explicitly get thread-local settings for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings)?;
+
         if _sync {
-            Reader::new().with_file(path)
+            Reader::from_context(context).with_file(path)
         } else {
-            Reader::new().with_file_async(path).await
+            Reader::from_context(context).with_file_async(path).await
         }
     }
 
@@ -449,9 +447,10 @@ impl Reader {
         stream: impl Read + Seek + MaybeSend,
     ) -> Result<Reader> {
         if _sync {
-            Reader::new().with_manifest_data_and_stream(c2pa_data, format, stream)
+            Reader::from_context(Context::new())
+                .with_manifest_data_and_stream(c2pa_data, format, stream)
         } else {
-            Reader::new()
+            Reader::from_context(Context::new())
                 .with_manifest_data_and_stream_async(c2pa_data, format, stream)
                 .await
         }
@@ -522,9 +521,9 @@ impl Reader {
         fragment: impl Read + Seek + MaybeSend,
     ) -> Result<Self> {
         if _sync {
-            Reader::new().with_fragment(format, stream, fragment)
+            Reader::from_context(Context::new()).with_fragment(format, stream, fragment)
         } else {
-            Reader::new()
+            Reader::from_context(Context::new())
                 .with_fragment_async(format, stream, fragment)
                 .await
         }
@@ -576,7 +575,7 @@ impl Reader {
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
-        Reader::new().with_fragmented_files(path, fragments)
+        Reader::from_context(Context::new()).with_fragmented_files(path, fragments)
     }
 
     /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
@@ -1404,8 +1403,7 @@ pub mod tests {
     use std::io::Cursor;
 
     use super::*;
-    #[cfg(target_os = "wasi")]
-    use crate::settings::Settings;
+    use crate::utils::test::test_context;
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
@@ -1416,10 +1414,10 @@ pub mod tests {
     #[test]
     // Verify that we can convert a Reader back into a Builder re-sign and the read it back again
     fn test_into_builder() -> Result<()> {
-        crate::settings::Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        let context = test_context().into_shared();
         let mut source = Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST);
         let format = "image/jpeg";
-        let reader = Reader::from_stream(format, &mut source)?;
+        let reader = Reader::from_shared_context(&context).with_stream(format, &mut source)?;
         println!("{reader}");
 
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
@@ -1428,11 +1426,10 @@ pub mod tests {
 
         source.set_position(0);
         let mut dest = Cursor::new(Vec::new());
-        let signer = crate::settings::Settings::signer()?;
-        builder.sign(&signer, format, &mut source, &mut dest)?;
+        builder.save_to_stream(format, &mut source, &mut dest)?;
 
         dest.set_position(0);
-        let reader2 = Reader::from_stream(format, &mut dest)?;
+        let reader2 = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
         println!("{reader2}");
 
         assert_eq!(reader2.validation_state(), ValidationState::Trusted);
@@ -1451,8 +1448,7 @@ pub mod tests {
 
     #[test]
     fn test_reader_new_with_stream() -> Result<()> {
-        const TEST_SETTINGS: &str = include_str!("../tests/fixtures/test_settings.toml");
-        let context = Context::new().with_settings(TEST_SETTINGS)?;
+        let context = test_context();
 
         let mut source = Cursor::new(IMAGE_WITH_MANIFEST);
 
@@ -1500,11 +1496,9 @@ pub mod tests {
 
     #[test]
     fn test_reader_trusted() -> Result<()> {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
-        let reader =
-            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
+        let context = Context::new();
+        let reader = Reader::from_context(context)
+            .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         Ok(())
     }
@@ -1513,10 +1507,12 @@ pub mod tests {
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_from_file_nested_errors() -> Result<()> {
         // disable trust check so that the status is Valid vs Trusted
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
-        let reader =
-            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
+        let settings = crate::Settings::default()
+            .with_value("verify.verify_trust", false)
+            .unwrap();
+        let context = Context::new().with_settings(settings).unwrap();
+        let reader = Reader::from_context(context)
+            .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         println!("{reader}");
         assert_eq!(reader.validation_status(), None);
         assert_eq!(reader.validation_state(), ValidationState::Valid);
