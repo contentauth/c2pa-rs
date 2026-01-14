@@ -1007,4 +1007,220 @@ mod tests {
         let decoded: TestStruct = from_value(value).unwrap();
         assert_eq!(decoded, test);
     }
+
+    #[test]
+    fn test_value_serialize_newtype_struct() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        struct Wrapper(String);
+
+        let data = Wrapper("wrapped_value".to_string());
+        let value = to_value(&data).unwrap();
+
+        // Newtype structs serialize as their inner value
+        assert_eq!(value, Value::Text("wrapped_value".to_string()));
+
+        let decoded: Wrapper = from_value(value).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_value_serialize_tuple_struct() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        struct Point(i32, i32, i32);
+
+        let data = Point(10, 20, 30);
+        let value = to_value(&data).unwrap();
+
+        // Tuple structs serialize as arrays
+        assert!(value.is_array());
+        let arr = value.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+        assert_eq!(arr[0], Value::Integer(10));
+        assert_eq!(arr[1], Value::Integer(20));
+        assert_eq!(arr[2], Value::Integer(30));
+
+        let decoded: Point = from_value(value).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_value_serialize_newtype_variant() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        enum TestEnum {
+            Value(i32),
+            Text(String),
+        }
+
+        let data = TestEnum::Value(42);
+        let value = to_value(&data).unwrap();
+
+        // Newtype variants serialize as {"variant": value}
+        assert!(value.is_map());
+        let map = value.as_map().unwrap();
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key(&Value::Text("Value".to_string())));
+        assert_eq!(
+            map.get(&Value::Text("Value".to_string())),
+            Some(&Value::Integer(42))
+        );
+
+        let decoded: TestEnum = from_value(value).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_value_serialize_tuple_variant() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        enum TestEnum {
+            Point(i32, i32),
+            Color(u8, u8, u8),
+        }
+
+        let data = TestEnum::Point(100, 200);
+        let value = to_value(&data).unwrap();
+
+        // Tuple variants serialize as {"variant": [values...]}
+        assert!(value.is_map());
+        let map = value.as_map().unwrap();
+        assert_eq!(map.len(), 1);
+
+        let key = Value::Text("Point".to_string());
+        assert!(map.contains_key(&key));
+
+        let inner = map.get(&key).unwrap();
+        assert!(inner.is_array());
+        let arr = inner.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0], Value::Integer(100));
+        assert_eq!(arr[1], Value::Integer(200));
+
+        let decoded: TestEnum = from_value(value).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_value_serialize_struct_variant() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        enum TestEnum {
+            Person { name: String, age: u32 },
+            Location { city: String, country: String },
+        }
+
+        let data = TestEnum::Person {
+            name: "Alice".to_string(),
+            age: 30,
+        };
+        let value = to_value(&data).unwrap();
+
+        // Struct variants serialize as {"variant": {"field": value, ...}}
+        assert!(value.is_map());
+        let outer_map = value.as_map().unwrap();
+        assert_eq!(outer_map.len(), 1);
+
+        let key = Value::Text("Person".to_string());
+        assert!(outer_map.contains_key(&key));
+
+        let inner = outer_map.get(&key).unwrap();
+        assert!(inner.is_map());
+        let inner_map = inner.as_map().unwrap();
+        assert_eq!(inner_map.len(), 2);
+        assert_eq!(
+            inner_map.get(&Value::Text("name".to_string())),
+            Some(&Value::Text("Alice".to_string()))
+        );
+        assert_eq!(
+            inner_map.get(&Value::Text("age".to_string())),
+            Some(&Value::Integer(30))
+        );
+
+        let decoded: TestEnum = from_value(value).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_value_serialize_tuple_struct_empty() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        struct Empty();
+
+        let data = Empty();
+        let value = to_value(&data).unwrap();
+
+        // Empty tuple struct serializes as empty array
+        assert!(value.is_array());
+        assert_eq!(value.as_array().unwrap().len(), 0);
+
+        let decoded: Empty = from_value(value).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_value_serialize_tuple_variant_nested() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        enum Outer {
+            Data(Vec<i32>, String),
+        }
+
+        let data = Outer::Data(vec![1, 2, 3], "test".to_string());
+        let value = to_value(&data).unwrap();
+
+        // Verify nested structures work correctly
+        assert!(value.is_map());
+        let map = value.as_map().unwrap();
+        let inner = map.get(&Value::Text("Data".to_string())).unwrap();
+        assert!(inner.is_array());
+        let arr = inner.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+
+        // First element is an array
+        assert!(arr[0].is_array());
+        let inner_arr = arr[0].as_array().unwrap();
+        assert_eq!(inner_arr.len(), 3);
+
+        // Second element is a string
+        assert_eq!(arr[1], Value::Text("test".to_string()));
+
+        let decoded: Outer = from_value(value).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_value_serialize_struct_variant_complex() {
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        enum ComplexEnum {
+            Config {
+                enabled: bool,
+                settings: Vec<String>,
+                count: u32,
+            },
+        }
+
+        let data = ComplexEnum::Config {
+            enabled: true,
+            settings: vec!["opt1".to_string(), "opt2".to_string()],
+            count: 5,
+        };
+        let value = to_value(&data).unwrap();
+
+        // Verify complex struct variant serialization
+        assert!(value.is_map());
+        let outer_map = value.as_map().unwrap();
+        let inner = outer_map.get(&Value::Text("Config".to_string())).unwrap();
+        assert!(inner.is_map());
+        let inner_map = inner.as_map().unwrap();
+
+        assert_eq!(
+            inner_map.get(&Value::Text("enabled".to_string())),
+            Some(&Value::Bool(true))
+        );
+        assert_eq!(
+            inner_map.get(&Value::Text("count".to_string())),
+            Some(&Value::Integer(5))
+        );
+
+        let settings = inner_map.get(&Value::Text("settings".to_string())).unwrap();
+        assert!(settings.is_array());
+
+        let decoded: ComplexEnum = from_value(value).unwrap();
+        assert_eq!(decoded, data);
+    }
 }

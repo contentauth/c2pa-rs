@@ -1593,4 +1593,540 @@ mod tests {
         let decoded: i32 = from_slice(&buf).unwrap();
         assert_eq!(decoded, 42);
     }
+
+    // ============================================================================
+    // Comprehensive Deserialization Coverage Tests
+    // ============================================================================
+
+    #[test]
+    fn test_decode_various_integer_sizes() {
+        // Small integers (0-23) - single byte
+        let small: u8 = 10;
+        let encoded = to_vec(&small).unwrap();
+        assert_eq!(encoded.len(), 1);
+        assert_eq!(from_slice::<u8>(&encoded).unwrap(), 10);
+
+        // u8 size (24-255) - 2 bytes
+        let medium: u8 = 200;
+        let encoded = to_vec(&medium).unwrap();
+        assert_eq!(from_slice::<u8>(&encoded).unwrap(), 200);
+
+        // u16 size - 3 bytes
+        let large: u16 = 1000;
+        let encoded = to_vec(&large).unwrap();
+        assert_eq!(from_slice::<u16>(&encoded).unwrap(), 1000);
+
+        // u32 size - 5 bytes
+        let huge: u32 = 100_000;
+        let encoded = to_vec(&huge).unwrap();
+        assert_eq!(from_slice::<u32>(&encoded).unwrap(), 100_000);
+
+        // u64 size - 9 bytes
+        let enormous: u64 = 10_000_000_000;
+        let encoded = to_vec(&enormous).unwrap();
+        assert_eq!(from_slice::<u64>(&encoded).unwrap(), 10_000_000_000);
+
+        // Negative integers
+        let neg_small: i8 = -10;
+        let encoded = to_vec(&neg_small).unwrap();
+        assert_eq!(from_slice::<i8>(&encoded).unwrap(), -10);
+
+        let neg_large: i64 = -1_000_000;
+        let encoded = to_vec(&neg_large).unwrap();
+        assert_eq!(from_slice::<i64>(&encoded).unwrap(), -1_000_000);
+    }
+
+    #[test]
+    fn test_decode_recursion_depth_limit() {
+        use std::io::Cursor;
+
+        use crate::decoder::Decoder;
+
+        // Create a deeply nested array structure that exceeds the default limit
+        let mut cbor = vec![0x9f]; // Start indefinite array
+        // Nest 150 levels deep (exceeds DEFAULT_MAX_DEPTH of 128)
+        cbor.extend(std::iter::repeat_n(0x9f, 150));
+        // Add a simple value at the end
+        cbor.push(0x00); // integer 0
+        // Close all arrays
+        cbor.extend(std::iter::repeat_n(0xff, 151));
+
+        let mut decoder = Decoder::new(Cursor::new(&cbor[..]));
+        let result: Result<Value> = decoder.decode();
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("nesting depth") || err_msg.contains("recursion"),
+            "Expected recursion depth error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_decode_allocation_limit() {
+        // Create CBOR for a byte string claiming to be 200MB (exceeds default 100MB limit)
+        let mut cbor = vec![0x5a]; // byte string with u32 length
+        cbor.extend_from_slice(&200_000_000u32.to_be_bytes());
+        // Don't actually include the bytes - the decoder should reject before reading them
+
+        let result: Result<Vec<u8>> = from_slice(&cbor);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Allocation") || err_msg.contains("exceeds maximum"),
+            "Expected allocation limit error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_decode_allocation_limit_custom() {
+        use crate::decoder::from_slice_with_limit;
+
+        // Manually create CBOR claiming to have a 10KB byte string
+        // Format: 0x5a (u32 length), then the length bytes
+        let mut cbor = vec![0x5a]; // byte string with u32 length
+        cbor.extend_from_slice(&10_000u32.to_be_bytes()); // Claims 10KB
+        // Don't include all the bytes - just enough to show it would succeed with high limit
+        cbor.extend_from_slice(&[0u8; 100]); // Only include 100 bytes
+
+        // This should succeed with a 20KB limit
+        let result: Result<Vec<u8>> = from_slice_with_limit(&cbor, 20_000);
+        // Will fail with "unexpected end" because we didn't include all bytes, but that's fine
+        // The important thing is it doesn't fail with an allocation error
+        assert!(result.is_err() && !result.unwrap_err().to_string().contains("exceeds maximum"));
+
+        // This should fail with allocation error for 5KB limit
+        let mut cbor = vec![0x5a]; // byte string with u32 length
+        cbor.extend_from_slice(&10_000u32.to_be_bytes()); // Claims 10KB
+        let result: Result<Vec<u8>> = from_slice_with_limit(&cbor, 5_000);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn test_decode_indefinite_byte_string() {
+        use serde_bytes::ByteBuf;
+        // Manually construct indefinite-length byte string
+        // Format: 0x5f (indefinite bytes), chunks..., 0xff (break)
+        let mut cbor = vec![0x5f]; // Start indefinite byte string
+        cbor.push(0x43); // Definite byte string, length 3
+        cbor.extend_from_slice(b"hel");
+        cbor.push(0x42); // Definite byte string, length 2
+        cbor.extend_from_slice(b"lo");
+        cbor.push(0xff); // Break
+
+        let result: ByteBuf = from_slice(&cbor).unwrap();
+        assert_eq!(result.as_ref(), b"hello");
+    }
+
+    #[test]
+    fn test_decode_indefinite_text_string() {
+        // Manually construct indefinite-length text string
+        // Format: 0x7f (indefinite text), chunks..., 0xff (break)
+        let mut cbor = vec![0x7f]; // Start indefinite text string
+        cbor.push(0x65); // Definite text string, length 5
+        cbor.extend_from_slice(b"hello");
+        cbor.push(0x61); // Definite text string, length 1
+        cbor.extend_from_slice(b" ");
+        cbor.push(0x65); // Definite text string, length 5
+        cbor.extend_from_slice(b"world");
+        cbor.push(0xff); // Break
+
+        let result: String = from_slice(&cbor).unwrap();
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn test_decode_indefinite_array() {
+        // Manually construct indefinite-length array
+        // Format: 0x9f (indefinite array), elements..., 0xff (break)
+        let mut cbor = vec![0x9f]; // Start indefinite array
+        cbor.push(0x01); // integer 1
+        cbor.push(0x02); // integer 2
+        cbor.push(0x03); // integer 3
+        cbor.push(0xff); // Break
+
+        let result: Vec<u32> = from_slice(&cbor).unwrap();
+        assert_eq!(result, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_decode_indefinite_map() {
+        use std::collections::HashMap;
+
+        // Manually construct indefinite-length map
+        // Format: 0xbf (indefinite map), key-value pairs..., 0xff (break)
+        let mut cbor = vec![0xbf]; // Start indefinite map
+        // "a" => 1
+        cbor.push(0x61);
+        cbor.push(b'a');
+        cbor.push(0x01);
+        // "b" => 2
+        cbor.push(0x61);
+        cbor.push(b'b');
+        cbor.push(0x02);
+        cbor.push(0xff); // Break
+
+        let result: HashMap<String, u32> = from_slice(&cbor).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.get("a"), Some(&1));
+        assert_eq!(result.get("b"), Some(&2));
+    }
+
+    #[test]
+    fn test_decode_tagged_value() {
+        // Test tag deserialization (tags are currently passed through to content)
+        // Format: 0xc0 (tag 0), followed by value
+        let mut cbor = vec![0xc0]; // Tag 0 (date/time string)
+        cbor.push(0x64); // Text string, length 4
+        cbor.extend_from_slice(b"test");
+
+        let result: String = from_slice(&cbor).unwrap();
+        assert_eq!(result, "test");
+    }
+
+    #[test]
+    fn test_decode_enum_unit_variant() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        enum TestEnum {
+            VariantA,
+            VariantB,
+        }
+
+        let data = TestEnum::VariantA;
+        let encoded = to_vec(&data).unwrap();
+        let decoded: TestEnum = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, TestEnum::VariantA);
+    }
+
+    #[test]
+    fn test_decode_enum_newtype_variant() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        enum TestEnum {
+            Value(u32),
+        }
+
+        let data = TestEnum::Value(42);
+        let encoded = to_vec(&data).unwrap();
+        let decoded: TestEnum = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, TestEnum::Value(42));
+    }
+
+    #[test]
+    fn test_decode_enum_tuple_variant() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        enum TestEnum {
+            Point(i32, i32),
+        }
+
+        let data = TestEnum::Point(10, 20);
+        let encoded = to_vec(&data).unwrap();
+        let decoded: TestEnum = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, TestEnum::Point(10, 20));
+    }
+
+    #[test]
+    fn test_decode_enum_struct_variant() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        enum TestEnum {
+            Person { name: String, age: u32 },
+        }
+
+        let data = TestEnum::Person {
+            name: "Alice".to_string(),
+            age: 30,
+        };
+        let encoded = to_vec(&data).unwrap();
+        let decoded: TestEnum = from_slice(&encoded).unwrap();
+        assert!(matches!(decoded, TestEnum::Person { .. }));
+    }
+
+    #[test]
+    fn test_decode_newtype_struct_array_format() {
+        // Test NEW format: newtype struct as 1-element array
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct Wrapped(String);
+
+        let data = Wrapped("test".to_string());
+        let encoded = to_vec(&data).unwrap();
+        let decoded: Wrapped = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, Wrapped("test".to_string()));
+    }
+
+    #[test]
+    fn test_decode_newtype_struct_transparent_format() {
+        // Test OLD format compatibility: direct value (not wrapped in array)
+        #[derive(Debug, Deserialize, PartialEq)]
+        struct Wrapped(String);
+
+        // Manually encode as just a string (not in array)
+        let cbor = to_vec(&"test".to_string()).unwrap();
+        let decoded: Wrapped = from_slice(&cbor).unwrap();
+        assert_eq!(decoded, Wrapped("test".to_string()));
+    }
+
+    #[test]
+    fn test_decode_option_some_various_types() {
+        // Test Option<T> for various T types
+        let some_int: Option<u32> = Some(42);
+        let encoded = to_vec(&some_int).unwrap();
+        let decoded: Option<u32> = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, Some(42));
+
+        let some_string: Option<String> = Some("hello".to_string());
+        let encoded = to_vec(&some_string).unwrap();
+        let decoded: Option<String> = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, Some("hello".to_string()));
+
+        let some_bytes: Option<Vec<u8>> = Some(vec![1, 2, 3]);
+        let encoded = to_vec(&some_bytes).unwrap();
+        let decoded: Option<Vec<u8>> = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, Some(vec![1, 2, 3]));
+
+        let some_bool: Option<bool> = Some(true);
+        let encoded = to_vec(&some_bool).unwrap();
+        let decoded: Option<bool> = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, Some(true));
+    }
+
+    #[test]
+    fn test_decode_option_none() {
+        let none_int: Option<u32> = None;
+        let encoded = to_vec(&none_int).unwrap();
+        let decoded: Option<u32> = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, None);
+    }
+
+    #[test]
+    fn test_decode_from_reader() {
+        use std::io::Cursor;
+
+        use crate::decoder::from_reader;
+
+        let data = vec![1u32, 2, 3, 4, 5];
+        let encoded = to_vec(&data).unwrap();
+        let reader = Cursor::new(encoded);
+
+        let decoded: Vec<u32> = from_reader(reader).unwrap();
+        assert_eq!(decoded, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_decode_from_reader_with_limit() {
+        use std::io::Cursor;
+
+        use crate::decoder::from_reader_with_limit;
+
+        // Manually create CBOR claiming to have a 10KB byte string
+        let mut cbor = vec![0x5a]; // byte string with u32 length
+        cbor.extend_from_slice(&10_000u32.to_be_bytes()); // Claims 10KB
+        cbor.extend_from_slice(&[0u8; 100]); // Only include 100 bytes
+
+        // This should succeed with a 20KB limit (though it will fail with unexpected end)
+        let reader = Cursor::new(cbor.clone());
+        let result: Result<Vec<u8>> = from_reader_with_limit(reader, 20_000);
+        assert!(result.is_err() && !result.unwrap_err().to_string().contains("exceeds maximum"));
+
+        // This should fail with allocation error for 5KB limit
+        let reader = Cursor::new(cbor);
+        let result: Result<Vec<u8>> = from_reader_with_limit(reader, 5_000);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn test_decode_error_empty_input() {
+        let empty: &[u8] = &[];
+        let result: Result<u32> = from_slice(empty);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("empty"));
+    }
+
+    #[test]
+    fn test_decode_error_trailing_data() {
+        // Encode an integer but add extra bytes
+        let mut cbor = to_vec(&42u32).unwrap();
+        cbor.push(0x00); // Extra byte
+
+        let result: Result<u32> = from_slice(&cbor);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("trailing"));
+    }
+
+    #[test]
+    fn test_decode_error_invalid_utf8() {
+        // Manually create CBOR with invalid UTF-8 in text string
+        let mut cbor = vec![0x64]; // Text string, length 4
+        cbor.extend_from_slice(&[0xff, 0xfe, 0xfd, 0xfc]); // Invalid UTF-8
+
+        let result: Result<String> = from_slice(&cbor);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("UTF-8") || err_msg.contains("utf8"),
+            "Expected UTF-8 error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_decode_error_wrong_enum_format() {
+        // Try to decode an integer as an enum (should fail)
+        let cbor = to_vec(&42u32).unwrap();
+        #[derive(Deserialize)]
+        enum TestEnum {
+            A,
+            B,
+        }
+        let result: Result<TestEnum> = from_slice(&cbor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decode_error_indefinite_in_chunks() {
+        // Create invalid CBOR: indefinite byte string with indefinite chunk
+        let mut cbor = vec![0x5f]; // Start indefinite byte string
+        cbor.push(0x5f); // Invalid: chunk cannot be indefinite
+        cbor.push(0x41);
+        cbor.push(b'x');
+        cbor.push(0xff); // break for inner
+        cbor.push(0xff); // break for outer
+
+        let result: Result<Vec<u8>> = from_slice(&cbor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decode_error_wrong_chunk_type() {
+        // Create invalid CBOR: indefinite byte string with text chunk
+        let mut cbor = vec![0x5f]; // Start indefinite byte string
+        cbor.push(0x61); // Invalid: text string chunk in byte string
+        cbor.push(b'x');
+        cbor.push(0xff); // break
+
+        let result: Result<Vec<u8>> = from_slice(&cbor);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("byte string chunks must be byte strings")
+        );
+    }
+
+    #[test]
+    fn test_decode_error_indefinite_integer() {
+        // Integers cannot be indefinite length
+        let cbor = vec![0x1f]; // Invalid: indefinite unsigned integer
+
+        let result: Result<u32> = from_slice(&cbor);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_decode_bool_values() {
+        // Test true
+        let cbor = vec![0xf5]; // CBOR true
+        let result: bool = from_slice(&cbor).unwrap();
+        assert!(result);
+
+        // Test false
+        let cbor = vec![0xf4]; // CBOR false
+        let result: bool = from_slice(&cbor).unwrap();
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_decode_float_values() {
+        // Test f32
+        let val: f32 = 3.25;
+        let encoded = to_vec(&val).unwrap();
+        let decoded: f32 = from_slice(&encoded).unwrap();
+        assert!((decoded - 3.25).abs() < 0.01);
+
+        // Test f64
+        let val: f64 = 2.875;
+        let encoded = to_vec(&val).unwrap();
+        let decoded: f64 = from_slice(&encoded).unwrap();
+        assert!((decoded - 2.875).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_decode_nested_structures() {
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct Inner {
+            value: u32,
+        }
+
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct Middle {
+            inner: Inner,
+            name: String,
+        }
+
+        #[derive(Debug, Serialize, Deserialize, PartialEq)]
+        struct Outer {
+            middle: Middle,
+            id: u64,
+        }
+
+        let data = Outer {
+            middle: Middle {
+                inner: Inner { value: 42 },
+                name: "test".to_string(),
+            },
+            id: 12345,
+        };
+
+        let encoded = to_vec(&data).unwrap();
+        let decoded: Outer = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_decode_tuple() {
+        let data = (1u32, "hello".to_string(), true);
+        let encoded = to_vec(&data).unwrap();
+        let decoded: (u32, String, bool) = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_decode_char() {
+        let data = 'x';
+        let encoded = to_vec(&data).unwrap();
+        let decoded: char = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, 'x');
+    }
+
+    #[test]
+    fn test_decode_definite_empty_collections() {
+        // Empty array
+        let empty_vec: Vec<u32> = vec![];
+        let encoded = to_vec(&empty_vec).unwrap();
+        let decoded: Vec<u32> = from_slice(&encoded).unwrap();
+        assert_eq!(decoded, empty_vec);
+
+        // Empty map
+        use std::collections::HashMap;
+        let empty_map: HashMap<String, u32> = HashMap::new();
+        let encoded = to_vec(&empty_map).unwrap();
+        let decoded: HashMap<String, u32> = from_slice(&encoded).unwrap();
+        assert_eq!(decoded.len(), 0);
+    }
+
+    #[test]
+    fn test_decode_indefinite_empty_collections() {
+        // Empty indefinite array
+        let cbor = vec![0x9f, 0xff]; // [_ break]
+        let decoded: Vec<u32> = from_slice(&cbor).unwrap();
+        assert_eq!(decoded.len(), 0);
+
+        // Empty indefinite map
+        let cbor = vec![0xbf, 0xff]; // {_ break}
+        use std::collections::HashMap;
+        let decoded: HashMap<String, u32> = from_slice(&cbor).unwrap();
+        assert_eq!(decoded.len(), 0);
+    }
 }
