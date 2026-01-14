@@ -8,14 +8,21 @@ pub struct Decoder<R: Read> {
     reader: R,
     peeked: Option<u8>,
     max_allocation: Option<usize>,
+    recursion_depth: usize,
+    max_recursion_depth: usize,
 }
 
 impl<R: Read> Decoder<R> {
+    /// Default maximum recursion depth to prevent stack overflow from deeply nested structures
+    pub const DEFAULT_MAX_DEPTH: usize = 128;
+
     pub fn new(reader: R) -> Self {
         Decoder {
             reader,
             peeked: None,
             max_allocation: None, // Default: no artificial limit, rely on try_reserve
+            recursion_depth: 0,
+            max_recursion_depth: Self::DEFAULT_MAX_DEPTH,
         }
     }
 
@@ -29,7 +36,19 @@ impl<R: Read> Decoder<R> {
             reader,
             peeked: None,
             max_allocation: Some(max_bytes),
+            recursion_depth: 0,
+            max_recursion_depth: Self::DEFAULT_MAX_DEPTH,
         }
+    }
+
+    fn check_recursion_depth(&self) -> Result<()> {
+        if self.recursion_depth >= self.max_recursion_depth {
+            return Err(Error::Syntax(format!(
+                "CBOR nesting depth {} exceeds maximum {}",
+                self.recursion_depth, self.max_recursion_depth
+            )));
+        }
+        Ok(())
     }
 
     /// Try to allocate a buffer of the given size
@@ -319,26 +338,36 @@ impl<'de, R: Read> serde::Deserializer<'de> for Decoder<R> {
                     }
                 }
             }
-            MAJOR_ARRAY => match self.read_length(info)? {
-                Some(len) => visitor.visit_seq(SeqAccess {
-                    de: &mut self,
-                    remaining: Some(len as usize),
-                }),
-                None => visitor.visit_seq(SeqAccess {
-                    de: &mut self,
-                    remaining: None,
-                }),
-            },
-            MAJOR_MAP => match self.read_length(info)? {
-                Some(len) => visitor.visit_map(MapAccess {
-                    de: &mut self,
-                    remaining: Some(len as usize),
-                }),
-                None => visitor.visit_map(MapAccess {
-                    de: &mut self,
-                    remaining: None,
-                }),
-            },
+            MAJOR_ARRAY => {
+                self.check_recursion_depth()?;
+                self.recursion_depth += 1;
+                match self.read_length(info)? {
+                    Some(len) => visitor.visit_seq(SeqAccess {
+                        de: &mut self,
+                        remaining: Some(len as usize),
+                    }),
+                    None => visitor.visit_seq(SeqAccess {
+                        de: &mut self,
+                        remaining: None,
+                    }),
+                }
+                // Note: recursion_depth is decremented in SeqAccess::drop
+            }
+            MAJOR_MAP => {
+                self.check_recursion_depth()?;
+                self.recursion_depth += 1;
+                match self.read_length(info)? {
+                    Some(len) => visitor.visit_map(MapAccess {
+                        de: &mut self,
+                        remaining: Some(len as usize),
+                    }),
+                    None => visitor.visit_map(MapAccess {
+                        de: &mut self,
+                        remaining: None,
+                    }),
+                }
+                // Note: recursion_depth is decremented in MapAccess::drop
+            }
             MAJOR_TAG => {
                 // Read the tag number
                 let _tag = self
@@ -559,26 +588,36 @@ impl<'de, R: Read> serde::Deserializer<'de> for &mut Decoder<R> {
                     }
                 }
             }
-            MAJOR_ARRAY => match self.read_length(info)? {
-                Some(len) => visitor.visit_seq(SeqAccess {
-                    de: self,
-                    remaining: Some(len as usize),
-                }),
-                None => visitor.visit_seq(SeqAccess {
-                    de: self,
-                    remaining: None,
-                }),
-            },
-            MAJOR_MAP => match self.read_length(info)? {
-                Some(len) => visitor.visit_map(MapAccess {
-                    de: self,
-                    remaining: Some(len as usize),
-                }),
-                None => visitor.visit_map(MapAccess {
-                    de: self,
-                    remaining: None,
-                }),
-            },
+            MAJOR_ARRAY => {
+                self.check_recursion_depth()?;
+                self.recursion_depth += 1;
+                match self.read_length(info)? {
+                    Some(len) => visitor.visit_seq(SeqAccess {
+                        de: self,
+                        remaining: Some(len as usize),
+                    }),
+                    None => visitor.visit_seq(SeqAccess {
+                        de: self,
+                        remaining: None,
+                    }),
+                }
+                // Note: recursion_depth is decremented in SeqAccess::drop
+            }
+            MAJOR_MAP => {
+                self.check_recursion_depth()?;
+                self.recursion_depth += 1;
+                match self.read_length(info)? {
+                    Some(len) => visitor.visit_map(MapAccess {
+                        de: self,
+                        remaining: Some(len as usize),
+                    }),
+                    None => visitor.visit_map(MapAccess {
+                        de: self,
+                        remaining: None,
+                    }),
+                }
+                // Note: recursion_depth is decremented in MapAccess::drop
+            }
             MAJOR_TAG => {
                 // Read the tag number
                 let _tag = self
@@ -942,6 +981,12 @@ struct SeqAccess<'a, R: Read> {
     remaining: Option<usize>, // None for indefinite-length
 }
 
+impl<'a, R: Read> Drop for SeqAccess<'a, R> {
+    fn drop(&mut self) {
+        self.de.recursion_depth = self.de.recursion_depth.saturating_sub(1);
+    }
+}
+
 impl<'de, 'a, R: Read> serde::de::SeqAccess<'de> for SeqAccess<'a, R> {
     type Error = crate::Error;
 
@@ -971,6 +1016,12 @@ impl<'de, 'a, R: Read> serde::de::SeqAccess<'de> for SeqAccess<'a, R> {
 struct MapAccess<'a, R: Read> {
     de: &'a mut Decoder<R>,
     remaining: Option<usize>, // None for indefinite-length
+}
+
+impl<'a, R: Read> Drop for MapAccess<'a, R> {
+    fn drop(&mut self) {
+        self.de.recursion_depth = self.de.recursion_depth.saturating_sub(1);
+    }
 }
 
 impl<'de, 'a, R: Read> serde::de::MapAccess<'de> for MapAccess<'a, R> {
@@ -1011,8 +1062,10 @@ pub fn from_slice<'de, T: Deserialize<'de>>(slice: &[u8]) -> Result<T> {
         return Err(Error::Syntax("empty input".to_string()));
     }
 
-    // Wrap in Cursor for better performance with small reads
-    let mut decoder = Decoder::new(Cursor::new(slice));
+    // Use a default 100MB limit to prevent OOM attacks from malicious CBOR
+    // Advanced users can bypass this limit by using Decoder::new() directly
+    const DEFAULT_MAX_ALLOCATION: usize = 100 * 1024 * 1024;
+    let mut decoder = Decoder::with_max_allocation(Cursor::new(slice), DEFAULT_MAX_ALLOCATION);
     let value = decoder.decode()?;
 
     // Check if all bytes were consumed
@@ -1032,7 +1085,10 @@ pub fn from_slice<'de, T: Deserialize<'de>>(slice: &[u8]) -> Result<T> {
 /// Wraps the reader in a BufReader for optimal performance with small reads.
 /// If the reader is already buffered, consider using Decoder::new() directly.
 pub fn from_reader<R: Read, T: for<'de> Deserialize<'de>>(reader: R) -> Result<T> {
-    let mut decoder = Decoder::new(BufReader::new(reader));
+    // Use a default 100MB limit to prevent OOM attacks from malicious CBOR
+    // Advanced users can bypass this limit by using Decoder::new() directly
+    const DEFAULT_MAX_ALLOCATION: usize = 100 * 1024 * 1024;
+    let mut decoder = Decoder::with_max_allocation(BufReader::new(reader), DEFAULT_MAX_ALLOCATION);
     decoder.decode()
 }
 

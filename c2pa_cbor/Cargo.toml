@@ -3,10 +3,6 @@ name = "c2pa_cbor"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "cbor-dos-test"
-path = "oom_test/cbor-dos-test.rs"
-
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"

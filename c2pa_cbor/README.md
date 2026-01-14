@@ -16,6 +16,16 @@ A fast, lightweight CBOR (Concise Binary Object Representation) encoder/decoder 
 - ✅ **Full `serde_transcode` support** - handles `#[serde(flatten)]` and other advanced features
 - ✅ **Backward compatible newtype struct handling** - works with existing CBOR data
 - ✅ **Deterministic encoding** - always produces definite-length CBOR (required for C2PA)
+- ✅ **Built-in OOM protection** - default 100MB allocation limit prevents denial-of-service attacks
+
+## Security
+
+This library includes built-in protection against malicious CBOR attacks:
+
+- **Allocation limit**: Default 100MB limit prevents out-of-memory (OOM) attacks from CBOR claiming extremely large sizes
+- **Recursion depth limit**: Default 128-level nesting limit prevents stack overflow from deeply nested structures
+
+These limits are sufficient for legitimate C2PA manifests while preventing denial-of-service attacks. For advanced use cases requiring custom limits, use `Decoder::new()` or `Decoder::with_max_allocation()` directly.
 
 ## Installation
 
@@ -193,35 +203,8 @@ This design ensures:
 
 The buffering path adds minimal overhead and only activates when necessary, making the library both fast and fully compatible with the serde ecosystem.
 
-## Performance
 
-Compared to `serde_cbor`:
 
-### Serialization (Encoding)
-- **13-24% faster** for typical workloads
-- Identical output size for most structures
-- Zero overhead for known-length collections
-
-### Deserialization (Decoding)  
-- **2-2.2x slower** than serde_cbor for small structures
-- Simple structs: 2.24x slower (156ns vs 70ns per struct)
-- Complex structs: 1.61x slower (1.79µs vs 1.12µs per struct)
-- Large binary data: ~31.5 GB/s (excellent performance)
-- Uses `Cursor` for optimized slice reading and `BufReader` for file/network reads
-
-### When to use c2pa_cbor
-✅ **Prefer c2pa_cbor if you need:**
-- `serde_transcode` support with `#[serde(flatten)]`
-- Guaranteed deterministic/canonical CBOR output
-- Backward compatibility with different newtype struct formats
-- Faster serialization for content creation workflows
-- Good-enough deserialization (< 100ms for 1MB of structured data)
-
-✅ **Stick with serde_cbor if:**
-- You need the absolute fastest deserialization (2x faster for small structures)
-- Every nanosecond matters in your hot path
-
-For most C2PA use cases, c2pa_cbor provides an excellent balance of features, maintainability, and performance.
 
 ## Migration from serde_cbor
 
@@ -321,25 +304,5 @@ This is achieved through:
 - Direct encoding when sizes are known (fast path)
 - Automatic buffering and counting when sizes are unknown (compatibility path)
 
-## Testing
 
-Run the test suite:
 
-```bash
-cargo test
-```
-
-Run performance tests:
-
-```bash
-cargo test performance -- --nocapture
-cargo test speed_vs_size -- --nocapture
-```
-
-## License
-
-[Add your license here]
-
-## Contributing
-
-[Add contributing guidelines here]

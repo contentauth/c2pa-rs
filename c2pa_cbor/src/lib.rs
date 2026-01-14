@@ -1184,4 +1184,68 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_default_from_slice_has_protection() {
+        // Test that the default from_slice has built-in OOM protection
+        // Create CBOR claiming 200MB text string (exceeds default 100MB limit)
+        let mut cbor = vec![0x7b]; // major type 3 (text), 8-byte length
+        let length: u64 = 200 * 1024 * 1024; // 200MB
+        cbor.extend_from_slice(&length.to_be_bytes());
+        cbor.extend_from_slice(b"malicious"); // Add some data
+
+        // This should be automatically rejected by the default 100MB limit
+        let result: Result<Value> = from_slice(&cbor);
+
+        assert!(
+            result.is_err(),
+            "from_slice should have default protection against oversized allocations"
+        );
+
+        if let Err(e) = result {
+            let msg = format!("{:?}", e);
+            assert!(
+                msg.contains("exceeds maximum") || msg.contains("Allocation size"),
+                "Error should mention allocation limit: {}",
+                msg
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::same_item_push)]
+    fn test_deep_nesting_protection() {
+        // Test protection against deeply nested structures that cause stack overflow
+        // Create CBOR with 200 nested arrays (exceeds default depth limit of 128)
+        let mut cbor = Vec::new();
+
+        // Start with 200 nested indefinite-length arrays
+        for _ in 0..200 {
+            cbor.push(0x9f); // indefinite-length array
+        }
+
+        cbor.push(0x01); // a simple integer value at the center
+
+        // Close all 200 arrays
+        for _ in 0..200 {
+            cbor.push(0xff); // break/end marker
+        }
+
+        // This should be rejected due to excessive nesting depth
+        let result: Result<Value> = from_slice(&cbor);
+
+        assert!(
+            result.is_err(),
+            "from_slice should reject deeply nested structures"
+        );
+
+        if let Err(e) = result {
+            let msg = format!("{:?}", e);
+            assert!(
+                msg.contains("nesting depth") || msg.contains("exceeds maximum"),
+                "Error should mention nesting depth: {}",
+                msg
+            );
+        }
+    }
 }
