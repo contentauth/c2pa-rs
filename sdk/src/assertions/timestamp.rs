@@ -74,10 +74,7 @@ impl TimeStamp {
         message: &[u8],
         http_resolver: &impl SyncHttpResolver,
     ) -> Result<Vec<u8>> {
-        use crate::{
-            crypto::cose::CertificateTrustPolicy, settings::Settings,
-            status_tracker::StatusTracker, Error,
-        };
+        use crate::{crypto::cose::CertificateTrustPolicy, status_tracker::StatusTracker, Error};
 
         let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
         let headers = None;
@@ -106,18 +103,13 @@ impl TimeStamp {
         let ctp = CertificateTrustPolicy::passthrough();
         let mut tracker = StatusTracker::default();
 
-        // TODO: separate verifying time stamp and verifying time stamp trust into separate functions?
-        //       do we need to pass settings here at all if `ctp` is set to pasthrough anyways?
-        let mut settings = Settings::default();
-        settings.verify.verify_timestamp_trust = false;
-
         if _sync {
             crate::crypto::time_stamp::verify_time_stamp(
                 &bytes,
                 message,
                 &ctp,
                 &mut tracker,
-                &settings,
+                false,
             )?;
         } else {
             crate::crypto::time_stamp::verify_time_stamp_async(
@@ -125,7 +117,7 @@ impl TimeStamp {
                 message,
                 &ctp,
                 &mut tracker,
-                &settings,
+                false,
             )
             .await?;
         }

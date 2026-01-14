@@ -18,31 +18,18 @@
 //!
 //! ```bash
 //! cargo run --example fragmented_cawg -- /path/to/source/init_segment_or_glob  fragment_glob_pattern path/to/destination/folder
+//! cargo run --example fragmented_bmff -- "sdk/tests/fixtures/bunny/bunny_89283bps/BigBuckBunny_2s_init.mp4" "BigBuckBunny_2s*.m4s" target/bunny
 //! ```
 
 mod cawg {
     use std::path::{Path, PathBuf};
 
-    use anyhow::{anyhow, bail, Context, Result};
-    use c2pa::{
-        crypto::raw_signature,
-        identity::{
-            builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
-            x509::X509CredentialHolder,
-        },
-        Builder, Signer, SigningAlg,
-    };
+    use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
+    use c2pa::{Builder, Settings, Signer};
     use serde_json::json;
-
-    const CERTS: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/es256.pub");
-    const PRIVATE_KEY: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/es256.pem");
-
-    const CAWG_CERTS: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/ed25519.pub");
-    const CAWG_PRIVATE_KEY: &[u8] = include_bytes!("../../sdk/tests/fixtures/certs/ed25519.pem");
 
     fn manifest_def() -> String {
         json!({
-            "claim_version": 2,
             "claim_generator_info": [
                 {
                     "name": "c2pa cawg test",
@@ -79,32 +66,6 @@ mod cawg {
         .to_string()
     }
 
-    /// Creates a CAWG signer from a certificate chains and private keys.
-    fn cawg_signer(referenced_assertions: &[&str]) -> Result<impl Signer> {
-        let c2pa_raw_signer = raw_signature::signer_from_cert_chain_and_private_key(
-            CERTS,
-            PRIVATE_KEY,
-            SigningAlg::Es256,
-            None,
-        )?;
-
-        let cawg_raw_signer = raw_signature::signer_from_cert_chain_and_private_key(
-            CAWG_CERTS,
-            CAWG_PRIVATE_KEY,
-            SigningAlg::Ed25519,
-            None,
-        )?;
-
-        let mut ia_signer = IdentityAssertionSigner::new(c2pa_raw_signer);
-
-        let x509_holder = X509CredentialHolder::from_raw_signer(cawg_raw_signer);
-        let mut iab = IdentityAssertionBuilder::for_credential_holder(x509_holder);
-        iab.add_referenced_assertions(referenced_assertions);
-
-        ia_signer.add_identity_assertion(iab);
-        Ok(ia_signer)
-    }
-
     pub fn run<S: AsRef<Path>, G: AsRef<Path>, D: AsRef<Path>>(
         source: S,
         glob_pattern: G,
@@ -114,14 +75,21 @@ mod cawg {
         let glob_pattern = glob_pattern.as_ref().to_path_buf();
         let dest = dest.as_ref();
 
-        let mut builder = Builder::from_json(&manifest_def())?;
-        builder.definition.claim_version = Some(2); // CAWG should only be used on v2 claims
+        // Ensure output directory exists
+        std::fs::create_dir_all(dest)?;
 
-        // This example will generate a CAWG manifest referencing the training-mining
-        // assertion.
-        let signer = cawg_signer(&["cawg.training-mining"])?;
+        let settings = Settings::new()
+            .with_toml(include_str!(
+                "../tests/fixtures/test_settings_with_cawg_signing.toml"
+            ))?
+            .with_value(
+                "cawg_x509_signer.local.referenced_assertions",
+                vec!["cawg.training-mining"],
+            )?;
+        let context = c2pa::Context::new().with_settings(settings)?.into_shared();
+        let mut builder = Builder::from_shared_context(&context).with_definition(manifest_def())?;
 
-        sign_fragmented(&mut builder, &signer, source, &glob_pattern, dest)
+        sign_fragmented(&mut builder, context.signer()?, source, &glob_pattern, dest)
     }
 
     fn sign_fragmented(
