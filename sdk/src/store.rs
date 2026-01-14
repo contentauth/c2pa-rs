@@ -7018,12 +7018,10 @@ pub mod tests {
     #[test]
     fn test_jumbf_generation_with_bmffv3_fixed_block_size() {
         // use Merkle tree with 1024 byte chunks
-        let settings = Settings::new()
-            .with_value("core.merkle_tree_chunk_size_in_kb", 1)
-            .unwrap();
-        let context = crate::context::Context::new()
-            .with_settings(settings)
-            .unwrap();
+        let context = crate::context::Context::new();
+
+        // use Merkle tree with 1024 byte chunks
+        crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) =
