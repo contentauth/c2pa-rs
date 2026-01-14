@@ -3114,7 +3114,7 @@ impl Store {
 
                 let verify_after_sign = settings.verify.verify_after_sign;
                 // Also catch the case where we may have written to io::empty() or similar
-                if verify_after_sign && output_stream.stream_position()? > 0 {
+                if verify_after_sign {
                     // verify the store
                     let mut validation_log =
                         StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
