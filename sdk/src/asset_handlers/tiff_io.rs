@@ -675,6 +675,12 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         target_ifd: &mut BTreeMap<u16, IfdClonedEntry>,
         mut asset_reader: &mut R,
     ) -> Result<()> {
+        let start_offset = self.offset().unwrap_or(0);
+        let has_strips = target_ifd.contains_key(&STRIPBYTECOUNTS) && target_ifd.contains_key(&STRIPOFFSETS);
+        let has_tiles = target_ifd.contains_key(&TILEBYTECOUNTS) && target_ifd.contains_key(&TILEOFFSETS);
+        println!("[TIFF_DEBUG] clone_image_data: START writer_offset={}, has_strips={}, has_tiles={}", 
+            start_offset, has_strips, has_tiles);
+        
         match (
             target_ifd.contains_key(&STRIPBYTECOUNTS),
             target_ifd.contains_key(&STRIPOFFSETS),
@@ -683,8 +689,10 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         ) {
             (true, true, false, false) => {
                 // stripped image data
+                println!("[TIFF_DEBUG] clone_image_data: processing STRIPS");
                 let sbc_entry = target_ifd[&STRIPBYTECOUNTS].clone();
                 let so_entry = target_ifd.get_mut(&STRIPOFFSETS).ok_or(Error::NotFound)?;
+                println!("[TIFF_DEBUG] clone_image_data: strip_count={}", so_entry.value_count);
 
                 // check for well formed TIFF
                 if so_entry.value_count != sbc_entry.value_count {
@@ -717,10 +725,9 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     }
                 });
 
-                // seek to end of file
-                self.writer.seek(SeekFrom::End(0))?;
-
                 // copy the strips
+                let total_strip_bytes: u64 = sbcs.iter().sum();
+                println!("[TIFF_DEBUG] clone_image_data: copying strips, total_strip_bytes={}", total_strip_bytes);
                 with_order!(so_entry.value_bytes.as_slice(), self.endianness, |src| {
                     for c in sbcs.iter() {
                         let cnt = usize::try_from(*c).map_err(|_err| {
@@ -750,6 +757,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         self.writer.write_all(data.as_slice())?;
                     }
                 });
+                println!("[TIFF_DEBUG] clone_image_data: after copying strips, writer_offset={}", self.offset().unwrap_or(0));
 
                 // patch the offsets
                 with_order!(
@@ -787,8 +795,10 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             }
             (false, false, true, true) => {
                 // tiled image data
+                println!("[TIFF_DEBUG] clone_image_data: processing TILES");
                 let tbc_entry = target_ifd[&TILEBYTECOUNTS].clone();
                 let to_entry = target_ifd.get_mut(&TILEOFFSETS).ok_or(Error::NotFound)?;
+                println!("[TIFF_DEBUG] clone_image_data: tile_count={}", to_entry.value_count);
 
                 // check for well formed TIFF
                 if to_entry.value_count != tbc_entry.value_count {
@@ -821,10 +831,9 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     }
                 });
 
-                // seek to end of file
-                self.writer.seek(SeekFrom::End(0))?;
-
                 // copy the tiles
+                let total_tile_bytes: u64 = tbcs.iter().sum();
+                println!("[TIFF_DEBUG] clone_image_data: copying tiles, total_tile_bytes={}", total_tile_bytes);
                 with_order!(to_entry.value_bytes.as_slice(), self.endianness, |src| {
                     for c in tbcs.iter() {
                         let cnt = usize::try_from(*c).map_err(|_err| {
@@ -850,6 +859,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         self.writer.write_all(data.as_slice())?;
                     }
                 });
+                println!("[TIFF_DEBUG] clone_image_data: after copying tiles, writer_offset={}", self.offset().unwrap_or(0));
 
                 // patch the offsets
                 with_order!(
@@ -885,9 +895,13 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     }
                 );
             }
-            (_, _, _, _) => (),
+            (_, _, _, _) => {
+                println!("[TIFF_DEBUG] clone_image_data: no strips or tiles found");
+            }
         };
 
+        let end_offset = self.offset().unwrap_or(0);
+        println!("[TIFF_DEBUG] clone_image_data: END writer_offset={}, bytes_written={}", end_offset, end_offset - start_offset);
         Ok(())
     }
 
@@ -904,15 +918,24 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         let mut offsets_exif: Vec<u64> = Vec::new();
         let mut offsets_gps: Vec<u64> = Vec::new();
 
+        let children_count = page.children(tiff_tree).count();
+        println!("[TIFF_DEBUG] clone_sub_files: START, num_children={}, writer_offset={}", 
+            children_count, self.offset().unwrap_or(0));
+
+        let mut subfile_idx = 0;
         // clone the EXIF entry and DNG entries
         for n in page.children(tiff_tree) {
             let ifd = &n.data;
+            println!("[TIFF_DEBUG] clone_sub_files: processing child {}, ifd_type={:?}, num_entries={}, writer_offset={}", 
+                subfile_idx, ifd.ifd_type, ifd.entries.len(), self.offset().unwrap_or(0));
 
             // clone IFD entries
             let mut cloned_ifd = self.clone_ifd_entries(&ifd.entries, asset_reader)?;
+            println!("[TIFF_DEBUG] clone_sub_files: after clone_ifd_entries, writer_offset={}", self.offset().unwrap_or(0));
 
             // clone the image data
             self.clone_image_data(&mut cloned_ifd, asset_reader)?;
+            println!("[TIFF_DEBUG] clone_sub_files: after clone_image_data, writer_offset={}", self.offset().unwrap_or(0));
 
             // write directory
             let sub_ifd_offset = self.write_ifd(&mut cloned_ifd)?;
@@ -931,8 +954,10 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 IfdType::Exif => offsets_exif.push(sub_ifd_offset),
                 IfdType::Gps => offsets_gps.push(sub_ifd_offset),
             };
+            subfile_idx += 1;
         }
 
+        println!("[TIFF_DEBUG] clone_sub_files: END, writer_offset={}", self.offset().unwrap_or(0));
         offset_map.insert(SUBFILE_TAG, offsets_ifd);
         offset_map.insert(EXIFIFD_TAG, offsets_exif);
         offset_map.insert(GPSIFD_TAG, offsets_gps);
@@ -947,9 +972,13 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         asset_reader: &mut R,
     ) -> Result<()> {
         // handle page 0
+        let start_offset = self.offset().unwrap_or(0);
+        let reader_start = asset_reader.stream_position().unwrap_or(0);
+        println!("[TIFF_DEBUG] clone_tiff: START writer_offset={}, reader_pos={}", start_offset, reader_start);
 
         // clone the subfile entries (DNG)
         let subfile_offsets = self.clone_sub_files(tiff_tree, page_0, asset_reader)?;
+        println!("[TIFF_DEBUG] clone_tiff: after clone_sub_files, writer_offset={}", self.offset().unwrap_or(0));
 
         let page_0_idf = tiff_tree
             .get_mut(page_0)
@@ -957,14 +986,18 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
         // clone IFD entries
         let mut cloned_ifd = self.clone_ifd_entries(&page_0_idf.data.entries, asset_reader)?;
+        println!("[TIFF_DEBUG] clone_tiff: after clone_ifd_entries, writer_offset={}, num_entries={}", 
+            self.offset().unwrap_or(0), cloned_ifd.len());
 
         // clone the image data
         self.clone_image_data(&mut cloned_ifd, asset_reader)?;
+        println!("[TIFF_DEBUG] clone_tiff: after clone_image_data, writer_offset={}", self.offset().unwrap_or(0));
 
         // add in new Tags
         for (tag, new_entry) in &self.additional_ifds {
             cloned_ifd.insert(*tag, new_entry.clone());
         }
+        println!("[TIFF_DEBUG] clone_tiff: after adding new tags, additional_ifds count={}", self.additional_ifds.len());
 
         // fix up subfile offsets
         for t in SUBFILES {
@@ -1001,10 +1034,14 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         }
 
         // write directory
+        println!("[TIFF_DEBUG] clone_tiff: before write_ifd, writer_offset={}", self.offset().unwrap_or(0));
         let first_ifd_offset = self.write_ifd(&mut cloned_ifd)?;
+        println!("[TIFF_DEBUG] clone_tiff: after write_ifd, first_ifd_offset={}, writer_offset={}", 
+            first_ifd_offset, self.offset().unwrap_or(0));
 
         // write final location info
         let curr_pos = self.offset()?;
+        println!("[TIFF_DEBUG] clone_tiff: END curr_pos (final file size)={}", curr_pos);
 
         self.writer.seek(SeekFrom::Start(self.first_idf_offset))?;
 
@@ -1255,17 +1292,30 @@ fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized
     asset_reader: &mut R,
     tiff_tags: Vec<IfdClonedEntry>,
 ) -> Result<()> {
+    let writer_start_pos = writer.stream_position().unwrap_or(999999);
+    println!("[TIFF_DEBUG] tiff_clone_with_tags: writer_start_pos={}, num_tags={}",
+        writer_start_pos, tiff_tags.len());
+    
     let (mut tiff_tree, page_0, endianness, big_tiff) = map_tiff(asset_reader)?;
+    let page_0_entries = tiff_tree.get(page_0).map(|n| n.data.entries.len()).unwrap_or(0);
+    let page_0_children = page_0.children(&tiff_tree).count();
+    println!("[TIFF_DEBUG] tiff_clone_with_tags: page_0_entries={}, page_0_children={}, big_tiff={}", 
+        page_0_entries, page_0_children, big_tiff);
 
     let mut bo = ByteOrdered::new(writer, endianness);
 
     let mut tc = TiffCloner::new(endianness, big_tiff, &mut bo)?;
 
     for t in tiff_tags {
+        println!("[TIFF_DEBUG] tiff_clone_with_tags: adding tag={}, value_bytes.len={}", t.entry_tag, t.value_bytes.len());
         tc.add_target_tag(t);
     }
 
     tc.clone_tiff(&mut tiff_tree, page_0, asset_reader)?;
+    
+    let writer_end_pos = bo.stream_position().unwrap_or(999999);
+    println!("[TIFF_DEBUG] tiff_clone_with_tags: writer_end_pos={}, bytes_written={}",
+        writer_end_pos, writer_end_pos - writer_start_pos);
 
     Ok(())
 }
@@ -1274,16 +1324,23 @@ fn add_required_tags_to_stream(
     output_stream: &mut dyn CAIReadWrite,
 ) -> Result<()> {
     let tiff_io = TiffIO {};
+    println!("[TIFF_DEBUG] add_required_tags_to_stream: input_pos={}, output_pos={}",
+        input_stream.stream_position().unwrap_or(999999),
+        output_stream.stream_position().unwrap_or(999999));
 
     match tiff_io.read_cai(input_stream) {
         Ok(_) => {
+            println!("[TIFF_DEBUG] add_required_tags_to_stream: TIFF already has C2PA, copying as-is");
             // just clone
             input_stream.rewind()?;
             output_stream.rewind()?;
-            std::io::copy(input_stream, output_stream)?;
+            let copied = std::io::copy(input_stream, output_stream)?;
+            println!("[TIFF_DEBUG] add_required_tags_to_stream: copied {} bytes, input_pos={}, output_pos={}",
+                copied, input_stream.stream_position().unwrap_or(999999), output_stream.stream_position().unwrap_or(999999));
             Ok(())
         }
         Err(Error::JumbfNotFound) => {
+            println!("[TIFF_DEBUG] add_required_tags_to_stream: no C2PA found, adding placeholder");
             // allocate enough bytes so that value is not stored in offset field
             let some_bytes = vec![0u8; 10];
             let tio = TiffIO {};
@@ -1444,6 +1501,11 @@ impl CAIWriter for TiffIO {
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()> {
+        println!("[TIFF_DEBUG] TiffIO::write_cai: store_bytes.len={}, input_pos={}, output_pos={}",
+            store_bytes.len(),
+            input_stream.stream_position().unwrap_or(999999),
+            output_stream.stream_position().unwrap_or(999999));
+        
         let l = u64::try_from(store_bytes.len())
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
@@ -1454,14 +1516,22 @@ impl CAIWriter for TiffIO {
             value_bytes: store_bytes.to_vec(),
         };
 
-        tiff_clone_with_tags(output_stream, input_stream, vec![entry])
+        let result = tiff_clone_with_tags(output_stream, input_stream, vec![entry]);
+        println!("[TIFF_DEBUG] TiffIO::write_cai: after tiff_clone_with_tags, output_pos={}",
+            output_stream.stream_position().unwrap_or(999999));
+        result
     }
 
     fn get_object_locations_from_stream(
         &self,
         input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>> {
+        println!("[TIFF_DEBUG] TiffIO::get_object_locations_from_stream: input_pos={}",
+            input_stream.stream_position().unwrap_or(999999));
+        
         let len = stream_len(input_stream)?;
+        println!("[TIFF_DEBUG] TiffIO::get_object_locations_from_stream: stream_len={}", len);
+        
         let vec_cap = usize::try_from(len)
             .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
         let output_buf: Vec<u8> = Vec::with_capacity(vec_cap + 100);
@@ -1469,13 +1539,19 @@ impl CAIWriter for TiffIO {
         let mut output_stream = Cursor::new(output_buf);
 
         add_required_tags_to_stream(input_stream, &mut output_stream)?;
+        println!("[TIFF_DEBUG] TiffIO::get_object_locations_from_stream: after add_required_tags, input_pos={}, local_output_len={}",
+            input_stream.stream_position().unwrap_or(999999),
+            output_stream.get_ref().len());
         output_stream.rewind()?;
 
         let (idfs, first_idf_token, e, big_tiff) = map_tiff(&mut output_stream)?;
 
         let cai_ifd_entry = match idfs[first_idf_token].data.get_tag(C2PA_TAG) {
             Some(ifd) => ifd,
-            None => return Ok(Vec::new()),
+            None => {
+                println!("[TIFF_DEBUG] TiffIO::get_object_locations_from_stream: no C2PA tag found");
+                return Ok(Vec::new());
+            }
         };
 
         // make sure data type is for unstructured data
@@ -1490,6 +1566,9 @@ impl CAIWriter for TiffIO {
             .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
         let manifest_len = usize::try_from(cai_ifd_entry.value_count)
             .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
+
+        println!("[TIFF_DEBUG] TiffIO::get_object_locations_from_stream: manifest_offset={}, manifest_len={}",
+            manifest_offset, manifest_len);
 
         Ok(vec![HashObjectPositions {
             offset: manifest_offset,

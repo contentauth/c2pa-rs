@@ -3033,6 +3033,10 @@ impl Store {
             signer.reserve_size(),
             settings,
         )?;
+        
+        println!("[TIFF_DEBUG] save_to_stream: after start_save_stream, intermediate_stream len={}, pos={}",
+            crate::utils::io_utils::stream_len(&mut intermediate_stream).unwrap_or(0),
+            intermediate_stream.stream_position().unwrap_or(999999));
 
         let mut preliminary_claim = PartialClaim::default();
         {
@@ -3093,6 +3097,12 @@ impl Store {
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         intermediate_stream.rewind()?;
+        output_stream.rewind()?;
+        println!("[TIFF_DEBUG] Before finish_save_stream: intermediate_stream len={}, pos={}, output_stream pos={}", 
+            crate::utils::io_utils::stream_len(&mut intermediate_stream).unwrap_or(0),
+            intermediate_stream.stream_position().unwrap_or(999999),
+            output_stream.stream_position().unwrap_or(999999));
+        intermediate_stream.rewind()?; // rewind again since stream_len moved position
         match self.finish_save_stream(
             jumbf_bytes,
             format,
@@ -3305,11 +3315,16 @@ impl Store {
             // 3) Generate in memory CAI jumbf block
             data = self.to_jumbf_internal(reserve_size)?;
             jumbf_size = data.len();
+            println!("[TIFF_DEBUG] save_to_stream_prepare: jumbf_size={}", jumbf_size);
 
             // write the jumbf to the output stream if we are embedding the manifest
             if !remove_manifests {
                 intermediate_stream.rewind()?;
+                println!("[TIFF_DEBUG] save_to_stream_prepare: before first save_jumbf_to_stream, output_pos={}",
+                    output_stream.stream_position().unwrap_or(999999));
                 save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                println!("[TIFF_DEBUG] save_to_stream_prepare: after first save_jumbf_to_stream, output_pos={}",
+                    output_stream.stream_position().unwrap_or(999999));
             } else {
                 // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
                 intermediate_stream.rewind()?;
@@ -3323,7 +3338,11 @@ impl Store {
 
                 // get the final hash ranges, but not for update manifests
                 output_stream.rewind()?;
+                println!("[TIFF_DEBUG] save_to_stream_prepare: before object_locations_from_stream, output_pos={}",
+                    output_stream.stream_position().unwrap_or(999999));
                 let mut new_hash_ranges = object_locations_from_stream(format, output_stream)?;
+                println!("[TIFF_DEBUG] save_to_stream_prepare: after object_locations_from_stream, output_pos={}, hash_ranges={:?}",
+                    output_stream.stream_position().unwrap_or(999999), new_hash_ranges);
                 if !pc.update_manifest() {
                     let updated_hashes = Store::generate_data_hashes_for_stream(
                         output_stream,
@@ -3331,6 +3350,10 @@ impl Store {
                         &mut new_hash_ranges,
                         true,
                     )?;
+                    println!("[TIFF_DEBUG] save_to_stream_prepare: generated {} hashes", updated_hashes.len());
+                    for h in &updated_hashes {
+                        println!("[TIFF_DEBUG] save_to_stream_prepare: hash exclusions={:?}", h.exclusions);
+                    }
 
                     // patch existing claim hash with updated data
                     for hash in updated_hashes {
@@ -3339,6 +3362,9 @@ impl Store {
                 }
             }
         }
+
+        println!("[TIFF_DEBUG] save_to_stream_prepare: end, output_pos={}",
+            output_stream.stream_position().unwrap_or(999999));
 
         // regenerate the jumbf because the cbor changed
         data = self.to_jumbf_internal(reserve_size)?;
@@ -3358,6 +3384,11 @@ impl Store {
         sig: Vec<u8>,
         sig_placeholder: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>)> {
+        println!("[TIFF_DEBUG] finish_save_stream: format={}, jumbf_bytes.len={}, input_pos={}, output_pos={}",
+            format, jumbf_bytes.len(),
+            input_stream.stream_position().unwrap_or(999999),
+            output_stream.stream_position().unwrap_or(999999));
+        
         if sig_placeholder.len() != sig.len() {
             return Err(Error::CoseSigboxTooSmall);
         }
@@ -3369,7 +3400,11 @@ impl Store {
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         match pc.remote_manifest() {
             RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                println!("[TIFF_DEBUG] finish_save_stream: calling save_jumbf_to_stream, output_pos before={}",
+                    output_stream.stream_position().unwrap_or(999999));
                 save_jumbf_to_stream(format, input_stream, output_stream, &jumbf_bytes)?;
+                println!("[TIFF_DEBUG] finish_save_stream: after save_jumbf_to_stream, output_pos={}",
+                    output_stream.stream_position().unwrap_or(999999));
             }
             RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
                 // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
