@@ -1972,6 +1972,68 @@ mod tests {
     }
 
     #[test]
+    fn builder_create_intent_empty_and_sign_tiff() {
+        let source_image = include_bytes!(fixture_path!("test.tiff"));
+        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        // Create intent will create a minimal size manifest
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::Empty,
+            )
+        };
+        assert_eq!(result, 0);
+
+        let format = CString::new("image/tiff").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let _ = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                &mut source_stream,
+                &mut dest_stream,
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+
+        // Verify we can read the signed data back
+        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
+        let mut read_stream = dest_test_stream.into_c_stream();
+        let format = CString::new("image/tiff").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        assert!(!reader.is_null());
+
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+
+        let json_str = unsafe { CString::from_raw(json) };
+        let json_content = json_str.to_str().unwrap();
+
+        // Verify there is no data hash mismatch error
+        assert!(
+            !json_content.contains("assertion.dataHash.mismatch"),
+            "tiff signing failed"
+        );
+
+        TestC2paStream::drop_c_stream(source_stream);
+        TestC2paStream::drop_c_stream(read_stream);
+        unsafe {
+            c2pa_manifest_bytes_free(manifest_bytes_ptr);
+            c2pa_builder_free(builder);
+            c2pa_signer_free(signer);
+            c2pa_reader_free(reader);
+        }
+    }
+
+    #[test]
     fn builder_edit_intent_and_sign() {
         // Use an already-signed image as the source for editing
         let signed_source_image = include_bytes!(fixture_path!("C.jpg"));
