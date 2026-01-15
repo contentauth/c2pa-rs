@@ -3325,6 +3325,16 @@ impl Store {
                 output_stream.rewind()?;
                 let mut new_hash_ranges = object_locations_from_stream(format, output_stream)?;
                 if !pc.update_manifest() {
+                    // if we removed the manifest fixup the hash range to be empty
+                    if remove_manifests {
+                        new_hash_ranges.iter_mut().for_each(|h| {
+                            if h.htype == HashBlockObjectType::Cai {
+                                h.offset = 0;
+                                h.length = 0;
+                            }
+                        });
+                    }
+
                     let updated_hashes = Store::generate_data_hashes_for_stream(
                         output_stream,
                         pc.alg(),

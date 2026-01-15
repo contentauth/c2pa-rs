@@ -59,9 +59,6 @@ pub struct BoxMap {
     pub range_len: u64,
 
     #[serde(skip)]
-    pub is_tiff: bool, // if true use tiff rules to interpret data
-
-    #[serde(skip)]
     pub entry_is_data: Option<Vec<u8>>, // if the data is contained in the entry then this field contains the data to hash
 }
 
@@ -131,144 +128,83 @@ impl BoxHash {
 
         // get source box list, the source list is returned expanded
         // to show each box as an individual entry
-        let mut source_bms = bhp.get_box_map(reader)?;
+        let source_bms = bhp.get_box_map(reader)?;
         let mut source_index = 0;
 
         // check to see we source index starts at PNGh and skip if not included in the hash list
-        let is_tiff = if let Some(first_expected_bms) = source_bms.get(source_index) {
+        if let Some(first_expected_bms) = source_bms.get(source_index) {
             if first_expected_bms.names[0] == "PNGh" && self.boxes[0].names[0] != "PNGh" {
                 source_index += 1;
             }
-            first_expected_bms.entry_is_data.is_some() // only true if TIFF box hash
         } else {
             return Err(Error::HashMismatch("No data boxes found".to_string()));
         };
 
-        // tiff boxes point to arbitrary sets of bytes so we have to hash to data as provided
-        if is_tiff {
-            for bm in &self.boxes {
-                let curr_alg = match &bm.alg {
-                    Some(a) => a.clone(),
-                    None => match alg {
-                        Some(a) => a.to_owned(),
-                        None => {
-                            return Err(Error::HashMismatch("No algorithm specified".to_string()))
-                        }
-                    },
-                };
+        for bm in &self.boxes {
+            let mut inclusions = Vec::new();
 
-                let mut to_be_hashed = Vec::new();
-                for name in &bm.names {
-                    match source_bms.get_mut(source_index) {
-                        Some(next_source_bm) => {
-                            if name == C2PA_BOXHASH {
-                                // there should only be 1 collapsed C2PA range
-                                if bm.names.len() != 1 {
-                                    return Err(Error::HashMismatch(
-                                        "Malformed C2PA box hash".to_owned(),
-                                    ));
-                                }
-                                continue;
-                            }
+            // build up current inclusion, consuming all names in this BoxMap
+            let mut skip_c2pa = false;
+            let mut inclusion = HashRange::new(0u64, 0u64);
+            for name in &bm.names {
+                match source_bms.get(source_index) {
+                    Some(next_source_bm) => {
+                        if name == &next_source_bm.names[0] {
+                            if inclusion.length() == 0 {
+                                // this is a new item
+                                inclusion.set_start(next_source_bm.range_start);
+                                inclusion.set_length(next_source_bm.range_len);
 
-                            if name == &next_source_bm.names[0] {
-                                let _ = next_source_bm.dump_box(reader, &curr_alg);
-                                let mut box_bytes = next_source_bm.entry_is_data.take().ok_or(
-                                    Error::HashMismatch(ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned()),
-                                )?;
-                                to_be_hashed.append(&mut box_bytes);
-                            } else {
-                                return Err(Error::HashMismatch(
-                                    ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
-                                ));
-                            }
-                        }
-                        None => {
-                            return Err(Error::HashMismatch(
-                                ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
-                            ))
-                        }
-                    }
-                    source_index += 1;
-                }
-
-                let mut to_be_hashed_reader = Cursor::new(to_be_hashed);
-
-                if !verify_stream_by_alg(&curr_alg, &bm.hash, &mut to_be_hashed_reader, None, false)
-                {
-                    return Err(Error::HashMismatch("Hashes do not match".to_owned()));
-                }
-            }
-        } else {
-            for bm in &self.boxes {
-                let mut inclusions = Vec::new();
-
-                // build up current inclusion, consuming all names in this BoxMap
-                let mut skip_c2pa = false;
-                let mut inclusion = HashRange::new(0u64, 0u64);
-                for name in &bm.names {
-                    match source_bms.get(source_index) {
-                        Some(next_source_bm) => {
-                            if name == &next_source_bm.names[0] {
-                                if inclusion.length() == 0 {
-                                    // this is a new item
-                                    inclusion.set_start(next_source_bm.range_start);
-                                    inclusion.set_length(next_source_bm.range_len);
-
-                                    if name == C2PA_BOXHASH {
-                                        // there should only be 1 collapsed C2PA range
-                                        if bm.names.len() != 1 {
-                                            return Err(Error::HashMismatch(
-                                                "Malformed C2PA box hash".to_owned(),
-                                            ));
-                                        }
-                                        skip_c2pa = true;
+                                if name == C2PA_BOXHASH {
+                                    // there should only be 1 collapsed C2PA range
+                                    if bm.names.len() != 1 {
+                                        return Err(Error::HashMismatch(
+                                            "Malformed C2PA box hash".to_owned(),
+                                        ));
                                     }
-                                } else {
-                                    // count any unknown data between named segments
-                                    let len_to_this_seg =
-                                        next_source_bm.range_start - inclusion.start();
-                                    // update item
-                                    inclusion
-                                        .set_length(len_to_this_seg + next_source_bm.range_len);
+                                    skip_c2pa = true;
                                 }
                             } else {
-                                return Err(Error::HashMismatch(
-                                    ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
-                                ));
+                                // count any unknown data between named segments
+                                let len_to_this_seg =
+                                    next_source_bm.range_start - inclusion.start();
+                                // update item
+                                inclusion.set_length(len_to_this_seg + next_source_bm.range_len);
                             }
-                        }
-                        None => {
+                        } else {
                             return Err(Error::HashMismatch(
                                 ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
-                            ))
+                            ));
                         }
                     }
-                    source_index += 1;
+                    None => {
+                        return Err(Error::HashMismatch(
+                            ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
+                        ))
+                    }
                 }
+                source_index += 1;
+            }
 
-                // C2PA chunks are skipped for hashing purposes
-                // or if the box is explicitly excluded
-                let exclude = bm.excluded.unwrap_or(false);
-                if skip_c2pa || exclude {
-                    continue;
-                }
+            // C2PA chunks are skipped for hashing purposes
+            // or if the box is explicitly excluded
+            let exclude = bm.excluded.unwrap_or(false);
+            if skip_c2pa || exclude {
+                continue;
+            }
 
-                inclusions.push(inclusion);
+            inclusions.push(inclusion);
 
-                let curr_alg = match &bm.alg {
-                    Some(a) => a.clone(),
-                    None => match alg {
-                        Some(a) => a.to_owned(),
-                        None => {
-                            return Err(Error::HashMismatch("No algorithm specified".to_string()))
-                        }
-                    },
-                };
+            let curr_alg = match &bm.alg {
+                Some(a) => a.clone(),
+                None => match alg {
+                    Some(a) => a.to_owned(),
+                    None => return Err(Error::HashMismatch("No algorithm specified".to_string())),
+                },
+            };
 
-                if !verify_stream_by_alg(&curr_alg, &bm.hash, reader, Some(inclusions), false) {
-                    return Err(Error::HashMismatch("Hashes do not match".to_owned()));
-                }
+            if !verify_stream_by_alg(&curr_alg, &bm.hash, reader, Some(inclusions), false) {
+                return Err(Error::HashMismatch("Hashes do not match".to_owned()));
             }
         }
 
