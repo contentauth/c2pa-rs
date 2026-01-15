@@ -57,7 +57,7 @@ pub struct BoxMap {
 
     #[serde(skip)]
     pub range_len: u64,
-   }
+}
 
 impl BoxMap {
     // diagnostic tool to show hashes for boxes
@@ -68,11 +68,9 @@ impl BoxMap {
         }
 
         // get the hash
-        
-            reader.seek(SeekFrom::Start(self.range_start))?;
-            let to_be_hashed = reader.read_to_vec(self.range_len)?;
-            (hash_by_alg(alg, &to_be_hashed, None), to_be_hashed.len())
-        
+        reader.seek(SeekFrom::Start(self.range_start))?;
+        let to_be_hashed = reader.read_to_vec(self.range_len)?;
+        let (hash, len) = (hash_by_alg(alg, &to_be_hashed, None), to_be_hashed.len());
 
         println!("data len: {}, hash: {}", len, Hexlify(&hash));
         Ok(())
