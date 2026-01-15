@@ -2,6 +2,7 @@
   "active_manifest": "urn:c2pa:7a2bcae2-b1d1-4d78-bbed-098b0c62bf72",
   "manifests": {
     "contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf": {
+      "claim_version": 1,
       "claim_generator": "make_test_images/0.33.1 c2pa-rs/0.33.1",
       "claim_generator_info": [
         {
@@ -82,6 +83,7 @@
       "label": "contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf"
     },
     "urn:c2pa:7a2bcae2-b1d1-4d78-bbed-098b0c62bf72": {
+      "claim_version": 2,
       "claim_generator_info": [
         {
           "name": "c2pa-rs testing",

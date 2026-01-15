@@ -276,9 +276,22 @@ fn check_stapled_ocsp_response(
         Some(tst_info) => Ok(tst_info.clone()),
         None => {
             if _sync {
-                validate_cose_tst_info(sign1, data, ctp, &mut local_log_sync, settings)
+                validate_cose_tst_info(
+                    sign1,
+                    data,
+                    ctp,
+                    &mut local_log_sync,
+                    settings.verify.verify_timestamp_trust,
+                )
             } else {
-                validate_cose_tst_info_async(sign1, data, ctp, &mut local_log_sync, settings).await
+                validate_cose_tst_info_async(
+                    sign1,
+                    data,
+                    ctp,
+                    &mut local_log_sync,
+                    settings.verify.verify_timestamp_trust,
+                )
+                .await
             }
         }
     };
@@ -355,9 +368,15 @@ pub(crate) fn fetch_and_check_ocsp_response(
     // use supplied override time if provided
     let signing_time: Option<DateTime<Utc>> = match tst_info {
         Some(tst_info) => Some(tst_info.gen_time.clone().into()),
-        None => validate_cose_tst_info(sign1, data, ctp, validation_log, context.settings())
-            .ok()
-            .map(|tst_info| tst_info.gen_time.clone().into()),
+        None => validate_cose_tst_info(
+            sign1,
+            data,
+            ctp,
+            validation_log,
+            context.settings().verify.verify_timestamp_trust,
+        )
+        .ok()
+        .map(|tst_info| tst_info.gen_time.clone().into()),
     };
 
     // Check the OCSP response, but only if it is well-formed.
