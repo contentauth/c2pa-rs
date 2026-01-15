@@ -22,10 +22,8 @@ use std::{
 use atree::{Arena, Token};
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use byteordered::{with_order, ByteOrdered, Endianness};
-use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::BoxMap,
     asset_io::{
         rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -53,8 +51,11 @@ const STRIPBYTECOUNTS: u16 = 279;
 const STRIPOFFSETS: u16 = 273;
 const TILEBYTECOUNTS: u16 = 325;
 const TILEOFFSETS: u16 = 324;
+
+/* support when we find a use case
 const FREEOFFSETS: u16 = 288;
 const FREEBYTECOUNTS: u16 = 289;
+*/
 
 const SUBFILES: [u16; 4] = [SUBFILE_TAG, EXIFIFD_TAG, GPSIFD_TAG, INTEROPERABILITY_TAG];
 
@@ -135,37 +136,6 @@ pub struct IfdEntry {
     value_offset: u64,
 }
 
-impl IfdEntry {
-    pub fn tag_contains_data(&self) -> bool {
-        match self.entry_type {
-            1 | 2 | 6 | 7 => self.value_count <= 4, // 8 bit cases
-            3 | 8 => self.value_count <= 2,         // 16 bit cases
-            4 | 9 | 11 => self.value_count <= 1,
-            _ => false,
-        }
-    }
-
-    pub fn entry_type_byte_len(&self) -> usize {
-        match self.entry_type {
-            1 | 2 | 6 | 7 => 1, // 8 bit cases
-            3 | 8 => 2,         // 16 bit cases
-            4 | 9 | 11 => 4,
-            5 | 10 | 12 => 8,
-            _ => 0,
-        }
-    }
-
-    pub fn entry_len(&self) -> u64 {
-        match self.entry_type {
-            1 | 2 | 6 | 7 => self.value_count, // 8 bit cases
-            3 | 8 => self.value_count * 2,     // 16 bit cases
-            4 | 9 | 11 => self.value_count * 4,
-            5 | 10 | 12 => self.value_count * 8,
-            _ => 0,
-        }
-    }
-}
-
 // helper enum to know if the IFD requires special handling
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IfdType {
@@ -181,7 +151,7 @@ pub struct ImageFileDirectory {
     offset: u64,
     entry_cnt: u64,
     ifd_type: IfdType,
-    entries: BTreeMap<u16, IfdEntry>,
+    entries: HashMap<u16, IfdEntry>,
     next_ifd_offset: Option<u64>,
     next_idf_offset_location: u64,
 }
@@ -291,7 +261,7 @@ impl TiffStructure {
         byte_reader: &mut ByteOrdered<&mut R, Endianness>,
         big_tiff: bool,
         entry_cnt: u64,
-        entries: &mut BTreeMap<u16, IfdEntry>,
+        entries: &mut HashMap<u16, IfdEntry>,
     ) -> Result<()>
     where
         R: Read + Seek + ?Sized,
@@ -370,7 +340,7 @@ impl TiffStructure {
             offset: ifd_offset,
             entry_cnt,
             ifd_type,
-            entries: BTreeMap::new(),
+            entries: HashMap::new(),
             next_ifd_offset: None,
             next_idf_offset_location: 0,
         };
@@ -558,228 +528,6 @@ pub(crate) struct IfdClonedEntry {
     pub value_bytes: Vec<u8>,
 }
 
-impl IfdClonedEntry {
-    pub fn tag_contains_data(&self) -> bool {
-        match self.entry_type {
-            1 | 2 | 6 | 7 => self.value_count <= 4, // 8 bit cases
-            3 | 8 => self.value_count <= 2,         // 16 bit cases
-            4 | 9 | 11 => self.value_count <= 1,
-            _ => false,
-        }
-    }
-}
-
-// read IFD entry bytes in file endianess order
-pub fn read_ifd_entry_data<R: Read + Seek + ?Sized>(
-    entry: &IfdEntry,
-    mut asset_reader: &mut R,
-    target_endianness: Endianness,
-    big_tiff: bool,
-) -> Result<Vec<u8>> {
-    // get bytes for tag
-    let cnt = entry.value_count;
-    let et = entry.entry_type;
-
-    let entry_type = IFDEntryType::from_u16(et).ok_or(Error::UnsupportedType)?;
-
-    // read IFD raw data in file native endian format
-    let data = match entry_type {
-        IFDEntryType::Byte
-        | IFDEntryType::Sbyte
-        | IFDEntryType::Undefined
-        | IFDEntryType::Ascii => {
-            let num_bytes = usize::try_from(cnt)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-            let mut data = safe_vec(cnt, Some(0u8))?;
-
-            if num_bytes <= 4 || big_tiff && num_bytes <= 8 {
-                let offset_bytes = entry.value_offset.to_ne_bytes();
-                for (i, item) in offset_bytes.iter().take(num_bytes).enumerate() {
-                    data[i] = *item;
-                }
-            } else {
-                // move to start of data
-                asset_reader.seek(SeekFrom::Start(decode_offset(
-                    entry.value_offset,
-                    target_endianness,
-                    big_tiff,
-                )?))?;
-                asset_reader.read_exact(data.as_mut_slice())?;
-            }
-
-            data
-        }
-        IFDEntryType::Short => {
-            let num_shorts_x2 = usize::try_from(
-                cnt.checked_mul(2)
-                    .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?,
-            )
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-            let mut data = safe_vec(num_shorts_x2 as u64, Some(0u8))?;
-
-            if num_shorts_x2 <= 4 || big_tiff && num_shorts_x2 <= 8 {
-                let offset_bytes = entry.value_offset.to_ne_bytes();
-                let mut offset_reader = Cursor::new(offset_bytes);
-
-                let mut w = Cursor::new(data.as_mut_slice());
-                for _i in 0..num_shorts_x2 / 2 {
-                    let s = offset_reader.read_u16::<NativeEndian>()?; // read a short from offset
-                    w.write_u16::<NativeEndian>(s)?; // write a short in output endian
-                }
-            } else {
-                // move to start of data
-                asset_reader.seek(SeekFrom::Start(decode_offset(
-                    entry.value_offset,
-                    target_endianness,
-                    big_tiff,
-                )?))?;
-                asset_reader.read_exact(data.as_mut_slice())?;
-            }
-
-            data
-        }
-        IFDEntryType::Long | IFDEntryType::Ifd => {
-            let num_longs_x4 = usize::try_from(
-                cnt.checked_mul(4)
-                    .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?,
-            )
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-            let mut data = safe_vec(num_longs_x4 as u64, Some(0u8))?;
-
-            if num_longs_x4 <= 4 || big_tiff && num_longs_x4 <= 8 {
-                let offset_bytes = entry.value_offset.to_ne_bytes();
-                let mut offset_reader = Cursor::new(offset_bytes);
-
-                let mut w = Cursor::new(data.as_mut_slice());
-                for _i in 0..num_longs_x4 / 4 {
-                    let s = offset_reader.read_u32::<NativeEndian>()?; // read a long from offset
-                    w.write_u32::<NativeEndian>(s)?; // write a long in output endian
-                }
-            } else {
-                // move to start of data
-                asset_reader.seek(SeekFrom::Start(decode_offset(
-                    entry.value_offset,
-                    target_endianness,
-                    big_tiff,
-                )?))?;
-                asset_reader.read_exact(data.as_mut_slice())?;
-            }
-
-            data
-        }
-        IFDEntryType::Sshort => {
-            let num_sshorts_x2 = usize::try_from(
-                cnt.checked_mul(2)
-                    .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?,
-            )
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-            let mut data = safe_vec(num_sshorts_x2 as u64, Some(0u8))?;
-
-            if num_sshorts_x2 <= 4 || big_tiff && num_sshorts_x2 <= 8 {
-                let offset_bytes = entry.value_offset.to_ne_bytes();
-                let mut offset_reader = Cursor::new(offset_bytes);
-
-                let mut w = Cursor::new(data.as_mut_slice());
-                for _i in 0..num_sshorts_x2 / 2 {
-                    let s = offset_reader.read_i16::<NativeEndian>()?; // read a short from offset
-                    w.write_i16::<NativeEndian>(s)?; // write a short in output endian
-                }
-            } else {
-                // move to start of data
-                asset_reader.seek(SeekFrom::Start(decode_offset(
-                    entry.value_offset,
-                    target_endianness,
-                    big_tiff,
-                )?))?;
-                asset_reader.read_exact(data.as_mut_slice())?;
-            }
-
-            data
-        }
-        IFDEntryType::Slong => {
-            let num_slongs_x4 = usize::try_from(
-                cnt.checked_mul(4)
-                    .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?,
-            )
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-            let mut data = safe_vec(num_slongs_x4 as u64, Some(0u8))?;
-
-            if num_slongs_x4 <= 4 || big_tiff && num_slongs_x4 <= 8 {
-                let offset_bytes = entry.value_offset.to_ne_bytes();
-                let mut offset_reader = Cursor::new(offset_bytes);
-
-                let mut w = Cursor::new(data.as_mut_slice());
-                for _i in 0..num_slongs_x4 / 4 {
-                    let s = offset_reader.read_i32::<NativeEndian>()?; // read a slong from offset
-                    w.write_i32::<NativeEndian>(s)?; // write a slong in output endian
-                }
-            } else {
-                // move to start of data
-                asset_reader.seek(SeekFrom::Start(decode_offset(
-                    entry.value_offset,
-                    target_endianness,
-                    big_tiff,
-                )?))?;
-                asset_reader.read_exact(data.as_mut_slice())?;
-            }
-
-            data
-        }
-        IFDEntryType::Float => {
-            let num_floats_x4 = usize::try_from(
-                cnt.checked_mul(4)
-                    .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?,
-            )
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-            let mut data = safe_vec(num_floats_x4 as u64, Some(0u8))?;
-
-            if num_floats_x4 <= 4 || big_tiff && num_floats_x4 <= 8 {
-                let offset_bytes = entry.value_offset.to_ne_bytes();
-                let mut offset_reader = Cursor::new(offset_bytes);
-
-                let mut w = Cursor::new(data.as_mut_slice());
-                for _i in 0..num_floats_x4 / 4 {
-                    let s = offset_reader.read_f32::<NativeEndian>()?; // read a float from offset
-                    w.write_f32::<NativeEndian>(s)?; // write a float in output endian
-                }
-            } else {
-                // move to start of data
-                asset_reader.seek(SeekFrom::Start(decode_offset(
-                    entry.value_offset,
-                    target_endianness,
-                    big_tiff,
-                )?))?;
-                asset_reader.read_exact(data.as_mut_slice())?;
-            }
-
-            data
-        }
-        IFDEntryType::Rational
-        | IFDEntryType::Srational
-        | IFDEntryType::Slong8
-        | IFDEntryType::Double
-        | IFDEntryType::Long8
-        | IFDEntryType::Ifd8 => {
-            // move to start of data
-            asset_reader.seek(SeekFrom::Start(decode_offset(
-                entry.value_offset,
-                target_endianness,
-                big_tiff,
-            )?))?;
-
-            asset_reader.read_to_vec(cnt * 8)?
-        }
-    };
-
-    Ok(data)
-}
-
 // struct to clone a TIFF/DNG and new tags if desired
 pub(crate) struct TiffCloner<T>
 where
@@ -787,7 +535,7 @@ where
 {
     endianness: Endianness,
     big_tiff: bool,
-    first_ifd_offset: u64,
+    first_idf_offset: u64,
     writer: ByteOrdered<T, Endianness>,
     additional_ifds: BTreeMap<u16, IfdClonedEntry>,
 }
@@ -799,7 +547,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         let mut tc = TiffCloner {
             endianness,
             big_tiff,
-            first_ifd_offset: 0,
+            first_idf_offset: 0,
             writer: bo,
             additional_ifds: BTreeMap::new(),
         };
@@ -847,7 +595,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             self.writer.write_u32(0)?;
         }
 
-        self.first_ifd_offset = offset;
+        self.first_idf_offset = offset;
         Ok(offset)
     }
 
@@ -867,63 +615,46 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         Ok(())
     }
 
-    fn ifd_len(&self, target_ifd: &mut BTreeMap<u16, IfdClonedEntry>) -> u64 {
-        let mut cnt = 0;
-
-        // count
-        cnt += if self.big_tiff { 8 } else { 2 };
-
-        // entries
-        let num_entries = target_ifd.len() as u64;
-        // tag + cnt + count + value_bytes
-        let entry_size: u64 = if self.big_tiff {
-            2 + 2 + 8 + 8
-        } else {
-            2 + 2 + 4 + 4
-        };
-
-        cnt += num_entries * entry_size;
-
-        // add in next_ifd pointer
-        cnt += if self.big_tiff { 8 } else { 4 };
-
-        cnt
-    }
-
-    pub fn write_new_end_ifd(
-        &mut self,
-        target_ifd: &mut BTreeMap<u16, IfdClonedEntry>,
-    ) -> Result<u64> {
-        self.writer.seek(SeekFrom::End(0))?;
-        self.write_ifd(target_ifd)
-    }
-
     fn write_ifd(&mut self, target_ifd: &mut BTreeMap<u16, IfdClonedEntry>) -> Result<u64> {
-        let mut data = Vec::new();
-        let data_writer = Cursor::new(data);
-        let mut bo = ByteOrdered::new(data_writer, self.endianness.clone());
+        let is_c2pa_idf = target_ifd.len() == 1 && target_ifd.contains_key(&C2PA_TAG);
 
-        // write out all data to buffer and save the offsets, skipping subfiles since the data is already written
-        for &mut IfdClonedEntry {
-            value_bytes: ref mut value_bytes_ref,
-            ..
-        } in target_ifd.values_mut()
-        {
-            let data_bytes = if self.big_tiff { 8 } else { 4 };
+        if !is_c2pa_idf {
+            // write out all data and save the offsets, skipping subfiles since the data is already written
+            for &mut IfdClonedEntry {
+                value_bytes: ref mut value_bytes_ref,
+                ..
+            } in target_ifd.values_mut()
+            {
+                let data_bytes = if self.big_tiff { 8 } else { 4 };
 
-            if value_bytes_ref.len() > data_bytes {
-                // get location of entry data start
-                let offset = bo.stream_position()?;
+                if value_bytes_ref.len() > data_bytes {
+                    // get location of entry data start
+                    let offset = self.writer.stream_position()?;
 
-                // write out the data bytes
-                bo.write_all(value_bytes_ref)?;
+                    // write out the data bytes
+                    self.writer.write_all(value_bytes_ref)?;
 
-                // set to new data offset position in native endianness,
-                // will be converted to target endianness when we write
-                *value_bytes_ref = offset.to_ne_bytes().to_vec();
-            } else {
-                while value_bytes_ref.len() < data_bytes {
-                    value_bytes_ref.push(0);
+                    // set offset pointer in file source endian
+                    let mut offset_vec = vec![0; data_bytes];
+
+                    with_order!(offset_vec.as_mut_slice(), self.endianness, |ew| {
+                        if self.big_tiff {
+                            ew.write_u64(offset)?;
+                        } else {
+                            let offset_u32 = u32::try_from(offset).map_err(|_err| {
+                                Error::InvalidAsset("value out of range".to_string())
+                            })?; // get beginning of chunk which starts 4 bytes before label
+
+                            ew.write_u32(offset_u32)?;
+                        }
+                    });
+
+                    // set to new data offset position
+                    *value_bytes_ref = offset_vec;
+                } else {
+                    while value_bytes_ref.len() < data_bytes {
+                        value_bytes_ref.push(0);
+                    }
                 }
             }
         }
@@ -939,18 +670,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         // write out the entry count
         self.write_entry_count(target_ifd.len())?;
 
-        // ifd size
-        let mut ifd_size = self.ifd_len(target_ifd);
-
-         // write 0s for next offset
-        if self.big_tiff {
-            ifd_size += 8;
-            bo.write_u64(0)?;
-        } else {
-            ifd_size += 4;
-            bo.write_u32(0)?;
-        }
-
+        // save the bytes
+        let mut c2pa_bytes = None;
         // write out the directory entries
         for (tag, entry) in target_ifd.iter() {
             self.writer.write_u16(*tag)?;
@@ -965,38 +686,53 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 self.writer.write_u32(cnt)?;
             }
 
-            if entry.tag_contains_data() {
-                self.writer.write_all(&entry.value_bytes)?;
-            } else {
-                // this is an offset of fix up to account for the IFD written before the data
-                let mut offset = u64::from_ne_bytes(entry.value_bytes[..8].try_into().unwrap());
-                offset += ifd_size;
+            if *tag == C2PA_TAG && is_c2pa_idf {
+                let data_bytes = if self.big_tiff { 8u64 } else { 4u64 };
 
-                if self.big_tiff {
-                    bo.write_u64(offset)?;
+                // does the data fit within size of value_bytes
+                if entry.value_bytes.len() > data_bytes as usize {
+                    c2pa_bytes = Some(entry.value_bytes.to_owned());
+                    let c2pa_bytes_pos = self.writer.stream_position()?
+                        + data_bytes // size of pointer
+                        + data_bytes; // size of IFD terminator
+
+                    if self.big_tiff {
+                        self.writer.write_u64(c2pa_bytes_pos)?;
+                    } else {
+                        let offset32 = u32::try_from(c2pa_bytes_pos)?;
+                        self.writer.write_u32(offset32)?;
+                    }
                 } else {
-                    let offset32 = u32::try_from(offset)
-                        .or_else(|_| Err(Error::InvalidAsset("value out of range".to_string())))?;
-                    bo.write_u32(offset32)?;
+                    self.writer.write_all(&entry.value_bytes)?;
                 }
+            } else {
+                self.writer.write_all(&entry.value_bytes)?;
             }
         }
 
-        // write out the data
-        data = bo.into_inner().into_inner();
-        self.writer.write_all(&data)?;
+        // terminate IFD
+        if self.big_tiff {
+            self.writer.write_u64(0)?;
+        } else {
+            self.writer.write_u32(0)?;
+        }
+
+        // write manifest after IFD if needed
+        if let Some(c2pa_bytes) = c2pa_bytes {
+            self.writer.write_all(&c2pa_bytes)?;
+        }
 
         Ok(ifd_offset)
     }
 
-    // add new TAG by supplying the IFD entry
+    // add new TAG by supplying the IDF entry
     pub fn add_target_tag(&mut self, entry: IfdClonedEntry) {
         self.additional_ifds.insert(entry.entry_tag, entry);
     }
 
     pub fn set_ifd_offset(&mut self, entry: &ImageFileDirectory, offset: u64) -> Result<()> {
         self.writer
-            .seek(SeekFrom::Start(entry.next_idf_offset_location));
+            .seek(SeekFrom::Start(entry.next_idf_offset_location))?;
 
         // write 0s for next offset
         if self.big_tiff {
@@ -1255,13 +991,6 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             // write directory
             let sub_ifd_offset = self.write_ifd(&mut cloned_ifd)?;
 
-            // terminate since we don't support chained sub-ifd
-            if self.big_tiff {
-                self.writer.write_u64(0)?;
-            } else {
-                self.writer.write_u32(0)?;
-            }
-
             // fix up offset in main page known IFDs
             match ifd.ifd_type {
                 IfdType::Page => (),
@@ -1281,7 +1010,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     pub fn clone_tiff<R: Read + Seek + ?Sized>(
         &mut self,
         tiff_tree: &mut Arena<ImageFileDirectory>,
-        tokens: &[Token], // first page tokens
+        tokens: &[Token],
         asset_reader: &mut R,
     ) -> Result<()> {
         let mut page_ifd_offsets = Vec::new();
@@ -1293,6 +1022,32 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         let last_page = tokens
             .last()
             .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
+
+        let last_page_ifd = tiff_tree
+            .get(*last_page)
+            .ok_or_else(|| Error::InvalidAsset("TIFF does not have IFD".to_string()))?;
+
+        // separate out the C2PA entry since it goes in its own IFD
+        let new_c2pa_entry = self.additional_ifds.remove(&C2PA_TAG);
+
+        // is this an old manifest so we need to add a manifest or a
+        // multipage tiff without a manifest
+        let needs_end_ifd = last_page == first_page
+            || !last_page_ifd.data.entries.contains_key(&C2PA_TAG) && new_c2pa_entry.is_some();
+
+        // if multipage, make sure last page containing C2PA contains a single entry
+        if last_page != first_page
+            && last_page_ifd.data.entries.contains_key(&C2PA_TAG)
+            && last_page_ifd.data.entries.len() > 1
+        {
+            return Err(Error::ValidationRule(
+                "Last IDF with C2PA manifest contained additional tags, expected 1 tag".to_string(),
+            ));
+        }
+
+        // is there and existing valid new end C2PA IFD
+        let has_c2pa_ifd =
+            last_page != first_page || last_page_ifd.data.entries.contains_key(&C2PA_TAG);
 
         for page_token in tokens {
             // clone the subfile entries (DNG)
@@ -1312,6 +1067,13 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             if page_token == first_page {
                 for (tag, new_entry) in &self.additional_ifds {
                     cloned_ifd.insert(*tag, new_entry.clone());
+                }
+            }
+
+            // replace C2PA content
+            if page_token == last_page && has_c2pa_ifd {
+                if let Some(new_entry) = &new_c2pa_entry {
+                    cloned_ifd.insert(C2PA_TAG, new_entry.clone());
                 }
             }
 
@@ -1351,16 +1113,30 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
             // write directory
             let ifd_offset = self.write_ifd(&mut cloned_ifd)?;
+
             page_ifd_offsets.push((ifd_offset, self.offset()?));
+        }
+
+        // add new C2PA IFD if needed
+        if needs_end_ifd {
+            if let Some(new_entry) = &new_c2pa_entry {
+                let mut cloned_entry = BTreeMap::new();
+                cloned_entry.insert(C2PA_TAG, new_entry.clone());
+
+                // write directory
+                let ifd_offset = self.write_ifd(&mut cloned_entry)?;
+
+                page_ifd_offsets.push((ifd_offset, self.offset()?));
+            }
         }
 
         // link all IFDs
         let mut prior_ifd_start = 0u64;
-        for (index, (offset, write_point)) in page_ifd_offsets.iter().enumerate() {
+        for (index, (offset, _write_point)) in page_ifd_offsets.iter().enumerate() {
             // if this is the first IFD we need to patch the TIFF header
             if index == 0 {
                 self.writer.seek(SeekFrom::Start(4))?; // header first IDF offset location
-            
+
                 if self.big_tiff {
                     self.writer.write_u64(*offset)?;
                 } else {
@@ -1373,11 +1149,11 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 // seek and patch the prior IFD next offset field
                 self.writer.seek(SeekFrom::Start(prior_ifd_start))?;
                 let prior_ifd = TiffStructure::read_ifd(
-                            &mut self.writer.inner_mut(),
-                            self.endianness,
-                            self.big_tiff,
-                            IfdType::Page,
-                        )?;
+                    &mut self.writer.inner_mut(),
+                    self.endianness,
+                    self.big_tiff,
+                    IfdType::Page,
+                )?;
 
                 self.set_ifd_offset(&prior_ifd, *offset)?;
 
@@ -1390,21 +1166,216 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         Ok(())
     }
 
-    pub fn clone_ifd_entries<R: Read + Seek + ?Sized>(
+    fn clone_ifd_entries<R: Read + Seek + ?Sized>(
         &mut self,
-        entries: &BTreeMap<u16, IfdEntry>,
-        asset_reader: &mut R,
+        entries: &HashMap<u16, IfdEntry>,
+        mut asset_reader: &mut R,
     ) -> Result<BTreeMap<u16, IfdClonedEntry>> {
         let mut target_ifd: BTreeMap<u16, IfdClonedEntry> = BTreeMap::new();
 
         for (tag, entry) in entries {
             let target_endianness = self.writer.endianness();
+
+            // get bytes for tag
             let cnt = entry.value_count;
             let et = entry.entry_type;
 
             let entry_type = IFDEntryType::from_u16(et).ok_or(Error::UnsupportedType)?;
 
-            let data = read_ifd_entry_data(entry, asset_reader, target_endianness, self.big_tiff)?;
+            // read IFD raw data in file native endian format
+            let data = match entry_type {
+                IFDEntryType::Byte
+                | IFDEntryType::Sbyte
+                | IFDEntryType::Undefined
+                | IFDEntryType::Ascii => {
+                    let num_bytes = usize::try_from(cnt)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    let mut data = safe_vec(cnt, Some(0u8))?;
+
+                    if num_bytes <= 4 || self.big_tiff && num_bytes <= 8 {
+                        let offset_bytes = entry.value_offset.to_ne_bytes();
+                        for (i, item) in offset_bytes.iter().take(num_bytes).enumerate() {
+                            data[i] = *item;
+                        }
+                    } else {
+                        // move to start of data
+                        asset_reader.seek(SeekFrom::Start(decode_offset(
+                            entry.value_offset,
+                            target_endianness,
+                            self.big_tiff,
+                        )?))?;
+                        asset_reader.read_exact(data.as_mut_slice())?;
+                    }
+
+                    data
+                }
+                IFDEntryType::Short => {
+                    let num_shorts_x2 =
+                        usize::try_from(cnt.checked_mul(2).ok_or_else(|| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    let mut data = safe_vec(num_shorts_x2 as u64, Some(0u8))?;
+
+                    if num_shorts_x2 <= 4 || self.big_tiff && num_shorts_x2 <= 8 {
+                        let offset_bytes = entry.value_offset.to_ne_bytes();
+                        let mut offset_reader = Cursor::new(offset_bytes);
+
+                        let mut w = Cursor::new(data.as_mut_slice());
+                        for _i in 0..num_shorts_x2 / 2 {
+                            let s = offset_reader.read_u16::<NativeEndian>()?; // read a short from offset
+                            w.write_u16::<NativeEndian>(s)?; // write a short in output endian
+                        }
+                    } else {
+                        // move to start of data
+                        asset_reader.seek(SeekFrom::Start(decode_offset(
+                            entry.value_offset,
+                            target_endianness,
+                            self.big_tiff,
+                        )?))?;
+                        asset_reader.read_exact(data.as_mut_slice())?;
+                    }
+
+                    data
+                }
+                IFDEntryType::Long | IFDEntryType::Ifd => {
+                    let num_longs_x4 =
+                        usize::try_from(cnt.checked_mul(4).ok_or_else(|| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    let mut data = safe_vec(num_longs_x4 as u64, Some(0u8))?;
+
+                    if num_longs_x4 <= 4 || self.big_tiff && num_longs_x4 <= 8 {
+                        let offset_bytes = entry.value_offset.to_ne_bytes();
+                        let mut offset_reader = Cursor::new(offset_bytes);
+
+                        let mut w = Cursor::new(data.as_mut_slice());
+                        for _i in 0..num_longs_x4 / 4 {
+                            let s = offset_reader.read_u32::<NativeEndian>()?; // read a long from offset
+                            w.write_u32::<NativeEndian>(s)?; // write a long in output endian
+                        }
+                    } else {
+                        // move to start of data
+                        asset_reader.seek(SeekFrom::Start(decode_offset(
+                            entry.value_offset,
+                            target_endianness,
+                            self.big_tiff,
+                        )?))?;
+                        asset_reader.read_exact(data.as_mut_slice())?;
+                    }
+
+                    data
+                }
+                IFDEntryType::Sshort => {
+                    let num_sshorts_x2 =
+                        usize::try_from(cnt.checked_mul(2).ok_or_else(|| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    let mut data = safe_vec(num_sshorts_x2 as u64, Some(0u8))?;
+
+                    if num_sshorts_x2 <= 4 || self.big_tiff && num_sshorts_x2 <= 8 {
+                        let offset_bytes = entry.value_offset.to_ne_bytes();
+                        let mut offset_reader = Cursor::new(offset_bytes);
+
+                        let mut w = Cursor::new(data.as_mut_slice());
+                        for _i in 0..num_sshorts_x2 / 2 {
+                            let s = offset_reader.read_i16::<NativeEndian>()?; // read a short from offset
+                            w.write_i16::<NativeEndian>(s)?; // write a short in output endian
+                        }
+                    } else {
+                        // move to start of data
+                        asset_reader.seek(SeekFrom::Start(decode_offset(
+                            entry.value_offset,
+                            target_endianness,
+                            self.big_tiff,
+                        )?))?;
+                        asset_reader.read_exact(data.as_mut_slice())?;
+                    }
+
+                    data
+                }
+                IFDEntryType::Slong => {
+                    let num_slongs_x4 =
+                        usize::try_from(cnt.checked_mul(4).ok_or_else(|| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    let mut data = safe_vec(num_slongs_x4 as u64, Some(0u8))?;
+
+                    if num_slongs_x4 <= 4 || self.big_tiff && num_slongs_x4 <= 8 {
+                        let offset_bytes = entry.value_offset.to_ne_bytes();
+                        let mut offset_reader = Cursor::new(offset_bytes);
+
+                        let mut w = Cursor::new(data.as_mut_slice());
+                        for _i in 0..num_slongs_x4 / 4 {
+                            let s = offset_reader.read_i32::<NativeEndian>()?; // read a slong from offset
+                            w.write_i32::<NativeEndian>(s)?; // write a slong in output endian
+                        }
+                    } else {
+                        // move to start of data
+                        asset_reader.seek(SeekFrom::Start(decode_offset(
+                            entry.value_offset,
+                            target_endianness,
+                            self.big_tiff,
+                        )?))?;
+                        asset_reader.read_exact(data.as_mut_slice())?;
+                    }
+
+                    data
+                }
+                IFDEntryType::Float => {
+                    let num_floats_x4 =
+                        usize::try_from(cnt.checked_mul(4).ok_or_else(|| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    let mut data = safe_vec(num_floats_x4 as u64, Some(0u8))?;
+
+                    if num_floats_x4 <= 4 || self.big_tiff && num_floats_x4 <= 8 {
+                        let offset_bytes = entry.value_offset.to_ne_bytes();
+                        let mut offset_reader = Cursor::new(offset_bytes);
+
+                        let mut w = Cursor::new(data.as_mut_slice());
+                        for _i in 0..num_floats_x4 / 4 {
+                            let s = offset_reader.read_f32::<NativeEndian>()?; // read a float from offset
+                            w.write_f32::<NativeEndian>(s)?; // write a float in output endian
+                        }
+                    } else {
+                        // move to start of data
+                        asset_reader.seek(SeekFrom::Start(decode_offset(
+                            entry.value_offset,
+                            target_endianness,
+                            self.big_tiff,
+                        )?))?;
+                        asset_reader.read_exact(data.as_mut_slice())?;
+                    }
+
+                    data
+                }
+                IFDEntryType::Rational
+                | IFDEntryType::Srational
+                | IFDEntryType::Slong8
+                | IFDEntryType::Double
+                | IFDEntryType::Long8
+                | IFDEntryType::Ifd8 => {
+                    // move to start of data
+                    asset_reader.seek(SeekFrom::Start(decode_offset(
+                        entry.value_offset,
+                        target_endianness,
+                        self.big_tiff,
+                    )?))?;
+
+                    asset_reader.read_to_vec(cnt * 8)?
+                }
+            };
 
             target_ifd.insert(
                 *tag,
@@ -1424,79 +1395,18 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized>(
     writer: &mut W,
     asset_reader: &mut R,
-    mut tiff_tags: Vec<IfdClonedEntry>,
+    tiff_tags: Vec<IfdClonedEntry>,
 ) -> Result<()> {
     let (mut tiff_tree, page_tokens, endianness, big_tiff) = map_tiff(asset_reader)?;
 
-    let first_page = page_tokens
-        .first()
-        .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
-    let last_page = page_tokens
-        .last()
-        .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
-    let last_ifd = &tiff_tree[*last_page].data;
+    let mut bo = ByteOrdered::new(writer, endianness);
+    let mut tc = TiffCloner::new(endianness, big_tiff, &mut bo)?;
 
-    let contains_old_c2pa = first_page == last_page && last_ifd.get_tag(C2PA_TAG).is_some();
-    let contains_new_c2pa = first_page != last_page && last_ifd.get_tag(C2PA_TAG).is_some();
-
-    let new_c2pa_entry = if let Some(pos) = tiff_tags.iter().position(|v| v.entry_tag == C2PA_TAG) {
-        Some(tiff_tags.remove(pos))
-    } else {
-        None
-    };
-
-    // if this is a 1.3 style TIFF manifest just erase it or if we have to write some new tags
-    let intermediate_data = Vec::new();
-    let mut intermediate_stream = Cursor::new(intermediate_data);
-    if contains_old_c2pa || !tiff_tags.is_empty() {
-        let mut bo = ByteOrdered::new(intermediate_stream, endianness);
-        let mut tc = TiffCloner::new(endianness, big_tiff, &mut bo)?;
-
-        for t in tiff_tags {
-            tc.add_target_tag(t);
-        }
-
-        tc.clone_tiff(&mut tiff_tree, &page_tokens, asset_reader)?;
-        intermediate_stream = bo.into_inner();
-        intermediate_stream.rewind()?;
+    for t in tiff_tags {
+        tc.add_target_tag(t);
     }
 
-    // we need to add the manifest if asked otherwise we just write the output
-    if let Some(c2pa_entry) = new_c2pa_entry {
-        // if we had to rewrite the data to change the tags the intermediate_stream
-        if stream_len(&mut intermediate_stream)? > 0 {
-            intermediate_stream.rewind();
-
-            // map the modified asset
-            let (tiff_tree, page_tokens, endianness, big_tiff) = map_tiff(asset_reader)?;
-
-            let last_page = page_tokens
-                .last()
-                .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
-            let last_ifd = &tiff_tree[*last_page].data;
-
-            let mut bo = ByteOrdered::new(intermediate_stream, endianness);
-            let mut tc = TiffCloner::new(endianness, big_tiff, &mut bo)?;
-
-            let mut target_ifd = BTreeMap::new();
-            target_ifd.insert(c2pa_entry.entry_tag, c2pa_entry);
-
-            let new_lasts_ifd_pos = tc.write_new_end_ifd(&mut target_ifd)?;
-
-            // point last ifd to new last ifd
-            tc.set_ifd_offset(last_ifd, new_lasts_ifd_pos)?;
-        } else {
-            std::io::copy(asset_reader, writer)?;
-        }
-    } else {
-        // if we had to rewrite the data to change the tags the intermediate_stream
-        if stream_len(&mut intermediate_stream)? > 0 {
-            intermediate_stream.rewind()?;
-            std::io::copy(&mut intermediate_stream, writer)?;
-        } else {
-            std::io::copy(asset_reader, writer)?;
-        }
-    }
+    tc.clone_tiff(&mut tiff_tree, &page_tokens, asset_reader)?;
 
     Ok(())
 }
@@ -1763,375 +1673,6 @@ impl CAIWriter for TiffIO {
     }
 }
 
-fn ifd_entry_hash_bytes(
-    entry: &IfdEntry,
-    endianness: Endianness,
-    big_tiff: bool,
-) -> Result<Vec<u8>> {
-    let output = Vec::new();
-    let mut writer = ByteOrdered::runtime(output, endianness);
-
-    writer.write_u16(entry.entry_tag)?;
-    writer.write_u16(entry.entry_type)?;
-
-    if big_tiff {
-        writer.write_u64(entry.value_count)?;
-    } else {
-        let cnt = u32::try_from(entry.value_count)
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-        writer.write_u32(cnt)?;
-    }
-
-    // convert offset to host endianess
-    let decoded_offset = decode_offset(entry.value_offset, endianness, big_tiff)?;
-    if big_tiff {
-        writer.write_u64(decoded_offset)?;
-    } else {
-        let decoded_offset32 = u32::try_from(decoded_offset)
-            .or_else(|_| Err(Error::InvalidAsset("value out of range".to_string())))?;
-        writer.write_u32(decoded_offset32)?;
-    }
-
-    Ok(writer.into_inner())
-}
-
-fn subifd_bytes(
-    mut input_stream: &mut dyn CAIRead,
-    entry: &IfdEntry,
-    out_bytes: &mut Vec<u8>,
-    endianness: Endianness,
-    big_tiff: bool,
-) -> Result<()> {
-    if entry.entry_type_byte_len() != 4 {
-        return Err(Error::InvalidAsset(
-            "SubIFD must be 4 bytes entry type".to_string(),
-        ));
-    }
-
-    // bytes of the offset or offsets
-    let offsets = if entry.value_count > 1 {
-        let decoded_offset = decode_offset(entry.value_offset, endianness, big_tiff)?;
-        input_stream.seek(SeekFrom::Start(decoded_offset))?;
-
-        let num_longs_bytes = usize::try_from(
-            entry
-                .value_count
-                .checked_mul(4)
-                .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?,
-        )
-        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-        let mut subfile_offsets = safe_vec(entry.value_count, Some(0u32))?; // will contain offsets in native endianness
-
-        let mut buf = input_stream.read_to_vec(num_longs_bytes as u64)?;
-        let offsets_buf = Cursor::new(buf.clone());
-
-        // add the raw bytes to to be hashed content
-        out_bytes.append(&mut buf);
-
-        // get the offsets for the other data to be included in the hash
-        with_order!(offsets_buf, endianness, |src| {
-            for item in subfile_offsets.iter_mut().take(num_longs_bytes / 4) {
-                let s = src.read_u32()?; // read a long from offset
-                *item = s; // write a long in output endian
-            }
-        });
-
-        subfile_offsets
-            .iter()
-            .map(|v| {
-                let v64 = *v as u64;
-                v64
-            })
-            .collect::<Vec<_>>()
-    } else {
-        let decoded_offset = decode_offset(entry.value_offset, endianness, big_tiff)?;
-        vec![decoded_offset]
-    };
-
-    // get the bytes of each subfile
-    for subfile_offset in offsets {
-        input_stream.seek(SeekFrom::Start(subfile_offset))?;
-
-        let subfile_ifd =
-            TiffStructure::read_ifd(input_stream, endianness, big_tiff, IfdType::Subfile)?;
-
-        for (tag, entry) in &subfile_ifd.entries {
-            // start with the bytes of the tag itself
-            let mut entry_value_bytes = ifd_entry_hash_bytes(entry, endianness, big_tiff)?;
-
-            // if the IFD entry has self contained data then it does not point to additional data
-            if entry.tag_contains_data() {
-                out_bytes.append(&mut entry_value_bytes);
-                continue;
-            }
-
-            match *tag {
-                STRIPOFFSETS => {
-                    let sbc_entry = subfile_ifd
-                        .entries
-                        .get(&STRIPBYTECOUNTS)
-                        .ok_or(Error::NotFound)?;
-
-                    // get the strip bytes
-                    let so_entry = entry;
-
-                    // check for well formed TIFF
-                    if so_entry.value_count != sbc_entry.value_count {
-                        return Err(Error::InvalidAsset(
-                            "TIFF strip count does not match strip offset count".to_string(),
-                        ));
-                    }
-
-                    let mut sbcs: Vec<u64> = safe_vec(sbc_entry.value_count, Some(0))?;
-
-                    // get the byte counts
-                    let sbc_entry_bytes =
-                        read_ifd_entry_data(sbc_entry, input_stream, endianness, big_tiff)?;
-
-                    with_order!(sbc_entry_bytes.as_slice(), endianness, |src| {
-                        for c in &mut sbcs {
-                            match sbc_entry.entry_type {
-                                4u16 => {
-                                    let s = src.read_u32()?;
-                                    *c = s.into();
-                                }
-                                3u16 => {
-                                    let s = src.read_u16()?;
-                                    *c = s.into();
-                                }
-                                16u16 => {
-                                    let s = src.read_u64()?;
-                                    *c = s;
-                                }
-                                _ => {
-                                    return Err(Error::InvalidAsset(
-                                        "invalid TIFF strip".to_string(),
-                                    ))
-                                }
-                            }
-                        }
-                    });
-
-                    // copy the strip data
-                    let so_entry_bytes =
-                        read_ifd_entry_data(so_entry, input_stream, endianness, big_tiff)?;
-
-                    with_order!(so_entry_bytes.as_slice(), endianness, |src| {
-                        for c in sbcs.iter() {
-                            let cnt = usize::try_from(*c).map_err(|_err| {
-                                Error::InvalidAsset("value out of range".to_string())
-                            })?;
-
-                            // get the offset
-                            let so: u64 = match so_entry.entry_type {
-                                4u16 => {
-                                    let s = src.read_u32()?;
-                                    s.into()
-                                }
-                                3u16 => {
-                                    let s = src.read_u16()?;
-                                    s.into()
-                                }
-                                16u16 => src.read_u64()?,
-                                _ => {
-                                    return Err(Error::InvalidAsset(
-                                        "invalid TIFF strip".to_string(),
-                                    ))
-                                }
-                            };
-
-                            // append the strip data to be hashed
-                            input_stream.seek(SeekFrom::Start(so))?;
-                            let mut data = input_stream.read_to_vec(cnt as u64)?;
-                            entry_value_bytes.append(&mut data);
-                        }
-                    });
-                }
-                TILEOFFSETS => {
-                    let tbc_entry = subfile_ifd
-                        .entries
-                        .get(&TILEBYTECOUNTS)
-                        .ok_or(Error::NotFound)?;
-
-                    // get the tile bytes
-                    let to_entry = entry;
-
-                    // check for well formed TIFF
-                    if to_entry.value_count != tbc_entry.value_count {
-                        return Err(Error::InvalidAsset(
-                            "TIFF tile count does not match tile offset count".to_string(),
-                        ));
-                    }
-
-                    let mut tbcs: Vec<u64> = safe_vec(tbc_entry.value_count, Some(0u64))?;
-
-                    // get the byte counts
-                    let tbc_entry_bytes =
-                        read_ifd_entry_data(tbc_entry, input_stream, endianness, big_tiff)?;
-
-                    with_order!(tbc_entry_bytes.as_slice(), endianness, |src| {
-                        for val in &mut tbcs {
-                            match tbc_entry.entry_type {
-                                4u16 => {
-                                    let s = src.read_u32()?;
-                                    *val = s.into();
-                                }
-                                3u16 => {
-                                    let s = src.read_u16()?;
-                                    *val = s.into();
-                                }
-                                16u16 => {
-                                    let s = src.read_u64()?;
-                                    *val = s;
-                                }
-                                _ => {
-                                    return Err(Error::InvalidAsset(
-                                        "invalid TIFF tile".to_string(),
-                                    ))
-                                }
-                            }
-                        }
-                    });
-
-                    // copy the tile bytes
-                    let to_entry_bytes =
-                        read_ifd_entry_data(to_entry, input_stream, endianness, big_tiff)?;
-
-                    with_order!(to_entry_bytes.as_slice(), endianness, |src| {
-                        for c in tbcs.iter() {
-                            let cnt = usize::try_from(*c).map_err(|_err| {
-                                Error::InvalidAsset("value out of range".to_string())
-                            })?;
-
-                            // get the offset
-                            let to: u64 = match to_entry.entry_type {
-                                4u16 => {
-                                    let s = src.read_u32()?;
-                                    s.into()
-                                }
-                                16u16 => src.read_u64()?,
-                                _ => {
-                                    return Err(Error::InvalidAsset(
-                                        "invalid TIFF tile".to_string(),
-                                    ))
-                                }
-                            };
-
-                            // copy the tile bytes
-                            input_stream.seek(SeekFrom::Start(to))?;
-                            let mut data = input_stream.read_to_vec(cnt as u64)?;
-                            entry_value_bytes.append(&mut data);
-                        }
-                    });
-                }
-                FREEOFFSETS => {
-                    let fbc_entry = subfile_ifd
-                        .entries
-                        .get(&FREEBYTECOUNTS)
-                        .ok_or(Error::NotFound)?;
-
-                    // get the tile bytes
-                    let fo_entry = entry;
-
-                    // check for well formed TIFF
-                    if fo_entry.value_count != fbc_entry.value_count {
-                        return Err(Error::InvalidAsset(
-                            "TIFF free count does not match free offset count".to_string(),
-                        ));
-                    }
-
-                    let mut fbcs: Vec<u64> = safe_vec(fbc_entry.value_count, Some(0u64))?;
-
-                    // get the byte counts
-                    let fbc_entry_bytes =
-                        read_ifd_entry_data(fbc_entry, input_stream, endianness, big_tiff)?;
-
-                    with_order!(fbc_entry_bytes.as_slice(), endianness, |src| {
-                        for val in &mut fbcs {
-                            match fbc_entry.entry_type {
-                                4u16 => {
-                                    let s = src.read_u32()?;
-                                    *val = s.into();
-                                }
-                                3u16 => {
-                                    let s = src.read_u16()?;
-                                    *val = s.into();
-                                }
-                                16u16 => {
-                                    let s = src.read_u64()?;
-                                    *val = s;
-                                }
-                                _ => {
-                                    return Err(Error::InvalidAsset(
-                                        "invalid TIFF tile".to_string(),
-                                    ))
-                                }
-                            }
-                        }
-                    });
-
-                    // copy the tile bytes
-                    let fo_entry_bytes =
-                        read_ifd_entry_data(fo_entry, input_stream, endianness, big_tiff)?;
-
-                    with_order!(fo_entry_bytes.as_slice(), endianness, |src| {
-                        for c in fbcs.iter() {
-                            let cnt = usize::try_from(*c).map_err(|_err| {
-                                Error::InvalidAsset("value out of range".to_string())
-                            })?;
-
-                            // get the offset
-                            let fo: u64 = match fo_entry.entry_type {
-                                4u16 => {
-                                    let s = src.read_u32()?;
-                                    s.into()
-                                }
-                                16u16 => src.read_u64()?,
-                                _ => {
-                                    return Err(Error::InvalidAsset(
-                                        "invalid TIFF tile".to_string(),
-                                    ))
-                                }
-                            };
-
-                            // copy the tile bytes
-                            input_stream.seek(SeekFrom::Start(fo))?;
-                            let mut data = input_stream.read_to_vec(cnt as u64)?;
-                            entry_value_bytes.append(&mut data);
-                        }
-                    });
-                }
-                SUBFILE_TAG | EXIFIFD_TAG | GPSIFD_TAG | INTEROPERABILITY_TAG => {
-                    let subfile_entry = &subfile_ifd.entries.get(tag).ok_or(Error::NotFound)?;
-
-                    // recursively add subfile bytes
-                    subifd_bytes(
-                        input_stream,
-                        &subfile_entry,
-                        &mut entry_value_bytes,
-                        endianness,
-                        big_tiff,
-                    )?;
-                }
-                52545 => continue,
-                _ => {
-                    // get the data for the tag
-                    if !entry.tag_contains_data() {
-                        let mut tag_data =
-                            read_ifd_entry_data(entry, input_stream, endianness, big_tiff)?;
-                        entry_value_bytes.append(&mut tag_data);
-                    }
-                }
-            }
-
-            out_bytes.append(&mut entry_value_bytes);
-        }
-    }
-
-    Ok(())
-}
-
 impl AssetPatch for TiffIO {
     fn patch_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         let mut asset_io = OpenOptions::new()
@@ -2263,11 +1804,13 @@ pub mod tests {
 
     use super::*;
     use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
-    #[test]
-    fn test_read_write_manifest() {
-        let data = "some data";
 
-        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+    #[test]
+    fn test_multipage_read_write_manifest() {
+        let data = "some data";
+        let data2 = "some different data";
+
+        let source = crate::utils::test::fixture_path("MultiPage.tif");
 
         let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
@@ -2283,40 +1826,21 @@ pub mod tests {
         let loaded = tiff_io.read_cai_store(&output).unwrap();
 
         assert_eq!(&loaded, data.as_bytes());
-    }
 
-     #[test]
-    fn test_multipage_clone() {
-        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
-        let mut input_stream = std::fs::File::open(&source).unwrap();
+        // test adding over existing
+        tiff_io.save_cai_store(&output, data2.as_bytes()).unwrap();
 
-        let mut output_stream = tempfile_builder("test.tif").unwrap();
-        println!("{:?}", output_stream);
+        // read data back
+        let loaded = tiff_io.read_cai_store(&output).unwrap();
 
-        let output_buf = Vec::new();
-        let mut i_stream =  Cursor::new(output_buf);
-
-        let (mut ifds, page_tokens, e, big_tiff) = map_tiff(&mut input_stream).unwrap();
-
-        let mut bo = ByteOrdered::new(i_stream, e);
-        let mut tc = TiffCloner::new(e, big_tiff, &mut bo).unwrap();
-
-        input_stream.rewind().unwrap();
-        tc.clone_tiff(&mut ifds, &page_tokens, &mut input_stream).unwrap();
-
-        tc.writer.rewind().unwrap();
-        std::io::copy(&mut tc.writer, &mut output_stream).unwrap();
-        output_stream.rewind().unwrap();
-        let (tiff_tree, tokens, e, big_tiff) = map_tiff(&mut output_stream).unwrap();
-
-        println!("it works");
+        assert_eq!(&loaded, data2.as_bytes());
     }
 
     #[test]
-    fn test_read_write_manifest_multipage() {
+    fn test_read_write_manifest() {
         let data = "some data";
 
-        let source = crate::utils::test::fixture_path("MultiPage.tif");
+        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
 
         let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
@@ -2384,26 +1908,6 @@ pub mod tests {
 
         assert_eq!(&loaded, data.as_bytes());
 
-        tiff_io.remove_cai_store(&output).unwrap();
-
-        match tiff_io.read_cai_store(&output) {
-            Err(Error::JumbfNotFound) => (),
-            _ => panic!("should be no C2PA store"),
-        }
-    }
-
-    #[test]
-    fn test_remove_manifest_1_4() {
-        let source = crate::utils::test::fixture_path("tiff_with_box_hash.dng");
-
-        let temp_dir = tempdirectory().unwrap();
-        let output = temp_dir_path(&temp_dir, "test.tif");
-
-        std::fs::copy(source, &output).unwrap();
-
-        let tiff_io = TiffIO {};
-
-        // first make sure that calling this without a manifest does not error
         tiff_io.remove_cai_store(&output).unwrap();
 
         match tiff_io.read_cai_store(&output) {
@@ -2492,7 +1996,7 @@ pub mod tests {
         assert!(matches!(locations, Err(Error::InvalidAsset(_))));
     }
 
-    //*  disable until I find smaller DNG
+    /*  disable until I find smaller DNG
     #[test]
     fn test_read_write_dng_manifest() {
         let data = "some data";
@@ -2523,8 +2027,9 @@ pub mod tests {
         let source = crate::utils::test::fixture_path("test.DNG");
         let mut f = std::fs::File::open(&source).unwrap();
 
-        let (ifds, tokens, _endianness, _big_tiff) = map_tiff(&mut f).unwrap();
+        let (idfs, token, _endianness, _big_tiff) = map_tiff(&mut f).unwrap();
 
-        println!("IFD {}", ifds[tokens[0]].data.entry_cnt);
+        println!("IFD {}", idfs[token].data.entry_cnt);
     }
+    */
 }

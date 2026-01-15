@@ -38,7 +38,7 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 
 pub const C2PA_BOXHASH: &str = "C2PA";
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 pub struct BoxMap {
     pub names: Vec<String>,
 
@@ -84,22 +84,6 @@ impl BoxMap {
 
         println!("data len: {}, hash: {}", len, Hexlify(&hash));
         Ok(())
-    }
-}
-
-impl Default for BoxMap {
-    fn default() -> Self {
-        Self {
-            names: Default::default(),
-            alg: Default::default(),
-            hash: Default::default(),
-            excluded: Default::default(),
-            pad: Default::default(),
-            range_start: Default::default(),
-            range_len: Default::default(),
-            is_tiff: false,
-            entry_is_data: None,
-        }
     }
 }
 
