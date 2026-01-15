@@ -717,6 +717,10 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     }
                 });
 
+                // Seek to our tracked write position (not End(0) which could be wrong if stream has leftover data)
+                let current_offset = self.offset()?;
+                self.writer.seek(SeekFrom::Start(current_offset))?;
+
                 // copy the strips
                 with_order!(so_entry.value_bytes.as_slice(), self.endianness, |src| {
                     for c in sbcs.iter() {
@@ -817,6 +821,10 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         }
                     }
                 });
+
+                // Seek to our tracked write position (not End(0) which could be wrong if stream has leftover data)
+                let current_offset = self.offset()?;
+                self.writer.seek(SeekFrom::Start(current_offset))?;
 
                 // copy the tiles
                 with_order!(to_entry.value_bytes.as_slice(), self.endianness, |src| {
