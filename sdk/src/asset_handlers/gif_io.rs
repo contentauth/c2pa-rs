@@ -1444,7 +1444,7 @@ mod tests {
                 excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 0,
-                range_len: 6,
+                range_len: 6
             })
         );
         assert_eq!(
@@ -1456,7 +1456,7 @@ mod tests {
                 excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 368495,
-                range_len: 778,
+                range_len: 778
             })
         );
         assert_eq!(
@@ -1468,7 +1468,7 @@ mod tests {
                 excluded: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: SAMPLE1.len() as u64,
-                range_len: 1,
+                range_len: 1
             })
         );
         assert_eq!(box_map.len(), 276);
