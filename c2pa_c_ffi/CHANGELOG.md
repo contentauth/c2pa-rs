@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.75.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.0...c2pa-c-ffi-v0.75.1)
+## [0.76.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.0...c2pa-c-ffi-v0.76.0)
 _15 January 2026_
 
 ### Fixed

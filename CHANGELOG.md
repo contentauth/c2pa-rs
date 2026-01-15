@@ -9,7 +9,7 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
-## [0.75.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.0...c2pa-v0.75.1)
+## [0.76.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.0...c2pa-v0.76.0)
 _15 January 2026_
 
 ### Added
