@@ -558,6 +558,118 @@ macro_rules! free_handle {
     }};
 }
 
+/// Guard a handle parameter, creating an immutable reference with the given name
+/// Returns early with -1 on error
+#[macro_export]
+macro_rules! guard_handle {
+    ($ptr:expr, $type:ty, $name:ident) => {
+        let __arc = match get_handles().get($ptr as Handle) {
+            Ok(arc) => arc,
+            Err(err) => {
+                err.set_last();
+                return -1;
+            }
+        };
+        let __guard = __arc.lock().unwrap();
+        let $name = match __guard.downcast_ref::<$type>() {
+            Some(val) => val,
+            None => {
+                Error::WrongHandleType($ptr as Handle).set_last();
+                return -1;
+            }
+        };
+    };
+}
+
+/// Guard a handle parameter, creating a mutable reference with the given name
+/// Returns early with -1 on error
+#[macro_export]
+macro_rules! guard_handle_mut {
+    ($ptr:expr, $type:ty, $name:ident) => {
+        let __arc = match get_handles().get($ptr as Handle) {
+            Ok(arc) => arc,
+            Err(err) => {
+                err.set_last();
+                return -1;
+            }
+        };
+        let mut __guard = __arc.lock().unwrap();
+        let $name = match __guard.downcast_mut::<$type>() {
+            Some(val) => val,
+            None => {
+                Error::WrongHandleType($ptr as Handle).set_last();
+                return -1;
+            }
+        };
+    };
+}
+
+/// Guard a handle parameter, creating an immutable reference (return null on error)
+#[macro_export]
+macro_rules! guard_handle_or_null {
+    ($ptr:expr, $type:ty, $name:ident) => {
+        let __arc = match get_handles().get($ptr as Handle) {
+            Ok(arc) => arc,
+            Err(err) => {
+                err.set_last();
+                return std::ptr::null_mut();
+            }
+        };
+        let __guard = __arc.lock().unwrap();
+        let $name = match __guard.downcast_ref::<$type>() {
+            Some(val) => val,
+            None => {
+                Error::WrongHandleType($ptr as Handle).set_last();
+                return std::ptr::null_mut();
+            }
+        };
+    };
+}
+
+/// Guard a handle parameter mutably (return null on error)
+#[macro_export]
+macro_rules! guard_handle_mut_or_null {
+    ($ptr:expr, $type:ty, $name:ident) => {
+        let __arc = match get_handles().get($ptr as Handle) {
+            Ok(arc) => arc,
+            Err(err) => {
+                err.set_last();
+                return std::ptr::null_mut();
+            }
+        };
+        let mut __guard = __arc.lock().unwrap();
+        let $name = match __guard.downcast_mut::<$type>() {
+            Some(val) => val,
+            None => {
+                Error::WrongHandleType($ptr as Handle).set_last();
+                return std::ptr::null_mut();
+            }
+        };
+    };
+}
+
+/// Guard a handle parameter mutably (return void on error)
+#[macro_export]
+macro_rules! guard_handle_mut_or_return {
+    ($ptr:expr, $type:ty, $name:ident) => {
+        let __arc = match get_handles().get($ptr as Handle) {
+            Ok(arc) => arc,
+            Err(err) => {
+                err.set_last();
+                return;
+            }
+        };
+        let mut __guard = __arc.lock().unwrap();
+        let $name = match __guard.downcast_mut::<$type>() {
+            Some(val) => val,
+            None => {
+                Error::WrongHandleType($ptr as Handle).set_last();
+                return;
+            }
+        };
+    };
+}
+
 /// Defines a callback to read from a stream.
 ///
 /// # Parameters
@@ -1211,13 +1323,8 @@ pub unsafe extern "C" fn c2pa_builder_set_no_embed(builder_ptr: *mut C2paBuilder
         Error::set_last(Error::NullParameter(stringify!(builder_ptr).to_string()));
         return;
     }
-    let handle = ptr_to_handle(builder_ptr);
-    if let Ok(arc) = get_handles().get(handle) {
-        let mut guard = arc.lock().unwrap();
-        if let Some(builder) = guard.downcast_mut::<C2paBuilder>() {
-            builder.set_no_embed(true);
-        }
-    }
+    guard_handle_mut_or_return!(builder_ptr, C2paBuilder, builder);
+    builder.set_no_embed(true);
 }
 
 /// Sets the remote URL on the Builder.
@@ -1472,44 +1579,9 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     check_or_return_int!(dest);
     check_or_return_int!(manifest_bytes_ptr);
 
-    // Get both Arc's first - no nested lock issues!
-    let signer_handle = ptr_to_handle(signer_ptr);
-    let builder_handle = ptr_to_handle(builder_ptr);
-
-    let signer_arc = match get_handles().get(signer_handle) {
-        Ok(arc) => arc,
-        Err(err) => {
-            err.set_last();
-            return -1;
-        }
-    };
-
-    let builder_arc = match get_handles().get(builder_handle) {
-        Ok(arc) => arc,
-        Err(err) => {
-            err.set_last();
-            return -1;
-        }
-    };
-
-    // Now lock both and downcast - safe since we're not holding map lock
-    let signer_guard = signer_arc.lock().unwrap();
-    let signer = match signer_guard.downcast_ref::<C2paSigner>() {
-        Some(s) => s,
-        None => {
-            Error::WrongHandleType(signer_handle).set_last();
-            return -1;
-        }
-    };
-
-    let mut builder_guard = builder_arc.lock().unwrap();
-    let builder = match builder_guard.downcast_mut::<C2paBuilder>() {
-        Some(b) => b,
-        None => {
-            Error::WrongHandleType(builder_handle).set_last();
-            return -1;
-        }
-    };
+    // Guard handles - Arc/Mutex/downcast boilerplate hidden!
+    guard_handle!(signer_ptr, C2paSigner, signer);
+    guard_handle_mut!(builder_ptr, C2paBuilder, builder);
 
     let result = builder.sign(signer.signer.as_ref(), &format, &mut *source, &mut *dest);
 
@@ -1630,44 +1702,9 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
         }
     }
 
-    // Get both Arc's first - no nested lock issues!
-    let signer_handle = ptr_to_handle(signer_ptr);
-    let builder_handle = ptr_to_handle(builder_ptr);
-
-    let signer_arc = match get_handles().get(signer_handle) {
-        Ok(arc) => arc,
-        Err(err) => {
-            err.set_last();
-            return -1;
-        }
-    };
-
-    let builder_arc = match get_handles().get(builder_handle) {
-        Ok(arc) => arc,
-        Err(err) => {
-            err.set_last();
-            return -1;
-        }
-    };
-
-    // Now lock both and downcast - safe since we're not holding map lock
-    let signer_guard = signer_arc.lock().unwrap();
-    let signer = match signer_guard.downcast_ref::<C2paSigner>() {
-        Some(s) => s,
-        None => {
-            Error::WrongHandleType(signer_handle).set_last();
-            return -1;
-        }
-    };
-
-    let mut builder_guard = builder_arc.lock().unwrap();
-    let builder = match builder_guard.downcast_mut::<C2paBuilder>() {
-        Some(b) => b,
-        None => {
-            Error::WrongHandleType(builder_handle).set_last();
-            return -1;
-        }
-    };
+    // Guard handles - Arc/Mutex/downcast boilerplate hidden!
+    guard_handle!(signer_ptr, C2paSigner, signer);
+    guard_handle_mut!(builder_ptr, C2paBuilder, builder);
 
     let result = builder.sign_data_hashed_embeddable(signer.signer.as_ref(), &data_hash, &format);
 
