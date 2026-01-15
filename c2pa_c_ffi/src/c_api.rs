@@ -547,6 +547,9 @@ macro_rules! with_handle_mut_int {
 #[macro_export]
 macro_rules! free_handle {
     ($ptr:expr, $type:ty) => {{
+        if $ptr.is_null() {
+            return 0; // NULL is considered already freed
+        }
         let handle = ptr_to_handle($ptr);
         match get_handles().remove::<$type>(handle) {
             Ok(_) => 0,
@@ -563,6 +566,10 @@ macro_rules! free_handle {
 #[macro_export]
 macro_rules! guard_handle {
     ($ptr:expr, $type:ty, $name:ident) => {
+        if $ptr.is_null() {
+            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
+            return -1;
+        }
         let __arc = match get_handles().get($ptr as Handle) {
             Ok(arc) => arc,
             Err(err) => {
@@ -586,6 +593,10 @@ macro_rules! guard_handle {
 #[macro_export]
 macro_rules! guard_handle_mut {
     ($ptr:expr, $type:ty, $name:ident) => {
+        if $ptr.is_null() {
+            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
+            return -1;
+        }
         let __arc = match get_handles().get($ptr as Handle) {
             Ok(arc) => arc,
             Err(err) => {
@@ -608,6 +619,10 @@ macro_rules! guard_handle_mut {
 #[macro_export]
 macro_rules! guard_handle_or_null {
     ($ptr:expr, $type:ty, $name:ident) => {
+        if $ptr.is_null() {
+            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
+            return std::ptr::null_mut();
+        }
         let __arc = match get_handles().get($ptr as Handle) {
             Ok(arc) => arc,
             Err(err) => {
@@ -630,6 +645,10 @@ macro_rules! guard_handle_or_null {
 #[macro_export]
 macro_rules! guard_handle_mut_or_null {
     ($ptr:expr, $type:ty, $name:ident) => {
+        if $ptr.is_null() {
+            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
+            return std::ptr::null_mut();
+        }
         let __arc = match get_handles().get($ptr as Handle) {
             Ok(arc) => arc,
             Err(err) => {
@@ -652,6 +671,10 @@ macro_rules! guard_handle_mut_or_null {
 #[macro_export]
 macro_rules! guard_handle_mut_or_return {
     ($ptr:expr, $type:ty, $name:ident) => {
+        if $ptr.is_null() {
+            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
+            return;
+        }
         let __arc = match get_handles().get($ptr as Handle) {
             Ok(arc) => arc,
             Err(err) => {
@@ -665,6 +688,33 @@ macro_rules! guard_handle_mut_or_return {
             None => {
                 Error::WrongHandleType($ptr as Handle).set_last();
                 return;
+            }
+        };
+    };
+}
+
+/// Guard a handle parameter (return default value on error)
+/// Useful for bool, usize, or other non-pointer returns
+#[macro_export]
+macro_rules! guard_handle_or_default {
+    ($ptr:expr, $type:ty, $name:ident, $default:expr) => {
+        if $ptr.is_null() {
+            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
+            return $default;
+        }
+        let __arc = match get_handles().get($ptr as Handle) {
+            Ok(arc) => arc,
+            Err(err) => {
+                err.set_last();
+                return $default;
+            }
+        };
+        let __guard = __arc.lock().unwrap();
+        let $name = match __guard.downcast_ref::<$type>() {
+            Some(val) => val,
+            None => {
+                Error::WrongHandleType($ptr as Handle).set_last();
+                return $default;
             }
         };
     };
@@ -1059,9 +1109,6 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
 /// The C2paReader can only be freed once and is invalid after this call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_free(reader_ptr: *mut C2paReader) -> c_int {
-    if reader_ptr.is_null() {
-        return 0; // NULL is considered already freed
-    }
     free_handle!(reader_ptr, C2paReader)
 }
 
@@ -1115,19 +1162,8 @@ pub unsafe extern "C" fn c2pa_reader_remote_url(reader_ptr: *mut C2paReader) -> 
 /// reader_ptr must be a valid pointer to a C2paReader.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_is_embedded(reader_ptr: *mut C2paReader) -> bool {
-    if reader_ptr.is_null() {
-        Error::set_last(Error::NullParameter(stringify!(reader_ptr).to_string()));
-        return false;
-    }
-    let handle = ptr_to_handle(reader_ptr);
-    get_handles()
-        .get(handle)
-        .ok()
-        .and_then(|arc| {
-            let guard = arc.lock().unwrap();
-            guard.downcast_ref::<C2paReader>().map(|r| r.is_embedded())
-        })
-        .unwrap_or_default()
+    guard_handle_or_default!(reader_ptr, C2paReader, reader, false);
+    reader.is_embedded()
 }
 
 /// Writes a C2paReader resource to a stream given a URI.
@@ -1163,13 +1199,8 @@ pub unsafe extern "C" fn c2pa_reader_resource_to_stream(
     let uri = from_cstr_or_return_int!(uri);
 
     with_handle_int!(reader_ptr, C2paReader, |reader| {
-        match reader.resource_to_stream(&uri, &mut (*stream)) {
-            Ok(len) => len as i64,
-            Err(err) => {
-                Error::from_c2pa_error(err).set_last();
-                -1
-            }
-        }
+        ok_or_return_int!(reader.resource_to_stream(&uri, &mut (*stream)), |len| len
+            as i64)
     })
 }
 
@@ -1263,9 +1294,6 @@ pub unsafe extern "C" fn c2pa_builder_supported_mime_types(
 /// The C2paBuilder can only be freed once and is invalid after this call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) -> c_int {
-    if builder_ptr.is_null() {
-        return 0; // NULL is considered already freed
-    }
     free_handle!(builder_ptr, C2paBuilder)
 }
 
@@ -1319,10 +1347,6 @@ pub unsafe extern "C" fn c2pa_builder_set_intent(
 /// builder_ptr must be a valid pointer to a Builder.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_set_no_embed(builder_ptr: *mut C2paBuilder) {
-    if builder_ptr.is_null() {
-        Error::set_last(Error::NullParameter(stringify!(builder_ptr).to_string()));
-        return;
-    }
     guard_handle_mut_or_return!(builder_ptr, C2paBuilder, builder);
     builder.set_no_embed(true);
 }
@@ -1503,13 +1527,7 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
     };
 
     with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
-        match builder.add_action(action_value) {
-            Ok(_) => 0, // returns 0 on success
-            Err(err) => {
-                Error::from_c2pa_error(err).set_last();
-                -1
-            }
-        }
+        ok_or_return_int!(builder.add_action(action_value), |_| 0)
     })
 }
 
@@ -1951,9 +1969,6 @@ pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -
 /// The C2paSigner can only be freed once and is invalid after this call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_free(signer_ptr: *mut C2paSigner) -> c_int {
-    if signer_ptr.is_null() {
-        return 0; // NULL is considered already freed
-    }
     free_handle!(signer_ptr, C2paSigner)
 }
 
