@@ -3660,7 +3660,6 @@ mod tests {
     /// example of creating a builder directly with a [`ManifestDefinition`]
     #[c2pa_test_async]
     /// test if the sdk can add a cloud ingredient retrieved from a stream and a cloud manifest
-    // This works with or without the fetch_remote_manifests feature
     async fn test_add_cloud_ingredient() {
         crate::settings::reset_default_settings().ok();
 

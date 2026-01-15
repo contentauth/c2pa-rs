@@ -243,7 +243,7 @@ impl Reader {
 
     #[cfg(feature = "file_io")]
     /// Add manifest store from a file to the [`Reader`].
-    /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
+    /// If the [`Verify::remote_manifest_fetch`] setting is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
     ///
     /// NOTE: If the file does not have a manifest store, the function will check for a sidecar manifest with the same base file name and a .c2pa extension.
     ///
@@ -270,6 +270,7 @@ impl Reader {
     /// [CAWG identity] assertions require async calls for validation.
     ///
     /// [CAWG identity]: https://cawg.io/identity/
+    /// [`Verify::remote_manifest_fetch`]: crate::settings::Verify::remote_manifest_fetch
     #[async_generic]
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
@@ -332,7 +333,7 @@ impl Reader {
     }
 
     /// Create a manifest store [`Reader`] from a file.
-    /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
+    /// If the `verify.remote_manifest_fetch` setting is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
     ///
     /// NOTE: If the file does not have a manifest store, the function will check for a sidecar manifest with the same base file name and a .c2pa extension.
     ///
@@ -1401,11 +1402,10 @@ pub mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::utils::test::test_context;
+    use crate::{utils::test::test_context, Settings};
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
-    #[cfg(feature = "fetch_remote_manifests")]
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
     const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACA.jpg");
 
@@ -1461,8 +1461,15 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(feature = "fetch_remote_manifests")]
     fn test_reader_remote_url() -> Result<()> {
+        Settings::from_toml(
+            &toml::toml! {
+                [verify]
+                remote_manifest_fetch = true
+            }
+            .to_string(),
+        )?;
+
         let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?;
         let remote_url = reader.remote_url();
         assert_eq!(remote_url, Some("https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391"));

@@ -71,9 +71,16 @@ fn test_reader_xca_jpg() -> Result<()> {
     compare_to_known_good(&reader, "XCA.json")
 }
 
-#[cfg(feature = "fetch_remote_manifests")]
 #[c2pa_test_async]
 async fn test_reader_remote_url_async() -> Result<()> {
+    Settings::from_toml(
+        &toml::toml! {
+            [verify]
+            remote_manifest_fetch = true
+        }
+        .to_string(),
+    )?;
+
     let reader = Reader::from_stream_async(
         "image/jpeg",
         std::io::Cursor::new(include_bytes!("./fixtures/cloud.jpg")),

@@ -35,7 +35,7 @@ These requirements are enforced in the [Tier 1A workflow](/.github/workflows/tie
 ### Tier 1A for c2pa-rs
 
 * **Ubuntu:** `x86_64-unknown-linux-gnu`, Rust `stable`, `all` features, `openssl` | `rust_native_crypto`, `glibc`
-* **Wasm:** `wasm32-unknown-unknown`, Rust `stable`, `fetch_remote_manifests` feature, `rust_native_crypto`
+* **Wasm:** `wasm32-unknown-unknown`, Rust `stable`, feature, `rust_native_crypto`
 * **WASI:** `wasm32-wasip2`, Rust `nightly-2025-08-25`, `all` features
 
 ### Tier 1A for c2pa-c-ffi

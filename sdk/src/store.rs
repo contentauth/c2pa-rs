@@ -91,7 +91,6 @@ use crate::{
 };
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
-#[cfg(feature = "fetch_remote_manifests")]
 const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
 pub(crate) struct ManifestHashes {
@@ -3421,7 +3420,6 @@ impl Store {
     }
 
     // fetch remote manifest if possible
-    #[cfg(feature = "fetch_remote_manifests")]
     #[async_generic]
     fn fetch_remote_manifest(url: &str, context: &Context) -> Result<Vec<u8>> {
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
@@ -3473,22 +3471,16 @@ impl Store {
     fn handle_remote_manifest(ext_ref: &str, _context: &Context) -> Result<Vec<u8>> {
         // verify provenance path is remote url
         if Store::is_valid_remote_url(ext_ref) {
-            #[cfg(feature = "fetch_remote_manifests")]
-            {
-                // Everything except browser wasm if fetch_remote_manifests is enabled
-                if _context.settings().verify.remote_manifest_fetch {
-                    if _sync {
-                        Store::fetch_remote_manifest(ext_ref, _context)
-                    } else {
-                        Store::fetch_remote_manifest_async(ext_ref, _context).await
-                    }
+            // Everything except browser wasm if fetch_remote_manifests is enabled
+            if _context.settings().verify.remote_manifest_fetch {
+                if _sync {
+                    Store::fetch_remote_manifest(ext_ref, _context)
                 } else {
-                    Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
+                    Store::fetch_remote_manifest_async(ext_ref, _context).await
                 }
+            } else {
+                Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
             }
-
-            #[cfg(not(feature = "fetch_remote_manifests"))]
-            Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
         } else {
             Err(Error::JumbfNotFound)
         }

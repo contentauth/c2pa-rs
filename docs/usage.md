@@ -40,7 +40,6 @@ You can enable any of the following features:
 - **openssl** *(enabled by default)*: Use the vendored `openssl` implementation for cryptography.
 - **rust_native_crypto**: Use Rust native cryptography.
 - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
-- **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
 - **file_io**: Enables APIs that use file system I/O.
 - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
 - **pdf**: Enables basic PDF read support.
@@ -58,6 +57,7 @@ You can enable any of the following features:
 
 The following features are no longer supported:
 
+* **fetch_remote_manifests**. Fetching remote manifests can now be enabled with the `verify.remote_manifest_fetch` setting.
 * **v1_api**. The old API that this enabled has been removed.
 * **serialize_thumbnails**. Thumbnails can be serialized by accessing resources directly.
 
@@ -156,7 +156,7 @@ fn main() -> Result<()> {
     let toml = r#"
         [verify]
         verify_after_sign = true
-        
+
         [core]
         allowed_network_hosts = ["example.com"]
     "#;
@@ -173,7 +173,7 @@ use c2pa::{Context, Settings, Result};
 fn main() -> Result<()> {
     let mut settings = Settings::default();
     settings.verify.verify_after_sign = true;
-    
+
     let context = Context::new().with_settings(settings)?;
     Ok(())
 }
@@ -191,12 +191,12 @@ fn main() -> Result<()> {
     // Configure context
     let context = Context::new()
         .with_settings(r#"{"verify": {"remote_manifest_fetch": false}}"#)?;
-    
+
     // Create reader with context
     let stream = File::open("path/to/image.jpg")?;
     let reader = Reader::from_context(context)
         .with_stream("image/jpeg", stream)?;
-    
+
     println!("{}", reader.json());
     Ok(())
 }
@@ -220,16 +220,16 @@ fn main() -> Result<()> {
                 "intent": "edit"
             }
         }))?;
-    
+
     // Create builder with context and inline JSON definition
     let mut builder = Builder::from_context(context)
         .with_definition(json!({"title": "My Image"}))?;
-    
+
     // Save with automatic signer from context
     let mut source = std::fs::File::open("source.jpg")?;
     let mut dest = Cursor::new(Vec::new());
     builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
-    
+
     Ok(())
 }
 ```
@@ -265,15 +265,15 @@ fn main() -> Result<()> {
     // Configure context with signer settings
     let context = Context::new()
         .with_settings(include_str!("config.json"))?;
-    
+
     let mut builder = Builder::from_context(context)
         .with_definition(json!({"title": "My Image"}))?;
-    
+
     // Signer is created automatically from context's settings
     let mut source = std::fs::File::open("source.jpg")?;
     let mut dest = std::fs::File::create("signed.jpg")?;
     builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
-    
+
     Ok(())
 }
 ```
@@ -293,13 +293,13 @@ fn main() -> Result<()> {
         SigningAlg::Ps256,
         None
     )?;
-    
+
     // Set it on the context
     let context = Context::new().with_signer(signer);
-    
+
     // Later retrieve it
     let signer_ref = context.signer()?;
-    
+
     Ok(())
 }
 ```
