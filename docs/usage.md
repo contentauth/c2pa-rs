@@ -57,6 +57,7 @@ You can enable any of the following features:
 
 The following features are no longer supported:
 
+* **fetch_remote_manifests**. Fetching remote manifests can now be enabled with the `verify.remote_manifest_fetch` setting.
 * **v1_api**. The old API that this enabled has been removed.
 * **serialize_thumbnails**. Thumbnails can be serialized by accessing resources directly.
 
