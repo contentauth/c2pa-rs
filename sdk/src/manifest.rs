@@ -118,6 +118,13 @@ pub struct Manifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
 
+    /// The version of the claim, parsed from the claim label.
+    ///
+    /// For example:
+    /// - `c2pa.claim.v2` -> 2
+    /// - `c2pa.claim` -> 1
+    claim_version: Option<u8>,
+
     /// The [`CoseSign1::signature`] value.
     ///
     /// [`CoseSign1::signature`]: coset::CoseSign1::signature
@@ -246,6 +253,15 @@ impl Manifest {
     /// claim signature box.
     pub fn signature(&self) -> Option<&[u8]> {
         self.signature.as_deref()
+    }
+
+    /// Returns the version of the claim, parsed from the claim label.
+    ///
+    /// For example:
+    /// - `c2pa.claim.v2` -> 2
+    /// - `c2pa.claim` -> 1
+    pub fn claim_version(&self) -> Option<u8> {
+        self.claim_version
     }
 
     /// Returns the parent ingredient if it exists.
@@ -384,6 +400,7 @@ impl Manifest {
                 .cose_sign1()
                 .ok()
                 .map(|cose_sign1| cose_sign1.signature),
+            claim_version: Some(claim.version().try_into()?),
             ..Default::default()
         };
 
