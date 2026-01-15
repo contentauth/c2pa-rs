@@ -448,8 +448,7 @@ impl Reader {
         let settings = crate::settings::get_thread_local_settings();
         let context = Context::new().with_settings(settings).unwrap_or_default();
         if _sync {
-            Reader::from_context(context)
-                .with_manifest_data_and_stream(c2pa_data, format, stream)
+            Reader::from_context(context).with_manifest_data_and_stream(c2pa_data, format, stream)
         } else {
             Reader::from_context(context)
                 .with_manifest_data_and_stream_async(c2pa_data, format, stream)

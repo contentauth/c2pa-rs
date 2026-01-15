@@ -12,7 +12,7 @@
 // each license.
 
 mod common;
-use c2pa::{validation_status, Context, Error, Reader, Result, Settings, ValidationState};
+use c2pa::{validation_status, Builder, Context, Error, Reader, Result, Settings, ValidationState};
 #[cfg(feature = "fetch_remote_manifests")]
 use c2pa_macros::c2pa_test_async;
 use common::{assert_err, compare_to_known_good, fixture_stream};
@@ -105,7 +105,6 @@ fn write_known_goods() -> Result<()> {
 /// This is necessary to make sure trust config is used, for instance.
 #[test]
 fn test_reader_validation_state_uses_context_settings() -> Result<()> {
-    use c2pa::Builder;
     use std::io::Cursor;
 
     let settings = Settings::new().with_json(include_str!("fixtures/test_settings.json"))?;
@@ -125,8 +124,11 @@ fn test_reader_validation_state_uses_context_settings() -> Result<()> {
     dest.set_position(0);
 
     // Create a contextualized Reader
-    let reader = Reader::from_shared_context(&context)
-        .with_manifest_data_and_stream(&manifest_data, format, &mut dest)?;
+    let reader = Reader::from_shared_context(&context).with_manifest_data_and_stream(
+        &manifest_data,
+        format,
+        &mut dest,
+    )?;
 
     // Trust is configured, so this should return Trusted
     assert_eq!(
