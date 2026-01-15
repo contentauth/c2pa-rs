@@ -12,7 +12,8 @@
 // each license.
 
 mod common;
-use c2pa::{validation_status, Context, Error, Reader, Result, Settings};
+use c2pa::{validation_status, Context, Error, Reader, Result, Settings, ValidationState};
+#[cfg(feature = "fetch_remote_manifests")]
 use c2pa_macros::c2pa_test_async;
 use common::{assert_err, compare_to_known_good, fixture_stream};
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -96,5 +97,43 @@ fn write_known_goods() -> Result<()> {
     for filename in &filenames {
         common::write_known_good(filename)?;
     }
+    Ok(())
+}
+
+/// Test that validation_state() correctly uses the Reader's context settings
+/// for remote (no_embed) manifests.
+/// This is necessary to make sure trust config is used, for instance.
+#[test]
+fn test_reader_validation_state_uses_context_settings() -> Result<()> {
+    use c2pa::Builder;
+    use std::io::Cursor;
+
+    let settings = Settings::new().with_json(include_str!("fixtures/test_settings.json"))?;
+    let context = Context::new().with_settings(settings)?.into_shared();
+
+    // No embedding here
+    let mut builder = Builder::from_shared_context(&context);
+    builder.no_embed = true;
+
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+    let mut dest = Cursor::new(Vec::new());
+
+    let manifest_data = builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+
+    // Create a contextualized Reader
+    let reader = Reader::from_shared_context(&context)
+        .with_manifest_data_and_stream(&manifest_data, format, &mut dest)?;
+
+    // Trust is configured, so this should return Trusted
+    assert_eq!(
+        reader.validation_state(),
+        ValidationState::Trusted,
+        "Expected Trusted state when trust anchors are configured in the Reader's context"
+    );
+
     Ok(())
 }
