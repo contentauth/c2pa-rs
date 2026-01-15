@@ -3112,6 +3112,7 @@ impl Store {
 
                 let verify_after_sign = settings.verify.verify_after_sign;
                 // Skip verification for external/sidecar manifests since they're not embedded
+                // What should we do in this case, retrieve them? Or really skip?
                 let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
                 let is_external = matches!(
                     pc.remote_manifest(),
