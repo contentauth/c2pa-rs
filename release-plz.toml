@@ -49,6 +49,7 @@ changelog_path = "./CHANGELOG.md"
 
 [[package]]
 name = "c2patool"
+version_group = "c2pa-rs"
 
 [[package]]
 name = "c2pa-c-ffi"
