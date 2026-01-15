@@ -717,8 +717,9 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     }
                 });
 
-                // seek to end of file
-                self.writer.seek(SeekFrom::End(0))?;
+                // Seek to our tracked write position (not End(0) which could be wrong if stream has leftover data)
+                let current_offset = self.offset()?;
+                self.writer.seek(SeekFrom::Start(current_offset))?;
 
                 // copy the strips
                 with_order!(so_entry.value_bytes.as_slice(), self.endianness, |src| {
@@ -821,8 +822,9 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     }
                 });
 
-                // seek to end of file
-                self.writer.seek(SeekFrom::End(0))?;
+                // Seek to our tracked write position (not End(0) which could be wrong if stream has leftover data)
+                let current_offset = self.offset()?;
+                self.writer.seek(SeekFrom::Start(current_offset))?;
 
                 // copy the tiles
                 with_order!(to_entry.value_bytes.as_slice(), self.endianness, |src| {
@@ -1475,7 +1477,9 @@ impl CAIWriter for TiffIO {
 
         let cai_ifd_entry = match idfs[first_idf_token].data.get_tag(C2PA_TAG) {
             Some(ifd) => ifd,
-            None => return Ok(Vec::new()),
+            None => {
+                return Ok(Vec::new());
+            }
         };
 
         // make sure data type is for unstructured data

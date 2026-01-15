@@ -2396,6 +2396,7 @@ mod tests {
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
     const TEST_IMAGE_CLOUD: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    const TEST_IMAGE_TIFF: &[u8] = include_bytes!("../tests/fixtures/test.tiff");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
     const TEST_MANIFEST_CLOUD: &[u8] = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
 
@@ -4309,5 +4310,37 @@ mod tests {
             .find(|assertion| assertion.label().starts_with(Actions::LABEL))
             .unwrap();
         assert!(actions_assertion.created());
+    }
+
+    #[test]
+    fn test_builder_sign_tiff() {
+        let format = "image/tiff";
+        let mut source = Cursor::new(TEST_IMAGE_TIFF);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .unwrap();
+
+        // read and validate the signed manifest store
+        dest.rewind().unwrap();
+        let reader = Reader::from_stream(format, &mut dest).expect("from_stream");
+
+        // Verify there is no data hash mismatch error in validation status
+        if let Some(status) = reader.validation_status() {
+            for s in status {
+                assert_ne!(
+                    s.code(),
+                    "assertion.dataHash.mismatch",
+                    "TIFF signing produced a data hash mismatch error"
+                );
+            }
+        }
+
+        assert!(reader.active_manifest().is_some());
     }
 }
