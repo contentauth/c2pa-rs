@@ -728,8 +728,6 @@ impl Reader {
         }
 
         let verify_trust = self.context.settings().verify.verify_trust;
-        println!("verify_trust: {}", verify_trust);
-        println!("validation_status: {:?}", self.validation_status());
         match self.validation_status() {
             Some(status) => {
                 // if there are any errors, the state is invalid unless the only error is an untrusted credential
