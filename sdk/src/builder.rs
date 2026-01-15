@@ -4047,6 +4047,8 @@ mod tests {
     #[test]
     fn test_builder_set_base_path() {
         let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
         let ingredient_folder = fixture_path("ingredient");
         builder.set_base_path(&ingredient_folder);
 
