@@ -73,13 +73,11 @@ unsafe fn safe_slice_from_raw_parts(
 }
 
 // C has no namespace so we prefix things with C2PA to make them unique
-#[allow(deprecated)]
-use c2pa::settings::{load_settings_from_str, Settings};
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 use c2pa::{
     assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
-    CallbackSigner, Reader as C2paReader, SigningAlg,
+    CallbackSigner, Reader as C2paReader, Settings, SigningAlg,
 };
 use scopeguard::guard;
 use tokio::runtime::Runtime; // cawg validator requires async
@@ -405,6 +403,7 @@ pub unsafe extern "C" fn c2pa_error_set_last(error_str: *const c_char) -> c_int 
 }
 
 /// Load Settings from a string.
+/// Sets thread-local settings.
 ///
 /// # Errors
 /// Returns -1 if there were errors, otherwise returns 0.
@@ -419,8 +418,8 @@ pub unsafe extern "C" fn c2pa_load_settings(
 ) -> c_int {
     let settings = from_cstr_or_return_int!(settings);
     let format = from_cstr_or_return_int!(format);
-    #[allow(deprecated)]
-    let result = load_settings_from_str(&settings, &format);
+    // we use the legacy from_string function to set thread-local settings for backward compatibility
+    let result = Settings::from_string(&settings, &format);
     ok_or_return_int!(result, |_| 0) // returns 0 on success
 }
 
@@ -2392,6 +2391,15 @@ mod tests {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
+
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::Empty,
+            )
+        };
+        assert_eq!(result, 0);
 
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
