@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_cbor"
-version = "0.74.0"
+version = "0.75.0"
 dependencies = [
  "criterion",
  "half",
