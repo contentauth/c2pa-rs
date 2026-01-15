@@ -12,10 +12,116 @@
 // each license.
 
 use std::{
+    any::Any,
+    collections::HashMap,
     ffi::CString,
     os::raw::{c_char, c_int, c_uchar, c_void},
     ptr,
+    sync::{atomic::AtomicU64, Arc, Mutex, RwLock},
 };
+
+// ============================================================================
+// Handle Management System
+// ============================================================================
+
+type Handle = u64;
+type HandleValue = Arc<Mutex<Box<dyn Any + Send>>>;
+
+struct HandleMap {
+    map: RwLock<HashMap<Handle, HandleValue>>,
+    next_id: AtomicU64,
+}
+
+impl HandleMap {
+    fn new() -> Self {
+        Self {
+            map: RwLock::new(HashMap::new()),
+            next_id: AtomicU64::new(1), // 0 = NULL
+        }
+    }
+
+    /// Insert a value and return its handle
+    fn insert<T: Any + Send + 'static>(&self, value: T) -> Handle {
+        let handle = self
+            .next_id
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut map = self.map.write().unwrap();
+        map.insert(handle, Arc::new(Mutex::new(Box::new(value))));
+        handle
+    }
+
+    /// Get an Arc to work with - avoids nested lock issues
+    /// Returns the HandleValue which must be downcast by the caller
+    fn get(&self, handle: Handle) -> Result<HandleValue, Error> {
+        let map = self.map.read().unwrap();
+        let arc = map
+            .get(&handle)
+            .ok_or(Error::InvalidHandle(handle))?
+            .clone(); // Just increments Arc refcount - cheap!
+        drop(map); // Release map lock immediately
+        Ok(arc)
+    }
+
+    /// Remove and return a value
+    fn remove<T: Any + 'static>(&self, handle: Handle) -> Result<T, Error> {
+        let mut map = self.map.write().unwrap();
+        let arc = map.remove(&handle).ok_or(Error::InvalidHandle(handle))?;
+        drop(map); // Release write lock
+
+        // Try to unwrap the Arc (will fail if anyone else holds a clone)
+        let mutex =
+            Arc::try_unwrap(arc).map_err(|_| Error::Other("Handle still in use".to_string()))?;
+
+        let boxed = mutex.into_inner().unwrap();
+        boxed
+            .downcast::<T>()
+            .map(|b| *b)
+            .map_err(|_| Error::WrongHandleType(handle))
+    }
+}
+
+// Single global handle map - much simpler!
+fn get_handles() -> &'static HandleMap {
+    use std::sync::OnceLock;
+    static HANDLES: OnceLock<HandleMap> = OnceLock::new();
+    HANDLES.get_or_init(HandleMap::new)
+}
+
+/// Convert a typed pointer to a handle
+fn ptr_to_handle<T>(ptr: *mut T) -> Handle {
+    ptr as Handle
+}
+
+/// Convert a handle to a typed pointer
+fn handle_to_ptr<T>(handle: Handle) -> *mut T {
+    handle as *mut T
+}
+
+/// Helper for with_handle macro - needed for type inference
+fn __with_handle_helper<T: Any + 'static, R, F>(handle: Handle, f: F) -> Result<R, Error>
+where
+    F: FnOnce(&T) -> R,
+{
+    let arc = get_handles().get(handle)?;
+    let guard = arc.lock().unwrap();
+    let value = guard
+        .downcast_ref::<T>()
+        .ok_or(Error::WrongHandleType(handle))?;
+    Ok(f(value))
+}
+
+/// Helper for with_handle_mut macro - needed for type inference
+fn __with_handle_mut_helper<T: Any + 'static, R, F>(handle: Handle, f: F) -> Result<R, Error>
+where
+    F: FnOnce(&mut T) -> R,
+{
+    let arc = get_handles().get(handle)?;
+    let mut guard = arc.lock().unwrap();
+    let value = guard
+        .downcast_mut::<T>()
+        .ok_or(Error::WrongHandleType(handle))?;
+    Ok(f(value))
+}
 
 /// Validates that a buffer size is within safe bounds and doesn't cause integer overflow
 /// when used with pointer arithmetic.
@@ -79,7 +185,6 @@ use c2pa::{
     assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
     CallbackSigner, Reader as C2paReader, Settings, SigningAlg,
 };
-use scopeguard::guard;
 use tokio::runtime::Runtime; // cawg validator requires async
 
 #[cfg(feature = "file_io")]
@@ -206,8 +311,12 @@ pub enum C2paBuilderIntent {
 
 #[repr(C)]
 pub struct C2paSigner {
-    pub signer: Box<dyn c2pa::Signer>,
+    pub signer: Box<dyn c2pa::Signer + Send + Sync>,
 }
+
+// Safety: C2paSigner is Send + Sync because it only contains a Box<dyn Signer + Send + Sync>
+unsafe impl Send for C2paSigner {}
+unsafe impl Sync for C2paSigner {}
 
 // Null check macro for C pointers.
 #[macro_export]
@@ -335,6 +444,118 @@ macro_rules! guard_boxed_int {
             -1
         )
     };
+}
+
+// ============================================================================
+// Handle Management Macros
+// ============================================================================
+
+/// Convert a Result into a typed opaque pointer (handle disguised as pointer)
+#[macro_export]
+macro_rules! return_handle {
+    ($result:expr, $type:ty) => {
+        match $result {
+            Ok(value) => {
+                let handle = get_handles().insert(value);
+                handle_to_ptr::<$type>(handle)
+            }
+            Err(err) => {
+                Error::from_c2pa_error(err).set_last();
+                std::ptr::null_mut()
+            }
+        }
+    };
+}
+
+/// Execute a read-only operation on a typed pointer (internally uses handles)
+#[macro_export]
+macro_rules! with_handle {
+    ($ptr:expr, $type:ty, $transform:expr) => {{
+        if $ptr.is_null() {
+            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
+            return std::ptr::null_mut();
+        }
+        let handle = ptr_to_handle($ptr);
+        match __with_handle_helper::<$type, _, _>(handle, $transform) {
+            Ok(result) => result,
+            Err(err) => {
+                err.set_last();
+                return std::ptr::null_mut();
+            }
+        }
+    }};
+}
+
+/// Execute a mutable operation on a typed pointer
+#[macro_export]
+macro_rules! with_handle_mut {
+    ($ptr:expr, $type:ty, $transform:expr) => {{
+        if $ptr.is_null() {
+            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
+            return std::ptr::null_mut();
+        }
+        let handle = ptr_to_handle($ptr);
+        match __with_handle_mut_helper::<$type, _, _>(handle, $transform) {
+            Ok(result) => result,
+            Err(err) => {
+                err.set_last();
+                return std::ptr::null_mut();
+            }
+        }
+    }};
+}
+
+/// Execute operation on typed pointer, return -1 on error
+#[macro_export]
+macro_rules! with_handle_int {
+    ($ptr:expr, $type:ty, $transform:expr) => {{
+        if $ptr.is_null() {
+            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
+            return -1;
+        }
+        let handle = ptr_to_handle($ptr);
+        match __with_handle_helper::<$type, _, _>(handle, $transform) {
+            Ok(result) => result,
+            Err(err) => {
+                err.set_last();
+                return -1;
+            }
+        }
+    }};
+}
+
+/// Execute mutable operation on typed pointer, return -1 on error
+#[macro_export]
+macro_rules! with_handle_mut_int {
+    ($ptr:expr, $type:ty, $transform:expr) => {{
+        if $ptr.is_null() {
+            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
+            return -1;
+        }
+        let handle = ptr_to_handle($ptr);
+        match __with_handle_mut_helper::<$type, _, _>(handle, $transform) {
+            Ok(result) => result,
+            Err(err) => {
+                err.set_last();
+                return -1;
+            }
+        }
+    }};
+}
+
+/// Free a typed pointer (handle)
+#[macro_export]
+macro_rules! free_handle {
+    ($ptr:expr, $type:ty) => {{
+        let handle = ptr_to_handle($ptr);
+        match get_handles().remove::<$type>(handle) {
+            Ok(_) => 0,
+            Err(err) => {
+                err.set_last();
+                -1
+            }
+        }
+    }};
 }
 
 /// Defines a callback to read from a stream.
@@ -645,7 +866,7 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
 
     let result = C2paReader::from_stream(&format, &mut (*stream));
 
-    return_boxed!(post_validate(result))
+    return_handle!(post_validate(result), C2paReader)
 }
 
 /// Creates and verifies a C2paReader from a file path.
@@ -677,7 +898,7 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
 pub unsafe fn c2pa_reader_from_file(path: *const c_char) -> *mut C2paReader {
     let path = from_cstr_or_return_null!(path);
     let result = C2paReader::from_file(&path);
-    return_boxed!(post_validate(result))
+    return_handle!(post_validate(result), C2paReader)
 }
 
 /// Creates and verifies a C2paReader from an asset stream with the given format and manifest data.
@@ -717,7 +938,7 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
         };
 
     let result = C2paReader::from_manifest_data_and_stream(manifest_bytes, &format, &mut (*stream));
-    return_boxed!(post_validate(result))
+    return_handle!(post_validate(result), C2paReader)
 }
 
 /// Frees a C2paReader allocated by Rust.
@@ -725,10 +946,11 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
 /// # Safety
 /// The C2paReader can only be freed once and is invalid after this call.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_reader_free(reader_ptr: *mut C2paReader) {
-    if !reader_ptr.is_null() {
-        drop(Box::from_raw(reader_ptr));
+pub unsafe extern "C" fn c2pa_reader_free(reader_ptr: *mut C2paReader) -> c_int {
+    if reader_ptr.is_null() {
+        return 0; // NULL is considered already freed
     }
+    free_handle!(reader_ptr, C2paReader)
 }
 
 /// Returns a JSON string generated from a C2paReader.
@@ -738,10 +960,8 @@ pub unsafe extern "C" fn c2pa_reader_free(reader_ptr: *mut C2paReader) {
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c_char {
-    check_or_return_null!(reader_ptr);
-    let c2pa_reader = guard_boxed!(reader_ptr);
-
-    to_c_string(c2pa_reader.json())
+    let json = with_handle!(reader_ptr, C2paReader, |reader| reader.json());
+    to_c_string(json)
 }
 
 /// Returns a detailed JSON string generated from a C2paReader.
@@ -751,10 +971,8 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) -> *mut c_char {
-    check_or_return_null!(reader_ptr);
-    let c2pa_reader = guard_boxed!(reader_ptr);
-
-    to_c_string(c2pa_reader.detailed_json())
+    let json = with_handle!(reader_ptr, C2paReader, |reader| reader.detailed_json());
+    to_c_string(json)
 }
 
 /// Returns the remote url of the manifest if it was obtained remotely.
@@ -766,11 +984,12 @@ pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) 
 /// reader_ptr must be a valid pointer to a C2paReader.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_remote_url(reader_ptr: *mut C2paReader) -> *const c_char {
-    check_or_return_null!(reader_ptr);
-    let c2pa_reader = guard_boxed!(reader_ptr);
+    let url = with_handle!(reader_ptr, C2paReader, |reader| {
+        reader.remote_url().map(|u| u.to_string())
+    });
 
-    match c2pa_reader.remote_url() {
-        Some(url) => to_c_string(url.to_string()),
+    match url {
+        Some(url_string) => to_c_string(url_string),
         None => ptr::null(),
     }
 }
@@ -784,10 +1003,19 @@ pub unsafe extern "C" fn c2pa_reader_remote_url(reader_ptr: *mut C2paReader) -> 
 /// reader_ptr must be a valid pointer to a C2paReader.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_is_embedded(reader_ptr: *mut C2paReader) -> bool {
-    null_check!((reader_ptr), |ptr| ptr, false);
-    let c2pa_reader = guard_boxed!(reader_ptr);
-
-    c2pa_reader.is_embedded()
+    if reader_ptr.is_null() {
+        Error::set_last(Error::NullParameter(stringify!(reader_ptr).to_string()));
+        return false;
+    }
+    let handle = ptr_to_handle(reader_ptr);
+    get_handles()
+        .get(handle)
+        .ok()
+        .and_then(|arc| {
+            let guard = arc.lock().unwrap();
+            guard.downcast_ref::<C2paReader>().map(|r| r.is_embedded())
+        })
+        .unwrap_or_default()
 }
 
 /// Writes a C2paReader resource to a stream given a URI.
@@ -821,9 +1049,16 @@ pub unsafe extern "C" fn c2pa_reader_resource_to_stream(
     stream: *mut C2paStream,
 ) -> i64 {
     let uri = from_cstr_or_return_int!(uri);
-    let reader = guard_boxed_int!(reader_ptr);
-    let result = reader.resource_to_stream(&uri, &mut (*stream));
-    ok_or_return_int!(result, |len| len as i64)
+
+    with_handle_int!(reader_ptr, C2paReader, |reader| {
+        match reader.resource_to_stream(&uri, &mut (*stream)) {
+            Ok(len) => len as i64,
+            Err(err) => {
+                Error::from_c2pa_error(err).set_last();
+                -1
+            }
+        }
+    })
 }
 
 /// Returns an array of char* pointers to c2pa::Reader's supported mime types.
@@ -866,7 +1101,7 @@ pub unsafe extern "C" fn c2pa_reader_supported_mime_types(
 pub unsafe extern "C" fn c2pa_builder_from_json(manifest_json: *const c_char) -> *mut C2paBuilder {
     let manifest_json = from_cstr_or_return_null!(manifest_json);
     let result = C2paBuilder::from_json(&manifest_json);
-    return_boxed!(result)
+    return_handle!(result, C2paBuilder)
 }
 
 /// Create a C2paBuilder from an archive stream.
@@ -891,7 +1126,7 @@ pub unsafe extern "C" fn c2pa_builder_from_json(manifest_json: *const c_char) ->
 /// ```
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_from_archive(stream: *mut C2paStream) -> *mut C2paBuilder {
-    return_boxed!(C2paBuilder::from_archive(&mut (*stream)))
+    return_handle!(C2paBuilder::from_archive(&mut (*stream)), C2paBuilder)
 }
 
 /// Returns an array of char* pointers to the supported mime types.
@@ -915,10 +1150,11 @@ pub unsafe extern "C" fn c2pa_builder_supported_mime_types(
 /// # Safety
 /// The C2paBuilder can only be freed once and is invalid after this call.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) {
-    if !builder_ptr.is_null() {
-        drop(Box::from_raw(builder_ptr));
+pub unsafe extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) -> c_int {
+    if builder_ptr.is_null() {
+        return 0; // NULL is considered already freed
     }
+    free_handle!(builder_ptr, C2paBuilder)
 }
 
 /// Sets the builder intent on the Builder.
@@ -950,16 +1186,16 @@ pub unsafe extern "C" fn c2pa_builder_set_intent(
     intent: C2paBuilderIntent,
     digital_source_type: C2paDigitalSourceType,
 ) -> c_int {
-    let mut builder = guard_boxed_int!(builder_ptr);
-
     let builder_intent = match intent {
         C2paBuilderIntent::Create => c2pa::BuilderIntent::Create(digital_source_type.into()),
         C2paBuilderIntent::Edit => c2pa::BuilderIntent::Edit,
         C2paBuilderIntent::Update => c2pa::BuilderIntent::Update,
     };
 
-    builder.set_intent(builder_intent);
-    0 as c_int
+    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+        builder.set_intent(builder_intent);
+        0
+    })
 }
 
 /// Sets the no-embed flag on the Builder.
@@ -970,11 +1206,18 @@ pub unsafe extern "C" fn c2pa_builder_set_intent(
 /// # Safety
 /// builder_ptr must be a valid pointer to a Builder.
 #[no_mangle]
-#[allow(clippy::unused_unit)] // clippy doesn't like the () return type for null_check
 pub unsafe extern "C" fn c2pa_builder_set_no_embed(builder_ptr: *mut C2paBuilder) {
-    null_check!((builder_ptr), |ptr| ptr, ());
-    let mut builder = guard_boxed!(builder_ptr);
-    builder.set_no_embed(true);
+    if builder_ptr.is_null() {
+        Error::set_last(Error::NullParameter(stringify!(builder_ptr).to_string()));
+        return;
+    }
+    let handle = ptr_to_handle(builder_ptr);
+    if let Ok(arc) = get_handles().get(handle) {
+        let mut guard = arc.lock().unwrap();
+        if let Some(builder) = guard.downcast_mut::<C2paBuilder>() {
+            builder.set_no_embed(true);
+        }
+    }
 }
 
 /// Sets the remote URL on the Builder.
@@ -993,10 +1236,11 @@ pub unsafe extern "C" fn c2pa_builder_set_remote_url(
     builder_ptr: *mut C2paBuilder,
     remote_url: *const c_char,
 ) -> c_int {
-    let mut builder = guard_boxed_int!(builder_ptr);
     let remote_url = from_cstr_or_return_int!(remote_url);
-    builder.set_remote_url(&remote_url);
-    0 as c_int
+    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+        builder.set_remote_url(&remote_url);
+        0
+    })
 }
 
 /// ⚠️ **Deprecated Soon**
@@ -1018,10 +1262,11 @@ pub unsafe extern "C" fn c2pa_builder_set_base_path(
     builder_ptr: *mut C2paBuilder,
     base_path: *const c_char,
 ) -> c_int {
-    let mut builder = guard_boxed_int!(builder_ptr);
     let base_path = from_cstr_or_return_int!(base_path);
-    builder.set_base_path(&base_path);
-    0 as c_int
+    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+        builder.set_base_path(&base_path);
+        0
+    })
 }
 
 /// Adds a resource to the C2paBuilder.
@@ -1044,10 +1289,11 @@ pub unsafe extern "C" fn c2pa_builder_add_resource(
     uri: *const c_char,
     stream: *mut C2paStream,
 ) -> c_int {
-    let mut builder = guard_boxed_int!(builder_ptr);
     let uri = from_cstr_or_return_int!(uri);
-    let result = builder.add_resource(&uri, &mut (*stream));
-    ok_or_return_int!(result, |_| 0) // returns 0 on success
+    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+        let result = builder.add_resource(&uri, &mut (*stream));
+        ok_or_return_int!(result, |_| 0) // returns 0 on success
+    })
 }
 
 /// Adds an ingredient to the C2paBuilder.
@@ -1071,13 +1317,13 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     format: *const c_char,
     source: *mut C2paStream,
 ) -> c_int {
-    check_or_return_int!(builder_ptr);
     check_or_return_int!(source);
-    let mut builder = guard_boxed!(builder_ptr);
     let ingredient_json = from_cstr_or_return_int!(ingredient_json);
     let format = from_cstr_or_return_int!(format);
-    let result = builder.add_ingredient_from_stream(&ingredient_json, &format, &mut (*source));
-    ok_or_return_int!(result, |_| 0) // returns 0 on success
+    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+        let result = builder.add_ingredient_from_stream(&ingredient_json, &format, &mut (*source));
+        ok_or_return_int!(result, |_| 0) // returns 0 on success
+    })
 }
 
 /// Adds an action to the manifest the Builder is constructing.
@@ -1138,7 +1384,6 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
     builder_ptr: *mut C2paBuilder,
     action_json: *const c_char,
 ) -> c_int {
-    let mut builder = guard_boxed_int!(builder_ptr);
     let action_json = from_cstr_or_return_int!(action_json);
 
     // Parse the JSON into a serde Value to use with the Builder
@@ -1150,13 +1395,15 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
         }
     };
 
-    match builder.add_action(action_value) {
-        Ok(_) => 0, // returns 0 on success
-        Err(err) => {
-            Error::from_c2pa_error(err).set_last();
-            -1
+    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+        match builder.add_action(action_value) {
+            Ok(_) => 0, // returns 0 on success
+            Err(err) => {
+                Error::from_c2pa_error(err).set_last();
+                -1
+            }
         }
-    }
+    })
 }
 
 /// Writes an Archive of the Builder to the destination stream.
@@ -1186,11 +1433,11 @@ pub unsafe extern "C" fn c2pa_builder_to_archive(
     builder_ptr: *mut C2paBuilder,
     stream: *mut C2paStream,
 ) -> c_int {
-    check_or_return_int!(builder_ptr);
     check_or_return_int!(stream);
-    let mut builder = guard_boxed_int!(builder_ptr);
-    let result = builder.to_archive(&mut (*stream));
-    ok_or_return_int!(result, |_| 0) // returns 0 on success
+    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+        let result = builder.to_archive(&mut (*stream));
+        ok_or_return_int!(result, |_| 0) // returns 0 on success
+    })
 }
 
 /// Creates and writes signed manifest from the C2paBuilder to the destination stream.
@@ -1220,30 +1467,66 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     signer_ptr: *mut C2paSigner,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    check_or_return_int!(builder_ptr);
     let format = from_cstr_or_return_int!(format);
     check_or_return_int!(source);
     check_or_return_int!(dest);
-    check_or_return_int!(signer_ptr);
     check_or_return_int!(manifest_bytes_ptr);
 
-    let mut builder = guard_boxed!(builder_ptr);
-    let c2pa_signer = guard_boxed!(signer_ptr);
+    // Get both Arc's first - no nested lock issues!
+    let signer_handle = ptr_to_handle(signer_ptr);
+    let builder_handle = ptr_to_handle(builder_ptr);
 
-    let result = builder.sign(
-        c2pa_signer.signer.as_ref(),
-        &format,
-        &mut *source,
-        &mut *dest,
-    );
-    ok_or_return_int!(result, |manifest_bytes: Vec<u8>| {
-        let len = manifest_bytes.len() as i64;
-        if !manifest_bytes_ptr.is_null() {
-            *manifest_bytes_ptr =
-                Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
-        };
-        len
-    })
+    let signer_arc = match get_handles().get(signer_handle) {
+        Ok(arc) => arc,
+        Err(err) => {
+            err.set_last();
+            return -1;
+        }
+    };
+
+    let builder_arc = match get_handles().get(builder_handle) {
+        Ok(arc) => arc,
+        Err(err) => {
+            err.set_last();
+            return -1;
+        }
+    };
+
+    // Now lock both and downcast - safe since we're not holding map lock
+    let signer_guard = signer_arc.lock().unwrap();
+    let signer = match signer_guard.downcast_ref::<C2paSigner>() {
+        Some(s) => s,
+        None => {
+            Error::WrongHandleType(signer_handle).set_last();
+            return -1;
+        }
+    };
+
+    let mut builder_guard = builder_arc.lock().unwrap();
+    let builder = match builder_guard.downcast_mut::<C2paBuilder>() {
+        Some(b) => b,
+        None => {
+            Error::WrongHandleType(builder_handle).set_last();
+            return -1;
+        }
+    };
+
+    let result = builder.sign(signer.signer.as_ref(), &format, &mut *source, &mut *dest);
+
+    match result {
+        Ok(manifest_bytes) => {
+            let len = manifest_bytes.len() as i64;
+            if !manifest_bytes_ptr.is_null() {
+                *manifest_bytes_ptr =
+                    Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
+            }
+            len
+        }
+        Err(err) => {
+            Error::from_c2pa_error(err).set_last();
+            -1
+        }
+    }
 }
 
 /// Frees a C2PA manifest returned by c2pa_builder_sign.
@@ -1281,18 +1564,18 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     format: *const c_char,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    check_or_return_int!(builder_ptr);
     check_or_return_int!(manifest_bytes_ptr);
-    let mut builder = guard_boxed!(builder_ptr);
     let format = from_cstr_or_return_int!(format);
-    let result = builder.data_hashed_placeholder(reserved_size, &format);
-    ok_or_return_int!(result, |manifest_bytes: Vec<u8>| {
-        let len = manifest_bytes.len() as i64;
-        if !manifest_bytes_ptr.is_null() {
-            *manifest_bytes_ptr =
-                Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
-        };
-        len
+    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+        let result = builder.data_hashed_placeholder(reserved_size, &format);
+        ok_or_return_int!(result, |manifest_bytes: Vec<u8>| {
+            let len = manifest_bytes.len() as i64;
+            if !manifest_bytes_ptr.is_null() {
+                *manifest_bytes_ptr =
+                    Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
+            };
+            len
+        })
     })
 }
 
@@ -1325,8 +1608,6 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     asset: *mut C2paStream,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    check_or_return_int!(builder_ptr);
-    check_or_return_int!(signer_ptr);
     let data_hash_json = from_cstr_or_return_int!(data_hash);
     let format = from_cstr_or_return_int!(format);
     check_or_return_int!(manifest_bytes_ptr);
@@ -1349,20 +1630,61 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
         }
     }
 
-    let mut builder = guard_boxed!(builder_ptr);
-    let c2pa_signer = guard_boxed!(signer_ptr);
+    // Get both Arc's first - no nested lock issues!
+    let signer_handle = ptr_to_handle(signer_ptr);
+    let builder_handle = ptr_to_handle(builder_ptr);
 
-    let result =
-        builder.sign_data_hashed_embeddable(c2pa_signer.signer.as_ref(), &data_hash, &format);
+    let signer_arc = match get_handles().get(signer_handle) {
+        Ok(arc) => arc,
+        Err(err) => {
+            err.set_last();
+            return -1;
+        }
+    };
 
-    ok_or_return_int!(result, |manifest_bytes: Vec<u8>| {
-        let len = manifest_bytes.len() as i64;
-        if !manifest_bytes_ptr.is_null() {
-            *manifest_bytes_ptr =
-                Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
-        };
-        len
-    })
+    let builder_arc = match get_handles().get(builder_handle) {
+        Ok(arc) => arc,
+        Err(err) => {
+            err.set_last();
+            return -1;
+        }
+    };
+
+    // Now lock both and downcast - safe since we're not holding map lock
+    let signer_guard = signer_arc.lock().unwrap();
+    let signer = match signer_guard.downcast_ref::<C2paSigner>() {
+        Some(s) => s,
+        None => {
+            Error::WrongHandleType(signer_handle).set_last();
+            return -1;
+        }
+    };
+
+    let mut builder_guard = builder_arc.lock().unwrap();
+    let builder = match builder_guard.downcast_mut::<C2paBuilder>() {
+        Some(b) => b,
+        None => {
+            Error::WrongHandleType(builder_handle).set_last();
+            return -1;
+        }
+    };
+
+    let result = builder.sign_data_hashed_embeddable(signer.signer.as_ref(), &data_hash, &format);
+
+    match result {
+        Ok(manifest_bytes) => {
+            let len = manifest_bytes.len() as i64;
+            if !manifest_bytes_ptr.is_null() {
+                *manifest_bytes_ptr =
+                    Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
+            }
+            len
+        }
+        Err(err) => {
+            Error::from_c2pa_error(err).set_last();
+            -1
+        }
+    }
 }
 
 /// Convert a binary c2pa manifest into an embeddable version for the given format.
@@ -1487,9 +1809,11 @@ pub unsafe extern "C" fn c2pa_signer_create(
     if let Some(tsa_url) = tsa_url.as_ref() {
         signer = signer.set_tsa_url(tsa_url);
     }
-    Box::into_raw(Box::new(C2paSigner {
+    let c2pa_signer = C2paSigner {
         signer: Box::new(signer),
-    }))
+    };
+    let handle = get_handles().insert(c2pa_signer);
+    handle_to_ptr::<C2paSigner>(handle)
 }
 
 /// Creates a C2paSigner from a SignerInfo.
@@ -1523,11 +1847,14 @@ pub unsafe extern "C" fn c2pa_signer_from_info(signer_info: &C2paSignerInfo) -> 
         ta_url: from_cstr_option!(signer_info.ta_url),
     };
 
-    let signer = signer_info.signer();
-    match signer {
-        Ok(signer) => Box::into_raw(Box::new(C2paSigner {
-            signer: Box::new(signer),
-        })),
+    match signer_info.signer() {
+        Ok(signer) => {
+            let c2pa_signer = C2paSigner {
+                signer: Box::new(signer),
+            };
+            let handle = get_handles().insert(c2pa_signer);
+            handle_to_ptr::<C2paSigner>(handle)
+        }
         Err(err) => {
             err.set_last();
             std::ptr::null_mut()
@@ -1546,12 +1873,19 @@ pub unsafe extern "C" fn c2pa_signer_from_info(signer_info: &C2paSignerInfo) -> 
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
-    let signer = Settings::signer();
-    ok_or_return_null!(signer, |signer| {
-        Box::into_raw(Box::new(C2paSigner {
-            signer: Box::new(signer),
-        }))
-    })
+    match Settings::signer() {
+        Ok(signer) => {
+            let c2pa_signer = C2paSigner {
+                signer: Box::new(signer),
+            };
+            let handle = get_handles().insert(c2pa_signer);
+            handle_to_ptr::<C2paSigner>(handle)
+        }
+        Err(err) => {
+            Error::from_c2pa_error(err).set_last();
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// Returns the size to reserve for the signature for this signer.
@@ -1567,9 +1901,11 @@ pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
 /// The signer_ptr must be a valid pointer to a C2paSigner.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -> i64 {
-    check_or_return_int!(signer_ptr);
-    let c2pa_signer = guard_boxed!(signer_ptr);
-    c2pa_signer.signer.reserve_size() as i64
+    with_handle_int!(
+        signer_ptr,
+        C2paSigner,
+        |signer| signer.signer.reserve_size() as i64
+    )
 }
 
 /// Frees a C2paSigner allocated by Rust.
@@ -1577,10 +1913,11 @@ pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -
 /// # Safety
 /// The C2paSigner can only be freed once and is invalid after this call.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_signer_free(signer_ptr: *const C2paSigner) {
-    if !signer_ptr.is_null() {
-        drop(Box::from_raw(signer_ptr as *mut C2paSigner));
+pub unsafe extern "C" fn c2pa_signer_free(signer_ptr: *mut C2paSigner) -> c_int {
+    if signer_ptr.is_null() {
+        return 0; // NULL is considered already freed
     }
+    free_handle!(signer_ptr, C2paSigner)
 }
 
 #[no_mangle]

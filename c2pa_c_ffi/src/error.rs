@@ -49,6 +49,10 @@ pub enum Error {
     NullParameter(String),
     #[error("Remote: {0}")]
     RemoteManifest(String),
+    #[error("InvalidHandle: {0}")]
+    InvalidHandle(u64),
+    #[error("WrongHandleType: {0}")]
+    WrongHandleType(u64),
     #[error("ResourceNotFound: {0}")]
     ResourceNotFound(String),
     #[error("Signature: {0}")]
@@ -147,6 +151,8 @@ impl Error {
             "ResourceNotFound" => Self::ResourceNotFound(error_message),
             "Signature" => Self::Signature(error_message),
             "Verify" => Self::Verify(error_message),
+            "InvalidHandle" => Self::InvalidHandle(error_message.parse().unwrap_or(0)),
+            "WrongHandleType" => Self::WrongHandleType(error_message.parse().unwrap_or(0)),
             _ => Self::Other(format!("{error_type}: {error_message}")),
         }
     }
