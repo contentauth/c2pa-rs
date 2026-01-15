@@ -319,8 +319,8 @@ pub mod tests {
                 // TO DISCUSS: Maurice, I'm not quite sure what we were testing
                 // in the original test. LMK if I've lost too much in translation
                 // here.
-                let orig_as_value: DataHash = c2pa_cbor::from_slice(orig_cbor).unwrap();
-                let ad_as_value: DataHash = c2pa_cbor::from_slice(ad_cbor).unwrap();
+                let orig_as_value: DataHash = serde_cbor::from_slice(orig_cbor).unwrap();
+                let ad_as_value: DataHash = serde_cbor::from_slice(ad_cbor).unwrap();
 
                 assert_eq!(orig_as_value, ad_as_value);
             } else {

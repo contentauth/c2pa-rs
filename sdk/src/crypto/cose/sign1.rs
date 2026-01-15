@@ -12,8 +12,8 @@
 // each license.
 
 use async_generic::async_generic;
+use ciborium::value::Value;
 use coset::{
-    cbor::value::Value,
     iana::{self, Algorithm, EnumI64},
     CoseSign1, Label, RegisteredLabelWithPrivate, TaggedCborSerializable,
 };

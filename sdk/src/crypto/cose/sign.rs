@@ -13,8 +13,8 @@
 
 use asn1_rs::FromDer;
 use async_generic::async_generic;
+use ciborium::value::Value;
 use coset::{
-    cbor::value::Value,
     iana::{self, EnumI64},
     ContentType, CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, ProtectedHeader,
     RegisteredLabel, TaggedCborSerializable,
@@ -358,7 +358,7 @@ pub fn sign_v2_embedded(
 
     let sig_data = ByteBuf::from(sign1.signature.clone());
     let mut sig_data_cbor: Vec<u8> = vec![];
-    coset::cbor::into_writer(&sig_data, &mut sig_data_cbor)
+    ciborium::into_writer(&sig_data, &mut sig_data_cbor)
         .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
 
     // Fill in the unprotected header with time stamp data.

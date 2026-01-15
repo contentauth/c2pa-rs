@@ -129,7 +129,7 @@ where
 pub trait AssertionCbor: Serialize + DeserializeOwned + AssertionBase {
     fn to_cbor_assertion(&self) -> Result<Assertion> {
         let data = AssertionData::Cbor(
-            c2pa_cbor::to_vec(self).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
+            serde_cbor::to_vec(self).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
         );
         Ok(Assertion::new(self.label(), self.version(), data).set_content_type("application/cbor"))
     }
@@ -138,7 +138,7 @@ pub trait AssertionCbor: Serialize + DeserializeOwned + AssertionBase {
         assertion.check_max_version(Self::VERSION)?;
 
         match assertion.decode_data() {
-            AssertionData::Cbor(data) => Ok(c2pa_cbor::from_slice(data).map_err(|e| {
+            AssertionData::Cbor(data) => Ok(serde_cbor::from_slice(data).map_err(|e| {
                 Error::AssertionDecoding(AssertionDecodeError::from_assertion_and_cbor_err(
                     assertion, e,
                 ))
@@ -206,7 +206,7 @@ impl fmt::Debug for AssertionData {
             }
             Self::Cbor(s) => {
                 let buf: Vec<u8> = Vec::new();
-                let mut from = c2pa_cbor::Deserializer::from_slice(s);
+                let mut from = serde_cbor::Deserializer::from_slice(s);
                 let mut to = serde_json::Serializer::pretty(buf);
 
                 serde_transcode::transcode(&mut from, &mut to).map_err(|_err| fmt::Error)?;
@@ -341,7 +341,7 @@ impl Assertion {
 
             AssertionData::Cbor(x) => {
                 let buf: Vec<u8> = Vec::new();
-                let mut from = c2pa_cbor::Deserializer::from_slice(x);
+                let mut from = serde_cbor::Deserializer::from_slice(x);
                 let mut to = serde_json::Serializer::new(buf);
 
                 serde_transcode::transcode(&mut from, &mut to)
@@ -524,7 +524,7 @@ impl AssertionDecodeError {
 
     pub(crate) fn from_assertion_and_cbor_err(
         assertion: &Assertion,
-        source: c2pa_cbor::error::Error,
+        source: serde_cbor::error::Error,
     ) -> Self {
         Self {
             label: assertion.label.clone(),
@@ -643,7 +643,7 @@ pub enum AssertionDecodeErrorCause {
     JsonError(#[from] serde_json::Error),
 
     #[error(transparent)]
-    CborError(#[from] c2pa_cbor::Error),
+    CborError(#[from] serde_cbor::Error),
 
     /// There was a problem decoding field.
     #[error("the assertion had a mandatory field: {expected} that could not be decoded")]

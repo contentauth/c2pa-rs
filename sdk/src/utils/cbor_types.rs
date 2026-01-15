@@ -13,7 +13,6 @@
 
 use std::{fmt, ops::Deref};
 
-use c2pa_cbor::tags::Tagged;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{
@@ -21,6 +20,7 @@ use serde::{
     ser::{Serialize, Serializer},
 };
 use serde_bytes::ByteBuf;
+use serde_cbor::tags::Tagged;
 
 // New types for C2PA that will serialize to the correct
 // CBOR type specified in the C2PA spec.
@@ -148,13 +148,13 @@ impl fmt::Display for BytesT {
 // the map you would like to extract
 pub(crate) fn map_cbor_to_type<T: serde::de::DeserializeOwned>(
     key: &str,
-    mp: &c2pa_cbor::Value,
+    mp: &serde_cbor::Value,
 ) -> Option<T> {
-    if let c2pa_cbor::Value::Map(m) = mp {
-        let k = c2pa_cbor::Value::Text(key.to_string());
+    if let serde_cbor::Value::Map(m) = mp {
+        let k = serde_cbor::Value::Text(key.to_string());
         let v = m.get(&k)?;
-        let v_bytes = c2pa_cbor::ser::to_vec(v).ok()?;
-        let output: T = c2pa_cbor::from_slice(&v_bytes).ok()?;
+        let v_bytes = serde_cbor::ser::to_vec(v).ok()?;
+        let output: T = serde_cbor::from_slice(&v_bytes).ok()?;
         Some(output)
     } else {
         None
@@ -172,9 +172,9 @@ pub mod tests {
     fn test_round_trip() {
         let uri = UriT("Some data value".into());
 
-        let uri_cbor = c2pa_cbor::ser::to_vec(&uri).expect("should serialize");
+        let uri_cbor = serde_cbor::ser::to_vec(&uri).expect("should serialize");
 
-        let uri_restored: UriT = c2pa_cbor::from_slice(&uri_cbor).expect("should deserialize");
+        let uri_restored: UriT = serde_cbor::from_slice(&uri_cbor).expect("should deserialize");
 
         assert_eq!(uri.as_ref(), uri_restored.as_ref());
     }

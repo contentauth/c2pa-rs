@@ -69,7 +69,7 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
         }
 
         let mut signer_payload_cbor: Vec<u8> = vec![];
-        c2pa_cbor::to_writer(&mut signer_payload_cbor, signer_payload)
+        ciborium::into_writer(signer_payload, &mut signer_payload_cbor)
             .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
 
         let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, status_tracker)?;

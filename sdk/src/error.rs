@@ -332,7 +332,7 @@ pub enum Error {
     ImageError(#[from] image::ImageError),
 
     #[error(transparent)]
-    CborError(#[from] c2pa_cbor::Error),
+    CborError(#[from] serde_cbor::Error),
 
     #[error(transparent)]
     TomlSerializationError(#[from] toml::ser::Error),
