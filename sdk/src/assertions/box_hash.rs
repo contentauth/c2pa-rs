@@ -224,7 +224,6 @@ impl BoxHash {
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
-                ..Default::default()
             };
 
             let mut c2pa_box = BoxMap {
@@ -235,7 +234,6 @@ impl BoxHash {
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
-                ..Default::default()
             };
 
             let mut after_c2pa = BoxMap {
@@ -246,7 +244,6 @@ impl BoxHash {
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
-                ..Default::default()
             };
 
             let mut is_before_c2pa = true;
@@ -545,7 +542,6 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
-                    ..Default::default()
                 },
                 // And follow with
                 BoxMap {
@@ -556,7 +552,6 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
-                    ..Default::default()
                 },
             ])
         });
@@ -594,7 +589,6 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
-                    ..Default::default()
                 },
                 // Make sure the first one is the C2PA box
                 BoxMap {
@@ -605,7 +599,6 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
-                    ..Default::default()
                 },
             ])
         });
@@ -643,7 +636,6 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
-                    ..Default::default()
                 },
                 // Make sure the first one is the C2PA box
                 BoxMap {
@@ -654,7 +646,6 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
-                    ..Default::default()
                 },
                 BoxMap {
                     names: vec!["test1".to_string()],
@@ -664,7 +655,6 @@ mod tests {
                     pad: ByteBuf::from(vec![]),
                     range_start: 20,
                     range_len: 10,
-                    ..Default::default()
                 },
             ])
         });
