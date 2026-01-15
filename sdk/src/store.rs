@@ -3093,6 +3093,7 @@ impl Store {
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         intermediate_stream.rewind()?;
+        output_stream.rewind()?;
         match self.finish_save_stream(
             jumbf_bytes,
             format,

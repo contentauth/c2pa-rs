@@ -417,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa"
-version = "0.75.0"
+version = "0.75.2"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -521,7 +521,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.75.0"
+version = "0.75.2"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -535,7 +535,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.75.0"
+version = "0.75.2"
 dependencies = [
  "quote",
  "syn 2.0.114",
@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "c2patool"
-version = "0.26.11"
+version = "0.26.13"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.75.0"
+version = "0.75.2"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2282,7 +2282,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.75.0"
+version = "0.75.2"
 dependencies = [
  "anyhow",
  "c2pa",
