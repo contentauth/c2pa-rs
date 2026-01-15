@@ -1,7 +1,7 @@
 // Copyright 2022 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
-// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // at your option.
 
 // Unless required by applicable law or agreed to in writing,
@@ -32,17 +32,16 @@ use crate::{
     },
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
+    context::Context,
     crypto::base64,
     error::{Error, Result},
     hashed_uri::HashedUri,
-    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     jumbf::{
         self,
         labels::{assertion_label_from_uri, manifest_label_from_uri},
     },
     log_item,
     resource_store::{ResourceRef, ResourceStore},
-    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
     utils::{
@@ -732,9 +731,10 @@ impl Ingredient {
         path: P,
         options: &dyn IngredientOptions,
     ) -> Result<Self> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = SyncGenericResolver::new();
-        Self::from_file_impl(path.as_ref(), options, &http_resolver, &settings)
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings)?;
+        Self::from_file_impl(path.as_ref(), options, &context)
     }
 
     // Internal implementation to avoid code bloat.
@@ -742,8 +742,7 @@ impl Ingredient {
     fn from_file_impl(
         path: &Path,
         options: &dyn IngredientOptions,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Self> {
         #[cfg(feature = "diagnostics")]
         let _t = crate::utils::time_it::TimeIt::new("Ingredient:from_file_with_options");
@@ -774,25 +773,15 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) =
-            match Store::load_jumbf_from_path(path, http_resolver, settings) {
-                Ok(manifest_bytes) => {
-                    (
-                        // generate a store from the buffer and then validate from the asset path
-                        Store::from_jumbf_with_settings(
-                            &manifest_bytes,
-                            &mut validation_log,
-                            settings,
-                        )
+        let (result, manifest_bytes) = match Store::load_jumbf_from_path(path, context) {
+            Ok(manifest_bytes) => {
+                (
+                    // generate a store from the buffer and then validate from the asset path
+                    Store::from_jumbf_with_context(&manifest_bytes, &mut validation_log, context)
                         .and_then(|mut store| {
                             // verify the store
                             store
-                                .verify_from_path(
-                                    path,
-                                    &mut validation_log,
-                                    http_resolver,
-                                    settings,
-                                )
+                                .verify_from_path(path, &mut validation_log, context)
                                 .map(|_| store)
                         })
                         .inspect_err(|e| {
@@ -800,11 +789,11 @@ impl Ingredient {
                             log_item!("asset", "error loading file", "Ingredient::from_file")
                                 .failure_no_throw(&mut validation_log, e);
                         }),
-                        Some(manifest_bytes),
-                    )
-                }
-                Err(err) => (Err(err), None),
-            };
+                    Some(manifest_bytes),
+                )
+            }
+            Err(err) => (Err(err), None),
+        };
 
         // set validation status from result and log
         ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
@@ -819,7 +808,7 @@ impl Ingredient {
                     ingredient.maybe_add_thumbnail(
                         &format,
                         &mut std::io::BufReader::new(std::fs::File::open(path)?),
-                        settings,
+                        context,
                     )?;
                 }
             }
@@ -841,10 +830,12 @@ impl Ingredient {
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings)?;
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
-        ingredient.add_stream_internal(format, stream, &SyncGenericResolver::new(), &settings)
+        ingredient.add_stream_internal(format, stream, &context)
     }
 
     /// Create an Ingredient from JSON.
@@ -859,19 +850,12 @@ impl Ingredient {
     /// Sets thumbnail if not defined and a valid claim thumbnail is found or add_thumbnails is enabled.
     /// Instance_id, document_id, and provenance will be overridden if found in the stream.
     /// Format will be overridden only if it is the default (application/octet-stream).
-    #[async_generic(async_signature(
-        mut self,
-        format: S,
-        stream: &mut dyn CAIRead,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
-    ))]
+    #[async_generic]
     pub(crate) fn with_stream<S: Into<String>>(
         mut self,
         format: S,
         stream: &mut dyn CAIRead,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Self> {
         let format = format.into();
 
@@ -903,27 +887,20 @@ impl Ingredient {
         stream.rewind()?;
 
         if _sync {
-            self.add_stream_internal(&format, stream, http_resolver, settings)
+            self.add_stream_internal(&format, stream, context)
         } else {
-            self.add_stream_internal_async(&format, stream, http_resolver, settings)
+            self.add_stream_internal_async(&format, stream, context)
                 .await
         }
     }
 
     // Internal implementation to avoid code bloat.
-    #[async_generic(async_signature(
-        mut self,
-        format: &str,
-        stream: &mut dyn CAIRead,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
-    ))]
+    #[async_generic]
     fn add_stream_internal(
         mut self,
         format: &str,
         stream: &mut dyn CAIRead,
-        http_resolver: &impl SyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
@@ -931,9 +908,9 @@ impl Ingredient {
         let jumbf_result = match self.manifest_data() {
             Some(data) => Ok(data.into_owned()),
             None => if _sync {
-                Store::load_jumbf_from_stream(format, stream, http_resolver, settings)
+                Store::load_jumbf_from_stream(format, stream, context)
             } else {
-                Store::load_jumbf_from_stream_async(format, stream, http_resolver, settings).await
+                Store::load_jumbf_from_stream_async(format, stream, context).await
             }
             .map(|(manifest_bytes, _)| manifest_bytes),
         };
@@ -946,20 +923,16 @@ impl Ingredient {
                         &manifest_bytes,
                         format,
                         &mut *stream,
-                        true,
                         &mut validation_log,
-                        http_resolver,
-                        settings,
+                        context,
                     )
                 } else {
                     Store::from_manifest_data_and_stream_async(
                         &manifest_bytes,
                         format,
                         &mut *stream,
-                        true,
                         &mut validation_log,
-                        http_resolver,
-                        settings,
+                        context,
                     )
                     .await
                 };
@@ -970,23 +943,13 @@ impl Ingredient {
 
         // Fetch ocsp responses and store it with the ingredient
         if let Ok(ref mut store) = result {
-            let labels = store.get_manifest_labels_for_ocsp(settings);
+            let labels = store.get_manifest_labels_for_ocsp(context.settings());
 
             let ocsp_response_ders = if _sync {
-                store.get_ocsp_response_ders(
-                    labels,
-                    &mut validation_log,
-                    http_resolver,
-                    settings,
-                )?
+                store.get_ocsp_response_ders(labels, &mut validation_log, context)?
             } else {
                 store
-                    .get_ocsp_response_ders_async(
-                        labels,
-                        &mut validation_log,
-                        http_resolver,
-                        settings,
-                    )
+                    .get_ocsp_response_ders_async(labels, &mut validation_log, context)
                     .await?
             };
 
@@ -1003,7 +966,7 @@ impl Ingredient {
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), settings)?;
+        self.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), context)?;
 
         Ok(self)
     }
@@ -1022,16 +985,16 @@ impl Ingredient {
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = AsyncGenericResolver::new();
-        Self::from_stream_async_with_settings(format, stream, &http_resolver, &settings).await
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings)?;
+        Self::from_stream_async_with_settings(format, stream, &context).await
     }
 
     pub(crate) async fn from_stream_async_with_settings(
         format: &str,
         stream: &mut dyn CAIRead,
-        http_resolver: &impl AsyncHttpResolver,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
@@ -1039,57 +1002,50 @@ impl Ingredient {
         let mut validation_log = StatusTracker::default();
 
         // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) = match Store::load_jumbf_from_stream_async(
-            format,
-            stream,
-            &AsyncGenericResolver::new(),
-            settings,
-        )
-        .await
-        {
-            Ok((manifest_bytes, _)) => {
-                (
-                    // generate a store from the buffer and then validate from the asset path
-                    match Store::from_jumbf_with_settings(
-                        &manifest_bytes,
-                        &mut validation_log,
-                        settings,
-                    ) {
-                        Ok(store) => {
-                            // verify the store
-                            Store::verify_store_async(
-                                &store,
-                                &mut ClaimAssetData::Stream(stream, format),
-                                &mut validation_log,
-                                http_resolver,
-                                settings,
-                            )
-                            .await
-                            .map(|_| store)
-                        }
-                        Err(e) => {
-                            log_item!(
-                                "asset",
-                                "error loading asset",
-                                "Ingredient::from_stream_async"
-                            )
-                            .failure_no_throw(&mut validation_log, &e);
+        let (result, manifest_bytes) =
+            match Store::load_jumbf_from_stream_async(format, stream, context).await {
+                Ok((manifest_bytes, _)) => {
+                    (
+                        // generate a store from the buffer and then validate from the asset path
+                        match Store::from_jumbf_with_context(
+                            &manifest_bytes,
+                            &mut validation_log,
+                            context,
+                        ) {
+                            Ok(store) => {
+                                // verify the store
+                                Store::verify_store_async(
+                                    &store,
+                                    &mut ClaimAssetData::Stream(stream, format),
+                                    &mut validation_log,
+                                    context,
+                                )
+                                .await
+                                .map(|_| store)
+                            }
+                            Err(e) => {
+                                log_item!(
+                                    "asset",
+                                    "error loading asset",
+                                    "Ingredient::from_stream_async"
+                                )
+                                .failure_no_throw(&mut validation_log, &e);
 
-                            Err(e)
-                        }
-                    },
-                    Some(manifest_bytes),
-                )
-            }
-            Err(err) => (Err(err), None),
-        };
+                                Err(e)
+                            }
+                        },
+                        Some(manifest_bytes),
+                    )
+                }
+                Err(err) => (Err(err), None),
+            };
 
         // set validation status from result and log
         ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), settings)?;
+        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), context)?;
 
         Ok(ingredient)
     }
@@ -1249,7 +1205,7 @@ impl Ingredient {
         claim: &mut Claim,
         redactions: Option<Vec<String>>,
         resources: Option<&ResourceStore>, // use alternate resource store (for Builder model)
-        settings: &Settings,
+        context: &Context,
     ) -> Result<HashedUri> {
         let mut thumbnail = None;
         // for Builder model, ingredient resources may be in the manifest
@@ -1270,7 +1226,7 @@ impl Ingredient {
 
                 // have Store check and load ingredients and add them to a claim
                 let ingredient_store =
-                    Store::load_ingredient_to_claim(claim, &manifest_data, redactions, settings)?;
+                    Store::load_ingredient_to_claim(claim, &manifest_data, redactions, context)?;
 
                 let ingredient_active_claim = ingredient_store
                     .provenance_claim()
@@ -1488,48 +1444,45 @@ impl Ingredient {
         format: &str,
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let http_resolver = AsyncGenericResolver::new();
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings)?;
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
         let mut validation_log = StatusTracker::default();
 
         let manifest_bytes: Vec<u8> = manifest_bytes.into();
         // generate a store from the buffer and then validate from the asset path
-        let result = match Store::from_jumbf_with_settings(
-            &manifest_bytes,
-            &mut validation_log,
-            &settings,
-        ) {
-            Ok(store) => {
-                // verify the store
-                stream.rewind()?;
+        let result =
+            match Store::from_jumbf_with_context(&manifest_bytes, &mut validation_log, &context) {
+                Ok(store) => {
+                    // verify the store
+                    stream.rewind()?;
 
-                Store::verify_store_async(
-                    &store,
-                    &mut ClaimAssetData::Stream(stream, format),
-                    &mut validation_log,
-                    &http_resolver,
-                    &settings,
-                )
-                .await
-                .map(|_| store)
-            }
-            Err(e) => {
-                // add a log entry for the error so we act like verify
-                log_item!("asset", "error loading file", "Ingredient::from_file")
-                    .failure_no_throw(&mut validation_log, &e);
+                    Store::verify_store_async(
+                        &store,
+                        &mut ClaimAssetData::Stream(stream, format),
+                        &mut validation_log,
+                        &context,
+                    )
+                    .await
+                    .map(|_| store)
+                }
+                Err(e) => {
+                    // add a log entry for the error so we act like verify
+                    log_item!("asset", "error loading file", "Ingredient::from_file")
+                        .failure_no_throw(&mut validation_log, &e);
 
-                Err(e)
-            }
-        };
+                    Err(e)
+                }
+            };
 
         // set validation status from result and log
         ingredient.update_validation_status(result, Some(manifest_bytes), &validation_log)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
-        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), &settings)?;
+        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), &context)?;
 
         Ok(ingredient)
     }
@@ -1543,11 +1496,12 @@ impl Ingredient {
         &mut self,
         format: &str,
         stream: &mut R,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<()>
     where
         R: std::io::BufRead + std::io::Seek,
     {
+        let settings = context.settings();
         let auto_thumbnail = settings.builder.thumbnail.enabled;
 
         if self.thumbnail.is_none() && auto_thumbnail {
@@ -1921,7 +1875,6 @@ mod tests_file_io {
     const NO_MANIFEST_JPEG: &str = "earth_apollo17.jpg";
     const MANIFEST_JPEG: &str = "C.jpg";
     const BAD_SIGNATURE_JPEG: &str = "E-sig-CA.jpg";
-    const PRERELEASE_JPEG: &str = "prerelease.jpg";
 
     fn stats(ingredient: &Ingredient) -> usize {
         let thumb_size = ingredient.thumbnail_bytes().map_or(0, |i| i.len());
@@ -2081,6 +2034,7 @@ mod tests_file_io {
     #[test]
     #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
     fn test_jpg_prerelease() {
+        const PRERELEASE_JPEG: &str = "prerelease.jpg";
         let ap = fixture_path(PRERELEASE_JPEG);
         let ingredient = Ingredient::from_file(ap).expect("from_file");
         stats(&ingredient);

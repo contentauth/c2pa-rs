@@ -19,10 +19,10 @@ use std::{
     collections::HashMap,
     io::{Cursor, Read, Write},
     path::PathBuf,
+    sync::LazyLock,
 };
 
 use env_logger;
-use once_cell::sync::Lazy;
 use tempfile::TempDir;
 
 use crate::{
@@ -32,11 +32,11 @@ use crate::{
     },
     asset_io::CAIReadWrite,
     claim::Claim,
+    context::Context,
     crypto::{cose::CertificateTrustPolicy, raw_signature::SigningAlg},
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
     resource_store::UriOrResource,
-    settings::Settings,
     store::Store,
     utils::{io_utils::tempdirectory, mime::extension_to_mime},
     AsyncSigner, ClaimGeneratorInfo, Result,
@@ -85,7 +85,7 @@ macro_rules! define_fixtures {
         )*
 
         // Create the registry mapping filenames to data and format
-        static EMBEDDED_FIXTURES: Lazy<HashMap<&'static str, (&'static [u8], &'static str)>> = Lazy::new(|| {
+        static EMBEDDED_FIXTURES: LazyLock<HashMap<&'static str, (&'static [u8], &'static str)>> = LazyLock::new(|| {
             let mut map = HashMap::new();
             $(
                 // Convert to &[u8] slice to avoid fixed-size array type issues
@@ -136,6 +136,65 @@ pub fn setup_logger() {
     INIT.call_once(|| {
         let _ = env_logger::builder().is_test(true).try_init();
     });
+}
+
+/// Returns Settings configured for testing.
+///
+/// This loads the standard test settings from `tests/fixtures/test_settings.toml`,
+/// which includes trust anchors, signer configuration, and verification settings
+/// appropriate for testing.
+///
+/// # Panics
+///
+/// Panics if test settings cannot be loaded.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::utils::test::test_settings;
+///
+/// // Use directly with Context
+/// let context = Context::new().with_settings(test_settings())?;
+///
+/// // Or modify for specific test needs
+/// let mut settings = test_settings();
+/// settings.verify.verify_trust = false;
+/// let context = Context::new().with_settings(settings)?;
+/// ```
+#[allow(clippy::expect_used)]
+pub fn test_settings() -> crate::Settings {
+    crate::Settings::new()
+        .with_toml(include_str!("../../tests/fixtures/test_settings.toml"))
+        .expect("built-in test_settings.toml should be valid")
+}
+
+/// Creates a Context configured with standard test settings.
+///
+/// This is equivalent to `Context::new().with_settings(test_settings())`.
+/// Use this for most tests that need a configured context.
+///
+/// # Panics
+///
+/// Panics if test settings cannot be loaded.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::utils::test::test_context;
+///
+/// // Single use
+/// let builder = Builder::from_context(test_context());
+///
+/// // Shared across multiple components
+/// let ctx = test_context().into_shared();
+/// let builder1 = Builder::from_shared_context(&ctx);
+/// let builder2 = Builder::from_shared_context(&ctx);
+/// ```
+#[allow(clippy::expect_used)]
+pub fn test_context() -> Context {
+    Context::new()
+        .with_settings(test_settings())
+        .expect("test_settings should always be valid")
 }
 
 /// Create new C2PA compatible UUID
@@ -327,7 +386,7 @@ pub fn create_test_claim_v1() -> Result<Claim> {
 /// Creates a store with an unsigned claim for testing
 pub fn create_test_store() -> Result<Store> {
     // Create claims store.
-    let mut store = Store::with_settings(&Settings::default());
+    let mut store = Store::from_context(&Context::new());
 
     let claim = create_test_claim()?;
     store.commit_claim(claim).unwrap();
@@ -337,7 +396,7 @@ pub fn create_test_store() -> Result<Store> {
 /// Creates a store with an unsigned v1 claim for testing
 pub fn create_test_store_v1() -> Result<Store> {
     // Create claims store.
-    let mut store = Store::with_settings(&Settings::default());
+    let mut store = Store::from_context(&Context::new());
 
     let claim = create_test_claim_v1()?;
     store.commit_claim(claim).unwrap();

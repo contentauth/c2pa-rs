@@ -21,7 +21,7 @@ use crate::{
     http::{SyncGenericResolver, SyncHttpResolver},
     identity::{builder::IdentityAssertionBuilder, x509::X509CredentialHolder},
     settings::{Settings, SettingsValidate},
-    Error, Result, Signer, SigningAlg,
+    BoxedSigner, Error, Result, Signer, SigningAlg,
 };
 
 /// Settings for configuring a local or remote [`Signer`].
@@ -46,6 +46,8 @@ pub enum SignerSettings {
         tsa_url: Option<String>,
         // Referenced assertions for CAWG identity signing (optional).
         referenced_assertions: Option<Vec<String>>,
+        // Roles for CAWG identity signing (optional).
+        roles: Option<Vec<String>>,
     },
     /// A signer configured remotely.
     Remote {
@@ -61,6 +63,8 @@ pub enum SignerSettings {
         tsa_url: Option<String>,
         // Referenced assertions for CAWG identity signing (optional).
         referenced_assertions: Option<Vec<String>>,
+        // Roles for CAWG identity signing (optional).
+        roles: Option<Vec<String>>,
     },
 }
 
@@ -69,82 +73,94 @@ impl SignerSettings {
     /// Returns the constructed signer from the [Settings::signer] field.
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
-    pub fn signer() -> Result<Box<dyn Signer>> {
-        let c2pa_signer = Self::c2pa_signer()?;
+    pub fn signer() -> Result<BoxedSigner> {
+        let signer_info = match Settings::get_thread_local_value::<Option<SignerSettings>>("signer")
+        {
+            Ok(Some(signer_info)) => signer_info,
+            #[cfg(test)]
+            _ => {
+                return Ok(crate::utils::test_signer::test_signer(SigningAlg::Ps256));
+            }
+            #[cfg(not(test))]
+            _ => {
+                return Err(Error::MissingSignerSettings);
+            }
+        };
+
+        let c2pa_signer = Self::c2pa_signer(signer_info)?;
 
         // TO DISCUSS: What if get_value returns an Err(...)?
         if let Ok(Some(cawg_x509_settings)) =
-            Settings::get_value::<Option<SignerSettings>>("cawg_x509_signer")
+            Settings::get_thread_local_value::<Option<SignerSettings>>("cawg_x509_signer")
         {
-            match cawg_x509_settings {
-                SignerSettings::Local {
-                    alg: cawg_alg,
-                    sign_cert: cawg_sign_cert,
-                    private_key: cawg_private_key,
-                    tsa_url: cawg_tsa_url,
-                    referenced_assertions,
-                } => {
-                    let cawg_dual_signer = CawgX509IdentitySigner {
-                        c2pa_signer,
-                        cawg_alg,
-                        cawg_sign_cert,
-                        cawg_private_key,
-                        cawg_tsa_url,
-                        cawg_referenced_assertions: referenced_assertions.unwrap_or_default(),
-                    };
-
-                    Ok(Box::new(cawg_dual_signer))
-                }
-
-                SignerSettings::Remote {
-                    url: _url,
-                    alg: _alg,
-                    sign_cert: _sign_cert,
-                    tsa_url: _tsa_url,
-                    referenced_assertions: _referenced_assertions,
-                } => todo!("Remote CAWG X.509 signing not yet supported"),
-            }
+            cawg_x509_settings.cawg_signer(c2pa_signer)
         } else {
             Ok(c2pa_signer)
         }
     }
 
-    /// Returns a C2PA-only signer from the [`BuilderSettings::signer`] field.
-    fn c2pa_signer() -> Result<Box<dyn Signer>> {
-        let signer_info = Settings::get_value::<Option<SignerSettings>>("signer");
+    /// Returns a c2pa signer using the provided signer settings.
+    pub fn c2pa_signer(self) -> Result<BoxedSigner> {
+        match self {
+            SignerSettings::Local {
+                alg,
+                sign_cert,
+                private_key,
+                tsa_url,
+                referenced_assertions: _,
+                roles: _,
+            } => {
+                create_signer::from_keys(sign_cert.as_bytes(), private_key.as_bytes(), alg, tsa_url)
+            }
+            SignerSettings::Remote {
+                url,
+                alg,
+                sign_cert,
+                tsa_url,
+                referenced_assertions: _,
+                roles: _,
+            } => Ok(Box::new(RemoteSigner {
+                url,
+                alg,
+                reserve_size: 10000 + sign_cert.len(),
+                certs: vec![sign_cert.into_bytes()],
+                tsa_url,
+            })),
+        }
+    }
 
-        match signer_info {
-            Ok(Some(signer_info)) => match signer_info {
-                SignerSettings::Local {
-                    alg,
-                    sign_cert,
-                    private_key,
-                    tsa_url,
-                    referenced_assertions: _,
-                } => create_signer::from_keys(
-                    sign_cert.as_bytes(),
-                    private_key.as_bytes(),
-                    alg,
-                    tsa_url.to_owned(),
-                ),
-                SignerSettings::Remote {
-                    url,
-                    alg,
-                    sign_cert,
-                    tsa_url,
-                    referenced_assertions: _,
-                } => Ok(Box::new(RemoteSigner {
-                    url,
-                    alg,
-                    reserve_size: 10000 + sign_cert.len(),
-                    certs: vec![sign_cert.into_bytes()],
-                    tsa_url,
-                })),
-            },
-            #[cfg(test)]
-            _ => Ok(crate::utils::test_signer::test_signer(SigningAlg::Ps256)),
-            #[cfg(not(test))]
-            _ => Err(Error::MissingSignerSettings),
+    /// Returns a CAWG X.509 identity signer that wraps the provided c2pa signer.
+    pub fn cawg_signer(self, c2pa_signer: BoxedSigner) -> Result<BoxedSigner> {
+        match self {
+            SignerSettings::Local {
+                alg: cawg_alg,
+                sign_cert: cawg_sign_cert,
+                private_key: cawg_private_key,
+                tsa_url: cawg_tsa_url,
+                referenced_assertions: cawg_referenced_assertions,
+                roles: cawg_roles,
+            } => {
+                let cawg_dual_signer = CawgX509IdentitySigner {
+                    c2pa_signer,
+                    cawg_alg,
+                    cawg_sign_cert,
+                    cawg_private_key,
+                    cawg_tsa_url,
+                    cawg_referenced_assertions: cawg_referenced_assertions.unwrap_or_default(),
+                    cawg_roles: cawg_roles.unwrap_or_default(),
+                };
+
+                Ok(Box::new(cawg_dual_signer))
+            }
+
+            SignerSettings::Remote {
+                url: _url,
+                alg: _alg,
+                sign_cert: _sign_cert,
+                tsa_url: _tsa_url,
+                referenced_assertions: _,
+                roles: _,
+            } => todo!("Remote CAWG X.509 signing not yet supported"),
         }
     }
 }
@@ -156,12 +172,13 @@ impl SettingsValidate for SignerSettings {
 }
 
 struct CawgX509IdentitySigner {
-    c2pa_signer: Box<dyn Signer>,
+    c2pa_signer: BoxedSigner,
     cawg_alg: SigningAlg,
     cawg_sign_cert: String,
     cawg_private_key: String,
     cawg_tsa_url: Option<String>,
     cawg_referenced_assertions: Vec<String>,
+    cawg_roles: Vec<String>,
     // NOTE: The CAWG signing settings are stored here because
     // we can't clone or transfer ownership of an `X509CredentialHolder`
     // inside the dynamic_assertions callback.
@@ -225,7 +242,7 @@ impl Signer for CawgX509IdentitySigner {
 
         let mut iab = IdentityAssertionBuilder::for_credential_holder(x509_credential_holder);
 
-        // TODO: Configure referenced assertions and role.        // Add referenced assertions if configured
+        // Add referenced assertions if configured
         if !self.cawg_referenced_assertions.is_empty() {
             let referenced_assertions: Vec<&str> = self
                 .cawg_referenced_assertions
@@ -233,6 +250,12 @@ impl Signer for CawgX509IdentitySigner {
                 .map(|s| s.as_str())
                 .collect();
             iab.add_referenced_assertions(&referenced_assertions);
+        }
+
+        // Add roles if configured
+        if !self.cawg_roles.is_empty() {
+            let roles: Vec<&str> = self.cawg_roles.iter().map(|s| s.as_str()).collect();
+            iab.add_roles(&roles);
         }
 
         vec![Box::new(iab)]

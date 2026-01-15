@@ -47,17 +47,15 @@
 //! # Ok(())
 //! # }
 //! ```
-
-//! ## Example: Adding a signed Manifest to an Asset
 //!
-//! ## Adding a manifest to a file
-//!
-//! ```ignore-wasm32
+//! ## Adding a signed manifest to a file
+//! ```
 //! # use c2pa::Result;
 //! use std::io::Cursor;
 //!
-//! use c2pa::{settings::Settings, Builder, SigningAlg};
+//! use c2pa::{Builder, Context};
 //! use serde::Serialize;
+//! use serde_json::json;
 //!
 //! #[derive(Serialize)]
 //! struct Test {
@@ -65,17 +63,19 @@
 //! }
 //!
 //! # fn main() -> Result<()> {
-//! {
-//!     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-//!     let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
-//!     builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+//! // Create context with signer configuration
+//! let context =
+//!     Context::new().with_settings(include_str!("../tests/fixtures/test_settings.toml"))?;
 //!
-//!     // embed a manifest using the signer
-//!     let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
-//!     let mut dest = Cursor::new(Vec::new());
-//!     let signer = Settings::signer()?;
-//!     let _c2pa_data = builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
-//! }
+//! // Build manifest
+//! let mut builder = Builder::from_context(context)
+//!     .with_definition(json!({"title": "Test"}))?;
+//! builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+//!
+//! // Save with automatic signer from context (created from settings)
+//! let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
+//! let mut dest = Cursor::new(Vec::new());
+//! let _c2pa_data = builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -117,6 +117,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The assertions module contains the definitions for the assertions that are part of the C2PA specification.
 pub mod assertions;
 
+pub mod context;
+
 /// The cose_sign module contains the definitions for the COSE signing algorithms.
 pub mod cose_sign;
 
@@ -130,6 +132,10 @@ pub mod crypto;
 /// Dynamic assertions are a new feature that allows you to add assertions to a C2PA file as a part of the signing process.
 #[doc(hidden)]
 pub mod dynamic_assertion;
+
+// TODO: pub it when we expose in high-level API
+/// The http module contains generic traits for configuring sync and async http resolvers.
+pub(crate) mod http;
 
 /// The `identity` module provides support for the [CAWG identity assertion](https://cawg.io/identity).
 #[doc(hidden)]
@@ -152,10 +158,6 @@ pub mod validation_results;
 #[doc(hidden)]
 pub mod validation_status;
 
-// TODO: pub it when we expose in high-level API
-/// The http module contains generic traits for configuring sync and async http resolvers.
-pub(crate) mod http;
-
 // Public exports
 pub use assertions::DigitalSourceType;
 #[doc(inline)]
@@ -163,9 +165,7 @@ pub use assertions::Relationship;
 pub use builder::{Builder, BuilderIntent, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
-// pub use dynamic_assertion::{
-//     AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
-// };
+pub use context::Context;
 pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
 #[doc(inline)]
@@ -180,7 +180,8 @@ pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 pub use reader::Reader;
 #[doc(inline)]
 pub use resource_store::{ResourceRef, ResourceStore};
-pub use signer::{AsyncSigner, Signer};
+pub use settings::Settings;
+pub use signer::{AsyncSigner, BoxedAsyncSigner, BoxedSigner, Signer};
 pub use utils::mime::format_from_path;
 #[doc(inline)]
 pub use validation_results::{ValidationResults, ValidationState};
@@ -205,9 +206,8 @@ pub(crate) mod jumbf;
 pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store_report;
-
-#[allow(dead_code)]
-// TODO: Remove this when the feature is released (used in tests only for some builds now)
+/// The maybe_send_sync module contains traits for conditional Send bounds based on target architecture.
+pub(crate) mod maybe_send_sync;
 pub(crate) mod reader;
 pub(crate) mod resource_store;
 pub(crate) mod salt;

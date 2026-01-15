@@ -17,6 +17,7 @@ use ciborium::value::Value;
 use coset::{CoseSign1, Label};
 
 use crate::{
+    context::Context,
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
@@ -25,7 +26,6 @@ use crate::{
         },
         ocsp::OcspResponse,
     },
-    http::{AsyncHttpResolver, SyncHttpResolver},
     log_item,
     settings::Settings,
     status_tracker::StatusTracker,
@@ -42,8 +42,7 @@ use crate::{
     ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
-    http_resolver: &impl AsyncHttpResolver,
-    settings: &Settings,
+    context: &Context,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn check_ocsp_status(
@@ -54,10 +53,10 @@ pub fn check_ocsp_status(
     ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
-    http_resolver: &impl SyncHttpResolver,
-    settings: &Settings,
+    context: &Context,
 ) -> Result<OcspResponse, CoseError> {
-    if settings
+    if context
+        .settings()
         .builder
         .certificate_status_should_override
         .unwrap_or(false)
@@ -72,7 +71,7 @@ pub fn check_ocsp_status(
                         ocsp_response_ders,
                         tst_info,
                         validation_log,
-                        settings,
+                        context.settings(),
                     )
                 } else {
                     process_ocsp_responses_async(
@@ -82,7 +81,7 @@ pub fn check_ocsp_status(
                         ocsp_response_ders,
                         tst_info,
                         validation_log,
-                        settings,
+                        context.settings(),
                     )
                     .await
                 };
@@ -100,7 +99,7 @@ pub fn check_ocsp_status(
                     ctp,
                     tst_info,
                     validation_log,
-                    settings,
+                    context.settings(),
                 )
             } else {
                 check_stapled_ocsp_response_async(
@@ -110,7 +109,7 @@ pub fn check_ocsp_status(
                     ctp,
                     tst_info,
                     validation_log,
-                    settings,
+                    context.settings(),
                 )
                 .await
             }
@@ -125,8 +124,7 @@ pub fn check_ocsp_status(
                         ctp,
                         tst_info,
                         validation_log,
-                        http_resolver,
-                        settings,
+                        context,
                     )
                 } else {
                     fetch_and_check_ocsp_response_async(
@@ -135,8 +133,7 @@ pub fn check_ocsp_status(
                         ctp,
                         tst_info,
                         validation_log,
-                        http_resolver,
-                        settings,
+                        context,
                     )
                     .await
                 }
@@ -152,7 +149,7 @@ pub fn check_ocsp_status(
                                 ocsp_response_ders,
                                 tst_info,
                                 validation_log,
-                                settings,
+                                context.settings(),
                             )
                         } else {
                             process_ocsp_responses_async(
@@ -162,7 +159,7 @@ pub fn check_ocsp_status(
                                 ocsp_response_ders,
                                 tst_info,
                                 validation_log,
-                                settings,
+                                context.settings(),
                             )
                             .await
                         }
@@ -279,9 +276,22 @@ fn check_stapled_ocsp_response(
         Some(tst_info) => Ok(tst_info.clone()),
         None => {
             if _sync {
-                validate_cose_tst_info(sign1, data, ctp, &mut local_log_sync, settings)
+                validate_cose_tst_info(
+                    sign1,
+                    data,
+                    ctp,
+                    &mut local_log_sync,
+                    settings.verify.verify_timestamp_trust,
+                )
             } else {
-                validate_cose_tst_info_async(sign1, data, ctp, &mut local_log_sync, settings).await
+                validate_cose_tst_info_async(
+                    sign1,
+                    data,
+                    ctp,
+                    &mut local_log_sync,
+                    settings.verify.verify_timestamp_trust,
+                )
+                .await
             }
         }
     };
@@ -333,8 +343,7 @@ fn check_stapled_ocsp_response(
     ctp: &CertificateTrustPolicy,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
-    http_resolver: &impl AsyncHttpResolver,
-    settings: &Settings,
+    context: &crate::context::Context,
 ))]
 pub(crate) fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
@@ -342,15 +351,14 @@ pub(crate) fn fetch_and_check_ocsp_response(
     ctp: &CertificateTrustPolicy,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
-    http_resolver: &impl SyncHttpResolver,
-    settings: &Settings,
+    context: &crate::context::Context,
 ) -> Result<OcspResponse, CoseError> {
     let certs = cert_chain_from_sign1(sign1)?;
 
     let ocsp_der = if _sync {
-        crate::crypto::ocsp::fetch_ocsp_response(&certs, http_resolver)
+        crate::crypto::ocsp::fetch_ocsp_response(&certs, context)
     } else {
-        crate::crypto::ocsp::fetch_ocsp_response_async(&certs, http_resolver).await
+        crate::crypto::ocsp::fetch_ocsp_response_async(&certs, context).await
     };
 
     let Some(ocsp_response_der) = ocsp_der else {
@@ -360,9 +368,15 @@ pub(crate) fn fetch_and_check_ocsp_response(
     // use supplied override time if provided
     let signing_time: Option<DateTime<Utc>> = match tst_info {
         Some(tst_info) => Some(tst_info.gen_time.clone().into()),
-        None => validate_cose_tst_info(sign1, data, ctp, validation_log, settings)
-            .ok()
-            .map(|tst_info| tst_info.gen_time.clone().into()),
+        None => validate_cose_tst_info(
+            sign1,
+            data,
+            ctp,
+            validation_log,
+            context.settings().verify.verify_timestamp_trust,
+        )
+        .ok()
+        .map(|tst_info| tst_info.gen_time.clone().into()),
     };
 
     // Check the OCSP response, but only if it is well-formed.
