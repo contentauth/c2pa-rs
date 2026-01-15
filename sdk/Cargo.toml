@@ -107,8 +107,7 @@ bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
-ciborium = "0.2.2"
-toml = "0.9.10"
+c2pa_cbor = { path = "../c2pa_cbor" }
 config = { version = "0.14.0", default-features = false, features = [
     "json",
     "toml",
@@ -168,7 +167,6 @@ rsa = { version = "0.9.10", features = ["pem", "sha2", "std"], optional = true }
 schemars = { version = "1.0.4", optional = true }
 serde = { version = "1.0.225", features = ["derive"] }
 serde_bytes = "0.11.14"
-serde_cbor = "0.11.1"
 serde_derive = "1.0.197"
 serde_json = { version = "1.0.117", features = ["preserve_order"] }
 serde_with = "3.15.1"
@@ -178,6 +176,7 @@ spki = { version = "0.7.3", optional = true }
 static-iref = "3.0"
 tempfile = "3.23.0"
 thiserror = "2.0.17"
+toml = "0.9.10"
 url = "2.5.3"
 uuid = { version = "1.18.0", features = ["serde", "v4"] }
 web-time = "1.1"
