@@ -602,7 +602,7 @@ fn reader_from_args(args: &CliArgs) -> Result<Reader> {
     }
 }
 
-// Utility to catch reader formtting errors and print the reader json or detailed json
+// Utility to catch reader formatting errors and print the reader json or detailed json
 // formatting can fail if Reader CBOR is deeply nested or malformed
 fn print_reader(reader: &Reader, detailed: bool) -> Result<()> {
     let result = if detailed {

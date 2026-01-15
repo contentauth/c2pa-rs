@@ -546,6 +546,7 @@ name = "c2pa_cbor"
 version = "0.74.0"
 dependencies = [
  "criterion",
+ "half",
  "serde",
  "serde-transcode",
  "serde_bytes",

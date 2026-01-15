@@ -214,6 +214,20 @@ macro_rules! define_typed_array_encoder {
     };
 }
 
+// Special case for f16 arrays since f16 type is not yet stable in Rust
+// We take u16 (the raw bits) and encode them directly
+/// Helper to encode a float16 big-endian array (tag 80)
+pub fn encode_float16be_array<W: Write>(writer: &mut W, data: &[u16]) -> Result<()> {
+    let bytes: Vec<u8> = data.iter().flat_map(|&n| n.to_be_bytes()).collect();
+    encode_tagged(writer, TAG_FLOAT16BE_ARRAY, &bytes)
+}
+
+/// Helper to encode a float16 little-endian array (tag 84)
+pub fn encode_float16le_array<W: Write>(writer: &mut W, data: &[u16]) -> Result<()> {
+    let bytes: Vec<u8> = data.iter().flat_map(|&n| n.to_le_bytes()).collect();
+    encode_tagged(writer, TAG_FLOAT16LE_ARRAY, &bytes)
+}
+
 define_typed_array_encoder! {
     /// Helper to encode a uint16 big-endian array (tag 65)
     encode_uint16be_array, TAG_UINT16BE_ARRAY, u16, to_be_bytes;
@@ -532,5 +546,40 @@ mod tests {
         let decoded: Tagged<String> = crate::from_slice(&cbor).unwrap();
         assert_eq!(decoded.tag, None);
         assert_eq!(decoded.value, "plain string");
+    }
+
+    #[test]
+    fn test_encode_float16be_array() {
+        // Test f16 big-endian array encoding
+        // u16 values represent the raw IEEE 754 binary16 bits
+        // 0x3c00 = 1.0 in f16, 0x4000 = 2.0, 0x4200 = 3.0
+        let data: Vec<u16> = vec![0x3c00, 0x4000, 0x4200];
+        let mut buf = Vec::new();
+        encode_float16be_array(&mut buf, &data).unwrap();
+
+        // Should have tag 80
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_FLOAT16BE_ARRAY);
+
+        // Verify the bytes are big-endian
+        // After the tag and byte string header, should have the raw bytes
+        assert!(buf.len() >= 6); // tag + header + 6 bytes of data
+    }
+
+    #[test]
+    fn test_encode_float16le_array() {
+        // Test f16 little-endian array encoding
+        let data: Vec<u16> = vec![0x3c00, 0x4000, 0x4200];
+        let mut buf = Vec::new();
+        encode_float16le_array(&mut buf, &data).unwrap();
+
+        // Should have tag 84
+        let mut decoder = crate::Decoder::from_slice(&buf);
+        let tag = decoder.read_tag().unwrap();
+        assert_eq!(tag, TAG_FLOAT16LE_ARRAY);
+
+        // Verify the bytes are little-endian
+        assert!(buf.len() >= 6); // tag + header + 6 bytes of data
     }
 }

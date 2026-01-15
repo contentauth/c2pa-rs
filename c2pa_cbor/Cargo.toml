@@ -11,6 +11,7 @@ keywords = ["cbor", "metadata"]
 
 
 [dependencies]
+half = "2.0.0" # for f16 support - until f16 is stabilized
 serde = { version = "1.0", features = ["derive"] }
 serde_bytes = "0.11"
 

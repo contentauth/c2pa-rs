@@ -39,7 +39,6 @@ const ERR_UNSUPPORTED_OPTION: &str = "Unsupported type in option";
 const ERR_NEWTYPE_TEXT: &str = "Text in newtype must be definite length";
 const ERR_NEWTYPE_ARRAY_LEN: &str = "Expected 1-element array for newtype struct";
 const ERR_NEWTYPE_INDEFINITE: &str = "Indefinite-length array not supported for newtype struct";
-const ERR_OPTION_UNSUPPORTED: &str = "Option deserialization only supports maps and simple types";
 const ERR_EXPECTED_UNIT: &str = "Expected unit variant";
 const ERR_EXPECTED_DATA: &str = "Expected variant with data";
 
@@ -51,33 +50,84 @@ pub struct Decoder<R: Read> {
     max_recursion_depth: usize,
 }
 
-impl<R: Read> Decoder<R> {
-    /// Default maximum recursion depth to prevent stack overflow from deeply nested structures
-    pub const DEFAULT_MAX_DEPTH: usize = 128;
+/// Safely convert u64 to usize, checking for overflow on 32-bit platforms
+#[inline]
+fn u64_to_usize(val: u64) -> Result<usize> {
+    usize::try_from(val).map_err(|_| {
+        Error::Syntax(format!(
+            "Length {} exceeds maximum supported size on this platform",
+            val
+        ))
+    })
+}
 
+impl<R: Read> Decoder<R> {
+    /// Create a new CBOR decoder with default limits
+    ///
+    /// Default limits:
+    /// - No allocation limit (relies on `try_reserve` for system-level protection)
+    /// - Maximum recursion depth: 128 levels
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::Cursor;
+    ///
+    /// use c2pa_cbor::Decoder;
+    ///
+    /// let data = vec![0xa0]; // empty map
+    /// let decoder = Decoder::new(Cursor::new(&data));
+    /// ```
     pub fn new(reader: R) -> Self {
         Decoder {
             reader,
             peeked: None,
-            max_allocation: None, // Default: no artificial limit, rely on try_reserve
+            max_allocation: None,
             recursion_depth: 0,
-            max_recursion_depth: Self::DEFAULT_MAX_DEPTH,
+            max_recursion_depth: DEFAULT_MAX_DEPTH,
         }
     }
 
-    /// Create a decoder with a maximum allocation size limit
+    /// Set the maximum allocation size for a single CBOR value (builder pattern)
     ///
     /// This provides defense-in-depth against malicious CBOR with extremely large
-    /// length fields. Even if this limit is bypassed, try_reserve will still
-    /// prevent OOM by respecting system memory limits.
-    pub fn with_max_allocation(reader: R, max_bytes: usize) -> Self {
-        Decoder {
-            reader,
-            peeked: None,
-            max_allocation: Some(max_bytes),
-            recursion_depth: 0,
-            max_recursion_depth: Self::DEFAULT_MAX_DEPTH,
-        }
+    /// length fields. The limit applies to both individual allocations and cumulative
+    /// sizes for indefinite-length strings. Even without this limit, `try_reserve`
+    /// provides system-level protection.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::Cursor;
+    ///
+    /// use c2pa_cbor::Decoder;
+    ///
+    /// let data = vec![0xa0];
+    /// let decoder = Decoder::new(Cursor::new(&data)).with_max_allocation(1024 * 1024); // 1MB limit
+    /// ```
+    pub fn with_max_allocation(mut self, max_bytes: usize) -> Self {
+        self.max_allocation = Some(max_bytes);
+        self
+    }
+
+    /// Set the maximum recursion depth for nested structures (builder pattern)
+    ///
+    /// This prevents stack overflow from deeply nested CBOR structures.
+    /// Default is 128 levels, which is sufficient for most use cases.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::io::Cursor;
+    ///
+    /// use c2pa_cbor::Decoder;
+    ///
+    /// let data = vec![0xa0];
+    /// let decoder = Decoder::new(Cursor::new(&data)).with_max_depth(64); // Max 64 levels of nesting
+    /// ```
+    pub fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_recursion_depth = max_depth;
+        self
     }
 
     fn check_recursion_depth(&self) -> Result<()> {
@@ -209,7 +259,19 @@ impl<R: Read> Decoder<R> {
             let len = self
                 .read_length(info)?
                 .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_BYTE_CHUNK.to_string()))?;
-            let chunk = self.read_bytes(len as usize)?;
+            let chunk = self.read_bytes(u64_to_usize(len)?)?;
+
+            // Check cumulative size against max_allocation limit
+            let new_size = result.len().saturating_add(chunk.len());
+            if let Some(max) = self.max_allocation
+                && new_size > max
+            {
+                return Err(Error::Syntax(format!(
+                    "Indefinite byte string total size {} exceeds maximum {} bytes",
+                    new_size, max
+                )));
+            }
+
             result.extend_from_slice(&chunk);
         }
         Ok(result)
@@ -233,7 +295,19 @@ impl<R: Read> Decoder<R> {
             let len = self
                 .read_length(info)?
                 .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_TEXT_CHUNK.to_string()))?;
-            let chunk = self.read_text(len as usize)?;
+            let chunk = self.read_text(u64_to_usize(len)?)?;
+
+            // Check cumulative size against max_allocation limit
+            let new_size = result.len().saturating_add(chunk.len());
+            if let Some(max) = self.max_allocation
+                && new_size > max
+            {
+                return Err(Error::Syntax(format!(
+                    "Indefinite text string total size {} exceeds maximum {} bytes",
+                    new_size, max
+                )));
+            }
+
             result.push_str(&chunk);
         }
         Ok(result)
@@ -283,14 +357,14 @@ impl<R: Read> Decoder<R> {
             }
             MAJOR_BYTES => match self.read_length(info)? {
                 Some(len) => {
-                    let buf = self.read_bytes(len as usize)?;
+                    let buf = self.read_bytes(u64_to_usize(len)?)?;
                     visitor.visit_byte_buf(buf)
                 }
                 None => visitor.visit_byte_buf(self.read_indefinite_bytes()?),
             },
             MAJOR_TEXT => match self.read_length(info)? {
                 Some(len) => {
-                    let s = self.read_text(len as usize)?;
+                    let s = self.read_text(u64_to_usize(len)?)?;
                     visitor.visit_string(s)
                 }
                 None => visitor.visit_string(self.read_indefinite_text()?),
@@ -301,7 +375,7 @@ impl<R: Read> Decoder<R> {
                 match self.read_length(info)? {
                     Some(len) => visitor.visit_seq(SeqAccess {
                         de: self,
-                        remaining: Some(len as usize),
+                        remaining: Some(u64_to_usize(len)?),
                     }),
                     None => visitor.visit_seq(SeqAccess {
                         de: self,
@@ -316,7 +390,7 @@ impl<R: Read> Decoder<R> {
                 match self.read_length(info)? {
                     Some(len) => visitor.visit_map(MapAccess {
                         de: self,
-                        remaining: Some(len as usize),
+                        remaining: Some(u64_to_usize(len)?),
                     }),
                     None => visitor.visit_map(MapAccess {
                         de: self,
@@ -338,6 +412,14 @@ impl<R: Read> Decoder<R> {
                 FALSE => visitor.visit_bool(false),
                 TRUE => visitor.visit_bool(true),
                 NULL => visitor.visit_none(),
+                UNDEFINED => visitor.visit_unit(),
+                FLOAT16 => {
+                    let mut buf = [0u8; 2];
+                    self.reader.read_exact(&mut buf)?;
+                    // Requires the `half` crate or wait for f16 to be stabilized
+                    let f16_value = half::f16::from_be_bytes(buf);
+                    visitor.visit_f32(f16_value.to_f32())
+                }
                 FLOAT32 => {
                     let mut buf = [0u8; 4];
                     self.reader.read_exact(&mut buf)?;
@@ -370,9 +452,7 @@ impl<R: Read> Decoder<R> {
                 let len = self
                     .read_length(info)?
                     .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_ENUM.to_string()))?;
-                let mut buf = vec![0u8; len as usize];
-                self.reader.read_exact(&mut buf)?;
-                let s = String::from_utf8(buf).map_err(|_| Error::InvalidUtf8)?;
+                let s = self.read_text(u64_to_usize(len)?)?;
                 visitor.visit_enum(UnitVariantAccess { variant: s })
             }
             MAJOR_MAP => {
@@ -411,57 +491,41 @@ impl<'de, R: Read> serde::Deserializer<'de> for Decoder<R> {
             // CBOR null
             visitor.visit_none()
         } else {
-            // Not null - need to process this byte as part of Some(...)
-            // Put it back and deserialize
+            // Not null - process as Some(...)
             let major = initial >> 5;
             let info = initial & 0x1f;
 
-            // Create a temporary deserializer state with this byte already read
-            struct OptionDeserializer<'a, R: Read> {
-                decoder: &'a mut Decoder<R>,
-                initial_major: u8,
-                initial_info: u8,
-            }
-
-            impl<'de, 'a, R: Read> serde::Deserializer<'de> for OptionDeserializer<'a, R> {
-                type Error = crate::Error;
-
-                serde::forward_to_deserialize_any! {
-                    bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string
-                    bytes byte_buf option unit unit_struct newtype_struct seq tuple
-                    tuple_struct map struct enum identifier ignored_any
-                }
-
-                fn deserialize_any<V: serde::de::Visitor<'de>>(
-                    self,
-                    visitor: V,
-                ) -> Result<V::Value> {
-                    // Process using the already-read byte
-                    match self.initial_major {
-                        MAJOR_MAP => match self.decoder.read_length(self.initial_info)? {
-                            Some(len) => visitor.visit_map(MapAccess {
-                                de: self.decoder,
-                                remaining: Some(len as usize),
-                            }),
-                            None => visitor.visit_map(MapAccess {
-                                de: self.decoder,
-                                remaining: None,
-                            }),
-                        },
-                        _ => {
-                            // For other types, just delegate to decoder's deserialize_any
-                            // but we've already consumed the byte, so reconstruct the value
-                            Err(Error::Syntax(ERR_OPTION_UNSUPPORTED.to_string()))
-                        }
-                    }
+            // Handle the value based on major type
+            match major {
+                MAJOR_MAP => match self.read_length(info)? {
+                    Some(len) => visitor.visit_some(MapDeserializer {
+                        de: &mut self,
+                        remaining: Some(u64_to_usize(len)?),
+                    }),
+                    None => visitor.visit_some(MapDeserializer {
+                        de: &mut self,
+                        remaining: None,
+                    }),
+                },
+                MAJOR_ARRAY => match self.read_length(info)? {
+                    Some(len) => visitor.visit_some(ArrayDeserializer {
+                        de: &mut self,
+                        remaining: Some(u64_to_usize(len)?),
+                    }),
+                    None => visitor.visit_some(ArrayDeserializer {
+                        de: &mut self,
+                        remaining: None,
+                    }),
+                },
+                _ => {
+                    // For simple types, deserialize directly
+                    visitor.visit_some(PrefetchedDeserializer {
+                        de: &mut self,
+                        major,
+                        info,
+                    })
                 }
             }
-
-            visitor.visit_some(OptionDeserializer {
-                decoder: &mut self,
-                initial_major: major,
-                initial_info: info,
-            })
         }
     }
 
@@ -505,7 +569,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for &mut Decoder<R> {
             MAJOR_MAP => match self.read_length(info)? {
                 Some(len) => visitor.visit_some(MapDeserializer {
                     de: self,
-                    remaining: Some(len as usize),
+                    remaining: Some(u64_to_usize(len)?),
                 }),
                 None => visitor.visit_some(MapDeserializer {
                     de: self,
@@ -515,7 +579,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for &mut Decoder<R> {
             MAJOR_ARRAY => match self.read_length(info)? {
                 Some(len) => visitor.visit_some(ArrayDeserializer {
                     de: self,
-                    remaining: Some(len as usize),
+                    remaining: Some(u64_to_usize(len)?),
                 }),
                 None => visitor.visit_some(ArrayDeserializer {
                     de: self,
@@ -588,7 +652,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for &mut Decoder<R> {
                 MAJOR_MAP => match self.read_length(info)? {
                     Some(len) => visitor.visit_newtype_struct(MapDeserializer {
                         de: self,
-                        remaining: Some(len as usize),
+                        remaining: Some(u64_to_usize(len)?),
                     }),
                     None => visitor.visit_newtype_struct(MapDeserializer {
                         de: self,
@@ -599,7 +663,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for &mut Decoder<R> {
                     let len = self
                         .read_length(info)?
                         .ok_or_else(|| Error::Syntax(ERR_NEWTYPE_TEXT.to_string()))?;
-                    let s = self.read_text(len as usize)?;
+                    let s = self.read_text(u64_to_usize(len)?)?;
                     visitor.visit_newtype_struct(StringDeserializer { value: s })
                 }
                 _ => {
@@ -696,7 +760,7 @@ impl<'de, 'a, R: Read> serde::Deserializer<'de> for PrefetchedDeserializer<'a, R
                     .de
                     .read_length(self.info)?
                     .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_OPTION_TEXT.to_string()))?;
-                let s = self.de.read_text(len as usize)?;
+                let s = self.de.read_text(u64_to_usize(len)?)?;
                 visitor.visit_string(s)
             }
             MAJOR_BYTES => {
@@ -704,7 +768,7 @@ impl<'de, 'a, R: Read> serde::Deserializer<'de> for PrefetchedDeserializer<'a, R
                     .de
                     .read_length(self.info)?
                     .ok_or_else(|| Error::Syntax(ERR_INDEFINITE_OPTION_BYTES.to_string()))?;
-                let buf = self.de.read_bytes(len as usize)?;
+                let buf = self.de.read_bytes(u64_to_usize(len)?)?;
                 visitor.visit_byte_buf(buf)
             }
             MAJOR_SIMPLE => match self.info {
@@ -923,10 +987,9 @@ pub fn from_slice<'de, T: Deserialize<'de>>(slice: &[u8]) -> Result<T> {
         return Err(Error::Syntax("empty input".to_string()));
     }
 
-    // Use a default 100MB limit to prevent OOM attacks from malicious CBOR
+    // Use default limit to prevent OOM attacks from malicious CBOR
     // Advanced users can bypass this limit by using Decoder::new() directly
-    const DEFAULT_MAX_ALLOCATION: usize = 100 * 1024 * 1024;
-    let mut decoder = Decoder::with_max_allocation(Cursor::new(slice), DEFAULT_MAX_ALLOCATION);
+    let mut decoder = Decoder::new(Cursor::new(slice)).with_max_allocation(DEFAULT_MAX_ALLOCATION);
     let value = decoder.decode()?;
 
     // Check if all bytes were consumed
@@ -946,10 +1009,10 @@ pub fn from_slice<'de, T: Deserialize<'de>>(slice: &[u8]) -> Result<T> {
 /// Wraps the reader in a BufReader for optimal performance with small reads.
 /// If the reader is already buffered, consider using Decoder::new() directly.
 pub fn from_reader<R: Read, T: for<'de> Deserialize<'de>>(reader: R) -> Result<T> {
-    // Use a default 100MB limit to prevent OOM attacks from malicious CBOR
+    // Use default limit to prevent OOM attacks from malicious CBOR
     // Advanced users can bypass this limit by using Decoder::new() directly
-    const DEFAULT_MAX_ALLOCATION: usize = 100 * 1024 * 1024;
-    let mut decoder = Decoder::with_max_allocation(BufReader::new(reader), DEFAULT_MAX_ALLOCATION);
+    let mut decoder =
+        Decoder::new(BufReader::new(reader)).with_max_allocation(DEFAULT_MAX_ALLOCATION);
     decoder.decode()
 }
 
@@ -962,7 +1025,7 @@ pub fn from_reader_with_limit<R: Read, T: for<'de> Deserialize<'de>>(
     reader: R,
     max_bytes: usize,
 ) -> Result<T> {
-    let mut decoder = Decoder::with_max_allocation(BufReader::new(reader), max_bytes);
+    let mut decoder = Decoder::new(BufReader::new(reader)).with_max_allocation(max_bytes);
     decoder.decode()
 }
 
@@ -980,7 +1043,7 @@ pub fn from_slice_with_limit<'de, T: Deserialize<'de>>(
     }
 
     // Wrap in Cursor for better performance with small reads
-    let mut decoder = Decoder::with_max_allocation(Cursor::new(slice), max_bytes);
+    let mut decoder = Decoder::new(Cursor::new(slice)).with_max_allocation(max_bytes);
     let value = decoder.decode()?;
 
     // Check if all bytes were consumed

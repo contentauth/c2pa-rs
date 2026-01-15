@@ -24,7 +24,16 @@ This library includes built-in protection against malicious CBOR attacks:
 - **Allocation limit**: Default 100MB limit prevents out-of-memory (OOM) attacks from CBOR claiming extremely large sizes
 - **Recursion depth limit**: Default 128-level nesting limit prevents stack overflow from deeply nested structures
 
-These limits are sufficient for legitimate C2PA manifests while preventing denial-of-service attacks. For advanced use cases requiring custom limits, use `Decoder::new()` or `Decoder::with_max_allocation()` directly.
+These limits are sufficient for legitimate C2PA manifests while preventing denial-of-service attacks. For advanced use cases requiring custom limits, use the builder pattern:
+
+```rust
+use c2pa_cbor::Decoder;
+use std::io::Cursor;
+
+let decoder = Decoder::new(Cursor::new(&data))
+    .with_max_allocation(1024 * 1024)  // 1MB limit
+    .with_max_depth(64);                // Max 64 levels
+```
 
 ## Installation
 

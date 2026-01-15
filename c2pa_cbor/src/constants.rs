@@ -65,13 +65,11 @@ pub(crate) const TAG_SINT16LE_ARRAY: u64 = 77; // sint16 little-endian array
 pub(crate) const TAG_SINT32LE_ARRAY: u64 = 78; // sint32 little-endian array
 #[allow(dead_code)]
 pub(crate) const TAG_SINT64LE_ARRAY: u64 = 79; // sint64 little-endian array
-#[allow(dead_code)]
 pub(crate) const TAG_FLOAT16BE_ARRAY: u64 = 80; // float16 big-endian array
 pub(crate) const TAG_FLOAT32BE_ARRAY: u64 = 81; // float32 big-endian array
 pub(crate) const TAG_FLOAT64BE_ARRAY: u64 = 82; // float64 big-endian array
 #[allow(dead_code)]
 pub(crate) const TAG_FLOAT128BE_ARRAY: u64 = 83; // float128 big-endian array
-#[allow(dead_code)]
 pub(crate) const TAG_FLOAT16LE_ARRAY: u64 = 84; // float16 little-endian array
 pub(crate) const TAG_FLOAT32LE_ARRAY: u64 = 85; // float32 little-endian array
 pub(crate) const TAG_FLOAT64LE_ARRAY: u64 = 86; // float64 little-endian array
@@ -82,9 +80,23 @@ pub(crate) const TAG_FLOAT128LE_ARRAY: u64 = 87; // float128 little-endian array
 pub(crate) const FALSE: u8 = 20;
 pub(crate) const TRUE: u8 = 21;
 pub(crate) const NULL: u8 = 22;
-#[allow(dead_code)]
+pub(crate) const UNDEFINED: u8 = 23;
+#[allow(dead_code)] // These are unassigned in the IANA registry
+pub(crate) const SIMPLE_VALUE: u8 = 24;
 pub(crate) const FLOAT16: u8 = 25;
 pub(crate) const FLOAT32: u8 = 26;
 pub(crate) const FLOAT64: u8 = 27;
 pub(crate) const INDEFINITE: u8 = 31;
 pub(crate) const BREAK: u8 = 0xff;
+
+// DOS protection limits
+/// Default maximum allocation size (100MB) to prevent OOM attacks from malicious CBOR.
+///
+/// This can be overridden using `Decoder::new(reader).with_max_allocation(size)`
+/// or via the `from_reader_with_limit()` convenience function.
+pub const DEFAULT_MAX_ALLOCATION: usize = 100 * 1024 * 1024; // 100 MB
+
+/// Default maximum recursion depth to prevent stack overflow from deeply nested structures.
+///
+/// This can be overridden using `Decoder::new(reader).with_max_depth(depth)`.
+pub const DEFAULT_MAX_DEPTH: usize = 128;

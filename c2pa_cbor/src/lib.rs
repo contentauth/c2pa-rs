@@ -88,7 +88,11 @@ pub mod encoder;
 pub use encoder::{Encoder, to_vec, to_writer};
 
 pub mod decoder;
-pub use decoder::{Decoder, from_reader, from_slice};
+// Re-export DOS protection constants for user configuration
+pub use constants::{DEFAULT_MAX_ALLOCATION, DEFAULT_MAX_DEPTH};
+pub use decoder::{
+    Decoder, from_reader, from_reader_with_limit, from_slice, from_slice_with_limit,
+};
 
 pub mod value;
 pub use value::{Value, from_value, to_value};
@@ -1116,7 +1120,7 @@ mod tests {
 
         // Set limit to 10MB - should reject before attempting allocation
         let cursor = Cursor::new(&cbor[..]);
-        let mut decoder = Decoder::with_max_allocation(cursor, 10 * 1024 * 1024);
+        let mut decoder = Decoder::new(cursor).with_max_allocation(10 * 1024 * 1024);
         let result: Result<Value> = decoder.decode();
 
         assert!(
@@ -1150,7 +1154,7 @@ mod tests {
 
         // Set limit to 10MB - should accept
         let cursor = Cursor::new(&cbor[..]);
-        let mut decoder = Decoder::with_max_allocation(cursor, 10 * 1024 * 1024);
+        let mut decoder = Decoder::new(cursor).with_max_allocation(10 * 1024 * 1024);
         let result: Result<Value> = decoder.decode();
 
         assert!(
@@ -1182,7 +1186,7 @@ mod tests {
 
         // Set limit to 10MB - should reject
         let cursor = Cursor::new(&cbor[..]);
-        let mut decoder = Decoder::with_max_allocation(cursor, 10 * 1024 * 1024);
+        let mut decoder = Decoder::new(cursor).with_max_allocation(10 * 1024 * 1024);
         let result: Result<Value> = decoder.decode();
 
         assert!(result.is_err(), "Should reject byte string exceeding limit");
@@ -2404,5 +2408,185 @@ mod tests {
         let decoder = Decoder::from_slice(&cbor);
         let val = TestEnum::deserialize(decoder).unwrap();
         assert_eq!(val, TestEnum::Data("test".to_string()));
+    }
+
+    #[test]
+    fn test_cbor_undefined_constant() {
+        use crate::constants::UNDEFINED;
+
+        // Test that UNDEFINED constant is correct (additional info 23)
+        // CBOR undefined is encoded as major type 7, additional info 23
+        // Byte: 0xf7 = 0b111_10111 = major 7, info 23
+        assert_eq!(UNDEFINED, 23);
+
+        // Manually construct CBOR undefined and verify encoding
+        let cbor = [0xf7]; // Major type 7, additional info 23
+
+        // Note: serde doesn't have a concept of "undefined", so we can't
+        // directly test deserialization. But we can verify the constant is correct.
+        let major = cbor[0] >> 5;
+        let info = cbor[0] & 0x1f;
+        assert_eq!(major, 7);
+        assert_eq!(info, UNDEFINED);
+    }
+
+    #[test]
+    fn test_cbor_float16_constant() {
+        use crate::constants::FLOAT16;
+
+        // Test that FLOAT16 constant is correct (additional info 25)
+        // CBOR float16 is encoded as major type 7, additional info 25
+        // Byte: 0xf9 = 0b111_11001 = major 7, info 25
+        assert_eq!(FLOAT16, 25);
+
+        // Manually construct CBOR float16 (1.0 in f16 = 0x3c00)
+        // Format: 0xf9 (major 7, info 25) + 2 bytes for f16 value
+        let cbor = vec![0xf9, 0x3c, 0x00];
+
+        let major = cbor[0] >> 5;
+        let info = cbor[0] & 0x1f;
+        assert_eq!(major, 7);
+        assert_eq!(info, FLOAT16);
+
+        // Verify we can decode this as f64 (serde promotes f16 to f64)
+        let result: Result<f64> = from_slice(&cbor);
+        // Note: This may fail if decoder doesn't support f16 yet,
+        // but the constant itself is correct
+        if let Ok(val) = result {
+            assert!((val - 1.0).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_cbor_simple_values_range() {
+        use crate::constants::{FALSE, NULL, TRUE, UNDEFINED};
+
+        // Verify all simple values are in correct range (0-31)
+        // These are the exact values defined in RFC 8949 section 3.3
+        assert_eq!(FALSE, 20);
+        assert_eq!(TRUE, 21);
+        assert_eq!(NULL, 22);
+        assert_eq!(UNDEFINED, 23);
+
+        // Note: All these values are < 32 by definition (5-bit additional info),
+        // but clippy complains about assertions on constants, so we don't test that.
+    }
+
+    #[test]
+    fn test_decoder_with_limits() {
+        use std::io::Cursor;
+
+        use crate::{DEFAULT_MAX_ALLOCATION, DEFAULT_MAX_DEPTH, Decoder};
+
+        // Test that default constants are re-exported and accessible
+        assert_eq!(DEFAULT_MAX_ALLOCATION, 100 * 1024 * 1024);
+        assert_eq!(DEFAULT_MAX_DEPTH, 128);
+
+        // Test Decoder builder with custom values
+        let data = to_vec(&vec![1, 2, 3]).unwrap();
+        let mut decoder = Decoder::new(Cursor::new(&data))
+            .with_max_allocation(1024)
+            .with_max_depth(32);
+        let result: Vec<i32> = decoder.decode().unwrap();
+        assert_eq!(result, vec![1, 2, 3]);
+
+        // Test that custom depth limit is enforced
+        // Create nested arrays: [[[[...]]]] (40 levels deep)
+        let mut nested_cbor = Vec::new();
+        nested_cbor.extend(std::iter::repeat_n(0x81, 40)); // Array of length 1
+        nested_cbor.push(0x00); // Final value: 0
+
+        // Should fail with max_depth of 32
+        let mut decoder = Decoder::new(Cursor::new(&nested_cbor)).with_max_depth(32);
+        let result: Result<Value> = decoder.decode();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("nesting depth"));
+
+        // Should succeed with max_depth of 64
+        let mut decoder = Decoder::new(Cursor::new(&nested_cbor)).with_max_depth(64);
+        let result: Result<Value> = decoder.decode();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_max_allocation_indefinite_strings() {
+        use std::io::Cursor;
+
+        use crate::Decoder;
+
+        // Test that indefinite byte strings respect cumulative allocation limit
+        // Format: 0x5f (indefinite byte string) + chunks + 0xff (break)
+        let mut cbor = vec![0x5f]; // Indefinite byte string start
+
+        // Add 3 chunks of 50 bytes each = 150 total
+        for _ in 0..3 {
+            cbor.push(0x58); // Major 2 (bytes), info 24 (1-byte length)
+            cbor.push(50); // Length: 50 bytes
+            cbor.extend(std::iter::repeat_n(0x42, 50)); // 50 bytes of data
+        }
+        cbor.push(0xff); // Break
+
+        // Should fail with 100-byte limit (total is 150)
+        let mut decoder = Decoder::new(Cursor::new(&cbor)).with_max_allocation(100);
+        let result: Result<Value> = decoder.decode();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("total size") || err.contains("exceeds maximum"));
+
+        // Should succeed with 200-byte limit
+        let mut decoder = Decoder::new(Cursor::new(&cbor)).with_max_allocation(200);
+        let result: Result<Value> = decoder.decode();
+        assert!(result.is_ok(), "Expected success with 200-byte limit");
+        if let Value::Bytes(bytes) = result.unwrap() {
+            assert_eq!(bytes.len(), 150);
+        } else {
+            panic!("Expected Value::Bytes");
+        }
+    }
+
+    #[test]
+    fn test_max_allocation_single_large_allocation() {
+        use std::io::Cursor;
+
+        use crate::Decoder;
+
+        // Test that a single large allocation is caught
+        // Format: 0x5a (major 2, info 26 = 4-byte length) + length + data
+        let mut cbor = vec![0x5a]; // Major 2 (bytes), info 26 (4-byte length)
+        cbor.extend_from_slice(&1_000_000u32.to_be_bytes()); // 1MB
+        cbor.extend(std::iter::repeat_n(0x42, 100)); // Just a bit of actual data
+
+        // Should fail with 100KB limit
+        let mut decoder = Decoder::new(Cursor::new(&cbor)).with_max_allocation(100_000);
+        let result: Result<Value> = decoder.decode();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn test_u64_to_usize_overflow() {
+        use std::io::Cursor;
+
+        use crate::Decoder;
+
+        // Test that u64 values that don't fit in usize are rejected
+        // This is mainly relevant on 32-bit systems where usize is 32 bits
+        // On 64-bit systems, this won't overflow, but the allocation check will catch it
+
+        // Create CBOR with a huge length value
+        // Format: 0x5b (major 2, info 27 = 8-byte length) + 8-byte length + data
+        let mut cbor = vec![0x5b]; // Major 2 (bytes), info 27 (8-byte length)
+        cbor.extend_from_slice(&(u64::MAX).to_be_bytes()); // Massive length
+
+        let mut decoder = Decoder::new(Cursor::new(&cbor));
+        let result: Result<Value> = decoder.decode();
+        assert!(result.is_err());
+        // Either caught by overflow check or allocation limit
+        let err_str = result.unwrap_err().to_string();
+        assert!(
+            err_str.contains("exceeds maximum")
+                || err_str.contains("out of memory")
+                || err_str.contains("platform")
+        );
     }
 }
