@@ -9,6 +9,26 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.75.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.0...c2pa-v0.75.1)
+_15 January 2026_
+
+### Added
+
+* Report claim version in manifest report ([#1722](https://github.com/contentauth/c2pa-rs/pull/1722))
+
+### Fixed
+
+* Add c2pa_cbor as an alternative for serde_cbor and ciborium ([#1675](https://github.com/contentauth/c2pa-rs/pull/1675))
+* Verify after sign not executing ([#1638](https://github.com/contentauth/c2pa-rs/pull/1638))
+
+### Updated dependencies
+
+* Bump img-parts from 0.3.3 to 0.4.0 ([#1733](https://github.com/contentauth/c2pa-rs/pull/1733))
+* Bump range-set from 0.0.11 to 0.1.0 ([#1726](https://github.com/contentauth/c2pa-rs/pull/1726))
+* Bump nonempty-collections from 0.3.1 to 1.2.1 ([#1724](https://github.com/contentauth/c2pa-rs/pull/1724))
+* Bump extfmt from 0.1.1 to 0.2.0 ([#1725](https://github.com/contentauth/c2pa-rs/pull/1725))
+* Bump zip from 6.0.0 to 7.0.0 ([#1723](https://github.com/contentauth/c2pa-rs/pull/1723))
+
 ## [0.75.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.74.0...c2pa-v0.75.0)
 _14 January 2026_
 
