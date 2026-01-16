@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.75.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.3...c2pa-v0.75.4)
+_16 January 2026_
+
+### Fixed
+
+* No-embed: context propagation + verify after sign update ([#1743](https://github.com/contentauth/c2pa-rs/pull/1743))
+
 ## [0.75.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.2...c2pa-v0.75.3)
 _16 January 2026_
 
