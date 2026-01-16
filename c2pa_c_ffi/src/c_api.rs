@@ -318,44 +318,122 @@ pub struct C2paSigner {
 unsafe impl Send for C2paSigner {}
 unsafe impl Sync for C2paSigner {}
 
-// Null check macro for C pointers.
+// ============================================================================
+// Core Flexible Macros (explicit "return" makes control flow clear)
+// ============================================================================
+
+/// Check pointer not null or early-return with error value
 #[macro_export]
-macro_rules! null_check {
-    (($ptr:expr), $transform:expr, $default:expr) => {
+macro_rules! ptr_or_return {
+    ($ptr:expr, $err_val:expr) => {
         if $ptr.is_null() {
             Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
-            return $default;
-        } else {
-            $transform($ptr)
+            return $err_val;
         }
     };
 }
 
+/// Convert C string or early-return with error value
+#[macro_export]
+macro_rules! cstr_or_return {
+    ($ptr:expr, $err_val:expr) => {
+        if $ptr.is_null() {
+            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
+            return $err_val;
+        } else {
+            std::ffi::CStr::from_ptr($ptr)
+                .to_string_lossy()
+                .into_owned()
+        }
+    };
+}
+
+/// Handle Result or early-return with error value
+#[macro_export]
+macro_rules! result_or_return {
+    // For c2pa::Error results that need transformation
+    ($result:expr, $transform:expr, $err_val:expr) => {
+        match $result {
+            Ok(value) => $transform(value),
+            Err(err) => {
+                Error::from_c2pa_error(err).set_last();
+                return $err_val;
+            }
+        }
+    };
+    // For our Error type results (no conversion needed)
+    (@local $result:expr, $transform:expr, $err_val:expr) => {
+        match $result {
+            Ok(value) => $transform(value),
+            Err(err) => {
+                err.set_last();
+                return $err_val;
+            }
+        }
+    };
+}
+
+// ============================================================================
+// Named Shortcuts (self-documenting for common error values)
+// ============================================================================
+
+/// Handle Result, early-return with -1 (negative) on error
+#[macro_export]
+macro_rules! result_or_return_neg {
+    ($result:expr, $transform:expr) => {
+        result_or_return!($result, $transform, -1)
+    };
+}
+
+/// Handle Result, early-return with null on error
+#[macro_export]
+macro_rules! result_or_return_null {
+    ($result:expr, $transform:expr) => {
+        result_or_return!($result, $transform, std::ptr::null_mut())
+    };
+}
+
+/// Handle Result, early-return with 0 on error
+#[macro_export]
+macro_rules! result_or_return_zero {
+    ($result:expr, $transform:expr) => {
+        result_or_return!($result, $transform, 0)
+    };
+}
+
+/// Handle Result, early-return with false on error
+#[macro_export]
+macro_rules! result_or_return_false {
+    ($result:expr, $transform:expr) => {
+        result_or_return!($result, $transform, false)
+    };
+}
+
+// ============================================================================
+// Legacy Macro Aliases (for backward compatibility)
+// ============================================================================
+
 /// If the expression is null, set the last error and return null.
 #[macro_export]
-macro_rules! check_or_return_null {
+macro_rules! ptr_or_return_null {
     ($ptr : expr) => {
-        null_check!(($ptr), |ptr| ptr, std::ptr::null_mut())
+        ptr_or_return!($ptr, std::ptr::null_mut())
     };
 }
 
 /// If the expression is null, set the last error and return -1.
 #[macro_export]
-macro_rules! check_or_return_int {
+macro_rules! ptr_or_return_int {
     ($ptr : expr) => {
-        null_check!(($ptr), |ptr| ptr, -1)
+        ptr_or_return!($ptr, -1)
     };
 }
 
 /// If the expression is null, set the last error and return std::ptr::null_mut().
 #[macro_export]
-macro_rules! from_cstr_or_return_null {
+macro_rules! cstr_or_return_null {
     ($ptr : expr) => {
-        null_check!(
-            ($ptr),
-            |ptr| { std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned() },
-            std::ptr::null_mut()
-        )
+        cstr_or_return!($ptr, std::ptr::null_mut())
     };
 }
 
@@ -363,11 +441,7 @@ macro_rules! from_cstr_or_return_null {
 #[macro_export]
 macro_rules! from_cstr_or_return_int {
     ($ptr : expr) => {
-        null_check!(
-            ($ptr),
-            |ptr| { std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned() },
-            -1
-        )
+        cstr_or_return!($ptr, -1)
     };
 }
 
@@ -387,62 +461,17 @@ macro_rules! from_cstr_option {
     };
 }
 
-// Internal routine to handle Result types, set errors on Err, and return default values
-#[macro_export]
-macro_rules! result_check {
-    ($result:expr, $transform:expr, $default:expr) => {
-        match $result {
-            Ok(value) => $transform(value),
-            Err(err) => {
-                Error::from_c2pa_error(err).set_last();
-                return $default;
-            }
-        }
-    };
-}
-
 #[macro_export]
 macro_rules! ok_or_return_null {
     ($result:expr, $transform:expr) => {
-        result_check!($result, $transform, std::ptr::null_mut())
+        result_or_return_null!($result, $transform)
     };
 }
 
 #[macro_export]
 macro_rules! ok_or_return_int {
     ($result:expr, $transform:expr) => {
-        result_check!($result, $transform, -1)
-    };
-}
-
-#[macro_export]
-macro_rules! return_boxed {
-    ($result:expr) => {
-        ok_or_return_null!($result, |value| Box::into_raw(Box::new(value)))
-    };
-}
-
-#[macro_export]
-macro_rules! guard_boxed {
-    ($ptr:expr) => {
-        guard(Box::from_raw($ptr), |value| {
-            let _ = Box::into_raw(value);
-        })
-    };
-}
-
-#[macro_export]
-macro_rules! guard_boxed_int {
-    ($ptr:expr) => {
-        null_check!(
-            ($ptr),
-            |ptr| {
-                guard(Box::from_raw(ptr), |value| {
-                    let _ = Box::into_raw(value);
-                })
-            },
-            -1
-        )
+        result_or_return_neg!($result, $transform)
     };
 }
 
@@ -469,7 +498,7 @@ macro_rules! return_handle {
 
 /// Execute a read-only operation on a typed pointer (internally uses handles)
 #[macro_export]
-macro_rules! with_handle {
+macro_rules! with_handle_or_return_null {
     ($ptr:expr, $type:ty, $transform:expr) => {{
         if $ptr.is_null() {
             Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
@@ -488,7 +517,7 @@ macro_rules! with_handle {
 
 /// Execute a mutable operation on a typed pointer
 #[macro_export]
-macro_rules! with_handle_mut {
+macro_rules! with_handle_mut_or_return_null {
     ($ptr:expr, $type:ty, $transform:expr) => {{
         if $ptr.is_null() {
             Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
@@ -507,7 +536,7 @@ macro_rules! with_handle_mut {
 
 /// Execute operation on typed pointer, return -1 on error
 #[macro_export]
-macro_rules! with_handle_int {
+macro_rules! with_handle_or_return_neg {
     ($ptr:expr, $type:ty, $transform:expr) => {{
         if $ptr.is_null() {
             Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
@@ -526,7 +555,7 @@ macro_rules! with_handle_int {
 
 /// Execute mutable operation on typed pointer, return -1 on error
 #[macro_export]
-macro_rules! with_handle_mut_int {
+macro_rules! with_handle_mut_or_return_neg {
     ($ptr:expr, $type:ty, $transform:expr) => {{
         if $ptr.is_null() {
             Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
@@ -564,19 +593,10 @@ macro_rules! free_handle {
 /// Guard a handle parameter, creating an immutable reference with the given name
 /// Returns early with -1 on error
 #[macro_export]
-macro_rules! guard_handle {
+macro_rules! guard_handle_or_return_neg {
     ($ptr:expr, $type:ty, $name:ident) => {
-        if $ptr.is_null() {
-            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
-            return -1;
-        }
-        let __arc = match get_handles().get($ptr as Handle) {
-            Ok(arc) => arc,
-            Err(err) => {
-                err.set_last();
-                return -1;
-            }
-        };
+        ptr_or_return!($ptr, -1);
+        let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, -1);
         let __guard = __arc.lock().unwrap();
         let $name = match __guard.downcast_ref::<$type>() {
             Some(val) => val,
@@ -591,77 +611,16 @@ macro_rules! guard_handle {
 /// Guard a handle parameter, creating a mutable reference with the given name
 /// Returns early with -1 on error
 #[macro_export]
-macro_rules! guard_handle_mut {
+macro_rules! guard_handle_mut_or_return_neg {
     ($ptr:expr, $type:ty, $name:ident) => {
-        if $ptr.is_null() {
-            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
-            return -1;
-        }
-        let __arc = match get_handles().get($ptr as Handle) {
-            Ok(arc) => arc,
-            Err(err) => {
-                err.set_last();
-                return -1;
-            }
-        };
+        ptr_or_return!($ptr, -1);
+        let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, -1);
         let mut __guard = __arc.lock().unwrap();
         let $name = match __guard.downcast_mut::<$type>() {
             Some(val) => val,
             None => {
                 Error::WrongHandleType($ptr as Handle).set_last();
                 return -1;
-            }
-        };
-    };
-}
-
-/// Guard a handle parameter, creating an immutable reference (return null on error)
-#[macro_export]
-macro_rules! guard_handle_or_null {
-    ($ptr:expr, $type:ty, $name:ident) => {
-        if $ptr.is_null() {
-            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
-            return std::ptr::null_mut();
-        }
-        let __arc = match get_handles().get($ptr as Handle) {
-            Ok(arc) => arc,
-            Err(err) => {
-                err.set_last();
-                return std::ptr::null_mut();
-            }
-        };
-        let __guard = __arc.lock().unwrap();
-        let $name = match __guard.downcast_ref::<$type>() {
-            Some(val) => val,
-            None => {
-                Error::WrongHandleType($ptr as Handle).set_last();
-                return std::ptr::null_mut();
-            }
-        };
-    };
-}
-
-/// Guard a handle parameter mutably (return null on error)
-#[macro_export]
-macro_rules! guard_handle_mut_or_null {
-    ($ptr:expr, $type:ty, $name:ident) => {
-        if $ptr.is_null() {
-            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
-            return std::ptr::null_mut();
-        }
-        let __arc = match get_handles().get($ptr as Handle) {
-            Ok(arc) => arc,
-            Err(err) => {
-                err.set_last();
-                return std::ptr::null_mut();
-            }
-        };
-        let mut __guard = __arc.lock().unwrap();
-        let $name = match __guard.downcast_mut::<$type>() {
-            Some(val) => val,
-            None => {
-                Error::WrongHandleType($ptr as Handle).set_last();
-                return std::ptr::null_mut();
             }
         };
     };
@@ -675,13 +634,7 @@ macro_rules! guard_handle_mut_or_return {
             Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
             return;
         }
-        let __arc = match get_handles().get($ptr as Handle) {
-            Ok(arc) => arc,
-            Err(err) => {
-                err.set_last();
-                return;
-            }
-        };
+        let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, ());
         let mut __guard = __arc.lock().unwrap();
         let $name = match __guard.downcast_mut::<$type>() {
             Some(val) => val,
@@ -698,17 +651,8 @@ macro_rules! guard_handle_mut_or_return {
 #[macro_export]
 macro_rules! guard_handle_or_default {
     ($ptr:expr, $type:ty, $name:ident, $default:expr) => {
-        if $ptr.is_null() {
-            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
-            return $default;
-        }
-        let __arc = match get_handles().get($ptr as Handle) {
-            Ok(arc) => arc,
-            Err(err) => {
-                err.set_last();
-                return $default;
-            }
-        };
+        ptr_or_return!($ptr, $default);
+        let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, $default);
         let __guard = __arc.lock().unwrap();
         let $name = match __guard.downcast_ref::<$type>() {
             Some(val) => val,
@@ -717,6 +661,58 @@ macro_rules! guard_handle_or_default {
                 return $default;
             }
         };
+    };
+}
+
+// ============================================================================
+// Legacy Aliases for Handle Macros
+// ============================================================================
+
+/// Legacy alias for with_handle_or_return_null
+#[macro_export]
+macro_rules! with_handle {
+    ($ptr:expr, $type:ty, $transform:expr) => {
+        with_handle_or_return_null!($ptr, $type, $transform)
+    };
+}
+
+/// Legacy alias for with_handle_mut_or_return_null
+#[macro_export]
+macro_rules! with_handle_mut {
+    ($ptr:expr, $type:ty, $transform:expr) => {
+        with_handle_mut_or_return_null!($ptr, $type, $transform)
+    };
+}
+
+/// Legacy alias for with_handle_or_return_neg
+#[macro_export]
+macro_rules! with_handle_int {
+    ($ptr:expr, $type:ty, $transform:expr) => {
+        with_handle_or_return_neg!($ptr, $type, $transform)
+    };
+}
+
+/// Legacy alias for with_handle_mut_or_return_neg
+#[macro_export]
+macro_rules! with_handle_mut_int {
+    ($ptr:expr, $type:ty, $transform:expr) => {
+        with_handle_mut_or_return_neg!($ptr, $type, $transform)
+    };
+}
+
+/// Legacy alias for guard_handle_or_return_neg
+#[macro_export]
+macro_rules! guard_handle {
+    ($ptr:expr, $type:ty, $name:ident) => {
+        guard_handle_or_return_neg!($ptr, $type, $name)
+    };
+}
+
+/// Legacy alias for guard_handle_mut_or_return_neg
+#[macro_export]
+macro_rules! guard_handle_mut {
+    ($ptr:expr, $type:ty, $name:ident) => {
+        guard_handle_mut_or_return_neg!($ptr, $type, $name)
     };
 }
 
@@ -824,7 +820,7 @@ pub unsafe extern "C" fn c2pa_read_file(
     path: *const c_char,
     data_dir: *const c_char,
 ) -> *mut c_char {
-    let path = from_cstr_or_return_null!(path);
+    let path = cstr_or_return_null!(path);
     let data_dir = from_cstr_option!(data_dir);
 
     let result = read_file(&path, data_dir);
@@ -856,8 +852,8 @@ pub unsafe extern "C" fn c2pa_read_ingredient_file(
     path: *const c_char,
     data_dir: *const c_char,
 ) -> *mut c_char {
-    let path = from_cstr_or_return_null!(path);
-    let data_dir = from_cstr_or_return_null!(data_dir);
+    let path = cstr_or_return_null!(path);
+    let data_dir = cstr_or_return_null!(data_dir);
     let result = Ingredient::from_file_with_folder(path, data_dir).map_err(Error::from_c2pa_error);
 
     match result {
@@ -904,15 +900,15 @@ pub unsafe extern "C" fn c2pa_sign_file(
     data_dir: *const c_char,
 ) -> *mut c_char {
     // Convert C pointers into Rust.
-    let source_path = from_cstr_or_return_null!(source_path);
-    let dest_path = from_cstr_or_return_null!(dest_path);
-    let manifest = from_cstr_or_return_null!(manifest);
+    let source_path = cstr_or_return_null!(source_path);
+    let dest_path = cstr_or_return_null!(dest_path);
+    let manifest = cstr_or_return_null!(manifest);
     let data_dir = from_cstr_option!(data_dir);
 
     let signer_info = SignerInfo {
-        alg: from_cstr_or_return_null!(signer_info.alg),
-        sign_cert: from_cstr_or_return_null!(signer_info.sign_cert).into_bytes(),
-        private_key: from_cstr_or_return_null!(signer_info.private_key).into_bytes(),
+        alg: cstr_or_return_null!(signer_info.alg),
+        sign_cert: cstr_or_return_null!(signer_info.sign_cert).into_bytes(),
+        private_key: cstr_or_return_null!(signer_info.private_key).into_bytes(),
         ta_url: from_cstr_option!(signer_info.ta_url),
     };
     // Read manifest from JSON and then sign and write it.
@@ -1024,7 +1020,7 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
     format: *const c_char,
     stream: *mut C2paStream,
 ) -> *mut C2paReader {
-    let format = from_cstr_or_return_null!(format);
+    let format = cstr_or_return_null!(format);
 
     let result = C2paReader::from_stream(&format, &mut (*stream));
 
@@ -1058,7 +1054,7 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
 #[cfg(feature = "file_io")]
 #[no_mangle]
 pub unsafe fn c2pa_reader_from_file(path: *const c_char) -> *mut C2paReader {
-    let path = from_cstr_or_return_null!(path);
+    let path = cstr_or_return_null!(path);
     let result = C2paReader::from_file(&path);
     return_handle!(post_validate(result), C2paReader)
 }
@@ -1086,8 +1082,8 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
     manifest_data: *const c_uchar,
     manifest_size: usize,
 ) -> *mut C2paReader {
-    check_or_return_null!(manifest_data);
-    let format = from_cstr_or_return_null!(format);
+    ptr_or_return_null!(manifest_data);
+    let format = cstr_or_return_null!(format);
 
     // Safe bounds validation for manifest data
     let manifest_bytes =
@@ -1119,7 +1115,7 @@ pub unsafe extern "C" fn c2pa_reader_free(reader_ptr: *mut C2paReader) -> c_int 
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c_char {
-    let json = with_handle!(reader_ptr, C2paReader, |reader| reader.json());
+    let json = with_handle_or_return_null!(reader_ptr, C2paReader, |reader| reader.json());
     to_c_string(json)
 }
 
@@ -1130,7 +1126,7 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) -> *mut c_char {
-    let json = with_handle!(reader_ptr, C2paReader, |reader| reader.detailed_json());
+    let json = with_handle_or_return_null!(reader_ptr, C2paReader, |reader| reader.detailed_json());
     to_c_string(json)
 }
 
@@ -1143,7 +1139,7 @@ pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) 
 /// reader_ptr must be a valid pointer to a C2paReader.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_remote_url(reader_ptr: *mut C2paReader) -> *const c_char {
-    let url = with_handle!(reader_ptr, C2paReader, |reader| {
+    let url = with_handle_or_return_null!(reader_ptr, C2paReader, |reader| {
         reader.remote_url().map(|u| u.to_string())
     });
 
@@ -1198,7 +1194,7 @@ pub unsafe extern "C" fn c2pa_reader_resource_to_stream(
 ) -> i64 {
     let uri = from_cstr_or_return_int!(uri);
 
-    with_handle_int!(reader_ptr, C2paReader, |reader| {
+    with_handle_or_return_neg!(reader_ptr, C2paReader, |reader| {
         ok_or_return_int!(reader.resource_to_stream(&uri, &mut (*stream)), |len| len
             as i64)
     })
@@ -1242,7 +1238,7 @@ pub unsafe extern "C" fn c2pa_reader_supported_mime_types(
 /// ```
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_from_json(manifest_json: *const c_char) -> *mut C2paBuilder {
-    let manifest_json = from_cstr_or_return_null!(manifest_json);
+    let manifest_json = cstr_or_return_null!(manifest_json);
     let result = C2paBuilder::from_json(&manifest_json);
     return_handle!(result, C2paBuilder)
 }
@@ -1332,7 +1328,7 @@ pub unsafe extern "C" fn c2pa_builder_set_intent(
         C2paBuilderIntent::Update => c2pa::BuilderIntent::Update,
     };
 
-    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
         builder.set_intent(builder_intent);
         0
     })
@@ -1368,7 +1364,7 @@ pub unsafe extern "C" fn c2pa_builder_set_remote_url(
     remote_url: *const c_char,
 ) -> c_int {
     let remote_url = from_cstr_or_return_int!(remote_url);
-    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
         builder.set_remote_url(&remote_url);
         0
     })
@@ -1394,7 +1390,7 @@ pub unsafe extern "C" fn c2pa_builder_set_base_path(
     base_path: *const c_char,
 ) -> c_int {
     let base_path = from_cstr_or_return_int!(base_path);
-    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
         builder.set_base_path(&base_path);
         0
     })
@@ -1421,7 +1417,7 @@ pub unsafe extern "C" fn c2pa_builder_add_resource(
     stream: *mut C2paStream,
 ) -> c_int {
     let uri = from_cstr_or_return_int!(uri);
-    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
         let result = builder.add_resource(&uri, &mut (*stream));
         ok_or_return_int!(result, |_| 0) // returns 0 on success
     })
@@ -1448,10 +1444,10 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     format: *const c_char,
     source: *mut C2paStream,
 ) -> c_int {
-    check_or_return_int!(source);
+    ptr_or_return_int!(source);
     let ingredient_json = from_cstr_or_return_int!(ingredient_json);
     let format = from_cstr_or_return_int!(format);
-    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
         let result = builder.add_ingredient_from_stream(&ingredient_json, &format, &mut (*source));
         ok_or_return_int!(result, |_| 0) // returns 0 on success
     })
@@ -1526,7 +1522,7 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
         }
     };
 
-    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
         ok_or_return_int!(builder.add_action(action_value), |_| 0)
     })
 }
@@ -1558,8 +1554,8 @@ pub unsafe extern "C" fn c2pa_builder_to_archive(
     builder_ptr: *mut C2paBuilder,
     stream: *mut C2paStream,
 ) -> c_int {
-    check_or_return_int!(stream);
-    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+    ptr_or_return_int!(stream);
+    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
         let result = builder.to_archive(&mut (*stream));
         ok_or_return_int!(result, |_| 0) // returns 0 on success
     })
@@ -1593,13 +1589,13 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
     let format = from_cstr_or_return_int!(format);
-    check_or_return_int!(source);
-    check_or_return_int!(dest);
-    check_or_return_int!(manifest_bytes_ptr);
+    ptr_or_return_int!(source);
+    ptr_or_return_int!(dest);
+    ptr_or_return_int!(manifest_bytes_ptr);
 
     // Guard handles - Arc/Mutex/downcast boilerplate hidden!
-    guard_handle!(signer_ptr, C2paSigner, signer);
-    guard_handle_mut!(builder_ptr, C2paBuilder, builder);
+    guard_handle_or_return_neg!(signer_ptr, C2paSigner, signer);
+    guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
 
     let result = builder.sign(signer.signer.as_ref(), &format, &mut *source, &mut *dest);
 
@@ -1654,9 +1650,9 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     format: *const c_char,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    check_or_return_int!(manifest_bytes_ptr);
+    ptr_or_return_int!(manifest_bytes_ptr);
     let format = from_cstr_or_return_int!(format);
-    with_handle_mut_int!(builder_ptr, C2paBuilder, |builder| {
+    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
         let result = builder.data_hashed_placeholder(reserved_size, &format);
         ok_or_return_int!(result, |manifest_bytes: Vec<u8>| {
             let len = manifest_bytes.len() as i64;
@@ -1700,7 +1696,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
 ) -> i64 {
     let data_hash_json = from_cstr_or_return_int!(data_hash);
     let format = from_cstr_or_return_int!(format);
-    check_or_return_int!(manifest_bytes_ptr);
+    ptr_or_return_int!(manifest_bytes_ptr);
 
     let mut data_hash: DataHash = match serde_json::from_str(&data_hash_json) {
         Ok(data_hash) => data_hash,
@@ -1721,8 +1717,8 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     }
 
     // Guard handles - Arc/Mutex/downcast boilerplate hidden!
-    guard_handle!(signer_ptr, C2paSigner, signer);
-    guard_handle_mut!(builder_ptr, C2paBuilder, builder);
+    guard_handle_or_return_neg!(signer_ptr, C2paSigner, signer);
+    guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
 
     let result = builder.sign_data_hashed_embeddable(signer.signer.as_ref(), &data_hash, &format);
 
@@ -1770,8 +1766,8 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     result_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
     let format = from_cstr_or_return_int!(format);
-    check_or_return_int!(manifest_bytes_ptr);
-    check_or_return_int!(result_bytes_ptr);
+    ptr_or_return_int!(manifest_bytes_ptr);
+    ptr_or_return_int!(result_bytes_ptr);
 
     // Safe bounds validation for manifest bytes
     let bytes = match safe_slice_from_raw_parts(
@@ -1833,7 +1829,7 @@ pub unsafe extern "C" fn c2pa_signer_create(
     certs: *const c_char,
     tsa_url: *const c_char,
 ) -> *mut C2paSigner {
-    let certs = from_cstr_or_return_null!(certs);
+    let certs = cstr_or_return_null!(certs);
     let tsa_url = from_cstr_option!(tsa_url);
     let context = context as *const ();
 
@@ -1896,9 +1892,9 @@ pub unsafe extern "C" fn c2pa_signer_create(
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_from_info(signer_info: &C2paSignerInfo) -> *mut C2paSigner {
     let signer_info = SignerInfo {
-        alg: from_cstr_or_return_null!(signer_info.alg),
-        sign_cert: from_cstr_or_return_null!(signer_info.sign_cert).into_bytes(),
-        private_key: from_cstr_or_return_null!(signer_info.private_key).into_bytes(),
+        alg: cstr_or_return_null!(signer_info.alg),
+        sign_cert: cstr_or_return_null!(signer_info.sign_cert).into_bytes(),
+        private_key: cstr_or_return_null!(signer_info.private_key).into_bytes(),
         ta_url: from_cstr_option!(signer_info.ta_url),
     };
 
@@ -1956,7 +1952,7 @@ pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
 /// The signer_ptr must be a valid pointer to a C2paSigner.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -> i64 {
-    with_handle_int!(
+    with_handle_or_return_neg!(
         signer_ptr,
         C2paSigner,
         |signer| signer.signer.reserve_size() as i64
@@ -1982,8 +1978,8 @@ pub unsafe extern "C" fn c2pa_ed25519_sign(
     len: usize,
     private_key: *const c_char,
 ) -> *const c_uchar {
-    check_or_return_null!(bytes);
-    let private_key = from_cstr_or_return_null!(private_key);
+    ptr_or_return_null!(bytes);
+    let private_key = cstr_or_return_null!(private_key);
 
     // Safe bounds validation for input bytes
     let bytes = match safe_slice_from_raw_parts(bytes, len, "bytes") {
