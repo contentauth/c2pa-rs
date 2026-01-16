@@ -90,32 +90,32 @@ macro_rules! ok_or_return {
 /// Handle Result, early-return with -1 (negative) on error
 #[macro_export]
 macro_rules! ok_or_return_int {
-    ($result:expr, $transform:expr) => {
-        ok_or_return!($result, $transform, -1)
+    ($result:expr) => {
+        ok_or_return!($result, |v| v, -1)
     };
 }
 
 /// Handle Result, early-return with null on error
 #[macro_export]
 macro_rules! ok_or_return_null {
-    ($result:expr, $transform:expr) => {
-        ok_or_return!($result, $transform, std::ptr::null_mut())
+    ($result:expr) => {
+        ok_or_return!($result, |v| v, std::ptr::null_mut())
     };
 }
 
 /// Handle Result, early-return with 0 on error
 #[macro_export]
 macro_rules! ok_or_return_zero {
-    ($result:expr, $transform:expr) => {
-        ok_or_return!($result, $transform, 0)
+    ($result:expr) => {
+        ok_or_return!($result, |v| v, 0)
     };
 }
 
 /// Handle Result, early-return with false on error
 #[macro_export]
 macro_rules! ok_or_return_false {
-    ($result:expr, $transform:expr) => {
-        ok_or_return!($result, $transform, false)
+    ($result:expr) => {
+        ok_or_return!($result, |v| v, false)
     };
 }
 

@@ -318,7 +318,7 @@ pub unsafe fn to_c_string(s: String) -> *mut std::os::raw::c_char {
     }
 }
 
-/// Converts a Vec<u8> to a tracked C byte array pointer
+/// Converts a `Vec<u8>` to a tracked C byte array pointer
 ///
 /// The returned pointer is tracked for allocation safety and MUST be freed
 /// by calling `free_c_bytes`.

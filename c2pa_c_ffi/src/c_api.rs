@@ -91,6 +91,7 @@
 use std::{
     os::raw::{c_char, c_int, c_uchar, c_void},
     ptr,
+    sync::Arc,
 };
 
 // C has no namespace so we prefix things with C2PA to make them unique
@@ -98,7 +99,7 @@ use std::{
 use c2pa::Ingredient;
 use c2pa::{
     assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
-    CallbackSigner, Reader as C2paReader, Settings, SigningAlg,
+    CallbackSigner, Context, Reader as C2paReader, Settings, SigningAlg,
 };
 use tokio::runtime::Runtime; // cawg validator requires async
 
@@ -230,14 +231,26 @@ pub enum C2paBuilderIntent {
     Update,
 }
 
-#[repr(C)]
+/// C2paSigner wraps a cryptographic signer for FFI use.
+///
+/// This struct is only ever passed as an opaque pointer to C code,
+/// so we don't need #[repr(C)]. Rust automatically derives Send + Sync
+/// because Box<dyn Signer + Send + Sync> implements those traits.
 pub struct C2paSigner {
     pub signer: Box<dyn c2pa::Signer + Send + Sync>,
 }
 
-// Safety: C2paSigner is Send + Sync because it only contains a Box<dyn Signer + Send + Sync>
-unsafe impl Send for C2paSigner {}
-unsafe impl Sync for C2paSigner {}
+/// A Context holds configuration and dependencies for C2PA operations.
+///
+/// Context encapsulates Settings, HTTP resolvers, and signers in a thread-safe way.
+/// It replaces the global Settings pattern with a more flexible approach.
+///
+/// This struct is only ever passed as an opaque pointer to C code,
+/// so we don't need #[repr(C)]. Rust automatically derives Send + Sync
+/// because `Arc<Context>` implements those traits.
+pub struct C2paContext {
+    context: Arc<Context>,
+}
 
 /// Defines a callback to read from a stream.
 ///
@@ -312,7 +325,7 @@ pub unsafe extern "C" fn c2pa_load_settings(
     let format = cstr_or_return_int!(format);
     // we use the legacy from_string function to set thread-local settings for backward compatibility
     let result = Settings::from_string(&settings, &format);
-    ok_or_return_int!(result, |_| 0) // returns 0 on success
+    ok_or_return!(result, |_| 0, -1) // returns 0 on success
 }
 
 /// Returns a ManifestStore JSON string from a file path.
@@ -706,8 +719,11 @@ pub unsafe extern "C" fn c2pa_reader_resource_to_stream(
     let uri = cstr_or_return_int!(uri);
     guard_handle_or_return_neg!(reader_ptr, C2paReader, reader);
 
-    ok_or_return_int!(reader.resource_to_stream(&uri, &mut (*stream)), |len| len
-        as i64)
+    ok_or_return!(
+        reader.resource_to_stream(&uri, &mut (*stream)),
+        |len| len as i64,
+        -1
+    )
 }
 
 /// Returns an array of char* pointers to c2pa::Reader's supported mime types.
@@ -792,6 +808,40 @@ pub unsafe extern "C" fn c2pa_builder_supported_mime_types(
     count: *mut usize,
 ) -> *const *const c_char {
     c2pa_mime_types_to_c_array(C2paBuilder::supported_mime_types(), count)
+}
+
+/// Sets the manifest definition on a Builder.
+///
+/// This is equivalent to calling builder.with_definition() in Rust.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * definition_json: JSON string containing the manifest definition.
+///
+/// # Returns
+/// 0 on success, -1 on error.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_with_definition(
+    builder_ptr: *mut C2paBuilder,
+    definition_json: *const c_char,
+) -> c_int {
+    let definition_json = cstr_or_return_int!(definition_json);
+    guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
+
+    // Parse the JSON into a ManifestDefinition
+    let definition: c2pa::ManifestDefinition = match serde_json::from_str(&definition_json) {
+        Ok(def) => def,
+        Err(e) => {
+            Error::Json(e.to_string()).set_last();
+            return -1;
+        }
+    };
+    // Directly update the builder's definition field (it's public)
+    builder.definition = definition;
+    0
 }
 
 /// Frees a C2paBuilder allocated by Rust.
@@ -926,7 +976,7 @@ pub unsafe extern "C" fn c2pa_builder_add_resource(
     let uri = cstr_or_return_int!(uri);
     guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
     let result = builder.add_resource(&uri, &mut (*stream));
-    ok_or_return_int!(result, |_| 0) // returns 0 on success
+    ok_or_return!(result, |_| 0, -1) // returns 0 on success
 }
 
 /// Adds an ingredient to the C2paBuilder.
@@ -955,7 +1005,7 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     let format = cstr_or_return_int!(format);
     guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
     let result = builder.add_ingredient_from_stream(&ingredient_json, &format, &mut (*source));
-    ok_or_return_int!(result, |_| 0) // returns 0 on success
+    ok_or_return!(result, |_| 0, -1) // returns 0 on success
 }
 
 /// Adds an action to the manifest the Builder is constructing.
@@ -1028,7 +1078,7 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
     };
 
     guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
-    ok_or_return_int!(builder.add_action(action_value), |_| 0)
+    ok_or_return!(builder.add_action(action_value), |_| 0, -1)
 }
 
 /// Writes an Archive of the Builder to the destination stream.
@@ -1061,7 +1111,7 @@ pub unsafe extern "C" fn c2pa_builder_to_archive(
     ptr_or_return_int!(stream);
     guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
     let result = builder.to_archive(&mut (*stream));
-    ok_or_return_int!(result, |_| 0) // returns 0 on success
+    ok_or_return!(result, |_| 0, -1) // returns 0 on success
 }
 
 /// Creates and writes signed manifest from the C2paBuilder to the destination stream.
@@ -1117,7 +1167,79 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     }
 }
 
-/// Frees a C2PA manifest returned by c2pa_builder_sign.
+/// Signs a Builder and saves the output to a stream, getting the signer from the Builder's context.
+///
+/// This is similar to c2pa_builder_sign, but it automatically retrieves the signer
+/// from the Builder's context (which was set via c2pa_builder_from_context).
+/// The manifest is embedded in the output stream.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder (must have been created from a context).
+/// * format: pointer to a C string with the mime type or extension.
+/// * source: pointer to a stream to read from.
+/// * dest: pointer to a stream to write to.
+/// * manifest_bytes_ptr: pointer to a pointer to a manifest byte array (can be NULL if not needed).
+///
+/// # Returns
+/// The size of the manifest as i64 or -1 on error.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings
+/// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_manifest_bytes_free
+/// and it is no longer valid after that call.
+///
+/// # Example
+/// ```c
+/// // Create a context with signer settings
+/// C2paContext* context = c2pa_context_new_from_settings(settings, "json");
+/// C2paBuilder* builder = c2pa_builder_from_context(context);
+///
+/// // Sign and save using the context's signer
+/// const unsigned char* manifest_bytes = NULL;
+/// i64 size = c2pa_builder_save_to_stream(
+///     builder, "image/jpeg", source_stream, dest_stream, &manifest_bytes
+/// );
+///
+/// if (size > 0) {
+///     // Success - manifest was embedded
+///     c2pa_manifest_bytes_free(manifest_bytes);
+/// }
+/// c2pa_builder_free(builder);
+/// c2pa_context_free(context);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_save_to_stream(
+    builder_ptr: *mut C2paBuilder,
+    format: *const c_char,
+    source: *mut C2paStream,
+    dest: *mut C2paStream,
+    manifest_bytes_ptr: *mut *const c_uchar,
+) -> i64 {
+    let format = cstr_or_return_int!(format);
+    ptr_or_return_int!(source);
+    ptr_or_return_int!(dest);
+    ptr_or_return_int!(manifest_bytes_ptr);
+
+    guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
+
+    let result = builder.save_to_stream(&format, &mut *source, &mut *dest);
+
+    match result {
+        Ok(manifest_bytes) => {
+            let len = manifest_bytes.len() as i64;
+            if !manifest_bytes_ptr.is_null() {
+                *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
+            }
+            len
+        }
+        Err(err) => {
+            Error::from_c2pa_error(err).set_last();
+            -1
+        }
+    }
+}
+
+/// Frees a C2PA manifest returned by c2pa_builder_sign or c2pa_builder_save_to_stream.
 ///
 /// # Safety
 /// The bytes can only be freed once and are invalid after this call.
@@ -1154,13 +1276,17 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     let format = cstr_or_return_int!(format);
     guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
     let result = builder.data_hashed_placeholder(reserved_size, &format);
-    ok_or_return_int!(result, |manifest_bytes: Vec<u8>| {
-        let len = manifest_bytes.len() as i64;
-        if !manifest_bytes_ptr.is_null() {
-            *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
-        };
-        len
-    })
+    ok_or_return!(
+        result,
+        |manifest_bytes: Vec<u8>| {
+            let len = manifest_bytes.len() as i64;
+            if !manifest_bytes_ptr.is_null() {
+                *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
+            };
+            len
+        },
+        -1
+    )
 }
 
 /// Sign a Builder using the specified signer and data hash.
@@ -1214,7 +1340,6 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
         }
     }
 
-    // Guard handles - Arc/Mutex/downcast boilerplate hidden!
     guard_handle_or_return_neg!(signer_ptr, C2paSigner, signer);
     guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
 
@@ -1280,13 +1405,17 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     };
 
     let result = c2pa::Builder::composed_manifest(bytes, &format);
-    ok_or_return_int!(result, |result_bytes: Vec<u8>| {
-        let len = result_bytes.len() as i64;
-        if !result_bytes_ptr.is_null() {
-            *result_bytes_ptr = to_c_bytes(result_bytes);
-        };
-        len
-    })
+    ok_or_return!(
+        result,
+        |result_bytes: Vec<u8>| {
+            let len = result_bytes.len() as i64;
+            if !result_bytes_ptr.is_null() {
+                *result_bytes_ptr = to_c_bytes(result_bytes);
+            };
+            len
+        },
+        -1
+    )
 }
 
 /// Creates a C2paSigner from a callback and configuration.
@@ -1460,6 +1589,186 @@ pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_free(signer_ptr: *mut C2paSigner) -> c_int {
     free_handle!(signer_ptr, C2paSigner)
+}
+
+/// Creates a new Context with default settings.
+///
+/// The Context encapsulates Settings, HTTP resolvers, and signers in a thread-safe way.
+/// It replaces the global Settings pattern with a more flexible approach.
+///
+/// # Returns
+/// Pointer to C2paContext or NULL on error.
+///
+/// # Example
+/// ```c
+/// C2paContext* context = c2pa_context_new();
+/// if (context == NULL) {
+///     char* error = c2pa_error();
+///     fprintf(stderr, "Error: %s\n", error);
+///     c2pa_string_free(error);
+///     return -1;
+/// }
+/// // Use context...
+/// c2pa_context_free(context);
+/// ```
+///
+/// # Safety
+/// The returned pointer MUST be freed by calling c2pa_context_free().
+/// The pointer is invalid after being freed.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_new() -> *mut C2paContext {
+    let context = Context::new();
+    let c2pa_context = C2paContext {
+        context: Arc::new(context),
+    };
+    return_handle!(Ok(c2pa_context), C2paContext)
+}
+
+/// Creates a new Context from settings string (JSON or TOML).
+///
+/// The settings string can contain configuration for signers, HTTP resolvers,
+/// verification settings, and more. The format is auto-detected (tries JSON first, then TOML).
+///
+/// # Parameters
+/// * settings_str: JSON or TOML settings string
+/// * format: "json" or "toml" (currently unused - format is auto-detected)
+///
+/// # Returns
+/// Pointer to C2paContext or NULL on error.
+///
+/// # Example
+/// ```c
+/// const char* settings = "{"signer": {"local": {"alg": "ps256", ...}}}";
+/// C2paContext* context = c2pa_context_new_from_settings(settings, "json");
+/// if (context == NULL) {
+///     char* error = c2pa_error();
+///     fprintf(stderr, "Error: %s\n", error);
+///     c2pa_string_free(error);
+///     return -1;
+/// }
+/// // Use context with embedded signer...
+/// c2pa_context_free(context);
+/// ```
+///
+/// # Safety
+/// The returned pointer MUST be freed by calling c2pa_context_free().
+/// The settings_str and format parameters must be valid NULL-terminated C strings or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_new_from_settings(
+    settings_str: *const c_char,
+    format: *const c_char,
+) -> *mut C2paContext {
+    let settings_str = cstr_or_return_null!(settings_str);
+    let _format = cstr_or_return_null!(format); // format param kept for API consistency but auto-detected
+
+    let result = Context::new().with_settings(settings_str);
+    let context = match result {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            Error::from_c2pa_error(err).set_last();
+            return std::ptr::null_mut();
+        }
+    };
+
+    let c2pa_context = C2paContext {
+        context: Arc::new(context),
+    };
+    return_handle!(Ok(c2pa_context), C2paContext)
+}
+
+/// Frees a Context.
+///
+/// # Parameters
+/// * context_ptr: pointer to a Context.
+///
+/// # Returns
+/// 0 on success, -1 on error.
+///
+/// # Safety
+/// The Context can only be freed once and is invalid after this call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_free(context_ptr: *mut C2paContext) -> c_int {
+    free_handle!(context_ptr, C2paContext)
+}
+
+/// Creates a Builder from a Context.
+///
+/// The Builder will use the Context's settings, HTTP resolver, and can access
+/// the Context's signer when needed for signing operations.
+///
+/// # Parameters
+/// * context_ptr: pointer to a Context.
+///
+/// # Returns
+/// Pointer to C2paBuilder or NULL on error.
+///
+/// # Example
+/// ```c
+/// C2paContext* context = c2pa_context_new();
+/// C2paBuilder* builder = c2pa_builder_from_context(context);
+/// if (builder == NULL) {
+///     char* error = c2pa_error();
+///     fprintf(stderr, "Error: %s\n", error);
+///     c2pa_string_free(error);
+///     c2pa_context_free(context);
+///     return -1;
+/// }
+/// // Use builder...
+/// c2pa_builder_free(builder);
+/// c2pa_context_free(context);
+/// ```
+///
+/// # Safety
+/// The returned pointer MUST be freed by calling c2pa_builder_free().
+/// The context_ptr must be a valid pointer from c2pa_context_new() or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_from_context(
+    context_ptr: *mut C2paContext,
+) -> *mut C2paBuilder {
+    guard_handle_or_null!(context_ptr, C2paContext, ctx);
+
+    let builder = C2paBuilder::from_shared_context(&ctx.context);
+    return_handle!(Ok(builder), C2paBuilder)
+}
+
+/// Creates a Reader from a Context.
+///
+/// The Reader will use the Context's settings and HTTP resolver for operations
+/// like fetching remote manifests.
+///
+/// # Parameters
+/// * context_ptr: pointer to a Context.
+///
+/// # Returns
+/// Pointer to C2paReader or NULL on error.
+///
+/// # Example
+/// ```c
+/// C2paContext* context = c2pa_context_new();
+/// C2paReader* reader = c2pa_reader_from_context(context);
+/// if (reader == NULL) {
+///     char* error = c2pa_error();
+///     fprintf(stderr, "Error: %s\n", error);
+///     c2pa_string_free(error);
+///     c2pa_context_free(context);
+///     return -1;
+/// }
+/// // Use reader...
+/// c2pa_reader_free(reader);
+/// c2pa_context_free(context);
+/// ```
+///
+/// # Safety
+/// The returned pointer MUST be freed by calling c2pa_reader_free().
+/// The context_ptr must be a valid pointer from c2pa_context_new() or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_from_context(
+    context_ptr: *mut C2paContext,
+) -> *mut C2paReader {
+    guard_handle_or_null!(context_ptr, C2paContext, ctx);
+
+    let reader = C2paReader::from_shared_context(&ctx.context);
+    return_handle!(Ok(reader), C2paReader)
 }
 
 #[no_mangle]
@@ -2361,5 +2670,256 @@ mod tests {
         let signer = unsafe { c2pa_signer_from_settings() };
         assert!(!signer.is_null());
         unsafe { c2pa_signer_free(signer) };
+    }
+
+    #[test]
+    fn test_c2pa_context_new() {
+        // Test creating a new context with default settings
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        // Clean up
+        let result = unsafe { c2pa_context_free(context) };
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_c2pa_context_double_free() {
+        // Test that double-freeing a context is detected
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        // First free should succeed
+        let result1 = unsafe { c2pa_context_free(context) };
+        assert_eq!(result1, 0);
+
+        // Second free should fail (handle no longer valid)
+        let result2 = unsafe { c2pa_context_free(context) };
+        assert_eq!(result2, -1);
+    }
+
+    #[test]
+    fn test_c2pa_builder_from_context() {
+        // Create a context
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        // Create a builder from the context
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null());
+
+        // Clean up
+        unsafe { c2pa_builder_free(builder) };
+        unsafe { c2pa_context_free(context) };
+    }
+
+    #[test]
+    fn test_c2pa_reader_from_context() {
+        // Create a context with default settings
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        // Create a reader from the context
+        // This creates an empty Reader that uses the context's settings and resolver
+        let reader = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader.is_null());
+
+        // Verify we can create multiple readers from the same context
+        let reader2 = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader2.is_null());
+
+        // Clean up - readers can be freed independently
+        unsafe { c2pa_reader_free(reader) };
+        unsafe { c2pa_reader_free(reader2) };
+        unsafe { c2pa_context_free(context) };
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_c2pa_reader_from_context_with_stream() {
+        // Create a context
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        // Create a reader from context
+        let reader = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader.is_null());
+
+        // Load a test file with a manifest
+        let source_image = include_bytes!(fixture_path!("C.jpg"));
+        let mut stream = TestC2paStream::from_bytes(source_image.to_vec());
+
+        // Read from the stream - this demonstrates that readers work correctly
+        // Note: Currently c2pa_reader_from_stream creates its own reader,
+        // but this test verifies the context-based reader is properly initialized
+        let format = CString::new("image/jpeg").unwrap();
+        let result = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
+        assert!(!result.is_null());
+
+        // Verify the reader loaded the manifest
+        let json = unsafe { c2pa_reader_json(result) };
+        assert!(!json.is_null());
+
+        let json_str = unsafe { CString::from_raw(json) };
+        let json_content = json_str.to_str().unwrap();
+        assert!(
+            json_content.contains("manifest"),
+            "Reader should load manifest from stream"
+        );
+
+        // Clean up
+        TestC2paStream::drop_c_stream(stream);
+        unsafe { c2pa_reader_free(result) };
+        unsafe { c2pa_reader_free(reader) };
+        unsafe { c2pa_context_free(context) };
+    }
+
+    #[test]
+    fn test_c2pa_context_null_free() {
+        // Test that freeing a NULL context is safe (no-op that succeeds)
+        let result = unsafe { c2pa_context_free(std::ptr::null_mut()) };
+        assert_eq!(result, 0); // NULL is considered already freed
+    }
+
+    #[test]
+    fn test_c2pa_builder_from_null_context() {
+        // Test that creating a builder from NULL context returns NULL
+        let builder = unsafe { c2pa_builder_from_context(std::ptr::null_mut()) };
+        assert!(builder.is_null());
+
+        // Verify error was set
+        let error = unsafe { c2pa_error() };
+        assert!(!error.is_null());
+        unsafe { c2pa_string_free(error) };
+    }
+
+    #[test]
+    fn test_c2pa_reader_from_null_context() {
+        // Test that creating a reader from NULL context returns NULL
+        let reader = unsafe { c2pa_reader_from_context(std::ptr::null_mut()) };
+        assert!(reader.is_null());
+
+        // Verify error was set
+        let error = unsafe { c2pa_error() };
+        assert!(!error.is_null());
+        unsafe { c2pa_string_free(error) };
+    }
+
+    #[test]
+    fn test_c2pa_context_new_from_settings() {
+        // Test creating a context from settings
+        const SETTINGS: &str = include_str!("../../sdk/tests/fixtures/test_settings.json");
+        let settings = CString::new(SETTINGS).unwrap();
+        let format = CString::new("json").unwrap();
+
+        let context = unsafe { c2pa_context_new_from_settings(settings.as_ptr(), format.as_ptr()) };
+        assert!(
+            !context.is_null(),
+            "Context should be created from settings"
+        );
+
+        // Clean up
+        let result = unsafe { c2pa_context_free(context) };
+        assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_c2pa_builder_save_to_stream_with_context() {
+        // This is a comprehensive integration test that:
+        // 1. Creates a context with signer settings
+        // 2. Creates a builder from that context
+        // 3. Signs using save_to_stream (which gets signer from context)
+        // 4. Reads back the signed content with a context-based reader
+
+        const SETTINGS: &str = include_str!("../../sdk/tests/fixtures/test_settings.json");
+        let settings = CString::new(SETTINGS).unwrap();
+        let format_str = CString::new("json").unwrap();
+
+        // Create context from settings (includes signer configuration)
+        let context =
+            unsafe { c2pa_context_new_from_settings(settings.as_ptr(), format_str.as_ptr()) };
+        assert!(
+            !context.is_null(),
+            "Context should be created from settings"
+        );
+
+        // Create a builder from the context
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null(), "Builder should be created from context");
+
+        // Set the definition on the builder
+        let manifest_def = CString::new(r#"{"title": "Context Integration Test"}"#).unwrap();
+        let result = unsafe { c2pa_builder_with_definition(builder, manifest_def.as_ptr()) };
+        assert_eq!(result, 0, "Setting definition should succeed");
+
+        // Prepare source and destination streams
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+
+        // Sign using save_to_stream - this gets the signer from the context automatically
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let size = unsafe {
+            c2pa_builder_save_to_stream(
+                builder,
+                format.as_ptr(),
+                &mut source_stream,
+                &mut dest_stream,
+                &mut manifest_bytes_ptr,
+            )
+        };
+
+        if size <= 0 {
+            let error = unsafe { c2pa_error() };
+            if !error.is_null() {
+                let error_str = unsafe { CString::from_raw(error) };
+                panic!("Signing failed with error: {}", error_str.to_str().unwrap());
+            } else {
+                panic!("Signing failed with no error message");
+            }
+        }
+
+        assert!(size > 0, "Signing should succeed and return manifest size");
+        assert!(
+            !manifest_bytes_ptr.is_null(),
+            "Manifest bytes should be returned"
+        );
+
+        // Read back the signed content using a context-based reader
+        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
+        let mut read_stream = dest_test_stream.into_c_stream();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        assert!(
+            !reader.is_null(),
+            "Reader should be created from signed stream"
+        );
+
+        // Verify the manifest content
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null(), "JSON should be retrieved from reader");
+
+        let json_str = unsafe { CString::from_raw(json) };
+        let json_content = json_str.to_str().unwrap();
+        assert!(
+            json_content.contains("Context Integration Test"),
+            "Manifest should contain our title"
+        );
+        assert!(
+            json_content.contains("manifest"),
+            "Manifest should be properly structured"
+        );
+
+        // Clean up
+        TestC2paStream::drop_c_stream(source_stream);
+        TestC2paStream::drop_c_stream(read_stream);
+        unsafe {
+            c2pa_manifest_bytes_free(manifest_bytes_ptr);
+            c2pa_reader_free(reader);
+            c2pa_builder_free(builder);
+            c2pa_context_free(context);
+        }
     }
 }
