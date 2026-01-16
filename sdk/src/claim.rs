@@ -2227,14 +2227,14 @@ impl Claim {
                     let Some(params) = action.parameters() else {
                         log_item!(
                             label.clone(),
-                            "opened, placed and removed items must have parameters",
+                            "opened, placed and removed items must have ingredient(s) parameters",
                             "verify_actions"
                         )
                         .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
                         .failure(
                             validation_log,
                             Error::ValidationRule(
-                                "opened, placed and removed items must have parameters".into(),
+                                "opened, placed and removed items must have ingredient(s) parameters".into(),
                             ),
                         )?;
                         continue; // Skip the parameter-dependent checks below
