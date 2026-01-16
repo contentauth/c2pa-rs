@@ -1863,6 +1863,28 @@ pub mod tests {
     }
 
     #[test]
+    fn test_read_write_manifest_dng() {
+        let data = "some data";
+
+        let source = crate::utils::test::fixture_path("subfiles.dng");
+
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "test.dng");
+
+        std::fs::copy(source, &output).unwrap();
+
+        let tiff_io = TiffIO {};
+
+        // save data to tiff
+        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+
+        // read data back
+        let loaded = tiff_io.read_cai_store(&output).unwrap();
+
+        assert_eq!(&loaded, data.as_bytes());
+    }
+
+    #[test]
     fn test_write_xmp() {
         let data = "some data";
 
