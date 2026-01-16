@@ -6916,7 +6916,7 @@ pub mod tests {
         // expect action error
         assert!(store.is_err());
         assert!(report.has_error(Error::ValidationRule(
-            "opened, placed and removed items must have parameters".into()
+            "opened, placed and removed items must have ingredient(s) parameters".into()
         )));
         assert!(report.filter_errors().count() == 2);
     }
