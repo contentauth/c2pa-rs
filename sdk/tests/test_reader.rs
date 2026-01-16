@@ -100,9 +100,8 @@ fn write_known_goods() -> Result<()> {
     Ok(())
 }
 
-/// Test that validation_state() correctly uses the Reader's context settings
-/// for remote (no_embed) manifests.
-/// This is necessary to make sure trust config is used, for instance.
+/// Test that validation_state() uses the Reader's context settings also
+/// when calling with_manifest_data_and_stream.
 #[test]
 fn test_reader_validation_state_uses_context_settings() -> Result<()> {
     use std::io::Cursor;
