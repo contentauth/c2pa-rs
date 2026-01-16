@@ -133,7 +133,7 @@ fn test_reader_validation_state_uses_context_settings() -> Result<()> {
     assert_eq!(
         reader.validation_state(),
         ValidationState::Trusted,
-        "Expected Trusted state when trust anchors are configured in the Reader context"
+        "Expected Trusted state when trust is configured in the Reader context"
     );
 
     Ok(())
