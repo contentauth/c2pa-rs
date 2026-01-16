@@ -35,7 +35,7 @@ pub use c_api::*;
 pub use error::{Error, Result};
 #[doc(hidden)]
 pub use ffi_utils::{
-    get_handles, handle_to_ptr, ptr_to_handle, track_bytes_allocation, track_string_allocation,
-    untrack_allocation, Handle,
+    free_c_bytes, free_c_string, get_handles, handle_to_ptr, ptr_to_handle, to_c_bytes,
+    to_c_string, untrack_allocation, Handle,
 };
 pub use signer_info::SignerInfo;

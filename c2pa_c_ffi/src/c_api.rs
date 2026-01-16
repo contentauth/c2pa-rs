@@ -89,7 +89,6 @@
 //! ```
 
 use std::{
-    ffi::CString,
     os::raw::{c_char, c_int, c_uchar, c_void},
     ptr,
 };
@@ -106,8 +105,8 @@ use tokio::runtime::Runtime; // cawg validator requires async
 // Import FFI infrastructure
 #[allow(unused_imports)] // Re-exported for macro use
 use crate::ffi_utils::{
-    get_handles, handle_to_ptr, is_safe_buffer_size, ptr_to_handle, safe_slice_from_raw_parts,
-    to_c_string, track_bytes_allocation, untrack_allocation, Handle,
+    free_c_bytes, free_c_string, get_handles, handle_to_ptr, is_safe_buffer_size, ptr_to_handle,
+    safe_slice_from_raw_parts, to_c_bytes, to_c_string, Handle,
 };
 #[cfg(feature = "file_io")]
 use crate::json_api::{read_file, sign_file};
@@ -457,16 +456,7 @@ pub unsafe extern "C" fn c2pa_release_string(s: *mut c_char) {
 /// The string can only be freed once and is invalid after this call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_string_free(s: *mut c_char) {
-    if !s.is_null() {
-        if untrack_allocation(s as *const u8) {
-            drop(CString::from_raw(s));
-        } else {
-            eprintln!(
-                "WARNING: Attempt to free untracked or already-freed string pointer: {:p}",
-                s
-            );
-        }
-    }
+    free_c_string(s);
 }
 
 /// Frees an array of char* pointers created by Rust.
@@ -1116,9 +1106,7 @@ pub unsafe extern "C" fn c2pa_builder_sign(
         Ok(manifest_bytes) => {
             let len = manifest_bytes.len() as i64;
             if !manifest_bytes_ptr.is_null() {
-                let ptr = Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
-                track_bytes_allocation(ptr, len as usize);
-                *manifest_bytes_ptr = ptr;
+                *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
             }
             len
         }
@@ -1135,16 +1123,7 @@ pub unsafe extern "C" fn c2pa_builder_sign(
 /// The bytes can only be freed once and are invalid after this call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_manifest_bytes_free(manifest_bytes_ptr: *const c_uchar) {
-    if !manifest_bytes_ptr.is_null() {
-        if untrack_allocation(manifest_bytes_ptr) {
-            drop(Box::from_raw(manifest_bytes_ptr as *mut c_uchar));
-        } else {
-            eprintln!(
-                "WARNING: Attempt to free untracked or already-freed manifest bytes pointer: {:p}",
-                manifest_bytes_ptr
-            );
-        }
-    }
+    free_c_bytes(manifest_bytes_ptr);
 }
 
 /// Creates a hashed placeholder from a Builder.
@@ -1178,9 +1157,7 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     ok_or_return_int!(result, |manifest_bytes: Vec<u8>| {
         let len = manifest_bytes.len() as i64;
         if !manifest_bytes_ptr.is_null() {
-            let ptr = Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
-            track_bytes_allocation(ptr, len as usize);
-            *manifest_bytes_ptr = ptr;
+            *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
         };
         len
     })
@@ -1247,9 +1224,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
         Ok(manifest_bytes) => {
             let len = manifest_bytes.len() as i64;
             if !manifest_bytes_ptr.is_null() {
-                let ptr = Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
-                track_bytes_allocation(ptr, len as usize);
-                *manifest_bytes_ptr = ptr;
+                *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
             }
             len
         }
@@ -1308,9 +1283,7 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     ok_or_return_int!(result, |result_bytes: Vec<u8>| {
         let len = result_bytes.len() as i64;
         if !result_bytes_ptr.is_null() {
-            let ptr = Box::into_raw(result_bytes.into_boxed_slice()) as *const c_uchar;
-            track_bytes_allocation(ptr, len as usize);
-            *result_bytes_ptr = ptr;
+            *result_bytes_ptr = to_c_bytes(result_bytes);
         };
         len
     })
@@ -2388,42 +2361,5 @@ mod tests {
         let signer = unsafe { c2pa_signer_from_settings() };
         assert!(!signer.is_null());
         unsafe { c2pa_signer_free(signer) };
-    }
-
-    #[test]
-    fn test_allocation_tracking_double_free_string() {
-        // Test that double-freeing a string is detected
-        let test_string = CString::new("test allocation tracking").unwrap();
-        let c_string = unsafe { to_c_string(test_string.to_str().unwrap().to_string()) };
-        assert!(!c_string.is_null());
-
-        // First free should succeed
-        unsafe { c2pa_string_free(c_string) };
-
-        // Second free should be detected and logged (not panic)
-        // The function will print a warning to stderr
-        unsafe { c2pa_string_free(c_string) };
-    }
-
-    #[test]
-    fn test_allocation_tracking_null_free() {
-        // Test that freeing NULL is safe
-        unsafe { c2pa_string_free(std::ptr::null_mut()) };
-        unsafe { c2pa_manifest_bytes_free(std::ptr::null()) };
-    }
-
-    #[test]
-    fn test_allocation_tracking_double_free_bytes() {
-        // Test that double-freeing byte arrays is detected
-        let test_bytes = vec![1u8, 2, 3, 4, 5];
-        let len = test_bytes.len();
-        let ptr = Box::into_raw(test_bytes.into_boxed_slice()) as *const c_uchar;
-        track_bytes_allocation(ptr, len);
-
-        // First free should succeed
-        unsafe { c2pa_manifest_bytes_free(ptr) };
-
-        // Second free should be detected and logged (not panic)
-        unsafe { c2pa_manifest_bytes_free(ptr) };
     }
 }

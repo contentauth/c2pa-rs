@@ -317,3 +317,168 @@ pub unsafe fn to_c_string(s: String) -> *mut std::os::raw::c_char {
         Err(_) => std::ptr::null_mut(),
     }
 }
+
+/// Converts a Vec<u8> to a tracked C byte array pointer
+///
+/// The returned pointer is tracked for allocation safety and MUST be freed
+/// by calling `free_c_bytes`.
+///
+/// # Arguments
+/// * `bytes` - The byte vector to convert
+///
+/// # Returns
+/// * `*const c_uchar` - Pointer to the byte array
+///
+/// # Safety
+/// The returned pointer must be freed exactly once by calling `free_c_bytes`
+pub fn to_c_bytes(bytes: Vec<u8>) -> *const c_uchar {
+    let len = bytes.len();
+    let ptr = Box::into_raw(bytes.into_boxed_slice()) as *const c_uchar;
+    track_bytes_allocation(ptr, len);
+    ptr
+}
+
+/// Safely frees a tracked C string
+///
+/// Validates that the pointer was allocated and tracked by Rust before freeing.
+/// NULL pointers are safely ignored. Attempts to free untracked or already-freed
+/// pointers are detected and logged.
+///
+/// # Arguments
+/// * `ptr` - Pointer to the C string to free
+///
+/// # Returns
+/// * `true` if the string was tracked and freed successfully, or if ptr was NULL
+/// * `false` if the string was not tracked (double-free or invalid pointer)
+///
+/// # Safety
+/// This function is safe to call with NULL or invalid pointers - it will not panic
+pub unsafe fn free_c_string(ptr: *mut std::os::raw::c_char) -> bool {
+    use std::ffi::CString;
+
+    if ptr.is_null() {
+        return true; // NULL is always safe
+    }
+
+    if untrack_allocation(ptr as *const u8) {
+        drop(CString::from_raw(ptr));
+        true
+    } else {
+        eprintln!(
+            "WARNING: Attempt to free untracked or already-freed string pointer: {:p}",
+            ptr
+        );
+        false
+    }
+}
+
+/// Safely frees a tracked C byte array
+///
+/// Validates that the pointer was allocated and tracked by Rust before freeing.
+/// NULL pointers are safely ignored. Attempts to free untracked or already-freed
+/// pointers are detected and logged.
+///
+/// # Arguments
+/// * `ptr` - Pointer to the byte array to free
+///
+/// # Returns
+/// * `true` if the array was tracked and freed successfully, or if ptr was NULL
+/// * `false` if the array was not tracked (double-free or invalid pointer)
+///
+/// # Safety
+/// This function is safe to call with NULL or invalid pointers - it will not panic
+pub unsafe fn free_c_bytes(ptr: *const c_uchar) -> bool {
+    if ptr.is_null() {
+        return true; // NULL is always safe
+    }
+
+    if untrack_allocation(ptr) {
+        drop(Box::from_raw(ptr as *mut c_uchar));
+        true
+    } else {
+        eprintln!(
+            "WARNING: Attempt to free untracked or already-freed byte array pointer: {:p}",
+            ptr
+        );
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_allocation_tracking_double_free_string() {
+        use std::ffi::CString;
+
+        // Test that double-freeing a string is detected
+        let test_string = CString::new("test allocation tracking").unwrap();
+        let c_string = unsafe { to_c_string(test_string.to_str().unwrap().to_string()) };
+        assert!(!c_string.is_null());
+
+        // First free should succeed
+        let result1 = unsafe { free_c_string(c_string) };
+        assert!(result1);
+
+        // Second free should be detected and logged (not panic)
+        let result2 = unsafe { free_c_string(c_string) };
+        assert!(!result2);
+    }
+
+    #[test]
+    fn test_allocation_tracking_null_free() {
+        // Test that freeing NULL is safe
+        let result1 = unsafe { free_c_string(std::ptr::null_mut()) };
+        assert!(result1);
+
+        let result2 = unsafe { free_c_bytes(std::ptr::null()) };
+        assert!(result2);
+    }
+
+    #[test]
+    fn test_allocation_tracking_double_free_bytes() {
+        // Test that double-freeing byte arrays is detected
+        let test_bytes = vec![1u8, 2, 3, 4, 5];
+        let ptr = to_c_bytes(test_bytes);
+
+        // First free should succeed
+        let result1 = unsafe { free_c_bytes(ptr) };
+        assert!(result1);
+
+        // Second free should be detected and logged (not panic)
+        let result2 = unsafe { free_c_bytes(ptr) };
+        assert!(!result2);
+    }
+
+    #[test]
+    fn test_to_c_string_basic() {
+        // Test basic string conversion
+        let rust_string = "Hello, C!".to_string();
+        let c_string = unsafe { to_c_string(rust_string) };
+        assert!(!c_string.is_null());
+
+        // Clean up
+        unsafe { free_c_string(c_string) };
+    }
+
+    #[test]
+    fn test_to_c_bytes_basic() {
+        // Test basic byte array conversion
+        let bytes = vec![1, 2, 3, 4, 5];
+        let ptr = to_c_bytes(bytes);
+        assert!(!ptr.is_null());
+
+        // Clean up
+        unsafe { free_c_bytes(ptr) };
+    }
+
+    #[test]
+    fn test_to_c_string_with_null_byte() {
+        // Test that strings with embedded nulls return null
+        let bad_string = "Hello\0World".to_string();
+        let c_string = unsafe { to_c_string(bad_string) };
+        assert!(c_string.is_null());
+        // No need to free since it's null
+    }
+}
