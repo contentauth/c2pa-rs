@@ -305,7 +305,7 @@ pub unsafe fn safe_slice_from_raw_parts(
 ///
 /// # Safety
 /// The returned pointer must be freed exactly once by C code
-pub unsafe fn to_c_string(s: String) -> *mut std::os::raw::c_char {
+pub fn to_c_string(s: String) -> *mut std::os::raw::c_char {
     use std::ffi::CString;
     let len = s.len();
     match CString::new(s) {
@@ -318,7 +318,7 @@ pub unsafe fn to_c_string(s: String) -> *mut std::os::raw::c_char {
     }
 }
 
-/// Converts a `Vec<u8>` to a tracked C byte array pointer
+/// Converts a `Vec <u8>` to a tracked C byte array pointer
 ///
 /// The returned pointer is tracked for allocation safety and MUST be freed
 /// by calling `free_c_bytes`.
@@ -414,7 +414,7 @@ mod tests {
 
         // Test that double-freeing a string is detected
         let test_string = CString::new("test allocation tracking").unwrap();
-        let c_string = unsafe { to_c_string(test_string.to_str().unwrap().to_string()) };
+        let c_string = to_c_string(test_string.to_str().unwrap().to_string());
         assert!(!c_string.is_null());
 
         // First free should succeed
@@ -455,7 +455,7 @@ mod tests {
     fn test_to_c_string_basic() {
         // Test basic string conversion
         let rust_string = "Hello, C!".to_string();
-        let c_string = unsafe { to_c_string(rust_string) };
+        let c_string = to_c_string(rust_string);
         assert!(!c_string.is_null());
 
         // Clean up
@@ -477,7 +477,7 @@ mod tests {
     fn test_to_c_string_with_null_byte() {
         // Test that strings with embedded nulls return null
         let bad_string = "Hello\0World".to_string();
-        let c_string = unsafe { to_c_string(bad_string) };
+        let c_string = to_c_string(bad_string);
         assert!(c_string.is_null());
         // No need to free since it's null
     }

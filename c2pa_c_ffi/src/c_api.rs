@@ -849,7 +849,7 @@ pub unsafe extern "C" fn c2pa_builder_with_definition(
 /// # Safety
 /// The C2paBuilder can only be freed once and is invalid after this call.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) -> c_int {
+pub extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) -> c_int {
     free_handle!(builder_ptr, C2paBuilder)
 }
 
@@ -877,7 +877,7 @@ pub unsafe extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) -> c_i
 /// # Safety
 /// builder_ptr must be a valid pointer to a Builder.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_builder_set_intent(
+pub extern "C" fn c2pa_builder_set_intent(
     builder_ptr: *mut C2paBuilder,
     intent: C2paBuilderIntent,
     digital_source_type: C2paDigitalSourceType,
@@ -901,7 +901,7 @@ pub unsafe extern "C" fn c2pa_builder_set_intent(
 /// # Safety
 /// builder_ptr must be a valid pointer to a Builder.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_builder_set_no_embed(builder_ptr: *mut C2paBuilder) {
+pub extern "C" fn c2pa_builder_set_no_embed(builder_ptr: *mut C2paBuilder) {
     guard_handle_mut_or_return!(builder_ptr, C2paBuilder, builder);
     builder.set_no_embed(true);
 }
@@ -1110,7 +1110,7 @@ pub unsafe extern "C" fn c2pa_builder_to_archive(
 ) -> c_int {
     ptr_or_return_int!(stream);
     guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
-    let result = builder.to_archive(&mut (*stream));
+    let result = builder.to_archive(&mut *stream);
     ok_or_return!(result, |_| 0, -1) // returns 0 on success
 }
 
@@ -1549,7 +1549,7 @@ pub unsafe extern "C" fn c2pa_signer_from_info(signer_info: &C2paSignerInfo) -> 
 /// The returned value MUST be released by calling c2pa_signer_free
 /// and it is no longer valid after that call.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
+pub extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
     match Settings::signer() {
         Ok(signer) => {
             let c2pa_signer = C2paSigner {
@@ -1837,7 +1837,7 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
     // the underlying memory must be allocated as `*mut *mut c_char` because freeing
     // or deallocating memory requires a mutable pointer. This ensures the caller can
     // safely release ownership of both the array and its strings.
-    let mut mime_ptrs: Vec<*mut c_char> = strs.into_iter().map(|s| to_c_string(s)).collect();
+    let mut mime_ptrs: Vec<*mut c_char> = strs.into_iter().map(to_c_string).collect();
     mime_ptrs.shrink_to_fit();
 
     // verify that the length and capacity of the vector are identitical, as we rely on this later
@@ -1966,7 +1966,7 @@ mod tests {
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
         }
-        unsafe { c2pa_builder_free(builder) };
+        c2pa_builder_free(builder);
         unsafe { c2pa_signer_free(signer) };
     }
 
@@ -2043,13 +2043,11 @@ mod tests {
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
         // The create intent requires needs a digital source type
-        let result = unsafe {
-            c2pa_builder_set_intent(
-                builder,
-                C2paBuilderIntent::Create,
-                C2paDigitalSourceType::DigitalCreation,
-            )
-        };
+        let result = c2pa_builder_set_intent(
+            builder,
+            C2paBuilderIntent::Create,
+            C2paDigitalSourceType::DigitalCreation,
+        );
         assert_eq!(result, 0);
 
         let format = CString::new("image/jpeg").unwrap();
@@ -2109,13 +2107,11 @@ mod tests {
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
         // The create intent requires needs a digital source type
-        let result = unsafe {
-            c2pa_builder_set_intent(
-                builder,
-                C2paBuilderIntent::Create,
-                C2paDigitalSourceType::Empty,
-            )
-        };
+        let result = c2pa_builder_set_intent(
+            builder,
+            C2paBuilderIntent::Create,
+            C2paDigitalSourceType::Empty,
+        );
         assert_eq!(result, 0);
 
         let format = CString::new("image/jpeg").unwrap();
@@ -2171,13 +2167,11 @@ mod tests {
 
         // Edit intent will extract the parent ingredient from source
         // (Digital source type is ignored in the case of the edit intent)
-        let result = unsafe {
-            c2pa_builder_set_intent(
-                builder,
-                C2paBuilderIntent::Edit,
-                C2paDigitalSourceType::Empty,
-            )
-        };
+        let result = c2pa_builder_set_intent(
+            builder,
+            C2paBuilderIntent::Edit,
+            C2paDigitalSourceType::Empty,
+        );
         assert_eq!(result, 0);
 
         // Verify we can read the signed data back
@@ -2224,7 +2218,7 @@ mod tests {
     #[test]
     fn test_c2pa_builder_no_embed_null() {
         let builder: *mut c2pa::Builder = std::ptr::null_mut();
-        unsafe { c2pa_builder_set_no_embed(builder) };
+        c2pa_builder_set_no_embed(builder);
     }
 
     #[test]
@@ -2243,8 +2237,8 @@ mod tests {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
-        unsafe { c2pa_builder_set_no_embed(builder) };
-        unsafe { c2pa_builder_free(builder) };
+        c2pa_builder_set_no_embed(builder);
+        c2pa_builder_free(builder);
     }
 
     #[test]
@@ -2402,7 +2396,7 @@ mod tests {
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: uri");
         TestC2paStream::drop_c_stream(stream);
-        unsafe { c2pa_builder_free(builder) };
+        c2pa_builder_free(builder);
     }
 
     #[test]
@@ -2415,7 +2409,7 @@ mod tests {
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
-        unsafe { c2pa_builder_free(builder) };
+        c2pa_builder_free(builder);
     }
 
     #[test]
@@ -2580,13 +2574,11 @@ mod tests {
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
-        let result = unsafe {
-            c2pa_builder_set_intent(
-                builder,
-                C2paBuilderIntent::Create,
-                C2paDigitalSourceType::Empty,
-            )
-        };
+        let result = c2pa_builder_set_intent(
+            builder,
+            C2paBuilderIntent::Create,
+            C2paDigitalSourceType::Empty,
+        );
         assert_eq!(result, 0);
 
         let format = CString::new("image/jpeg").unwrap();
@@ -2626,7 +2618,7 @@ mod tests {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
             c2pa_reader_free(reader);
         }
-        unsafe { c2pa_builder_free(builder) };
+        c2pa_builder_free(builder);
         unsafe { c2pa_signer_free(signer) };
     }
 
@@ -2667,7 +2659,7 @@ mod tests {
         let format = CString::new("json").unwrap();
         let result = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
         assert_eq!(result, 0);
-        let signer = unsafe { c2pa_signer_from_settings() };
+        let signer = c2pa_signer_from_settings();
         assert!(!signer.is_null());
         unsafe { c2pa_signer_free(signer) };
     }
@@ -2709,7 +2701,7 @@ mod tests {
         assert!(!builder.is_null());
 
         // Clean up
-        unsafe { c2pa_builder_free(builder) };
+        c2pa_builder_free(builder);
         unsafe { c2pa_context_free(context) };
     }
 

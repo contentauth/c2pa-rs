@@ -32,6 +32,9 @@ pub use crate::ffi_utils::{get_handles, handle_to_ptr, ptr_to_handle, Handle};
 // Core Flexible Macros (explicit "return" makes control flow clear)
 // ============================================================================
 
+/// Maximum length for C strings when using bounded conversion (64KB)
+pub const MAX_CSTRING_LEN: usize = 65536;
+
 /// Check pointer not null or early-return with error value
 #[macro_export]
 macro_rules! ptr_or_return {
@@ -43,19 +46,58 @@ macro_rules! ptr_or_return {
     };
 }
 
-/// Convert C string or early-return with error value
+/// Convert C string with bounded length check or early-return with error value
+/// Uses a safe bounded approach to prevent reading unbounded memory.
+/// Maximum string length is MAX_CSTRING_LEN (64KB).
 #[macro_export]
 macro_rules! cstr_or_return {
-    ($ptr:expr, $err_val:expr) => {
-        if $ptr.is_null() {
+    ($ptr:expr, $err_val:expr) => {{
+        let ptr = $ptr;
+        if ptr.is_null() {
             Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
             return $err_val;
         } else {
-            std::ffi::CStr::from_ptr($ptr)
-                .to_string_lossy()
-                .into_owned()
+            // SAFETY: We create a bounded slice up to MAX_CSTRING_LEN.
+            // Caller must ensure ptr is valid for reading and points to a
+            // null-terminated string within MAX_CSTRING_LEN bytes.
+            let bytes = unsafe {
+                std::slice::from_raw_parts(ptr as *const u8, $crate::ffi_macros::MAX_CSTRING_LEN)
+            };
+            match std::ffi::CStr::from_bytes_until_nul(bytes) {
+                Ok(cstr) => cstr.to_string_lossy().into_owned(),
+                Err(_) => {
+                    Error::set_last(Error::StringTooLong(stringify!($ptr).to_string()));
+                    return $err_val;
+                }
+            }
         }
-    };
+    }};
+}
+
+/// Convert C string with custom length limit or early-return with error value
+/// Allows specifying a custom maximum length for the string.
+#[macro_export]
+macro_rules! cstr_or_return_with_limit {
+    ($ptr:expr, $max_len:expr, $err_val:expr) => {{
+        let ptr = $ptr;
+        let max_len = $max_len;
+        if ptr.is_null() {
+            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
+            return $err_val;
+        } else {
+            // SAFETY: We create a bounded slice up to max_len.
+            // Caller must ensure ptr is valid for reading and points to a
+            // null-terminated string within max_len bytes.
+            let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, max_len) };
+            match std::ffi::CStr::from_bytes_until_nul(bytes) {
+                Ok(cstr) => cstr.to_string_lossy().into_owned(),
+                Err(_) => {
+                    Error::set_last(Error::StringTooLong(stringify!($ptr).to_string()));
+                    return $err_val;
+                }
+            }
+        }
+    }};
 }
 
 /// Handle Result or early-return with error value
@@ -154,32 +196,27 @@ macro_rules! cstr_or_return_int {
 // Internal routine to convert a *const c_char to Option<String>.
 #[macro_export]
 macro_rules! cstr_option {
-    ($ptr : expr) => {
-        if $ptr.is_null() {
+    ($ptr : expr) => {{
+        let ptr = $ptr;
+        if ptr.is_null() {
             None
         } else {
-            Some(
-                std::ffi::CStr::from_ptr($ptr)
-                    .to_string_lossy()
-                    .into_owned(),
-            )
+            // SAFETY: We create a bounded slice up to MAX_CSTRING_LEN.
+            // Caller must ensure ptr is valid for reading and points to a
+            // null-terminated string within MAX_CSTRING_LEN bytes.
+            let bytes = unsafe {
+                std::slice::from_raw_parts(ptr as *const u8, $crate::ffi_macros::MAX_CSTRING_LEN)
+            };
+            match std::ffi::CStr::from_bytes_until_nul(bytes) {
+                Ok(cstr) => Some(cstr.to_string_lossy().into_owned()),
+                Err(_) => {
+                    Error::set_last(Error::StringTooLong(stringify!($ptr).to_string()));
+                    None
+                }
+            }
         }
-    };
+    }};
 }
-
-// #[macro_export]
-// macro_rules! ok_or_return_null {
-//     ($result:expr, $transform:expr) => {
-//         ok_or_return_null!($result, $transform)
-//     };
-// }
-
-// #[macro_export]
-// macro_rules! ok_or_return_int {
-//     ($result:expr, $transform:expr) => {
-//         ok_or_return_neg!($result, $transform)
-//     };
-// }
 
 // ============================================================================
 // Handle Management Macros

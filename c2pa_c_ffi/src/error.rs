@@ -47,6 +47,8 @@ pub enum Error {
     Other(String),
     #[error("NullParameter: {0}")]
     NullParameter(String),
+    #[error("StringTooLong: {0}")]
+    StringTooLong(String),
     #[error("Remote: {0}")]
     RemoteManifest(String),
     #[error("InvalidHandle: {0}")]
@@ -147,6 +149,7 @@ impl Error {
             "NotSupported" => Self::NotSupported(error_message),
             "Other" => Self::Other(error_message),
             "NullParameter" => Self::NullParameter(error_message),
+            "StringTooLong" => Self::StringTooLong(error_message),
             "Remote" => Self::RemoteManifest(error_message),
             "ResourceNotFound" => Self::ResourceNotFound(error_message),
             "Signature" => Self::Signature(error_message),
