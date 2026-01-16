@@ -14,7 +14,7 @@ _16 January 2026_
 
 ### Fixed
 
-* Context propagation for Reader ([#1743](https://github.com/contentauth/c2pa-rs/pull/1743))
+* Context propagation for Reader to support legacy behavior ([#1743](https://github.com/contentauth/c2pa-rs/pull/1743))
 
 ## [0.75.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.2...c2pa-v0.75.3)
 _16 January 2026_
