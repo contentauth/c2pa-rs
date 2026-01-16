@@ -3111,15 +3111,9 @@ impl Store {
                 output_stream.rewind()?;
 
                 let verify_after_sign = settings.verify.verify_after_sign;
-                // Skip verification for external/sidecar manifests since they're not embedded
-                // What should we do in this case, retrieve them? Or really skip?
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                let is_external = matches!(
-                    pc.remote_manifest(),
-                    RemoteManifest::SideCar | RemoteManifest::Remote(_)
-                );
+
                 // Also catch the case where we may have written to io::empty() or similar
-                if verify_after_sign && !is_external && output_stream.seek(SeekFrom::End(0))? > 0 {
+                if verify_after_sign && output_stream.seek(SeekFrom::End(0))? > 0 {
                     // verify the store
                     let mut validation_log =
                         StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
