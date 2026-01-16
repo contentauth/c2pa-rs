@@ -3111,7 +3111,6 @@ impl Store {
                 output_stream.rewind()?;
 
                 let verify_after_sign = settings.verify.verify_after_sign;
-
                 // Also catch the case where we may have written to io::empty() or similar
                 if verify_after_sign && output_stream.seek(SeekFrom::End(0))? > 0 {
                     // verify the store
