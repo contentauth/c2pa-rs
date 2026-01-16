@@ -231,7 +231,14 @@ macro_rules! guard_handle_or_return_neg {
     ($ptr:expr, $type:ty, $name:ident) => {
         ptr_or_return!($ptr, -1);
         let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, -1);
-        let __guard = __arc.lock().unwrap();
+        let __guard = match __arc.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                // Mutex was poisoned by a panic, but we can still access the data
+                eprintln!("WARNING: Mutex poisoned for handle {}, recovering", $ptr as Handle);
+                poisoned.into_inner()
+            }
+        };
         let $name = match __guard.downcast_ref::<$type>() {
             Some(val) => val,
             None => {
@@ -249,7 +256,13 @@ macro_rules! guard_handle_or_null {
     ($ptr:expr, $type:ty, $name:ident) => {
         ptr_or_return!($ptr, std::ptr::null_mut());
         let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, std::ptr::null_mut());
-        let __guard = __arc.lock().unwrap();
+        let __guard = match __arc.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("WARNING: Mutex poisoned for handle {}, recovering", $ptr as Handle);
+                poisoned.into_inner()
+            }
+        };
         let $name = match __guard.downcast_ref::<$type>() {
             Some(val) => val,
             None => {
@@ -267,7 +280,13 @@ macro_rules! guard_handle_mut_or_return_neg {
     ($ptr:expr, $type:ty, $name:ident) => {
         ptr_or_return!($ptr, -1);
         let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, -1);
-        let mut __guard = __arc.lock().unwrap();
+        let mut __guard = match __arc.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("WARNING: Mutex poisoned for handle {}, recovering", $ptr as Handle);
+                poisoned.into_inner()
+            }
+        };
         let $name = match __guard.downcast_mut::<$type>() {
             Some(val) => val,
             None => {
@@ -287,7 +306,13 @@ macro_rules! guard_handle_mut_or_return {
             return;
         }
         let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, ());
-        let mut __guard = __arc.lock().unwrap();
+        let mut __guard = match __arc.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("WARNING: Mutex poisoned for handle {}, recovering", $ptr as Handle);
+                poisoned.into_inner()
+            }
+        };
         let $name = match __guard.downcast_mut::<$type>() {
             Some(val) => val,
             None => {
@@ -305,7 +330,13 @@ macro_rules! guard_handle_or_default {
     ($ptr:expr, $type:ty, $name:ident, $default:expr) => {
         ptr_or_return!($ptr, $default);
         let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, $default);
-        let __guard = __arc.lock().unwrap();
+        let __guard = match __arc.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("WARNING: Mutex poisoned for handle {}, recovering", $ptr as Handle);
+                poisoned.into_inner()
+            }
+        };
         let $name = match __guard.downcast_ref::<$type>() {
             Some(val) => val,
             None => {

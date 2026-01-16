@@ -11,6 +11,83 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! # C2PA C FFI - Safety Requirements
+//!
+//! This FFI uses an opaque handle-based API for memory safety. Handles appear
+//! as typed pointers (e.g., `C2paReader*`) but are internally managed by Rust.
+//!
+//! ## Critical Safety Rules for C/C++ Callers:
+//!
+//! ### 1. Handle Lifecycle
+//! - **MUST** free each handle exactly once using the corresponding `_free()` function
+//! - **MUST NOT** use a handle after freeing it (undefined behavior)
+//! - **MUST NOT** copy or duplicate handle values (they are NOT real pointers)
+//! - NULL handles are always safe to pass (will return error)
+//!
+//! ### 2. Error Checking
+//! - **ALWAYS** check return values:
+//!   - Negative values (typically -1) indicate errors
+//!   - NULL pointers indicate errors
+//!   - Zero may indicate success or error depending on function
+//! - Call `c2pa_error()` immediately after errors to get details
+//! - The error string is only valid until the next FFI call
+//!
+//! ### 3. Thread Safety
+//! - Handles CAN be used from multiple threads (internally protected)
+//! - However, freeing a handle while another thread uses it causes errors
+//! - Caller must ensure proper synchronization around free operations
+//!
+//! ### 4. String Memory
+//! - Strings returned by `*_json()`, `c2pa_error()`, etc. are owned by Rust
+//! - **MUST** free them with `c2pa_string_free()` when done
+//! - **DO NOT** free them with standard `free()` or `delete`
+//!
+//! ### 5. Stream Callbacks
+//! - Stream callbacks may be called from Rust code
+//! - **MUST NOT** call back into this FFI from within a callback (deadlock risk)
+//! - Callbacks should be fast and non-blocking when possible
+//!
+//! ## Example Safe Usage:
+//!
+//! ```c
+//! // Create a reader (returns opaque handle)
+//! C2paReader* reader = c2pa_reader_from_file("image.jpg", "image/jpeg", NULL);
+//! if (reader == NULL) {
+//!     const char* err = c2pa_error();
+//!     fprintf(stderr, "Error: %s\n", err);
+//!     c2pa_string_free((char*)err);
+//!     return -1;
+//! }
+//!
+//! // Use the reader
+//! char* json = c2pa_reader_json(reader);
+//! if (json == NULL) {
+//!     const char* err = c2pa_error();
+//!     fprintf(stderr, "Error: %s\n", err);
+//!     c2pa_string_free((char*)err);
+//!     c2pa_reader_free(reader);  // Clean up on error
+//!     return -1;
+//! }
+//!
+//! printf("Manifest: %s\n", json);
+//!
+//! // Free all resources in reverse order
+//! c2pa_string_free(json);
+//! c2pa_reader_free(reader);  // Only free once!
+//! ```
+//!
+//! ## Leak Detection
+//!
+//! At program exit, the FFI will report the number of leaked handles if any
+//! were not properly freed. This helps identify memory management issues in
+//! C code. The message will look like:
+//!
+//! ```text
+//! ⚠️  WARNING: 3 handle(s) were not freed at shutdown!
+//! This indicates C code did not properly free all allocated handles.
+//! Each handle should be freed exactly once with the appropriate _free() function.
+//! ```
+
 use std::{
     ffi::CString,
     os::raw::{c_char, c_int, c_uchar, c_void},

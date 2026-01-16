@@ -86,6 +86,22 @@ impl HandleMap {
     }
 }
 
+impl Drop for HandleMap {
+    fn drop(&mut self) {
+        let map = self.map.read().unwrap();
+        if !map.is_empty() {
+            eprintln!(
+                "\n⚠️  WARNING: {} handle(s) were not freed at shutdown!",
+                map.len()
+            );
+            eprintln!("This indicates C code did not properly free all allocated handles.");
+            eprintln!(
+                "Each handle should be freed exactly once with the appropriate _free() function.\n"
+            );
+        }
+    }
+}
+
 // Single global handle map - much simpler!
 pub fn get_handles() -> &'static HandleMap {
     use std::sync::OnceLock;
@@ -109,7 +125,13 @@ where
     F: FnOnce(&T) -> R,
 {
     let arc = get_handles().get(handle)?;
-    let guard = arc.lock().unwrap();
+    let guard = match arc.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            eprintln!("WARNING: Mutex poisoned for handle {}, recovering", handle);
+            poisoned.into_inner()
+        }
+    };
     let value = guard
         .downcast_ref::<T>()
         .ok_or(Error::WrongHandleType(handle))?;
@@ -122,7 +144,13 @@ where
     F: FnOnce(&mut T) -> R,
 {
     let arc = get_handles().get(handle)?;
-    let mut guard = arc.lock().unwrap();
+    let mut guard = match arc.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            eprintln!("WARNING: Mutex poisoned for handle {}, recovering", handle);
+            poisoned.into_inner()
+        }
+    };
     let value = guard
         .downcast_mut::<T>()
         .ok_or(Error::WrongHandleType(handle))?;
