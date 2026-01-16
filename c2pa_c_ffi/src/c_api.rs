@@ -19,10 +19,7 @@ use std::{
 
 // Import FFI infrastructure
 #[allow(unused_imports)] // Re-exported for macro use
-use crate::ffi_handle_system::{
-    get_handles, handle_to_ptr, ptr_to_handle, Handle, __with_handle_helper,
-    __with_handle_mut_helper,
-};
+use crate::ffi_handle_system::{get_handles, handle_to_ptr, ptr_to_handle, Handle};
 use crate::Error;
 
 /// Validates that a buffer size is within safe bounds and doesn't cause integer overflow
@@ -619,7 +616,8 @@ pub unsafe extern "C" fn c2pa_reader_free(reader_ptr: *mut C2paReader) -> c_int 
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c_char {
-    let json = with_handle_or_return_null!(reader_ptr, C2paReader, |reader| reader.json());
+    guard_handle_or_null!(reader_ptr, C2paReader, reader);
+    let json = reader.json();
     to_c_string(json)
 }
 
@@ -630,7 +628,8 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) -> *mut c_char {
-    let json = with_handle_or_return_null!(reader_ptr, C2paReader, |reader| reader.detailed_json());
+    guard_handle_or_null!(reader_ptr, C2paReader, reader);
+    let json = reader.detailed_json();
     to_c_string(json)
 }
 
@@ -643,12 +642,10 @@ pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) 
 /// reader_ptr must be a valid pointer to a C2paReader.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_remote_url(reader_ptr: *mut C2paReader) -> *const c_char {
-    let url = with_handle_or_return_null!(reader_ptr, C2paReader, |reader| {
-        reader.remote_url().map(|u| u.to_string())
-    });
+    guard_handle_or_null!(reader_ptr, C2paReader, reader);
 
-    match url {
-        Some(url_string) => to_c_string(url_string),
+    match reader.remote_url() {
+        Some(url) => to_c_string(url.to_string()),
         None => ptr::null(),
     }
 }
@@ -697,11 +694,10 @@ pub unsafe extern "C" fn c2pa_reader_resource_to_stream(
     stream: *mut C2paStream,
 ) -> i64 {
     let uri = from_cstr_or_return_int!(uri);
+    guard_handle_or_return_neg!(reader_ptr, C2paReader, reader);
 
-    with_handle_or_return_neg!(reader_ptr, C2paReader, |reader| {
-        ok_or_return_int!(reader.resource_to_stream(&uri, &mut (*stream)), |len| len
-            as i64)
-    })
+    ok_or_return_int!(reader.resource_to_stream(&uri, &mut (*stream)), |len| len
+        as i64)
 }
 
 /// Returns an array of char* pointers to c2pa::Reader's supported mime types.
@@ -832,10 +828,9 @@ pub unsafe extern "C" fn c2pa_builder_set_intent(
         C2paBuilderIntent::Update => c2pa::BuilderIntent::Update,
     };
 
-    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
-        builder.set_intent(builder_intent);
-        0
-    })
+    guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
+    builder.set_intent(builder_intent);
+    0
 }
 
 /// Sets the no-embed flag on the Builder.
@@ -868,10 +863,9 @@ pub unsafe extern "C" fn c2pa_builder_set_remote_url(
     remote_url: *const c_char,
 ) -> c_int {
     let remote_url = from_cstr_or_return_int!(remote_url);
-    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
-        builder.set_remote_url(&remote_url);
-        0
-    })
+    guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
+    builder.set_remote_url(&remote_url);
+    0
 }
 
 /// ⚠️ **Deprecated Soon**
@@ -894,10 +888,9 @@ pub unsafe extern "C" fn c2pa_builder_set_base_path(
     base_path: *const c_char,
 ) -> c_int {
     let base_path = from_cstr_or_return_int!(base_path);
-    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
-        builder.set_base_path(&base_path);
-        0
-    })
+    guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
+    builder.set_base_path(&base_path);
+    0
 }
 
 /// Adds a resource to the C2paBuilder.
@@ -921,10 +914,9 @@ pub unsafe extern "C" fn c2pa_builder_add_resource(
     stream: *mut C2paStream,
 ) -> c_int {
     let uri = from_cstr_or_return_int!(uri);
-    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
-        let result = builder.add_resource(&uri, &mut (*stream));
-        ok_or_return_int!(result, |_| 0) // returns 0 on success
-    })
+    guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
+    let result = builder.add_resource(&uri, &mut (*stream));
+    ok_or_return_int!(result, |_| 0) // returns 0 on success
 }
 
 /// Adds an ingredient to the C2paBuilder.
@@ -951,10 +943,9 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     ptr_or_return_int!(source);
     let ingredient_json = from_cstr_or_return_int!(ingredient_json);
     let format = from_cstr_or_return_int!(format);
-    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
-        let result = builder.add_ingredient_from_stream(&ingredient_json, &format, &mut (*source));
-        ok_or_return_int!(result, |_| 0) // returns 0 on success
-    })
+    guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
+    let result = builder.add_ingredient_from_stream(&ingredient_json, &format, &mut (*source));
+    ok_or_return_int!(result, |_| 0) // returns 0 on success
 }
 
 /// Adds an action to the manifest the Builder is constructing.
@@ -1026,9 +1017,8 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
         }
     };
 
-    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
-        ok_or_return_int!(builder.add_action(action_value), |_| 0)
-    })
+    guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
+    ok_or_return_int!(builder.add_action(action_value), |_| 0)
 }
 
 /// Writes an Archive of the Builder to the destination stream.
@@ -1059,10 +1049,9 @@ pub unsafe extern "C" fn c2pa_builder_to_archive(
     stream: *mut C2paStream,
 ) -> c_int {
     ptr_or_return_int!(stream);
-    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
-        let result = builder.to_archive(&mut (*stream));
-        ok_or_return_int!(result, |_| 0) // returns 0 on success
-    })
+    guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
+    let result = builder.to_archive(&mut (*stream));
+    ok_or_return_int!(result, |_| 0) // returns 0 on success
 }
 
 /// Creates and writes signed manifest from the C2paBuilder to the destination stream.
@@ -1156,16 +1145,15 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
 ) -> i64 {
     ptr_or_return_int!(manifest_bytes_ptr);
     let format = from_cstr_or_return_int!(format);
-    with_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, |builder| {
-        let result = builder.data_hashed_placeholder(reserved_size, &format);
-        ok_or_return_int!(result, |manifest_bytes: Vec<u8>| {
-            let len = manifest_bytes.len() as i64;
-            if !manifest_bytes_ptr.is_null() {
-                *manifest_bytes_ptr =
-                    Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
-            };
-            len
-        })
+    guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
+    let result = builder.data_hashed_placeholder(reserved_size, &format);
+    ok_or_return_int!(result, |manifest_bytes: Vec<u8>| {
+        let len = manifest_bytes.len() as i64;
+        if !manifest_bytes_ptr.is_null() {
+            *manifest_bytes_ptr =
+                Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
+        };
+        len
     })
 }
 
@@ -1456,11 +1444,8 @@ pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
 /// The signer_ptr must be a valid pointer to a C2paSigner.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -> i64 {
-    with_handle_or_return_neg!(
-        signer_ptr,
-        C2paSigner,
-        |signer| signer.signer.reserve_size() as i64
-    )
+    guard_handle_or_return_neg!(signer_ptr, C2paSigner, signer);
+    signer.signer.reserve_size() as i64
 }
 
 /// Frees a C2paSigner allocated by Rust.

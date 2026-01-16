@@ -34,8 +34,5 @@ pub use c2pa_stream::*;
 pub use c_api::*;
 pub use error::{Error, Result};
 #[doc(hidden)]
-pub use ffi_handle_system::{
-    get_handles, handle_to_ptr, ptr_to_handle, Handle, __with_handle_helper,
-    __with_handle_mut_helper,
-};
+pub use ffi_handle_system::{get_handles, handle_to_ptr, ptr_to_handle, Handle};
 pub use signer_info::SignerInfo;

@@ -13,7 +13,7 @@
 
 //! FFI Helper Macros
 //!
-//! This module provides a comprehensive set of macros for building safe,
+//! This module provides a set of macros for building safe,
 //! ergonomic C FFI bindings. The macros handle common FFI patterns like:
 //! - Null pointer checking
 //! - C string conversion
@@ -26,10 +26,7 @@
 // Re-export types/functions that macros need
 #[doc(hidden)]
 #[allow(unused_imports)] // May not be directly used but needed for macro expansion
-pub use crate::ffi_handle_system::{
-    get_handles, handle_to_ptr, ptr_to_handle, Handle, __with_handle_helper,
-    __with_handle_mut_helper,
-};
+pub use crate::ffi_handle_system::{get_handles, handle_to_ptr, ptr_to_handle, Handle};
 
 // ============================================================================
 // Core Flexible Macros (explicit "return" makes control flow clear)
@@ -209,82 +206,6 @@ macro_rules! return_handle {
     };
 }
 
-/// Execute a read-only operation on a typed pointer (internally uses handles)
-#[macro_export]
-macro_rules! with_handle_or_return_null {
-    ($ptr:expr, $type:ty, $transform:expr) => {{
-        if $ptr.is_null() {
-            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
-            return std::ptr::null_mut();
-        }
-        let handle = ptr_to_handle($ptr);
-        match __with_handle_helper::<$type, _, _>(handle, $transform) {
-            Ok(result) => result,
-            Err(err) => {
-                err.set_last();
-                return std::ptr::null_mut();
-            }
-        }
-    }};
-}
-
-/// Execute a mutable operation on a typed pointer
-#[macro_export]
-macro_rules! with_handle_mut_or_return_null {
-    ($ptr:expr, $type:ty, $transform:expr) => {{
-        if $ptr.is_null() {
-            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
-            return std::ptr::null_mut();
-        }
-        let handle = ptr_to_handle($ptr);
-        match __with_handle_mut_helper::<$type, _, _>(handle, $transform) {
-            Ok(result) => result,
-            Err(err) => {
-                err.set_last();
-                return std::ptr::null_mut();
-            }
-        }
-    }};
-}
-
-/// Execute operation on typed pointer, return -1 on error
-#[macro_export]
-macro_rules! with_handle_or_return_neg {
-    ($ptr:expr, $type:ty, $transform:expr) => {{
-        if $ptr.is_null() {
-            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
-            return -1;
-        }
-        let handle = ptr_to_handle($ptr);
-        match __with_handle_helper::<$type, _, _>(handle, $transform) {
-            Ok(result) => result,
-            Err(err) => {
-                err.set_last();
-                return -1;
-            }
-        }
-    }};
-}
-
-/// Execute mutable operation on typed pointer, return -1 on error
-#[macro_export]
-macro_rules! with_handle_mut_or_return_neg {
-    ($ptr:expr, $type:ty, $transform:expr) => {{
-        if $ptr.is_null() {
-            Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
-            return -1;
-        }
-        let handle = ptr_to_handle($ptr);
-        match __with_handle_mut_helper::<$type, _, _>(handle, $transform) {
-            Ok(result) => result,
-            Err(err) => {
-                err.set_last();
-                return -1;
-            }
-        }
-    }};
-}
-
 /// Free a typed pointer (handle)
 #[macro_export]
 macro_rules! free_handle {
@@ -316,6 +237,24 @@ macro_rules! guard_handle_or_return_neg {
             None => {
                 Error::WrongHandleType($ptr as Handle).set_last();
                 return -1;
+            }
+        };
+    };
+}
+
+/// Guard a handle parameter, creating an immutable reference with the given name
+/// Returns early with null pointer on error
+#[macro_export]
+macro_rules! guard_handle_or_null {
+    ($ptr:expr, $type:ty, $name:ident) => {
+        ptr_or_return!($ptr, std::ptr::null_mut());
+        let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, std::ptr::null_mut());
+        let __guard = __arc.lock().unwrap();
+        let $name = match __guard.downcast_ref::<$type>() {
+            Some(val) => val,
+            None => {
+                Error::WrongHandleType($ptr as Handle).set_last();
+                return std::ptr::null_mut();
             }
         };
     };
@@ -374,57 +313,5 @@ macro_rules! guard_handle_or_default {
                 return $default;
             }
         };
-    };
-}
-
-// ============================================================================
-// Legacy Aliases for Handle Macros
-// ============================================================================
-
-/// Legacy alias for with_handle_or_return_null
-#[macro_export]
-macro_rules! with_handle {
-    ($ptr:expr, $type:ty, $transform:expr) => {
-        with_handle_or_return_null!($ptr, $type, $transform)
-    };
-}
-
-/// Legacy alias for with_handle_mut_or_return_null
-#[macro_export]
-macro_rules! with_handle_mut {
-    ($ptr:expr, $type:ty, $transform:expr) => {
-        with_handle_mut_or_return_null!($ptr, $type, $transform)
-    };
-}
-
-/// Legacy alias for with_handle_or_return_neg
-#[macro_export]
-macro_rules! with_handle_int {
-    ($ptr:expr, $type:ty, $transform:expr) => {
-        with_handle_or_return_neg!($ptr, $type, $transform)
-    };
-}
-
-/// Legacy alias for with_handle_mut_or_return_neg
-#[macro_export]
-macro_rules! with_handle_mut_int {
-    ($ptr:expr, $type:ty, $transform:expr) => {
-        with_handle_mut_or_return_neg!($ptr, $type, $transform)
-    };
-}
-
-/// Legacy alias for guard_handle_or_return_neg
-#[macro_export]
-macro_rules! guard_handle {
-    ($ptr:expr, $type:ty, $name:ident) => {
-        guard_handle_or_return_neg!($ptr, $type, $name)
-    };
-}
-
-/// Legacy alias for guard_handle_mut_or_return_neg
-#[macro_export]
-macro_rules! guard_handle_mut {
-    ($ptr:expr, $type:ty, $name:ident) => {
-        guard_handle_mut_or_return_neg!($ptr, $type, $name)
     };
 }
