@@ -417,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa"
-version = "0.75.2"
+version = "0.75.3"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -521,7 +521,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.75.2"
+version = "0.75.3"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -535,7 +535,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.75.2"
+version = "0.75.3"
 dependencies = [
  "quote",
  "syn 2.0.114",
@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "c2patool"
-version = "0.26.13"
+version = "0.26.14"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -606,9 +606,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.52"
+version = "1.2.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd4932aefd12402b36c60956a4fe0035421f544799057659ff86f923657aada3"
+checksum = "755d2fce177175ffca841e9a06afdb2c4ab0f593d53b4dee48147dfaade85932"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.75.2"
+version = "0.75.3"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -1344,9 +1344,9 @@ checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
 name = "find-msvc-tools"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f449e6c6c08c865631d4890cfacf252b3d396c9bcc83adb6623cdb02a8336c41"
+checksum = "8591b0bcc8a98a64310a2fae1bb3e9b8564dd10e381e6e28010fde8e8e8568db"
 
 [[package]]
 name = "flate2"
@@ -1981,8 +1981,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
- "zune-core 0.5.0",
- "zune-jpeg 0.5.8",
+ "zune-core 0.5.1",
+ "zune-jpeg 0.5.9",
 ]
 
 [[package]]
@@ -2282,7 +2282,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.75.2"
+version = "0.75.3"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -3503,9 +3503,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-pki-types"
-version = "1.13.2"
+version = "1.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21e6f2ab2928ca4291b86736a8bd920a277a399bba1589409d72154ff87c1282"
+checksum = "be040f8b0a225e40375822a563fa9524378b9d63112f53e19ffff34df5d33fdd"
 dependencies = [
  "web-time",
  "zeroize",
@@ -3513,9 +3513,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.8"
+version = "0.103.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ffdfa2f5286e2247234e03f680868ac2815974dc39e00ea15adc445d0aafe52"
+checksum = "d7df23109aa6c1567d1c575b9952556388da57401e4ace1d15f79eedad0d8f53"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -5266,9 +5266,9 @@ checksum = "3f423a2c17029964870cfaabb1f13dfab7d092a62a29a89264f4d36990ca414a"
 
 [[package]]
 name = "zune-core"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "111f7d9820f05fd715df3144e254d6fc02ee4088b0644c0ffd0efc9e6d9d2773"
+checksum = "cb8a0807f7c01457d0379ba880ba6322660448ddebc890ce29bb64da71fb40f9"
 
 [[package]]
 name = "zune-jpeg"
@@ -5281,9 +5281,9 @@ dependencies = [
 
 [[package]]
 name = "zune-jpeg"
-version = "0.5.8"
+version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e35aee689668bf9bd6f6f3a6c60bb29ba1244b3b43adfd50edd554a371da37d5"
+checksum = "87c86acb70a85b2c16f071f171847d1945e8f44812630463cd14ec83900ad01c"
 dependencies = [
- "zune-core 0.5.0",
+ "zune-core 0.5.1",
 ]
