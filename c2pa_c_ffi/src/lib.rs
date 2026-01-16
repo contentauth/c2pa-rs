@@ -13,7 +13,7 @@
 /// This module exports a C2PA library
 // Declare foundational modules first
 mod error;
-mod ffi_handle_system;
+mod ffi_utils;
 
 // Then macros that depend on them
 #[macro_use]
@@ -34,5 +34,8 @@ pub use c2pa_stream::*;
 pub use c_api::*;
 pub use error::{Error, Result};
 #[doc(hidden)]
-pub use ffi_handle_system::{get_handles, handle_to_ptr, ptr_to_handle, Handle};
+pub use ffi_utils::{
+    get_handles, handle_to_ptr, ptr_to_handle, track_bytes_allocation, track_string_allocation,
+    untrack_allocation, Handle,
+};
 pub use signer_info::SignerInfo;

@@ -26,7 +26,7 @@
 // Re-export types/functions that macros need
 #[doc(hidden)]
 #[allow(unused_imports)] // May not be directly used but needed for macro expansion
-pub use crate::ffi_handle_system::{get_handles, handle_to_ptr, ptr_to_handle, Handle};
+pub use crate::ffi_utils::{get_handles, handle_to_ptr, ptr_to_handle, Handle};
 
 // ============================================================================
 // Core Flexible Macros (explicit "return" makes control flow clear)
@@ -60,7 +60,7 @@ macro_rules! cstr_or_return {
 
 /// Handle Result or early-return with error value
 #[macro_export]
-macro_rules! result_or_return {
+macro_rules! ok_or_return {
     // For c2pa::Error results that need transformation
     ($result:expr, $transform:expr, $err_val:expr) => {
         match $result {
@@ -89,39 +89,35 @@ macro_rules! result_or_return {
 
 /// Handle Result, early-return with -1 (negative) on error
 #[macro_export]
-macro_rules! result_or_return_neg {
+macro_rules! ok_or_return_int {
     ($result:expr, $transform:expr) => {
-        result_or_return!($result, $transform, -1)
+        ok_or_return!($result, $transform, -1)
     };
 }
 
 /// Handle Result, early-return with null on error
 #[macro_export]
-macro_rules! result_or_return_null {
+macro_rules! ok_or_return_null {
     ($result:expr, $transform:expr) => {
-        result_or_return!($result, $transform, std::ptr::null_mut())
+        ok_or_return!($result, $transform, std::ptr::null_mut())
     };
 }
 
 /// Handle Result, early-return with 0 on error
 #[macro_export]
-macro_rules! result_or_return_zero {
+macro_rules! ok_or_return_zero {
     ($result:expr, $transform:expr) => {
-        result_or_return!($result, $transform, 0)
+        ok_or_return!($result, $transform, 0)
     };
 }
 
 /// Handle Result, early-return with false on error
 #[macro_export]
-macro_rules! result_or_return_false {
+macro_rules! ok_or_return_false {
     ($result:expr, $transform:expr) => {
-        result_or_return!($result, $transform, false)
+        ok_or_return!($result, $transform, false)
     };
 }
-
-// ============================================================================
-// Legacy Macro Aliases (for backward compatibility)
-// ============================================================================
 
 /// If the expression is null, set the last error and return null.
 #[macro_export]
@@ -149,7 +145,7 @@ macro_rules! cstr_or_return_null {
 
 // Internal routine to convert a *const c_char to a rust String or return a -1 int error.
 #[macro_export]
-macro_rules! from_cstr_or_return_int {
+macro_rules! cstr_or_return_int {
     ($ptr : expr) => {
         cstr_or_return!($ptr, -1)
     };
@@ -157,7 +153,7 @@ macro_rules! from_cstr_or_return_int {
 
 // Internal routine to convert a *const c_char to Option<String>.
 #[macro_export]
-macro_rules! from_cstr_option {
+macro_rules! cstr_option {
     ($ptr : expr) => {
         if $ptr.is_null() {
             None
@@ -171,19 +167,19 @@ macro_rules! from_cstr_option {
     };
 }
 
-#[macro_export]
-macro_rules! ok_or_return_null {
-    ($result:expr, $transform:expr) => {
-        result_or_return_null!($result, $transform)
-    };
-}
+// #[macro_export]
+// macro_rules! ok_or_return_null {
+//     ($result:expr, $transform:expr) => {
+//         ok_or_return_null!($result, $transform)
+//     };
+// }
 
-#[macro_export]
-macro_rules! ok_or_return_int {
-    ($result:expr, $transform:expr) => {
-        result_or_return_neg!($result, $transform)
-    };
-}
+// #[macro_export]
+// macro_rules! ok_or_return_int {
+//     ($result:expr, $transform:expr) => {
+//         ok_or_return_neg!($result, $transform)
+//     };
+// }
 
 // ============================================================================
 // Handle Management Macros
@@ -230,7 +226,7 @@ macro_rules! free_handle {
 macro_rules! guard_handle_or_return_neg {
     ($ptr:expr, $type:ty, $name:ident) => {
         ptr_or_return!($ptr, -1);
-        let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, -1);
+        let __arc = ok_or_return!(@local get_handles().get($ptr as Handle), |v| v, -1);
         let __guard = match __arc.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
@@ -255,7 +251,7 @@ macro_rules! guard_handle_or_return_neg {
 macro_rules! guard_handle_or_null {
     ($ptr:expr, $type:ty, $name:ident) => {
         ptr_or_return!($ptr, std::ptr::null_mut());
-        let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, std::ptr::null_mut());
+        let __arc = ok_or_return!(@local get_handles().get($ptr as Handle), |v| v, std::ptr::null_mut());
         let __guard = match __arc.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
@@ -279,7 +275,7 @@ macro_rules! guard_handle_or_null {
 macro_rules! guard_handle_mut_or_return_neg {
     ($ptr:expr, $type:ty, $name:ident) => {
         ptr_or_return!($ptr, -1);
-        let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, -1);
+        let __arc = ok_or_return!(@local get_handles().get($ptr as Handle), |v| v, -1);
         let mut __guard = match __arc.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
@@ -305,7 +301,7 @@ macro_rules! guard_handle_mut_or_return {
             Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
             return;
         }
-        let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, ());
+        let __arc = ok_or_return!(@local get_handles().get($ptr as Handle), |v| v, ());
         let mut __guard = match __arc.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
@@ -329,7 +325,7 @@ macro_rules! guard_handle_mut_or_return {
 macro_rules! guard_handle_or_default {
     ($ptr:expr, $type:ty, $name:ident, $default:expr) => {
         ptr_or_return!($ptr, $default);
-        let __arc = result_or_return!(@local get_handles().get($ptr as Handle), |v| v, $default);
+        let __arc = ok_or_return!(@local get_handles().get($ptr as Handle), |v| v, $default);
         let __guard = match __arc.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {

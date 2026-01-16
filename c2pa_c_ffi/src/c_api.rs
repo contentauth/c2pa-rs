@@ -94,66 +94,6 @@ use std::{
     ptr,
 };
 
-// Import FFI infrastructure
-#[allow(unused_imports)] // Re-exported for macro use
-use crate::ffi_handle_system::{get_handles, handle_to_ptr, ptr_to_handle, Handle};
-use crate::Error;
-
-/// Validates that a buffer size is within safe bounds and doesn't cause integer overflow
-/// when used with pointer arithmetic.
-///
-/// # Arguments
-/// * `size` - Size to validate
-/// * `ptr` - Pointer to validate against (for address space checks)
-///
-/// # Returns
-/// * `true` if the size is safe to use
-/// * `false` if the size would cause integer overflow
-unsafe fn is_safe_buffer_size(size: usize, ptr: *const c_uchar) -> bool {
-    // Combined checks for early return - improves branch prediction
-    if size == 0 || size > isize::MAX as usize {
-        return false;
-    }
-
-    // Check if the buffer would extend beyond address space to fail fast
-    if !ptr.is_null() {
-        let end_ptr = ptr.add(size);
-        if end_ptr < ptr {
-            return false; // Wrapped around
-        }
-    }
-
-    true
-}
-
-/// Creates a safe slice from raw parts with bounds validation
-///
-/// # Arguments
-/// * `ptr` - Pointer to the data
-/// * `len` - Length of the data
-/// * `param_name` - Name of the parameter for error reporting
-///
-/// # Returns
-/// * `Ok(slice)` if the slice is safe to create
-/// * `Err(Error)` if bounds validation fails
-unsafe fn safe_slice_from_raw_parts(
-    ptr: *const c_uchar,
-    len: usize,
-    param_name: &str,
-) -> Result<&[u8], Error> {
-    if ptr.is_null() {
-        return Err(Error::NullParameter(param_name.to_string()));
-    }
-
-    if !is_safe_buffer_size(len, ptr) {
-        return Err(Error::Other(format!(
-            "Buffer size {len} is invalid for parameter '{param_name}'",
-        )));
-    }
-
-    Ok(std::slice::from_raw_parts(ptr, len))
-}
-
 // C has no namespace so we prefix things with C2PA to make them unique
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
@@ -163,9 +103,15 @@ use c2pa::{
 };
 use tokio::runtime::Runtime; // cawg validator requires async
 
+// Import FFI infrastructure
+#[allow(unused_imports)] // Re-exported for macro use
+use crate::ffi_utils::{
+    get_handles, handle_to_ptr, is_safe_buffer_size, ptr_to_handle, safe_slice_from_raw_parts,
+    to_c_string, track_bytes_allocation, untrack_allocation, Handle,
+};
 #[cfg(feature = "file_io")]
 use crate::json_api::{read_file, sign_file};
-use crate::{c2pa_stream::C2paStream, signer_info::SignerInfo};
+use crate::{c2pa_stream::C2paStream, signer_info::SignerInfo, Error};
 
 // Work around limitations in cbindgen.
 mod cbindgen_fix {
@@ -306,16 +252,6 @@ pub type SignerCallback = unsafe extern "C" fn(
     signed_len: usize,
 ) -> isize;
 
-// Internal routine to return a rust String reference to C as *mut c_char.
-// The returned value MUST be released by calling release_string
-// and it is no longer valid after that call.
-unsafe fn to_c_string(s: String) -> *mut c_char {
-    match CString::new(s) {
-        Ok(c_str) => c_str.into_raw(),
-        Err(_) => std::ptr::null_mut(),
-    }
-}
-
 /// Returns a version string for logging.
 ///
 /// # Safety
@@ -354,7 +290,7 @@ pub unsafe extern "C" fn c2pa_error() -> *mut c_char {
 /// Reads from NULL-terminated C strings.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_error_set_last(error_str: *const c_char) -> c_int {
-    let error_str = from_cstr_or_return_int!(error_str);
+    let error_str = cstr_or_return_int!(error_str);
     Error::set_last(Error::from(error_str));
     0
 }
@@ -373,8 +309,8 @@ pub unsafe extern "C" fn c2pa_load_settings(
     settings: *const c_char,
     format: *const c_char,
 ) -> c_int {
-    let settings = from_cstr_or_return_int!(settings);
-    let format = from_cstr_or_return_int!(format);
+    let settings = cstr_or_return_int!(settings);
+    let format = cstr_or_return_int!(format);
     // we use the legacy from_string function to set thread-local settings for backward compatibility
     let result = Settings::from_string(&settings, &format);
     ok_or_return_int!(result, |_| 0) // returns 0 on success
@@ -399,7 +335,7 @@ pub unsafe extern "C" fn c2pa_read_file(
     data_dir: *const c_char,
 ) -> *mut c_char {
     let path = cstr_or_return_null!(path);
-    let data_dir = from_cstr_option!(data_dir);
+    let data_dir = cstr_option!(data_dir);
 
     let result = read_file(&path, data_dir);
     match result {
@@ -481,13 +417,13 @@ pub unsafe extern "C" fn c2pa_sign_file(
     let source_path = cstr_or_return_null!(source_path);
     let dest_path = cstr_or_return_null!(dest_path);
     let manifest = cstr_or_return_null!(manifest);
-    let data_dir = from_cstr_option!(data_dir);
+    let data_dir = cstr_option!(data_dir);
 
     let signer_info = SignerInfo {
         alg: cstr_or_return_null!(signer_info.alg),
         sign_cert: cstr_or_return_null!(signer_info.sign_cert).into_bytes(),
         private_key: cstr_or_return_null!(signer_info.private_key).into_bytes(),
-        ta_url: from_cstr_option!(signer_info.ta_url),
+        ta_url: cstr_option!(signer_info.ta_url),
     };
     // Read manifest from JSON and then sign and write it.
     let result = sign_file(&source_path, &dest_path, &manifest, &signer_info, data_dir);
@@ -522,7 +458,14 @@ pub unsafe extern "C" fn c2pa_release_string(s: *mut c_char) {
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_string_free(s: *mut c_char) {
     if !s.is_null() {
-        drop(CString::from_raw(s));
+        if untrack_allocation(s as *const u8) {
+            drop(CString::from_raw(s));
+        } else {
+            eprintln!(
+                "WARNING: Attempt to free untracked or already-freed string pointer: {:p}",
+                s
+            );
+        }
     }
 }
 
@@ -770,7 +713,7 @@ pub unsafe extern "C" fn c2pa_reader_resource_to_stream(
     uri: *const c_char,
     stream: *mut C2paStream,
 ) -> i64 {
-    let uri = from_cstr_or_return_int!(uri);
+    let uri = cstr_or_return_int!(uri);
     guard_handle_or_return_neg!(reader_ptr, C2paReader, reader);
 
     ok_or_return_int!(reader.resource_to_stream(&uri, &mut (*stream)), |len| len
@@ -939,7 +882,7 @@ pub unsafe extern "C" fn c2pa_builder_set_remote_url(
     builder_ptr: *mut C2paBuilder,
     remote_url: *const c_char,
 ) -> c_int {
-    let remote_url = from_cstr_or_return_int!(remote_url);
+    let remote_url = cstr_or_return_int!(remote_url);
     guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
     builder.set_remote_url(&remote_url);
     0
@@ -964,7 +907,7 @@ pub unsafe extern "C" fn c2pa_builder_set_base_path(
     builder_ptr: *mut C2paBuilder,
     base_path: *const c_char,
 ) -> c_int {
-    let base_path = from_cstr_or_return_int!(base_path);
+    let base_path = cstr_or_return_int!(base_path);
     guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
     builder.set_base_path(&base_path);
     0
@@ -990,7 +933,7 @@ pub unsafe extern "C" fn c2pa_builder_add_resource(
     uri: *const c_char,
     stream: *mut C2paStream,
 ) -> c_int {
-    let uri = from_cstr_or_return_int!(uri);
+    let uri = cstr_or_return_int!(uri);
     guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
     let result = builder.add_resource(&uri, &mut (*stream));
     ok_or_return_int!(result, |_| 0) // returns 0 on success
@@ -1018,8 +961,8 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     source: *mut C2paStream,
 ) -> c_int {
     ptr_or_return_int!(source);
-    let ingredient_json = from_cstr_or_return_int!(ingredient_json);
-    let format = from_cstr_or_return_int!(format);
+    let ingredient_json = cstr_or_return_int!(ingredient_json);
+    let format = cstr_or_return_int!(format);
     guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
     let result = builder.add_ingredient_from_stream(&ingredient_json, &format, &mut (*source));
     ok_or_return_int!(result, |_| 0) // returns 0 on success
@@ -1083,7 +1026,7 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
     builder_ptr: *mut C2paBuilder,
     action_json: *const c_char,
 ) -> c_int {
-    let action_json = from_cstr_or_return_int!(action_json);
+    let action_json = cstr_or_return_int!(action_json);
 
     // Parse the JSON into a serde Value to use with the Builder
     let action_value: serde_json::Value = match serde_json::from_str(&action_json) {
@@ -1158,7 +1101,7 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     signer_ptr: *mut C2paSigner,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    let format = from_cstr_or_return_int!(format);
+    let format = cstr_or_return_int!(format);
     ptr_or_return_int!(source);
     ptr_or_return_int!(dest);
     ptr_or_return_int!(manifest_bytes_ptr);
@@ -1173,8 +1116,9 @@ pub unsafe extern "C" fn c2pa_builder_sign(
         Ok(manifest_bytes) => {
             let len = manifest_bytes.len() as i64;
             if !manifest_bytes_ptr.is_null() {
-                *manifest_bytes_ptr =
-                    Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
+                let ptr = Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
+                track_bytes_allocation(ptr, len as usize);
+                *manifest_bytes_ptr = ptr;
             }
             len
         }
@@ -1192,7 +1136,14 @@ pub unsafe extern "C" fn c2pa_builder_sign(
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_manifest_bytes_free(manifest_bytes_ptr: *const c_uchar) {
     if !manifest_bytes_ptr.is_null() {
-        drop(Box::from_raw(manifest_bytes_ptr as *mut c_uchar));
+        if untrack_allocation(manifest_bytes_ptr) {
+            drop(Box::from_raw(manifest_bytes_ptr as *mut c_uchar));
+        } else {
+            eprintln!(
+                "WARNING: Attempt to free untracked or already-freed manifest bytes pointer: {:p}",
+                manifest_bytes_ptr
+            );
+        }
     }
 }
 
@@ -1221,14 +1172,15 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
     ptr_or_return_int!(manifest_bytes_ptr);
-    let format = from_cstr_or_return_int!(format);
+    let format = cstr_or_return_int!(format);
     guard_handle_mut_or_return_neg!(builder_ptr, C2paBuilder, builder);
     let result = builder.data_hashed_placeholder(reserved_size, &format);
     ok_or_return_int!(result, |manifest_bytes: Vec<u8>| {
         let len = manifest_bytes.len() as i64;
         if !manifest_bytes_ptr.is_null() {
-            *manifest_bytes_ptr =
-                Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
+            let ptr = Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
+            track_bytes_allocation(ptr, len as usize);
+            *manifest_bytes_ptr = ptr;
         };
         len
     })
@@ -1263,8 +1215,8 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     asset: *mut C2paStream,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    let data_hash_json = from_cstr_or_return_int!(data_hash);
-    let format = from_cstr_or_return_int!(format);
+    let data_hash_json = cstr_or_return_int!(data_hash);
+    let format = cstr_or_return_int!(format);
     ptr_or_return_int!(manifest_bytes_ptr);
 
     let mut data_hash: DataHash = match serde_json::from_str(&data_hash_json) {
@@ -1295,8 +1247,9 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
         Ok(manifest_bytes) => {
             let len = manifest_bytes.len() as i64;
             if !manifest_bytes_ptr.is_null() {
-                *manifest_bytes_ptr =
-                    Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
+                let ptr = Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
+                track_bytes_allocation(ptr, len as usize);
+                *manifest_bytes_ptr = ptr;
             }
             len
         }
@@ -1334,7 +1287,7 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     manifest_bytes_size: usize,
     result_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    let format = from_cstr_or_return_int!(format);
+    let format = cstr_or_return_int!(format);
     ptr_or_return_int!(manifest_bytes_ptr);
     ptr_or_return_int!(result_bytes_ptr);
 
@@ -1355,7 +1308,9 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     ok_or_return_int!(result, |result_bytes: Vec<u8>| {
         let len = result_bytes.len() as i64;
         if !result_bytes_ptr.is_null() {
-            *result_bytes_ptr = Box::into_raw(result_bytes.into_boxed_slice()) as *const c_uchar;
+            let ptr = Box::into_raw(result_bytes.into_boxed_slice()) as *const c_uchar;
+            track_bytes_allocation(ptr, len as usize);
+            *result_bytes_ptr = ptr;
         };
         len
     })
@@ -1399,7 +1354,7 @@ pub unsafe extern "C" fn c2pa_signer_create(
     tsa_url: *const c_char,
 ) -> *mut C2paSigner {
     let certs = cstr_or_return_null!(certs);
-    let tsa_url = from_cstr_option!(tsa_url);
+    let tsa_url = cstr_option!(tsa_url);
     let context = context as *const ();
 
     // Create a callback that uses the provided C callback function
@@ -1464,7 +1419,7 @@ pub unsafe extern "C" fn c2pa_signer_from_info(signer_info: &C2paSignerInfo) -> 
         alg: cstr_or_return_null!(signer_info.alg),
         sign_cert: cstr_or_return_null!(signer_info.sign_cert).into_bytes(),
         private_key: cstr_or_return_null!(signer_info.private_key).into_bytes(),
-        ta_url: from_cstr_option!(signer_info.ta_url),
+        ta_url: cstr_option!(signer_info.ta_url),
     };
 
     match signer_info.signer() {
@@ -2433,5 +2388,42 @@ mod tests {
         let signer = unsafe { c2pa_signer_from_settings() };
         assert!(!signer.is_null());
         unsafe { c2pa_signer_free(signer) };
+    }
+
+    #[test]
+    fn test_allocation_tracking_double_free_string() {
+        // Test that double-freeing a string is detected
+        let test_string = CString::new("test allocation tracking").unwrap();
+        let c_string = unsafe { to_c_string(test_string.to_str().unwrap().to_string()) };
+        assert!(!c_string.is_null());
+
+        // First free should succeed
+        unsafe { c2pa_string_free(c_string) };
+
+        // Second free should be detected and logged (not panic)
+        // The function will print a warning to stderr
+        unsafe { c2pa_string_free(c_string) };
+    }
+
+    #[test]
+    fn test_allocation_tracking_null_free() {
+        // Test that freeing NULL is safe
+        unsafe { c2pa_string_free(std::ptr::null_mut()) };
+        unsafe { c2pa_manifest_bytes_free(std::ptr::null()) };
+    }
+
+    #[test]
+    fn test_allocation_tracking_double_free_bytes() {
+        // Test that double-freeing byte arrays is detected
+        let test_bytes = vec![1u8, 2, 3, 4, 5];
+        let len = test_bytes.len();
+        let ptr = Box::into_raw(test_bytes.into_boxed_slice()) as *const c_uchar;
+        track_bytes_allocation(ptr, len);
+
+        // First free should succeed
+        unsafe { c2pa_manifest_bytes_free(ptr) };
+
+        // Second free should be detected and logged (not panic)
+        unsafe { c2pa_manifest_bytes_free(ptr) };
     }
 }
