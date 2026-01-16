@@ -444,7 +444,7 @@ impl Reader {
         format: &str,
         stream: impl Read + Seek + MaybeSend,
     ) -> Result<Reader> {
-        // Get thread-local settings if any for backward compatibility
+        // Get thread-local settings (if any) for backward compatibility
         let settings = crate::settings::get_thread_local_settings();
         let context = Context::new().with_settings(settings).unwrap_or_default();
         if _sync {
