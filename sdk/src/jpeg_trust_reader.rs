@@ -685,16 +685,34 @@ impl JpegTrustReader {
         let is_valid = validation_results.validation_state() != ValidationState::Invalid;
         validation_status.insert("isValid".to_string(), json!(is_valid));
 
-        // Add error field
-        validation_status.insert("error".to_string(), Value::Null);
+        // Add error field (null if valid, or first error message if not)
+        let error_message = if !is_valid {
+            if let Some(active_manifest) = validation_results.active_manifest() {
+                active_manifest
+                    .failure
+                    .first()
+                    .and_then(|s| s.explanation())
+                    .map(|e| Value::String(e.to_string()))
+                    .unwrap_or(Value::Null)
+            } else {
+                Value::Null
+            }
+        } else {
+            Value::Null
+        };
+        validation_status.insert("error".to_string(), error_message);
 
-        // Build validationErrors array from failures
+        // Build validationErrors array from failures (as objects with code, message, severity)
         let mut errors = Vec::new();
         if let Some(active_manifest) = validation_results.active_manifest() {
             for status in active_manifest.failure.iter() {
+                let mut error_obj = Map::new();
+                error_obj.insert("code".to_string(), json!(status.code()));
                 if let Some(explanation) = status.explanation() {
-                    errors.push(json!(explanation));
+                    error_obj.insert("message".to_string(), json!(explanation));
                 }
+                error_obj.insert("severity".to_string(), json!("error"));
+                errors.push(Value::Object(error_obj));
             }
         }
         validation_status.insert("validationErrors".to_string(), json!(errors));
@@ -724,12 +742,15 @@ impl JpegTrustReader {
         Ok(Some(Value::Object(validation_status)))
     }
 
-    /// Build a single validation entry
+    /// Build a single validation entry for the entries array
     fn build_validation_entry(&self, status: &ValidationStatus, severity: &str) -> Result<Value> {
         let mut entry = Map::new();
         entry.insert("code".to_string(), json!(status.code()));
         if let Some(url) = status.url() {
             entry.insert("url".to_string(), json!(url));
+        }
+        if let Some(explanation) = status.explanation() {
+            entry.insert("explanation".to_string(), json!(explanation));
         }
         entry.insert("severity".to_string(), json!(severity));
         Ok(Value::Object(entry))
