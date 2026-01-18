@@ -404,16 +404,74 @@ impl JpegTrustReader {
     fn convert_assertions(&self, manifest: &Manifest) -> Result<Map<String, Value>> {
         let mut assertions_obj = Map::new();
 
+        // Process regular assertions
         for assertion in manifest.assertions() {
             let label = assertion.label().to_string();
-            if let Ok(value) = assertion.value() {
+            
+            // Try to get the value - if it fails (e.g., binary or CBOR), try to decode it
+            let value_result = if let Ok(value) = assertion.value() {
+                Ok(value.clone())
+            } else {
+                // For CBOR assertions (like ingredients), try to decode them
+                self.decode_assertion_data(assertion)
+            };
+            
+            if let Ok(value) = value_result {
                 // Fix any byte array hashes to base64 strings
-                let fixed_value = Self::fix_hash_encoding(value.clone());
+                let fixed_value = Self::fix_hash_encoding(value);
                 assertions_obj.insert(label, fixed_value);
+            }
+        }
+        
+        // Add ingredient assertions from the ingredients array
+        // Each ingredient is itself an assertion that should be in the assertions object
+        for (index, ingredient) in manifest.ingredients().iter().enumerate() {
+            // Convert ingredient to JSON
+            if let Ok(ingredient_json) = serde_json::to_value(ingredient) {
+                // Fix any byte array hashes to base64 strings
+                let mut fixed_ingredient = Self::fix_hash_encoding(ingredient_json);
+                
+                // Get the label from the ingredient (includes version if v2+)
+                // The label field contains the correct versioned label like "c2pa.ingredient.v2"
+                let base_label = if let Some(label_value) = fixed_ingredient.get("label") {
+                    label_value
+                        .as_str()
+                        .unwrap_or("c2pa.ingredient")
+                        .to_string()
+                } else {
+                    "c2pa.ingredient".to_string()
+                };
+                
+                // Remove the label field since it's redundant (the label is the key in assertions object)
+                if let Some(obj) = fixed_ingredient.as_object_mut() {
+                    obj.remove("label");
+                }
+                
+                // Add instance number if there are multiple ingredients
+                let label = if manifest.ingredients().len() > 1 {
+                    format!("{}__{}",  base_label, index + 1)
+                } else {
+                    base_label
+                };
+                
+                assertions_obj.insert(label, fixed_ingredient);
             }
         }
 
         Ok(assertions_obj)
+    }
+    
+    /// Decode assertion data that's not in JSON format (e.g., CBOR)
+    fn decode_assertion_data(&self, assertion: &crate::ManifestAssertion) -> Result<Value> {
+        // Try to get binary data and decode as CBOR
+        if let Ok(binary) = assertion.binary() {
+            // Try to decode as CBOR to JSON
+            let cbor_value: serde_cbor::Value = serde_cbor::from_slice(binary)?;
+            let json_value: Value = serde_json::to_value(&cbor_value)?;
+            Ok(json_value)
+        } else {
+            Err(Error::UnsupportedType)
+        }
     }
 
     /// Recursively convert byte array hashes to base64 strings
