@@ -377,7 +377,7 @@ impl JpegTrustReader {
             manifest_obj.insert("label".to_string(), json!(label));
 
             // Convert assertions from array to object
-            let assertions_obj = self.convert_assertions(manifest)?;
+            let assertions_obj = self.convert_assertions(manifest, label)?;
             manifest_obj.insert("assertions".to_string(), json!(assertions_obj));
 
             // Build claim.v2 object
@@ -401,7 +401,7 @@ impl JpegTrustReader {
     }
 
     /// Convert assertions from array format to object format (keyed by label)
-    fn convert_assertions(&self, manifest: &Manifest) -> Result<Map<String, Value>> {
+    fn convert_assertions(&self, manifest: &Manifest, manifest_label: &str) -> Result<Map<String, Value>> {
         let mut assertions_obj = Map::new();
 
         // Process regular assertions
@@ -420,6 +420,31 @@ impl JpegTrustReader {
                 // Fix any byte array hashes to base64 strings
                 let fixed_value = Self::fix_hash_encoding(value);
                 assertions_obj.insert(label, fixed_value);
+            }
+        }
+        
+        // Add hash assertions (c2pa.hash.data, c2pa.hash.bmff, c2pa.hash.boxes)
+        // These are filtered out by Manifest::from_store but we need them for JPEG Trust format
+        if let Some(claim) = self.inner.store.get_claim(manifest_label) {
+            for hash_assertion in claim.hash_assertions() {
+                let label = hash_assertion.label_raw();
+                let instance = hash_assertion.instance();
+                
+                // Get the assertion and convert to JSON
+                if let Some(assertion) = claim.get_claim_assertion(&label, instance) {
+                    if let Ok(assertion_obj) = assertion.assertion().as_json_object() {
+                        let fixed_value = Self::fix_hash_encoding(assertion_obj);
+                        
+                        // Handle instance numbers for multiple assertions with same label
+                        let final_label = if instance > 0 {
+                            format!("{}_{}", label, instance + 1)
+                        } else {
+                            label
+                        };
+                        
+                        assertions_obj.insert(final_label, fixed_value);
+                    }
+                }
             }
         }
         
@@ -474,9 +499,9 @@ impl JpegTrustReader {
         }
     }
 
-    /// Recursively convert byte array hashes to base64 strings
+    /// Recursively convert byte array hashes and pads to base64 strings
     ///
-    /// This fixes the issue where HashedUri hash fields are serialized as byte arrays
+    /// This fixes the issue where hash and pad fields are serialized as byte arrays
     /// instead of base64 strings when converting from CBOR to JSON.
     fn fix_hash_encoding(value: Value) -> Value {
         match value {
@@ -495,6 +520,24 @@ impl JpegTrustReader {
                             // Convert to base64
                             let hash_b64 = base64::encode(&bytes);
                             map.insert("hash".to_string(), json!(hash_b64));
+                        }
+                    }
+                }
+
+                // Check if this object has a "pad" field that's an array
+                if let Some(pad_value) = map.get("pad") {
+                    if let Some(pad_array) = pad_value.as_array() {
+                        // Check if it's an array of integers (byte array)
+                        if pad_array.iter().all(|v| v.is_u64() || v.is_i64()) {
+                            // Convert to Vec<u8>
+                            let bytes: Vec<u8> = pad_array
+                                .iter()
+                                .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                .collect();
+
+                            // Convert to base64
+                            let pad_b64 = base64::encode(&bytes);
+                            map.insert("pad".to_string(), json!(pad_b64));
                         }
                     }
                 }

@@ -176,15 +176,20 @@ $ cargo run --example jpeg_trust_format | grep '"hash":'
 1. **sdk/src/jpeg_trust_reader.rs**
    - Added `fix_hash_encoding()` helper function
    - Modified `convert_assertions()` to apply fix
+   - Extended to also encode `pad` fields in hash assertions
 
 2. **sdk/tests/test_jpeg_trust_hash_encoding.rs** (new file)
    - Comprehensive hash encoding tests
    - Recursive verification utilities
 
+## Extension: Pad Field Encoding
+
+The `fix_hash_encoding()` function was later extended to also handle `pad` fields in hash assertions (such as `c2pa.hash.data`). The `pad` field contains padding bytes and was also being serialized as an integer array. The same base64 encoding logic is now applied to both `hash` and `pad` fields, ensuring all binary data is consistently base64 encoded throughout the JPEG Trust output.
+
 ## Summary Statistics
 
 - **Tests Added**: 5 comprehensive hash encoding tests
-- **Total JPEG Trust Tests**: 32 (11 unit + 9 asset hash + 7 schema + 5 hash encoding)
-- **All Tests Passing**: ✅ 32/32
+- **Total JPEG Trust Tests**: 45 (11 unit + 9 asset hash + 7 schema + 5 hash encoding + 6 ingredients + 7 hash assertions)
+- **All Tests Passing**: ✅ 45/45
 - **No Regressions**: ✅ 573 existing c2pa tests still passing
 
