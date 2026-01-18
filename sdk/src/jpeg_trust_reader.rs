@@ -41,8 +41,7 @@ use crate::{
 
 /// Use a JpegTrustReader to read and validate a manifest store in JPEG Trust format.
 #[skip_serializing_none]
-#[derive(Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct JpegTrustReader {
     #[serde(skip)]
     inner: Reader,
@@ -267,11 +266,11 @@ impl JpegTrustReader {
     /// use std::fs::File;
     ///
     /// let mut reader = JpegTrustReader::from_file("image.jpg")?;
-    /// 
+    ///
     /// // Compute hash from the same file
     /// let mut file = File::open("image.jpg")?;
     /// let hash = reader.compute_asset_hash(&mut file)?;
-    /// 
+    ///
     /// // Now the JSON output will include asset_info
     /// let json = reader.json();
     /// # Ok(())
@@ -418,7 +417,7 @@ impl JpegTrustReader {
     }
 
     /// Recursively convert byte array hashes to base64 strings
-    /// 
+    ///
     /// This fixes the issue where HashedUri hash fields are serialized as byte arrays
     /// instead of base64 strings when converting from CBOR to JSON.
     fn fix_hash_encoding(value: Value) -> Value {
@@ -434,19 +433,19 @@ impl JpegTrustReader {
                                 .iter()
                                 .filter_map(|v| v.as_u64().map(|n| n as u8))
                                 .collect();
-                            
+
                             // Convert to base64
                             let hash_b64 = base64::encode(&bytes);
                             map.insert("hash".to_string(), json!(hash_b64));
                         }
                     }
                 }
-                
+
                 // Recursively process all values in the map
                 for (_key, val) in map.iter_mut() {
                     *val = Self::fix_hash_encoding(val.clone());
                 }
-                
+
                 Value::Object(map)
             }
             Value::Array(arr) => {
@@ -576,10 +575,12 @@ impl JpegTrustReader {
         let not_before = cert.validity().not_before.to_datetime();
         let not_after = cert.validity().not_after.to_datetime();
         // Convert OffsetDateTime to RFC3339 format using chrono
-        let not_before_chrono: DateTime<Utc> = DateTime::from_timestamp(not_before.unix_timestamp(), 0)
-            .ok_or(Error::CoseInvalidCert)?;
-        let not_after_chrono: DateTime<Utc> = DateTime::from_timestamp(not_after.unix_timestamp(), 0)
-            .ok_or(Error::CoseInvalidCert)?;
+        let not_before_chrono: DateTime<Utc> =
+            DateTime::from_timestamp(not_before.unix_timestamp(), 0)
+                .ok_or(Error::CoseInvalidCert)?;
+        let not_after_chrono: DateTime<Utc> =
+            DateTime::from_timestamp(not_after.unix_timestamp(), 0)
+                .ok_or(Error::CoseInvalidCert)?;
         details.validity = Some(json!({
             "not_before": not_before_chrono.to_rfc3339(),
             "not_after": not_after_chrono.to_rfc3339()
@@ -602,13 +603,13 @@ impl JpegTrustReader {
 
                 // Map OIDs to standard abbreviations
                 let key = match oid.to_string().as_str() {
-                    "2.5.4.6" => "C",      // countryName
-                    "2.5.4.8" => "ST",     // stateOrProvinceName
-                    "2.5.4.7" => "L",      // localityName
-                    "2.5.4.10" => "O",     // organizationName
-                    "2.5.4.11" => "OU",    // organizationalUnitName
-                    "2.5.4.3" => "CN",     // commonName
-                    _ => continue,         // Skip unknown OIDs
+                    "2.5.4.6" => "C",   // countryName
+                    "2.5.4.8" => "ST",  // stateOrProvinceName
+                    "2.5.4.7" => "L",   // localityName
+                    "2.5.4.10" => "O",  // organizationName
+                    "2.5.4.11" => "OU", // organizationalUnitName
+                    "2.5.4.3" => "CN",  // commonName
+                    _ => continue,      // Skip unknown OIDs
                 };
 
                 components.insert(key.to_string(), json!(value));
@@ -650,13 +651,15 @@ impl JpegTrustReader {
         };
 
         // Signature validation status
-        if let Some(sig_code) = Self::find_validation_code(&active_manifest.success, "claimSignature")
+        if let Some(sig_code) =
+            Self::find_validation_code(&active_manifest.success, "claimSignature")
         {
             status.insert("signature".to_string(), json!(sig_code));
         }
 
         // Trust status
-        if let Some(trust_code) = Self::find_validation_code(&active_manifest.success, "signingCredential")
+        if let Some(trust_code) =
+            Self::find_validation_code(&active_manifest.success, "signingCredential")
         {
             status.insert("trust".to_string(), json!(trust_code));
         } else if let Some(trust_code) =
@@ -666,7 +669,8 @@ impl JpegTrustReader {
         }
 
         // Content validation status
-        if let Some(content_code) = Self::find_validation_code(&active_manifest.success, "assertion.dataHash")
+        if let Some(content_code) =
+            Self::find_validation_code(&active_manifest.success, "assertion.dataHash")
         {
             status.insert("content".to_string(), json!(content_code));
         }
@@ -703,7 +707,11 @@ impl JpegTrustReader {
     ) -> Option<String> {
         statuses
             .iter()
-            .find(|s| s.url().map(|u| u.contains(assertion_label)).unwrap_or(false))
+            .find(|s| {
+                s.url()
+                    .map(|u| u.contains(assertion_label))
+                    .unwrap_or(false)
+            })
             .map(|s| s.code().to_string())
     }
 
@@ -842,10 +850,8 @@ mod tests {
 
     #[test]
     fn test_jpeg_trust_reader_from_stream() -> Result<()> {
-        let reader = JpegTrustReader::from_stream(
-            "image/jpeg",
-            std::io::Cursor::new(IMAGE_WITH_MANIFEST),
-        )?;
+        let reader =
+            JpegTrustReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
 
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         Ok(())
@@ -853,10 +859,8 @@ mod tests {
 
     #[test]
     fn test_jpeg_trust_format_json() -> Result<()> {
-        let reader = JpegTrustReader::from_stream(
-            "image/jpeg",
-            std::io::Cursor::new(IMAGE_WITH_MANIFEST),
-        )?;
+        let reader =
+            JpegTrustReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
 
         let json_value = reader.to_json_value()?;
 
@@ -902,10 +906,8 @@ mod tests {
     #[test]
     fn test_compute_asset_hash_from_stream() -> Result<()> {
         // Create reader
-        let mut reader = JpegTrustReader::from_stream(
-            "image/jpeg",
-            std::io::Cursor::new(IMAGE_WITH_MANIFEST),
-        )?;
+        let mut reader =
+            JpegTrustReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
 
         // Initially no asset hash
         assert!(reader.asset_hash().is_none());
@@ -961,10 +963,8 @@ mod tests {
     #[test]
     fn test_set_asset_hash_directly() -> Result<()> {
         // Create reader
-        let mut reader = JpegTrustReader::from_stream(
-            "image/jpeg",
-            std::io::Cursor::new(IMAGE_WITH_MANIFEST),
-        )?;
+        let mut reader =
+            JpegTrustReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
 
         // Set hash directly
         let test_hash = "JPkcXXC5DfT9IUUBPK5UaKxGsJ8YIE67BayL+ei3ats=";
@@ -987,15 +987,11 @@ mod tests {
     #[test]
     fn test_asset_hash_consistency() -> Result<()> {
         // Create two readers from the same data
-        let mut reader1 = JpegTrustReader::from_stream(
-            "image/jpeg",
-            std::io::Cursor::new(IMAGE_WITH_MANIFEST),
-        )?;
+        let mut reader1 =
+            JpegTrustReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
 
-        let mut reader2 = JpegTrustReader::from_stream(
-            "image/jpeg",
-            std::io::Cursor::new(IMAGE_WITH_MANIFEST),
-        )?;
+        let mut reader2 =
+            JpegTrustReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
 
         // Compute hashes
         let mut stream1 = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
@@ -1013,10 +1009,8 @@ mod tests {
     #[test]
     fn test_json_without_asset_hash() -> Result<()> {
         // Create reader without computing hash
-        let reader = JpegTrustReader::from_stream(
-            "image/jpeg",
-            std::io::Cursor::new(IMAGE_WITH_MANIFEST),
-        )?;
+        let reader =
+            JpegTrustReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
 
         // JSON should not include asset_info
         let json_value = reader.to_json_value()?;
@@ -1028,10 +1022,8 @@ mod tests {
     #[test]
     fn test_json_with_asset_hash() -> Result<()> {
         // Create reader and compute hash
-        let mut reader = JpegTrustReader::from_stream(
-            "image/jpeg",
-            std::io::Cursor::new(IMAGE_WITH_MANIFEST),
-        )?;
+        let mut reader =
+            JpegTrustReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
 
         let mut stream = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
         reader.compute_asset_hash(&mut stream)?;
@@ -1051,10 +1043,8 @@ mod tests {
     #[test]
     fn test_asset_hash_update() -> Result<()> {
         // Create reader
-        let mut reader = JpegTrustReader::from_stream(
-            "image/jpeg",
-            std::io::Cursor::new(IMAGE_WITH_MANIFEST),
-        )?;
+        let mut reader =
+            JpegTrustReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
 
         // Set initial hash
         reader.set_asset_hash("sha256", "hash1");
@@ -1085,4 +1075,3 @@ mod tests {
         Ok(())
     }
 }
-

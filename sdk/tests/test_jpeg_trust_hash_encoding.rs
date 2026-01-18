@@ -32,13 +32,12 @@ fn verify_no_byte_array_hashes(value: &Value, path: &str) -> Vec<String> {
             // Check if this object has a "hash" field
             if let Some(hash_value) = map.get("hash") {
                 let current_path = format!("{}.hash", path);
-                
+
                 if hash_value.is_array() {
                     // This is bad - hash should not be an array
                     errors.push(format!(
                         "Found byte array hash at {}: {:?}",
-                        current_path,
-                        hash_value
+                        current_path, hash_value
                     ));
                 } else if let Some(hash_str) = hash_value.as_str() {
                     // Good - it's a string. Verify it looks like base64
@@ -77,7 +76,8 @@ fn verify_no_byte_array_hashes(value: &Value, path: &str) -> Vec<String> {
 /// Check if a string is valid base64
 fn is_valid_base64(s: &str) -> bool {
     // Base64 characters are A-Z, a-z, 0-9, +, /, and = for padding
-    s.chars().all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+    s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
         && !s.is_empty()
 }
 
@@ -109,8 +109,10 @@ fn test_action_ingredient_hash_is_base64() -> Result<()> {
     let manifests = json_value["manifests"]
         .as_array()
         .expect("manifests should be array");
-    
-    let first_manifest = manifests.first().expect("should have at least one manifest");
+
+    let first_manifest = manifests
+        .first()
+        .expect("should have at least one manifest");
     let assertions = first_manifest["assertions"]
         .as_object()
         .expect("assertions should be object");
@@ -164,8 +166,10 @@ fn test_assertion_reference_hashes_are_base64() -> Result<()> {
     let manifests = json_value["manifests"]
         .as_array()
         .expect("manifests should be array");
-    
-    let first_manifest = manifests.first().expect("should have at least one manifest");
+
+    let first_manifest = manifests
+        .first()
+        .expect("should have at least one manifest");
     let claim_v2 = first_manifest["claim.v2"]
         .as_object()
         .expect("claim.v2 should be object");
@@ -206,8 +210,10 @@ fn test_ingredient_assertion_hashes_are_base64() -> Result<()> {
     let manifests = json_value["manifests"]
         .as_array()
         .expect("manifests should be array");
-    
-    let first_manifest = manifests.first().expect("should have at least one manifest");
+
+    let first_manifest = manifests
+        .first()
+        .expect("should have at least one manifest");
     let assertions = first_manifest["assertions"]
         .as_object()
         .expect("assertions should be object");
@@ -271,7 +277,7 @@ fn test_all_hashes_match_schema_format() -> Result<()> {
 
     // Collect all hash values
     let mut hash_count = 0;
-    
+
     fn count_hashes(value: &Value, counter: &mut usize) {
         match value {
             Value::Object(map) => {
@@ -305,4 +311,3 @@ fn test_all_hashes_match_schema_format() -> Result<()> {
 
     Ok(())
 }
-
