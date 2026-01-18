@@ -408,11 +408,53 @@ impl JpegTrustReader {
         for assertion in manifest.assertions() {
             let label = assertion.label().to_string();
             if let Ok(value) = assertion.value() {
-                assertions_obj.insert(label, value.clone());
+                // Fix any byte array hashes to base64 strings
+                let fixed_value = Self::fix_hash_encoding(value.clone());
+                assertions_obj.insert(label, fixed_value);
             }
         }
 
         Ok(assertions_obj)
+    }
+
+    /// Recursively convert byte array hashes to base64 strings
+    /// 
+    /// This fixes the issue where HashedUri hash fields are serialized as byte arrays
+    /// instead of base64 strings when converting from CBOR to JSON.
+    fn fix_hash_encoding(value: Value) -> Value {
+        match value {
+            Value::Object(mut map) => {
+                // Check if this object has a "hash" field that's an array
+                if let Some(hash_value) = map.get("hash") {
+                    if let Some(hash_array) = hash_value.as_array() {
+                        // Check if it's an array of integers (byte array)
+                        if hash_array.iter().all(|v| v.is_u64() || v.is_i64()) {
+                            // Convert to Vec<u8>
+                            let bytes: Vec<u8> = hash_array
+                                .iter()
+                                .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                .collect();
+                            
+                            // Convert to base64
+                            let hash_b64 = base64::encode(&bytes);
+                            map.insert("hash".to_string(), json!(hash_b64));
+                        }
+                    }
+                }
+                
+                // Recursively process all values in the map
+                for (_key, val) in map.iter_mut() {
+                    *val = Self::fix_hash_encoding(val.clone());
+                }
+                
+                Value::Object(map)
+            }
+            Value::Array(arr) => {
+                // Recursively process all array elements
+                Value::Array(arr.into_iter().map(Self::fix_hash_encoding).collect())
+            }
+            other => other,
+        }
     }
 
     /// Build the claim.v2 object from scattered manifest properties
