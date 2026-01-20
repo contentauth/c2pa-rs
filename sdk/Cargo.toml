@@ -53,7 +53,7 @@ rust_native_crypto = [
 # Enables default http features for sync and async http resolvers.
 default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
 # Enable `reqwest` sync http resolver, not supported on WASM/WASI.
-http_reqwest_blocking = ["dep:reqwest", "reqwest/blocking"]
+http_reqwest_blocking = ["dep:reqwest", "reqwest/blocking", "dep:rustls"]
 # Enable `ureq` sync http resolver, not supported on WASM/WASI.
 http_ureq = ["dep:ureq"]
 # Enable `wasi` sync http resolver, only supported on WASI.
@@ -61,7 +61,7 @@ http_wasi = ["dep:wasi"]
 # Enable `wstd` async http resolver, only supported on WASI.
 http_wstd = ["dep:wstd"]
 # Enable `reqwest` async http resolver, not supported on WASI.
-http_reqwest = ["dep:reqwest"]
+http_reqwest = ["dep:reqwest", "dep:rustls"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -200,12 +200,14 @@ sha2 = { version = "0.10.6", features = ["asm"] }
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 reqwest = { version = "0.13.1", default-features = false, features = [
-    # Default features enabled, except `default-tls`->`native-tls` due to licensing.
+    # Default features enabled, except `rustls`->`rustls-no-provider` due to licensing.
     "charset",
-    "native-tls",
+    "rustls-no-provider",
     "http2",
     "system-proxy",
 ], optional = true }
+# Enable `ring` as a provider for `reqwest`.
+rustls = { version = "0.23.4", default-features = false, features = ["ring"], optional = true}
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 openssl = { version = "0.10.72", features = ["vendored"], optional = true }
