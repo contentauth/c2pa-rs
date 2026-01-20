@@ -757,6 +757,23 @@ pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) 
     to_c_string(c2pa_reader.detailed_json())
 }
 
+/// Returns the certificate chain found in the active manifest from a C2paReader.
+///
+/// # Safety
+/// The returned value MUST be released by calling c2pa_string_free
+/// and it is no longer valid after that call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_certs_from_reader(reader_ptr: *mut C2paReader) -> *mut c_char {
+    check_or_return_null!(reader_ptr);
+    let c2pa_reader = guard_boxed!(reader_ptr);
+    if let Some(manifest) = c2pa_reader.active_manifest() {
+        if let Some(si) = manifest.signature_info() {
+            return to_c_string(si.cert_chain().to_string());
+        }
+    }
+    std::ptr::null_mut()
+}
+
 /// Returns the remote url of the manifest if it was obtained remotely.
 ///
 /// # Parameters
@@ -1834,6 +1851,9 @@ mod tests {
 
         assert!(json_content.contains("manifest"));
         assert!(json_content.contains("com.example.test-action"));
+
+        let certs = unsafe { c2pa_certs_from_reader(reader) };
+        assert!(!certs.is_null());
 
         TestC2paStream::drop_c_stream(source_stream);
         TestC2paStream::drop_c_stream(read_stream);
