@@ -1395,13 +1395,33 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 }
 
 fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized>(
-    writer: &mut W,
+    asset_writer: &mut W,
     asset_reader: &mut R,
     tiff_tags: Vec<IfdClonedEntry>,
 ) -> Result<()> {
     let (mut tiff_tree, page_tokens, endianness, big_tiff) = map_tiff(asset_reader)?;
 
-    let mut bo = ByteOrdered::new(writer, endianness);
+    // if only tag is the C2PA tag try to do fast append
+    if let Some(tt) = tiff_tags.iter().find(|t| t.entry_tag == C2PA_TAG) {
+        if tiff_tags.len() == 1 {
+            let status = fast_update(
+                asset_writer,
+                asset_reader,
+                &mut tiff_tree,
+                &page_tokens,
+                &tt.value_bytes,
+                big_tiff,
+                endianness,
+            )?;
+
+            // we were able to fast write
+            if status {
+                return Ok(());
+            }
+        }
+    }
+
+    let mut bo = ByteOrdered::new(asset_writer, endianness);
     let mut tc = TiffCloner::new(endianness, big_tiff, &mut bo)?;
 
     for t in tiff_tags {
@@ -1486,6 +1506,81 @@ where
     asset_reader.seek(SeekFrom::Start(decoded_offset)).ok()?;
 
     asset_reader.read_to_vec(xmp_ifd_entry.value_count).ok()
+}
+
+// if the manifest is the last content of the file then a quick update can be performed
+fn fast_update<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized>(
+    asset_writer: &mut W,
+    asset_reader: &mut R,
+    tiff_tree: &mut Arena<ImageFileDirectory>,
+    tokens: &[Token],
+    data: &[u8],
+    big_tiff: bool,
+    endianness: Endianness,
+) -> Result<bool> {
+    let mut bo = ByteOrdered::new(asset_writer, endianness);
+
+    let first_page = tokens
+        .first()
+        .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
+
+    let last_page = tokens
+        .last()
+        .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
+
+    let last_page_ifd = tiff_tree
+        .get(*last_page)
+        .ok_or_else(|| Error::InvalidAsset("TIFF does not have IFD".to_string()))?;
+
+    // if the idf is not in its own c2pa only IDF we cannot do the fast path
+    if last_page != first_page
+        && last_page_ifd.data.entries.contains_key(&C2PA_TAG)
+        && last_page_ifd.data.entries.len() == 1
+    {
+        // check if the manifest is last content in the file
+        let ifd_offset = last_page_ifd.data.offset;
+        let manifest_offset = &last_page_ifd.data.entries[&C2PA_TAG].value_offset;
+        let new_manifest_size = data.len() as u64;
+        let manifest_size = last_page_ifd.data.entries[&C2PA_TAG].value_count;
+        let asset_len = stream_len(asset_reader)?;
+
+        if (*manifest_offset + manifest_size) != asset_len {
+            // can't do since the manifest is not the last set of bytes
+            return Ok(false);
+        }
+
+        // can just copy the source byte up to the manifest position
+        bo.rewind()?;
+        asset_reader.rewind()?;
+        let mut before_manifest = asset_reader.take(*manifest_offset);
+        std::io::copy(&mut before_manifest, &mut bo)?;
+
+        // now write the new manifest
+        bo.write_all(data)?;
+
+        // patch the IFD manifest size
+        let entry_cnt_size = if big_tiff { 8u64 } else { 2u64 };
+        let size_offset = ifd_offset
+            + entry_cnt_size // entry count 
+            + 2 // 1st tag
+            + 2; // 1st type
+
+        // jump to location to write the updated size
+        bo.seek(SeekFrom::Start(size_offset))?;
+
+        // update the count
+        if big_tiff {
+            bo.write_u64(new_manifest_size)?;
+        } else {
+            let new_manifest_size_u32 = u32::try_from(new_manifest_size)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+            bo.write_u32(new_manifest_size_u32)?;
+        }
+
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 pub struct TiffIO {}
@@ -1643,11 +1738,29 @@ impl CAIWriter for TiffIO {
         let manifest_len = usize::try_from(cai_ifd_entry.value_count)
             .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
 
-        Ok(vec![HashObjectPositions {
-            offset: manifest_offset,
-            length: manifest_len,
-            htype: HashBlockObjectType::Cai,
-        }])
+        // figure out count  to exclude
+        let entry_cnt_size = if big_tiff { 8u64 } else { 2u64 };
+        let count_offset = ifds[*last_page].data.offset
+            + entry_cnt_size // entry count size
+            + 2 // 1st tag
+            + 2; // 1st type
+
+        // size of the count field
+        let count_size = if big_tiff { 8 } else { 4 };
+
+        Ok(vec![
+            HashObjectPositions {
+                offset: manifest_offset,
+                length: manifest_len,
+                htype: HashBlockObjectType::Cai,
+            },
+            HashObjectPositions {
+                offset: usize::try_from(count_offset)
+                    .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?,
+                length: count_size,
+                htype: HashBlockObjectType::OtherExclusion,
+            },
+        ])
     }
 
     fn remove_cai_store_from_stream(

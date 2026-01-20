@@ -247,6 +247,10 @@ where
                         continue;
                     }
 
+                    if exclusion.length() == 0 {
+                        continue;
+                    }
+
                     let end = exclusion
                         .start()
                         .checked_add(exclusion.length())
