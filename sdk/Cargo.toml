@@ -135,7 +135,7 @@ img-parts = "0.4.0"
 iref = { version = "3.2.2", features = ["serde"] }
 jfifdump = "0.6.0"
 log = "0.4.8"
-lopdf = { version = "0.38.0", optional = true }
+lopdf = { version = "0.39.0", optional = true }
 lazy_static = "1.4.0"
 memchr = "2.7.6"
 mp4 = "0.14.0"
