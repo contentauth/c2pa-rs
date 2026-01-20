@@ -33,7 +33,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
-          RELEASE_PLZ_LOG: DEBUG
 
       - name: Fetch newly created tags
         run: git fetch --tags
