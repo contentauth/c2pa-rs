@@ -1,0 +1,18 @@
+# This ensures that when a user manually closes a ticket in Jira,
+# it will update the workflow labels appropriately.
+
+name: Closing ticket
+on:
+  issues:
+    types: [closed]
+jobs:
+  label_issues:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - run: 'gh issue edit "$NUMBER" --add-label "status: done" --remove-label "status: wip,status: todo,status: in progress,status: in test,status: not prioritized,status: blocked,status: api review,status: code review,status: design review,status: code complete,status: ready"'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}

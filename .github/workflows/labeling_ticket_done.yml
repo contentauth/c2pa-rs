@@ -1,0 +1,19 @@
+# This ensures that when a ticket is labeled as Done in Jira, it will close the ticket on GitHub.
+
+name: Labeling ticket "Done"
+on:
+  issues:
+    types: [labeled]
+jobs:
+  label_issues:
+    runs-on: ubuntu-latest
+    if: |
+      contains(github.event.issue.labels.*.name, 'status: done')
+    permissions:
+      issues: write
+    steps:
+      - run: 'gh issue close "$NUMBER"'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
