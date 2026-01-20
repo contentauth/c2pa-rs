@@ -813,14 +813,14 @@ impl Settings {
         let updated_config = Config::builder()
             .add_source(config)
             .set_override(path, value)
-            .map_err(|e| Error::BadParam(format!("Invalid path '{}': {}", path, e)))?
+            .map_err(|e| Error::BadParam(format!("Invalid path '{path}': {e}")))?
             .build()
             .map_err(|e| Error::OtherError(Box::new(e)))?;
 
         // Deserialize back to Settings
         let updated_settings = updated_config
             .try_deserialize::<Settings>()
-            .map_err(|e| Error::BadParam(format!("Invalid value for '{}': {}", path, e)))?;
+            .map_err(|e| Error::BadParam(format!("Invalid value for '{path}': {e}")))?;
 
         // Validate the updated settings
         updated_settings.validate()?;
@@ -903,7 +903,7 @@ impl Settings {
 
         config
             .get::<T>(path)
-            .map_err(|e| Error::BadParam(format!("Failed to get value at '{}': {}", path, e)))
+            .map_err(|e| Error::BadParam(format!("Failed to get value at '{path}': {e}")))
     }
 }
 
