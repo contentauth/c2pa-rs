@@ -400,11 +400,12 @@ where
     let tiff_tree: Arena<ImageFileDirectory> = if let Some(ifd) = ts.first_ifd.clone() {
         let (mut tiff_tree, page_0) = Arena::with_data(ifd);
         let mut current_token = page_0;
+
         // get the pages
         loop {
             tokens.push(current_token);
 
-            // look for known special IFDs on page 0
+            // look for known special IFDs
             let page_subifd = tiff_tree[current_token].data.get_tag(SUBFILE_TAG).copied();
 
             // grab SubIFDs for page (DNG)
@@ -730,7 +731,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         self.additional_ifds.insert(entry.entry_tag, entry);
     }
 
-    pub fn set_ifd_offset(&mut self, entry: &ImageFileDirectory, offset: u64) -> Result<()> {
+    pub fn set_next_ifd_offset(&mut self, entry: &ImageFileDirectory, offset: u64) -> Result<()> {
         self.writer
             .seek(SeekFrom::Start(entry.next_idf_offset_location))?;
 
@@ -1157,7 +1158,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     IfdType::Page,
                 )?;
 
-                self.set_ifd_offset(&prior_ifd, *offset)?;
+                self.set_next_ifd_offset(&prior_ifd, *offset)?;
 
                 prior_ifd_start = *offset;
             }
