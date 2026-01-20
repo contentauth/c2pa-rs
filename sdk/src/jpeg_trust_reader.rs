@@ -542,6 +542,66 @@ impl JpegTrustReader {
                     }
                 }
 
+                // Check if this object has a "pad1" field that's an array (cawg.identity)
+                if let Some(pad1_value) = map.get("pad1") {
+                    if let Some(pad1_array) = pad1_value.as_array() {
+                        // Check if it's an array of integers (byte array)
+                        if pad1_array.iter().all(|v| v.is_u64() || v.is_i64()) {
+                            // Convert to Vec<u8>
+                            let bytes: Vec<u8> = pad1_array
+                                .iter()
+                                .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                .collect();
+
+                            // Convert to base64
+                            let pad1_b64 = base64::encode(&bytes);
+                            map.insert("pad1".to_string(), json!(pad1_b64));
+                        }
+                    }
+                }
+
+                // Check if this object has a "pad2" field that's an array (cawg.identity)
+                if let Some(pad2_value) = map.get("pad2") {
+                    if let Some(pad2_array) = pad2_value.as_array() {
+                        // Check if it's an array of integers (byte array)
+                        if pad2_array.iter().all(|v| v.is_u64() || v.is_i64()) {
+                            // Convert to Vec<u8>
+                            let bytes: Vec<u8> = pad2_array
+                                .iter()
+                                .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                .collect();
+
+                            // Convert to base64
+                            let pad2_b64 = base64::encode(&bytes);
+                            map.insert("pad2".to_string(), json!(pad2_b64));
+                        }
+                    }
+                }
+
+                // Check if this object has a "signature" field that's an array (cawg.identity)
+                // This should be decoded as COSE_Sign1 and expanded similar to claimSignature
+                if let Some(signature_value) = map.get("signature") {
+                    if let Some(sig_array) = signature_value.as_array() {
+                        // Check if it's an array of integers (byte array)
+                        if sig_array.iter().all(|v| v.is_u64() || v.is_i64()) {
+                            // Convert to Vec<u8>
+                            let sig_bytes: Vec<u8> = sig_array
+                                .iter()
+                                .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                .collect();
+
+                            // Try to decode as COSE_Sign1 and extract certificate info
+                            if let Ok(decoded_sig) = Self::decode_cawg_signature(&sig_bytes) {
+                                map.insert("signature".to_string(), decoded_sig);
+                            } else {
+                                // If decoding fails, fall back to base64
+                                let sig_b64 = base64::encode(&sig_bytes);
+                                map.insert("signature".to_string(), json!(sig_b64));
+                            }
+                        }
+                    }
+                }
+
                 // Recursively process all values in the map
                 for (_key, val) in map.iter_mut() {
                     *val = Self::fix_hash_encoding(val.clone());
@@ -754,14 +814,132 @@ impl JpegTrustReader {
 
         for pem in pem_chain.split("-----BEGIN CERTIFICATE-----") {
             if let Some(end_idx) = pem.find("-----END CERTIFICATE-----") {
-                let pem_data = pem[..end_idx].trim();
-                if let Ok(der) = base64::decode(pem_data) {
+                // Extract PEM data and remove all whitespace (newlines, spaces, tabs)
+                let pem_data: String = pem[..end_idx]
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .collect();
+                
+                if let Ok(der) = base64::decode(&pem_data) {
                     certs.push(der);
                 }
             }
         }
 
         Ok(certs)
+    }
+
+    /// Decode cawg.identity signature field (COSE_Sign1) and extract certificate info
+    /// Similar to build_claim_signature but for the signature field in cawg.identity assertions
+    fn decode_cawg_signature(signature_bytes: &[u8]) -> Result<Value> {
+        use coset::{CoseSign1, TaggedCborSerializable};
+        use crate::crypto::cose::{cert_chain_from_sign1, signing_alg_from_sign1};
+
+        // Parse COSE_Sign1
+        let sign1 = <CoseSign1 as TaggedCborSerializable>::from_tagged_slice(signature_bytes)
+            .map_err(|_| Error::CoseSignature)?;
+
+        let mut signature_obj = Map::new();
+
+        // Extract algorithm from protected headers
+        if let Ok(alg) = signing_alg_from_sign1(&sign1) {
+            signature_obj.insert("algorithm".to_string(), json!(alg.to_string()));
+        }
+
+        // Try to extract X.509 certificate chain (for cawg.x509.cose signatures)
+        if let Ok(cert_chain) = cert_chain_from_sign1(&sign1) {
+            if !cert_chain.is_empty() {
+                // Parse the first certificate (end entity)
+                if let Ok((_rem, cert)) = X509Certificate::from_der(&cert_chain[0]) {
+                    // Extract serial number in hex format
+                    signature_obj.insert("serial_number".to_string(), json!(format!("{:x}", cert.serial)));
+
+                    // Extract issuer DN components
+                    if let Ok(issuer) = Self::extract_dn_components_static(cert.issuer()) {
+                        signature_obj.insert("issuer".to_string(), json!(issuer));
+                    }
+
+                    // Extract subject DN components
+                    if let Ok(subject) = Self::extract_dn_components_static(cert.subject()) {
+                        signature_obj.insert("subject".to_string(), json!(subject));
+                    }
+
+                    // Extract validity period
+                    let not_before = cert.validity().not_before.to_datetime();
+                    let not_after = cert.validity().not_after.to_datetime();
+                    
+                    if let Some(not_before_chrono) = DateTime::<Utc>::from_timestamp(not_before.unix_timestamp(), 0) {
+                        if let Some(not_after_chrono) = DateTime::<Utc>::from_timestamp(not_after.unix_timestamp(), 0) {
+                            signature_obj.insert("validity".to_string(), json!({
+                                "not_before": not_before_chrono.to_rfc3339(),
+                                "not_after": not_after_chrono.to_rfc3339()
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+        
+        // If no certificate chain was found, try to extract Verifiable Credential
+        // (for cawg.identity_claims_aggregation signatures)
+        if !signature_obj.contains_key("serial_number") {
+            if let Some(payload) = sign1.payload.as_ref() {
+                // Try to parse payload as JSON (W3C Verifiable Credential)
+                if let Ok(vc_value) = serde_json::from_slice::<Value>(payload) {
+                    // Extract issuer (DID)
+                    if let Some(issuer) = vc_value.get("issuer") {
+                        signature_obj.insert("issuer".to_string(), issuer.clone());
+                    }
+                    
+                    // Extract validity period
+                    if let Some(valid_from) = vc_value.get("validFrom") {
+                        signature_obj.insert("validFrom".to_string(), valid_from.clone());
+                    }
+                    if let Some(valid_until) = vc_value.get("validUntil") {
+                        signature_obj.insert("validUntil".to_string(), valid_until.clone());
+                    }
+                    
+                    // Extract verified identities from credential subject
+                    if let Some(cred_subject) = vc_value.get("credentialSubject") {
+                        if let Some(verified_ids) = cred_subject.get("verifiedIdentities") {
+                            signature_obj.insert("verifiedIdentities".to_string(), verified_ids.clone());
+                        }
+                    }
+                    
+                    // Mark this as an ICA credential
+                    signature_obj.insert("credentialType".to_string(), json!("IdentityClaimsAggregation"));
+                }
+            }
+        }
+
+        Ok(Value::Object(signature_obj))
+    }
+
+    /// Static version of extract_dn_components for use in decode_cawg_signature
+    fn extract_dn_components_static(name: &x509_parser::x509::X509Name) -> Result<Map<String, Value>> {
+        let mut components = Map::new();
+
+        for rdn in name.iter() {
+            for attr in rdn.iter() {
+                let oid = attr.attr_type();
+                let value = attr.as_str().map_err(|_| Error::CoseInvalidCert)?;
+
+                // Map OIDs to standard abbreviations
+                let key = match oid.to_string().as_str() {
+                    "2.5.4.6" => "C",   // countryName
+                    "2.5.4.8" => "ST",  // stateOrProvinceName
+                    "2.5.4.7" => "L",   // localityName
+                    "2.5.4.10" => "O",  // organizationName
+                    "2.5.4.11" => "OU", // organizationalUnitName
+                    "2.5.4.3" => "CN",  // commonName
+                    _ => continue,      // Skip unknown OIDs
+                };
+
+                components.insert(key.to_string(), json!(value));
+            }
+        }
+
+        Ok(components)
     }
 
     /// Build status object for a manifest
@@ -1200,6 +1378,178 @@ mod tests {
 
         // Different files should have different hashes
         assert_ne!(hash1, hash2);
+
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_claim_signature_decoding() -> Result<()> {
+        // Test that claim_signature is decoded with full certificate details
+        let mut reader = JpegTrustReader::from_file("tests/fixtures/CA.jpg")?;
+        reader.compute_asset_hash_from_file("tests/fixtures/CA.jpg")?;
+
+        let json_value = reader.to_json_value()?;
+        let manifests = json_value["manifests"].as_array().unwrap();
+        
+        // Find a manifest with claim_signature
+        let manifest = manifests.iter().find(|m| m.get("claim_signature").is_some());
+        assert!(manifest.is_some(), "Should have a manifest with claim_signature");
+        
+        let claim_sig = &manifest.unwrap()["claim_signature"];
+        
+        // Verify algorithm is present
+        assert!(claim_sig.get("algorithm").is_some(), "claim_signature should have algorithm");
+        
+        // Verify certificate details are decoded (not just algorithm)
+        // Should have serial_number, issuer, subject, and validity for X.509 certificates
+        assert!(
+            claim_sig.get("serial_number").is_some(),
+            "claim_signature should have serial_number from decoded certificate"
+        );
+        assert!(
+            claim_sig.get("issuer").is_some(),
+            "claim_signature should have issuer from decoded certificate"
+        );
+        assert!(
+            claim_sig.get("subject").is_some(),
+            "claim_signature should have subject from decoded certificate"
+        );
+        assert!(
+            claim_sig.get("validity").is_some(),
+            "claim_signature should have validity from decoded certificate"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_cawg_identity_x509_signature_decoding() -> Result<()> {
+        // Test that cawg.identity with X.509 signature is fully decoded
+        let mut reader = JpegTrustReader::from_file("tests/fixtures/C_with_CAWG_data.jpg")?;
+        reader.compute_asset_hash_from_file("tests/fixtures/C_with_CAWG_data.jpg")?;
+
+        let json_value = reader.to_json_value()?;
+        let manifests = json_value["manifests"].as_array().unwrap();
+        
+        // Find the manifest and its cawg.identity assertion
+        let manifest = &manifests[0];
+        let assertions = manifest["assertions"].as_object().unwrap();
+        
+        let cawg_identity = assertions.get("cawg.identity");
+        assert!(cawg_identity.is_some(), "Should have cawg.identity assertion");
+        
+        let cawg_identity = cawg_identity.unwrap();
+        
+        // Verify pad1 and pad2 are base64 strings, not arrays
+        assert!(
+            cawg_identity["pad1"].is_string(),
+            "pad1 should be a base64 string, not an array"
+        );
+        if cawg_identity.get("pad2").is_some() {
+            assert!(
+                cawg_identity["pad2"].is_string(),
+                "pad2 should be a base64 string, not an array"
+            );
+        }
+        
+        // Verify signature is decoded
+        let signature = &cawg_identity["signature"];
+        assert!(signature.is_object(), "signature should be an object, not an array");
+        
+        // For X.509 signatures (sig_type: cawg.x509.cose), verify certificate details
+        let sig_type = cawg_identity["signer_payload"]["sig_type"].as_str().unwrap();
+        if sig_type == "cawg.x509.cose" {
+            assert!(
+                signature.get("algorithm").is_some(),
+                "signature should have algorithm"
+            );
+            assert!(
+                signature.get("serial_number").is_some(),
+                "X.509 signature should have serial_number"
+            );
+            assert!(
+                signature.get("issuer").is_some(),
+                "X.509 signature should have issuer DN components"
+            );
+            assert!(
+                signature.get("subject").is_some(),
+                "X.509 signature should have subject DN components"
+            );
+            assert!(
+                signature.get("validity").is_some(),
+                "X.509 signature should have validity period"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_cawg_identity_ica_signature_decoding() -> Result<()> {
+        // Test that cawg.identity with ICA signature extracts VC information
+        // Note: This test uses a fixture from the identity tests
+        let test_image = include_bytes!("identity/tests/fixtures/claim_aggregation/adobe_connected_identities.jpg");
+        
+        let mut reader = JpegTrustReader::from_stream("image/jpeg", std::io::Cursor::new(&test_image[..]))?;
+        let mut stream = std::io::Cursor::new(&test_image[..]);
+        reader.compute_asset_hash(&mut stream)?;
+
+        let json_value = reader.to_json_value()?;
+        let manifests = json_value["manifests"].as_array().unwrap();
+        
+        // Find a manifest with cawg.identity assertion
+        let manifest = manifests.iter().find(|m| {
+            if let Some(assertions) = m.get("assertions").and_then(|a| a.as_object()) {
+                assertions.keys().any(|k| k.starts_with("cawg.identity"))
+            } else {
+                false
+            }
+        });
+        
+        if let Some(manifest) = manifest {
+            let assertions = manifest["assertions"].as_object().unwrap();
+            let cawg_identity_key = assertions.keys().find(|k| k.starts_with("cawg.identity")).unwrap();
+            let cawg_identity = &assertions[cawg_identity_key];
+            
+            // Verify pad fields are base64 strings
+            assert!(
+                cawg_identity["pad1"].is_string(),
+                "pad1 should be a base64 string"
+            );
+            
+            // Verify signature is decoded
+            let signature = &cawg_identity["signature"];
+            assert!(signature.is_object(), "signature should be an object");
+            
+            // For ICA signatures (sig_type: cawg.identity_claims_aggregation),
+            // verify VC information is extracted
+            let sig_type = cawg_identity["signer_payload"]["sig_type"].as_str().unwrap();
+            if sig_type == "cawg.identity_claims_aggregation" {
+                assert!(
+                    signature.get("algorithm").is_some(),
+                    "ICA signature should have algorithm"
+                );
+                assert!(
+                    signature.get("issuer").is_some(),
+                    "ICA signature should have issuer (DID)"
+                );
+                
+                // ICA signatures should have VC-specific fields
+                // Note: Some of these may be optional depending on the VC
+                let has_vc_info = signature.get("validFrom").is_some()
+                    || signature.get("validUntil").is_some()
+                    || signature.get("verifiedIdentities").is_some()
+                    || signature.get("credentialType").is_some();
+                
+                assert!(
+                    has_vc_info,
+                    "ICA signature should have at least some VC information (validFrom, validUntil, verifiedIdentities, or credentialType)"
+                );
+            }
+        }
 
         Ok(())
     }
