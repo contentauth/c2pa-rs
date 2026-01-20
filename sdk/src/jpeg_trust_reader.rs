@@ -581,31 +581,59 @@ impl JpegTrustReader {
         let signature_ref = format!("self#jumbf=/c2pa/{}/c2pa.signature", label);
         claim_v2.insert("signature".to_string(), json!(signature_ref));
 
-        // Build created_assertions array with hashes
-        let created_assertions = self.build_assertion_references(manifest, label)?;
+        // Build created_assertions and gathered_assertions arrays with hashes from the underlying claim
+        let (created_assertions, gathered_assertions) = self.build_assertion_references(manifest, label)?;
         claim_v2.insert("created_assertions".to_string(), created_assertions);
+        claim_v2.insert("gathered_assertions".to_string(), gathered_assertions);
 
-        // Add empty arrays for gathered and redacted assertions
-        claim_v2.insert("gathered_assertions".to_string(), json!([]));
+        // Add empty array for redacted assertions
         claim_v2.insert("redacted_assertions".to_string(), json!([]));
 
         Ok(Value::Object(claim_v2))
     }
 
     /// Build assertion references with hashes from manifest
-    fn build_assertion_references(&self, manifest: &Manifest, _label: &str) -> Result<Value> {
-        let mut references = Vec::new();
+    /// Returns a tuple of (created_assertions, gathered_assertions) arrays
+    fn build_assertion_references(&self, _manifest: &Manifest, label: &str) -> Result<(Value, Value)> {
+        // Get the underlying claim to access created_assertions and gathered_assertions separately
+        let claim = self.inner.store.get_claim(label)
+            .ok_or_else(|| Error::ClaimMissing { label: label.to_owned() })?;
 
-        for assertion_ref in manifest.assertion_references() {
+        // Build created_assertions array
+        let mut created_refs = Vec::new();
+        for assertion_ref in claim.created_assertions() {
             let mut ref_obj = Map::new();
             ref_obj.insert("url".to_string(), json!(assertion_ref.url()));
-            // hash() returns Vec<u8>, not Option<Vec<u8>>
             let hash = assertion_ref.hash();
             ref_obj.insert("hash".to_string(), json!(base64::encode(&hash)));
-            references.push(Value::Object(ref_obj));
+            created_refs.push(Value::Object(ref_obj));
         }
 
-        Ok(Value::Array(references))
+        // Build gathered_assertions array if available
+        let mut gathered_refs = Vec::new();
+        if let Some(gathered) = claim.gathered_assertions() {
+            for assertion_ref in gathered {
+                let mut ref_obj = Map::new();
+                ref_obj.insert("url".to_string(), json!(assertion_ref.url()));
+                let hash = assertion_ref.hash();
+                ref_obj.insert("hash".to_string(), json!(base64::encode(&hash)));
+                gathered_refs.push(Value::Object(ref_obj));
+            }
+        }
+
+        // For Claim V1, created_assertions and gathered_assertions will both be empty
+        // In that case, populate created_assertions with all assertions (V1 doesn't distinguish)
+        if created_refs.is_empty() && gathered_refs.is_empty() && claim.version() == 1 {
+            for assertion_ref in claim.assertions() {
+                let mut ref_obj = Map::new();
+                ref_obj.insert("url".to_string(), json!(assertion_ref.url()));
+                let hash = assertion_ref.hash();
+                ref_obj.insert("hash".to_string(), json!(base64::encode(&hash)));
+                created_refs.push(Value::Object(ref_obj));
+            }
+        }
+
+        Ok((Value::Array(created_refs), Value::Array(gathered_refs)))
     }
 
     /// Build claim_signature object with detailed certificate information
