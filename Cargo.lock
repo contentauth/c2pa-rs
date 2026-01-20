@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa"
-version = "0.75.3"
+version = "0.75.4"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.75.3"
+version = "0.75.4"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -557,7 +557,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.75.3"
+version = "0.75.4"
 dependencies = [
  "quote",
  "syn 2.0.114",
@@ -565,7 +565,7 @@ dependencies = [
 
 [[package]]
 name = "c2patool"
-version = "0.26.14"
+version = "0.26.15"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1342,7 +1342,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.75.3"
+version = "0.75.4"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2346,9 +2346,9 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "lopdf"
-version = "0.38.0"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7184fdea2bc3cd272a1acec4030c321a8f9875e877b3f92a53f2f6033fdc289"
+checksum = "f560f57dfb9142a02d673e137622fd515d4231e51feb8b4af28d92647d83f35b"
 dependencies = [
  "aes",
  "bitflags",
@@ -2384,7 +2384,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.75.3"
+version = "0.75.4"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -3132,9 +3132,9 @@ checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
 name = "quick-xml"
-version = "0.38.4"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
+checksum = "f2e3bf4aa9d243beeb01a7b3bc30b77cfe2c44e24ec02d751a7104a53c2c49a1"
 dependencies = [
  "memchr",
 ]
