@@ -199,7 +199,13 @@ sha2 = "0.10.6"
 sha2 = { version = "0.10.6", features = ["asm"] }
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
-reqwest = { version = "0.13.1", optional = true }
+reqwest = { version = "0.13.1", default-features = false, features = [
+    # Default features enabled, except `default-tls`->`native-tls` due to licensing.
+    "charset",
+    "native-tls",
+    "http2",
+    "system-proxy",
+], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 openssl = { version = "0.10.72", features = ["vendored"], optional = true }
