@@ -257,7 +257,7 @@ mod tests {
         assert_eq!(log.description, "signing certificate untrusted");
 
         assert_eq!(
-            log.validation_status.as_ref().unwrap().as_ref(),
+            log.validation_status.as_ref().unwrap().as_ref() as &str,
             "signingCredential.untrusted"
         );
     }
