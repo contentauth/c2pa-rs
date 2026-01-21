@@ -74,17 +74,13 @@ fn sanitize_archive_path(path: &str) -> Result<String> {
     // Reject paths that start with '/' (absolute paths)
     if path.starts_with('/') || path.starts_with('\\') {
         return Err(Error::BadParam(format!(
-            "Absolute path not allowed: {}",
-            path
+            "Absolute path not allowed: {path}"
         )));
     }
 
     // Check for drive letters on Windows (e.g., "C:")
     if path.len() >= 2 && path.chars().nth(1) == Some(':') {
-        return Err(Error::BadParam(format!(
-            "Drive letter not allowed: {}",
-            path
-        )));
+        return Err(Error::BadParam(format!("Drive letter not allowed: {path}")));
     }
 
     // Split the path and check each component
@@ -94,8 +90,7 @@ fn sanitize_archive_path(path: &str) -> Result<String> {
         // Reject '..' components
         if *component == ".." {
             return Err(Error::BadParam(format!(
-                "Path traversal not allowed: {}",
-                path
+                "Path traversal not allowed: {path}"
             )));
         }
 
