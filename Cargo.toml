@@ -17,10 +17,6 @@ version = "0.75.4"
 [workspace.dependencies]
 c2pa = { path = "sdk", default-features = false }
 
-# Remove once http://github.com/chipsenkbeil/typed-path/pull/57 is merged and released
-[patch.crates-io]
-typed-path = { git = "https://github.com/cdmurph32/typed-path", branch = "wasip2_fix" }
-
 [profile.release]
 strip = true  # Automatically strip symbols from the binary.
 opt-level = 3
