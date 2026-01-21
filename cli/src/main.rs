@@ -37,11 +37,7 @@ use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
 use tempfile::NamedTempFile;
-#[cfg(not(target_os = "wasi"))]
-use tokio::runtime::Runtime;
 use url::Url;
-#[cfg(target_os = "wasi")]
-use wstd::runtime::block_on;
 
 use crate::{
     callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
@@ -298,6 +294,7 @@ fn load_trust_resource(resource: &TrustResource) -> Result<String> {
     }
 }
 
+// TODO: replace this with AsyncGenericResolver in c2pa-rs
 #[cfg(target_os = "wasi")]
 fn blocking_get(url: &str) -> Result<String> {
     use std::io::Read;
@@ -570,21 +567,7 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
     Ok(readers)
 }
 
-// run cawg validation if supported
-fn validate_cawg(reader: &mut Reader) -> Result<()> {
-    #[cfg(not(target_os = "wasi"))]
-    {
-        Runtime::new()?
-            .block_on(reader.post_validate_async(&CawgValidator {}))
-            .map_err(anyhow::Error::from)
-    }
-    #[cfg(target_os = "wasi")]
-    {
-        block_on(reader.post_validate_async(&CawgValidator {})).map_err(anyhow::Error::from)
-    }
-}
-
-fn reader_from_args(args: &CliArgs) -> Result<Reader> {
+async fn reader_from_args(args: &CliArgs) -> Result<Reader> {
     if let Some(external_manifest) = &args.external_manifest {
         let c2pa_data = fs::read(external_manifest)?;
         let format = match c2pa::format_from_path(&args.path) {
@@ -593,16 +576,21 @@ fn reader_from_args(args: &CliArgs) -> Result<Reader> {
                 bail!("Format for {:?} is unrecognized", args.path);
             }
         };
-        Ok(
-            Reader::from_manifest_data_and_stream(&c2pa_data, &format, File::open(&args.path)?)
-                .map_err(special_errs)?,
+        Ok(Reader::from_manifest_data_and_stream_async(
+            &c2pa_data,
+            &format,
+            File::open(&args.path)?,
         )
+        .await
+        .map_err(special_errs)?)
     } else {
-        Ok(Reader::from_file(&args.path).map_err(special_errs)?)
+        Ok(Reader::from_file_async(&args.path)
+            .await
+            .map_err(special_errs)?)
     }
 }
 
-fn main() -> Result<()> {
+async fn execute() -> Result<()> {
     let args = CliArgs::parse();
 
     // set RUST_LOG=debug to get detailed debug logging
@@ -618,7 +606,7 @@ fn main() -> Result<()> {
     }
 
     if args.cert_chain {
-        let reader = Reader::from_file(path).map_err(special_errs)?;
+        let reader = Reader::from_file_async(path).await.map_err(special_errs)?;
         // todo: add cawg certs here??
         if let Some(manifest) = reader.active_manifest() {
             if let Some(si) = manifest.signature_info() {
@@ -834,8 +822,10 @@ fn main() -> Result<()> {
                 }
 
                 // generate a report on the output file
-                let mut reader = Reader::from_file(&output).map_err(special_errs)?;
-                validate_cawg(&mut reader)?;
+                let mut reader = Reader::from_file_async(&output)
+                    .await
+                    .map_err(special_errs)?;
+                reader.post_validate_async(&CawgValidator {}).await?;
                 if args.detailed {
                     println!("{reader:#?}");
                 } else {
@@ -866,8 +856,10 @@ fn main() -> Result<()> {
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
             println!("Ingredient report written to the directory {:?}", &output);
         } else {
-            let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
-            validate_cawg(&mut reader)?;
+            let mut reader = Reader::from_file_async(&args.path)
+                .await
+                .map_err(special_errs)?;
+            reader.post_validate_async(&CawgValidator {}).await?;
             reader.to_folder(&output)?;
             let report = reader.to_string();
             if args.detailed {
@@ -885,8 +877,8 @@ fn main() -> Result<()> {
             Ingredient::from_file(&args.path).map_err(special_errs)?
         )
     } else if args.detailed {
-        let mut reader = reader_from_args(&args)?;
-        validate_cawg(&mut reader)?;
+        let mut reader = reader_from_args(&args).await?;
+        reader.post_validate_async(&CawgValidator {}).await?;
         println!("{reader:#?}");
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
@@ -894,21 +886,32 @@ fn main() -> Result<()> {
     {
         let mut stores = verify_fragmented(&args.path, fg)?;
         if stores.len() == 1 {
-            validate_cawg(&mut stores[0])?;
+            stores[0].post_validate_async(&CawgValidator {}).await?;
             println!("{}", stores[0]);
         } else {
             for store in &mut stores {
-                validate_cawg(store)?;
+                store.post_validate_async(&CawgValidator {}).await?;
             }
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        let mut reader = reader_from_args(&args)?;
-        validate_cawg(&mut reader)?;
+        let mut reader = reader_from_args(&args).await?;
+        reader.post_validate_async(&CawgValidator {}).await?;
         println!("{reader}");
     }
 
     Ok(())
+}
+
+#[cfg(not(target_os = "wasi"))]
+#[tokio::main]
+async fn main() -> Result<()> {
+    execute().await
+}
+
+#[cfg(target_os = "wasi")]
+async fn main() -> Result<()> {
+    wstd::runtime::block_on(execute())
 }
 
 #[cfg(test)]
