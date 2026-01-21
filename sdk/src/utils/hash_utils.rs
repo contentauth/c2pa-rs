@@ -247,7 +247,16 @@ where
                         continue;
                     }
 
-                    let end = exclusion.start() + exclusion.length() - 1;
+                    if exclusion.length() == 0 {
+                        continue;
+                    }
+
+                    let end = exclusion
+                        .start()
+                        .checked_add(exclusion.length())
+                        .ok_or(Error::BadParam("No exclusion range".to_string()))?
+                        .checked_sub(1)
+                        .ok_or(Error::BadParam("No exclusion range".to_string()))?;
                     let exclusion_start = exclusion.start();
                     ranges.remove_range(exclusion_start..=end);
                 }
@@ -310,6 +319,10 @@ where
                 //build final ranges
                 let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
                 for inclusion in hr {
+                    if inclusion.length() == 0 {
+                        continue;
+                    }
+
                     let end = inclusion.start() + inclusion.length() - 1;
                     let inclusion_start = inclusion.start();
 

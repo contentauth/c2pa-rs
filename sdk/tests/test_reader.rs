@@ -12,7 +12,8 @@
 // each license.
 
 mod common;
-use c2pa::{settings::Settings, validation_status, Error, Reader, Result};
+use c2pa::{validation_status, Builder, Context, Error, Reader, Result, Settings, ValidationState};
+#[cfg(feature = "fetch_remote_manifests")]
 use c2pa_macros::c2pa_test_async;
 use common::{assert_err, compare_to_known_good, fixture_stream};
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -52,10 +53,11 @@ fn test_reader_c_jpg() -> Result<()> {
 
 #[test]
 fn test_reader_xca_jpg() -> Result<()> {
-    Settings::from_string(include_str!("fixtures/test_settings.json"), "json")?;
+    let settings = Settings::new().with_json(include_str!("fixtures/test_settings.json"))?;
+    let context = Context::new().with_settings(settings)?;
 
     let (format, mut stream) = fixture_stream("XCA.jpg")?;
-    let reader = Reader::from_stream(&format, &mut stream)?;
+    let reader = Reader::from_context(context).with_stream(&format, &mut stream)?;
     // validation_results should have the expected failure
     assert_eq!(
         reader
@@ -95,5 +97,44 @@ fn write_known_goods() -> Result<()> {
     for filename in &filenames {
         common::write_known_good(filename)?;
     }
+    Ok(())
+}
+
+/// Test that validation_state() uses the Reader's context settings also
+/// when calling with_manifest_data_and_stream.
+#[test]
+fn test_reader_validation_state_uses_context_settings() -> Result<()> {
+    use std::io::Cursor;
+
+    let settings = Settings::new().with_json(include_str!("fixtures/test_settings.json"))?;
+    let context = Context::new().with_settings(settings)?.into_shared();
+
+    // No embedding here
+    let mut builder = Builder::from_shared_context(&context);
+    builder.no_embed = true;
+
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+    let mut dest = Cursor::new(Vec::new());
+
+    let manifest_data = builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+
+    // Create a contextualized Reader
+    let reader = Reader::from_shared_context(&context).with_manifest_data_and_stream(
+        &manifest_data,
+        format,
+        &mut dest,
+    )?;
+
+    // Trust is configured, so this should return Trusted
+    assert_eq!(
+        reader.validation_state(),
+        ValidationState::Trusted,
+        "Expected Trusted state when trust is configured in the Reader context"
+    );
+
     Ok(())
 }
