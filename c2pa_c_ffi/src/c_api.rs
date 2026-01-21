@@ -569,6 +569,19 @@ pub unsafe extern "C" fn c2pa_string_free(s: *mut c_char) {
     }
 }
 
+/// Frees a const string allocated by Rust.
+///
+/// # Safety
+/// * Reads from NULL-terminated C strings.
+/// * The string can only be freed once and is invalid after this call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_const_string_free(s: *const c_char) {
+    if !s.is_null() {
+        // Cast is okay as strings allocated by Rust and then passed to C are mutable.
+        drop(CString::from_raw(s as *mut c_char));
+    }
+}
+
 /// Frees an array of char* pointers created by Rust.
 ///
 /// # Parameters
@@ -734,7 +747,7 @@ pub unsafe extern "C" fn c2pa_reader_free(reader_ptr: *mut C2paReader) {
 /// Returns a JSON string generated from a C2paReader.
 ///
 /// # Safety
-/// The returned value MUST be released by calling c2pa_string_free
+/// The returned value MUST be released by calling c2pa_string_free,
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c_char {
@@ -764,6 +777,7 @@ pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) 
 ///
 /// # Safety
 /// reader_ptr must be a valid pointer to a C2paReader.
+/// The returned value MUST be released by calling c2pa_const_string_free.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_remote_url(reader_ptr: *mut C2paReader) -> *const c_char {
     check_or_return_null!(reader_ptr);
@@ -1666,7 +1680,7 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
 
 #[cfg(test)]
 mod tests {
-    use std::{ffi::CString, panic::catch_unwind};
+    use std::{ffi::CString, panic::catch_unwind, ptr::null};
 
     use super::*;
     use crate::TestC2paStream;
@@ -2440,6 +2454,18 @@ mod tests {
         }
         unsafe { c2pa_builder_free(builder) };
         unsafe { c2pa_signer_free(signer) };
+    }
+
+    #[test]
+    fn test_c2pa_const_string_free_with_valid_ptr() {
+        let str = CString::new("test").unwrap();
+        let ptr = str.into_raw() as *const c_char;
+        assert!(catch_unwind(|| unsafe { c2pa_const_string_free(ptr) }).is_ok());
+    }
+
+    #[test]
+    fn test_c2pa_const_string_free_with_null_ptr() {
+        assert!(catch_unwind(|| unsafe { c2pa_const_string_free(null()) }).is_ok());
     }
 
     #[test]
