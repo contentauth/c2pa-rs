@@ -4008,6 +4008,65 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_archive_format_variants() -> Result<()> {
+        use std::io::Read;
+
+        // Test 1: New C2PA format (generate_c2pa_archive = true)
+        let settings_new = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context_new = Context::new().with_settings(settings_new)?;
+        let mut builder_new = Builder::from_context(context_new)
+            .with_definition(r#"{"title": "Test New Format"}"#)?;
+
+        let mut archive_new = Cursor::new(Vec::new());
+        builder_new.to_archive(&mut archive_new)?;
+
+        // Verify it's C2PA format (starts with JUMBF box signature)
+        archive_new.rewind()?;
+        let mut header = [0u8; 12];
+        archive_new.read_exact(&mut header)?;
+        // C2PA archives should start with JUMBF box structure
+        // Check for "jumb" box type at offset 4-8
+        assert_eq!(
+            &header[4..8],
+            b"jumb",
+            "Should be C2PA/JUMBF format with 'jumb' box"
+        );
+
+        // Test 2: Old ZIP format (generate_c2pa_archive = false)
+        let settings_old = Settings::new().with_value("builder.generate_c2pa_archive", false)?;
+
+        let context_old = Context::new().with_settings(settings_old)?;
+        let mut builder_old = Builder::from_context(context_old)
+            .with_definition(r#"{"title": "Test Old Format"}"#)?;
+
+        let mut archive_old = Cursor::new(Vec::new());
+        builder_old.to_archive(&mut archive_old)?;
+
+        // Verify it's ZIP format (starts with PK signature)
+        archive_old.rewind()?;
+        let mut zip_header = [0u8; 4];
+        archive_old.read_exact(&mut zip_header)?;
+        assert_eq!(&zip_header[0..2], b"PK", "Should be ZIP format");
+
+        // Test 3: Verify both can be read back
+        archive_new.rewind()?;
+        let loaded_new = Builder::from_archive(archive_new)?;
+        assert_eq!(
+            loaded_new.definition.title,
+            Some("Test New Format".to_string())
+        );
+
+        archive_old.rewind()?;
+        let loaded_old = Builder::from_archive(archive_old)?;
+        assert_eq!(
+            loaded_old.definition.title,
+            Some("Test Old Format".to_string())
+        );
+
+        Ok(())
+    }
+
     /// Test Builder add_action with a serde_json::Value
     #[test]
     fn test_builder_add_action_with_value() {
