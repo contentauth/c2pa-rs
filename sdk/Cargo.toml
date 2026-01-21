@@ -178,6 +178,7 @@ spki = { version = "0.7.3", optional = true }
 static-iref = "3.0"
 tempfile = "3.23.0"
 thiserror = "2.0.17"
+typed-path = "< 0.12"
 url = "2.5.3"
 uuid = { version = "1.18.0", features = ["serde", "v4"] }
 web-time = "1.1"
