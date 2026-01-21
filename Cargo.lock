@@ -513,7 +513,6 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "toml 0.9.11+spec-1.1.0",
- "typed-path",
  "ureq",
  "url",
  "uuid",
@@ -526,7 +525,8 @@ dependencies = [
  "wstd",
  "x509-parser",
  "zeroize",
- "zip",
+ "zip 6.0.0",
+ "zip 7.0.0",
 ]
 
 [[package]]
@@ -4495,12 +4495,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
-name = "typed-path"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41713888c5ccfd99979fcd1afd47b71652e331b3d4a0e19d30769e80fec76cce"
-
-[[package]]
 name = "typenum"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5266,6 +5260,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "zip"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb2a05c7c36fde6c09b08576c9f7fb4cda705990f73b58fe011abf7dfb24168b"
+dependencies = [
+ "arbitrary",
+ "crc32fast",
+ "indexmap 2.13.0",
+ "memchr",
 ]
 
 [[package]]

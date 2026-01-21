@@ -213,10 +213,12 @@ ureq = { version = "3.1.0", default-features = false, features = [
 ], optional = true }
 
 [target.'cfg(target_os = "wasi")'.dependencies]
-# TODO: Keep these two crates pinned until typed-path works on WASI without wasip2. See https://github.com/contentauth/c2pa-rs/issues/1759.
-# Zip 7.2.0 pulls typed-path 0.12.0 on WASI, so pin to 7.0.0 here.
-typed-path = "=0.10.0"
-zip = { version = "=7.0.0", default-features = false }
+# TODO: Keep zip crate pinned until typed-path works on WASI.
+# See https://github.com/contentauth/c2pa-rs/issues/1759 and
+# http://github.com/chipsenkbeil/typed-path/pull/57.
+# Zip 7.x adds a dependency on typed-path 0.12.0 which doesn't compile on WASI,
+# so pin to 6.x here.
+zip = { version = "6.0", default-features = false }
 
 wasi = { version = "0.14.3", optional = true }
 wstd = { version = "0.5.4", optional = true }
