@@ -41,6 +41,7 @@ use crate::{
     error::{Error, Result},
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
+    signer::BoxedSigner,
     store::Store,
     utils::{hash_utils::hash_to_b64, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
@@ -1132,10 +1133,10 @@ impl Builder {
             // Create a temporary context with verify_after_reading disabled, since archives
             // contain placeholder signatures that will fail CBOR parsing during verification.
             // The user's context settings will be preserved for the Builder.
-            let mut no_verify_settings = self.context.settings().clone();
-            no_verify_settings.verify.verify_after_reading = false;
+            //let no_verify_settings = self.context.settings().clone();
+            //no_verify_settings.verify.verify_after_reading = false;
 
-            let temp_context = Context::new().with_settings(no_verify_settings)?;
+            let temp_context = Context::new(); //.with_settings(no_verify_settings)?;
 
             // Load the store without verification to avoid CBOR parsing errors on placeholder signatures
             let store = Store::from_stream(
@@ -2234,29 +2235,74 @@ impl Builder {
             .ok_or(Error::IngredientNotFound)
     }
 
+    /// Creates a signer using an embedded Ed25519 certificate for archive signatures.
+    /// This uses a static test certificate chain specifically for archive placeholders.
+    /// The certificate is identifiable by its subject: "C2PA Signer"
+    #[cfg(feature = "archive_certs")]
+    fn create_archive_placeholder_signer() -> Result<BoxedSigner> {
+        use crate::{
+            crypto::raw_signature::{signer_from_cert_chain_and_private_key, SigningAlg},
+            signer::RawSignerWrapper,
+        };
+
+        // Embedded Ed25519 certificate chain for archive signing
+        // This is a test certificate used for signing archives
+        const ARCHIVE_CERT_CHAIN: &[u8] = include_bytes!("fixtures/certs/ed25519.pub");
+        const ARCHIVE_PRIVATE_KEY: &[u8] = include_bytes!("fixtures/certs/ed25519.pem");
+
+        let raw_signer = signer_from_cert_chain_and_private_key(
+            ARCHIVE_CERT_CHAIN,
+            ARCHIVE_PRIVATE_KEY,
+            SigningAlg::Ed25519,
+            None,
+        )?;
+
+        Ok(Box::new(RawSignerWrapper(raw_signer)))
+    }
+
     /// This creates a working store from the builder
-    /// The working store is signed with a BoxHash over an empty string
+    /// The working store is signed with an embedded Ed25519 certificate
     /// And is returned as a Vec<u8> of the c2pa_manifest bytes
     /// This works as an archive of the store that can be read back to restore the Builder state
-    fn working_store_sign(&self) -> Result<Vec<u8>> {
-        // first we need to generate a BoxHash over an empty string
-        let mut empty_asset = std::io::Cursor::new("");
-        let boxes = jumbf_io::get_assetio_handler("application/c2pa")
-            .ok_or(Error::UnsupportedType)?
-            .asset_box_hash_ref()
-            .ok_or(Error::UnsupportedType)?
-            .get_box_map(&mut empty_asset)?;
-        let box_hash = BoxHash { boxes };
+    fn working_store_sign(&mut self) -> Result<Vec<u8>> {
+        #[cfg(feature = "archive_certs")]
+        {
+            // Create a signer for archives
+            let signer = Self::create_archive_placeholder_signer()?;
 
-        // then convert the builder to a claim and add the box hash assertion
-        let mut claim = self.to_claim()?;
-        claim.add_assertion(&box_hash)?;
+            // Use save_to_stream with empty input/output streams for application/c2pa format
+            let mut empty_input = std::io::Cursor::new(Vec::<u8>::new());
+            let mut output = std::io::Cursor::new(Vec::new());
 
-        // now commit and sign it. The signing will allow us to detect tampering.
-        let mut store = Store::new();
-        store.commit_claim(claim)?;
+            let c2pa_data = self.sign(
+                signer.as_ref(),
+                "application/c2pa",
+                &mut empty_input,
+                &mut output,
+            )?;
 
-        store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
+            Ok(c2pa_data)
+        }
+
+        #[cfg(not(feature = "archive_certs"))]
+        {
+            // Fallback to old BoxHash approach if archive_certs feature is disabled
+            let mut empty_asset = std::io::Cursor::new("");
+            let boxes = jumbf_io::get_assetio_handler("application/c2pa")
+                .ok_or(Error::UnsupportedType)?
+                .asset_box_hash_ref()
+                .ok_or(Error::UnsupportedType)?
+                .get_box_map(&mut empty_asset)?;
+            let box_hash = BoxHash { boxes };
+
+            let mut claim = self.to_claim()?;
+            claim.add_assertion(&box_hash)?;
+
+            let mut store = Store::new();
+            store.commit_claim(claim)?;
+
+            store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
+        }
     }
 }
 
@@ -3987,17 +4033,22 @@ mod tests {
 
     #[test]
     fn test_with_archive() -> Result<()> {
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context = Context::new().with_settings(settings)?.into_shared(); // builder with archive enabled by default
         let mut builder =
-            Builder::from_context(Context::new()).with_definition(r#"{"title": "Test Image"}"#)?;
+            Builder::from_shared_context(&context).with_definition(r#"{"title": "Test Image"}"#)?;
 
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive)?;
 
-        // Load from archive with custom context
         archive.rewind()?;
-        let context = Context::new();
+        let reader =
+            Reader::from_shared_context(&context).with_stream("application/c2pa", &mut archive)?;
+        println!("{reader}");
+        // Load from archive with shared context
+        archive.rewind()?;
 
-        let loaded_builder = Builder::from_context(context).with_archive(archive)?;
+        let loaded_builder = Builder::from_shared_context(&context).with_archive(archive)?;
 
         // Verify the manifest data was loaded with the correct title
         assert_eq!(

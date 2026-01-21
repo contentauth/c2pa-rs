@@ -28,8 +28,9 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["openssl", "default_http"]
+default = ["openssl", "default_http", "archive_certs"]
 add_thumbnails = ["image"]
+archive_certs = ["dep:rcgen"]
 file_io = []
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
@@ -162,6 +163,7 @@ rasn = "0.28.2"
 rasn-cms = "0.28.2"
 rasn-ocsp = "0.28.2"
 rasn-pkix = "0.28.2"
+rcgen = { version = "0.12", optional = true, default-features = false, features = ["ring"] }
 regex = "1.11"
 riff = "2.0.0"
 rsa = { version = "0.9.10", features = ["pem", "sha2", "std"], optional = true }
