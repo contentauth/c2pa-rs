@@ -17,6 +17,9 @@ use std::{
     ptr,
 };
 
+use chrono::Local;
+use fern::Dispatch;
+
 /// Validates that a buffer size is within safe bounds and doesn't cause integer overflow
 /// when used with pointer arithmetic.
 ///
@@ -65,7 +68,7 @@ unsafe fn safe_slice_from_raw_parts(
 
     if !is_safe_buffer_size(len, ptr) {
         return Err(Error::Other(format!(
-            "Buffer size {len} is invalid for parameter '{param_name}'",
+            "Buffer size {len} is invalid for parameter '{param_name}'"
         )));
     }
 
@@ -374,6 +377,37 @@ pub unsafe extern "C" fn c2pa_version() -> *mut c_char {
         c2pa::VERSION
     );
     to_c_string(version)
+}
+
+/// Sets up stream logging.
+/// The logger will write any logged text to the provided stream.
+///
+/// # Safety
+/// The stream pointer must be valid and remain valid for the lifetime of the logger.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_init_stream_logging(stream: *mut C2paStream) -> c_int {
+    check_or_return_int!(stream);
+
+    let result = Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "[{}][{}] {}",
+                Local::now().format("%Y-%m-%d %H:%M:%S"),
+                record.level(),
+                message
+            ))
+        })
+        .level(log::LevelFilter::Info)
+        .chain(std::io::stdout())
+        // Log to the provided stream
+        .chain(fern::Output::writer(Box::new(&mut (*stream)), "\n"))
+        .apply();
+
+    if result.is_ok() {
+        0
+    } else {
+        -1
+    }
 }
 
 /// Returns the last error message.
@@ -1973,6 +2007,10 @@ mod tests {
 
     #[test]
     fn builder_edit_intent_and_sign() {
+        let log_vec = Vec::new();
+        let mut log_stream = TestC2paStream::new(log_vec).into_c_stream();
+        unsafe { c2pa_init_stream_logging(&mut log_stream) };
+
         // Use an already-signed image as the source for editing
         let signed_source_image = include_bytes!(fixture_path!("C.jpg"));
         let mut source_stream = TestC2paStream::from_bytes(signed_source_image.to_vec());
@@ -2023,8 +2061,18 @@ mod tests {
         // and no "empty" source type appears in the JSON
         assert!(!json_content.contains("digitalsourcetype/empty"));
 
+        // Check that the log stream contains data by seeking to the end
+        use std::io::{Seek, SeekFrom};
+        let stream_size = log_stream.seek(SeekFrom::End(0)).unwrap();
+        assert!(
+            stream_size > 0,
+            "Log stream should contain logging data, but has {} bytes",
+            stream_size
+        );
+
         TestC2paStream::drop_c_stream(source_stream);
         TestC2paStream::drop_c_stream(read_stream);
+        TestC2paStream::drop_c_stream(log_stream);
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
             c2pa_builder_free(builder);
