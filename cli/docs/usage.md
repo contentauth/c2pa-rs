@@ -3,13 +3,13 @@
 C2PA Tool's command-line syntax is:
 
 ```
-c2patool [OPTIONS] <PATH> [COMMAND]
+c2patool <ASSET_PATH> [OPTIONS] [SUBCOMMAND]
 ```
 
 Where:
 - `OPTIONS` is one or more of the command-line options described in following table.
-- `<PATH>` is the (relative or absolute) file path to the asset to read or embed a manifest into.
-- `[COMMAND]` is one of the optional subcommands: `trust`, `fragment`, or `help`.
+- `<ASSET_PATH>` is the (relative or absolute) file path to the asset to read or embed a manifest into.
+- `[SUBCOMMAND]` is one of the optional subcommands: `trust`, `fragment`, or `help`.
 
 By default, c2patool writes a JSON representation of C2PA manifests found in the asset to the standard output. 
 
@@ -295,8 +295,9 @@ The `--fragments_glob` option is only available with the `fragment` subcommand a
 
 ## WASI
 
-The wasm created for wasm32-wasip2 can be run directly with [wasmtime](https://docs.wasmtime.dev/). It also can be transpiled to a JS + core Wasm for JavaScript execution using [jco](https://bytecodealliance.github.io/jco/transpiling.html).
+You can run the Wasm binary created for `wasm32-wasip2` directly with [wasmtime](https://docs.wasmtime.dev/). You can also transpile it into an ECMAScript module for JavaScript execution by using [jco](https://bytecodealliance.github.io/jco/transpiling.html) as follows:
+
 ```
-wasmtime -S cli -S http --dir . c2patool.wasm [OPTIONS] <PATH> [COMMAND]
+wasmtime -S cli -S http --dir . c2patool.wasm [OPTIONS] <ASSET_PATH> [COMMAND]
 ```
 
