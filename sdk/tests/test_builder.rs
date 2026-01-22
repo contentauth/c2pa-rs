@@ -636,7 +636,7 @@ fn test_archive_path_traversal_protection() -> Result<()> {
             // Expected error
         }
         Err(e) => {
-            panic!("Expected path traversal error, got: {:?}", e);
+            panic!("Expected path traversal error, got: {e:?}");
         }
         Ok(_) => {
             panic!("Path traversal should have been blocked!");
@@ -652,7 +652,7 @@ fn test_archive_path_traversal_protection() -> Result<()> {
             // Expected error
         }
         Err(e) => {
-            panic!("Expected absolute path error, got: {:?}", e);
+            panic!("Expected absolute path error, got: {e:?}");
         }
         Ok(_) => {
             panic!("Absolute path should have been blocked!");
