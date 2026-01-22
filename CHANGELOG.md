@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.75.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.5...c2pa-v0.75.6)
+_22 January 2026_
+
+### Added
+
+* Trigger a new release to allow generated binaries to be published
+
 ## [0.75.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.4...c2pa-v0.75.5)
 _21 January 2026_
 
