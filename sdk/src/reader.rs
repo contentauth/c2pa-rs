@@ -169,7 +169,7 @@ impl Reader {
     /// # use std::sync::Arc;
     /// # fn main() -> Result<()> {
     /// // Create a shared Context once
-    /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
+    /// let ctx = Context::new().with_settings(Settings::new()).into_shared();
     ///
     /// // Share it across multiple Readers (even across threads!)
     /// let reader1 = Reader::from_shared_context(&ctx);
@@ -186,7 +186,7 @@ impl Reader {
         }
     }
 
-    /// Add manifest store from a stream to the [`Reader`]
+    /// Add manifest store from a stream to the [`Reader`].
     /// # Arguments
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.

@@ -420,6 +420,7 @@ impl Settings {
     #[cfg(feature = "file_io")]
     /// Load thread-local [Settings] from a file.
     /// to be deprecated - use [Settings::with_file] instead
+    #[doc(hidden)]
     pub fn from_file<P: AsRef<Path>>(settings_path: P) -> Result<Self> {
         let ext = settings_path
             .as_ref()
@@ -434,6 +435,7 @@ impl Settings {
     /// Load thread-local [Settings] from string representation of the configuration.
     /// Format of configuration must be supplied (json or toml).
     /// to be deprecated - use [Settings::with_json] or [Settings::with_toml] instead
+    #[doc(hidden)]
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
@@ -753,12 +755,14 @@ impl Settings {
     }
 
     /// Serializes the thread-local [Settings] into a toml string.
+    #[doc(hidden)]
     pub fn to_toml() -> Result<String> {
         let settings = get_thread_local_settings();
         Ok(toml::to_string(&settings)?)
     }
 
     /// Serializes the thread-local [Settings] into a pretty (formatted) toml string.
+    #[doc(hidden)]
     pub fn to_pretty_toml() -> Result<String> {
         let settings = get_thread_local_settings();
         Ok(toml::to_string_pretty(&settings)?)

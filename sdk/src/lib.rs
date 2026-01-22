@@ -25,9 +25,13 @@
 //! The library has a Builder/Reader API that focuses on simplicity
 //! and stream support.
 //!
+//! For more information, see [CAI open source SDK - Rust library](https://opensource.contentauthenticity.org/docs/rust-sdk/)
+//!
 //! # Examples
 //!
 //! ## Reading a manifest
+//!
+//! TODO - Update to use Context
 //!
 //! ```
 //! # use c2pa::Result;
@@ -49,6 +53,9 @@
 //! ```
 //!
 //! ## Adding a signed manifest to a file
+//!
+//! TODO - Change example to be a more common case - Adding parent with intent, ingredient.
+//!
 //! ```
 //! # use c2pa::Result;
 //! use std::io::Cursor;
@@ -80,33 +87,39 @@
 //! # }
 //! ```
 //!
-//! # WASM
-//!
-//! The only supported HTTP features for WASM (not WASI) are `http_reqwest`. This means WASM
-//! only supports the async API for network requests.
-//!
-//! ## WASI
-//!
-//! The only supported HTTP features for WASI are `http_wasi` and `http_wstd`. The former
-//! enables sync network requests, while the latter enables async network requests.
-//!
 //! # Features
 //!
 //! You can enable any of the following features:
 //!
-//! - **default_http** *(enabled by default)*: Enables default HTTP features for sync and async HTTP resolvers (`http_req`, `http_reqwest`, `http_wasi`, and `http_std`).
-//! - **openssl** *(enabled by default)*: Use the vendored `openssl` implementation for cryptography.
-//! - **rust_native_crypto**: Use Rust native cryptography.
+//! These features are enabled by default:
+//! - **default_http**: Enables default HTTP features for sync and async HTTP resolvers (`http_req`, `http_reqwest`, `http_wasi`, and `http_std`).
+//! - **openssl**: Use the vendored `openssl` implementation for cryptography.
+//!
+//! Other features:
 //! - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
 //! - **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
 //! - **file_io**: Enables APIs that use filesystem I/O.
 //! - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
 //! - **pdf**: Enables basic PDF read support.
+//! - **rust_native_crypto**: Use Rust native cryptography.  
+//! TODO - Confirm behavior with openssl 
+//!
+//! ## HTTP features
+//! TODO - Rationalize the HTTP features
 //! - **http_ureq**: Enables `ureq` for sync HTTP requests.
 //! - **http_reqwest**: Enables `reqwest` for async HTTP requests.
 //! - **http_reqwest_blocking**: Enables the `blocking` feature of `reqwest` for sync HTTP requests.
 //! - **http_wasi**: Enables `wasi` for sync HTTP requests on WASI.
 //! - **http_wstd**: Enables `wstd` for async HTTP requests on WASI.
+//!
+//! ## WASM and WASI
+//!
+//! For WASM the only supported HTTP feature is `http_reqwest`. This means WASM
+//! only supports the async API for network requests.
+//!
+//! For WASI the only supported HTTP features are `http_wasi`, which enables sync network requests, 
+//! and `http_wstd` which enables async network requests.
+//!
 
 /// The internal name of the C2PA SDK.
 pub const NAME: &str = "c2pa-rs";
@@ -115,15 +128,13 @@ pub const NAME: &str = "c2pa-rs";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Public modules
-/// The assertions module contains the definitions for the assertions that are part of the C2PA specification.
+/// The `assertions` module contains the definitions for the assertions that are part of the C2PA specification.
 pub mod assertions;
 
-pub mod context;
-
-/// The cose_sign module contains the definitions for the COSE signing algorithms.
+/// The `cose_sign` module contains the definitions for the COSE signing algorithms.
 pub mod cose_sign;
 
-/// The create_signer module contains the definitions for the signers that are part of the C2PA specification.
+/// The `create_signer` module contains the definitions for the signers that are part of the C2PA specification.
 pub mod create_signer;
 
 /// Cryptography primitives.
@@ -135,14 +146,14 @@ pub mod crypto;
 pub mod dynamic_assertion;
 
 // TODO: pub it when we expose in high-level API
-/// The http module contains generic traits for configuring sync and async http resolvers.
+/// The `http` module contains generic traits for configuring sync and async HTTP resolvers.
 pub(crate) mod http;
 
 /// The `identity` module provides support for the [CAWG identity assertion](https://cawg.io/identity).
 #[doc(hidden)]
 pub mod identity;
 
-/// The jumbf_io module contains the definitions for the JUMBF data in assets.
+/// The `jumbf_io` module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
 
 /// The settings module provides a way to configure the C2PA SDK.
@@ -152,35 +163,39 @@ pub mod settings;
 #[doc(hidden)]
 pub mod status_tracker;
 
-/// The validation_results module contains the definitions for the validation results that are part of the C2PA specification.
+/// The `validation_results` module contains the definitions for the validation results that are part of the C2PA specification.
 pub mod validation_results;
 
-/// The validation_status module contains the definitions for the validation status that are part of the C2PA specification.
+/// The `validation_status` module contains the definitions for the validation status that are part of the C2PA specification.
 #[doc(hidden)]
 pub mod validation_status;
 
 // Public exports
+#[doc(inline)]
 pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
 pub use builder::{Builder, BuilderIntent, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
+#[doc(inline)]
 pub use context::Context;
 pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
-#[doc(inline)]
+#[doc(hidden)]
 pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};
 pub use hashed_uri::HashedUri;
 pub use ingredient::Ingredient;
 #[cfg(feature = "file_io")]
+#[doc(hidden)]
 pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use manifest::{Manifest, SignatureInfo};
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 pub use reader::Reader;
 #[doc(inline)]
 pub use resource_store::{ResourceRef, ResourceStore};
+#[doc(inline)]
 pub use settings::Settings;
 pub use signer::{AsyncSigner, BoxedAsyncSigner, BoxedSigner, Signer};
 pub use utils::mime::format_from_path;
@@ -195,6 +210,7 @@ pub(crate) mod builder;
 pub(crate) mod callback_signer;
 pub(crate) mod claim;
 pub(crate) mod claim_generator_info;
+pub(crate) mod context;
 pub(crate) mod cose_validator;
 pub(crate) mod error;
 pub(crate) mod external_manifest;
