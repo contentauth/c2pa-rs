@@ -211,7 +211,7 @@ c2patool sample/C.jpg trust \
 
 **IMPORTANT:** C2PA has an official trust list. 
 
-Currently, the [C2PA Verify tool uses a temporary known certificate list](https://opensource.contentauthenticity.org/docs/verify-known-cert-list) which is frozen; no new certificates can be added to this list.
+Currently, the C2PA Verify tool uses the interim trust list which is frozen; no new certificates can be added to this list.
 
 To configure C2PA tool to use the Verify temporary known certificate list, set the following environment variables on your system:
 
