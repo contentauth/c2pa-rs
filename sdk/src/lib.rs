@@ -89,7 +89,7 @@
 //!
 //! # Features
 //!
-//! You can enable any of the following features:
+//! The crate provides the following features:
 //!
 //! These features are enabled by default:
 //! - **default_http**: Enables default HTTP features for sync and async HTTP resolvers (`http_req`, `http_reqwest`, `http_wasi`, and `http_std`).
