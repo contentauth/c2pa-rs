@@ -132,7 +132,7 @@ In the example above, the tool will embed the URL `http://my_server/myasset.c2pa
 
 If you use both the `-s` and `-r` options, the tool embeds a manifest in the output file and also adds the remote reference.
 
-## Signing claim bytes with your own signer
+### Signing claim bytes with your own signer
 
 When generating a manifest, if the private key is not accessible on the system on which you are running the tool, use the `--signer-path` argument to specify the path to an executable that performs signing. 
 This executable receives the claim bytes (the bytes to be signed) from standard input (`stdin`) and outputs the signature bytes to standard output (`stdout`). 
@@ -150,7 +150,7 @@ c2patool sample/image.jpg            \
 
 For information on calculating the value of the `--reserve-size` argument, see `c2patool --help`.
 
-## Providing a manifest definition on the command line
+### Providing a manifest definition on the command line
 
 To provide the manifest definition as a command line argument instead of in a file, use the `--config` / `-c` option.
 
@@ -163,7 +163,7 @@ c2patool sample/image.jpg \
       "data": {"my_key": "whatever I want"}}]}'
 ```
 
-## Speeding up signing
+### Speeding up signing
 
 By default, `c2patool` validates the signature immediately after signing a manifest. To disable this and speed up the validation process, use the `--no_signing_verify` option.
 
