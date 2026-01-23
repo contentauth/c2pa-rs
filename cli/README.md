@@ -15,7 +15,6 @@ For a simple example of calling c2patool from a Node.js server application, see 
 **Additional documentation**:
 
 - [Using C2PA Tool](docs/usage.md)
-- [Command reference](docs/command-ref.md)
 - [Manifest definition file](docs/manifest.md)
 - [Using an X.509 certificate](docs/x_509.md)
 - [Change log / release notes](CHANGELOG.md)
