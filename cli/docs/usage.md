@@ -196,17 +196,26 @@ By default, `c2patool` validates the signature immediately after signing a manif
 
 ## Configuring trust support
 
+Use the `trust` subcommand to specify _trust lists_ that the tool consults to determine if an asset was signed by a "trusted" certificate, which can be either a certificate on the specified _allowed list_ or a certificate that chains back to a root certificate on the specified _trust anchors_ list. 
+
+There are two significant trust lists for signing Content Credentials:
+
+- The [official C2PA trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists#c2pa-trust-list) that products in the [C2PA conformance program](https://opensource.contentauthenticity.org/docs/conformance/) use.
+- The legacy [interim trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists#interim-trust-list), which is now frozen; no new certificates can be added to this list. Currently, the [C2PA Verify tool](https://verify.contentauthenticity.org/) uses this trust list.
+
+**Note:** With the `trust` subcommand, C2PA Tool will make several HTTP requests each time it runs. Since these lists may change without notice (and the allowed list may change quite often), check these lists frequently to stay in sync with the Verify site. However, when performing bulk operations, you may want to cache these files locally to avoid a large number of network calls that might affect performance.
+
+### Trust subcommand options
+
 Enable trust support by using the `trust` subcommand, as follows:
 
 ```
-c2patool [path] trust [OPTIONS]
+c2patool <ASSET_PATH> trust [OPTIONS]
 ```
 
-When the `trust` subcommand is supplied, should c2patool encounter a problem with validating any of the claims in the asset, its JSON output will contain a `validation_status` field whose value is an array of objects, each describing a validation problem.
+If C2PA Tool can't validate any of the claims in the asset against the specified trust lists, the JSON output will contain a `validation_status` field whose value is an array of objects, each describing a validation problem.
 
-### Additional trust options
-
-Several additional CLI options are available with the `trust` sub-command to specify the location of files containing the trust anchors list or known certificate list, as described in the following table. You can also use environment variables to specify these values.
+Several additional CLI options are available with the `trust` sub-command, as described in the following table. You can also use environment variables to specify these values.
 
 <div class="trust-table" markdown="1">
 
@@ -234,29 +243,26 @@ c2patool sample/C.jpg trust \
   --trust_config https://server.com/store.cfg
 ```
 
-### Using the Verify known certificate list
+### Using the official C2PA trust list
 
-**IMPORTANT:** C2PA has an official trust list. 
-
-Currently, the C2PA Verify tool uses the interim trust list which is frozen; no new certificates can be added to this list.
-
-To configure C2PA tool to use the Verify temporary known certificate list, set the following environment variables on your system:
+To specify the [official C2PA trust list](https://github.com/c2pa-org/conformance-public/blob/main/trust-list/C2PA-TRUST-LIST.pem) use the `--trust_anchors` option as follows:
 
 ```shell
-export C2PATOOL_TRUST_ANCHORS='https://contentcredentials.org/trust/anchors.pem'
-export C2PATOOL_ALLOWED_LIST='https://contentcredentials.org/trust/allowed.sha256.txt'
-export C2PATOOL_TRUST_CONFIG='https://contentcredentials.org/trust/store.cfg'
+c2patool sample/C.jpg trust \
+  --trust_anchors='https://raw.githubusercontent.com/c2pa-org/conformance-public/refs/heads/main/trust-list/C2PA-TRUST-LIST.pem' \
 ```
 
-**Note:** When these environment variables are set, C2PA Tool will make several HTTP requests each time it  runs. Since these lists may change without notice (and the allowed list may change quite often), check these lists frequently to stay in sync with the Verify site. However, when performing bulk operations, you may want to cache these files locally to avoid a large number of network calls that might affect performance.
+The C2PA trust list does not provide "allowed list" of end-entity certificates, nor do you need to specify the `--trust_config` option.
 
-You can then run:
+Alternatively, set the following environment variable on your system:
 
 ```shell
-c2patool sample/C.jpg trust
+export C2PATOOL_TRUST_ANCHORS='https://raw.githubusercontent.com/c2pa-org/conformance-public/refs/heads/main/trust-list/C2PA-TRUST-LIST.pem'
 ```
 
-You can also specify these values as CLI arguments instead:
+### Using the interim trust list
+
+To use the legacy interim trust list, specify the CLI options as follows:
 
 ```shell
 c2patool sample/C.jpg trust \
@@ -265,7 +271,21 @@ c2patool sample/C.jpg trust \
   --trust_config='https://contentcredentials.org/trust/store.cfg'
 ```
 
-**Note:** This sample image should show a `signingCredential.untrusted` validation status since the test signing certificate used to sign them is not contained on the trust lists above.
+Alternatively, set the following environment variables on your system:
+
+```shell
+export C2PATOOL_TRUST_ANCHORS='https://contentcredentials.org/trust/anchors.pem'
+export C2PATOOL_ALLOWED_LIST='https://contentcredentials.org/trust/allowed.sha256.txt'
+export C2PATOOL_TRUST_CONFIG='https://contentcredentials.org/trust/store.cfg'
+```
+
+You can then run, for example:
+
+```shell
+c2patool sample/C.jpg trust
+```
+
+**Note:** This sample image shows a `signingCredential.untrusted` validation status since the test signing certificate used is not contained on the trust lists above.
 
 ## Adding a manifest to fragmented BMFF content
 
