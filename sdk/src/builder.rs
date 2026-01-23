@@ -926,6 +926,7 @@ impl Builder {
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 zip.write_all(ARCHIVE_VERSION.as_bytes())?;
                 // write the manifest.json file
+
                 zip.start_file("manifest.json", options)
                     .map_err(|e| Error::OtherError(Box::new(e)))?;
                 zip.write_all(&serde_json::to_vec(self)?)?;
