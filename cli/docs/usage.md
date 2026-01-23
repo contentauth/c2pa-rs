@@ -8,10 +8,10 @@ c2patool <ASSET_PATH> [OPTIONS] [SUBCOMMAND]
 
 Where:
 - `<ASSET_PATH>` is the (relative or absolute) file path to the asset to read or embed a manifest into.
-- `[OPTIONS]` is one or more of the command-line options described in following table.
-- `[SUBCOMMAND]` is one of the optional subcommands: `trust`, `fragment`, or `help`.
+- `[OPTIONS]` is one or more of the [command-line options](#options) described in following table.
+- `[SUBCOMMAND]` is one of the optional [subcommands](#subcommands): `trust`, `fragment`, or `help`.
 
-By default, C2PA Tool writes a JSON representation of C2PA manifest data found in the asset to the standard output. You can override the default by using the `--output, -o` option.
+By default, C2PA Tool writes the JSON manifest data found in the asset to the standard output. You can override the default by using the `--output, -o` option.
 
 ## Subcommands
 
@@ -36,7 +36,7 @@ The following options are available with any (or no) subcommand.  Additional opt
 | `--ingredient` | `-i` | N/A | Create an Ingredient definition in --output folder. |
 | `--manifest` | `-m` | `<manifest_file>` | Specify a manifest file to add to an asset file. See [Adding a manifest to an asset file](#adding-a-manifest-to-an-asset-file).
 | `--no_signing_verify` | None | N/A |  Do not validate the signature after signing an asset, which speeds up signing. See [Speeding up signing](#speeding-up-signing) |
-| `--output` | `-o` | `<output_file>` | Path to output folder or file. See [Adding a manifest to an asset file](#adding-a-manifest-to-an-asset-file). |
+| `--output` | `-o` | `<output_file>` | Path to output folder or file. This option can be used in two ways:<br/>&bull;With the `-m` option to [add a manifest to the specified asset file](#adding-a-manifest-to-an-asset-file). The argument then specifies the name of the resulting asset file with Content Credentials added.<br/>&bull;Without the `-m` option to [write the manifest data to a directory](#saving-manifest-data-to-a-directory) (including assertion and ingredient thumbnails). The argument then specifies the output directory to use. |
 | `--parent` | `-p` | `<parent_file>` | Path to parent file. See [Specifying a parent file](#specifying-a-parent-file). |
 | `--remote` | `-r` | `<manifest_url>` | URL for remote manifest available over HTTP. See [Generating a remote manifest](#generating-a-remote-manifest)| N/A? |
 | `--reserve-size` | N/A | Only valid with `--signer-path` argument. The amount of memory to reserve for signing. Default: 20000. For more information, see CLI help. |
@@ -55,6 +55,8 @@ c2patool sample/C.jpg
 ```
 
 The tool displays the manifest JSON to standard output (stdout).
+
+### Saving manifest data to a directory
 
 Use the `--output` argument to write the contents of the manifest, (including the manifest's assertion and ingredient thumbnails) to the specified directory.
 
