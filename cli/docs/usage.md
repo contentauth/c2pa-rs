@@ -200,7 +200,7 @@ Use the `trust` subcommand to specify _trust lists_ that the tool consults to de
 
 There are two significant trust lists for signing Content Credentials:
 
-- The [official C2PA trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists#c2pa-trust-list) that products in the [C2PA conformance program](https://opensource.contentauthenticity.org/docs/conformance/) use.
+- The [official C2PA trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists#c2pa-trust-list) that products in the [C2PA conformance program](https://opensource.contentauthenticity.org/docs/conformance/) use. The [Adobe Content Authenticity Inspect tool](https://inspect.cr/) uses the official C2PA trust list. 
 - The legacy [interim trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists#interim-trust-list), which is now frozen; no new certificates can be added to this list. Currently, the [C2PA Verify tool](https://verify.contentauthenticity.org/) uses this trust list.
 
 **Note:** With the `trust` subcommand, C2PA Tool will make several HTTP requests each time it runs. Since these lists may change without notice (and the allowed list may change quite often), check these lists frequently to stay in sync with the Verify site. However, when performing bulk operations, you may want to cache these files locally to avoid a large number of network calls that might affect performance.
