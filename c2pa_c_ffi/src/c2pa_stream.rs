@@ -16,7 +16,10 @@ use std::{
     slice,
 };
 
-use crate::Error;
+use crate::{
+    box_tracked, cimpl_free, deref_mut_or_return_neg, error::C2paError, ok_or_return_int,
+    CimplError,
+};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -243,9 +246,7 @@ pub unsafe extern "C" fn c2pa_create_stream(
     writer: WriteCallback,
     flusher: FlushCallback,
 ) -> *mut C2paStream {
-    Box::into_raw(Box::new(C2paStream::new(
-        context, reader, seeker, writer, flusher,
-    )))
+    box_tracked!(C2paStream::new(context, reader, seeker, writer, flusher,))
 }
 
 /// Releases a C2paStream allocated by Rust.
@@ -254,9 +255,7 @@ pub unsafe extern "C" fn c2pa_create_stream(
 /// Can only be released once and is invalid after this call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_release_stream(stream: *mut C2paStream) {
-    if !stream.is_null() {
-        drop(Box::from_raw(stream));
-    }
+    cimpl_free(stream as *mut std::ffi::c_void);
 }
 
 /// This struct is used to test the C2paStream implementation.
@@ -276,15 +275,9 @@ impl TestC2paStream {
     }
 
     unsafe extern "C" fn reader(context: *mut StreamContext, data: *mut u8, len: isize) -> isize {
-        let stream: &mut TestC2paStream = &mut *(context as *mut TestC2paStream);
+        let stream = deref_mut_or_return_neg!(context as *mut TestC2paStream, TestC2paStream);
         let data: &mut [u8] = slice::from_raw_parts_mut(data, len as usize);
-        match stream.cursor.read(data) {
-            Ok(bytes) => bytes as isize,
-            Err(e) => {
-                crate::Error::set_last(Error::Io(e.to_string()));
-                -1
-            }
-        }
+        ok_or_return_int!(stream.cursor.read(data)) as isize
     }
 
     unsafe extern "C" fn seeker(
@@ -292,12 +285,14 @@ impl TestC2paStream {
         offset: isize,
         mode: C2paSeekMode,
     ) -> isize {
-        let stream: &mut TestC2paStream = &mut *(context as *mut TestC2paStream);
+        let stream = deref_mut_or_return_neg!(context as *mut TestC2paStream, TestC2paStream);
 
         match mode {
             C2paSeekMode::Start => {
                 if offset < 0 {
-                    crate::Error::set_last(Error::Io("Offset out of bounds".to_string()));
+                    CimplError::set_last(CimplError::from(C2paError::Other(
+                        "Offset out of bounds".to_string(),
+                    )));
                     return -1;
                 }
                 stream.cursor.set_position(offset as u64);
@@ -306,7 +301,7 @@ impl TestC2paStream {
             C2paSeekMode::Current => match stream.cursor.seek(SeekFrom::Current(offset as i64)) {
                 Ok(_) => {}
                 Err(e) => {
-                    crate::Error::set_last(Error::Io(e.to_string()));
+                    CimplError::set_last(CimplError::from(C2paError::Io(e.to_string())));
                     return -1;
                 }
             },
@@ -314,7 +309,7 @@ impl TestC2paStream {
             C2paSeekMode::End => match stream.cursor.seek(SeekFrom::End(offset as i64)) {
                 Ok(_) => {}
                 Err(e) => {
-                    crate::Error::set_last(Error::Io(e.to_string()));
+                    CimplError::set_last(CimplError::from(C2paError::Io(e.to_string())));
                     return -1;
                 }
             },
@@ -333,7 +328,7 @@ impl TestC2paStream {
         match stream.cursor.write(data) {
             Ok(bytes) => bytes as isize,
             Err(e) => {
-                crate::Error::set_last(Error::Io(e.to_string()));
+                CimplError::set_last(CimplError::from(C2paError::Io(e.to_string())));
                 -1
             }
         }
@@ -342,7 +337,7 @@ impl TestC2paStream {
     pub fn into_c_stream(self) -> C2paStream {
         unsafe {
             C2paStream::new(
-                Box::into_raw(Box::new(self)) as *mut StreamContext,
+                box_tracked!(self) as *mut StreamContext,
                 Self::reader,
                 Self::seeker,
                 Self::writer,
@@ -358,11 +353,12 @@ impl TestC2paStream {
 
     pub fn from_c_stream(mut c_stream: C2paStream) -> Self {
         let original_context = c_stream.extract_context();
+
         unsafe { *Box::from_raw(Box::into_raw(original_context) as *mut TestC2paStream) }
     }
 
     pub fn drop_c_stream(c_stream: C2paStream) {
-        drop(Self::from_c_stream(c_stream));
+        cimpl_free(&c_stream as *const _ as *mut std::ffi::c_void);
     }
 }
 
