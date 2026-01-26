@@ -31,7 +31,6 @@ use crate::{
     crypto::{
         cose::{self, CoseError},
         raw_signature::SigningAlg,
-        time_stamp,
     },
     error::{Error, Result},
     hashed_uri::HashedUri,
