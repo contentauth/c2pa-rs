@@ -278,7 +278,6 @@ impl Manifest {
                 .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
 
             let to_be_signed = cose::cose_countersign_data(&signature_cbor, &cose_sign1.protected);
-            // let message_imprint = time_stamp::default_rfc3161_message(&to_be_signed)?;
 
             Ok(Some(to_be_signed))
         } else {
