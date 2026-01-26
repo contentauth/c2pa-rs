@@ -191,6 +191,7 @@ pub use validation_results::{ValidationResults, ValidationState};
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
+pub(crate) mod batch_timestamp;
 pub(crate) mod builder;
 pub(crate) mod callback_signer;
 pub(crate) mod claim;

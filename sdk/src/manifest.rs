@@ -16,6 +16,7 @@ use std::{borrow::Cow, path::PathBuf, slice::Iter};
 use std::{fs::create_dir_all, path::Path};
 
 use async_generic::async_generic;
+use coset::CoseSign1;
 use log::debug;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -27,7 +28,11 @@ use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, AssertionMetadata, EmbeddedData, Metadata, SoftwareAgent},
     claim::{ClaimAssertionType, RemoteManifest},
-    crypto::raw_signature::SigningAlg,
+    crypto::{
+        cose::{self, CoseError},
+        raw_signature::SigningAlg,
+        time_stamp,
+    },
     error::{Error, Result},
     hashed_uri::HashedUri,
     identity::IdentityAssertion,
@@ -125,11 +130,8 @@ pub struct Manifest {
     /// - `c2pa.claim` -> 1
     claim_version: Option<u8>,
 
-    /// The [`CoseSign1::signature`] value.
-    ///
-    /// [`CoseSign1::signature`]: coset::CoseSign1::signature
     #[serde(skip)]
-    signature: Option<Vec<u8>>,
+    cose_sign1: Option<CoseSign1>,
 
     /// Indicates where a generated manifest goes
     #[serde(skip)]
@@ -252,7 +254,36 @@ impl Manifest {
     /// Returns the signature field of the `COSE_Sign1_Tagged` structure found in the
     /// claim signature box.
     pub fn signature(&self) -> Option<&[u8]> {
-        self.signature.as_deref()
+        self.cose_sign1
+            .as_ref()
+            .map(|cose_sign1| cose_sign1.signature.as_slice())
+    }
+
+    /// Returns the `ToBeSigned` value which is obtained by CBOR-encoding the `Sig_structure` with a "v2 payload" as
+    /// defined by:
+    /// - [C2PA spec (§10.3.2.5 Time-stamps)](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_time_stamps)
+    /// - [RFC 8152 spec (§4.4 Signing and Verification Process)](https://datatracker.ietf.org/doc/html/rfc8152)
+    ///
+    /// According to the C2PA spec, this value is to be hashed and inserted into the `TimeStampReq` structure to
+    /// be used for obtaining a timestamp token.
+    ///
+    /// Note this function is for advanced users performing timestamping on their own behalf. The SDK has other means
+    /// to timestamp for you, such as via [`Signer::time_authority_url`].
+    ///
+    /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
+    pub fn timestamp_v2_to_be_signed_value(&self) -> Result<Option<Vec<u8>>> {
+        if let Some(cose_sign1) = &self.cose_sign1 {
+            let mut signature_cbor: Vec<u8> = vec![];
+            ciborium::into_writer(&cose_sign1.signature, &mut signature_cbor)
+                .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
+
+            let to_be_signed = cose::cose_countersign_data(&signature_cbor, &cose_sign1.protected);
+            // let message_imprint = time_stamp::default_rfc3161_message(&to_be_signed)?;
+
+            Ok(Some(to_be_signed))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Returns the version of the claim, parsed from the claim label.
@@ -396,10 +427,7 @@ impl Manifest {
             format: claim.format().map(|s| s.to_owned()),
             instance_id: claim.instance_id().to_owned(),
             label: Some(claim.label().to_owned()),
-            signature: claim
-                .cose_sign1()
-                .ok()
-                .map(|cose_sign1| cose_sign1.signature),
+            cose_sign1: claim.cose_sign1().ok(),
             claim_version: Some(claim.version().try_into()?),
             ..Default::default()
         };
