@@ -267,10 +267,7 @@ impl Manifest {
     /// According to the C2PA spec, this value is to be hashed and inserted into the `TimeStampReq` structure to
     /// be used for obtaining a timestamp token.
     ///
-    /// Note this function is for advanced users performing timestamping on their own behalf. The SDK has other means
-    /// to timestamp for you, such as via [`Signer::time_authority_url`].
-    ///
-    /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
+    /// Note this function is for advanced users performing timestamping on their own behalf.
     pub fn timestamp_v2_to_be_signed_value(&self) -> Result<Option<Vec<u8>>> {
         if let Some(cose_sign1) = &self.cose_sign1 {
             let mut signature_cbor: Vec<u8> = vec![];
