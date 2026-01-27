@@ -616,7 +616,7 @@ pub unsafe extern "C" fn c2pa_reader_from_context(_context: *const Context) -> *
 
 #[no_mangle]
 /// # Safety
-/// context must be a valid pointer to an Arc<Context>.
+/// context must be a valid pointer to an `Arc<Context>`.
 pub unsafe extern "C" fn c2pa_reader_from_shared_context(
     context: *const Arc<Context>,
 ) -> *mut C2paReader {
@@ -643,8 +643,9 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
     stream: *mut C2paStream,
 ) -> *mut C2paReader {
     let format = cstr_or_return_null!(format);
+    let stream = deref_mut_or_return_null!(stream, C2paStream);
 
-    let result = C2paReader::from_stream(&format, &mut (*stream));
+    let result = C2paReader::from_stream(&format, stream);
     let result = ok_or_return_null!(post_validate(result));
     box_tracked!(result)
 }
@@ -706,6 +707,7 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
 ) -> *mut C2paReader {
     ptr_or_return_null!(manifest_data);
     let format = cstr_or_return_null!(format);
+    let stream = deref_mut_or_return_null!(stream, C2paStream);
 
     // Safe bounds validation for manifest data
     let manifest_bytes =
@@ -717,7 +719,7 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
             }
         };
 
-    let result = C2paReader::from_manifest_data_and_stream(manifest_bytes, &format, &mut (*stream));
+    let result = C2paReader::from_manifest_data_and_stream(manifest_bytes, &format, stream);
     box_tracked!(ok_or_return_null!(post_validate(result)))
 }
 
@@ -1638,10 +1640,10 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
 
 #[cfg(test)]
 mod tests {
-    use std::{ffi::CString, panic::catch_unwind};
+    use std::{ffi::CString, io::Seek, panic::catch_unwind};
 
     use super::*;
-    use crate::TestC2paStream;
+    use crate::TestStream;
 
     macro_rules! fixture_path {
         ($path:expr) => {
@@ -1723,9 +1725,9 @@ mod tests {
     #[test]
     fn test_sign_with_info() {
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
-        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let mut source_stream = TestStream::new(source_image.to_vec());
         let dest_vec = Vec::new();
-        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+        let mut dest_stream = TestStream::new(dest_vec);
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
@@ -1735,8 +1737,8 @@ mod tests {
             c2pa_builder_sign(
                 builder,
                 format.as_ptr(),
-                &mut source_stream,
-                &mut dest_stream,
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
                 signer,
                 &mut manifest_bytes_ptr,
             )
@@ -1745,8 +1747,6 @@ mod tests {
         // let error = unsafe { CString::from_raw(error) };
         // assert_eq!(error.to_str().unwrap(), "Other Invalid signing algorithm");
         // assert_eq!(result, 65485);
-        TestC2paStream::drop_c_stream(source_stream);
-        TestC2paStream::drop_c_stream(dest_stream);
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
         }
@@ -1757,9 +1757,9 @@ mod tests {
     #[test]
     fn builder_add_actions_and_sign() {
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
-        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let mut source_stream = TestStream::new(source_image.to_vec());
         let dest_vec = Vec::new();
-        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+        let mut dest_stream = TestStream::new(dest_vec);
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
@@ -1784,19 +1784,20 @@ mod tests {
             c2pa_builder_sign(
                 builder,
                 format.as_ptr(),
-                &mut source_stream,
-                &mut dest_stream,
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
                 signer,
                 &mut manifest_bytes_ptr,
             )
         };
 
         // Verify we can read the signed data back
-        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
-        let mut read_stream = dest_test_stream.into_c_stream();
-        let format = CString::new("image/jpeg").unwrap();
+        dest_stream.stream_mut().rewind().unwrap();
 
-        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
+        if let Some(msg) = CimplError::last_message() {
+            println!("last error: {}", msg);
+        }
         assert!(!reader.is_null());
 
         let json = unsafe { c2pa_reader_json(reader) };
@@ -1807,8 +1808,6 @@ mod tests {
         assert!(json_content.contains("manifest"));
         assert!(json_content.contains("com.example.test-action"));
 
-        TestC2paStream::drop_c_stream(source_stream);
-        TestC2paStream::drop_c_stream(read_stream);
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
             c2pa_builder_free(builder);
@@ -1820,9 +1819,9 @@ mod tests {
     #[test]
     fn builder_create_intent_digital_creation_and_sign() {
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
-        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let mut source_stream = TestStream::new(source_image.to_vec());
         let dest_vec = Vec::new();
-        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+        let mut dest_stream = TestStream::new(dest_vec);
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
@@ -1842,19 +1841,18 @@ mod tests {
             c2pa_builder_sign(
                 builder,
                 format.as_ptr(),
-                &mut source_stream,
-                &mut dest_stream,
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
                 signer,
                 &mut manifest_bytes_ptr,
             )
         };
 
         // Verify we can read the signed data back
-        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
-        let mut read_stream = dest_test_stream.into_c_stream();
+        dest_stream.stream_mut().rewind().unwrap();
         let format = CString::new("image/jpeg").unwrap();
 
-        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
         assert!(!reader.is_null());
 
         let json = unsafe { c2pa_reader_json(reader) };
@@ -1873,8 +1871,6 @@ mod tests {
             1
         );
 
-        TestC2paStream::drop_c_stream(source_stream);
-        TestC2paStream::drop_c_stream(read_stream);
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
             c2pa_builder_free(builder);
@@ -1886,9 +1882,9 @@ mod tests {
     #[test]
     fn builder_create_intent_empty_and_sign() {
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
-        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let mut source_stream = TestStream::new(source_image.to_vec());
         let dest_vec = Vec::new();
-        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+        let mut dest_stream = TestStream::new(dest_vec);
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
@@ -1908,19 +1904,18 @@ mod tests {
             c2pa_builder_sign(
                 builder,
                 format.as_ptr(),
-                &mut source_stream,
-                &mut dest_stream,
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
                 signer,
                 &mut manifest_bytes_ptr,
             )
         };
 
         // Verify we can read the signed data back
-        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
-        let mut read_stream = dest_test_stream.into_c_stream();
+        dest_stream.stream_mut().rewind().unwrap();
         let format = CString::new("image/jpeg").unwrap();
 
-        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
         assert!(!reader.is_null());
 
         let json = unsafe { c2pa_reader_json(reader) };
@@ -1933,8 +1928,6 @@ mod tests {
         // Verify the digital source type we picked was used
         assert!(json_content.contains("digitalsourcetype/empty"));
 
-        TestC2paStream::drop_c_stream(source_stream);
-        TestC2paStream::drop_c_stream(read_stream);
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
             c2pa_builder_free(builder);
@@ -1947,9 +1940,9 @@ mod tests {
     fn builder_edit_intent_and_sign() {
         // Use an already-signed image as the source for editing
         let signed_source_image = include_bytes!(fixture_path!("C.jpg"));
-        let mut source_stream = TestC2paStream::from_bytes(signed_source_image.to_vec());
+        let mut source_stream = TestStream::new(signed_source_image.to_vec());
         let dest_vec = Vec::new();
-        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+        let mut dest_stream = TestStream::new(dest_vec);
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
@@ -1971,18 +1964,17 @@ mod tests {
             c2pa_builder_sign(
                 builder,
                 format.as_ptr(),
-                &mut source_stream,
-                &mut dest_stream,
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
                 signer,
                 &mut manifest_bytes_ptr,
             )
         };
 
-        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
-        let mut read_stream = dest_test_stream.into_c_stream();
+        dest_stream.stream_mut().rewind().unwrap();
         let format = CString::new("image/jpeg").unwrap();
 
-        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
         assert!(!reader.is_null());
 
         let json = unsafe { c2pa_reader_json(reader) };
@@ -1995,8 +1987,6 @@ mod tests {
         // and no "empty" source type appears in the JSON
         assert!(!json_content.contains("digitalsourcetype/empty"));
 
-        TestC2paStream::drop_c_stream(source_stream);
-        TestC2paStream::drop_c_stream(read_stream);
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
             c2pa_builder_free(builder);
@@ -2105,44 +2095,46 @@ mod tests {
 
     #[test]
     fn test_c2pa_reader_remote_url() {
-        let mut stream = TestC2paStream::new(include_bytes!(fixture_path!("cloud.jpg")).to_vec())
-            .into_c_stream();
+        let mut stream = TestStream::new(include_bytes!(fixture_path!("cloud.jpg")).to_vec());
 
         let format = CString::new("image/jpeg").unwrap();
-        let result = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
+        let result = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
+        if result.is_null() {
+            if let Some(msg) = CimplError::last_message() {
+                panic!("Reader creation failed: {}", msg);
+            } else {
+                panic!("Reader creation failed with no error message");
+            }
+        }
         assert!(!result.is_null());
         let remote_url = unsafe { c2pa_reader_remote_url(result) };
         assert!(!remote_url.is_null());
         let remote_url = unsafe { std::ffi::CStr::from_ptr(remote_url) };
         assert_eq!(remote_url, c"https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391");
-        TestC2paStream::drop_c_stream(stream);
     }
 
     // cargo test test_reader_file_with_wrong_label -- --nocapture
     #[test]
     fn test_reader_file_with_wrong_label() {
-        let mut stream = TestC2paStream::new(
+        let mut stream = TestStream::new(
             include_bytes!(fixture_path!("adobe-20220124-E-clm-CAICAI.jpg")).to_vec(),
-        )
-        .into_c_stream();
+        );
 
         let format = CString::new("image/jpeg").unwrap();
         let result: *mut C2paReader =
-            unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
+            unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         assert!(!result.is_null());
-        TestC2paStream::drop_c_stream(stream);
     }
 
     #[test]
     fn test_c2pa_reader_from_stream_null_format() {
-        let mut stream = TestC2paStream::new(Vec::new()).into_c_stream();
+        let mut stream = TestStream::new(Vec::new());
 
-        let result = unsafe { c2pa_reader_from_stream(std::ptr::null(), &mut stream) };
+        let result = unsafe { c2pa_reader_from_stream(std::ptr::null(), stream.as_ptr()) };
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: format");
-        TestC2paStream::drop_c_stream(stream);
     }
 
     #[test]
@@ -2150,9 +2142,9 @@ mod tests {
         let source_image = include_bytes!(
             "../../sdk/src/identity/tests/fixtures/claim_aggregation/ica_validation/success.jpg"
         );
-        let mut stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
-        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut stream) };
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         assert!(!reader.is_null());
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
@@ -2162,7 +2154,6 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("cawg.ica.credential_valid"));
-        TestC2paStream::drop_c_stream(stream);
     }
 
     #[test]
@@ -2179,13 +2170,13 @@ mod tests {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
-        let mut stream = TestC2paStream::new(Vec::new()).into_c_stream();
-        let result = unsafe { c2pa_builder_add_resource(builder, std::ptr::null(), &mut stream) };
+        let mut stream = TestStream::new(Vec::new());
+        let result =
+            unsafe { c2pa_builder_add_resource(builder, std::ptr::null(), stream.as_ptr()) };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: uri");
-        TestC2paStream::drop_c_stream(stream);
         unsafe { c2pa_builder_free(builder) };
     }
 
@@ -2340,9 +2331,9 @@ mod tests {
         }
 
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
-        let mut source_stream = TestC2paStream::from_bytes(source_image.to_vec());
+        let mut source_stream = TestStream::new(source_image.to_vec());
         let dest_vec = Vec::new();
-        let mut dest_stream = TestC2paStream::new(dest_vec).into_c_stream();
+        let mut dest_stream = TestStream::new(dest_vec);
 
         let certs = include_str!(fixture_path!("certs/ed25519.pub"));
         let certs_cstr = CString::new(certs).unwrap();
@@ -2381,8 +2372,8 @@ mod tests {
             c2pa_builder_sign(
                 builder,
                 format.as_ptr(),
-                &mut source_stream,
-                &mut dest_stream,
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
                 signer,
                 &mut manifest_bytes_ptr,
             )
@@ -2390,11 +2381,13 @@ mod tests {
         assert!(result > 0);
 
         // Verify we can read the signed data back
-        let dest_test_stream = TestC2paStream::from_c_stream(dest_stream);
-        let mut read_stream = dest_test_stream.into_c_stream();
+        dest_stream.stream_mut().rewind().unwrap();
         let format = CString::new("image/jpeg").unwrap();
 
-        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), &mut read_stream) };
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
+        if let Some(msg) = CimplError::last_message() {
+            println!("last error: {}", msg);
+        }
         assert!(!reader.is_null());
 
         let json = unsafe { c2pa_reader_json(reader) };
@@ -2404,8 +2397,6 @@ mod tests {
 
         assert!(json_content.contains("manifest"));
 
-        TestC2paStream::drop_c_stream(source_stream);
-        TestC2paStream::drop_c_stream(read_stream);
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
             c2pa_reader_free(reader);

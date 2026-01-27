@@ -268,7 +268,7 @@ pub fn track_arc<T: 'static>(ptr: *mut T) -> *mut T {
     ptr
 }
 
-/// Track an Arc<Mutex<T>>-wrapped pointer
+/// Track an `Arc<Mutex<T>>`-wrapped pointer
 ///
 /// Use this when you allocate with `Arc::into_raw(Arc::new(Mutex::new(value)))`.
 /// The pointer will be freed with `Arc::from_raw()` when `cimpl_free()` is called.

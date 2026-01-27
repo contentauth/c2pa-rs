@@ -68,8 +68,8 @@
 //! ## Error Handling
 //! - **External crate Result**: `ok_or_return_null!(result)` → uses From trait automatically
 //! - **cimpl::Error Result**: `ok_or_return_null!(result)` → used directly
-//! - **Option<T> (validation)**: `some_or_return_other_null!(option, "message")` → most common case
-//! - **Option<T> (custom error)**: `some_or_return_null!(option, Error::other(msg))` → specific error
+//! - **`Option<T>` (validation)**: `some_or_return_other_null!(option, "message")` → most common case
+//! - **`Option<T>` (custom error)**: `some_or_return_null!(option, Error::other(msg))` → specific error
 //!
 //! ## Naming Pattern
 //! All macros follow: `action_or_return_<what>`
@@ -644,7 +644,7 @@ macro_rules! cstr_option {
     }};
 }
 
-/// Internal routine to convert a *const c_char to Option<String> (alias for consistency)
+/// Internal routine to convert a *const c_char to `Option<String>` (alias for consistency)
 #[macro_export]
 macro_rules! from_cstr_option {
     ($ptr : expr) => {
