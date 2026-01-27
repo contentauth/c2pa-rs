@@ -622,7 +622,6 @@ impl Ingredient {
                         .active_manifest()
                         .is_some_and(|m| m.failure().is_empty())
                         && auto_thumbnail
-                    // Check the setting!
                     {
                         if let Some(hashed_uri) = claim
                             .assertions()
