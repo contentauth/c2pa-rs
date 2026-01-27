@@ -6,19 +6,6 @@ This C2PA open-source library is maintained in partnership with Adobe. At this t
 
 Please do not create a public GitHub issue for any suspected security vulnerabilities. Instead, please file an issue through [Adobe's HackerOne page](https://hackerone.com/adobe?type=team). If for some reason this is not possible, reach out to cai-security@adobe.com.
 
-## Vulnerability SLAs
-
-Once we receive an actionable vulnerability (meaning there is an available patch, or a code fix is required), we will acknowledge the vulnerability within 24 hours. Our target SLAs for resolution are:
-
-1. 72 hours for vulnerabilities with a CVSS score of 9.0-10.0
-2. 2 weeks for vulnerabilities with a CVSS score of 7.0-8.9
-
-Any vulnerability with a score below 6.9 will be resolved when possible.
-
-## C2PA vulnerabilities
-
-This library is not meant to address any potential vulnerabilities within the C2PA specification itself. It is only an implementation of the spec as written. Any suspected vulnerabilities within the spec can be reported [here](https://github.com/c2pa-org/specifications/issues).
-
 ## What counts as a reportable vulnerability?
 
 We will follow this checklist when evaluating vulnerability tickets.
@@ -31,6 +18,7 @@ Tickets that match the following characteristics will generally be **rejected**:
 * **Use of non-default configuration settings to bypass security requirements** provided the consequences of those settings are sufficiently documented in our [documentation on settings](docs/settings.md).
 * **Generation of invalid C2PA manifests from valid inputs or credentials.** In these scenarios, the inputs were not maliciously altered, but due to a bug in the SDK a malformed manifest has been produced. These are welcome as ordinary bug reports, but are not security vulnerabilities.
 * **Use of the SDK or command-line tools on unsupported platforms or unreleased versions.** Only platforms and build configurations listed as Tier 1A, Tier 1B, or Tier 2 on [our support tiers page](docs/support-tiers.md) are explicitly supported. A security ticket must include the version number of the SDK or c2patool and the host platform that was used. Only tagged releases will be accepted. If any non-standard build process (i.e. not using current Rust cargo to build from source or not using a pre-packaged binary provided by this team), that should be disclosed and may result in a ticket not being accepted.
+* **Issues with the C2PA technical specification itself.** This library is only an implementation of the spec as written. Any suspected vulnerabilities within the spec can be reported [here](https://github.com/c2pa-org/specifications/issues).
 
 ### ❌ _Temporarily_ unwelcome vulnerability tickets
 
