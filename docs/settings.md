@@ -155,7 +155,7 @@ Here's the JSON with all default values:
     "certificate_status_should_override": null,
     "intent": null,
     "created_assertion_labels": null,
-    "generate_c2pa_archive": null
+    "generate_c2pa_archive": true
   },
   "signer": null,
   "cawg_x509_signer": null
@@ -184,7 +184,7 @@ The `builder` object specifies settings for the Builder API.
 | `builder.certificate_status_should_override` | Boolean | Override OCSP with certificate status assertions | null |
 | `builder.intent` | object | Default builder intent. The value uses object notation and must be one of: `{"Create": "digitalCapture"}` <br/> `"Edit"` <br/> `"Update"`. | null |
 | `builder.created_assertion_labels` | Array | Array of base assertion labels you want to treated as `created`. When the builder encounters one of these, it will become a created assertion.  | null |
-| `builder.generate_c2pa_archive` | Boolean | Generate C2PA archive format | null |
+| `builder.generate_c2pa_archive` | Boolean | Generate C2PA archive format | true |
 | `builder.actions` | Object | Action assertion configuration. |  |
 | `builder.actions.all_actions_included` | Boolean | Whether all actions are specified | null |
 | `builder.actions.templates` | Array | Action templates | null |
