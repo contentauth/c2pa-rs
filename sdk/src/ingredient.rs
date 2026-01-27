@@ -618,11 +618,6 @@ impl Ingredient {
                     // but only if thumbnail generation is enabled in settings
                     let auto_thumbnail = context.settings().builder.thumbnail.enabled;
 
-                    let has_active_manifest = validation_results.active_manifest().is_some();
-                    let is_valid = validation_results
-                        .active_manifest()
-                        .is_some_and(|m| m.failure().is_empty());
-
                     if validation_results
                         .active_manifest()
                         .is_some_and(|m| m.failure().is_empty())
