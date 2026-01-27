@@ -44,7 +44,7 @@ pub struct CreativeWork(SchemaDotOrg);
 impl CreativeWork {
     /// Label prefix for a creative work assertion.
     ///
-    /// See <https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_creative_work>.
+    /// See [_creative_work - C2PA Technical Specification](https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_creative_work)
     pub const LABEL: &'static str = labels::CREATIVE_WORK;
 
     pub fn new() -> CreativeWork {

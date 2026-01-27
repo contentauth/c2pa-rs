@@ -196,7 +196,7 @@ pub struct Core {
     /// This option is associated with the [`MerkleMap::fixed_block_size`] field.
     ///
     /// See more information in the spec here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash>
+    /// [bmff_based_hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash)
     ///
     /// [`MerkleMap::fixed_block_size`]: crate::assertions::MerkleMap::fixed_block_size
     /// [`BmffHash`]: crate::assertions::BmffHash
@@ -206,7 +206,7 @@ pub struct Core {
     /// This option defaults to 5.
     ///
     /// See more information in the spec here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash>
+    /// [bmff_based_hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash)
     ///
     /// [`BmffHash`]: crate::assertions::BmffHash
     pub merkle_tree_max_proofs: usize,
@@ -224,7 +224,7 @@ pub struct Core {
     pub decode_identity_assertions: bool,
     /// <div class="warning">
     /// The CAWG identity assertion does not currently respect this setting.
-    /// See <a href="https://github.com/contentauth/c2pa-rs/issues/1645">issue #1645</a>.
+    /// See [1645</a - C2PA Technical Specification](a href="https://github.com/contentauth/c2pa-rs/issues/1645">issue #1645</a)
     /// </div>
     ///
     /// List of host patterns that are allowed for network requests.
@@ -360,7 +360,7 @@ pub struct Verify {
     /// The default value is false.
     ///
     /// See more information in the spec here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_versioning_manifests_due_to_conflicts>
+    /// [versioning_manifests_due_to_conflicts - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_versioning_manifests_due_to_conflicts)
     pub(crate) skip_ingredient_conflict_resolution: bool,
     /// Whether to do strictly C2PA v1 validation or otherwise the latest validation.
     ///

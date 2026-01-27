@@ -223,9 +223,9 @@ impl Reader {
     /// # Returns
     /// A [`Reader`] for the manifest store.
     /// # Note
-    /// [CAWG identity] assertions require async calls for validation.
+    /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     ///
-    /// [CAWG identity]: https://cawg.io/identity/
+
     #[async_generic]
     pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -267,9 +267,8 @@ impl Reader {
     /// ```
     ///
     /// # Note
-    /// [CAWG identity] assertions require async calls for validation.
+    /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     ///
-    /// [CAWG identity]: https://cawg.io/identity/
     #[async_generic]
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
@@ -353,9 +352,8 @@ impl Reader {
     /// ```
     ///
     /// # Note
-    /// [CAWG identity] assertions require async calls for validation.
+    /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     ///
-    /// [CAWG identity]: https://cawg.io/identity/
     #[cfg(feature = "file_io")]
     #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {

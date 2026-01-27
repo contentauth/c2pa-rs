@@ -106,7 +106,7 @@ pub struct AssetTypes {
 
 #[allow(dead_code)]
 impl AssetTypes {
-    /// See <https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_asset_type>.
+    /// See [Asset type - C2PA Technical Specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_asset_type).
     pub const LABEL: &'static str = labels::ASSET_TYPE;
 
     pub fn new(at: AssetType) -> Self {
