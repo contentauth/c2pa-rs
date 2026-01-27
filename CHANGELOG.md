@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.75.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.6...c2pa-v0.75.7)
+_27 January 2026_
+
+### Fixed
+
+* Retrigger release-plz release workflow ([#1781](https://github.com/contentauth/c2pa-rs/pull/1781))
+
 ## [0.75.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.5...c2pa-v0.75.6)
 _22 January 2026_
 
