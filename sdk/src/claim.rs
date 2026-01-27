@@ -49,8 +49,8 @@ use crate::{
         asn1::rfc3161::TstInfo,
         base64,
         cose::{
-            get_ocsp_der, parse_cose_sign1, CertificateInfo, CertificateTrustPolicy,
-            OcspFetchPolicy,
+            self, get_ocsp_der, parse_cose_sign1, CertificateInfo, CertificateTrustPolicy,
+            CoseError, OcspFetchPolicy,
         },
         ocsp::OcspResponse,
     },
@@ -1060,6 +1060,19 @@ impl Claim {
 
         let sign1 = parse_cose_sign1(sig, &data, &mut validation_log)?;
         Ok(sign1)
+    }
+
+    /// Returns the CBOR-encoded `Sig_structure` with a "v2 payload" as defined by:
+    /// - [C2PA spec (§10.3.2.5 Time-stamps)](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_time_stamps)
+    /// - [RFC 8152 spec (§4.4 Signing and Verification Process)](https://datatracker.ietf.org/doc/html/rfc8152)
+    pub fn timestamp_v2_sig_structure(&self) -> Result<Vec<u8>> {
+        let cose_sign1 = self.cose_sign1()?;
+        let mut signature_cbor: Vec<u8> = vec![];
+        ciborium::into_writer(&cose_sign1.signature, &mut signature_cbor)
+            .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
+
+        let sig_structure = cose::cose_countersign_data(&signature_cbor, &cose_sign1.protected);
+        Ok(sig_structure)
     }
 
     /// get claim generator

@@ -57,30 +57,37 @@ impl TimeStamp {
 
     /// Refresh the timestamp token for a given manifest id.
     ///
-    /// The signature is expected to be the `signature` field of the `COSE_Sign1_Tagged` structure
-    /// found in the C2PA claim signature box of the manifest corresponding to the `manifest_id`.
+    /// The `sig_structure_hash` is expected to be the CBOR-encoded `Sig_structure` with fields as
+    /// defined by:
+    /// - [C2PA spec (§10.3.2.5 Time-stamps)](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_time_stamps)
+    /// - [RFC 8152 spec (§4.4 Signing and Verification Process)](https://datatracker.ietf.org/doc/html/rfc8152)
     //
-    // The `signature` is normally obtained from [`Store::get_cose_sign1_signature`].
+    // The `sig_structure_hash` is normally obtained from [`Claim::timestamp_v2_sig_structure`].
     //
-    // [`Store::get_cose_sign1_signature`][crate::store::Store::get_cose_sign1_structure].
+    // [`Store::timestamp_v2_sig_structure`][crate::claim::Claim::timestamp_v2_sig_structure].
     #[async_generic(async_signature(
         &mut self,
         tsa_url: &str,
         manifest_id: &str,
-        signature: &[u8],
+        sig_structure_hash: &[u8],
         http_resolver: &(impl AsyncHttpResolver + ?Sized),
     ))]
     pub(crate) fn refresh_timestamp(
         &mut self,
         tsa_url: &str,
         manifest_id: &str,
-        signature: &[u8],
+        sig_structure_hash: &[u8],
         http_resolver: &(impl SyncHttpResolver + ?Sized),
     ) -> Result<()> {
         let timestamp_token = if _sync {
-            TimeStamp::send_timestamp_token_request(tsa_url, signature, http_resolver)?
+            TimeStamp::send_timestamp_token_request(tsa_url, sig_structure_hash, http_resolver)?
         } else {
-            TimeStamp::send_timestamp_token_request_async(tsa_url, signature, http_resolver).await?
+            TimeStamp::send_timestamp_token_request_async(
+                tsa_url,
+                sig_structure_hash,
+                http_resolver,
+            )
+            .await?
         };
 
         self.0
