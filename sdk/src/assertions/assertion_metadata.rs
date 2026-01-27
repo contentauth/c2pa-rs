@@ -475,10 +475,7 @@ pub mod tests {
         let result = AssertionMetadata::from_assertion(&assertion).expect("extract_assertion");
 
         // Verify all fields survived round-trip
-        assert_eq!(
-            result.get_field("customString"),
-            Some(&json!("test value"))
-        );
+        assert_eq!(result.get_field("customString"), Some(&json!("test value")));
         assert_eq!(result.get_field("customNumber"), Some(&json!(42)));
         assert_eq!(result.get_field("customBool"), Some(&json!(true)));
         assert_eq!(

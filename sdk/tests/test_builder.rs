@@ -701,8 +701,8 @@ fn test_ingredient_arbitrary_metadata_fields() -> Result<()> {
         }]
     });
 
-    let mut builder = Builder::from_shared_context(&context)
-        .with_definition(manifest_json.to_string())?;
+    let mut builder =
+        Builder::from_shared_context(&context).with_definition(manifest_json.to_string())?;
 
     const TEST_IMAGE: &[u8] = include_bytes!("fixtures/no_manifest.jpg");
     let format = "image/jpeg";
@@ -723,11 +723,7 @@ fn test_ingredient_arbitrary_metadata_fields() -> Result<()> {
     // Navigate to the ingredient in the manifest
     let ingredients = manifest_json["manifests"]
         .as_object()
-        .and_then(|m| {
-            m.values().next().and_then(|v| {
-                v["ingredients"].as_array()
-            })
-        })
+        .and_then(|m| m.values().next().and_then(|v| v["ingredients"].as_array()))
         .expect("should have ingredients");
 
     assert!(
