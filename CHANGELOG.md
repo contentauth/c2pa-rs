@@ -9,6 +9,52 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.75.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.6...c2pa-v0.75.7)
+_27 January 2026_
+
+### Fixed
+
+* Retrigger release-plz release workflow ([#1781](https://github.com/contentauth/c2pa-rs/pull/1781))
+
+## [0.75.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.5...c2pa-v0.75.6)
+_22 January 2026_
+
+### Added
+
+* Trigger a new release to allow generated binaries to be published
+
+## [0.75.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.4...c2pa-v0.75.5)
+_21 January 2026_
+
+### Fixed
+
+* Use patched version of typed-path for zip ([#1761](https://github.com/contentauth/c2pa-rs/pull/1761))
+* Work around compilation issues introduced by `typed_path` crate ([#1757](https://github.com/contentauth/c2pa-rs/pull/1757))
+* Update tiff support to latest standard ([#1736](https://github.com/contentauth/c2pa-rs/pull/1736))
+
+### Updated dependencies
+
+* Bump quick-xml from 0.38.4 to 0.39.0 ([#1754](https://github.com/contentauth/c2pa-rs/pull/1754))
+* Bump lopdf from 0.38.0 to 0.39.0 ([#1753](https://github.com/contentauth/c2pa-rs/pull/1753))
+
+## [0.75.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.3...c2pa-v0.75.4)
+_16 January 2026_
+
+### Fixed
+
+* Context propagation for Reader to support legacy behavior ([#1743](https://github.com/contentauth/c2pa-rs/pull/1743))
+
+## [0.75.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.2...c2pa-v0.75.3)
+_16 January 2026_
+
+### Documented
+
+* Describe what parameter is missing in c2pa.opened/placed/removed validation ([#1737](https://github.com/contentauth/c2pa-rs/pull/1737))
+
+### Fixed
+
+* Disable verify after sign temporarily (due to bug) ([#1746](https://github.com/contentauth/c2pa-rs/pull/1746))
+
 ## [0.75.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.1...c2pa-v0.75.2)
 _15 January 2026_
 

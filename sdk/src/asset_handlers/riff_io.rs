@@ -1001,10 +1001,10 @@ pub mod tests {
         );
 
         if let Err(e) = write_result {
-            panic!("write_cai failed: {:?}", e);
+            panic!("write_cai failed: {e:?}");
         }
 
-        eprintln!("Write completed in {:?}", write_duration);
+        eprintln!("Write completed in {write_duration:?}");
 
         // Verify output size
         dest.flush().unwrap();
@@ -1038,7 +1038,7 @@ pub mod tests {
 
         let test_file = "tests/fixtures/large_test.avi";
         if !std::path::Path::new(test_file).exists() {
-            println!("Skipping test - {} not found", test_file);
+            println!("Skipping test - {test_file} not found");
             return;
         }
 
@@ -1057,7 +1057,7 @@ pub mod tests {
         let source_size = std::fs::metadata(test_file).unwrap().len();
         let dest_size = dest.get_ref().len() as u64;
 
-        println!("Source: {} bytes, Dest: {} bytes", source_size, dest_size);
+        println!("Source: {source_size} bytes, Dest: {dest_size} bytes");
         assert!(dest_size > source_size); // Should be larger with C2PA
         assert!(dest_size < source_size + 100_000); // But not too much larger
 
@@ -1096,7 +1096,7 @@ pub mod tests {
             .unwrap();
         let duration = start.elapsed();
 
-        println!("Signing took {:?}", duration);
+        println!("Signing took {duration:?}");
 
         // Verify we got output
         assert!(!dest.get_ref().is_empty());
@@ -1104,7 +1104,7 @@ pub mod tests {
         // Verify the output size
         let source_size = std::fs::metadata(test_file).unwrap().len();
         let dest_size = dest.get_ref().len() as u64;
-        println!("Source: {} bytes, Dest: {} bytes", source_size, dest_size);
+        println!("Source: {source_size} bytes, Dest: {dest_size} bytes");
         assert!(dest_size > source_size); // Should be larger with C2PA
         assert!(dest_size < source_size + 100_000); // But not too much larger
     }
