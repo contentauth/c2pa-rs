@@ -16,14 +16,24 @@ use std::{
     sync::Arc,
 };
 
-use c2pa::Context;
+// C has no namespace so we prefix things with C2PA to make them unique
+#[cfg(feature = "file_io")]
+use c2pa::Ingredient;
+use c2pa::{
+    assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
+    CallbackSigner, Context, Reader as C2paReader, Settings as C2paSettings, SigningAlg,
+};
+use tokio::runtime::Runtime; // cawg validator requires async
 
+#[cfg(feature = "file_io")]
+use crate::json_api::{read_file, sign_file};
 // Import macros and utilities from cimpl
 use crate::{
-    box_tracked, cimpl_free, cstr_or_return_int, cstr_or_return_neg, cstr_or_return_null,
-    deref_mut_or_return, deref_mut_or_return_neg, deref_mut_or_return_null, deref_or_return_null,
-    from_cstr_option, guard_boxed_int, ok_or_return_int, ok_or_return_null, option_to_c_string,
-    ptr_or_return_int, ptr_or_return_null, safe_slice_from_raw_parts, to_c_string, CimplError,
+    box_tracked, c2pa_stream::C2paStream, cimpl_free, cstr_or_return_int, cstr_or_return_neg,
+    cstr_or_return_null, deref_mut_or_return, deref_mut_or_return_neg, deref_mut_or_return_null,
+    deref_or_return_null, error::Error, from_cstr_option, guard_boxed_int, ok_or_return_int,
+    ok_or_return_null, option_to_c_string, ptr_or_return_int, ptr_or_return_null,
+    safe_slice_from_raw_parts, signer_info::SignerInfo, to_c_string, CimplError,
 };
 
 /// Validates that a buffer size is within safe bounds and doesn't cause integer overflow
@@ -54,47 +64,6 @@ unsafe fn is_safe_buffer_size(size: usize, ptr: *const c_uchar) -> bool {
     true
 }
 
-// / Creates a safe slice from raw parts with bounds validation
-// /
-// / # Arguments
-// / * `ptr` - Pointer to the data
-// / * `len` - Length of the data
-// / * `param_name` - Name of the parameter for error reporting
-// /
-// / # Returns
-// / * `Ok(slice)` if the slice is safe to create
-// / * `Err(Error)` if bounds validation fails
-// unsafe fn safe_slice_from_raw_parts(
-//     ptr: *const c_uchar,
-//     len: usize,
-//     param_name: &str,
-// ) -> Result<&[u8], Error> {
-//     if ptr.is_null() {
-//         return Err(Error::NullParameter(param_name.to_string()));
-//     }
-
-//     if !is_safe_buffer_size(len, ptr) {
-//         return Err(Error::Other(format!(
-//             "Buffer size {len} is invalid for parameter '{param_name}'",
-//         )));
-//     }
-
-//     Ok(std::slice::from_raw_parts(ptr, len))
-// }
-
-// C has no namespace so we prefix things with C2PA to make them unique
-#[cfg(feature = "file_io")]
-use c2pa::Ingredient;
-use c2pa::{
-    assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
-    CallbackSigner, Reader as C2paReader, Settings, SigningAlg,
-};
-use tokio::runtime::Runtime; // cawg validator requires async
-
-#[cfg(feature = "file_io")]
-use crate::json_api::{read_file, sign_file};
-use crate::{c2pa_stream::C2paStream, error::Error, signer_info::SignerInfo};
-
 // Work around limitations in cbindgen.
 mod cbindgen_fix {
     #[repr(C)]
@@ -105,6 +74,8 @@ mod cbindgen_fix {
     #[allow(dead_code)]
     pub struct C2paReader;
 }
+
+pub type C2paContext = Context;
 
 /// List of supported signing algorithms.
 #[repr(C)]
@@ -427,14 +398,175 @@ pub unsafe extern "C" fn c2pa_load_settings(
     let settings = cstr_or_return_neg!(settings);
     let format = cstr_or_return_neg!(format);
     // we use the legacy from_string function to set thread-local settings for backward compatibility
-    let result = Settings::from_string(&settings, &format);
+    let result = C2paSettings::from_string(&settings, &format);
     ok_or_return_zero!(result);
     0 // returns 0 on success
 }
 
-/// Returns a ManifestStore JSON string from a file path.
+/// Creates a new C2PA settings object with default values.
 ///
-/// Any thumbnails or other binary resources will be written to data_dir if provided.
+/// # Safety
+///
+/// This function is safe to call. The returned pointer must be freed
+/// by calling `c2pa_settings_free()`.
+///
+/// # Returns
+///
+/// A pointer to a newly allocated C2paSettings object, or NULL on allocation failure.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_settings_new() -> *mut C2paSettings {
+    box_tracked!(C2paSettings::new())
+}
+
+/// Updates settings from a JSON or TOML string.
+///
+/// # Safety
+///
+/// * `settings` must be a valid pointer to a C2paSettings object previously
+///   created by `c2pa_settings_new()` and not yet freed.
+/// * `settings_str` must be a valid pointer to a null-terminated UTF-8 string.
+/// * `format` must be a valid pointer to a null-terminated string containing
+///   either "json" or "toml".
+/// * The pointers must remain valid for the duration of this call.
+/// * This function is not thread-safe - do not call concurrently on the same `settings`.
+///
+/// # Returns
+///
+/// 0 on success, negative value on error.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_settings_update_from_string(
+    settings: *mut C2paSettings,
+    settings_str: *const c_char,
+    format: *const c_char,
+) -> c_int {
+    let settings = deref_mut_or_return_neg!(settings, C2paSettings);
+    let settings_str = cstr_or_return_neg!(settings_str);
+    let format = cstr_or_return_neg!(format);
+    let result = settings.update_from_str(&settings_str, &format);
+    ok_or_return_int!(result);
+    0
+}
+
+/// Sets a specific configuration value in the settings using dot notation.
+///
+/// # Safety
+///
+/// * `settings` must be a valid pointer to a C2paSettings object previously
+///   created by `c2pa_settings_new()` and not yet freed.
+/// * `path` must be a valid pointer to a null-terminated UTF-8 string containing
+///   a dot-separated path (e.g., "verify.verify_after_sign").
+/// * `value` must be a valid pointer to a null-terminated UTF-8 string containing
+///   a JSON value (e.g., "true", "\"ps256\"", "42").
+/// * The pointers must remain valid for the duration of this call.
+/// * This function is not thread-safe - do not call concurrently on the same `settings`.
+///
+/// # Returns
+///
+/// 0 on success, negative value on error.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_settings_set_value(
+    settings: *mut C2paSettings,
+    path: *const c_char,
+    value: *const c_char,
+) -> c_int {
+    let settings = deref_mut_or_return_neg!(settings, C2paSettings);
+    let path = cstr_or_return_neg!(path);
+    let value_str = cstr_or_return_neg!(value);
+
+    // Parse the JSON value to determine the type
+    let parsed_value: serde_json::Value = match serde_json::from_str(&value_str) {
+        Ok(v) => v,
+        Err(e) => {
+            CimplError::from(c2pa::Error::BadParam(format!("Invalid JSON value: {e}"))).set_last();
+            return -1;
+        }
+    };
+
+    // Convert JSON value to config::Value and set it
+    let result = match parsed_value {
+        serde_json::Value::Bool(b) => settings.set_value(&path, b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                settings.set_value(&path, i)
+            } else if let Some(f) = n.as_f64() {
+                settings.set_value(&path, f)
+            } else {
+                Err(c2pa::Error::BadParam("Invalid number format".to_string()))
+            }
+        }
+        serde_json::Value::String(s) => settings.set_value(&path, s),
+        serde_json::Value::Array(arr) => {
+            // Convert array to Vec<String> for common use case
+            let string_vec: c2pa::Result<Vec<String>> = arr
+                .iter()
+                .map(|v| {
+                    if let serde_json::Value::String(s) = v {
+                        Ok(s.clone())
+                    } else {
+                        Err(c2pa::Error::BadParam(
+                            "Array values must be strings".to_string(),
+                        ))
+                    }
+                })
+                .collect();
+            match string_vec {
+                Ok(vec) => settings.set_value(&path, vec),
+                Err(e) => Err(e),
+            }
+        }
+        serde_json::Value::Null => Err(c2pa::Error::BadParam("Cannot set null values".to_string())),
+        serde_json::Value::Object(_) => Err(c2pa::Error::BadParam(
+            "Cannot set object values directly, use update_from_string instead".to_string(),
+        )),
+    };
+
+    ok_or_return_int!(result);
+    0
+}
+
+/// Creates a new C2PA context with default settings.
+///
+/// # Safety
+///
+/// This function is safe to call. The returned pointer must be freed
+/// by calling `c2pa_context_free()`.
+///
+/// # Returns
+///
+/// A pointer to a newly allocated C2paContext object, or NULL on allocation failure.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_new() -> *mut C2paContext {
+    box_tracked!(Context::new())
+}
+
+/// Updates the context with new settings.
+///
+/// # Safety
+///
+/// * `context` must be a valid pointer to a C2paContext object previously
+///   created by `c2pa_context_new()` and not yet freed.
+/// * `settings` must be a valid pointer to a C2paSettings object previously
+///   created by `c2pa_settings_new()` and not yet freed.
+/// * The pointers must remain valid for the duration of this call.
+/// * This function is not thread-safe - do not call concurrently with any
+///   other function that accesses the same `context`.
+/// * The `settings` object is cloned internally; the caller retains ownership.
+///
+/// # Returns
+///
+/// 0 on success, negative value on error.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_set_settings(
+    context: *mut C2paContext,
+    settings: *mut C2paSettings,
+) -> c_int {
+    let context = deref_mut_or_return_neg!(context, C2paContext);
+    let settings = deref_or_return_neg!(settings, C2paSettings);
+    let result = context.set_settings(settings);
+    ok_or_return_int!(result);
+    0
+}
+
 ///
 /// # Errors
 /// Returns NULL if there were errors, otherwise returns a JSON string.
@@ -536,6 +668,33 @@ pub unsafe extern "C" fn c2pa_sign_file(
     let bytes = ok_or_return_null!(result);
     let json = String::from_utf8_lossy(&bytes).to_string();
     to_c_string(json)
+}
+
+/// Frees any pointer allocated by this library.
+///
+/// This is a generic free function that works for all C2PA objects including:
+/// - C2paContext
+/// - C2paSettings
+/// - C2paBuilder
+/// - C2paReader
+/// - C2paSigner
+/// - strings (c_char*)
+/// - and any other objects created by this library
+///
+/// # Safety
+///
+/// * The pointer must have been allocated by this library (e.g., from c2pa_context_new(),
+///   c2pa_settings_new(), c2pa_builder_from_json(), etc.)
+/// * The pointer must not have been modified in C.
+/// * The pointer can only be freed once and is invalid after this call.
+/// * Do not use type-specific free functions (like c2pa_string_free) if you use this.
+///
+/// # Returns
+///
+/// 0 on success, -1 on error (e.g., if the pointer was not allocated by this library).
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_free(ptr: *mut c_void) -> c_int {
+    cimpl_free!(ptr)
 }
 
 /// Frees a string allocated by Rust.
@@ -1526,7 +1685,7 @@ pub unsafe extern "C" fn c2pa_signer_from_info(signer_info: &C2paSignerInfo) -> 
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
-    let signer = ok_or_return_null!(Settings::signer());
+    let signer = ok_or_return_null!(C2paSettings::signer());
     box_tracked!(C2paSigner {
         signer: Box::new(signer),
     })
@@ -2445,5 +2604,237 @@ mod tests {
         let signer = unsafe { c2pa_signer_from_settings() };
         assert!(!signer.is_null());
         unsafe { c2pa_signer_free(signer) };
+    }
+
+    #[test]
+    fn test_c2pa_settings_new() {
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+        unsafe { c2pa_free(settings as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_settings_update_from_json_string() {
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+
+        let json = CString::new(r#"{"verify": {"verify_after_sign": true}}"#).unwrap();
+        let format = CString::new("json").unwrap();
+
+        let result =
+            unsafe { c2pa_settings_update_from_string(settings, json.as_ptr(), format.as_ptr()) };
+        assert_eq!(result, 0);
+
+        unsafe { c2pa_free(settings as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_settings_update_from_toml_string() {
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+
+        let toml = CString::new(
+            r#"
+[verify]
+verify_after_sign = true
+"#,
+        )
+        .unwrap();
+        let format = CString::new("toml").unwrap();
+
+        let result =
+            unsafe { c2pa_settings_update_from_string(settings, toml.as_ptr(), format.as_ptr()) };
+        assert_eq!(result, 0);
+
+        unsafe { c2pa_free(settings as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_settings_update_from_string_invalid() {
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+
+        let invalid_json = CString::new(r#"{"verify": {"verify_after_sign": "#).unwrap();
+        let format = CString::new("json").unwrap();
+
+        let result = unsafe {
+            c2pa_settings_update_from_string(settings, invalid_json.as_ptr(), format.as_ptr())
+        };
+        assert_ne!(result, 0); // Should fail with invalid JSON
+
+        unsafe { c2pa_free(settings as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_settings_set_value() {
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+
+        let path = CString::new("verify.verify_after_sign").unwrap();
+        let value = CString::new("true").unwrap();
+
+        let result = unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) };
+        assert_eq!(result, 0);
+
+        unsafe { c2pa_free(settings as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_settings_set_value_string() {
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+
+        // Test setting array of strings which is a common string value type
+        let path = CString::new("core.allowed_network_hosts").unwrap();
+        let value = CString::new(r#"["example.com", "test.org"]"#).unwrap(); // JSON array of strings
+
+        let result = unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) };
+        assert_eq!(result, 0);
+
+        unsafe { c2pa_free(settings as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_settings_set_value_number() {
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+
+        let path = CString::new("verify.max_memory_usage").unwrap();
+        let value = CString::new("1000000").unwrap();
+
+        let result = unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) };
+        assert_eq!(result, 0);
+
+        unsafe { c2pa_free(settings as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_settings_set_value_invalid_json() {
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+
+        let path = CString::new("verify.verify_after_sign").unwrap();
+        let invalid_value = CString::new("not valid json").unwrap(); // Not valid JSON
+
+        let result =
+            unsafe { c2pa_settings_set_value(settings, path.as_ptr(), invalid_value.as_ptr()) };
+        assert_ne!(result, 0); // Should fail with invalid JSON
+
+        unsafe { c2pa_free(settings as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_context_new() {
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+        unsafe { c2pa_free(context as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_context_set_settings() {
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+
+        // Update settings
+        let json = CString::new(r#"{"verify": {"verify_after_sign": true}}"#).unwrap();
+        let format = CString::new("json").unwrap();
+        let result =
+            unsafe { c2pa_settings_update_from_string(settings, json.as_ptr(), format.as_ptr()) };
+        assert_eq!(result, 0);
+
+        // Set settings on context
+        let result = unsafe { c2pa_context_set_settings(context, settings) };
+        assert_eq!(result, 0);
+
+        unsafe {
+            c2pa_free(settings as *mut c_void);
+            c2pa_free(context as *mut c_void);
+        };
+    }
+
+    #[test]
+    fn test_c2pa_context_set_settings_multiple_times() {
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        // First settings
+        let settings1 = unsafe { c2pa_settings_new() };
+        assert!(!settings1.is_null());
+        let json1 = CString::new(r#"{"verify": {"verify_after_sign": true}}"#).unwrap();
+        let format = CString::new("json").unwrap();
+        let result =
+            unsafe { c2pa_settings_update_from_string(settings1, json1.as_ptr(), format.as_ptr()) };
+        assert_eq!(result, 0);
+
+        let result = unsafe { c2pa_context_set_settings(context, settings1) };
+        assert_eq!(result, 0);
+
+        // Second settings (update)
+        let settings2 = unsafe { c2pa_settings_new() };
+        assert!(!settings2.is_null());
+        let json2 = CString::new(r#"{"verify": {"verify_after_sign": false}}"#).unwrap();
+        let result =
+            unsafe { c2pa_settings_update_from_string(settings2, json2.as_ptr(), format.as_ptr()) };
+        assert_eq!(result, 0);
+
+        let result = unsafe { c2pa_context_set_settings(context, settings2) };
+        assert_eq!(result, 0);
+
+        unsafe {
+            c2pa_free(settings1 as *mut c_void);
+            c2pa_free(settings2 as *mut c_void);
+            c2pa_free(context as *mut c_void);
+        };
+    }
+
+    #[test]
+    fn test_c2pa_context_set_settings_with_full_config() {
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+
+        // Load full settings from test file
+        const SETTINGS: &str = include_str!("../../sdk/tests/fixtures/test_settings.json");
+        let settings_str = CString::new(SETTINGS).unwrap();
+        let format = CString::new("json").unwrap();
+        let result = unsafe {
+            c2pa_settings_update_from_string(settings, settings_str.as_ptr(), format.as_ptr())
+        };
+        assert_eq!(result, 0);
+
+        // Apply to context
+        let result = unsafe { c2pa_context_set_settings(context, settings) };
+        assert_eq!(result, 0);
+
+        unsafe {
+            c2pa_free(settings as *mut c_void);
+            c2pa_free(context as *mut c_void);
+        };
+    }
+
+    #[test]
+    fn test_c2pa_free_works_for_all_types() {
+        // Test that c2pa_free works for different object types
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+        let result = unsafe { c2pa_free(settings as *mut c_void) };
+        assert_eq!(result, 0);
+
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+        let result = unsafe { c2pa_free(context as *mut c_void) };
+        assert_eq!(result, 0);
+
+        // Test with a string
+        let test_str = CString::new("test").unwrap();
+        let c_str = to_c_string(test_str.to_str().unwrap().to_string());
+        assert!(!c_str.is_null());
+        let result = unsafe { c2pa_free(c_str as *mut c_void) };
+        assert_eq!(result, 0);
     }
 }
