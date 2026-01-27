@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.18](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.17...c2patool-v0.26.18)
+_27 January 2026_
+
+### Documented
+
+* Remove outdated ref to CreativeWork, other small edits ([#1770](https://github.com/contentauth/c2pa-rs/pull/1770))
+
 ## [0.26.17](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.16...c2patool-v0.26.17)
 _22 January 2026_
 
