@@ -418,8 +418,10 @@ pub unsafe extern "C" fn c2pa_load_settings(
 ) -> c_int {
     let settings = from_cstr_or_return_int!(settings);
     let format = from_cstr_or_return_int!(format);
+
     // we use the legacy from_string function to set thread-local settings for backward compatibility
     let result = Settings::from_string(&settings, &format);
+
     ok_or_return_int!(result, |_| 0) // returns 0 on success
 }
 
@@ -865,7 +867,9 @@ pub unsafe extern "C" fn c2pa_reader_supported_mime_types(
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_from_json(manifest_json: *const c_char) -> *mut C2paBuilder {
     let manifest_json = from_cstr_or_return_null!(manifest_json);
+
     let result = C2paBuilder::from_json(&manifest_json);
+
     return_boxed!(result)
 }
 
@@ -1236,6 +1240,7 @@ pub unsafe extern "C" fn c2pa_builder_sign(
         &mut *source,
         &mut *dest,
     );
+
     ok_or_return_int!(result, |manifest_bytes: Vec<u8>| {
         let len = manifest_bytes.len() as i64;
         if !manifest_bytes_ptr.is_null() {
