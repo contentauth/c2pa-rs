@@ -558,12 +558,7 @@ impl Builder {
     /// * Returns an [`Error`] if the JSON is malformed or incorrect.
     pub fn from_json(json: &str) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        println!("[SETTINGS-TRACE] Rust Builder::from_json called on thread {:?}", std::thread::current().id());
-        
         let settings = crate::settings::get_thread_local_settings();
-        println!("[SETTINGS-TRACE] Rust Builder::from_json got settings on thread {:?}: thumbnail.enabled = {}", 
-                  std::thread::current().id(), settings.builder.thumbnail.enabled);
-        
         let context = Context::new().with_settings(settings)?;
 
         Ok(Self {
@@ -1676,10 +1671,6 @@ impl Builder {
 
         // check settings to see if we should auto generate a thumbnail
         let auto_thumbnail = self.context.settings().builder.thumbnail.enabled;
-        
-        println!("[SETTINGS-TRACE] Rust Builder::maybe_add_thumbnail on thread {:?}: thumbnail.enabled = {}", 
-                 std::thread::current().id(), auto_thumbnail);
-
         if self.definition.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
 
@@ -1889,8 +1880,6 @@ impl Builder {
         R: Read + Seek + Send,
         W: Write + Read + Seek + Send,
     {
-        println!("[SETTINGS-TRACE] Rust Builder::sign called on thread {:?}", std::thread::current().id());
-        
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
         // todo:: read instance_id from xmp from stream ?

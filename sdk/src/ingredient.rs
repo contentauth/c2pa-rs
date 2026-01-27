@@ -615,18 +615,12 @@ impl Ingredient {
 
                 if let Some(claim) = store.provenance_claim() {
                     // if the parent claim is valid and has a thumbnail, use it
-                    // BUT only if thumbnail generation is enabled in settings
+                    // but only if thumbnail generation is enabled in settings
                     let auto_thumbnail = context.settings().builder.thumbnail.enabled;
-                    
+
                     let has_active_manifest = validation_results.active_manifest().is_some();
                     let is_valid = validation_results.active_manifest().is_some_and(|m| m.failure().is_empty());
-                    
-                    println!("[SETTINGS-TRACE] Rust Ingredient::update_validation_status on thread {:?}:", 
-                             std::thread::current().id());
-                    println!("  thumbnail.enabled = {}", auto_thumbnail);
-                    println!("  has_active_manifest = {}", has_active_manifest);
-                    println!("  is_valid (no failures) = {}", is_valid);
-                    
+
                     if validation_results
                         .active_manifest()
                         .is_some_and(|m| m.failure().is_empty())
@@ -637,9 +631,6 @@ impl Ingredient {
                             .iter()
                             .find(|hashed_uri| hashed_uri.url().contains(labels::CLAIM_THUMBNAIL))
                         {
-                            println!("[SETTINGS-TRACE] Rust Ingredient::update_validation_status copying thumbnail from existing manifest on thread {:?}", 
-                                     std::thread::current().id());
-                            
                             // We found a valid claim thumbnail so just reference it, we don't need to copy it
                             let thumb_manifest = manifest_label_from_uri(&hashed_uri.url())
                                 .unwrap_or_else(|| claim.label().to_string());
@@ -1263,11 +1254,8 @@ impl Ingredient {
                 let signature_uri = jumbf::labels::to_signature_uri(manifest_label);
 
                 // if there are validations and they have all passed, then use the parent claim thumbnail if available
-                // BUT only if thumbnail generation is enabled in settings
+                // ... but only if thumbnail generation is enabled in settings
                 let auto_thumbnail = context.settings().builder.thumbnail.enabled;
-                println!("[SETTINGS-TRACE] Rust Ingredient::add_to_claim (from existing manifest) on thread {:?}: thumbnail.enabled = {}", 
-                         std::thread::current().id(), auto_thumbnail);
-                
                 if let Some(validation_results) = self.validation_results() {
                     if validation_results.validation_state() != crate::ValidationState::Invalid && auto_thumbnail {
                         thumbnail = ingredient_active_claim
@@ -1275,8 +1263,6 @@ impl Ingredient {
                             .iter()
                             .find(|hashed_uri| hashed_uri.url().contains(labels::CLAIM_THUMBNAIL))
                             .map(|t| {
-                                println!("[SETTINGS-TRACE] Rust Ingredient::add_to_claim copying thumbnail from parent claim on thread {:?}", 
-                                         std::thread::current().id());
                                 // convert ingredient uris to absolute when adding them
                                 // since this uri references a different manifest
                                 let url = jumbf::labels::to_absolute_uri(manifest_label, &t.url());
@@ -1303,15 +1289,10 @@ impl Ingredient {
 
         // if the ingredient defines a thumbnail, add it to the claim
         // otherwise use the parent claim thumbnail if available
-        // BUT only if thumbnail generation is enabled in settings
+        // but only if thumbnail generation is enabled in settings
         let auto_thumbnail = context.settings().builder.thumbnail.enabled;
-        println!("[SETTINGS-TRACE] Rust Ingredient::add_to_claim (from self.thumbnail_ref) on thread {:?}: thumbnail.enabled = {}", 
-                 std::thread::current().id(), auto_thumbnail);
-        
         if let Some(thumb_ref) = self.thumbnail_ref() {
             if auto_thumbnail {
-                println!("[SETTINGS-TRACE] Rust Ingredient::add_to_claim adding ingredient thumbnail to claim on thread {:?}", 
-                         std::thread::current().id());
                 // if we have a hash, just build the hashed uri
                 let hash_url = match thumb_ref.hash.as_ref() {
                     Some(h) => {
@@ -1340,9 +1321,6 @@ impl Ingredient {
                     }
                 };
                 thumbnail = Some(hash_url);
-            } else {
-                println!("[SETTINGS-TRACE] Rust Ingredient::add_to_claim SKIPPING thumbnail (disabled) on thread {:?}", 
-                         std::thread::current().id());
             }
         }
 
