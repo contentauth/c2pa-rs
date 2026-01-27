@@ -16,7 +16,6 @@ use std::{collections::HashMap, env::consts};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256, Sha384, Sha512};
 
 use crate::{
     assertions::{
@@ -25,7 +24,6 @@ use crate::{
     },
     builder::BuilderIntent,
     cbor_types::DateT,
-    hash_utils::Hasher,
     resource_store::UriOrResource,
     settings::SettingsValidate,
     ClaimGeneratorInfo, Error, ResourceRef, Result,
@@ -460,25 +458,6 @@ pub enum TimeStampFetchScope {
     All,
 }
 
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HashAlgorithm {
-    Sha256,
-    Sha384,
-    Sha512,
-}
-
-impl HashAlgorithm {
-    pub fn hasher(&self) -> Hasher {
-        match self {
-            Self::Sha256 => Hasher::SHA256(Sha256::new()),
-            Self::Sha384 => Hasher::SHA384(Sha384::new()),
-            Self::Sha512 => Hasher::SHA512(Sha512::new()),
-        }
-    }
-}
-
 /// Settings for configuring auto-generation of the [`TimeStamp`] assertion.
 ///
 /// Useful when a manifest was signed offline and you want to attach a trusted timestamp to it later.
@@ -513,14 +492,6 @@ pub struct TimeStampSettings {
     ///
     /// The default value is [`TimeStampFetchScope::All`].
     pub fetch_scope: TimeStampFetchScope,
-    /// The algorithm to use to hash the `Sig_structure` which contains the countersignature
-    /// to be timestamped.
-    ///
-    /// The default value is [`HashAlgorithm::Sha256`].
-    ///
-    /// For more information, see:
-    /// <https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_time_stamps>
-    pub algorithm: HashAlgorithm,
 }
 
 impl Default for TimeStampSettings {
@@ -529,7 +500,6 @@ impl Default for TimeStampSettings {
             enabled: false,
             skip_existing: true,
             fetch_scope: TimeStampFetchScope::All,
-            algorithm: HashAlgorithm::Sha256,
         }
     }
 }
@@ -612,7 +582,6 @@ impl Default for BuilderSettings {
             intent: None,
             created_assertion_labels: None,
             generate_c2pa_archive: Some(true),
-            auto_timestamp_assertion: TimeStampSettings::default(),
         }
     }
 }

@@ -40,7 +40,6 @@ use crate::{
     context::Context,
     crypto::cose,
     error::{Error, Result},
-    hash_utils::Hasher,
     jumbf::labels::manifest_label_from_uri,
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
@@ -1848,17 +1847,12 @@ impl Builder {
             }
 
             if let Some(claim) = provenance_claim.claim_ingredient(&manifest_label) {
-                let sig_structure = claim.timestamp_v2_sig_structure()?;
-
-                let mut hasher = settings.builder.auto_timestamp_assertion.algorithm.hasher();
-                hasher.update(&sig_structure);
-                let hash = Hasher::finalize(hasher);
-
+                let signature = claim.cose_sign1()?.signature;
                 if _sync {
                     timestamp_assertion.refresh_timestamp(
                         tsa_url,
                         &manifest_label,
-                        &hash,
+                        &signature,
                         self.context().resolver(),
                     )?;
                 } else {
@@ -1866,7 +1860,7 @@ impl Builder {
                         .refresh_timestamp_async(
                             tsa_url,
                             &manifest_label,
-                            &hash,
+                            &signature,
                             self.context().resolver_async(),
                         )
                         .await?;
