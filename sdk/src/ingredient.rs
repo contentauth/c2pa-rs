@@ -619,12 +619,15 @@ impl Ingredient {
                     let auto_thumbnail = context.settings().builder.thumbnail.enabled;
 
                     let has_active_manifest = validation_results.active_manifest().is_some();
-                    let is_valid = validation_results.active_manifest().is_some_and(|m| m.failure().is_empty());
+                    let is_valid = validation_results
+                        .active_manifest()
+                        .is_some_and(|m| m.failure().is_empty());
 
                     if validation_results
                         .active_manifest()
                         .is_some_and(|m| m.failure().is_empty())
-                        && auto_thumbnail  // Check the setting!
+                        && auto_thumbnail
+                    // Check the setting!
                     {
                         if let Some(hashed_uri) = claim
                             .assertions()
@@ -1257,7 +1260,9 @@ impl Ingredient {
                 // ... but only if thumbnail generation is enabled in settings
                 let auto_thumbnail = context.settings().builder.thumbnail.enabled;
                 if let Some(validation_results) = self.validation_results() {
-                    if validation_results.validation_state() != crate::ValidationState::Invalid && auto_thumbnail {
+                    if validation_results.validation_state() != crate::ValidationState::Invalid
+                        && auto_thumbnail
+                    {
                         thumbnail = ingredient_active_claim
                             .assertions()
                             .iter()
@@ -1492,7 +1497,12 @@ impl Ingredient {
             };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, Some(manifest_bytes), &validation_log, &context)?;
+        ingredient.update_validation_status(
+            result,
+            Some(manifest_bytes),
+            &validation_log,
+            &context,
+        )?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
