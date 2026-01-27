@@ -75,7 +75,8 @@ mod cbindgen_fix {
     pub struct C2paReader;
 }
 
-pub type C2paContext = Context;
+pub type C2paContext = Arc<Context>;
+pub type C2paContextBuilder = Context;
 
 /// List of supported signing algorithms.
 #[repr(C)]
@@ -524,47 +525,112 @@ pub unsafe extern "C" fn c2pa_settings_set_value(
     0
 }
 
-/// Creates a new C2PA context with default settings.
+/// Creates a new context builder with default settings.
+///
+/// Use this to construct a context with custom configuration. After setting up
+/// the builder, call `c2pa_context_builder_build()` to create an immutable context.
 ///
 /// # Safety
 ///
-/// This function is safe to call. The returned pointer must be freed
-/// by calling `c2pa_context_free()`.
+/// This function is safe to call. The returned pointer must be freed by calling
+/// `c2pa_free()` or converted to a context with `c2pa_context_builder_build()`.
 ///
 /// # Returns
 ///
-/// A pointer to a newly allocated C2paContext object, or NULL on allocation failure.
+/// A pointer to a newly allocated C2paContextBuilder object, or NULL on allocation failure.
+///
+/// # Example
+///
+/// ```c
+/// // Create and configure a builder
+/// C2paContextBuilder* builder = c2pa_context_builder_new();
+/// C2paSettings* settings = c2pa_settings_new();
+/// c2pa_settings_set_value(settings, "verify.verify_after_sign", "true");
+/// c2pa_context_builder_set_settings(builder, settings);
+/// c2pa_free(settings);
+///
+/// // Build immutable context
+/// C2paContext* ctx = c2pa_context_builder_build(builder);
+/// // builder is now invalid, ctx can be shared
+/// ```
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_context_new() -> *mut C2paContext {
+pub unsafe extern "C" fn c2pa_context_builder_new() -> *mut C2paContextBuilder {
     box_tracked!(Context::new())
 }
 
-/// Updates the context with new settings.
+/// Updates the builder with settings.
+///
+/// This configures the builder with the provided settings. The settings are cloned
+/// internally, so the caller retains ownership. If this call fails, the builder
+/// remains in its previous valid state.
 ///
 /// # Safety
 ///
-/// * `context` must be a valid pointer to a C2paContext object previously
-///   created by `c2pa_context_new()` and not yet freed.
-/// * `settings` must be a valid pointer to a C2paSettings object previously
-///   created by `c2pa_settings_new()` and not yet freed.
+/// * `builder` must be a valid pointer to a C2paContextBuilder object previously
+///   created by `c2pa_context_builder_new()` and not yet built.
+/// * `settings` must be a valid pointer to a C2paSettings object.
 /// * The pointers must remain valid for the duration of this call.
-/// * This function is not thread-safe - do not call concurrently with any
-///   other function that accesses the same `context`.
-/// * The `settings` object is cloned internally; the caller retains ownership.
+/// * This function is not thread-safe - do not call concurrently on the same `builder`.
 ///
 /// # Returns
 ///
 /// 0 on success, negative value on error.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_context_set_settings(
-    context: *mut C2paContext,
+pub unsafe extern "C" fn c2pa_context_builder_set_settings(
+    builder: *mut C2paContextBuilder,
     settings: *mut C2paSettings,
 ) -> c_int {
-    let context = deref_mut_or_return_neg!(context, C2paContext);
+    let builder = deref_mut_or_return_neg!(builder, C2paContextBuilder);
     let settings = deref_or_return_neg!(settings, C2paSettings);
-    let result = context.set_settings(settings);
+    let result = builder.set_settings(settings);
     ok_or_return_int!(result);
     0
+}
+
+/// Builds an immutable, shareable context from the builder.
+///
+/// The builder is consumed by this operation and becomes invalid.
+/// The returned context is immutable and can be shared between multiple
+/// Reader and Builder instances.
+///
+/// # Safety
+///
+/// * `builder` must be a valid pointer to a C2paContextBuilder.
+/// * After calling this function, the builder pointer is INVALID and must not be used again.
+/// * The returned context must be freed with `c2pa_free()`.
+///
+/// # Returns
+///
+/// A pointer to an immutable C2paContext that can be shared, or NULL on error.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_builder_build(
+    builder: *mut C2paContextBuilder,
+) -> *mut C2paContext {
+    let context = Box::from_raw(builder);
+    box_tracked!((*context).into_shared())
+}
+
+/// Creates a new immutable context with default settings.
+///
+/// This is a convenience function equivalent to:
+/// ```c
+/// builder = c2pa_context_builder_new();
+/// ctx = c2pa_context_builder_build(builder);
+/// ```
+///
+/// Use `c2pa_context_builder_new()` if you need to configure the context
+/// before building it.
+///
+/// # Safety
+///
+/// This function is safe to call. The returned pointer must be freed with `c2pa_free()`.
+///
+/// # Returns
+///
+/// A pointer to a newly allocated immutable C2paContext object, or NULL on allocation failure.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_new() -> *mut C2paContext {
+    box_tracked!(Context::new().into_shared())
 }
 
 ///
@@ -759,27 +825,21 @@ pub unsafe extern "C" fn c2pa_reader_new() -> *mut C2paReader {
     box_tracked!(C2paReader::from_context(Context::default()))
 }
 
-// TODO: Reader::from_context takes ownership of Context, but Context doesn't implement Clone
-// and we can't take ownership from a *const pointer. Need to decide on the correct approach:
-// 1. Change signature to *mut and actually take ownership from C
-// 2. Use from_shared_context instead
-// 3. Add Context cloning support
+/// Creates a new C2paReader from a shared context.
+///
+/// The context can be reused to create multiple readers and builders.
+///
 /// # Safety
-/// context parameter is currently ignored. This function creates a new Reader with default context.
+///
+/// * `context` must be a valid pointer to a C2paContext object.
+/// * The context pointer remains valid after this call and can be reused.
+///
+/// # Returns
+///
+/// A pointer to a newly allocated C2paReader, or NULL on error.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_reader_from_context(_context: *const Context) -> *mut C2paReader {
-    // Temporary workaround: create a new Reader with default context
-    // This ignores the passed context parameter
-    box_tracked!(C2paReader::from_context(Context::default()))
-}
-
-#[no_mangle]
-/// # Safety
-/// context must be a valid pointer to an `Arc<Context>`.
-pub unsafe extern "C" fn c2pa_reader_from_shared_context(
-    context: *const Arc<Context>,
-) -> *mut C2paReader {
-    let context = deref_or_return_null!(context as *mut Arc<Context>, Arc<Context>);
+pub unsafe extern "C" fn c2pa_reader_from_context(context: *mut C2paContext) -> *mut C2paReader {
+    let context = deref_or_return_null!(context, C2paContext);
     box_tracked!(C2paReader::from_shared_context(context))
 }
 
@@ -809,6 +869,47 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
     box_tracked!(result)
 }
 
+/// Configures an existing reader with a stream.
+///
+/// This method consumes the original reader and returns a new configured reader.
+/// The original reader pointer becomes invalid after this call.
+///
+/// # Safety
+///
+/// * `reader` must be a valid pointer to a C2paReader.
+/// * `format` must be a valid null-terminated string with the MIME type.
+/// * `stream` must be a valid pointer to a C2paStream.
+/// * After calling this function, the `reader` pointer is INVALID.
+///
+/// # Returns
+///
+/// A pointer to a newly configured C2paReader, or NULL on error.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_with_stream(
+    reader: *mut C2paReader,
+    format: *const c_char,
+    stream: *mut C2paStream,
+) -> *mut C2paReader {
+    // Take ownership of the reader (consumes it)
+    let reader = Box::from_raw(reader);
+    let format = cstr_or_return_null!(format);
+    let stream = deref_mut_or_return_null!(stream, C2paStream);
+
+    let result = (*reader).with_stream(&format, stream);
+    let result = ok_or_return_null!(post_validate(result));
+    box_tracked!(result)
+}
+
+/// Creates a new C2paReader from a shared Context.
+///
+/// # Safety
+///
+/// * `context` must be a valid pointer to a C2paContext object.
+/// * The context pointer remains valid after this call and can be reused.
+///
+/// # Returns
+///
+/// A pointer to a newly allocated C2paReader, or NULL on error.
 /// Creates and verifies a C2paReader from a file path.
 /// This allows a client to use Rust's file I/O to read the file
 /// Parameters
@@ -2316,6 +2417,60 @@ mod tests {
     }
 
     #[test]
+    fn test_c2pa_reader_with_stream_from_context() {
+        // Create a context with custom settings
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+
+        let json = CString::new(r#"{"verify": {"verify_after_sign": true}}"#).unwrap();
+        let format = CString::new("json").unwrap();
+        let result =
+            unsafe { c2pa_settings_update_from_string(settings, json.as_ptr(), format.as_ptr()) };
+        assert_eq!(result, 0);
+
+        let result = unsafe { c2pa_context_builder_set_settings(builder, settings) };
+        assert_eq!(result, 0);
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+
+        // Create a reader from the context
+        let reader = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader.is_null());
+
+        // Create a stream with test image data
+        let source_image = include_bytes!(fixture_path!("adobe-20220124-E-clm-CAICAI.jpg"));
+        let mut stream = TestStream::new(source_image.to_vec());
+
+        // Use with_stream to configure the reader
+        let format = CString::new("image/jpeg").unwrap();
+        let configured_reader =
+            unsafe { c2pa_reader_with_stream(reader, format.as_ptr(), stream.as_ptr()) };
+        assert!(!configured_reader.is_null());
+
+        // Verify we can read the manifest
+        let json = unsafe { c2pa_reader_json(configured_reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CString::from_raw(json) };
+        let json_content = json_str.to_str().unwrap();
+        // Verify the manifest has expected content (the fixture contains Adobe claims)
+        assert!(
+            json_content.contains("claim") || json_content.contains("manifest"),
+            "Expected manifest content in JSON"
+        );
+
+        unsafe {
+            c2pa_free(settings as *mut c_void);
+            c2pa_free(context as *mut c_void);
+            c2pa_free(configured_reader as *mut c_void);
+            // Original reader was consumed by with_stream, don't free it
+        };
+    }
+
+    #[test]
     fn test_c2pa_reader_json_null_reader() {
         let result = unsafe { c2pa_reader_json(std::ptr::null_mut()) };
         assert!(result.is_null());
@@ -2731,9 +2886,16 @@ verify_after_sign = true
     }
 
     #[test]
-    fn test_c2pa_context_set_settings() {
-        let context = unsafe { c2pa_context_new() };
-        assert!(!context.is_null());
+    fn test_c2pa_context_builder_new() {
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+        unsafe { c2pa_free(builder as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_context_builder_set_settings() {
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
 
         let settings = unsafe { c2pa_settings_new() };
         assert!(!settings.is_null());
@@ -2745,20 +2907,48 @@ verify_after_sign = true
             unsafe { c2pa_settings_update_from_string(settings, json.as_ptr(), format.as_ptr()) };
         assert_eq!(result, 0);
 
-        // Set settings on context
-        let result = unsafe { c2pa_context_set_settings(context, settings) };
+        // Set settings on builder
+        let result = unsafe { c2pa_context_builder_set_settings(builder, settings) };
         assert_eq!(result, 0);
 
         unsafe {
             c2pa_free(settings as *mut c_void);
-            c2pa_free(context as *mut c_void);
+            c2pa_free(builder as *mut c_void);
         };
     }
 
     #[test]
-    fn test_c2pa_context_set_settings_multiple_times() {
-        let context = unsafe { c2pa_context_new() };
+    fn test_c2pa_context_builder_build() {
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+
+        let json = CString::new(r#"{"verify": {"verify_after_sign": true}}"#).unwrap();
+        let format = CString::new("json").unwrap();
+        let result =
+            unsafe { c2pa_settings_update_from_string(settings, json.as_ptr(), format.as_ptr()) };
+        assert_eq!(result, 0);
+
+        let result = unsafe { c2pa_context_builder_set_settings(builder, settings) };
+        assert_eq!(result, 0);
+
+        // Build the context (consumes builder)
+        let context = unsafe { c2pa_context_builder_build(builder) };
         assert!(!context.is_null());
+
+        unsafe {
+            c2pa_free(settings as *mut c_void);
+            c2pa_free(context as *mut c_void);
+            // builder is now invalid - don't free it
+        };
+    }
+
+    #[test]
+    fn test_c2pa_context_builder_set_settings_multiple_times() {
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
 
         // First settings
         let settings1 = unsafe { c2pa_settings_new() };
@@ -2769,10 +2959,10 @@ verify_after_sign = true
             unsafe { c2pa_settings_update_from_string(settings1, json1.as_ptr(), format.as_ptr()) };
         assert_eq!(result, 0);
 
-        let result = unsafe { c2pa_context_set_settings(context, settings1) };
+        let result = unsafe { c2pa_context_builder_set_settings(builder, settings1) };
         assert_eq!(result, 0);
 
-        // Second settings (update)
+        // Second settings (update builder again)
         let settings2 = unsafe { c2pa_settings_new() };
         assert!(!settings2.is_null());
         let json2 = CString::new(r#"{"verify": {"verify_after_sign": false}}"#).unwrap();
@@ -2780,8 +2970,12 @@ verify_after_sign = true
             unsafe { c2pa_settings_update_from_string(settings2, json2.as_ptr(), format.as_ptr()) };
         assert_eq!(result, 0);
 
-        let result = unsafe { c2pa_context_set_settings(context, settings2) };
+        let result = unsafe { c2pa_context_builder_set_settings(builder, settings2) };
         assert_eq!(result, 0);
+
+        // Build context
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
 
         unsafe {
             c2pa_free(settings1 as *mut c_void);
@@ -2791,9 +2985,9 @@ verify_after_sign = true
     }
 
     #[test]
-    fn test_c2pa_context_set_settings_with_full_config() {
-        let context = unsafe { c2pa_context_new() };
-        assert!(!context.is_null());
+    fn test_c2pa_context_builder_with_full_config() {
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
 
         let settings = unsafe { c2pa_settings_new() };
         assert!(!settings.is_null());
@@ -2807,12 +3001,37 @@ verify_after_sign = true
         };
         assert_eq!(result, 0);
 
-        // Apply to context
-        let result = unsafe { c2pa_context_set_settings(context, settings) };
+        // Apply to builder
+        let result = unsafe { c2pa_context_builder_set_settings(builder, settings) };
         assert_eq!(result, 0);
+
+        // Build context
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
 
         unsafe {
             c2pa_free(settings as *mut c_void);
+            c2pa_free(context as *mut c_void);
+        };
+    }
+
+    #[test]
+    fn test_c2pa_context_can_be_shared() {
+        // Test that a context can be used to create multiple readers
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        // Create multiple readers from the same context
+        let reader1 = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader1.is_null());
+
+        let reader2 = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader2.is_null());
+
+        // Context is still valid and can be reused
+        unsafe {
+            c2pa_free(reader1 as *mut c_void);
+            c2pa_free(reader2 as *mut c_void);
             c2pa_free(context as *mut c_void);
         };
     }
