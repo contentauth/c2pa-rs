@@ -73,10 +73,22 @@ mod cbindgen_fix {
     #[repr(C)]
     #[allow(dead_code)]
     pub struct C2paReader;
+
+    #[repr(C)]
+    #[allow(dead_code)]
+    pub struct C2paContextBuilder;
+
+    #[repr(C)]
+    #[allow(dead_code)]
+    pub struct C2paContext;
+
+    #[repr(C)]
+    #[allow(dead_code)]
+    pub struct C2paSettings;
 }
 
-pub type C2paContext = Arc<Context>;
-pub type C2paContextBuilder = Context;
+type C2paContextBuilder = Context;
+type C2paContext = Arc<Context>;
 
 /// List of supported signing algorithms.
 #[repr(C)]
@@ -189,133 +201,6 @@ pub enum C2paBuilderIntent {
 pub struct C2paSigner {
     pub signer: Box<dyn c2pa::Signer>,
 }
-
-// // Null check macro for C pointers.
-// #[macro_export]
-// macro_rules! null_check {
-//     (($ptr:expr), $transform:expr, $default:expr) => {
-//         if $ptr.is_null() {
-//             Error::set_last(Error::NullParameter(stringify!($ptr).to_string()));
-//             return $default;
-//         } else {
-//             $transform($ptr)
-//         }
-//     };
-// }
-
-// /// If the expression is null, set the last error and return null.
-// #[macro_export]
-// macro_rules! ptr_or_return_null {
-//     ($ptr : expr) => {
-//         null_check!(($ptr), |ptr| ptr, std::ptr::null_mut())
-//     };
-// }
-
-// /// If the expression is null, set the last error and return -1.
-// #[macro_export]
-// macro_rules! ptr_or_return_int {
-//     ($ptr : expr) => {
-//         null_check!(($ptr), |ptr| ptr, -1)
-//     };
-// }
-
-// /// If the expression is null, set the last error and return std::ptr::null_mut().
-// #[macro_export]
-// macro_rules! cstr_or_return_null {
-//     ($ptr : expr) => {
-//         null_check!(
-//             ($ptr),
-//             |ptr| { std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned() },
-//             std::ptr::null_mut()
-//         )
-//     };
-// }
-
-// // Internal routine to convert a *const c_char to a rust String or return a -1 int error.
-// #[macro_export]
-// macro_rules! cstr_or_return_int {
-//     ($ptr : expr) => {
-//         null_check!(
-//             ($ptr),
-//             |ptr| { std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned() },
-//             -1
-//         )
-//     };
-// }
-
-// // Internal routine to convert a *const c_char to Option<String>.
-// #[macro_export]
-// macro_rules! from_cstr_option {
-//     ($ptr : expr) => {
-//         if $ptr.is_null() {
-//             None
-//         } else {
-//             Some(
-//                 std::ffi::CStr::from_ptr($ptr)
-//                     .to_string_lossy()
-//                     .into_owned(),
-//             )
-//         }
-//     };
-// }
-
-// #[macro_export]
-// macro_rules! result_check {
-//     ($result:expr, $transform:expr, $default:expr) => {
-//         match $result {
-//             Ok(value) => $transform(value),
-//             Err(err) => {
-//                 Error::from_c2pa_error(err).set_last();
-//                 return $default;
-//             }
-//         }
-//     };
-// }
-
-// #[macro_export]
-// macro_rules! ok_or_return_null {
-//     ($result:expr, $transform:expr) => {
-//         result_check!($result, $transform, std::ptr::null_mut())
-//     };
-// }
-
-// #[macro_export]
-// macro_rules! ok_or_return_int {
-//     ($result:expr, $transform:expr) => {
-//         result_check!($result, $transform, -1)
-//     };
-// }
-
-// #[macro_export]
-// macro_rules! return_boxed {
-//     ($result:expr) => {
-//        ok_or_return_null!($result, |value| Box::into_raw(Box::new(value)))
-//     };
-// }
-
-// #[macro_export]
-// macro_rules! guard_boxed {
-//     ($ptr:expr) => {
-//         guard(Box::from_raw($ptr), |value| {
-//             let _ = Box::into_raw(value);
-//         })
-//     };
-// }
-
-// #[macro_export]
-// macro_rules! guard_boxed_int {
-//     ($ptr:expr) => {
-//         null_check!(
-//             ($ptr),
-//             |ptr| {
-//                 guard(Box::from_raw(ptr), |value| {
-//                     let _ = Box::into_raw(value);
-//                 })
-//             },
-//             -1
-//         )
-//     };
-// }
 
 /// Defines a callback to read from a stream.
 ///
@@ -900,6 +785,49 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     box_tracked!(result)
 }
 
+/// Configures an existing reader with a fragment stream.
+///
+/// This is used for fragmented BMFF media formats where manifests are stored
+/// in separate fragments. This method consumes the original reader and returns
+/// a new configured reader. The original reader pointer becomes invalid after this call.
+///
+/// # Safety
+///
+/// * `reader` must be a valid pointer to a C2paReader.
+/// * `format` must be a valid null-terminated string with the MIME type.
+/// * `stream` must be a valid pointer to a C2paStream (the main asset stream).
+/// * `fragment` must be a valid pointer to a C2paStream (the fragment stream).
+/// * After calling this function, the `reader` pointer is INVALID.
+///
+/// # Returns
+///
+/// A pointer to a newly configured C2paReader, or NULL on error.
+///
+/// # Example
+///
+/// ```c
+/// C2paReader* reader = c2pa_reader_from_context(ctx);
+/// C2paReader* new_reader = c2pa_reader_with_fragment(reader, "video/mp4", main_stream, fragment_stream);
+/// // reader is now invalid, use new_reader
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_with_fragment(
+    reader: *mut C2paReader,
+    format: *const c_char,
+    stream: *mut C2paStream,
+    fragment: *mut C2paStream,
+) -> *mut C2paReader {
+    // Take ownership of the reader (consumes it)
+    let reader = Box::from_raw(reader);
+    let format = cstr_or_return_null!(format);
+    let stream = deref_mut_or_return_null!(stream, C2paStream);
+    let fragment = deref_mut_or_return_null!(fragment, C2paStream);
+
+    let result = (*reader).with_fragment(&format, stream, fragment);
+    let result = ok_or_return_null!(post_validate(result));
+    box_tracked!(result)
+}
+
 /// Creates a new C2paReader from a shared Context.
 ///
 /// # Safety
@@ -1125,6 +1053,34 @@ pub unsafe extern "C" fn c2pa_builder_from_json(manifest_json: *const c_char) ->
     box_tracked!(result)
 }
 
+/// Creates a C2paBuilder from a shared Context.
+///
+/// The context can be reused to create multiple builders and readers.
+/// The builder will inherit the context's settings, signers, and resolvers.
+///
+/// # Safety
+///
+/// * `context` must be a valid pointer to a C2paContext object.
+/// * The context pointer remains valid after this call and can be reused.
+///
+/// # Returns
+///
+/// A pointer to a newly allocated C2paBuilder, or NULL on error.
+///
+/// # Example
+///
+/// ```c
+/// C2paContext* ctx = c2pa_context_new();
+/// C2paBuilder* builder = c2pa_builder_from_context(ctx);
+/// // context can still be used
+/// C2paReader* reader = c2pa_reader_from_context(ctx);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_from_context(context: *mut C2paContext) -> *mut C2paBuilder {
+    let context = deref_or_return_null!(context, C2paContext);
+    box_tracked!(C2paBuilder::from_shared_context(context))
+}
+
 /// Create a C2paBuilder from an archive stream.
 ///
 /// # Errors
@@ -1176,6 +1132,77 @@ pub unsafe extern "C" fn c2pa_builder_supported_mime_types(
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) {
     cimpl_free!(builder_ptr);
+}
+
+/// Updates the builder with a new manifest definition.
+///
+/// This consumes the original builder and returns a new configured builder.
+/// The original builder pointer becomes invalid after this call.
+///
+/// # Safety
+///
+/// * `builder` must be a valid pointer to a C2paBuilder.
+/// * `manifest_json` must be a valid null-terminated JSON string.
+/// * After calling this function, the `builder` pointer is INVALID.
+///
+/// # Returns
+///
+/// A pointer to a newly configured C2paBuilder, or NULL on error.
+///
+/// # Example
+///
+/// ```c
+/// C2paBuilder* builder = c2pa_builder_from_context(ctx);
+/// const char* json = "{\"title\": \"Updated Title\"}";
+/// C2paBuilder* new_builder = c2pa_builder_with_definition(builder, json);
+/// // builder is now invalid, use new_builder
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_with_definition(
+    builder: *mut C2paBuilder,
+    manifest_json: *const c_char,
+) -> *mut C2paBuilder {
+    // Take ownership of the builder (consumes it)
+    let builder = Box::from_raw(builder);
+    let manifest_json = cstr_or_return_null!(manifest_json);
+
+    let result = (*builder).with_definition(manifest_json);
+    box_tracked!(ok_or_return_null!(result))
+}
+
+/// Configures an existing builder with an archive stream.
+///
+/// This consumes the original builder and returns a new configured builder.
+/// The original builder pointer becomes invalid after this call.
+///
+/// # Safety
+///
+/// * `builder` must be a valid pointer to a C2paBuilder.
+/// * `stream` must be a valid pointer to a C2paStream.
+/// * After calling this function, the `builder` pointer is INVALID.
+///
+/// # Returns
+///
+/// A pointer to a newly configured C2paBuilder, or NULL on error.
+///
+/// # Example
+///
+/// ```c
+/// C2paBuilder* builder = c2pa_builder_from_context(ctx);
+/// C2paBuilder* new_builder = c2pa_builder_with_archive(builder, archive_stream);
+/// // builder is now invalid, use new_builder
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_with_archive(
+    builder: *mut C2paBuilder,
+    stream: *mut C2paStream,
+) -> *mut C2paBuilder {
+    // Take ownership of the builder (consumes it)
+    let builder = Box::from_raw(builder);
+    let stream = deref_mut_or_return_null!(stream, C2paStream);
+
+    let result = (*builder).with_archive(stream);
+    box_tracked!(ok_or_return_null!(result))
 }
 
 /// Sets the builder intent on the Builder.
