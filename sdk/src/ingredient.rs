@@ -1297,7 +1297,11 @@ impl Ingredient {
                 Some(h) => {
                     let hash = base64::decode(h)
                         .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?;
-                    Some(HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash))
+                    Some(HashedUri::new(
+                        thumb_ref.identifier.clone(),
+                        thumb_ref.alg.clone(),
+                        &hash,
+                    ))
                 }
                 None if auto_thumbnail => {
                     // only process thumbnails without hash if auto_thumbnail is enabled
