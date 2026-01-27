@@ -1671,6 +1671,7 @@ impl Builder {
 
         // check settings to see if we should auto generate a thumbnail
         let auto_thumbnail = self.context.settings().builder.thumbnail.enabled;
+
         if self.definition.thumbnail.is_none() && auto_thumbnail {
             stream.rewind()?;
 
