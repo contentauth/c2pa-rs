@@ -258,8 +258,7 @@ impl Manifest {
             .map(|cose_sign1| cose_sign1.signature.as_slice())
     }
 
-    /// Returns the `ToBeSigned` value which is obtained by CBOR-encoding the `Sig_structure` with a "v2 payload" as
-    /// defined by:
+    /// Returns the CBOR-encoded `Sig_structure` containing  a "v2 payload" as defined by:
     /// - [C2PA spec (§10.3.2.5 Time-stamps)](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_time_stamps)
     /// - [RFC 8152 spec (§4.4 Signing and Verification Process)](https://datatracker.ietf.org/doc/html/rfc8152)
     ///
@@ -267,7 +266,7 @@ impl Manifest {
     /// be used for obtaining a timestamp token.
     ///
     /// Note this function is for advanced users performing timestamping on their own behalf.
-    pub fn timestamp_v2_to_be_signed_value(&self) -> Result<Option<Vec<u8>>> {
+    pub fn timestamp_v2_sig_structure(&self) -> Result<Option<Vec<u8>>> {
         if let Some(cose_sign1) = &self.cose_sign1 {
             let mut signature_cbor: Vec<u8> = vec![];
             ciborium::into_writer(&cose_sign1.signature, &mut signature_cbor)
