@@ -507,7 +507,7 @@ impl Default for TimeStampSettings {
 // TODO: do more validation on URL fields, cert fields, etc.
 /// Settings for the [Builder][crate::Builder].
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Default)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct BuilderSettings {
     /// The name of the vendor creating the content credential.
     pub vendor: Option<String>,
@@ -562,12 +562,28 @@ pub struct BuilderSettings {
     /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_fields>
     pub created_assertion_labels: Option<Vec<String>>,
     /// Whether to generate a C2PA archive (instead of zip) when writing the manifest builder.
-    /// This will eventually become the default behavior.
+    /// Now always defaults to true - the ability to disable it will be removed in the future.
     pub generate_c2pa_archive: Option<bool>,
     /// Settings for configuring auto-generation of the [`TimeStamp`] assertion.
     ///
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     pub auto_timestamp_assertion: TimeStampSettings,
+}
+
+impl Default for BuilderSettings {
+    fn default() -> Self {
+        BuilderSettings {
+            vendor: None,
+            claim_generator_info: None,
+            thumbnail: ThumbnailSettings::default(),
+            actions: ActionsSettings::default(),
+            certificate_status_fetch: None,
+            certificate_status_should_override: None,
+            intent: None,
+            created_assertion_labels: None,
+            generate_c2pa_archive: Some(true),
+        }
+    }
 }
 
 /// The scope of which manifests to fetch for OCSP.

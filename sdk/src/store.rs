@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::{
     collections::{HashMap, HashSet},
-    io::{Cursor, Read, Seek},
+    io::{Cursor, Read, Seek, SeekFrom},
 };
 
 use async_generic::async_generic;
@@ -2191,6 +2191,11 @@ impl Store {
 
         let mut hashes: Vec<DataHash> = Vec::new();
 
+        // Create a DataHash regardless of whether JUMBF is found or not...
+        // For remote manifests with no embedded JUMBF, creates a hash with no exclusions,
+        // because there is nothing to exclude from the hashing (since nothing is embedded)
+        let mut dh = DataHash::new("jumbf manifest", alg);
+
         // sort blocks by offset
         block_locations.sort_by(|a, b| a.offset.cmp(&b.offset));
 
@@ -2211,12 +2216,12 @@ impl Store {
             if found_jumbf && item.htype == HashBlockObjectType::Cai {
                 block_end = item.offset + item.length;
             }
-        }
 
-        // Create a DataHash regardless of whether JUMBF is found or not...
-        // For remote manifests with no embedded JUMBF, creates a hash with no exclusions,
-        // because there is nothing to exclude from the hashing (since nothing is embedded)
-        let mut dh = DataHash::new("jumbf manifest", alg);
+            // add explict exclusion ranges
+            if item.htype == HashBlockObjectType::OtherExclusion {
+                dh.add_exclusion(HashRange::new(item.offset as u64, item.length as u64));
+            }
+        }
 
         if found_jumbf {
             // add exclusion for embedded jumbf
@@ -3030,6 +3035,7 @@ impl Store {
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         intermediate_stream.rewind()?;
+        output_stream.rewind()?;
         match self.finish_save_stream(
             jumbf_bytes,
             format,
@@ -3048,7 +3054,7 @@ impl Store {
 
                 let verify_after_sign = settings.verify.verify_after_sign;
                 // Also catch the case where we may have written to io::empty() or similar
-                if verify_after_sign && output_stream.stream_position()? > 0 {
+                if verify_after_sign && output_stream.seek(SeekFrom::End(0))? > 0 {
                     // verify the store
                     let mut validation_log =
                         StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
@@ -3262,6 +3268,18 @@ impl Store {
                 output_stream.rewind()?;
                 let mut new_hash_ranges = object_locations_from_stream(format, output_stream)?;
                 if !pc.update_manifest() {
+                    // if we removed the manifest fixup the hash range to be empty
+                    if remove_manifests {
+                        new_hash_ranges.iter_mut().for_each(|h| {
+                            if h.htype == HashBlockObjectType::Cai
+                                || h.htype == HashBlockObjectType::OtherExclusion
+                            {
+                                h.offset = 0;
+                                h.length = 0;
+                            }
+                        });
+                    }
+
                     let updated_hashes = Store::generate_data_hashes_for_stream(
                         output_stream,
                         pc.alg(),
@@ -6845,7 +6863,7 @@ pub mod tests {
         // expect action error
         assert!(store.is_err());
         assert!(report.has_error(Error::ValidationRule(
-            "opened, placed and removed items must have parameters".into()
+            "opened, placed and removed items must have ingredient(s) parameters".into()
         )));
         assert!(report.filter_errors().count() == 2);
     }

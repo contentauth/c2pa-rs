@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.75.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.6...c2pa-c-ffi-v0.75.7)
+_27 January 2026_
+
+## [0.75.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.5...c2pa-c-ffi-v0.75.6)
+_22 January 2026_
+
+## [0.75.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.4...c2pa-c-ffi-v0.75.5)
+_21 January 2026_
+
+## [0.75.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.3...c2pa-c-ffi-v0.75.4)
+_16 January 2026_
+
+## [0.75.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.2...c2pa-c-ffi-v0.75.3)
+_16 January 2026_
+
+## [0.75.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.1...c2pa-c-ffi-v0.75.2)
+_15 January 2026_
+
+## [0.75.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.0...c2pa-c-ffi-v0.75.1)
+_15 January 2026_
+
+### Fixed
+
+* Verify after sign not executing ([#1638](https://github.com/contentauth/c2pa-rs/pull/1638))
+
+## [0.75.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.74.0...c2pa-c-ffi-v0.75.0)
+_14 January 2026_
+
+### Added
+
+* Deeper integration of Context into the SDK ([#1710](https://github.com/contentauth/c2pa-rs/pull/1710))
+
 ## [0.73.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.73.2...c2pa-c-ffi-v0.73.3)
 _07 January 2026_
 

@@ -1,6 +1,5 @@
 name: 🐛 Bug report
 description: Report a problem or unexpected behavior
-labels: [bug]
 body:
   - type: dropdown
     id: component

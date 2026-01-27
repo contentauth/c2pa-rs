@@ -371,7 +371,7 @@ impl Default for Verify {
     fn default() -> Self {
         Self {
             verify_after_reading: true,
-            verify_after_sign: true,
+            verify_after_sign: false,
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
@@ -812,14 +812,14 @@ impl Settings {
         let updated_config = Config::builder()
             .add_source(config)
             .set_override(path, value)
-            .map_err(|e| Error::BadParam(format!("Invalid path '{}': {}", path, e)))?
+            .map_err(|e| Error::BadParam(format!("Invalid path '{path}': {e}")))?
             .build()
             .map_err(|e| Error::OtherError(Box::new(e)))?;
 
         // Deserialize back to Settings
         let updated_settings = updated_config
             .try_deserialize::<Settings>()
-            .map_err(|e| Error::BadParam(format!("Invalid value for '{}': {}", path, e)))?;
+            .map_err(|e| Error::BadParam(format!("Invalid value for '{path}': {e}")))?;
 
         // Validate the updated settings
         updated_settings.validate()?;
@@ -902,7 +902,7 @@ impl Settings {
 
         config
             .get::<T>(path)
-            .map_err(|e| Error::BadParam(format!("Failed to get value at '{}': {}", path, e)))
+            .map_err(|e| Error::BadParam(format!("Failed to get value at '{path}': {e}")))
     }
 }
 
@@ -1258,7 +1258,7 @@ pub mod tests {
         let mut settings = Settings::default();
 
         // Check defaults
-        assert!(settings.verify.verify_after_sign);
+        assert!(settings.verify.verify_after_reading);
         assert!(settings.verify.verify_trust);
 
         // Set both to false
@@ -1266,14 +1266,14 @@ pub mod tests {
             .update_from_str(
                 r#"
             [verify]
-            verify_after_sign = false
+            verify_after_reading = false
             verify_trust = false
         "#,
                 "toml",
             )
             .unwrap();
 
-        assert!(!settings.verify.verify_after_sign);
+        assert!(!settings.verify.verify_after_reading);
         assert!(!settings.verify.verify_trust);
 
         // Override: set one to true, keep other false
@@ -1281,13 +1281,13 @@ pub mod tests {
             .update_from_str(
                 r#"
             [verify]
-            verify_after_sign = true
+            verify_after_reading = true
         "#,
                 "toml",
             )
             .unwrap();
 
-        assert!(settings.verify.verify_after_sign);
+        assert!(settings.verify.verify_after_reading);
         assert!(!settings.verify.verify_trust);
     }
 
@@ -1296,7 +1296,7 @@ pub mod tests {
         let mut settings = Settings::default();
 
         // Check defaults
-        assert!(settings.verify.verify_after_sign);
+        assert!(settings.verify.verify_after_reading);
         assert!(settings.verify.verify_trust);
         assert!(settings.builder.created_assertion_labels.is_none());
 
@@ -1306,7 +1306,7 @@ pub mod tests {
                 r#"
             {
                 "verify": {
-                    "verify_after_sign": false,
+                    "verify_after_reading": false,
                     "verify_trust": false
                 },
                 "builder": {
@@ -1318,7 +1318,7 @@ pub mod tests {
             )
             .unwrap();
 
-        assert!(!settings.verify.verify_after_sign);
+        assert!(!settings.verify.verify_after_reading);
         assert!(!settings.verify.verify_trust);
         assert_eq!(
             settings.builder.created_assertion_labels,
@@ -1331,7 +1331,7 @@ pub mod tests {
                 r#"
             {
                 "verify": {
-                    "verify_after_sign": true
+                    "verify_after_reading": true
                 }
             }
         "#,
@@ -1339,7 +1339,7 @@ pub mod tests {
             )
             .unwrap();
 
-        assert!(settings.verify.verify_after_sign);
+        assert!(settings.verify.verify_after_reading);
         assert!(!settings.verify.verify_trust);
         assert_eq!(
             settings.builder.created_assertion_labels,
@@ -1360,7 +1360,7 @@ pub mod tests {
             )
             .unwrap();
 
-        assert!(settings.verify.verify_after_sign);
+        assert!(settings.verify.verify_after_reading);
         assert!(!settings.verify.verify_trust);
         assert!(settings.builder.created_assertion_labels.is_none());
     }

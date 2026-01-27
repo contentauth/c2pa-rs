@@ -117,7 +117,7 @@ const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
 coset = "0.4.0"
 der = { version = "0.7.9", features = ["alloc"] }
-extfmt = "0.1.1"
+extfmt = "0.2.0"
 ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
 ed25519-dalek = { version = "2.1.1", features = [
     "alloc",
@@ -131,17 +131,17 @@ hex = "0.4.3"
 hex-literal = "1.0.0" # Might be only a dev dependency
 http = "1.3.1"
 id3 = "1.16.3"
-img-parts = "0.3.2"
+img-parts = "0.4.0"
 iref = { version = "3.2.2", features = ["serde"] }
 jfifdump = "0.6.0"
 log = "0.4.8"
-lopdf = { version = "0.38.0", optional = true }
+lopdf = { version = "0.39.0", optional = true }
 lazy_static = "1.4.0"
 memchr = "2.7.6"
 mp4 = "0.14.0"
 nom = "7.1.3"
 non-empty-string = { version = "0.2.6", features = ["serde"] }
-nonempty-collections = { version = "0.3.1", features = ["serde"] }
+nonempty-collections = { version = "1.2.1", features = ["serde"] }
 num-bigint-dig = { version = "0.8.4", optional = true }
 p256 = { version = "0.13.2", optional = true }
 p384 = { version = "0.13.0", optional = true }
@@ -154,10 +154,10 @@ pem = "3.0.6"
 pkcs1 = { version = "0.7.5", optional = true }
 pkcs8 = "0.10.2"
 png_pong = "0.9.1"
-quick-xml = "0.38.3"
+quick-xml = "0.39.0"
 rand = "0.8.5"
 rand_chacha = { version = "0.9.0", features = ["os_rng"] }
-range-set = "0.0.11"
+range-set = "0.1.0"
 rasn = "0.28.2"
 rasn-cms = "0.28.2"
 rasn-ocsp = "0.28.2"
@@ -183,7 +183,6 @@ uuid = { version = "1.18.0", features = ["serde", "v4"] }
 web-time = "1.1"
 x509-parser = "0.18.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
-zip = { version = "6.0.0", default-features = false }
 
 # Use the asm feature of sha2 on aarch64 macOS for better performance. This nearly
 # halves hashing time for large assets (> 50gb mp4, for example).
@@ -211,10 +210,13 @@ openssl = { version = "0.10.72", features = ["vendored"], optional = true }
 ureq = { version = "3.1.0", default-features = false, features = [
     "rustls"
 ], optional = true }
+zip = { version = "7.0.0", default-features = false }
 
 [target.'cfg(target_os = "wasi")'.dependencies]
 wasi = { version = "0.14.3", optional = true }
 wstd = { version = "0.5.4", optional = true }
+# Use zip 6 for WASI to avoid typed-path wasip2 issue. Fix: http://github.com/chipsenkbeil/typed-path/pull/57
+zip = { version = "6.0.0", default-features = false }
 
 # `wstd` is required for testing, but optional as a normal dependency.
 [target.'cfg(target_os = "wasi")'.dev-dependencies]
@@ -282,6 +284,7 @@ web-sys = { version = "0.3.58", features = [
     "Window",
     "WorkerGlobalScope",
 ] }
+zip = { version = "7.0.0", default-features = false }
 
 [dev-dependencies]
 anyhow = "1.0.97"
