@@ -385,10 +385,10 @@ pub struct Builder {
     /// In most cases, you create this from a JSON manifest definition.
     pub definition: ManifestDefinition,
 
-    /// Optional remote URL for the manifest
+    /// Optional remote URL for the manifest.
     pub remote_url: Option<String>,
 
-    /// If true, the manifest store will not be embedded in the asset on sign
+    /// If true, the manifest store will not be embedded in the asset on sign.
     pub no_embed: bool,
 
     /// Base path to search for resources.
@@ -513,13 +513,13 @@ impl Builder {
     /// Sets the [`BuilderIntent`] for this [`Builder`].
     ///
     /// An intent lets the API know what kind of manifest to create.
-    /// Intents are `Create`, `Edit`, or `Update`.
-    /// This allows the API to check that you are doing the right thing.
+    /// and check that you are doing the right thing.
     /// It can also do things for you, like add parent ingredients from the source asset
     /// and automatically add required c2pa.created or c2pa.opened actions.
-    /// Create requires a `DigitalSourceType`. It is used for assets without a parent ingredient.
-    /// Edit requires a parent ingredient and is used for most assets that are being edited.
-    /// Update is a special case with many restrictions but is more compact than Edit.
+    /// Intents are `Create`, `Edit`, or `Update`:
+    /// - `Create` requires a `DigitalSourceType` and is used for assets without a parent ingredient.
+    /// - `Edit` requires a parent ingredient and is used for most assets that are being edited.
+    /// - `Update` is a special case with many restrictions but is more compact than `Edit`.
     /// # Arguments
     /// * `intent` - The [`BuilderIntent`] for this [`Builder`].
     /// # Returns
@@ -607,7 +607,7 @@ impl Builder {
         Ok(self)
     }
 
-    /// Returns a [Vec] of mime types that [c2pa-rs] is able to sign.
+    /// Returns a [Vec] of MIME types that the API is able to sign.
     pub fn supported_mime_types() -> Vec<String> {
         jumbf_io::supported_builder_mime_types()
     }
