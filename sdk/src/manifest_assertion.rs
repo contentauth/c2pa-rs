@@ -1,7 +1,7 @@
+use c2pa_cbor::Value as CborValue;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize}; //,  Deserializer, Serializer};
-use serde_cbor::Value as CborValue;
 use serde_json::Value;
 
 use crate::{
