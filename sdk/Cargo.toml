@@ -107,7 +107,7 @@ bytes = "1.7.2"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
-c2pa_cbor = { path = "../c2pa_cbor" }
+c2pa_cbor = "0.77.0"
 config = { version = "0.14.0", default-features = false, features = [
     "json",
     "toml",
