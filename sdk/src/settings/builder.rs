@@ -582,6 +582,7 @@ impl Default for BuilderSettings {
             intent: None,
             created_assertion_labels: None,
             generate_c2pa_archive: Some(true),
+            auto_timestamp_assertion: TimeStampSettings::default(),
         }
     }
 }
