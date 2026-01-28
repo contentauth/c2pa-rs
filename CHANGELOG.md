@@ -15,6 +15,7 @@ _28 January 2026_
 ### Fixed
 
 * MP3's GEOB MIME type ([#1790](https://github.com/contentauth/c2pa-rs/pull/1790))
+* Removed dependency on unmaintained `serde_cbor` crate ([#1739](https://github.com/contentauth/c2pa-rs/pull/1739))
 
 ## [0.75.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.6...c2pa-v0.75.7)
 _27 January 2026_
