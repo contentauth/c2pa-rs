@@ -5,6 +5,7 @@ use crate::{
         restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
         BoxedAsyncResolver, BoxedSyncResolver, SyncGenericResolver, SyncHttpResolver,
     },
+    maybe_send_sync::{MaybeSend, MaybeSync},
     settings::Settings,
     signer::{BoxedAsyncSigner, BoxedSigner},
     AsyncSigner, Error, Result, Signer,
@@ -57,6 +58,12 @@ pub trait IntoSettings {
 impl IntoSettings for Settings {
     fn into_settings(self) -> Result<Settings> {
         Ok(self)
+    }
+}
+
+impl IntoSettings for &Settings {
+    fn into_settings(self) -> Result<Settings> {
+        Ok(self.clone())
     }
 }
 
@@ -277,6 +284,11 @@ impl Context {
         Ok(self)
     }
 
+    pub fn set_settings<S: IntoSettings>(&mut self, settings: S) -> Result<()> {
+        self.settings = settings.into_settings()?;
+        Ok(())
+    }
+
     /// Returns a reference to the settings.
     ///
     /// # Examples
@@ -310,8 +322,7 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `SyncHttpResolver`
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_resolver<T: SyncHttpResolver + Send + Sync + 'static>(
+    pub fn with_resolver<T: SyncHttpResolver + MaybeSend + MaybeSync + 'static>(
         mut self,
         resolver: T,
     ) -> Self {
@@ -319,10 +330,12 @@ impl Context {
         self
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub fn with_resolver<T: SyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
+    pub fn set_resolver<T: SyncHttpResolver + MaybeSend + MaybeSync + 'static>(
+        &mut self,
+        resolver: T,
+    ) -> Result<()> {
         self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
-        self
+        Ok(())
     }
 
     /// Configure this Context with a custom asynchronous HTTP resolver.
@@ -332,8 +345,7 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `AsyncHttpResolver`
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_resolver_async<T: AsyncHttpResolver + Send + Sync + 'static>(
+    pub fn with_resolver_async<T: AsyncHttpResolver + MaybeSend + MaybeSync + 'static>(
         mut self,
         resolver: T,
     ) -> Self {
@@ -341,10 +353,12 @@ impl Context {
         self
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub fn with_resolver_async<T: AsyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
+    pub fn set_resolver_async<T: AsyncHttpResolver + MaybeSend + MaybeSync + 'static>(
+        &mut self,
+        resolver: T,
+    ) -> Result<()> {
         self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
-        self
+        Ok(())
     }
 
     /// Returns a reference to the sync resolver.
@@ -411,16 +425,25 @@ impl Context {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_signer<T: Signer + Send + Sync + 'static>(mut self, signer: T) -> Self {
+    pub fn with_signer<T: Signer + MaybeSend + MaybeSync + 'static>(mut self, signer: T) -> Self {
         self.signer = SignerState::Custom(Box::new(signer));
         self
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub fn with_signer<T: Signer + 'static>(mut self, signer: T) -> Self {
+    pub fn set_signer<T: Signer + MaybeSend + MaybeSync + 'static>(
+        &mut self,
+        signer: T,
+    ) -> Result<()> {
         self.signer = SignerState::Custom(Box::new(signer));
-        self
+        Ok(())
+    }
+
+    pub fn set_async_signer<T: AsyncSigner + MaybeSend + MaybeSync + 'static>(
+        &mut self,
+        signer: T,
+    ) -> Result<()> {
+        self.async_signer = AsyncSignerState::Custom(Box::new(signer));
+        Ok(())
     }
 
     /// Returns a reference to the signer.

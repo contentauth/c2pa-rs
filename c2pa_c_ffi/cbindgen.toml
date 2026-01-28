@@ -57,3 +57,7 @@ after_includes = """
 
 [fn]
 prefix = "C2PA_API extern"
+
+[export]
+# Exclude internal functions from C API
+exclude = ["cimpl_free"]
