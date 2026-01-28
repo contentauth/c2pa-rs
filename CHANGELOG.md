@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.75.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.7...c2pa-v0.75.8)
+_28 January 2026_
+
+### Fixed
+
+* MP3's GEOB MIME type ([#1790](https://github.com/contentauth/c2pa-rs/pull/1790))
+
 ## [0.75.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.6...c2pa-v0.75.7)
 _27 January 2026_
 
