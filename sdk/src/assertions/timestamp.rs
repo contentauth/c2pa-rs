@@ -34,7 +34,7 @@ use crate::{
 pub struct TimeStamp(pub HashMap<String, ByteBuf>);
 
 impl TimeStamp {
-    /// Label prefix for an [`TimeStamp`] assertion.
+    /// Label prefix for a [`TimeStamp`] assertion.
     ///
     /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
     pub const LABEL: &'static str = labels::TIMESTAMP;
