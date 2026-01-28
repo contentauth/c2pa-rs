@@ -74,17 +74,13 @@ fn sanitize_archive_path(path: &str) -> Result<String> {
     // Reject paths that start with '/' (absolute paths)
     if path.starts_with('/') || path.starts_with('\\') {
         return Err(Error::BadParam(format!(
-            "Absolute path not allowed: {}",
-            path
+            "Absolute path not allowed: {path}"
         )));
     }
 
     // Check for drive letters on Windows (e.g., "C:")
     if path.len() >= 2 && path.chars().nth(1) == Some(':') {
-        return Err(Error::BadParam(format!(
-            "Drive letter not allowed: {}",
-            path
-        )));
+        return Err(Error::BadParam(format!("Drive letter not allowed: {path}")));
     }
 
     // Split the path and check each component
@@ -94,8 +90,7 @@ fn sanitize_archive_path(path: &str) -> Result<String> {
         // Reject '..' components
         if *component == ".." {
             return Err(Error::BadParam(format!(
-                "Path traversal not allowed: {}",
-                path
+                "Path traversal not allowed: {path}"
             )));
         }
 
@@ -2396,6 +2391,7 @@ mod tests {
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
     const TEST_IMAGE_CLOUD: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    const TEST_IMAGE_TIFF: &[u8] = include_bytes!("../tests/fixtures/test.tiff");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
     const TEST_MANIFEST_CLOUD: &[u8] = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
 
@@ -4012,6 +4008,65 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_archive_format_variants() -> Result<()> {
+        use std::io::Read;
+
+        // Test 1: New C2PA format (generate_c2pa_archive = true)
+        let settings_new = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context_new = Context::new().with_settings(settings_new)?;
+        let mut builder_new = Builder::from_context(context_new)
+            .with_definition(r#"{"title": "Test New Format"}"#)?;
+
+        let mut archive_new = Cursor::new(Vec::new());
+        builder_new.to_archive(&mut archive_new)?;
+
+        // Verify it's C2PA format (starts with JUMBF box signature)
+        archive_new.rewind()?;
+        let mut header = [0u8; 12];
+        archive_new.read_exact(&mut header)?;
+        // C2PA archives should start with JUMBF box structure
+        // Check for "jumb" box type at offset 4-8
+        assert_eq!(
+            &header[4..8],
+            b"jumb",
+            "Should be C2PA/JUMBF format with 'jumb' box"
+        );
+
+        // Test 2: Old ZIP format (generate_c2pa_archive = false)
+        let settings_old = Settings::new().with_value("builder.generate_c2pa_archive", false)?;
+
+        let context_old = Context::new().with_settings(settings_old)?;
+        let mut builder_old = Builder::from_context(context_old)
+            .with_definition(r#"{"title": "Test Old Format"}"#)?;
+
+        let mut archive_old = Cursor::new(Vec::new());
+        builder_old.to_archive(&mut archive_old)?;
+
+        // Verify it's ZIP format (starts with PK signature)
+        archive_old.rewind()?;
+        let mut zip_header = [0u8; 4];
+        archive_old.read_exact(&mut zip_header)?;
+        assert_eq!(&zip_header[0..2], b"PK", "Should be ZIP format");
+
+        // Test 3: Verify both can be read back
+        archive_new.rewind()?;
+        let loaded_new = Builder::from_archive(archive_new)?;
+        assert_eq!(
+            loaded_new.definition.title,
+            Some("Test New Format".to_string())
+        );
+
+        archive_old.rewind()?;
+        let loaded_old = Builder::from_archive(archive_old)?;
+        assert_eq!(
+            loaded_old.definition.title,
+            Some("Test Old Format".to_string())
+        );
+
+        Ok(())
+    }
+
     /// Test Builder add_action with a serde_json::Value
     #[test]
     fn test_builder_add_action_with_value() {
@@ -4047,6 +4102,8 @@ mod tests {
     #[test]
     fn test_builder_set_base_path() {
         let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
         let ingredient_folder = fixture_path("ingredient");
         builder.set_base_path(&ingredient_folder);
 
@@ -4307,5 +4364,37 @@ mod tests {
             .find(|assertion| assertion.label().starts_with(Actions::LABEL))
             .unwrap();
         assert!(actions_assertion.created());
+    }
+
+    #[test]
+    fn test_builder_sign_tiff() {
+        let format = "image/tiff";
+        let mut source = Cursor::new(TEST_IMAGE_TIFF);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .unwrap();
+
+        // read and validate the signed manifest store
+        dest.rewind().unwrap();
+        let reader = Reader::from_stream(format, &mut dest).expect("from_stream");
+
+        // Verify there is no data hash mismatch error in validation status
+        if let Some(status) = reader.validation_status() {
+            for s in status {
+                assert_ne!(
+                    s.code(),
+                    "assertion.dataHash.mismatch",
+                    "TIFF signing produced a data hash mismatch error"
+                );
+            }
+        }
+
+        assert!(reader.active_manifest().is_some());
     }
 }

@@ -2392,6 +2392,15 @@ mod tests {
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::Empty,
+            )
+        };
+        assert_eq!(result, 0);
+
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
 
