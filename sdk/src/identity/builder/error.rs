@@ -40,8 +40,8 @@ pub enum IdentityBuilderError {
     InternalError(String),
 }
 
-impl<T: Debug> From<ciborium::ser::Error<T>> for IdentityBuilderError {
-    fn from(err: ciborium::ser::Error<T>) -> Self {
+impl From<c2pa_cbor::Error> for IdentityBuilderError {
+    fn from(err: c2pa_cbor::Error) -> Self {
         Self::CborGenerationError(err.to_string())
     }
 }
@@ -62,13 +62,11 @@ mod tests {
         wasm_bindgen_test
     )]
     fn impl_from_ciborium_err() {
-        let ciborium_err: ciborium::ser::Error<String> =
-            ciborium::ser::Error::Value("foo".to_string());
+        let ciborium_err = c2pa_cbor::Error::Io(std::io::Error::other("test error"));
         let builder_err: IdentityBuilderError = ciborium_err.into();
 
-        assert_eq!(
-            builder_err.to_string(),
-            "error while generating CBOR (Value(\"foo\"))"
-        );
+        assert!(builder_err
+            .to_string()
+            .contains("error while generating CBOR"));
     }
 }

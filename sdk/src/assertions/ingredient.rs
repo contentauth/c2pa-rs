@@ -652,14 +652,14 @@ impl AssertionBase for Ingredient {
 
     fn to_assertion(&self) -> Result<Assertion> {
         let data = crate::assertion::AssertionData::Cbor(
-            serde_cbor::to_vec(self).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
+            c2pa_cbor::to_vec(self).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
         );
         Ok(Assertion::new(self.label(), self.version(), data))
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self> {
-        let ingredient_value: serde_cbor::Value = serde_cbor::from_slice(assertion.data())
-            .map_err(|e| {
+        let ingredient_value: c2pa_cbor::Value =
+            c2pa_cbor::from_slice(assertion.data()).map_err(|e| {
                 Error::AssertionDecoding(AssertionDecodeError::from_err(
                     assertion.label(),
                     Some(assertion.get_ver()),
@@ -720,9 +720,9 @@ impl AssertionBase for Ingredient {
         let decoded = match version {
             1 => {
                 // make sure only V1 fields are present
-                if let serde_cbor::Value::Map(m) = &ingredient_value {
+                if let c2pa_cbor::Value::Map(m) = &ingredient_value {
                     if !m.keys().all(|v| match v {
-                        serde_cbor::Value::Text(t) => V1_FIELDS.contains(&t.as_str()),
+                        c2pa_cbor::Value::Text(t) => V1_FIELDS.contains(&t.as_str()),
                         _ => false,
                     }) {
                         return Err(to_decoding_err(
@@ -782,9 +782,9 @@ impl AssertionBase for Ingredient {
             }
             2 => {
                 // make sure only V2 fields are present
-                if let serde_cbor::Value::Map(m) = &ingredient_value {
+                if let c2pa_cbor::Value::Map(m) = &ingredient_value {
                     if !m.keys().all(|v| match v {
-                        serde_cbor::Value::Text(t) => V2_FIELDS.contains(&t.as_str()),
+                        c2pa_cbor::Value::Text(t) => V2_FIELDS.contains(&t.as_str()),
                         _ => false,
                     }) {
                         return Err(to_decoding_err(
@@ -853,9 +853,9 @@ impl AssertionBase for Ingredient {
             }
             3 => {
                 // make sure only V3 fields are present
-                if let serde_cbor::Value::Map(m) = &ingredient_value {
+                if let c2pa_cbor::Value::Map(m) = &ingredient_value {
                     if !m.keys().all(|v| match v {
-                        serde_cbor::Value::Text(t) => V3_FIELDS.contains(&t.as_str()),
+                        c2pa_cbor::Value::Text(t) => V3_FIELDS.contains(&t.as_str()),
                         _ => false,
                     }) {
                         return Err(to_decoding_err(
