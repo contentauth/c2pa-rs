@@ -31,7 +31,7 @@
 //!
 //! ## Reading a manifest
 //!
-//! TODO - Update to use Context
+//! TODO: Update to use Context
 //!
 //! ```
 //! # use c2pa::Result;
@@ -54,7 +54,7 @@
 //!
 //! ## Adding a signed manifest to a file
 //!
-//! TODO - Change example to be a more common case - Adding parent with intent, ingredient.
+//! TODO: Change example to be a more common case - Adding parent with intent, ingredient.
 //!
 //! ```
 //! # use c2pa::Result;
@@ -102,10 +102,10 @@
 //! - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
 //! - **pdf**: Enables basic PDF read support.
 //! - **rust_native_crypto**: Use Rust native cryptography.  
-//! TODO - Confirm behavior with openssl 
+//! TODO: Confirm behavior with openssl 
 //!
 //! ## HTTP features
-//! TODO - Rationalize the HTTP features
+//! TODO: Rationalize the HTTP features
 //! - **http_ureq**: Enables `ureq` for sync HTTP requests.
 //! - **http_reqwest**: Enables `reqwest` for async HTTP requests.
 //! - **http_reqwest_blocking**: Enables the `blocking` feature of `reqwest` for sync HTTP requests.
