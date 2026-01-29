@@ -623,6 +623,7 @@ impl Manifest {
                             let value = assertion.as_json_object()?;
                             let ma = ManifestAssertion::new(label, value)
                                 .set_instance(claim_assertion.instance())
+                                .set_kind(ManifestAssertionKind::Cbor)
                                 .set_created(created);
 
                             manifest.assertions.push(ma);
