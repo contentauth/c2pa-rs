@@ -567,9 +567,9 @@ pub mod tests {
             .set_field("objectField", json!({"a": 1, "b": "two"}));
 
         // Convert to CBOR and back
-        let cbor_bytes = serde_cbor::to_vec(&original).expect("serialize to CBOR");
+        let cbor_bytes = c2pa_cbor::to_vec(&original).expect("serialize to CBOR");
         let result: AssertionMetadata =
-            serde_cbor::from_slice(&cbor_bytes).expect("deserialize from CBOR");
+            c2pa_cbor::from_slice(&cbor_bytes).expect("deserialize from CBOR");
 
         // Verify all fields
         assert_eq!(result.get_field("stringField"), Some(&json!("test")));
