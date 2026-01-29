@@ -734,8 +734,9 @@ fn test_ingredient_arbitrary_metadata_fields() -> Result<()> {
     let ingredient = &ingredients[0];
 
     // Verify standard metadata field
+    assert_eq!(ingredient["metadata"]["dateTime"]["tag"].as_i64(), Some(0));
     assert_eq!(
-        ingredient["metadata"]["dateTime"].as_str(),
+        ingredient["metadata"]["dateTime"]["value"].as_str(),
         Some("2024-01-23T10:00:00Z")
     );
 
