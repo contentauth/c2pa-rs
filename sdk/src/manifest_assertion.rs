@@ -173,22 +173,6 @@ impl ManifestAssertion {
     }
 
     /// Creates a ManifestAssertion from an AssertionBase object, preserving CBOR encoding
-    ///
-    /// This is preferred over `from_assertion` for assertions that use custom CBOR encoding
-    /// (like TimeStamp) as it avoids lossy JSON transcoding.
-    ///
-    /// # Example: Creating a TimeStamp assertion
-    ///
-    /// ```
-    /// # use c2pa::Result;
-    /// use c2pa::{assertions::TimeStamp, ManifestAssertion};
-    /// # fn main() -> Result<()> {
-    /// let mut timestamp = TimeStamp::new();
-    /// timestamp.add_timestamp("manifest1", &[1, 2, 3, 4]);
-    /// let _ma = ManifestAssertion::from_assertion_cbor(&timestamp)?;
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn from_assertion_cbor<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
         let cbor_value = c2pa_cbor::value::to_value(data)
             .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
@@ -219,7 +203,7 @@ impl ManifestAssertion {
         // First check if we have native CBOR data stored
         match &self.data {
             ManifestData::Cbor(cbor_value) => {
-                // Direct deserialization from CBOR - no transcoding needed
+                // Direct deserialization from CBOR
                 c2pa_cbor::from_value(cbor_value.clone()).map_err(|e| {
                     Error::AssertionDecoding(AssertionDecodeError::from_err(
                         self.label.to_owned(),
@@ -234,7 +218,7 @@ impl ManifestAssertion {
                 match self.kind() {
                     ManifestAssertionKind::Cbor => {
                         // For CBOR assertions stored as JSON, transcode from JSON back to CBOR
-                        // This is lossy and won't work perfectly for some assertions like TimeStamp
+                        // Note this is lossy!
                         let json_value = self.value()?.to_owned();
                         let cbor_bytes = c2pa_cbor::value::to_value(&json_value).map_err(|e| {
                             Error::AssertionDecoding(AssertionDecodeError::from_err(
