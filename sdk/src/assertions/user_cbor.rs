@@ -46,7 +46,7 @@ impl AssertionBase for UserCbor {
         let _value: c2pa_cbor::Value = c2pa_cbor::from_slice(&self.cbor_data)
             .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
         let data = AssertionData::Cbor(self.cbor_data.clone());
-        Ok(Assertion::new(&self.label, None, data))
+        Ok(Assertion::new(&self.label, None, data).set_content_type("application/cbor"))
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self> {

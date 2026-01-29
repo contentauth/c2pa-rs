@@ -654,7 +654,7 @@ impl AssertionBase for Ingredient {
         let data = crate::assertion::AssertionData::Cbor(
             c2pa_cbor::to_vec(self).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
         );
-        Ok(Assertion::new(self.label(), self.version(), data))
+        Ok(Assertion::new(self.label(), self.version(), data).set_content_type("application/cbor"))
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self> {

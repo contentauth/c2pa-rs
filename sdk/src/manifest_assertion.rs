@@ -154,10 +154,18 @@ impl ManifestAssertion {
     /// # }
     /// ```
     pub fn from_assertion<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
-        Ok(Self::new(
-            data.label().to_owned(),
-            serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
-        ))
+        let label = data.label().to_owned();
+        let json_value =
+            serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
+
+        let mut ma = Self::new(label.clone(), json_value);
+
+        let is_assertion_metadata = label == labels::ASSERTION_METADATA;
+        if !is_assertion_metadata && label.ends_with(".metadata") {
+            ma = ma.set_kind(ManifestAssertionKind::Json);
+        }
+
+        Ok(ma)
     }
 
     /// Creates an Assertion object from a ManifestAssertion
@@ -181,14 +189,41 @@ impl ManifestAssertion {
     /// # }
     /// ```
     pub fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
-        serde_json::from_value(self.value()?.to_owned()).map_err(|e| {
-            Error::AssertionDecoding(AssertionDecodeError::from_json_err(
-                self.label.to_owned(),
-                None,
-                "application/json".to_owned(),
-                e,
-            ))
-        })
+        // Check the kind field to determine how to deserialize
+        match self.kind() {
+            ManifestAssertionKind::Cbor => {
+                // For CBOR assertions, transcode from JSON back to CBOR
+                // It seems everything is stored in JSON?!?
+                let json_value = self.value()?.to_owned();
+                let cbor_bytes = c2pa_cbor::value::to_value(&json_value).map_err(|e| {
+                    Error::AssertionDecoding(AssertionDecodeError::from_err(
+                        self.label.to_owned(),
+                        None,
+                        "application/cbor".to_owned(),
+                        e,
+                    ))
+                })?;
+                c2pa_cbor::from_value(cbor_bytes).map_err(|e| {
+                    Error::AssertionDecoding(AssertionDecodeError::from_err(
+                        self.label.to_owned(),
+                        None,
+                        "application/cbor".to_owned(),
+                        e,
+                    ))
+                })
+            }
+            _ => {
+                // For JSON and other types, use JSON deserialization
+                serde_json::from_value(self.value()?.to_owned()).map_err(|e| {
+                    Error::AssertionDecoding(AssertionDecodeError::from_json_err(
+                        self.label.to_owned(),
+                        None,
+                        "application/json".to_owned(),
+                        e,
+                    ))
+                })
+            }
+        }
     }
 }
 
@@ -220,5 +255,101 @@ pub(crate) mod tests {
         let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
         let ma2 = ManifestAssertion::from_assertion(&actions).expect("from_assertion");
         let _actions2: Actions = ma2.to_assertion().expect("to_assertion");
+    }
+
+    /// Test that CBOR newtype structs (like TimeStamp) are deserialized as CBORwhen kind=Cbor is set.
+    ///
+    /// If CBOR type isn't checked and CBOR isn't used, the test will fail with error:
+    /// "invalid type: sequence, expected a map" (likely because somewhere it fell back to JSON deserialization).
+    #[test]
+    fn test_cbor_newtype_struct_with_hashmap() {
+        use crate::assertions::TimeStamp;
+
+        // Create an assertion that needs to be CBOR
+        let mut timestamp = TimeStamp::new();
+        timestamp.add_timestamp("manifest1", &[1, 2, 3, 4]);
+        timestamp.add_timestamp("manifest2", &[5, 6, 7, 8]);
+
+        let cbor_bytes = c2pa_cbor::to_vec(&timestamp).expect("serialize to CBOR");
+
+        // Transcode CBOR to JSON to mimic a roundtrip
+        let cbor_value: c2pa_cbor::Value =
+            c2pa_cbor::from_slice(&cbor_bytes).expect("deserialize CBOR to Value");
+        let json_value =
+            serde_json::to_value(&cbor_value).expect("transcode CBOR Value to JSON Value");
+
+        let ma = ManifestAssertion::new("c2pa.time-stamp".to_string(), json_value)
+            .set_kind(ManifestAssertionKind::Cbor);
+
+        let deserialized: TimeStamp = ma.to_assertion().expect("deserialize with kind=Cbor");
+
+        // Roundtrip
+        assert_eq!(deserialized.get_timestamp("manifest1").unwrap(), &[1, 2, 3, 4]);
+        assert_eq!(deserialized.get_timestamp("manifest2").unwrap(), &[5, 6, 7, 8]);
+    }
+
+    /// Test that verifies the behavior difference between kind=None and kind=Cbor.
+    /// When kind is not explicitly set (None), the code defaults to JSON deserialization.
+    /// If the kind is not set when needed, errors like "invalid type: sequence, expected a map" may be observed
+    #[test]
+    fn test_cbor_assertion_kind_matters() {
+        use crate::assertions::Actions;
+
+        let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
+
+        // Serialize to CBOR and transcode to JSON (that is what happens internally in ManifestAssertion)
+        let cbor_bytes = c2pa_cbor::to_vec(&actions).expect("serialize to CBOR");
+        let cbor_value: c2pa_cbor::Value =
+            c2pa_cbor::from_slice(&cbor_bytes).expect("deserialize CBOR to Value");
+        let json_value = serde_json::to_value(&cbor_value).expect("transcode to JSON Value");
+
+        // No kind...
+        let ma_no_kind = ManifestAssertion::new(Actions::LABEL.to_string(), json_value.clone());
+        assert_eq!(
+            ma_no_kind.kind(),
+            &ManifestAssertionKind::Cbor,
+            "Default kind for Actions should be Cbor (set by from_assertion)"
+        );
+
+        // With kind...
+        let ma_with_kind = ManifestAssertion::new(Actions::LABEL.to_string(), json_value)
+            .set_kind(ManifestAssertionKind::Cbor);
+        assert_eq!(ma_with_kind.kind(), &ManifestAssertionKind::Cbor);
+
+        // The explicit kind makes sure we have correct deserialization semantics too!
+        let _actions1: Actions = ma_no_kind
+            .to_assertion()
+            .expect("Should work with default kind");
+        let _actions2: Actions = ma_with_kind
+            .to_assertion()
+            .expect("Should work with explicit kind=Cbor");
+    }
+
+    /// Test that verifies the kind field is preserved through the full cycle
+    #[test]
+    fn test_kind_field_preservation_roundtrip() {
+        use crate::assertions::TimeStamp;
+
+        let mut timestamp = TimeStamp::new();
+        timestamp.add_timestamp("test", &[1, 2, 3]);
+
+        let cbor_bytes = c2pa_cbor::to_vec(&timestamp).unwrap();
+
+        // Mimic internal storage behavior for rountrip mimicking
+        let cbor_value: c2pa_cbor::Value = c2pa_cbor::from_slice(&cbor_bytes).unwrap();
+        let json_value = serde_json::to_value(&cbor_value).unwrap();
+
+        // Create ManifestAssertion with kind=Cbor
+        let ma = ManifestAssertion::new("c2pa.time-stamp".to_string(), json_value)
+            .set_kind(ManifestAssertionKind::Cbor);
+
+        assert_eq!(ma.kind(), &ManifestAssertionKind::Cbor);
+
+        //Deserialize. If kind is not respected, falls back to JSON and will error with the invalid map/string error
+        let result: Result<TimeStamp> = ma.to_assertion();
+        assert!(
+            result.is_ok(),
+            "Should successfully deserialize when kind=Cbor is set"
+        );
     }
 }
