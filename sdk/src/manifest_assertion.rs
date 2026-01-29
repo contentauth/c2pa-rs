@@ -55,9 +55,21 @@ impl ManifestAssertion {
     pub fn new(label: String, data: Value) -> Self {
         Self {
             label,
+            // Note this means by default, here we get JSON encoding for assertions
             data: ManifestData::Json(data),
             instance: None,
             kind: None,
+            created: false,
+        }
+    }
+
+    /// Create with label and CBOR value (to preserve native encoding
+    pub fn new_from_cbor(label: String, data: CborValue) -> Self {
+        Self {
+            label,
+            data: ManifestData::Cbor(data),
+            instance: None,
+            kind: Some(ManifestAssertionKind::Cbor),
             created: false,
         }
     }
@@ -154,18 +166,33 @@ impl ManifestAssertion {
     /// # }
     /// ```
     pub fn from_assertion<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
-        let label = data.label().to_owned();
-        let json_value =
-            serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
+        Ok(Self::new(
+          data.label().to_owned(),
+          serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
+        ))
+    }
 
-        let mut ma = Self::new(label.clone(), json_value);
-
-        let is_assertion_metadata = label == labels::ASSERTION_METADATA;
-        if !is_assertion_metadata && label.ends_with(".metadata") {
-            ma = ma.set_kind(ManifestAssertionKind::Json);
-        }
-
-        Ok(ma)
+    /// Creates a ManifestAssertion from an AssertionBase object, preserving CBOR encoding
+    ///
+    /// This is preferred over `from_assertion` for assertions that use custom CBOR encoding
+    /// (like TimeStamp) as it avoids lossy JSON transcoding.
+    ///
+    /// # Example: Creating a TimeStamp assertion
+    ///
+    /// ```
+    /// # use c2pa::Result;
+    /// use c2pa::{assertions::TimeStamp, ManifestAssertion};
+    /// # fn main() -> Result<()> {
+    /// let mut timestamp = TimeStamp::new();
+    /// timestamp.add_timestamp("manifest1", &[1, 2, 3, 4]);
+    /// let _ma = ManifestAssertion::from_assertion_cbor(&timestamp)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_assertion_cbor<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
+        let cbor_value = c2pa_cbor::value::to_value(data)
+            .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
+        Ok(Self::new_from_cbor(data.label().to_owned(), cbor_value))
     }
 
     /// Creates an Assertion object from a ManifestAssertion
@@ -189,21 +216,11 @@ impl ManifestAssertion {
     /// # }
     /// ```
     pub fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
-        // Check the kind field to determine how to deserialize
-        match self.kind() {
-            ManifestAssertionKind::Cbor => {
-                // For CBOR assertions, transcode from JSON back to CBOR
-                // It seems everything is stored in JSON?!?
-                let json_value = self.value()?.to_owned();
-                let cbor_bytes = c2pa_cbor::value::to_value(&json_value).map_err(|e| {
-                    Error::AssertionDecoding(AssertionDecodeError::from_err(
-                        self.label.to_owned(),
-                        None,
-                        "application/cbor".to_owned(),
-                        e,
-                    ))
-                })?;
-                c2pa_cbor::from_value(cbor_bytes).map_err(|e| {
+        // First check if we have native CBOR data stored
+        match &self.data {
+            ManifestData::Cbor(cbor_value) => {
+                // Direct deserialization from CBOR - no transcoding needed
+                c2pa_cbor::from_value(cbor_value.clone()).map_err(|e| {
                     Error::AssertionDecoding(AssertionDecodeError::from_err(
                         self.label.to_owned(),
                         None,
@@ -212,17 +229,44 @@ impl ManifestAssertion {
                     ))
                 })
             }
-            _ => {
-                // For JSON and other types, use JSON deserialization
-                serde_json::from_value(self.value()?.to_owned()).map_err(|e| {
-                    Error::AssertionDecoding(AssertionDecodeError::from_json_err(
-                        self.label.to_owned(),
-                        None,
-                        "application/json".to_owned(),
-                        e,
-                    ))
-                })
+            ManifestData::Json(_) => {
+                // Check the kind field to determine how to deserialize
+                match self.kind() {
+                    ManifestAssertionKind::Cbor => {
+                        // For CBOR assertions stored as JSON, transcode from JSON back to CBOR
+                        // This is lossy and won't work perfectly for some assertions like TimeStamp
+                        let json_value = self.value()?.to_owned();
+                        let cbor_bytes = c2pa_cbor::value::to_value(&json_value).map_err(|e| {
+                            Error::AssertionDecoding(AssertionDecodeError::from_err(
+                                self.label.to_owned(),
+                                None,
+                                "application/cbor".to_owned(),
+                                e,
+                            ))
+                        })?;
+                        c2pa_cbor::from_value(cbor_bytes).map_err(|e| {
+                            Error::AssertionDecoding(AssertionDecodeError::from_err(
+                                self.label.to_owned(),
+                                None,
+                                "application/cbor".to_owned(),
+                                e,
+                            ))
+                        })
+                    }
+                    _ => {
+                        // For JSON and other types, use JSON deserialization
+                        serde_json::from_value(self.value()?.to_owned()).map_err(|e| {
+                            Error::AssertionDecoding(AssertionDecodeError::from_json_err(
+                                self.label.to_owned(),
+                                None,
+                                "application/json".to_owned(),
+                                e,
+                            ))
+                        })
+                    }
+                }
             }
+            ManifestData::Binary(_) => Err(Error::UnsupportedType),
         }
     }
 }
@@ -351,5 +395,29 @@ pub(crate) mod tests {
             result.is_ok(),
             "Should successfully deserialize when kind=Cbor is set"
         );
+    }
+
+    /// Test that from_assertion_cbor preserves native CBOR encoding without lossy transcoding
+    #[test]
+    fn test_from_assertion_cbor_preserves_encoding() {
+        use crate::assertions::TimeStamp;
+
+        let mut timestamp = TimeStamp::new();
+        timestamp.add_timestamp("manifest1", &[1, 2, 3, 4]);
+        timestamp.add_timestamp("manifest2", &[5, 6, 7, 8]);
+
+        // Use the new CBOR-preserving constructor
+        let ma = ManifestAssertion::from_assertion_cbor(&timestamp).expect("from_assertion_cbor");
+
+        // Verify it's stored as CBOR, not JSON
+        assert!(matches!(ma.data, ManifestData::Cbor(_)));
+        assert_eq!(ma.kind(), &ManifestAssertionKind::Cbor);
+
+        // Deserialize should work perfectly without any transcoding
+        let deserialized: TimeStamp = ma.to_assertion().expect("to_assertion");
+
+        // Verify data integrity
+        assert_eq!(deserialized.get_timestamp("manifest1").unwrap(), &[1, 2, 3, 4]);
+        assert_eq!(deserialized.get_timestamp("manifest2").unwrap(), &[5, 6, 7, 8]);
     }
 }
