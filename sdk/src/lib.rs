@@ -95,6 +95,9 @@
 //! - **default_http**: Enables default HTTP features for sync and async HTTP resolvers (`http_req`, `http_reqwest`, `http_wasi`, and `http_std`).
 //! - **openssl**: Use the vendored `openssl` implementation for cryptography.
 //!
+//! One of `openssl` or `rust_native_crypto` must be enabled. 
+//! If both are enabled, `rust_native_crypto` is used.
+//!
 //! Other features:
 //! - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
 //! - **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
@@ -105,6 +108,9 @@
 //! TODO: Confirm behavior with openssl 
 //!
 //! ## HTTP features
+//! These features toggle compilation with different HTTP libraries, depending on the one you use. 
+//! Some are async-only and others are sync-only. 
+//! Disabling all of them will speed up compilation and decrease build size.
 //! TODO: Rationalize the HTTP features
 //! - **http_ureq**: Enables `ureq` for sync HTTP requests.
 //! - **http_reqwest**: Enables `reqwest` for async HTTP requests.

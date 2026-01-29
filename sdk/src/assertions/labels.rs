@@ -181,7 +181,7 @@ pub const TIMESTAMP: &str = "c2pa.time-stamp";
 
 /// Label prefix for a certificate status assertion.
 ///
-/// See [Certificate status assertion - C2PA Technical Specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_certificate_status_assertion).
+/// See [Certificate status assertion - C2PA Technical Specification](https://c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#certificate_status_assertion).
 pub const CERTIFICATE_STATUS: &str = "c2pa.certificate-status";
 
 // Assertion store label
