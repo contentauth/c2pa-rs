@@ -181,14 +181,41 @@ impl ManifestAssertion {
     /// # }
     /// ```
     pub fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
-        serde_json::from_value(self.value()?.to_owned()).map_err(|e| {
-            Error::AssertionDecoding(AssertionDecodeError::from_json_err(
-                self.label.to_owned(),
-                None,
-                "application/json".to_owned(),
-                e,
-            ))
-        })
+        // Check the kind field to determine how to deserialize
+        match self.kind() {
+            ManifestAssertionKind::Cbor => {
+                // For CBOR assertions, transcode from JSON back to CBOR
+                // It seems everything is stored in JSON?!?
+                let json_value = self.value()?.to_owned();
+                let cbor_bytes = c2pa_cbor::value::to_value(&json_value).map_err(|e| {
+                    Error::AssertionDecoding(AssertionDecodeError::from_err(
+                        self.label.to_owned(),
+                        None,
+                        "application/cbor".to_owned(),
+                        e,
+                    ))
+                })?;
+                c2pa_cbor::from_value(cbor_bytes).map_err(|e| {
+                    Error::AssertionDecoding(AssertionDecodeError::from_err(
+                        self.label.to_owned(),
+                        None,
+                        "application/cbor".to_owned(),
+                        e,
+                    ))
+                })
+            }
+            _ => {
+                // For JSON and other types, use JSON deserialization
+                serde_json::from_value(self.value()?.to_owned()).map_err(|e| {
+                    Error::AssertionDecoding(AssertionDecodeError::from_json_err(
+                        self.label.to_owned(),
+                        None,
+                        "application/json".to_owned(),
+                        e,
+                    ))
+                })
+            }
+        }
     }
 }
 

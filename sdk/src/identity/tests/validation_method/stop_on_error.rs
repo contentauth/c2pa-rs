@@ -52,7 +52,7 @@ async fn malformed_cbor() {
     assert_eq!(ia_results.len(), 1);
 
     let ia_err = ia_results[0].as_ref().unwrap_err();
-    assert_eq!(ia_err.to_string(), "could not decode assertion cawg.identity (version (no version), content type application/json): missing field `signer_payload`");
+    assert_eq!(ia_err.to_string(), "could not decode assertion cawg.identity (version (no version), content type application/cbor): missing field `signer_payload`");
 
     assert_eq!(status_tracker.logged_items().len(), 1);
 
