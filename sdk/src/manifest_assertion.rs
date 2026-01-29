@@ -149,7 +149,8 @@ impl ManifestAssertion {
         self
     }
 
-    /// Creates a ManifestAssertion from an AssertionBase object
+    /// Creates a ManifestAssertion from an AssertionBase object,
+    /// with the data parameter encoded as JSON (ManifestData::Json)
     ///
     /// # Example: Creating a custom assertion an Action assertion
     ///
@@ -172,7 +173,8 @@ impl ManifestAssertion {
         ))
     }
 
-    /// Creates a ManifestAssertion from an AssertionBase object, preserving CBOR encoding
+    /// Creates a ManifestAssertion from an AssertionBase object,
+    /// preserving native CBOR encoding (data encoded as ManifestData::Cbor)
     pub fn from_assertion_cbor<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
         let cbor_value = c2pa_cbor::value::to_value(data)
             .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
