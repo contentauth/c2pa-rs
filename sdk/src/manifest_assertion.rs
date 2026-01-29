@@ -200,7 +200,7 @@ impl ManifestAssertion {
     /// # }
     /// ```
     pub fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
-        // First check if we have native CBOR data stored
+        // First what kind of data we may have stored
         match &self.data {
             ManifestData::Cbor(cbor_value) => {
                 // Direct deserialization from CBOR
