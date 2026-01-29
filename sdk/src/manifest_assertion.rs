@@ -63,7 +63,7 @@ impl ManifestAssertion {
         }
     }
 
-    /// Create with label and CBOR value (to preserve native encoding
+    /// Create with label and CBOR value (to preserve native encoding)
     pub fn new_from_cbor(label: String, data: CborValue) -> Self {
         Self {
             label,
