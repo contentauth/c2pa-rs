@@ -167,8 +167,8 @@ impl ManifestAssertion {
     /// ```
     pub fn from_assertion<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
         Ok(Self::new(
-          data.label().to_owned(),
-          serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
+            data.label().to_owned(),
+            serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
         ))
     }
 
@@ -312,8 +312,14 @@ pub(crate) mod tests {
         let deserialized: TimeStamp = ma.to_assertion().expect("deserialize with kind=Cbor");
 
         // Roundtrip
-        assert_eq!(deserialized.get_timestamp("manifest1").unwrap(), &[1, 2, 3, 4]);
-        assert_eq!(deserialized.get_timestamp("manifest2").unwrap(), &[5, 6, 7, 8]);
+        assert_eq!(
+            deserialized.get_timestamp("manifest1").unwrap(),
+            &[1, 2, 3, 4]
+        );
+        assert_eq!(
+            deserialized.get_timestamp("manifest2").unwrap(),
+            &[5, 6, 7, 8]
+        );
     }
 
     /// Test that verifies the behavior difference between kind=None and kind=Cbor.
@@ -401,7 +407,13 @@ pub(crate) mod tests {
         let deserialized: TimeStamp = ma.to_assertion().expect("to_assertion");
 
         // Verify data integrity
-        assert_eq!(deserialized.get_timestamp("manifest1").unwrap(), &[1, 2, 3, 4]);
-        assert_eq!(deserialized.get_timestamp("manifest2").unwrap(), &[5, 6, 7, 8]);
+        assert_eq!(
+            deserialized.get_timestamp("manifest1").unwrap(),
+            &[1, 2, 3, 4]
+        );
+        assert_eq!(
+            deserialized.get_timestamp("manifest2").unwrap(),
+            &[5, 6, 7, 8]
+        );
     }
 }
