@@ -224,7 +224,7 @@ pub struct Core {
     pub decode_identity_assertions: bool,
     /// <div class="warning">
     /// The CAWG identity assertion does not currently respect this setting.
-    /// See [1645</a - C2PA Technical Specification](a href="https://github.com/contentauth/c2pa-rs/issues/1645">issue #1645</a)
+    /// See [Issue #1645](https://github.com/contentauth/c2pa-rs/issues/1645).
     /// </div>
     ///
     /// List of host patterns that are allowed for network requests.
