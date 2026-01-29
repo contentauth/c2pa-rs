@@ -185,7 +185,7 @@ impl ManifestAssertion {
         match self.kind() {
             ManifestAssertionKind::Cbor => {
                 // For CBOR assertions, transcode from JSON back to CBOR
-                // (ManifestAssertion stores all data as JSON for convenience)
+                // It seems everything is stored in JSON?!?
                 let json_value = self.value()?.to_owned();
                 let cbor_bytes = c2pa_cbor::value::to_value(&json_value)
                     .map_err(|e| {
