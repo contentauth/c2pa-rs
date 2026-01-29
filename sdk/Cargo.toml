@@ -289,7 +289,7 @@ zip = { version = "7.0.0", default-features = false }
 anyhow = "1.0.97"
 glob = "0.3.1"
 hex-literal = "1.0.0"
-jumbf = "0.4.0"
+jumbf = "0.5.0"
 c2pa_macros = { path = "../macros" }
 mockall = "0.14.0"
 
