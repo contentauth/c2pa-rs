@@ -14,8 +14,9 @@
 use asn1_rs::nom::AsBytes;
 use async_generic::async_generic;
 use bcder::decode::Constructed;
-use ciborium::value::Value;
-use coset::{sig_structure_data, HeaderBuilder, Label, ProtectedHeader, SignatureContext};
+use coset::{
+    cbor::value::Value, sig_structure_data, HeaderBuilder, Label, ProtectedHeader, SignatureContext,
+};
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -67,14 +68,14 @@ pub(crate) fn validate_cose_tst_info(
         TimeStampStorage::V1_sigTst => data,
         TimeStampStorage::V2_sigTst2_CTT => {
             let sig_data = ByteBuf::from(sign1.signature.clone());
-            ciborium::into_writer(&sig_data, &mut maybe_sig_data)
+            coset::cbor::into_writer(&sig_data, &mut maybe_sig_data)
                 .map_err(|e| CoseError::CborParsingError(e.to_string()))?;
             maybe_sig_data.as_slice()
         }
     };
 
     let mut time_cbor: Vec<u8> = vec![];
-    ciborium::into_writer(sigtst, &mut time_cbor)
+    coset::cbor::into_writer(sigtst, &mut time_cbor)
         .map_err(|e| CoseError::InternalError(e.to_string()))?;
 
     let tst_infos = if _sync {
@@ -122,7 +123,7 @@ pub(crate) fn parse_and_validate_sigtst(
     validation_log: &mut StatusTracker,
     verify_trust: bool,
 ) -> Result<Vec<TstInfo>, CoseError> {
-    let tst_container: TstContainer = ciborium::from_reader(sigtst_cbor)
+    let tst_container: TstContainer = coset::cbor::from_reader(sigtst_cbor)
         .map_err(|err| CoseError::CborParsingError(err.to_string()))?;
 
     let mut tstinfos: Vec<TstInfo> = vec![];
@@ -239,10 +240,10 @@ pub(crate) fn add_sigtst_header(
         let cts = make_cose_timestamp(&cts);
 
         let mut sigtst_vec: Vec<u8> = vec![];
-        ciborium::into_writer(&cts, &mut sigtst_vec)
+        coset::cbor::into_writer(&cts, &mut sigtst_vec)
             .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
 
-        let sigtst_cbor: Value = ciborium::from_reader(sigtst_vec.as_slice())
+        let sigtst_cbor: Value = coset::cbor::from_reader(sigtst_vec.as_slice())
             .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
 
         match tss {

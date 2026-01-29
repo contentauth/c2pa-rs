@@ -912,7 +912,7 @@ impl Store {
                 let assertion = Assertion::from_data_cbor(&raw_label, cbor_box.cbor());
 
                 // make sure it is CBOR
-                if let Err(e) = serde_cbor::from_slice::<serde_cbor::Value>(cbor_box.cbor()) {
+                if let Err(e) = c2pa_cbor::from_slice::<c2pa_cbor::Value>(cbor_box.cbor()) {
                     log_item!(
                         label.to_owned(),
                         "invalid assertion cbor",
@@ -1108,7 +1108,7 @@ impl Store {
                         let mut databoxes = CAIDataboxStore::new();
 
                         for (uri, db) in claim.databoxes() {
-                            let db_cbor_bytes = serde_cbor::to_vec(db)
+                            let db_cbor_bytes = c2pa_cbor::to_vec(db)
                                 .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
                             let (link, instance) = Claim::assertion_label_from_link(&uri.url());
@@ -2755,9 +2755,9 @@ impl Store {
         let mut assertions = Vec::new();
         for da in dyn_assertions.iter() {
             let reserve_size = da.reserve_size()?;
-            let data1 = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
+            let data1 = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
             let cbor_delta = data1.len() - reserve_size;
-            let da_data = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
+            let da_data = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
             assertions.push(UserCbor::new(&da.label(), da_data));
         }
 
@@ -7909,7 +7909,7 @@ pub mod tests {
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
-                Ok(serde_cbor::to_vec(&assertion)?.len())
+                Ok(c2pa_cbor::to_vec(&assertion)?.len())
             }
 
             fn content(
@@ -7930,7 +7930,7 @@ pub mod tests {
                 };
 
                 Ok(DynamicAssertionContent::Cbor(
-                    serde_cbor::to_vec(&assertion).unwrap(),
+                    c2pa_cbor::to_vec(&assertion).unwrap(),
                 ))
             }
         }
@@ -8038,7 +8038,7 @@ pub mod tests {
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
-                Ok(serde_cbor::to_vec(&assertion)?.len())
+                Ok(c2pa_cbor::to_vec(&assertion)?.len())
             }
 
             async fn content(
@@ -8059,7 +8059,7 @@ pub mod tests {
                 };
 
                 Ok(DynamicAssertionContent::Cbor(
-                    serde_cbor::to_vec(&assertion).unwrap(),
+                    c2pa_cbor::to_vec(&assertion).unwrap(),
                 ))
             }
         }
