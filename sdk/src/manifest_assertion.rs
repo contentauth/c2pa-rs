@@ -154,10 +154,18 @@ impl ManifestAssertion {
     /// # }
     /// ```
     pub fn from_assertion<T: Serialize + AssertionBase>(data: &T) -> Result<Self> {
-        Ok(Self::new(
-            data.label().to_owned(),
-            serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
-        ))
+        let label = data.label().to_owned();
+        let json_value =
+            serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
+
+        let mut ma = Self::new(label.clone(), json_value);
+
+        let is_assertion_metadata = label == labels::ASSERTION_METADATA;
+        if !is_assertion_metadata && label.ends_with(".metadata") {
+            ma = ma.set_kind(ManifestAssertionKind::Json);
+        }
+
+        Ok(ma)
     }
 
     /// Creates an Assertion object from a ManifestAssertion
