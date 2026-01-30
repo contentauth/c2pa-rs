@@ -33,7 +33,6 @@ pub const INGREDIENT_IDS: &str = "ingredientIds";
 /// Description of the source of an asset.
 ///
 /// The digital source type must be either a value from the [IPTC Digital Source Types](https://cv.iptc.org/newscodes/digitalsourcetype) or a C2PA-specific value as given in [the C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_digital_source_type).
-///
 #[non_exhaustive]
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]

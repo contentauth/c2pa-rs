@@ -105,7 +105,6 @@
 //! - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
 //! - **pdf**: Enables basic PDF read support.
 //! - **rust_native_crypto**: Use Rust native cryptography.  
-//! TODO: Confirm behavior with openssl 
 //!
 //! ## HTTP features
 //! These features toggle compilation with different HTTP libraries, depending on the one you use. 
