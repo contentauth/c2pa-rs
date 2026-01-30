@@ -800,20 +800,22 @@ impl Reader {
     /// The number of bytes written.
     /// # Errors
     /// Returns [`Error`] if the resource does not exist.
-    ///
     /// # Example
     /// ```no_run
+    /// use std::io::Cursor;
     /// use c2pa::Reader;
-    /// #[cfg(feature = "file_io")]
-    /// {
-    ///     let stream = std::io::Cursor::new(Vec::new());
-    ///     let reader = Reader::from_file("path/to/file.jpg").unwrap();
-    ///     let manifest = reader.active_manifest().unwrap();
-    ///     let uri = &manifest.thumbnail_ref().unwrap().identifier;
-    ///     let bytes_written = reader.resource_to_stream(uri, stream).unwrap();
-    /// }
+    /// // Create a Reader from an in-memory stream (placeholder bytes shown here).
+    /// let input = Cursor::new(Vec::<u8>::new());
+    /// let reader = Reader::from_stream("image/jpeg", input).unwrap();
+    ///
+    /// // Get a resource identifier from the active manifest (e.g., a thumbnail).
+    /// let manifest = reader.active_manifest().unwrap();
+    /// let uri = &manifest.thumbnail_ref().unwrap().identifier;
+    ///
+    /// // Write that resource to an output stream.
+    /// let out = Cursor::new(Vec::new());
+    /// let bytes_written = reader.resource_to_stream(uri, out).unwrap();
     /// ```
-    /// TODO: Fix the example above to not read from a file.
     pub fn resource_to_stream(
         &self,
         uri: &str,
