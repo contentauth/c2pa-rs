@@ -165,11 +165,11 @@ impl Reader {
     /// # Examples
     ///
     /// ```
-    /// # use c2pa::{Context, Reader, Result};
+    /// # use c2pa::{Context, Reader, Result, Settings};
     /// # use std::sync::Arc;
     /// # fn main() -> Result<()> {
     /// // Create a shared Context once
-    /// let ctx = Context::new().with_settings(Settings::new()).into_shared();
+    /// let ctx = Context::new().with_settings(Settings::new())?.into_shared();
     ///
     /// // Share it across multiple Readers (even across threads!)
     /// let reader1 = Reader::from_shared_context(&ctx);
