@@ -620,7 +620,17 @@ impl Builder {
     }
 
     /// Sets the [`ClaimGeneratorInfo`] for this [`Builder`].
-    // TODO: Add example of a good ClaimGeneratorInfo.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Builder, ClaimGeneratorInfo, Result};
+    /// # fn main() -> Result<()> {
+    /// let mut builder = Builder::new();
+    /// builder.set_claim_generator_info(ClaimGeneratorInfo::new("my_app"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn set_claim_generator_info<I>(&mut self, claim_generator_info: I) -> &mut Self
     where
         I: Into<ClaimGeneratorInfo>,

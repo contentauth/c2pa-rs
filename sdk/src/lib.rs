@@ -107,10 +107,11 @@
 //! - **rust_native_crypto**: Use Rust native cryptography.
 //!
 //! ## HTTP features
+//! WARNING: These features are for advanced users.  Most people can ignore them.
 //! These features toggle compilation with different HTTP libraries, depending on the one you use.
 //! Some are async-only and others are sync-only.
-//! Disabling all of them will speed up compilation and decrease build size.
-//! TODO: Rationalize the HTTP features
+//! Disabling all of them will disable HTTP, speed up compilation, and decrease build size.
+//!
 //! - **http_ureq**: Enables `ureq` for sync HTTP requests.
 //! - **http_reqwest**: Enables `reqwest` for async HTTP requests.
 //! - **http_reqwest_blocking**: Enables the `blocking` feature of `reqwest` for sync HTTP requests.
