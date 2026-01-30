@@ -813,7 +813,7 @@ impl Reader {
     ///     let bytes_written = reader.resource_to_stream(uri, stream).unwrap();
     /// }
     /// ```
-    /// TODO: Fix the example to not read from a file.
+    /// TODO: Fix the example above to not read from a file.
     pub fn resource_to_stream(
         &self,
         uri: &str,
