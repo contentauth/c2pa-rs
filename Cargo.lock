@@ -544,9 +544,9 @@ dependencies = [
 
 [[package]]
 name = "c2pa_cbor"
-version = "0.77.0"
+version = "0.77.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68c4168a4e0be327fc46a936095a6c9a41e167f317419d250317dd408df45bbf"
+checksum = "42be240232265b2ea8c21cb97fdf700bfe2077ef6aa60186adf19a39f501ee5a"
 dependencies = [
  "half",
  "serde",
