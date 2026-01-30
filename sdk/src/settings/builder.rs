@@ -399,17 +399,17 @@ pub struct ActionsSettings {
     pub(crate) actions: Option<Vec<ActionSettings>>,
     /// Whether to automatically generate a c2pa.created [Action] assertion or error that it doesn't already exist.
     ///
-    /// For more information about the mandatory conditions for a c2pa.created action assertion, see the 
+    /// For more information about the mandatory conditions for a c2pa.created action assertion, see the
     /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion).
     pub auto_created_action: AutoActionSettings,
     /// Whether to automatically generate a c2pa.opened [Action] assertion or error that it doesn't already exist.
     ///
-    /// For more information about the mandatory conditions for a c2pa.opened action assertion, see the 
+    /// For more information about the mandatory conditions for a c2pa.opened action assertion, see the
     /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion).
     pub auto_opened_action: AutoActionSettings,
     /// Whether to automatically generate a c2pa.placed [Action] assertion or error that it doesn't already exist.
     ///
-    /// For more information about the mandatory conditions for a c2pa.placed action assertion, see 
+    /// For more information about the mandatory conditions for a c2pa.placed action assertion, see
     /// [Relationship - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship)
     pub auto_placed_action: AutoActionSettings,
 }

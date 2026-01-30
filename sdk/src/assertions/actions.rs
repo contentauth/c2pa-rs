@@ -745,7 +745,6 @@ impl ActionTemplate {
 /// other information such as what software performed the action.
 ///
 /// See [Actions - C2PA Technical Specification](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions)
-/// 
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Actions {

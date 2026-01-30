@@ -95,7 +95,7 @@
 //! - **default_http**: Enables default HTTP features for sync and async HTTP resolvers (`http_req`, `http_reqwest`, `http_wasi`, and `http_std`).
 //! - **openssl**: Use the vendored `openssl` implementation for cryptography.
 //!
-//! One of `openssl` or `rust_native_crypto` must be enabled. 
+//! One of `openssl` or `rust_native_crypto` must be enabled.
 //! If both are enabled, `rust_native_crypto` is used.
 //!
 //! Other features:
@@ -104,11 +104,11 @@
 //! - **file_io**: Enables APIs that use filesystem I/O.
 //! - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
 //! - **pdf**: Enables basic PDF read support.
-//! - **rust_native_crypto**: Use Rust native cryptography.  
+//! - **rust_native_crypto**: Use Rust native cryptography.
 //!
 //! ## HTTP features
-//! These features toggle compilation with different HTTP libraries, depending on the one you use. 
-//! Some are async-only and others are sync-only. 
+//! These features toggle compilation with different HTTP libraries, depending on the one you use.
+//! Some are async-only and others are sync-only.
 //! Disabling all of them will speed up compilation and decrease build size.
 //! TODO: Rationalize the HTTP features
 //! - **http_ureq**: Enables `ureq` for sync HTTP requests.
@@ -122,9 +122,8 @@
 //! For WASM the only supported HTTP feature is `http_reqwest`. This means WASM
 //! only supports the async API for network requests.
 //!
-//! For WASI the only supported HTTP features are `http_wasi`, which enables sync network requests, 
+//! For WASI the only supported HTTP features are `http_wasi`, which enables sync network requests,
 //! and `http_wstd` which enables async network requests.
-//!
 
 /// The internal name of the C2PA SDK.
 pub const NAME: &str = "c2pa-rs";

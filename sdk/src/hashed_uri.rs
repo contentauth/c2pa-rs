@@ -24,7 +24,6 @@ use crate::utils::DebugByteSlice;
 ///
 /// This is described in [URI References in the C2PA Technical
 /// Specification](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_uri_references).
-///
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct HashedUri {

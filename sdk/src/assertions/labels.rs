@@ -202,19 +202,16 @@ pub const PART: &str = ".part";
 
 /// Label prefix for a C2PA metadata assertion.
 ///
-/// A C2PA metadata assertion can only be used for [specific metadata fields]
+/// A [metadata assertion](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_metadata)
+/// can only be used for [specific metadata fields](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#metadata_annex)
 /// as described in the C2PA Technical Specification and only if those fields
 /// are generated from a hardware or software source.
-///
-/// See [Metadata - C2PA Technical Specification](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_metadata) 
-/// and [Specific metadata fields](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#metadata_annex)
 pub const METADATA: &str = "c2pa.metadata";
 
 /// Label prefix for a [CAWG metadata assertion](https://cawg.io/metadata/).
 ///
 /// The [CAWG metadata assertion](https://cawg.io/metadata/) is intended for human-generated metadata
 /// and may contain metadata from any documented schema.
-///
 pub const CAWG_METADATA: &str = "cawg.metadata";
 
 /// Array of all hash labels because they have special treatment

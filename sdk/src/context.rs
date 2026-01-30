@@ -166,7 +166,6 @@ impl IntoSettings for serde_json::Value {
 /// # Ok(())
 /// # }
 /// ```
-///
 pub struct Context {
     settings: Settings,
     sync_resolver: SyncResolverState,
