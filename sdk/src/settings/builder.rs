@@ -302,11 +302,11 @@ impl TryFrom<ActionTemplateSettings> for ActionTemplate {
                     template_parameters
                         .into_iter()
                         .map(|(key, value)| {
-                            serde_cbor::value::to_value(value)
+                            c2pa_cbor::value::to_value(value)
                                 .map(|value| (key, value))
                                 .map_err(|err| err.into())
                         })
-                        .collect::<Result<HashMap<String, serde_cbor::Value>>>()
+                        .collect::<Result<HashMap<String, c2pa_cbor::Value>>>()
                 })
                 .transpose()?,
         })
@@ -392,7 +392,7 @@ pub struct ActionsSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) templates: Option<Vec<ActionTemplateSettings>>,
     /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
-    // TODO: ActionSettings indirectly depends on ActionParameters which contains a serde_cbor::Value and
+    // TODO: ActionSettings indirectly depends on ActionParameters which contains a c2pa_cbor::Value and
     // schemars can't generate a schema for cbor values. It also doesn't feel right to change our API for
     // the sake of json schemas.
     #[cfg_attr(feature = "json_schema", schemars(skip))]
@@ -448,7 +448,7 @@ impl SettingsValidate for ActionsSettings {
 // TODO: do more validation on URL fields, cert fields, etc.
 /// Settings for the [Builder][crate::Builder].
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Default)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct BuilderSettings {
     /// The name of the vendor creating the content credential.
     pub vendor: Option<String>,
@@ -503,8 +503,24 @@ pub struct BuilderSettings {
     pub created_assertion_labels: Option<Vec<String>>,
 
     /// Whether to generate a C2PA archive (instead of zip) when writing the manifest builder.
-    /// This will eventually become the default behavior.
+    /// Now always defaults to true - the ability to disable it will be removed in the future.
     pub generate_c2pa_archive: Option<bool>,
+}
+
+impl Default for BuilderSettings {
+    fn default() -> Self {
+        BuilderSettings {
+            vendor: None,
+            claim_generator_info: None,
+            thumbnail: ThumbnailSettings::default(),
+            actions: ActionsSettings::default(),
+            certificate_status_fetch: None,
+            certificate_status_should_override: None,
+            intent: None,
+            created_assertion_labels: None,
+            generate_c2pa_archive: Some(true),
+        }
+    }
 }
 
 /// The scope of which manifests to fetch for OCSP.

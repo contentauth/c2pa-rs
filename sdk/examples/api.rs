@@ -92,11 +92,13 @@ fn main() -> Result<()> {
         |_context: *const (), data: &[u8]| CallbackSigner::ed25519_sign(data, PRIVATE_KEY);
     let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
 
+    // The context here holds loaded settings for further use
     let context = Context::new()
         .with_settings(settings)?
         .with_signer(signer)
         .into_shared();
 
+    // Create a builder using the context to propagate settings usage to the Builder
     let mut builder =
         Builder::from_shared_context(&context).with_definition(manifest_def(title, format))?;
     builder.add_ingredient_from_stream(
