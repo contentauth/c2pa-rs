@@ -1539,7 +1539,7 @@ impl Builder {
         actions: &mut Actions,
     ) -> Result<()> {
         let settings = self.context.settings();
-        // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
+        // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
         let auto_created = settings.builder.actions.auto_created_action.enabled;
         let auto_opened = settings.builder.actions.auto_opened_action.enabled;
 
@@ -1612,7 +1612,7 @@ impl Builder {
             }
         }
 
-        // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
+        // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_relationship
         if settings.builder.actions.auto_placed_action.enabled {
             // Get a list of ingredient URIs referenced by "c2pa.placed" actions.
             let mut referenced_uris = HashSet::new();

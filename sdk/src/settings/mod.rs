@@ -196,7 +196,7 @@ pub struct Core {
     /// This option is associated with the [`MerkleMap::fixed_block_size`] field.
     ///
     /// See more information in the spec here:
-    /// [bmff_based_hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash)
+    /// [bmff_based_hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_based_hash)
     ///
     /// [`MerkleMap::fixed_block_size`]: crate::assertions::MerkleMap::fixed_block_size
     /// [`BmffHash`]: crate::assertions::BmffHash
@@ -206,7 +206,7 @@ pub struct Core {
     /// This option defaults to 5.
     ///
     /// See more information in the spec here:
-    /// [bmff_based_hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash)
+    /// [bmff_based_hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_based_hash)
     ///
     /// [`BmffHash`]: crate::assertions::BmffHash
     pub merkle_tree_max_proofs: usize,
@@ -360,7 +360,7 @@ pub struct Verify {
     /// The default value is false.
     ///
     /// See more information in the spec here:
-    /// [versioning_manifests_due_to_conflicts - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_versioning_manifests_due_to_conflicts)
+    /// [versioning_manifests_due_to_conflicts - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_versioning_manifests_due_to_conflicts)
     pub(crate) skip_ingredient_conflict_resolution: bool,
     /// Whether to do strictly C2PA v1 validation or otherwise the latest validation.
     ///

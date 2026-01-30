@@ -35,7 +35,7 @@ pub struct CertificateStatus {
 impl CertificateStatus {
     /// Label prefix for a [`CertificateStatus`] assertion.
     ///
-    /// See [certificate status assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#certificate_status_assertion)
+    /// See [certificate status assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#certificate_status_assertion)
     pub const LABEL: &'static str = labels::CERTIFICATE_STATUS;
 
     pub fn new(ocsp_vals: Vec<Vec<u8>>) -> Self {

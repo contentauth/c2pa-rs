@@ -29,7 +29,7 @@ use crate::{
 /// Represents the levels of assurance a manifest store achives when evaluated against the C2PA
 /// specifications structural, cryptographic, and trust requirements.
 ///
-/// See [Validation states - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_validation_states).
+/// See [Validation states - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_validation_states).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub enum ValidationState {
@@ -40,12 +40,12 @@ pub enum ValidationState {
     Invalid,
     /// The manifest store is well-formed and the cryptographic integrity checks succeed.
     ///
-    /// See [Valid Manifest - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest).
+    /// See [Valid Manifest - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_valid_manifest).
     Valid,
     /// The manifest store is valid and signed by a certificate that chains up to a trusted root or known
     /// authority in the trust list.
     ///
-    /// See [Trusted Manifest - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_trusted_manifest).
+    /// See [Trusted Manifest - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_trusted_manifest).
     Trusted,
 }
 
@@ -199,7 +199,7 @@ impl ValidationResults {
 
     /// Returns the [ValidationState] of the manifest store based on the validation results.
     ///
-    /// See [Validation states - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_validation_states).
+    /// See [Validation states - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_validation_states).
     pub fn validation_state(&self) -> ValidationState {
         if let Some(active_manifest) = self.active_manifest.as_ref() {
             let success_codes: HashSet<&str> = active_manifest
@@ -214,7 +214,7 @@ impl ValidationResults {
                     .any(|idv| !idv.validation_deltas().failure().is_empty())
             });
 
-            // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
+            // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_valid_manifest
             let is_valid = success_codes.contains(validation_status::CLAIM_SIGNATURE_VALIDATED)
                 && success_codes.contains(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
                 && (failure_codes.is_empty()
@@ -223,7 +223,7 @@ impl ValidationResults {
                     }))
                 && !ingredient_failure;
 
-            // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_trusted_manifest
+            // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_trusted_manifest
             let is_trusted = success_codes.contains(validation_status::SIGNING_CREDENTIAL_TRUSTED)
                 && failure_codes.is_empty()
                 && is_valid;
@@ -370,7 +370,7 @@ impl IngredientDeltaValidationResult {
 
 /// Implements validation status for specific parts of a manifest.
 ///
-/// See [Standard Status Codes - C2PA Technical Specification](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_standard_status_codes).
+/// See [Standard Status Codes - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_standard_status_codes).
 pub mod validation_codes {
     use crate::status_tracker::LogKind;
 

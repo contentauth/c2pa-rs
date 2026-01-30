@@ -10,7 +10,7 @@ use crate::{
 
 /// The data structure used to store one or more soft bindings across some or all of the asset's content.
 ///
-/// See [Soft binding assertion - C2PA Technical Specification](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#soft_binding_assertion).
+/// See [Soft binding assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#soft_binding_assertion).
 #[derive(Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct SoftBinding {
     /// A string identifying the soft binding algorithm and version of that algorithm used to compute the value,
@@ -56,7 +56,7 @@ impl SoftBinding {
     /// Zero-filled bytes used for filling up space.
     ///
     /// This field is not applicable to `c2pa-rs` as it employs a single step processing approach to precompute assertion sizes, unlike the
-    /// "[Multiple Step Processing](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_multiple_step_processing)"
+    /// "[Multiple Step Processing](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_multiple_step_processing)"
     /// approach described by the spec.
     pub fn pad(&self) -> &[u8] {
         &self.pad

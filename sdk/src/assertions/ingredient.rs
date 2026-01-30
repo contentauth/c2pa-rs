@@ -97,7 +97,7 @@ impl Serialize for Ingredient {
 impl Ingredient {
     /// Label prefix for an ingredient assertion.
     ///
-    /// See [ingredient_assertion - C2PA Technical Specification](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#ingredient_assertion)
+    /// See [ingredient_assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#ingredient_assertion)
     pub const LABEL: &'static str = labels::INGREDIENT;
 
     pub fn new(title: &str, format: &str, instance_id: &str, document_id: Option<&str>) -> Self {

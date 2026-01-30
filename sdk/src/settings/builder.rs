@@ -400,17 +400,17 @@ pub struct ActionsSettings {
     /// Whether to automatically generate a c2pa.created [Action] assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.created action assertion, see the
-    /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion).
+    /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion).
     pub auto_created_action: AutoActionSettings,
     /// Whether to automatically generate a c2pa.opened [Action] assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.opened action assertion, see the
-    /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion).
+    /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion).
     pub auto_opened_action: AutoActionSettings,
     /// Whether to automatically generate a c2pa.placed [Action] assertion or error that it doesn't already exist.
     ///
     /// For more information about the mandatory conditions for a c2pa.placed action assertion, see
-    /// [Relationship - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship)
+    /// [Relationship - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_relationship)
     pub auto_placed_action: AutoActionSettings,
 }
 
@@ -472,7 +472,7 @@ pub struct BuilderSettings {
     ///
     /// The default is to not fetch them at all.
     ///
-    /// For more information, see [Certificate status assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#certificate_status_assertion).
+    /// For more information, see [Certificate status assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#certificate_status_assertion).
     ///
     /// [`CertificateStatus`]: crate::assertions::CertificateStatus
     pub(crate) certificate_status_fetch: Option<OcspFetchScope>,
@@ -499,7 +499,7 @@ pub struct BuilderSettings {
     /// Note that the label should be a **base label**, not including the assertion version nor instance.
     ///
     /// See more information on the difference between created vs gathered assertions in the spec here:
-    /// [fields - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_fields)
+    /// [fields - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_fields)
     pub created_assertion_labels: Option<Vec<String>>,
 
     /// Whether to generate a C2PA archive (instead of zip) when writing the manifest builder.
