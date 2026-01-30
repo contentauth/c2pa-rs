@@ -31,8 +31,6 @@
 //!
 //! ## Reading a manifest
 //!
-//! TODO: Update to use Context
-//!
 //! ```
 //! # use c2pa::Result;
 //! use c2pa::{assertions::Actions, Reader};
@@ -52,15 +50,40 @@
 //! # }
 //! ```
 //!
-//! ## Adding a signed manifest to a file
+//! ## Reading a manifest using Context, Settings, and trust list
 //!
-//! TODO: Change example to be a more common case - Adding parent with intent, ingredient.
+//! Download the official [C2PA trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists) PEM and 
+//! point `trust.trust_anchors` to its contents.
+//!
+//! ```no_run
+//! use c2pa::{Context, Reader, Result};
+//! use c2pa::settings::Settings;
+//!
+//! # fn main() -> Result<()> {
+//! // Load the official C2PA trust list (PEM bundle) from a local file you downloaded.
+//! let trust_pem = std::fs::read_to_string("path/to/C2PA-TRUST-LIST.pem")?;
+//!
+//! // Build Settings enabling certificate trust verification against the C2PA trust anchors.
+//! let settings = Settings::new()
+//!     .with_value("trust.trust_anchors", trust_pem)?
+//!     .with_value("verify.verify_trust", true)?;
+//!
+//! // Create a Context with these settings and read an asset.
+//! let context = Context::new().with_settings(settings)?;
+//! let reader = Reader::from_context(context).with_file("path/to/asset.jpg")?;
+//!
+//! println!("{}", reader.json());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Adding a signed manifest to a file
 //!
 //! ```
 //! # use c2pa::Result;
 //! use std::io::Cursor;
 //!
-//! use c2pa::{Builder, Context};
+//! use c2pa::{Builder, BuilderIntent, Context};
 //! use serde::Serialize;
 //! use serde_json::json;
 //!
@@ -77,9 +100,47 @@
 //! // Build manifest.
 //! let mut builder = Builder::from_context(context)
 //!     .with_definition(json!({"title": "Test"}))?;
+//! // Use Edit intent so the parent ingredient is captured from the source stream.
+//! builder.set_intent(BuilderIntent::Edit);
 //! builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!
 //! // Save with automatic signer from context (created from settings).
+//! let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
+//! let mut dest = Cursor::new(Vec::new());
+//! let _c2pa_data = builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Adding an ingredient and signing (Create intent)
+//!
+//! ```
+//! # use c2pa::Result;
+//! use std::io::Cursor;
+//!
+//! use c2pa::{Builder, BuilderIntent, Context, DigitalSourceType};
+//! use serde_json::json;
+//!
+//! # fn main() -> Result<()> {
+//! // Create context with signer configuration.
+//! let context =
+//!     Context::new().with_settings(include_str!("../tests/fixtures/test_settings.toml"))?;
+//!
+//! // Build manifest.
+//! let mut builder = Builder::from_context(context)
+//!     .with_definition(json!({"title": "Created Asset"}))?;
+//! // Use Create intent with a source type and add a component ingredient.
+//! builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+//!
+//! // Add an ingredient using Builder helper (no direct Ingredient struct).
+//! let ingredient_json = json!({
+//!     "title": "Overlay",
+//!     "relationship": "componentOf"
+//! }).to_string();
+//! let mut overlay_file = std::fs::File::open("tests/fixtures/sample1.png")?;
+//! builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut overlay_file)?;
+//!
+//! // Sign and embed using the context's signer.
 //! let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
 //! let mut dest = Cursor::new(Vec::new());
 //! let _c2pa_data = builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
