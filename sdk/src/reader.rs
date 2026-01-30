@@ -803,6 +803,7 @@ impl Reader {
     /// # Example
     /// ```no_run
     /// use std::io::Cursor;
+    ///
     /// use c2pa::Reader;
     /// // Create a Reader from an in-memory stream (placeholder bytes shown here).
     /// let input = Cursor::new(Vec::<u8>::new());
