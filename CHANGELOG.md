@@ -9,6 +9,18 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.75.9](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.8...c2pa-v0.75.9)
+_30 January 2026_
+
+### Added
+
+* Public API for timestamp assertions ([#1603](https://github.com/contentauth/c2pa-rs/pull/1603))
+* Add support for arbitrary key/value pairs in assertion metadata ([#1782](https://github.com/contentauth/c2pa-rs/pull/1782))
+
+### Updated dependencies
+
+* Bump c2pa-cbor from 0.77.0 to 0.77.1 ([#1800](https://github.com/contentauth/c2pa-rs/pull/1800))
+
 ## [0.75.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.7...c2pa-v0.75.8)
 _28 January 2026_
 
