@@ -10,19 +10,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::cell::RefCell;
-
 use thiserror::Error;
-pub type Result<T> = std::result::Result<T, Error>;
-
-// LAST_ERROR handling borrowed from Copyright (c) 2018 Michael Bryan
-thread_local! {
-    static LAST_ERROR: RefCell<Option<Error>> = const { RefCell::new(None) };
-}
 
 #[derive(Error, Debug)]
 /// Defines all possible errors that can occur in this library
-pub enum Error {
+pub enum C2paError {
     #[error("Assertion: {0}")]
     Assertion(String),
     #[error("AssertionNotFound: {0}")]
@@ -57,7 +49,37 @@ pub enum Error {
     Verify(String),
 }
 
-impl Error {
+pub type Error = C2paError;
+pub type Result<T> = std::result::Result<T, Error>;
+
+impl C2paError {
+    /// Returns the error code for this error type
+    pub fn code(&self) -> i32 {
+        match self {
+            Self::Assertion(_) => 100,
+            Self::AssertionNotFound(_) => 101,
+            Self::Decoding(_) => 102,
+            Self::Encoding(_) => 103,
+            Self::FileNotFound(_) => 104,
+            Self::Io(_) => 105,
+            Self::Json(_) => 106,
+            Self::Manifest(_) => 107,
+            Self::ManifestNotFound(_) => 108,
+            Self::NotSupported(_) => 109,
+            Self::Other(_) => 110,
+            Self::NullParameter(_) => 111,
+            Self::RemoteManifest(_) => 112,
+            Self::ResourceNotFound(_) => 113,
+            Self::Signature(_) => 114,
+            Self::Verify(_) => 115,
+        }
+    }
+
+    /// Returns the last error message stored in thread-local storage
+    pub fn last_message() -> String {
+        crate::cimpl::CimplError::last_message().unwrap_or_default()
+    }
+
     // Convert c2pa errors to published API errors
     #[allow(unused_variables)]
     pub(crate) fn from_c2pa_error(err: c2pa::Error) -> Self {
@@ -150,24 +172,28 @@ impl Error {
             _ => Self::Other(format!("{error_type}: {error_message}")),
         }
     }
+}
 
-    /// Returns the last error as String
-    pub fn last_message() -> Option<String> {
-        LAST_ERROR.with(|prev| prev.borrow().as_ref().map(|e| e.to_string()))
-    }
-
-    /// Sets the last error
-    pub fn set_last(self) {
-        LAST_ERROR.with(|prev| *prev.borrow_mut() = Some(self));
-    }
-
-    /// Takes the the last error and clears it
-    pub fn take_last() -> Option<Error> {
-        LAST_ERROR.with(|prev| prev.borrow_mut().take())
+impl From<c2pa::Error> for crate::cimpl::CimplError {
+    fn from(val: c2pa::Error) -> Self {
+        let c2pa_error = C2paError::from_c2pa_error(val);
+        crate::cimpl::CimplError::new(c2pa_error.code(), c2pa_error.to_string())
     }
 }
 
-impl From<&str> for Error {
+impl From<C2paError> for crate::cimpl::CimplError {
+    fn from(err: C2paError) -> Self {
+        crate::cimpl::CimplError::new(err.code(), err.to_string())
+    }
+}
+
+impl From<crate::cimpl::CimplError> for C2paError {
+    fn from(err: crate::cimpl::CimplError) -> Self {
+        C2paError::Other(err.to_string())
+    }
+}
+
+impl From<&str> for C2paError {
     fn from(err: &str) -> Self {
         let parts: Vec<&str> = err.split(": ").collect();
         if parts.len() == 2 {
@@ -178,8 +204,31 @@ impl From<&str> for Error {
     }
 }
 
-impl From<String> for Error {
+impl From<String> for C2paError {
     fn from(err: String) -> Self {
-        Error::from(err.as_str())
+        Self::from(err.as_str())
     }
 }
+
+// impl From<&str> for Error {
+//     fn from(err: &str) -> Self {
+//         let parts: Vec<&str> = err.split(": ").collect();
+//         if parts.len() == 2 {
+//             Self::from_type_and_message(parts[0], parts[1])
+//         } else {
+//             Self::Other(err.to_string())
+//         }
+//     }
+// }
+
+// impl From<String> for Error {
+//     fn from(err: String) -> Self {
+//         Error::from(err.as_str())
+//     }
+// }
+
+// impl From<crate::cimpl::cimpl_error::CimplError> for Error {
+//     fn from(err: crate::cimpl::cimpl_error::CimplError) -> Self {
+//         Error::Other(err.to_string())
+//     }
+// }
