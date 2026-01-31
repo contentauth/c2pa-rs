@@ -168,14 +168,75 @@ pub mod tests {
 
     use super::*;
 
+    // DateT tests (CBOR tag 0)
     #[test]
-    fn test_round_trip() {
-        let uri = UriT("Some data value".into());
+    fn test_date_t_serialization_has_tag_0() {
+        let date = DateT("2024-01-30T12:00:00Z".into());
+        let cbor_bytes = c2pa_cbor::ser::to_vec(&date).expect("should serialize");
 
-        let uri_cbor = c2pa_cbor::ser::to_vec(&uri).expect("should serialize");
+        // Use from_tagged_slice to explicitly check the tag
+        let tagged = Tagged::<String>::from_tagged_slice(&cbor_bytes).expect("should deserialize");
+        assert_eq!(tagged.tag, Some(0), "DateT should use CBOR tag 0");
+        assert_eq!(tagged.value, "2024-01-30T12:00:00Z");
+    }
 
-        let uri_restored: UriT = c2pa_cbor::from_slice(&uri_cbor).expect("should deserialize");
+    #[test]
+    fn test_date_t_deserialization_with_tag() {
+        let date_str = "2024-01-30T12:00:00Z";
+        let tagged = Tagged::new(Some(0), date_str);
+        let cbor_bytes = c2pa_cbor::ser::to_vec(&tagged).unwrap();
 
-        assert_eq!(uri.as_ref(), uri_restored.as_ref());
+        let date: DateT = c2pa_cbor::from_slice(&cbor_bytes).expect("should deserialize");
+        assert_eq!(date.0, date_str);
+    }
+
+    #[test]
+    fn test_date_t_deserialization_without_tag() {
+        let date_str = "2024-01-30T12:00:00Z";
+        let cbor_bytes = c2pa_cbor::ser::to_vec(&date_str.to_string()).unwrap();
+
+        let date: DateT = c2pa_cbor::from_slice(&cbor_bytes).expect("should deserialize");
+        assert_eq!(date.0, date_str);
+    }
+
+    // UriT tests (CBOR tag 32)
+    #[test]
+    fn test_uri_t_serialization_has_tag_32() {
+        let uri = UriT("https://example.com/test".into());
+        let cbor_bytes = c2pa_cbor::ser::to_vec(&uri).expect("should serialize");
+
+        // Use from_tagged_slice to explicitly check the tag
+        let tagged = Tagged::<String>::from_tagged_slice(&cbor_bytes).expect("should deserialize");
+        assert_eq!(tagged.tag, Some(32), "UriT should use CBOR tag 32");
+        assert_eq!(tagged.value, "https://example.com/test");
+    }
+
+    #[test]
+    fn test_uri_t_round_trip() {
+        let uri = UriT("https://example.com/test".into());
+        let cbor_bytes = c2pa_cbor::ser::to_vec(&uri).expect("should serialize");
+        let uri_restored: UriT = c2pa_cbor::from_slice(&cbor_bytes).expect("should deserialize");
+        assert_eq!(uri.0, uri_restored.0);
+    }
+
+    // BytesT tests (CBOR tag 64)
+    #[test]
+    fn test_bytes_t_serialization_has_tag_64() {
+        let bytes = BytesT(vec![0x01, 0x02, 0x03, 0x04]);
+        let cbor_bytes = c2pa_cbor::ser::to_vec(&bytes).expect("should serialize");
+
+        // Use from_tagged_slice to explicitly check the tag
+        let tagged = Tagged::<ByteBuf>::from_tagged_slice(&cbor_bytes).expect("should deserialize");
+        assert_eq!(tagged.tag, Some(64), "BytesT should use CBOR tag 64");
+        assert_eq!(tagged.value.to_vec(), vec![0x01, 0x02, 0x03, 0x04]);
+    }
+
+    #[test]
+    fn test_bytes_t_round_trip() {
+        let bytes = BytesT(vec![0x01, 0x02, 0x03, 0x04, 0xff, 0x00]);
+        let cbor_bytes = c2pa_cbor::ser::to_vec(&bytes).expect("should serialize");
+        let bytes_restored: BytesT =
+            c2pa_cbor::from_slice(&cbor_bytes).expect("should deserialize");
+        assert_eq!(bytes.0, bytes_restored.0);
     }
 }
