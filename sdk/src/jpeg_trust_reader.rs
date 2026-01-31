@@ -491,7 +491,7 @@ impl JpegTrustReader {
         // Try to get binary data and decode as CBOR
         if let Ok(binary) = assertion.binary() {
             // Try to decode as CBOR to JSON
-            let cbor_value: serde_cbor::Value = serde_cbor::from_slice(binary)?;
+            let cbor_value: c2pa_cbor::Value = c2pa_cbor::from_slice(binary)?;
             let json_value: Value = serde_json::to_value(&cbor_value)?;
             Ok(json_value)
         } else {
