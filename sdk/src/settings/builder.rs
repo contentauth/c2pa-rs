@@ -302,11 +302,11 @@ impl TryFrom<ActionTemplateSettings> for ActionTemplate {
                     template_parameters
                         .into_iter()
                         .map(|(key, value)| {
-                            serde_cbor::value::to_value(value)
+                            c2pa_cbor::value::to_value(value)
                                 .map(|value| (key, value))
                                 .map_err(|err| err.into())
                         })
-                        .collect::<Result<HashMap<String, serde_cbor::Value>>>()
+                        .collect::<Result<HashMap<String, c2pa_cbor::Value>>>()
                 })
                 .transpose()?,
         })
@@ -392,7 +392,7 @@ pub struct ActionsSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) templates: Option<Vec<ActionTemplateSettings>>,
     /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
-    // TODO: ActionSettings indirectly depends on ActionParameters which contains a serde_cbor::Value and
+    // TODO: ActionSettings indirectly depends on ActionParameters which contains a c2pa_cbor::Value and
     // schemars can't generate a schema for cbor values. It also doesn't feel right to change our API for
     // the sake of json schemas.
     #[cfg_attr(feature = "json_schema", schemars(skip))]
@@ -441,6 +441,65 @@ impl SettingsValidate for ActionsSettings {
         match self.auto_created_action.enabled && self.auto_created_action.source_type.is_none() {
             true => Err(Error::MissingAutoCreatedActionSourceType),
             false => Ok(()),
+        }
+    }
+}
+
+/// The scope of manifests to fetch timestamps for.
+///
+/// See [`TimeStampSettings`] for more information.
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum TimeStampFetchScope {
+    /// Fetch timestamps for only the parent manifest.
+    Parent,
+    /// Fetch timestmaps for all manifests in the manifest store.
+    All,
+}
+
+/// Settings for configuring auto-generation of the [`TimeStamp`] assertion.
+///
+/// Useful when a manifest was signed offline and you want to attach a trusted timestamp to it later.
+///
+/// [`TimeStamp`]: crate::assertions::TimeStamp
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TimeStampSettings {
+    /// Whether to auto-generate a [`TimeStamp`] assertion for the [`TimeStampSettings::fetch_scope`].
+    ///
+    /// Note that for this setting to take effect, a timestamping authority URL must be set in the
+    /// [`Signer::time_authority_url`]. If the signer is acquired from settings via [`Settings::signer`],
+    /// the URL can be set in [`SignerSettings`].
+    ///
+    /// The default value is false.
+    ///
+    /// [`TimeStamp`]: crate::assertions::TimeStamp
+    /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
+    /// [`Settings::signer`]: crate::settings::signer
+    /// [`SignerSettings`]: crate::settings::signer::SignerSettings
+    pub enabled: bool,
+    /// Whether to skip fetching timestamps for manifests that already have one.
+    ///
+    /// This setting will account for both existing [`TimeStamp`] assertions and timestamps embedded
+    /// in the claim.
+    ///
+    /// The default value is true.
+    ///
+    /// [`TimeStamp`]: crate::assertions::TimeStamp
+    pub skip_existing: bool,
+    /// Which manifests to fetch timestamps for.
+    ///
+    /// The default value is [`TimeStampFetchScope::All`].
+    pub fetch_scope: TimeStampFetchScope,
+}
+
+impl Default for TimeStampSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            skip_existing: true,
+            fetch_scope: TimeStampFetchScope::All,
         }
     }
 }
@@ -502,10 +561,13 @@ pub struct BuilderSettings {
     /// See more information on the difference between created vs gathered assertions in the spec here:
     /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_fields>
     pub created_assertion_labels: Option<Vec<String>>,
-
     /// Whether to generate a C2PA archive (instead of zip) when writing the manifest builder.
     /// Now always defaults to true - the ability to disable it will be removed in the future.
     pub generate_c2pa_archive: Option<bool>,
+    /// Settings for configuring auto-generation of the [`TimeStamp`] assertion.
+    ///
+    /// [`TimeStamp`]: crate::assertions::TimeStamp
+    pub auto_timestamp_assertion: TimeStampSettings,
 }
 
 impl Default for BuilderSettings {
@@ -520,6 +582,7 @@ impl Default for BuilderSettings {
             intent: None,
             created_assertion_labels: None,
             generate_c2pa_archive: Some(true),
+            auto_timestamp_assertion: TimeStampSettings::default(),
         }
     }
 }

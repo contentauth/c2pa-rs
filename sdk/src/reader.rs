@@ -657,19 +657,32 @@ impl Reader {
     /// Get the Reader as a JSON string
     /// This just calls to_json_formatted
     pub fn json(&self) -> String {
-        match self.to_json_formatted() {
-            Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
-            Err(_) => "{}".to_string(),
-        }
+        self.json_checked().unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Get the Reader as a JSON string, returning an error if formatting fails
+    ///
+    /// This is useful when you need to handle errors from deeply nested or malformed structures.
+    /// For a version that never fails, use [`Self::json()`].
+    pub fn json_checked(&self) -> Result<String> {
+        let value = self.to_json_formatted()?;
+        serde_json::to_string_pretty(&value).map_err(Error::JsonError)
     }
 
     /// Get the Reader as a detailed JSON string
     /// This just calls to_json_detailed_formatted
     pub fn detailed_json(&self) -> String {
-        match self.to_json_detailed_formatted() {
-            Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
-            Err(_) => "{}".to_string(),
-        }
+        self.detailed_json_checked()
+            .unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Get the Reader as a detailed JSON string, returning an error if formatting fails
+    ///
+    /// This is useful when you need to handle errors from deeply nested or malformed structures.
+    /// For a version that never fails, use [`Self::detailed_json()`].
+    pub fn detailed_json_checked(&self) -> Result<String> {
+        let value = self.to_json_detailed_formatted()?;
+        serde_json::to_string_pretty(&value).map_err(Error::JsonError)
     }
 
     /// Returns the remote url of the manifest if this [`Reader`] obtained the manifest remotely.
@@ -1370,18 +1383,16 @@ impl TryFrom<&Reader> for serde_json::Value {
 /// Prints the JSON of the manifest data.
 impl std::fmt::Display for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.json().as_str())
+        let json = self.json_checked().map_err(|_| std::fmt::Error)?;
+        f.write_str(&json)
     }
 }
 
 /// Prints the full debug details of the manifest data.
 impl std::fmt::Debug for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let json = self
-            .to_json_detailed_formatted()
-            .map_err(|_| std::fmt::Error)?;
-        let output = serde_json::to_string_pretty(&json).map_err(|_| std::fmt::Error)?;
-        f.write_str(&output)
+        let json = self.detailed_json_checked().map_err(|_| std::fmt::Error)?;
+        f.write_str(&json)
     }
 }
 

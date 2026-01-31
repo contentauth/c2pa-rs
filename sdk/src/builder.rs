@@ -33,14 +33,17 @@ use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
-        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, User,
-        UserCbor,
+        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail,
+        TimeStamp, User, UserCbor,
     },
     claim::Claim,
     context::Context,
+    crypto::cose,
     error::{Error, Result},
+    jumbf::labels::manifest_label_from_uri,
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
+    settings::builder::TimeStampFetchScope,
     store::Store,
     utils::{hash_utils::hash_to_b64, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
@@ -218,7 +221,7 @@ fn default_vec<T>() -> Vec<T> {
 #[serde(untagged)]
 pub enum AssertionData {
     #[cfg_attr(feature = "json_schema", schemars(skip))]
-    Cbor(serde_cbor::Value),
+    Cbor(c2pa_cbor::Value),
     Json(serde_json::Value),
 }
 
@@ -261,7 +264,7 @@ impl<'de> Deserialize<'de> for AssertionDefinition {
             Some(ManifestAssertionKind::Json) => AssertionData::Json(helper.data),
             Some(ManifestAssertionKind::Cbor) | None => {
                 let cbor_val =
-                    serde_cbor::value::to_value(helper.data).map_err(serde::de::Error::custom)?;
+                    c2pa_cbor::value::to_value(helper.data).map_err(serde::de::Error::custom)?;
                 AssertionData::Cbor(cbor_val)
             }
             _ => {
@@ -301,7 +304,7 @@ impl AssertionDefinition {
                 ))
             }),
             AssertionData::Cbor(value) => {
-                serde_cbor::value::from_value(value.clone()).map_err(|e| {
+                c2pa_cbor::value::from_value(value.clone()).map_err(|e| {
                     Error::AssertionDecoding(AssertionDecodeError::from_err(
                         self.label.to_owned(),
                         None,
@@ -399,6 +402,13 @@ pub struct Builder {
     /// A builder should construct a created, opened or updated manifest.
     #[deprecated(note = "Use set_intent() to set or intent()")]
     pub intent: Option<BuilderIntent>,
+
+    /// Manifest labels to fetch timestamps for.
+    ///
+    /// Examples of a manifest label may include:
+    /// - `contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf`
+    /// - `urn:c2pa:fa479510-2a7d-c165-7b26-488a267f4c6a`
+    pub timestamp_manifest_labels: HashSet<String>,
 
     /// Container for binary assets (like thumbnails).
     #[serde(skip)]
@@ -736,7 +746,7 @@ impl Builder {
         let created = false;
         self.definition.assertions.push(AssertionDefinition {
             label: label.into(),
-            data: AssertionData::Cbor(serde_cbor::value::to_value(data)?),
+            data: AssertionData::Cbor(c2pa_cbor::value::to_value(data)?),
             kind: None, // defaults to cbor
             created,
         });
@@ -817,6 +827,27 @@ impl Builder {
 
         self.add_assertion(Actions::LABEL, &actions)?;
         Ok(self)
+    }
+
+    /// Request a trusted timestamp for manifests with the given label.
+    ///
+    /// This only records the label on the builder. During signing, any matching manifest(s) will
+    /// have a [`TimeStamp`] assertion generated using the configured timestamping authority
+    /// ([`Signer::time_authority_url`]) if a timestamp for that manifest does not already exist.
+    ///
+    /// If [`TimeStampSettings::enabled`] is specified, the manifest labels specified here and the
+    /// manifest labels obtained from the setting's scope will be merged and fetched.
+    ///
+    /// Examples of a manifest label may include:
+    /// - `contentauth:urn:uuid:c2677d4b-0a93-4444-876f-ed2f2d40b8cf`
+    /// - `urn:c2pa:fa479510-2a7d-c165-7b26-488a267f4c6a`
+    ///
+    /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
+    /// [`TimeStamp`]: crate::assertions::TimeStamp
+    /// [`TimeStampSettings::enabled`]: crate::settings::builder::TimeStampSettings::enabled
+    pub fn add_timestamp(&mut self, manifest_label: impl Into<String>) -> &mut Self {
+        self.timestamp_manifest_labels.insert(manifest_label.into());
+        self
     }
 
     /// Adds an [`Ingredient`] to the manifest with JSON and a stream.
@@ -1445,7 +1476,7 @@ impl Builder {
                     ),
                     AssertionData::Cbor(value) => add_assertion(
                         &mut claim,
-                        &UserCbor::new(manifest_assertion.label(), serde_cbor::to_vec(value)?),
+                        &UserCbor::new(manifest_assertion.label(), c2pa_cbor::to_vec(value)?),
                         manifest_assertion.created(),
                     ),
                 },
@@ -1638,10 +1669,18 @@ impl Builder {
         Ok(())
     }
 
-    // Convert a Manifest into a Store
+    /// Converts the `Builder` into a [`Store`].
+    ///
+    /// This functioin calls [`Builder::to_claim`] internally. Use [`Builder::to_store_with_claim`]
+    /// if the [`Claim`] is constructed manually.
     fn to_store(&self) -> Result<Store> {
         let claim = self.to_claim()?;
+        self.to_store_with_claim(claim)
+    }
 
+    /// Converts the `Builder` into a [`Store`] with the specified [`Claim`], usually obtained
+    /// by calling [`Builder::to_claim`].
+    fn to_store_with_claim(&self, claim: Claim) -> Result<Store> {
         let mut store = Store::from_context(&self.context);
 
         // if this can be an update manifest, then set the update_manifest flag
@@ -1717,6 +1756,127 @@ impl Builder {
             stream.rewind()?;
         }
         Ok(self)
+    }
+
+    /// Creates and adds a [`TimeStamp`] assertion to the provenance claim of the given store. The claims
+    /// that are timestamped depends on the value of [`Builder::timestamp_manifest_labels`] and
+    /// [`TimeStampSettings::enabled`]. If neither are specified, this function will do nothing.
+    ///
+    /// Note this function should be called before the provenance claim is committed to the store.
+    ///
+    /// [`TimeStamp`]: crate::assertions::TimeStamp
+    /// [`TimeStampSettings::enabled`]: crate::settings::builder::TimeStampSettings::enabled
+    #[async_generic(async_signature(
+        &self,
+        tsa_url: &str,
+        provenance_claim: &mut Claim,
+    ))]
+    fn maybe_add_timestamp(&self, tsa_url: &str, provenance_claim: &mut Claim) -> Result<()> {
+        let settings = self.context().settings();
+
+        if !settings.builder.auto_timestamp_assertion.enabled
+            && self.timestamp_manifest_labels.is_empty()
+        {
+            return Ok(());
+        }
+
+        let mut claim_uris = HashSet::new();
+        match settings.builder.auto_timestamp_assertion.fetch_scope {
+            TimeStampFetchScope::All => {
+                for claim in provenance_claim.claim_ingredients() {
+                    claim_uris.insert(claim.uri());
+                }
+            }
+            TimeStampFetchScope::Parent => {
+                if let Some(parent_claim_uri) = provenance_claim.parent_claim_uri()? {
+                    claim_uris.insert(parent_claim_uri);
+                }
+            }
+        }
+
+        let timestamp_assertions = provenance_claim.timestamp_assertions();
+        let mut timestamp_assertion = if !timestamp_assertions.is_empty() {
+            // There can only be one timestamp assertion per the spec.
+            let timestamp_assertion =
+                TimeStamp::from_assertion(timestamp_assertions[0].assertion())?;
+            timestamp_assertion
+        } else {
+            TimeStamp::new()
+        };
+
+        // If `skip_existing` is enabled, only timestamp claims in `claim_uris` that aren't already timestamped.
+        if settings.builder.auto_timestamp_assertion.skip_existing {
+            for claim in &provenance_claim.claim_ingredients() {
+                // First we check the claim timestamp.
+                let cose_sign1 = claim.cose_sign1()?;
+                if cose::get_cose_tst_info(&cose_sign1).is_some() {
+                    claim_uris.remove(&claim.uri());
+                    continue;
+                }
+
+                // Then check timestamp assertions.
+                let timestamp_assertions = claim.timestamp_assertions();
+                for timestamp_assertion in timestamp_assertions {
+                    let timestamp_assertion =
+                        TimeStamp::from_assertion(timestamp_assertion.assertion())?;
+                    for timestamped_manifest_label in timestamp_assertion.0.keys() {
+                        if let Some(claim) =
+                            provenance_claim.claim_ingredient(timestamped_manifest_label)
+                        {
+                            claim_uris.remove(&claim.uri());
+                        }
+                    }
+                }
+            }
+        }
+
+        // The `auto_timestamp_assertion.skip_existing` setting shouldn't affect explicit timestamps,
+        // so we do it here.
+        for manifest_label in &self.timestamp_manifest_labels {
+            if let Some(claim) = provenance_claim.claim_ingredient(manifest_label) {
+                claim_uris.insert(claim.uri());
+            }
+        }
+
+        for claim_uri in &claim_uris {
+            let manifest_label = manifest_label_from_uri(claim_uri).ok_or(Error::ClaimEncoding)?;
+
+            // If a timestamp already exists for this manifest (maybe it was added by the user).
+            if timestamp_assertion.get_timestamp(&manifest_label).is_some() {
+                continue;
+            }
+
+            if let Some(claim) = provenance_claim.claim_ingredient(&manifest_label) {
+                let signature = claim.cose_sign1()?.signature;
+                if _sync {
+                    timestamp_assertion.refresh_timestamp(
+                        tsa_url,
+                        &manifest_label,
+                        &signature,
+                        self.context().resolver(),
+                    )?;
+                } else {
+                    timestamp_assertion
+                        .refresh_timestamp_async(
+                            tsa_url,
+                            &manifest_label,
+                            &signature,
+                            self.context().resolver_async(),
+                        )
+                        .await?;
+                }
+            }
+        }
+
+        if !claim_uris.is_empty() {
+            if provenance_claim.timestamp_assertions().is_empty() {
+                provenance_claim.add_assertion(&timestamp_assertion)?;
+            } else {
+                provenance_claim.replace_assertion(timestamp_assertion.to_assertion()?)?;
+            }
+        }
+
+        Ok(())
     }
 
     // Find an assertion in the manifest.
@@ -1893,8 +2053,17 @@ impl Builder {
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
 
-        // convert the manifest to a store
-        let mut store = self.to_store()?;
+        let mut claim = self.to_claim()?;
+
+        if let Some(tsa_url) = signer.time_authority_url() {
+            if _sync {
+                self.maybe_add_timestamp(&tsa_url, &mut claim)?;
+            } else {
+                self.maybe_add_timestamp_async(&tsa_url, &mut claim).await?
+            }
+        }
+
+        let mut store = self.to_store_with_claim(claim)?;
 
         // sign and write our store to to the output image file
         if _sync {

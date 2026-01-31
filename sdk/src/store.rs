@@ -59,7 +59,6 @@ use crate::{
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
-    http::{AsyncHttpResolver, SyncHttpResolver},
     jumbf::{
         self,
         boxes::*,
@@ -487,57 +486,6 @@ impl Store {
         placeholder
     }
 
-    fn get_cose_sign1_signature(&self, manifest_id: &str) -> Option<Vec<u8>> {
-        let manifest = self.get_claim(manifest_id)?;
-
-        let sig = manifest.signature_val();
-        let data = manifest.data().ok()?;
-        let mut validation_log =
-            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-
-        let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
-
-        Some(sign1.signature)
-    }
-
-    /// Creates a TimeStamp (c2pa.time-stamp) assertion containing the TimeStampTokens for each
-    /// specified manifest_id.  If any time stamp request fails the assertion is not created.
-    #[allow(dead_code)]
-    #[async_generic(async_signature(
-        &self,
-        manifest_ids: &[&str],
-        tsa_url: &str,
-        http_resolver: &impl AsyncHttpResolver
-    ))]
-    pub fn get_timestamp_assertion(
-        &self,
-        manifest_ids: &[&str],
-        tsa_url: &str,
-        http_resolver: &impl SyncHttpResolver,
-    ) -> Result<TimeStamp> {
-        let mut timestamp_assertion = TimeStamp::new();
-        for manifest_id in manifest_ids {
-            // lets add a timestamp for old manifest
-            let signature = self
-                .get_cose_sign1_signature(manifest_id)
-                .ok_or(Error::ClaimMissingSignatureBox)?;
-
-            let timestamp_token = if _sync {
-                TimeStamp::send_timestamp_token_request_impl(tsa_url, &signature, http_resolver)?
-            } else {
-                TimeStamp::send_timestamp_token_request_impl_async(
-                    tsa_url,
-                    &signature,
-                    http_resolver,
-                )
-                .await?
-            };
-
-            timestamp_assertion.add_timestamp(manifest_id, &timestamp_token);
-        }
-        Ok(timestamp_assertion)
-    }
-
     /// Return OCSP info if available
     // Currently only called from manifest_store behind a feature flag but this is allowable
     // anywhere so allow dead code here for future uses to compile
@@ -912,7 +860,7 @@ impl Store {
                 let assertion = Assertion::from_data_cbor(&raw_label, cbor_box.cbor());
 
                 // make sure it is CBOR
-                if let Err(e) = serde_cbor::from_slice::<serde_cbor::Value>(cbor_box.cbor()) {
+                if let Err(e) = c2pa_cbor::from_slice::<c2pa_cbor::Value>(cbor_box.cbor()) {
                     log_item!(
                         label.to_owned(),
                         "invalid assertion cbor",
@@ -1108,7 +1056,7 @@ impl Store {
                         let mut databoxes = CAIDataboxStore::new();
 
                         for (uri, db) in claim.databoxes() {
-                            let db_cbor_bytes = serde_cbor::to_vec(db)
+                            let db_cbor_bytes = c2pa_cbor::to_vec(db)
                                 .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
                             let (link, instance) = Claim::assertion_label_from_link(&uri.url());
@@ -2040,7 +1988,6 @@ impl Store {
         claim: &'a Claim,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
-        settings: &Settings,
     ) -> Result<StoreValidationInfo<'a>> {
         let mut svi = StoreValidationInfo::default();
         Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
@@ -2125,20 +2072,15 @@ impl Store {
 
                 // save the valid timestamps stored in the StoreValidationInfo
                 // we only use valid timestamps, otherwise just ignore
-                let mut verify_trust = settings.verify.verify_timestamp_trust;
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
-                        if rc.version() == 1 {
-                            // no trust checks for leagacy timestamps
-                            verify_trust = false;
-                        }
-
                         if let Ok(tst_info) = verify_time_stamp(
                             time_stamp_token,
                             rc.signature_val(),
                             &self.ctp,
                             validation_log,
-                            verify_trust,
+                            // no trust checks for leagacy timestamps
+                            rc.version() != 1,
                         ) {
                             svi.timestamps.insert(rc.label().to_owned(), tst_info);
                         }
@@ -2200,12 +2142,7 @@ impl Store {
         };
 
         // get info needed to complete validation
-        let svi = store.get_store_validation_info(
-            claim,
-            asset_data,
-            validation_log,
-            context.settings(),
-        )?;
+        let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
 
         if _sync {
             // verify the provenance claim
@@ -2755,9 +2692,9 @@ impl Store {
         let mut assertions = Vec::new();
         for da in dyn_assertions.iter() {
             let reserve_size = da.reserve_size()?;
-            let data1 = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
+            let data1 = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
             let cbor_delta = data1.len() - reserve_size;
-            let da_data = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
+            let da_data = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
             assertions.push(UserCbor::new(&da.label(), da_data));
         }
 
@@ -7909,7 +7846,7 @@ pub mod tests {
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
-                Ok(serde_cbor::to_vec(&assertion)?.len())
+                Ok(c2pa_cbor::to_vec(&assertion)?.len())
             }
 
             fn content(
@@ -7930,7 +7867,7 @@ pub mod tests {
                 };
 
                 Ok(DynamicAssertionContent::Cbor(
-                    serde_cbor::to_vec(&assertion).unwrap(),
+                    c2pa_cbor::to_vec(&assertion).unwrap(),
                 ))
             }
         }
@@ -8038,7 +7975,7 @@ pub mod tests {
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
-                Ok(serde_cbor::to_vec(&assertion)?.len())
+                Ok(c2pa_cbor::to_vec(&assertion)?.len())
             }
 
             async fn content(
@@ -8059,7 +7996,7 @@ pub mod tests {
                 };
 
                 Ok(DynamicAssertionContent::Cbor(
-                    serde_cbor::to_vec(&assertion).unwrap(),
+                    c2pa_cbor::to_vec(&assertion).unwrap(),
                 ))
             }
         }
@@ -8260,6 +8197,10 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_bogus_cert() {
         use crate::builder::{Builder, BuilderIntent};
+
+        // bypass auto sig check
+        crate::settings::set_settings_value("verify.verify_after_sign", false).unwrap();
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let png = include_bytes!("../tests/fixtures/libpng-test.png"); // Randomly generated local Ed25519
         let ed25519 = include_bytes!("../tests/fixtures/certs/ed25519.pem");

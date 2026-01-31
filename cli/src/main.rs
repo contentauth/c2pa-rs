@@ -602,6 +602,24 @@ fn reader_from_args(args: &CliArgs) -> Result<Reader> {
     }
 }
 
+// Utility to catch reader formatting errors and print the reader json or detailed json
+// formatting can fail if Reader CBOR is deeply nested or malformed
+fn print_reader(reader: &Reader, detailed: bool) -> Result<()> {
+    let result = if detailed {
+        reader.detailed_json_checked()
+    } else {
+        reader.json_checked()
+    }
+    .map_err(|e| anyhow!("Error formatting output: {}", e));
+    match result {
+        Ok(json) => {
+            println!("{json}");
+            Ok(())
+        }
+        Err(e) => bail!("Error formatting output: {}", e),
+    }
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -836,11 +854,7 @@ fn main() -> Result<()> {
                 // generate a report on the output file
                 let mut reader = Reader::from_file(&output).map_err(special_errs)?;
                 validate_cawg(&mut reader)?;
-                if args.detailed {
-                    println!("{reader:#?}");
-                } else {
-                    println!("{reader}")
-                }
+                print_reader(&reader, args.detailed)?;
             }
         } else {
             bail!("Output path required with manifest definition")
@@ -884,10 +898,6 @@ fn main() -> Result<()> {
             "{}",
             Ingredient::from_file(&args.path).map_err(special_errs)?
         )
-    } else if args.detailed {
-        let mut reader = reader_from_args(&args)?;
-        validate_cawg(&mut reader)?;
-        println!("{reader:#?}");
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
@@ -905,7 +915,7 @@ fn main() -> Result<()> {
     } else {
         let mut reader = reader_from_args(&args)?;
         validate_cawg(&mut reader)?;
-        println!("{reader}");
+        print_reader(&reader, args.detailed)?;
     }
 
     Ok(())

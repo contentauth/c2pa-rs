@@ -256,8 +256,7 @@ pub(crate) fn get_signing_info(
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 pub mod tests {
-    use ciborium::Value;
-    use coset::Label;
+    use coset::{cbor::value::Value, Label};
     #[allow(deprecated)]
     use sha2::digest::generic_array::sequence::Shorten;
     use x509_parser::{certificate::X509Certificate, pem::Pem};
@@ -393,7 +392,7 @@ pub mod tests {
                             x.1.as_array()
                                 .and_then(|ocsp_rsp_val| ocsp_rsp_val.first())
                                 .and_then(Value::as_bytes)
-                                .cloned()
+                                .map(|b| b.to_vec())
                         } else {
                             None
                         }
