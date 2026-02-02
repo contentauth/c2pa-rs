@@ -390,9 +390,9 @@ checksum = "175812e0be2bccb6abe50bb8d566126198344f707e304f45c648fd8f2cc0365e"
 
 [[package]]
 name = "bytemuck"
-version = "1.24.0"
+version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fbdf580320f38b612e485521afda1ee26d10cc9884efaaa750d383e13e3c5f4"
+checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
 
 [[package]]
 name = "byteorder"
@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa"
-version = "0.75.9"
+version = "0.75.10"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -496,7 +496,7 @@ dependencies = [
  "reqwest",
  "riff",
  "rsa",
- "schemars 1.2.0",
+ "schemars 1.2.1",
  "serde",
  "serde-transcode",
  "serde-wasm-bindgen",
@@ -530,7 +530,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.75.9"
+version = "0.75.10"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -544,9 +544,9 @@ dependencies = [
 
 [[package]]
 name = "c2pa_cbor"
-version = "0.77.1"
+version = "0.77.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42be240232265b2ea8c21cb97fdf700bfe2077ef6aa60186adf19a39f501ee5a"
+checksum = "a32d9f47773390b9e3400021ddd9ef7a8d61b8a6501cf72aecd6409d6d447c89"
 dependencies = [
  "half",
  "serde",
@@ -555,7 +555,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.75.9"
+version = "0.75.10"
 dependencies = [
  "quote",
  "syn 2.0.114",
@@ -563,7 +563,7 @@ dependencies = [
 
 [[package]]
 name = "c2patool"
-version = "0.26.20"
+version = "0.26.21"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1308,11 +1308,11 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.75.9"
+version = "0.75.10"
 dependencies = [
  "anyhow",
  "c2pa",
- "schemars 1.2.0",
+ "schemars 1.2.1",
  "serde_json",
 ]
 
@@ -2211,12 +2211,12 @@ dependencies = [
 
 [[package]]
 name = "jumbf"
-version = "0.4.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a32280817bc6e0dbd9aa2abfe52b8fe7405bebc33995649525ecc13ececc3b59"
+checksum = "341aaedb900ce9943138b4d2fbbf57f8e10fea282538354c5f9aec3fa03d736e"
 dependencies = [
  "nom 7.1.3",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2307,7 +2307,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.75.9"
+version = "0.75.10"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2908,15 +2908,15 @@ dependencies = [
 
 [[package]]
 name = "portable-atomic"
-version = "1.13.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f89776e4d69bb58bc6993e99ffa1d11f228b839984854c7daeb5d37f87cbe950"
+checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 
 [[package]]
 name = "portable-atomic-util"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8a2f0d8d040d7848a709caf78912debcc3f33ee4b3cac47d73d1e1069e83507"
+checksum = "7a9db96d7fa8782dd8c15ce32ffe8680bbd1e978a43bf51a34d39483540495f5"
 dependencies = [
  "portable-atomic",
 ]
@@ -3591,9 +3591,9 @@ dependencies = [
 
 [[package]]
 name = "schemars"
-version = "1.2.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54e910108742c57a770f492731f99be216a52fadd361b06c8fb59d74ccc267d2"
+checksum = "a2b42f36aa1cd011945615b92222f6bf73c599a102a300334cd7f8dbeec726cc"
 dependencies = [
  "dyn-clone",
  "ref-cast",
@@ -3604,9 +3604,9 @@ dependencies = [
 
 [[package]]
 name = "schemars_derive"
-version = "1.2.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4908ad288c5035a8eb12cfdf0d49270def0a268ee162b75eeee0f85d155a7c45"
+checksum = "7d115b50f4aaeea07e79c1912f645c7513d81715d0420f8bc77a18c6260b307f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3800,7 +3800,7 @@ dependencies = [
  "indexmap 1.9.3",
  "indexmap 2.13.0",
  "schemars 0.9.0",
- "schemars 1.2.0",
+ "schemars 1.2.1",
  "serde_core",
  "serde_json",
  "serde_with_macros",
@@ -3891,9 +3891,9 @@ checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "slab"
-version = "0.4.11"
+version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a2ae44ef20feb57a68b23d846850f861394c2e02dc425a50098ae8c90267589"
+checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"
@@ -5288,9 +5288,9 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.17"
+version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02aae0f83f69aafc94776e879363e9771d7ecbffe2c7fbb6c14c5e00dfe88439"
+checksum = "3ff05f8caa9038894637571ae6b9e29466c1f4f829d26c9b28f869a29cbe3445"
 
 [[package]]
 name = "zune-core"
