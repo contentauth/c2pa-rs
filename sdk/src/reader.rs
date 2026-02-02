@@ -806,7 +806,7 @@ impl Reader {
     ///
     /// use c2pa::Reader;
     /// // Create a Reader from an in-memory stream (placeholder bytes shown here).
-    /// let input = Cursor::new(Vec::<u8>::new());
+    /// let input = Cursor::new(Vec::new());
     /// let reader = Reader::from_stream("image/jpeg", input).unwrap();
     ///
     /// // Get a resource identifier from the active manifest (e.g., a thumbnail).
