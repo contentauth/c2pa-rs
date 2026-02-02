@@ -58,19 +58,21 @@
 //! ```no_run
 //! use c2pa::{settings::Settings, Context, Reader, Result};
 //!
-//! # #[cfg(not(target_arch = "wasm32"))]
 //! # fn main() -> Result<()> {
-//! // Load the official C2PA trust list (PEM bundle) from a local file you downloaded.
-//! let trust_pem = std::fs::read_to_string("path/to/C2PA-TRUST-LIST.pem")?;
+//! #[cfg(feature = "file_io")]
+//! {
+//!     // Load the official C2PA trust list (PEM bundle) from a local file you downloaded.
+//!     let trust_pem = std::fs::read_to_string("path/to/C2PA-TRUST-LIST.pem")?;
 //!
-//! // Build Settings enabling certificate trust verification against the C2PA trust anchors.
-//! let settings = Settings::new().with_value("trust.trust_anchors", trust_pem)?;
+//!     // Build Settings enabling certificate trust verification against the C2PA trust anchors.
+//!     let settings = Settings::new().with_value("trust.trust_anchors", trust_pem)?;
 //!
-//! // Create a Context with these settings and read an asset.
-//! let context = Context::new().with_settings(settings)?;
-//! let reader = Reader::from_context(context).with_file("path/to/asset.jpg")?;
+//!     // Create a Context with these settings and read an asset.
+//!     let context = Context::new().with_settings(settings)?;
+//!     let reader = Reader::from_context(context).with_file("path/to/asset.jpg")?;
 //!
-//! println!("{}", reader.json());
+//!     println!("{}", reader.json());
+//! }
 //! # Ok(())
 //! # }
 //! ```
