@@ -58,6 +58,7 @@
 //! ```no_run
 //! use c2pa::{settings::Settings, Context, Reader, Result};
 //!
+//! # #[cfg(not(target_arch = "wasm32"))]
 //! # fn main() -> Result<()> {
 //! // Load the official C2PA trust list (PEM bundle) from a local file you downloaded.
 //! let trust_pem = std::fs::read_to_string("path/to/C2PA-TRUST-LIST.pem")?;
