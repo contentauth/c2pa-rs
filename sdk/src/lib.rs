@@ -152,7 +152,7 @@ pub mod settings;
 #[doc(hidden)]
 pub mod status_tracker;
 
-/// The validation_results module contains the definitions for the validation results that are part of the C2PA specification.
+/// Contains the definitions for the validation results that are part of the C2PA specification.
 pub mod validation_results;
 
 /// The validation_status module contains the definitions for the validation status that are part of the C2PA specification.
