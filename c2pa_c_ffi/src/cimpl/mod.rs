@@ -25,7 +25,7 @@
 //! ## Example
 //!
 //! ```rust
-//! use cimpl::{cstr_or_return_null, ptr_or_return_null, to_c_string};
+//! use cimpl::{cstr_or_return_null, to_c_string};
 //!
 //! #[no_mangle]
 //! pub extern "C" fn process_string(

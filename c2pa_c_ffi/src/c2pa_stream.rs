@@ -17,7 +17,7 @@ use std::{
 };
 
 use crate::{
-    box_tracked, cimpl_free, deref_mut_or_return_neg, error::C2paError, ok_or_return_int,
+    box_tracked, cimpl_free, deref_mut_or_return_int, error::C2paError, ok_or_return_int,
     CimplError,
 };
 
@@ -324,7 +324,7 @@ impl TestC2paStream {
     }
 
     unsafe extern "C" fn reader(context: *mut StreamContext, data: *mut u8, len: isize) -> isize {
-        let stream = deref_mut_or_return_neg!(context as *mut TestC2paStream, TestC2paStream);
+        let stream = deref_mut_or_return_int!(context as *mut TestC2paStream, TestC2paStream);
         let data: &mut [u8] = slice::from_raw_parts_mut(data, len as usize);
         ok_or_return_int!(stream.cursor.read(data)) as isize
     }
@@ -334,7 +334,7 @@ impl TestC2paStream {
         offset: isize,
         mode: C2paSeekMode,
     ) -> isize {
-        let stream = deref_mut_or_return_neg!(context as *mut TestC2paStream, TestC2paStream);
+        let stream = deref_mut_or_return_int!(context as *mut TestC2paStream, TestC2paStream);
 
         match mode {
             C2paSeekMode::Start => {

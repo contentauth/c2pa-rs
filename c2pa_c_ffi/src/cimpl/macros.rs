@@ -30,16 +30,16 @@
 //!
 //! ```text
 //! ❌ if ptr.is_null() { Error::...; return -1; }
-//! ✅ deref_mut_or_return_neg!(ptr, Type)
+//! ✅ deref_mut_or_return_int!(ptr, Type)
 //!
 //! ❌ match result { Ok(v) => ..., Err(e) => { Error::...; return null } }
 //! ✅ ok_or_return_null!(result.map_err(InternalError::from))
 //!
 //! ❌ unsafe { if ptr.is_null() { ... } &mut *ptr }
-//! ✅ deref_mut_or_return_neg!(ptr, Type)
+//! ✅ deref_mut_or_return_int!(ptr, Type)
 //!
 //! ❌ unsafe { &*ptr } or unsafe { &mut *ptr }
-//! ✅ deref_or_return!(ptr, Type, -1) or deref_mut_or_return!(ptr, Type, -1)
+//! ✅ deref_or_return_int!(ptr, Type) or deref_mut_or_return_int!(ptr, Type)
 //!
 //! ❌ Manual string length checks and conversion
 //! ✅ cstr_or_return!(ptr, -1)
@@ -68,8 +68,6 @@
 //! ## Error Handling
 //! - **External crate Result**: `ok_or_return_null!(result)` → uses From trait automatically
 //! - **cimpl::Error Result**: `ok_or_return_null!(result)` → used directly
-//! - **`Option<T>` (validation)**: `some_or_return_other_null!(option, "message")` → most common case
-//! - **`Option<T>` (custom error)**: `some_or_return_null!(option, Error::other(msg))` → specific error
 //!
 //! ## Naming Pattern
 //! All macros follow: `action_or_return_<what>`
@@ -86,7 +84,6 @@
 //! | `*const c_char` (from C)| -              | `cstr_or_return_null!(s)`         | Getting string from C |
 //! | `Result<T, ExtErr>`    | pointer/int     | `ok_or_return_null!(r)`           | External crate errors (From trait) |
 //! | `Result<T, cimpl::Err>`| pointer/int     | `ok_or_return_null!(r)`           | Internal validation |
-//! | `Option<T>` validate   | pointer/int     | `some_or_return_other_null!(o, msg)` | Validation failures |
 //! | `Option<T>` custom     | pointer/int     | `some_or_return_null!(o, err)`    | Specific error needed |
 //! | `T` (owned)            | `*mut T`        | `box_tracked!(value)`             | Returning new object |
 //! | `String`               | `*mut c_char`   | `to_c_string(s)`                  | Returning string |
@@ -181,6 +178,11 @@
 // ----------------------------------------------------------------------------
 /// Validate pointer and dereference immutably, returning reference
 /// Returns early with custom value on error
+///
+/// # Examples
+/// ```rust,ignore
+/// let value = deref_or_return!(ptr, Type, -1);
+/// ```
 #[macro_export]
 macro_rules! deref_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
@@ -197,6 +199,10 @@ macro_rules! deref_or_return {
 
 /// Validate pointer and dereference immutably, returning reference
 /// Returns NULL on error
+/// # Examples
+/// ```rust,ignore
+/// let value = deref_or_return_null!(ptr, Type);
+/// ```
 #[macro_export]
 macro_rules! deref_or_return_null {
     ($ptr:expr, $type:ty) => {{
@@ -207,7 +213,7 @@ macro_rules! deref_or_return_null {
 /// Validate pointer and dereference immutably, returning reference
 /// Returns -1 on error
 #[macro_export]
-macro_rules! deref_or_return_neg {
+macro_rules! deref_or_return_int {
     ($ptr:expr, $type:ty) => {{
         $crate::deref_or_return!($ptr, $type, -1)
     }};
@@ -259,7 +265,7 @@ macro_rules! deref_mut_or_return_null {
 /// Validate pointer and dereference mutably, returning reference
 /// Returns -1 on error
 #[macro_export]
-macro_rules! deref_mut_or_return_neg {
+macro_rules! deref_mut_or_return_int {
     ($ptr:expr, $type:ty) => {{
         $crate::deref_mut_or_return!($ptr, $type, -1)
     }};
@@ -289,17 +295,6 @@ macro_rules! arc_tracked {
 
 /// Maximum length for C strings when using bounded conversion (64KB)
 pub const MAX_CSTRING_LEN: usize = 65536;
-
-/// Check pointer not null or early-return with error value
-#[macro_export]
-macro_rules! ptr_or_return {
-    ($ptr:expr, $err_val:expr) => {
-        if $ptr.is_null() {
-            $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
-            return $err_val;
-        }
-    };
-}
 
 /// Convert C string with bounded length check or early-return with error value
 /// Uses a safe bounded approach to prevent reading unbounded memory.
@@ -527,55 +522,14 @@ macro_rules! some_or_return_false {
     };
 }
 
-/// Convenience macro: Handle Option with Error::other message
-///
-/// Automatically wraps the message string in Error::other().
-/// This is the most common case for Option handling in FFI.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// let date = some_or_return_other_null!(
-///     NaiveDate::from_ymd_opt(2024, 1, 20),
-///     "Invalid date"
-/// );
-/// ```
+/// Check pointer not null or early-return with error value
 #[macro_export]
-macro_rules! some_or_return_other {
-    ($option:expr, $msg:expr, $err_val:expr) => {
-        $crate::some_or_return!($option, $crate::CimplError::other($msg), $err_val)
-    };
-}
-
-// Unused - kept for potential future use
-#[allow(unused_macros)]
-macro_rules! some_or_return_other_null {
-    ($option:expr, $msg:expr) => {
-        $crate::some_or_return!($option, $msg, std::ptr::null_mut())
-    };
-}
-
-/// Convenience macro: Handle Option with Error::other message, return -1
-#[macro_export]
-macro_rules! some_or_return_other_int {
-    ($option:expr, $msg:expr) => {
-        $crate::some_or_return!($option, $msg, -1)
-    };
-}
-
-/// Convenience macro: Handle Option with Error::other message, return 0
-#[macro_export]
-macro_rules! some_or_return_other_zero {
-    ($option:expr, $msg:expr) => {
-        $crate::some_or_return!($option, $msg, 0)
-    };
-}
-
-/// Convenience macro: Handle Option with Error::other message, return false
-#[macro_export]
-macro_rules! some_or_return_other_false {
-    ($option:expr, $msg:expr) => {
-        $crate::some_or_return!($option, $msg, false)
+macro_rules! ptr_or_return {
+    ($ptr:expr, $err_val:expr) => {
+        if $ptr.is_null() {
+            $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
+            return $err_val;
+        }
     };
 }
 
@@ -611,15 +565,14 @@ macro_rules! cstr_or_return_int {
     };
 }
 
-/// If the expression is null, set the last error and return 0.
-#[macro_export]
-macro_rules! cstr_or_return_neg {
-    ($ptr : expr) => {
-        $crate::cstr_or_return!($ptr, -1)
-    };
-}
-
-// Internal routine to convert a *const c_char to Option<String>.
+/// Convert a *const c_char to `Option<String>`.
+/// Returns None if the pointer is null.
+/// Returns `Some(String)` if the pointer is not null.
+/// Returns None if the string is too long.
+/// # Examples
+/// ```rust,ignore
+/// let string = cstr_option!(ptr);
+/// ```
 #[macro_export]
 macro_rules! cstr_option {
     ($ptr : expr) => {{
@@ -642,14 +595,6 @@ macro_rules! cstr_option {
             }
         }
     }};
-}
-
-/// Internal routine to convert a *const c_char to `Option<String>` (alias for consistency)
-#[macro_export]
-macro_rules! from_cstr_option {
-    ($ptr : expr) => {
-        $crate::cstr_option!($ptr)
-    };
 }
 
 /// Converts an `Option<String>` to a C string pointer.
@@ -675,37 +620,11 @@ macro_rules! option_to_c_string {
     };
 }
 
-/// Check pointer not null
-#[macro_export]
-macro_rules! null_check {
-    (($ptr:expr), $transform:expr, $err_val:expr) => {
-        if $ptr.is_null() {
-            $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
-            return $err_val;
-        }
-        $transform($ptr)
-    };
-}
-
-/// Dereference a boxed pointer or return with custom error value
-#[macro_export]
-macro_rules! guard_boxed {
-    ($ptr:expr) => {{
-        $crate::ptr_or_return!($ptr, std::ptr::null_mut());
-        unsafe { &mut *$ptr }
-    }};
-}
-
-/// Dereference a boxed pointer or return -1
-#[macro_export]
-macro_rules! guard_boxed_int {
-    ($ptr:expr) => {{
-        $crate::ptr_or_return!($ptr, -1);
-        unsafe { &mut *$ptr }
-    }};
-}
-
 /// Free a pointer that was allocated by cimpl
+/// # Examples
+/// ```rust,ignore
+/// cimpl_free!(ptr);
+/// ```
 #[macro_export]
 macro_rules! cimpl_free {
     ($ptr:expr) => {
