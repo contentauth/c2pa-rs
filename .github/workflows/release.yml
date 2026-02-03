@@ -14,6 +14,10 @@ jobs:
     name: Release-plz
     runs-on: ubuntu-latest
 
+    env:
+      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
     outputs:
       c2patool-release-tag: ${{ steps.sniff-c2patool-release-tag.outputs.tag }}
 
@@ -26,6 +30,11 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      # Hopefully temporary step while we sort out build issues.
+      - name: Work around crates.io git index issues
+        run: |
+          rm -rf ~/.cargo/registry/index/github.com-1ecc6299db9ec823/ || true
 
       - name: Run release-plz
         id: release-plz
