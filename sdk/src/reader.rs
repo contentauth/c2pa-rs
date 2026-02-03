@@ -1414,7 +1414,7 @@ impl Reader {
     /// - `ManifestType::ArchivedIngredient` if this appears to be an archived ingredient
     /// - `ManifestType::SignedManifest` if this is a regular signed C2PA manifest
     pub(crate) fn manifest_type(&self) -> ManifestType {
-        // Check for builder archive marker
+        // Check for builder archive marker (new archives)
         let is_builder = self
             .active_manifest()
             .and_then(|m| m.claim_generator_info.as_ref())
@@ -1428,8 +1428,34 @@ impl Reader {
             return ManifestType::ArchivedBuilder;
         }
 
+        // Fallback detection for older builder archives (before marker was added)
+        // Builder archives are unsigned or have a BoxHash with only a c2pa data segment
+        let is_old_builder_archive = self
+            .active_manifest()
+            .map(|m| {
+                // Check if this has a BoxHash assertion
+                m.assertions()
+                    .iter()
+                    .find(|a| a.label() == crate::assertions::BoxHash::LABEL)
+                    .and_then(|a| a.to_assertion::<crate::assertions::BoxHash>().ok())
+                    .map(|box_hash| {
+                        // Builder archives have BoxHash with only c2pa box (no media boxes)
+                        box_hash.boxes.len() == 1
+                            && box_hash
+                                .boxes
+                                .iter()
+                                .any(|b| b.names.contains(&"c2pa".to_string()))
+                    })
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+
+        if is_old_builder_archive {
+            return ManifestType::ArchivedBuilder;
+        }
+
         // Check if this looks like an archived ingredient
-        // (has exactly one ingredient with manifest_data and minimal assertions)
+        // (has exactly one ingredient with manifest_data)
         let has_archived_ingredient = self
             .active_manifest()
             .map(|m| {
