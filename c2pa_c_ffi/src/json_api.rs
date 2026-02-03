@@ -11,6 +11,9 @@
 // each license.
 
 use c2pa::{identity::validator::CawgValidator, Ingredient, Reader, Relationship};
+#[cfg(target_arch = "wasm32")]
+use tokio::runtime::Builder;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
 
 use crate::{Error, Result, SignerInfo};
@@ -21,10 +24,27 @@ use crate::{Error, Result, SignerInfo};
 /// Any Validation errors will be reported in the validation_status field.
 pub fn read_file(path: &str, data_dir: Option<String>) -> Result<String> {
     let mut reader = Reader::from_file(path).map_err(Error::from_c2pa_error)?;
-    let runtime = Runtime::new().map_err(|e| Error::Other(e.to_string()))?;
-    runtime
-        .block_on(reader.post_validate_async(&CawgValidator {}))
-        .map_err(Error::from_c2pa_error)?;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let runtime = Runtime::new().map_err(|e| Error::Other(e.to_string()))?;
+        runtime
+            .block_on(reader.post_validate_async(&CawgValidator {}))
+            .map_err(Error::from_c2pa_error)?;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        // WASM requires single-threaded runtime
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| Error::Other(e.to_string()))?;
+        runtime
+            .block_on(reader.post_validate_async(&CawgValidator {}))
+            .map_err(Error::from_c2pa_error)?;
+    }
+
     Ok(if let Some(dir) = data_dir {
         let json = reader.json();
         reader.to_folder(&dir).map_err(Error::from_c2pa_error)?;

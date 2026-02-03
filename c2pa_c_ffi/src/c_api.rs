@@ -80,7 +80,11 @@ use c2pa::{
     CallbackSigner, Reader as C2paReader, Settings, SigningAlg,
 };
 use scopeguard::guard;
+
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime; // cawg validator requires async
+#[cfg(target_arch = "wasm32")]
+use tokio::runtime::Builder;
 
 #[cfg(feature = "file_io")]
 use crate::json_api::{read_file, sign_file};
@@ -600,13 +604,28 @@ pub unsafe extern "C" fn c2pa_free_string_array(ptr: *const *const c_char, count
 fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, c2pa::Error> {
     match result {
         Ok(mut reader) => {
-            let runtime = match Runtime::new() {
-                Ok(runtime) => runtime,
-                Err(err) => return Err(c2pa::Error::OtherError(Box::new(err))),
-            };
-            match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
-                Ok(_) => Ok(reader),
-                Err(err) => Err(err),
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let runtime = match Runtime::new() {
+                    Ok(runtime) => runtime,
+                    Err(err) => return Err(c2pa::Error::OtherError(Box::new(err))),
+                };
+                match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
+                    Ok(_) => Ok(reader),
+                    Err(err) => Err(err),
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                // WASM requires single-threaded runtime
+                let runtime = match Builder::new_current_thread().enable_all().build() {
+                    Ok(runtime) => runtime,
+                    Err(err) => return Err(c2pa::Error::OtherError(Box::new(err))),
+                };
+                match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
+                    Ok(_) => Ok(reader),
+                    Err(err) => Err(err),
+                }
             }
         }
         Err(err) => Err(err),
