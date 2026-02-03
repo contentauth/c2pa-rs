@@ -2211,11 +2211,10 @@ dependencies = [
 
 [[package]]
 name = "jumbf"
-version = "0.5.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "341aaedb900ce9943138b4d2fbbf57f8e10fea282538354c5f9aec3fa03d736e"
+checksum = "75ff33af10c9a7ac0ef93e3694e8b22ad36990b93586f78591dd621aae7f7ee2"
 dependencies = [
- "nom 7.1.3",
  "thiserror 2.0.18",
 ]
 
