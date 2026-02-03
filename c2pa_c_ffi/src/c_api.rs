@@ -3347,4 +3347,193 @@ verify_after_sign = true
 
         // The reader should have been freed automatically (no leak)
     }
+
+    // ========== High-Value Coverage Tests ==========
+
+    #[test]
+    fn test_c2pa_reader_new() {
+        let reader = unsafe { c2pa_reader_new() };
+        assert!(!reader.is_null(), "Should create a default reader");
+
+        unsafe {
+            c2pa_free(reader as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_reader_is_embedded_null() {
+        // Test null pointer - should return false via deref_or_return_false!
+        let result = unsafe { c2pa_reader_is_embedded(std::ptr::null_mut()) };
+        assert!(!result, "Null reader should return false");
+    }
+
+    #[test]
+    fn test_c2pa_reader_remote_url_null() {
+        // Test null pointer - should return null
+        let result = unsafe { c2pa_reader_remote_url(std::ptr::null_mut()) };
+        assert!(result.is_null(), "Null reader should return null URL");
+    }
+
+    #[test]
+    fn test_c2pa_builder_set_intent_null() {
+        // Test null pointer - should return error
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                std::ptr::null_mut(),
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::DigitalCapture,
+            )
+        };
+        assert_eq!(result, -1, "Null builder should return -1");
+    }
+
+    #[test]
+    fn test_c2pa_builder_add_action_null_builder() {
+        let action = CString::new(r#"{"action": "c2pa.edited"}"#).unwrap();
+        let result = unsafe { c2pa_builder_add_action(std::ptr::null_mut(), action.as_ptr()) };
+        assert_eq!(result, -1, "Null builder should return error");
+    }
+
+    #[test]
+    fn test_c2pa_builder_add_action_null_action() {
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        let result = unsafe { c2pa_builder_add_action(builder, std::ptr::null()) };
+        assert_eq!(result, -1, "Null action should return error");
+
+        unsafe {
+            c2pa_free(builder as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_context_builder_set_settings_null_settings() {
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        // Test with null settings pointer
+        let result = unsafe { c2pa_context_builder_set_settings(builder, std::ptr::null_mut()) };
+        assert_eq!(result, -1, "Null settings should return -1");
+
+        unsafe {
+            c2pa_free(builder as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_signer_reserve_size() {
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let size = unsafe { c2pa_signer_reserve_size(signer) };
+        assert!(size > 0, "Reserve size should be positive");
+
+        unsafe {
+            c2pa_free(signer as *mut c_void);
+            c2pa_free(builder as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_signer_reserve_size_null() {
+        let size = unsafe { c2pa_signer_reserve_size(std::ptr::null_mut()) };
+        assert_eq!(size, -1, "Null signer should return -1");
+    }
+
+    #[test]
+    fn test_c2pa_string_free_backward_compat() {
+        // Test that string_free works for backward compatibility
+        let test_str = CString::new("test string").unwrap();
+        let c_str = to_c_string(test_str.to_str().unwrap().to_string());
+        assert!(!c_str.is_null());
+
+        // Should not crash
+        unsafe {
+            c2pa_string_free(c_str);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_string_free_null() {
+        // Should handle null gracefully
+        unsafe {
+            c2pa_string_free(std::ptr::null_mut());
+        }
+        // If we get here, it handled null without crashing
+    }
+
+    #[test]
+    fn test_c2pa_ed25519_sign_actually_calls_function() {
+        // Fix: The existing test_ed25519_sign doesn't call c2pa_ed25519_sign!
+        let bytes = b"test data to sign";
+        let private_key_pem = include_bytes!(fixture_path!("certs/ed25519.pem"));
+        let private_key = CString::new(private_key_pem.as_slice()).unwrap();
+
+        let signature =
+            unsafe { c2pa_ed25519_sign(bytes.as_ptr(), bytes.len(), private_key.as_ptr()) };
+
+        assert!(!signature.is_null(), "Should return signature");
+
+        unsafe {
+            c2pa_signature_free(signature);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_ed25519_sign_null_bytes() {
+        let private_key_path = CString::new(fixture_path!("certs/ed25519.pem")).unwrap();
+
+        let signature =
+            unsafe { c2pa_ed25519_sign(std::ptr::null(), 10, private_key_path.as_ptr()) };
+
+        assert!(signature.is_null(), "Null bytes should return null");
+    }
+
+    #[test]
+    fn test_c2pa_ed25519_sign_null_key() {
+        let bytes = b"test data";
+
+        let signature = unsafe { c2pa_ed25519_sign(bytes.as_ptr(), bytes.len(), std::ptr::null()) };
+
+        assert!(signature.is_null(), "Null key should return null");
+
+        // Verify error was set
+        let error = unsafe { c2pa_error() };
+        assert!(!error.is_null());
+        unsafe {
+            c2pa_string_free(error);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_reader_detailed_json_null() {
+        let result = unsafe { c2pa_reader_detailed_json(std::ptr::null_mut()) };
+        assert!(result.is_null(), "Null reader should return null");
+    }
+
+    #[test]
+    fn test_c2pa_reader_json_better_coverage() {
+        // The existing test only tests null, let's test with valid reader
+        let source_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let mut stream = TestStream::new(source_image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
+        assert!(!reader.is_null());
+
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null(), "Should return JSON");
+
+        // Verify it's valid JSON
+        use std::ffi::CStr;
+        let json_str = unsafe { CStr::from_ptr(json).to_str().unwrap() };
+        assert!(!json_str.is_empty());
+        let _: serde_json::Value = serde_json::from_str(json_str).unwrap();
+
+        unsafe {
+            c2pa_free(json as *mut c_void);
+            c2pa_free(reader as *mut c_void);
+        }
+    }
 }
