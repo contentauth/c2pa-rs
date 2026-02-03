@@ -2417,13 +2417,7 @@ impl Builder {
 
     /// Add an ingredient to the manifest from a Reader.
     ///
-    /// This method handles different types of readers:
-    /// - **Builder Archive**: Extracts all ingredients from the archived builder
-    /// - **Archived Ingredient**: Extracts the single archived ingredient
-    /// - **Regular C2PA Manifest**: Converts the manifest into a parent ingredient
-    ///
-    /// Note: This method needs to read the reader's data to determine its type.
-    /// For efficiency, consider using the stream-based methods when possible.
+    /// This method extracts ingredient(s) from the reader and adds them to the builder.
     ///
     /// # Arguments
     /// * `reader` - The Reader to get the ingredient from.
@@ -2433,26 +2427,13 @@ impl Builder {
         &mut self,
         reader: &crate::Reader,
     ) -> Result<&mut Ingredient> {
-        // Determine the archive type and handle accordingly
-        match reader.manifest_type() {
-            crate::reader::ManifestType::ArchivedIngredient => {
-                // Simple case: just extract the ingredient without full conversion
-                let ingredient = reader.to_ingredient()?;
-                self.add_ingredient(ingredient);
-                self.definition
-                    .ingredients
-                    .last_mut()
-                    .ok_or(Error::IngredientNotFound)
-            }
-            _ => {
-                // For Builder archives and regular manifests, we need the full into_builder logic
-                // But we can't clone Reader, so we'll need to manually extract the data
-                // This is less efficient but maintains the API
-                Err(Error::BadParam(
-                    "add_ingredient_from_reader with Builder archives or regular manifests requires ownership. Use add_ingredient_from_stream instead.".to_string()
-                ))
-            }
-        }
+        // Use the simple to_ingredient() extraction for backward compatibility
+        let ingredient = reader.to_ingredient()?;
+        self.add_ingredient(ingredient);
+        self.definition
+            .ingredients
+            .last_mut()
+            .ok_or(Error::IngredientNotFound)
     }
 
     /// This creates a working store from the builder
