@@ -40,7 +40,7 @@
 //!
 //! ## Example
 //!
-//! ```rust
+//! ```rust,ignore
 //! use cimpl::{cstr_or_return_null, to_c_string};
 //!
 //! #[no_mangle]

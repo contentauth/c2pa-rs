@@ -30,6 +30,7 @@ use crate::json_api::{read_file, sign_file};
 #[cfg(test)]
 use crate::safe_slice_from_raw_parts;
 // Import macros and utilities from cimpl
+#[allow(unused_imports)] // Usage varies by feature flags and test/non-test builds
 use crate::{
     box_tracked, bytes_or_return_int, bytes_or_return_null, c2pa_stream::C2paStream, cimpl_free,
     cstr_or_return_int, cstr_or_return_null, deref_mut_or_return, deref_mut_or_return_int,
