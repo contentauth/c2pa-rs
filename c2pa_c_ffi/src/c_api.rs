@@ -805,11 +805,12 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     format: *const c_char,
     stream: *mut C2paStream,
 ) -> *mut C2paReader {
-    // Take ownership of the reader (consumes it) for builder pattern
-    let reader = Box::from_raw(reader);
+    // Validate inputs first, while reader is still tracked
     let format = cstr_or_return_null!(format);
     let stream = deref_mut_or_return_null!(stream, C2paStream);
 
+    // Now safe to take ownership - all validations passed
+    let reader = Box::from_raw(reader);
     let result = (*reader).with_stream(&format, stream);
     let result = ok_or_return_null!(post_validate(result));
     box_tracked!(result)
@@ -847,12 +848,13 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
     stream: *mut C2paStream,
     fragment: *mut C2paStream,
 ) -> *mut C2paReader {
-    // Take ownership of the reader (consumes it) for builder pattern
-    let reader = Box::from_raw(reader);
+    // Validate inputs first, while reader is still tracked
     let format = cstr_or_return_null!(format);
     let stream = deref_mut_or_return_null!(stream, C2paStream);
     let fragment = deref_mut_or_return_null!(fragment, C2paStream);
 
+    // Now safe to take ownership - all validations passed
+    let reader = Box::from_raw(reader);
     let result = (*reader).with_fragment(&format, stream, fragment);
     let result = ok_or_return_null!(post_validate(result));
     box_tracked!(result)
@@ -1188,10 +1190,11 @@ pub unsafe extern "C" fn c2pa_builder_with_definition(
     builder: *mut C2paBuilder,
     manifest_json: *const c_char,
 ) -> *mut C2paBuilder {
-    // Take ownership of the builder (consumes it)
-    let builder = Box::from_raw(builder);
+    // Validate inputs first, while builder is still tracked
     let manifest_json = cstr_or_return_null!(manifest_json);
 
+    // Now safe to take ownership - all validations passed
+    let builder = Box::from_raw(builder);
     let result = (*builder).with_definition(manifest_json);
     box_tracked!(ok_or_return_null!(result))
 }
@@ -1223,10 +1226,11 @@ pub unsafe extern "C" fn c2pa_builder_with_archive(
     builder: *mut C2paBuilder,
     stream: *mut C2paStream,
 ) -> *mut C2paBuilder {
-    // Take ownership of the builder (consumes it)
-    let builder = Box::from_raw(builder);
+    // Validate stream first, while builder is still tracked
     let stream = deref_mut_or_return_null!(stream, C2paStream);
 
+    // Now safe to take ownership - stream is valid
+    let builder = Box::from_raw(builder);
     let result = (*builder).with_archive(stream);
     box_tracked!(ok_or_return_null!(result))
 }
