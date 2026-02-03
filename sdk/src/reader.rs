@@ -1412,99 +1412,44 @@ impl Reader {
     /// - `ManifestType::ArchivedIngredient` if this appears to be an archived ingredient
     /// - `ManifestType::SignedManifest` if this is a regular signed C2PA manifest
     pub(crate) fn manifest_type(&self) -> ManifestType {
-        // Check for builder archive marker (new archives)
-        let has_builder_marker = self
-            .active_manifest()
-            .and_then(|m| m.claim_generator_info.as_ref())
+        let manifest = match self.active_manifest() {
+            Some(m) => m,
+            None => return ManifestType::SignedManifest,
+        };
+
+        // Check for explicit archive type marker (new archives)
+        if let Some(archive_type) = manifest
+            .claim_generator_info
+            .as_ref()
             .and_then(|infos| infos.first())
-            .and_then(|info| info.get("com.contentauth.archive_type"))
+            .and_then(|info| info.get("org.contentauth.archive_type"))
             .and_then(|v| v.as_str())
-            .map(|s| s == "builder")
-            .unwrap_or(false);
+        {
+            return match archive_type {
+                "builder" => ManifestType::ArchivedBuilder,
+                "ingredient" => ManifestType::ArchivedIngredient,
+                _ => ManifestType::SignedManifest,
+            };
+        }
 
-        if has_builder_marker {
+        // Fallback for old archives without marker
+        let has_data_hash = manifest
+            .assertions()
+            .iter()
+            .any(|a| a.label() == crate::assertions::DataHash::LABEL);
+        
+        let has_box_hash = manifest
+            .assertions()
+            .iter()
+            .any(|a| a.label() == crate::assertions::BoxHash::LABEL);
+
+        // Two hard bindings = old builder archive (illegal but still detect it)
+        if has_data_hash && has_box_hash {
             return ManifestType::ArchivedBuilder;
         }
 
-        // Fallback detection for older builder archives (before marker was added)
-        // Builder archives have:
-        // 1. A DataHash assertion (placeholder signature)
-        // 2. A BoxHash with only c2pa box (hash over empty asset)
-        // 3. Format is "application/c2pa"
-        let is_old_builder_archive = self
-            .active_manifest()
-            .map(|m| {
-                let is_c2pa_format = m
-                    .format()
-                    .map(|f| f == "application/c2pa")
-                    .unwrap_or(false);
-
-                let has_data_hash = m
-                    .assertions()
-                    .iter()
-                    .any(|a| a.label() == crate::assertions::DataHash::LABEL);
-
-                let has_c2pa_only_box_hash = m
-                    .assertions()
-                    .iter()
-                    .find(|a| a.label() == crate::assertions::BoxHash::LABEL)
-                    .and_then(|a| a.to_assertion::<crate::assertions::BoxHash>().ok())
-                    .map(|box_hash| {
-                        // Builder archives have BoxHash with only c2pa box (no media boxes)
-                        box_hash.boxes.len() == 1
-                            && box_hash
-                                .boxes
-                                .iter()
-                                .any(|b| b.names.contains(&"c2pa".to_string()))
-                    })
-                    .unwrap_or(false);
-
-                is_c2pa_format && has_data_hash && has_c2pa_only_box_hash
-            })
-            .unwrap_or(false);
-
-        if is_old_builder_archive {
-            return ManifestType::ArchivedBuilder;
-        }
-
-        // Check if this looks like an archived ingredient
-        // Archived ingredients are created by signing with "application/c2pa" format
-        // They have:
-        // 1. Format is "application/c2pa"
-        // 2. A BoxHash with only c2pa box (fully signed, no placeholder)
-        // 3. NO DataHash (DataHash is only used for placeholder signatures)
-        let is_archived_ingredient = self
-            .active_manifest()
-            .map(|m| {
-                let is_c2pa_format = m
-                    .format()
-                    .map(|f| f == "application/c2pa")
-                    .unwrap_or(false);
-
-                let has_no_data_hash = !m
-                    .assertions()
-                    .iter()
-                    .any(|a| a.label() == crate::assertions::DataHash::LABEL);
-
-                let has_c2pa_only_box_hash = m
-                    .assertions()
-                    .iter()
-                    .find(|a| a.label() == crate::assertions::BoxHash::LABEL)
-                    .and_then(|a| a.to_assertion::<crate::assertions::BoxHash>().ok())
-                    .map(|box_hash| {
-                        box_hash.boxes.len() == 1
-                            && box_hash
-                                .boxes
-                                .iter()
-                                .any(|b| b.names.contains(&"c2pa".to_string()))
-                    })
-                    .unwrap_or(false);
-
-                is_c2pa_format && has_no_data_hash && has_c2pa_only_box_hash
-            })
-            .unwrap_or(false);
-
-        if is_archived_ingredient {
+        // If it has ingredients, assume archived ingredient
+        if !manifest.ingredients().is_empty() {
             return ManifestType::ArchivedIngredient;
         }
 

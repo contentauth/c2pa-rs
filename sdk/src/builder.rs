@@ -2437,36 +2437,53 @@ impl Builder {
     }
 
     /// This creates a working store from the builder
-    /// The working store is signed with a BoxHash over an empty string
+    /// If a signer is available in the context, it uses box hash signing
+    /// Otherwise, it falls back to a DataHash placeholder
     /// And is returned as a Vec<u8> of the c2pa_manifest bytes
     /// This works as an archive of the store that can be read back to restore the Builder state
-    fn working_store_sign(&self) -> Result<Vec<u8>> {
-        // first we need to generate a BoxHash over an empty string
-        let mut empty_asset = std::io::Cursor::new("");
-        let boxes = jumbf_io::get_assetio_handler("application/c2pa")
-            .ok_or(Error::UnsupportedType)?
-            .asset_box_hash_ref()
-            .ok_or(Error::UnsupportedType)?
-            .get_box_map(&mut empty_asset)?;
-        let box_hash = BoxHash { boxes };
-
-        // then convert the builder to a claim and add the box hash assertion
+    fn working_store_sign(&mut self) -> Result<Vec<u8>> {
+        // Convert the builder to a claim
         let mut claim = self.to_claim()?;
         
         // Mark this as a builder archive in the claim generator info
         if let Some(cgi) = claim.claim_generator_info.as_mut() {
             if let Some(first) = cgi.first_mut() {
-                first.insert("com.contentauth.archive_type", "builder");
+                first.insert(
+                    "org.contentauth.archive_type",
+                    serde_json::Value::String("builder".to_string()),
+                );
             }
         }
-        
-        claim.add_assertion(&box_hash)?;
 
-        // now commit and sign it. The signing will allow us to detect tampering.
-        let mut store = Store::new();
-        store.commit_claim(claim)?;
-
-        store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
+        // Check if we have a signer in the context
+        if let Ok(signer) = self.context.signer() {
+            // With signer: add BoxHash and sign
+            // Generate a BoxHash over an empty asset (for application/c2pa format)
+            let mut empty_asset = std::io::Cursor::new("");
+            let boxes = jumbf_io::get_assetio_handler("application/c2pa")
+                .ok_or(Error::UnsupportedType)?
+                .asset_box_hash_ref()
+                .ok_or(Error::UnsupportedType)?
+                .get_box_map(&mut empty_asset)?;
+            let box_hash = BoxHash { boxes };
+            
+            claim.add_assertion(&box_hash)?;
+            
+            // Commit the claim to a store
+            let mut store = Store::new();
+            store.commit_claim(claim)?;
+            
+            // Sign with box hash
+            store.get_box_hashed_embeddable_manifest(signer, &self.context)
+        } else {
+            // No signer: use data hash placeholder (don't add BoxHash)
+            // Commit the claim to a store
+            let mut store = Store::new();
+            store.commit_claim(claim)?;
+            
+            // get_data_hashed_manifest_placeholder will add DataHash
+            store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
+        }
     }
 }
 
@@ -4421,14 +4438,14 @@ mod tests {
             .active_manifest()
             .and_then(|m| m.claim_generator_info.as_ref())
             .and_then(|infos| infos.first())
-            .and_then(|info| info.get("com.contentauth.archive_type"))
+            .and_then(|info| info.get("org.contentauth.archive_type"))
             .and_then(|v| v.as_str())
             .map(|s| s == "builder")
             .unwrap_or(false);
 
         assert!(
             has_marker,
-            "Builder archive should have 'com.contentauth.archive_type' marker"
+            "Builder archive should have 'org.contentauth.archive_type' marker"
         );
 
         Ok(())
