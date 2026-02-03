@@ -50,7 +50,10 @@ impl PointerRegistry {
     /// Track a pointer with its type and cleanup function
     fn track(&self, ptr: usize, type_id: TypeId, cleanup: CleanupFn) {
         if ptr != 0 {
-            self.tracked.lock().unwrap().insert(ptr, (type_id, cleanup));
+            if let Ok(mut tracked) = self.tracked.lock() {
+                tracked.insert(ptr, (type_id, cleanup));
+            }
+            // Silently ignore poisoned mutex - this is a best-effort tracking system
         }
     }
 
@@ -60,7 +63,9 @@ impl PointerRegistry {
             return Err(Error::from(CimplError::null_parameter("pointer")));
         }
 
-        let tracked = self.tracked.lock().unwrap();
+        let tracked = self.tracked.lock().map_err(|_| {
+            Error::from(CimplError::other("mutex poisoned - thread panic detected"))
+        })?;
         match tracked.get(&ptr) {
             Some((actual_type, _)) if *actual_type == expected_type => Ok(()),
             Some(_) => Err(Error::from(CimplError::wrong_handle_type(ptr as u64))),
@@ -75,7 +80,9 @@ impl PointerRegistry {
         }
 
         let mut cleanup = {
-            let mut tracked = self.tracked.lock().unwrap();
+            let mut tracked = self.tracked.lock().map_err(|_| {
+                Error::from(CimplError::other("mutex poisoned - thread panic detected"))
+            })?;
             match tracked.remove(&ptr) {
                 Some((_, cleanup)) => cleanup,
                 None => return Err(Error::from(CimplError::invalid_handle(ptr as u64))),
@@ -83,120 +90,6 @@ impl PointerRegistry {
         }; // Release lock before cleanup
 
         cleanup(); // Run the cleanup function
-        Ok(())
-    }
-
-    /// Apply a builder chain to a boxed value without changing the pointer address
-    ///
-    /// This enables the Rust builder pattern (`self -> Self`) across FFI boundaries.
-    /// The consuming builder methods are applied while keeping the pointer stable.
-    ///
-    /// # Arguments
-    /// * `ptr` - Raw pointer to a Box-wrapped value
-    /// * `f` - Closure that applies builder chain: `|value| value.with_x().with_y()`
-    ///
-    /// # Type Parameters
-    /// * `T` - Must implement `Default` to allow temporary swapping
-    /// * `F` - Closure that consumes and returns `T`
-    ///
-    /// # Returns
-    /// * `Ok(())` if the chain was applied successfully
-    /// * `Err` if the pointer is invalid or has wrong type
-    ///
-    /// # Safety
-    /// This function is unsafe because it dereferences raw pointers. The caller must ensure:
-    /// - `ptr` is a valid pointer created with `Box::into_raw()`
-    /// - `ptr` has been tracked with `track_box()`
-    /// - `ptr` is not accessed concurrently (use `apply_to_mutex` for multi-threaded cases)
-    ///
-    /// # Example
-    /// ```ignore
-    /// // C creates a builder
-    /// let builder = Box::into_raw(Box::new(Builder::new()));
-    /// track_box(builder);
-    ///
-    /// // C calls a with_ method
-    /// unsafe {
-    ///     get_registry().apply_to_box(builder, |b| b.with_setting("value"))?;
-    /// }
-    /// // Pointer address unchanged, contents updated
-    /// ```
-    pub unsafe fn apply_to_box<T, F>(&self, ptr: *mut T, f: F) -> Result<(), Error>
-    where
-        T: 'static + Default,
-        F: FnOnce(T) -> T,
-    {
-        // Validate pointer is tracked with correct type
-        self.validate(ptr as usize, TypeId::of::<T>())?;
-
-        // Temporarily swap out the value (no clone needed!)
-        let value = std::ptr::replace(ptr, T::default());
-
-        // Apply the builder chain (consumes and returns value)
-        let new_value = f(value);
-
-        // Write back to same address (drops temporary default)
-        ptr.write(new_value);
-
-        Ok(())
-    }
-
-    /// Apply a builder chain to a mutex-wrapped value (thread-safe)
-    ///
-    /// Like `apply_to_box`, but for values wrapped in `Mutex<T>`. Use this when
-    /// the same pointer may be accessed from multiple threads.
-    ///
-    /// # Arguments
-    /// * `ptr` - Raw pointer to a Mutex-wrapped value
-    /// * `f` - Closure that applies builder chain: `|value| value.with_x().with_y()`
-    ///
-    /// # Type Parameters
-    /// * `T` - Must implement `Default` to allow temporary swapping
-    /// * `F` - Closure that consumes and returns `T`
-    ///
-    /// # Returns
-    /// * `Ok(())` if the chain was applied successfully
-    /// * `Err` if the pointer is invalid, has wrong type, or mutex is poisoned
-    ///
-    /// # Safety
-    /// This function is unsafe because it dereferences raw pointers. The caller must ensure:
-    /// - `ptr` is a valid pointer to a `Mutex<T>`
-    /// - `ptr` has been tracked with appropriate tracking function
-    ///
-    /// # Example
-    /// ```ignore
-    /// // For Arc<Mutex<Builder>> or Box<Mutex<Builder>>
-    /// let builder = Arc::into_raw(Arc::new(Mutex::new(Builder::new())));
-    /// track_arc_mutex(builder);
-    ///
-    /// // Thread-safe mutation
-    /// unsafe {
-    ///     get_registry().apply_to_mutex(builder, |b| b.with_setting("value"))?;
-    /// }
-    /// ```
-    pub unsafe fn apply_to_mutex<T, F>(&self, ptr: *mut Mutex<T>, f: F) -> Result<(), Error>
-    where
-        T: 'static + Default,
-        F: FnOnce(T) -> T,
-    {
-        // Validate pointer is tracked with correct type
-        self.validate(ptr as usize, TypeId::of::<Mutex<T>>())?;
-
-        // Get reference to mutex (pointer is valid per contract)
-        let mutex = &*ptr;
-
-        // Lock and swap - all atomic under the lock
-        let mut guard = mutex.lock().unwrap();
-
-        // Swap out the value
-        let value = std::mem::take(&mut *guard);
-
-        // Apply the builder chain
-        let new_value = f(value);
-
-        // Put back (still holding lock)
-        *guard = new_value;
-
         Ok(())
     }
 }
@@ -219,7 +112,7 @@ impl PointerRegistry {
 /// memory management bugs during development and integration testing.
 impl Drop for PointerRegistry {
     fn drop(&mut self) {
-        let tracked = self.tracked.lock().unwrap();
+        let tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
         if !tracked.is_empty() {
             eprintln!(
                 "\n⚠️  WARNING: {} pointer(s) were not freed at shutdown!",
@@ -254,7 +147,7 @@ pub(crate) fn get_registry() -> &'static PointerRegistry {
 /// ```ignore
 /// let ptr = track_box(Box::into_raw(Box::new(value)));
 /// ```
-pub fn track_box<T: 'static>(ptr: *mut T) -> *mut T {
+pub fn track_box<T: 'static + Send>(ptr: *mut T) -> *mut T {
     let ptr_val = ptr as usize; // Store as usize to make it Send
     let cleanup = move || unsafe {
         drop(Box::from_raw(ptr_val as *mut T));
@@ -275,7 +168,7 @@ pub fn track_box<T: 'static>(ptr: *mut T) -> *mut T {
 /// ```ignore
 /// let ptr = track_arc(Arc::into_raw(Arc::new(value)));
 /// ```
-pub fn track_arc<T: 'static>(ptr: *mut T) -> *mut T {
+pub fn track_arc<T: 'static + Send>(ptr: *mut T) -> *mut T {
     let ptr_val = ptr as usize; // Store as usize to make it Send
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const T));
@@ -296,7 +189,7 @@ pub fn track_arc<T: 'static>(ptr: *mut T) -> *mut T {
 /// ```ignore
 /// let ptr = track_arc_mutex(Arc::into_raw(Arc::new(Mutex::new(value))));
 /// ```
-pub fn track_arc_mutex<T: 'static>(ptr: *mut Mutex<T>) -> *mut Mutex<T> {
+pub fn track_arc_mutex<T: 'static + Send>(ptr: *mut Mutex<T>) -> *mut Mutex<T> {
     let ptr_val = ptr as usize; // Store as usize to make it Send
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const Mutex<T>));
@@ -498,12 +391,17 @@ pub fn to_c_string(s: String) -> *mut std::os::raw::c_char {
 /// * `bytes` - The byte vector to convert
 ///
 /// # Returns
-/// * `*const c_uchar` - Pointer to the byte array
+/// * `*const c_uchar` - Pointer to the byte array, or null if the vector is empty
 ///
 /// # Safety
-/// The returned pointer must be freed exactly once by calling `free_c_bytes`
+/// The returned pointer must be freed exactly once by calling `free_c_bytes`.
+/// Returns null for empty vectors to avoid dangling pointers from zero-sized allocations.
 pub fn to_c_bytes(bytes: Vec<u8>) -> *const c_uchar {
     let len = bytes.len();
+    if len == 0 {
+        return std::ptr::null();
+    }
+
     let ptr = Box::into_raw(bytes.into_boxed_slice()) as *const c_uchar;
     let ptr_val = ptr as usize;
     get_registry().track(

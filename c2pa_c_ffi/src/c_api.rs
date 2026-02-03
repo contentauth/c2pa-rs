@@ -202,7 +202,7 @@ pub enum C2paBuilderIntent {
 
 #[repr(C)]
 pub struct C2paSigner {
-    pub signer: Box<dyn c2pa::Signer>,
+    pub signer: Box<dyn c2pa::Signer + Send + Sync>,
 }
 
 /// Defines a callback to read from a stream.

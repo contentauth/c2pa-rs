@@ -775,6 +775,11 @@ macro_rules! cimpl_free {
 /// The returned pointer **must** be freed using `cimpl_free` (see [`crate::cimpl::utils::cimpl_free`])
 /// to avoid memory leaks. The pointer is automatically tracked in the pointer registry.
 ///
+/// # Empty Vectors
+///
+/// Returns `null` for empty vectors to avoid dangling pointers from zero-sized allocations.
+/// This is consistent with the FFI's policy that zero-sized buffers are not allowed.
+///
 /// # Safety
 ///
 /// The returned pointer must be freed exactly once using `cimpl_free`. Calling
@@ -791,7 +796,12 @@ macro_rules! cimpl_free {
 #[macro_export]
 macro_rules! vec_to_tracked_ptr {
     ($vec:expr) => {{
-        let ptr = Box::into_raw($vec.into_boxed_slice()) as *const std::os::raw::c_uchar;
-        $crate::track_box(ptr as *mut std::os::raw::c_uchar) as *const std::os::raw::c_uchar
+        let vec = $vec;
+        if vec.is_empty() {
+            std::ptr::null()
+        } else {
+            let ptr = Box::into_raw(vec.into_boxed_slice()) as *const std::os::raw::c_uchar;
+            $crate::track_box(ptr as *mut std::os::raw::c_uchar) as *const std::os::raw::c_uchar
+        }
     }};
 }
