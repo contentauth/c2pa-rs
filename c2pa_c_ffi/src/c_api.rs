@@ -3088,4 +3088,263 @@ verify_after_sign = true
         let result = unsafe { c2pa_free(c_str as *mut c_void) };
         assert_eq!(result, 0);
     }
+
+    #[test]
+    fn test_c2pa_reader_detailed_json() {
+        use std::ffi::CStr;
+
+        let source_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let mut stream = TestStream::new(source_image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
+        assert!(!reader.is_null());
+
+        // Get detailed JSON
+        let detailed_json = unsafe { c2pa_reader_detailed_json(reader) };
+        assert!(!detailed_json.is_null());
+
+        // Verify it's valid JSON and non-empty
+        let json_str = unsafe { CStr::from_ptr(detailed_json).to_str().unwrap() };
+        assert!(!json_str.is_empty(), "Detailed JSON should not be empty");
+
+        let json_value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        // Just verify it's a valid JSON object
+        assert!(json_value.is_object(), "Detailed JSON should be an object");
+
+        unsafe {
+            c2pa_free(detailed_json as *mut c_void);
+            c2pa_free(reader as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_reader_is_embedded() {
+        // Test with embedded manifest
+        let source_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let mut stream = TestStream::new(source_image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
+        assert!(!reader.is_null());
+
+        // Just test that the function executes without crashing
+        // The actual return value depends on the manifest structure
+        let _is_embedded = unsafe { c2pa_reader_is_embedded(reader) };
+
+        // Function should not crash - that's the main test
+        unsafe {
+            c2pa_free(reader as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_builder_from_context() {
+        // Create a custom context
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        // Create builder from context
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null());
+
+        // Verify builder can be used
+        let manifest_json = CString::new(r#"{"claim_generator": "test"}"#).unwrap();
+        let builder = unsafe { c2pa_builder_with_definition(builder, manifest_json.as_ptr()) };
+        assert!(!builder.is_null());
+
+        unsafe {
+            c2pa_free(builder as *mut c_void);
+            c2pa_free(context as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_format_embeddable() {
+        // This function requires manifest bytes, which is complex to set up.
+        // For now, test with minimal setup to verify it doesn't crash
+        let jpeg_format = CString::new("image/jpeg").unwrap();
+        let placeholder_bytes = b"placeholder";
+        let mut result_ptr: *const c_uchar = std::ptr::null();
+
+        let _result = unsafe {
+            c2pa_format_embeddable(
+                jpeg_format.as_ptr(),
+                placeholder_bytes.as_ptr(),
+                placeholder_bytes.len(),
+                &mut result_ptr,
+            )
+        };
+
+        // Function should execute without crashing - that's the main test
+        // The result value depends on whether the placeholder is valid
+    }
+
+    #[test]
+    fn test_c2pa_builder_add_ingredient_from_stream() {
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        // Create ingredient stream
+        let ingredient_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let mut ingredient_stream = TestStream::new(ingredient_image.to_vec());
+
+        let ingredient_json = CString::new(r#"{"title": "Test Ingredient"}"#).unwrap();
+        let format = CString::new("image/jpeg").unwrap();
+
+        // Add ingredient - note the correct parameter order
+        let result = unsafe {
+            c2pa_builder_add_ingredient_from_stream(
+                builder,
+                ingredient_json.as_ptr(),
+                format.as_ptr(),
+                ingredient_stream.as_ptr(),
+            )
+        };
+        assert_eq!(result, 0, "Should successfully add ingredient");
+
+        unsafe {
+            c2pa_free(builder as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_builder_with_definition() {
+        // Create initial builder
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        // Add definition to builder (this consumes the builder and returns a new one)
+        let new_manifest = CString::new(r#"{"claim_generator": "test_with_definition"}"#).unwrap();
+        let new_builder = unsafe { c2pa_builder_with_definition(builder, new_manifest.as_ptr()) };
+        assert!(!new_builder.is_null(), "Should return new builder");
+
+        // Original builder pointer is now invalid, use new_builder
+        unsafe {
+            c2pa_free(new_builder as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_builder_with_definition_null_json() {
+        // Create initial builder
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        // Test with null JSON - should return null and not leak builder
+        let new_builder = unsafe { c2pa_builder_with_definition(builder, std::ptr::null()) };
+        assert!(
+            new_builder.is_null(),
+            "Should return null for invalid input"
+        );
+
+        // The builder should have been freed automatically (no leak)
+    }
+
+    #[test]
+    fn test_c2pa_builder_with_archive() {
+        // Create initial builder
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        // Create archive stream (using a simple image as placeholder)
+        let archive_bytes = include_bytes!(fixture_path!("cloud.jpg"));
+        let mut archive_stream = TestStream::new(archive_bytes.to_vec());
+
+        // Add archive to builder (this consumes the builder and returns a new one)
+        let new_builder = unsafe { c2pa_builder_with_archive(builder, archive_stream.as_ptr()) };
+
+        // May fail if archive is invalid, but should not crash or leak
+        if !new_builder.is_null() {
+            unsafe {
+                c2pa_free(new_builder as *mut c_void);
+            }
+        }
+        // If null, builder was already freed by the function
+    }
+
+    #[test]
+    fn test_c2pa_builder_with_archive_null_stream() {
+        // Create initial builder
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        // Test with null stream - should return null and not leak builder
+        let new_builder = unsafe { c2pa_builder_with_archive(builder, std::ptr::null_mut()) };
+        assert!(
+            new_builder.is_null(),
+            "Should return null for invalid stream"
+        );
+
+        // The builder should have been freed automatically (no leak)
+    }
+
+    #[test]
+    fn test_c2pa_reader_with_fragment() {
+        // Create initial reader
+        let source_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let mut stream = TestStream::new(source_image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
+        assert!(!reader.is_null());
+
+        // Create fragment stream
+        let fragment_bytes = include_bytes!(fixture_path!("cloud.jpg"));
+        let mut fragment_stream = TestStream::new(fragment_bytes.to_vec());
+        let mut main_stream = TestStream::new(source_image.to_vec());
+
+        // Add fragment to reader (this consumes the reader and returns a new one)
+        let new_reader = unsafe {
+            c2pa_reader_with_fragment(
+                reader,
+                format.as_ptr(),
+                main_stream.as_ptr(),
+                fragment_stream.as_ptr(),
+            )
+        };
+
+        // May fail if fragment is invalid, but should not crash or leak
+        if !new_reader.is_null() {
+            unsafe {
+                c2pa_free(new_reader as *mut c_void);
+            }
+        }
+        // If null, reader was already freed by the function
+    }
+
+    #[test]
+    fn test_c2pa_reader_with_fragment_null_format() {
+        // Create initial reader
+        let source_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let mut stream = TestStream::new(source_image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
+        assert!(!reader.is_null());
+
+        let mut fragment_stream = TestStream::new(source_image.to_vec());
+        let mut main_stream = TestStream::new(source_image.to_vec());
+
+        // Test with null format - should return null and not leak reader
+        let new_reader = unsafe {
+            c2pa_reader_with_fragment(
+                reader,
+                std::ptr::null(),
+                main_stream.as_ptr(),
+                fragment_stream.as_ptr(),
+            )
+        };
+        assert!(
+            new_reader.is_null(),
+            "Should return null for invalid format"
+        );
+
+        // The reader should have been freed automatically (no leak)
+    }
 }
