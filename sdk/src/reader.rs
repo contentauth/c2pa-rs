@@ -1232,13 +1232,45 @@ impl Reader {
     }
 
     /// Convert the Reader back into a Builder.
-    /// This can be used to modify an existing manifest store.
+    ///
+    /// This method handles three different cases:
+    /// 1. **Builder Archive**: Restores the original builder's ManifestDefinition
+    /// 2. **Archived Ingredient**: Creates a new builder with the archived ingredient
+    /// 3. **Regular C2PA Manifest**: Creates a new builder with the manifest as parent ingredient
+    ///
     /// # Errors
     /// Returns an [`Error`] if there is no active manifest.
-    pub fn into_builder(mut self) -> Result<crate::Builder> {
-        // Preserve the Reader's context in the new Builder
+    pub fn into_builder(self) -> Result<crate::Builder> {
+        match self.archive_type() {
+            ArchiveType::Builder => {
+                // Path 1: Restore the original builder from archive
+                self.restore_builder_from_archive()
+            }
+            ArchiveType::Ingredient => {
+                // Path 2: Create new builder with the archived ingredient
+                let ingredient = self
+                    .active_manifest()
+                    .and_then(|m| m.ingredients().first())
+                    .ok_or(Error::IngredientNotFound)?
+                    .to_owned();
+
+                let mut builder = crate::Builder::from_shared_context(&self.context);
+                builder.add_ingredient(ingredient);
+                Ok(builder)
+            }
+            ArchiveType::Manifest => {
+                // Path 3: Create new builder with manifest as parent ingredient
+                self.manifest_into_builder()
+            }
+        }
+    }
+
+    /// Restores a Builder from a builder archive.
+    /// The manifest in the archive represents the original ManifestDefinition.
+    fn restore_builder_from_archive(mut self) -> Result<crate::Builder> {
         let context = self.context;
         let mut builder = crate::Builder::from_shared_context(&context);
+
         if let Some(label) = &self.active_manifest {
             if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
                 builder.definition.vendor = parts.cgi.clone();
@@ -1247,6 +1279,53 @@ impl Reader {
                 }
             }
             builder.definition.label = Some(label.to_string());
+
+            if let Some(mut manifest) = self.manifests.remove(label) {
+                // Restore the ManifestDefinition from the archived manifest
+                builder.definition.claim_generator_info =
+                    manifest.claim_generator_info.take().unwrap_or_default();
+                builder.definition.format = manifest.format().unwrap_or_default().to_string();
+                builder.definition.title = manifest.title().map(|s| s.to_owned());
+                builder.definition.instance_id = manifest.instance_id().to_owned();
+                builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
+                builder.definition.redactions = manifest.redactions.take();
+
+                // Restore ingredients with their manifest data
+                let ingredients = std::mem::take(&mut manifest.ingredients);
+                builder.definition.ingredients = ingredients;
+
+                // Restore assertions (excluding the BoxHash placeholder)
+                for assertion in manifest.assertions.iter() {
+                    if assertion.label() != crate::assertions::BoxHash::LABEL {
+                        builder.add_assertion(assertion.label(), assertion.value()?)?;
+                    }
+                }
+
+                // Restore resources
+                for (uri, data) in manifest.resources().resources() {
+                    builder.add_resource(uri, std::io::Cursor::new(data))?;
+                }
+            }
+        }
+
+        Ok(builder)
+    }
+
+    /// Converts a regular C2PA manifest into a Builder with the manifest as parent ingredient.
+    fn manifest_into_builder(mut self) -> Result<crate::Builder> {
+        // Preserve the Reader's context in the new Builder
+        let context = self.context;
+        let mut builder = crate::Builder::from_shared_context(&context);
+
+        if let Some(label) = &self.active_manifest {
+            if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
+                builder.definition.vendor = parts.cgi.clone();
+                if parts.is_v1 {
+                    builder.definition.claim_version = Some(1);
+                }
+            }
+            builder.definition.label = Some(label.to_string());
+
             if let Some(mut manifest) = self.manifests.remove(label) {
                 builder.definition.claim_generator_info =
                     manifest.claim_generator_info.take().unwrap_or_default();
@@ -1255,6 +1334,7 @@ impl Reader {
                 builder.definition.instance_id = manifest.instance_id().to_owned();
                 builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
                 builder.definition.redactions = manifest.redactions.take();
+
                 let ingredients = std::mem::take(&mut manifest.ingredients);
                 for mut ingredient in ingredients {
                     if let Some(active_manifest) = ingredient.active_manifest() {
@@ -1289,9 +1369,11 @@ impl Reader {
                     }
                     builder.add_ingredient(ingredient);
                 }
+
                 for assertion in manifest.assertions.iter() {
                     builder.add_assertion(assertion.label(), assertion.value()?)?;
                 }
+
                 for (uri, data) in manifest.resources().resources() {
                     builder.add_resource(uri, std::io::Cursor::new(data))?;
                 }
@@ -1313,6 +1395,59 @@ impl Reader {
 
         Ok(ingredient)
     }
+
+    /// Determines the type of archive this reader represents.
+    ///
+    /// Returns:
+    /// - `ArchiveType::Builder` if this is a builder archive (created with `Builder::to_archive()`)
+    /// - `ArchiveType::Ingredient` if this appears to be an archived ingredient
+    /// - `ArchiveType::Manifest` if this is a regular signed C2PA manifest
+    pub(crate) fn archive_type(&self) -> ArchiveType {
+        // Check for builder archive marker
+        let is_builder = self
+            .active_manifest()
+            .and_then(|m| m.claim_generator_info.as_ref())
+            .and_then(|infos| infos.first())
+            .and_then(|info| info.get("com.contentauth.archive_type"))
+            .and_then(|v| v.as_str())
+            .map(|s| s == "builder")
+            .unwrap_or(false);
+
+        if is_builder {
+            return ArchiveType::Builder;
+        }
+
+        // Check if this looks like an archived ingredient
+        // (has exactly one ingredient with manifest_data and minimal assertions)
+        let has_archived_ingredient = self
+            .active_manifest()
+            .map(|m| {
+                m.ingredients().len() == 1
+                    && m.ingredients()
+                        .first()
+                        .and_then(|i| i.manifest_data())
+                        .is_some()
+            })
+            .unwrap_or(false);
+
+        if has_archived_ingredient {
+            return ArchiveType::Ingredient;
+        }
+
+        // Default: regular C2PA manifest
+        ArchiveType::Manifest
+    }
+}
+
+/// Represents the type of C2PA data in a Reader
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ArchiveType {
+    /// A Builder that was archived with to_archive()
+    Builder,
+    /// An ingredient that was explicitly archived
+    Ingredient,
+    /// A regular signed C2PA manifest from an asset
+    Manifest,
 }
 
 /// Convert the Reader to a JSON value.
