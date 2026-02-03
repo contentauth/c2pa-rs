@@ -201,6 +201,22 @@ impl PointerRegistry {
     }
 }
 
+/// Automatic leak detection at shutdown.
+///
+/// When the pointer registry is dropped (at program shutdown), it checks for any
+/// tracked pointers that were never freed. This helps identify memory leaks caused
+/// by missing `cimpl_free()` calls in C code.
+///
+/// # Example Output
+///
+/// ```text
+/// ⚠️  WARNING: 3 pointer(s) were not freed at shutdown!
+/// This indicates C code did not properly free all allocated pointers.
+/// Each pointer should be freed exactly once with cimpl_free().
+/// ```
+///
+/// This detection runs in **all builds** (debug, release, and test) to help catch
+/// memory management bugs during development and integration testing.
 impl Drop for PointerRegistry {
     fn drop(&mut self) {
         let tracked = self.tracked.lock().unwrap();
@@ -301,28 +317,70 @@ pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
 /// (Box, Arc, etc.) or the underlying Rust type.
 ///
 /// # Returns
-/// - 0 on success
-/// - -1 if pointer was not tracked (invalid or double-free)
+/// - `0` on success
+/// - `-1` on error (pointer not tracked, double-free, or invalid pointer)
+///
+/// When an error occurs, the error is set via [`crate::CimplError::set_last`] and can be
+/// retrieved using the C2PA error handling functions.
+///
+/// # Test Mode Error Reporting
+///
+/// In test builds (`#[cfg(test)]`), this function will print detailed error information
+/// to stderr when it fails. This helps catch memory management bugs during testing:
+///
+/// ```text
+/// ⚠️  ERROR: cimpl_free failed for pointer 0x12345678: pointer not tracked
+/// This usually means:
+/// 1. The pointer was not allocated with box_tracked!/track_box
+/// 2. The pointer was already freed (double-free)
+/// 3. The pointer is invalid/corrupted
+/// ```
+///
+/// **Important**: C code should check the return value to detect errors. Test failures
+/// may indicate untracked allocations or incorrect pointer management.
 ///
 /// # Safety
-/// Safe to call with NULL (returns 0).
-/// Safe to call with any tracked pointer.
-/// DO NOT call on untracked pointers.
+/// - Safe to call with NULL (returns 0, no error set)
+/// - Safe to call with any tracked pointer
+/// - **DO NOT** call on untracked pointers - will return -1 and set error
+/// - **DO NOT** call twice on the same pointer - will return -1 and set error
 ///
 /// # Example (C)
 /// ```c
 /// MyString* str = mystring_create("hello");
 /// char* value = mystring_get_value(str);
 ///
-/// cimpl_free(value);  // Free the returned string
-/// cimpl_free(str);    // Free the MyString - same function!
+/// // Always check return values in production code
+/// if (cimpl_free(value) != 0) {
+///     // Handle error - check C2PA error functions
+/// }
+/// if (cimpl_free(str) != 0) {
+///     // Handle error
+/// }
 /// ```
 #[no_mangle]
 pub extern "C" fn cimpl_free(ptr: *mut std::ffi::c_void) -> i32 {
     match get_registry().free(ptr as usize) {
         Ok(()) => 0,
         Err(e) => {
-            CimplError::from(e).set_last();
+            let error = CimplError::from(e);
+
+            // In test builds, print error to stderr to make failures visible
+            #[cfg(test)]
+            {
+                if ptr as usize != 0 {
+                    eprintln!(
+                        "\n⚠️  ERROR: cimpl_free failed for pointer 0x{:x}: {}\n\
+                        This usually means:\n\
+                        1. The pointer was not allocated with box_tracked!/track_box\n\
+                        2. The pointer was already freed (double-free)\n\
+                        3. The pointer is invalid/corrupted\n",
+                        ptr as usize, error
+                    );
+                }
+            }
+
+            error.set_last();
             -1
         }
     }
@@ -402,7 +460,7 @@ pub unsafe fn safe_slice_from_raw_parts(
 /// Converts a Rust String to a C string (*mut c_char)
 ///
 /// The returned pointer is tracked for allocation safety and MUST be freed
-/// by calling the appropriate free function (e.g., `c2pa_string_free`).
+/// by calling the appropriate free function (e.g., `cimpl_free`).
 ///
 /// # Arguments
 /// * `s` - The Rust String to convert

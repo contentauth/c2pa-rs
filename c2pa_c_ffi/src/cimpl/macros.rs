@@ -24,6 +24,60 @@
 //! All macros that perform early returns include `_or_return_` in their names
 //! to make control flow explicit and obvious.
 //!
+//! # 🔍 Test Mode Debugging & Leak Detection
+//!
+//! The FFI layer includes comprehensive memory tracking and debugging features to catch
+//! memory management bugs during development and testing.
+//!
+//! ## Automatic Leak Detection (All Builds)
+//!
+//! The pointer registry automatically detects memory leaks at program shutdown. When the
+//! registry is dropped, it checks for any pointers that were never freed:
+//!
+//! ```text
+//! ⚠️  WARNING: 3 pointer(s) were not freed at shutdown!
+//! This indicates C code did not properly free all allocated pointers.
+//! Each pointer should be freed exactly once with cimpl_free().
+//! ```
+//!
+//! **This runs in ALL builds** (debug, release, test) and helps identify:
+//! - Forgotten `cimpl_free()` calls in C code
+//! - Pointers returned to C that were never cleaned up
+//! - Resource leaks that could accumulate over time
+//!
+//! ## Test-Mode Error Reporting
+//!
+//! In test builds (`#[cfg(test)]`), additional error reporting is enabled for immediate feedback:
+//!
+//! ### `cimpl_free` Error Output
+//!
+//! When `cimpl_free` fails in test mode, it prints detailed diagnostic information to stderr:
+//!
+//! ```text
+//! ⚠️  ERROR: cimpl_free failed for pointer 0x12345678: pointer not tracked
+//! This usually means:
+//! 1. The pointer was not allocated with box_tracked!/track_box
+//! 2. The pointer was already freed (double-free)
+//! 3. The pointer is invalid/corrupted
+//! ```
+//!
+//! ## Why These Errors Matter
+//!
+//! Memory management errors caught by these mechanisms indicate serious bugs:
+//! - **Untracked allocations**: Using `Box::into_raw` without `track_box` means `cimpl_free`
+//!   cannot safely deallocate the memory, causing memory leaks
+//! - **Double-free**: Calling `cimpl_free` twice on the same pointer is undefined behavior
+//! - **Invalid pointers**: Corrupted or uninitialized pointers will be caught
+//! - **Memory leaks**: Pointers never freed waste resources and accumulate over program lifetime
+//!
+//! ## Production Behavior
+//!
+//! **In production builds** (without `#[cfg(test)]`):
+//! - Leak detection at shutdown still runs (helps catch bugs in integration testing)
+//! - `cimpl_free` errors are still returned (as `-1`) and set via [`crate::CimplError::set_last`]
+//! - No stderr output for individual `cimpl_free` failures (quieter for library usage)
+//! - C code should always check return values and handle errors appropriately
+//!
 //! # ⚠️  CRITICAL: Anti-Pattern Detection Guide ⚠️
 //!
 //! **Before writing ANY FFI code, scan for these patterns and replace:**
@@ -58,7 +112,8 @@
 //! ## Input Validation (from C)
 //! - **Pointer from C**: `deref_or_return_null!(ptr, Type)` → validates & dereferences to `&Type`
 //! - **String from C**: `cstr_or_return_null!(c_str)` → converts C string to Rust `String`
-//! - **Check not null**: `ptr_or_return_null!(ptr)` → just null check, no deref
+//! - **Byte array from C**: `bytes_or_return_null!(ptr, len, "name")` → validates & converts to `&[u8]`
+//! - **Check not null**: `ptr_or_return_null!(ptr)` → just null check, no deref (for output params)
 //!
 //! ## Output Creation (to C)
 //! - **Box a value**: `box_tracked!(value)` → heap allocate and return pointer
@@ -82,6 +137,7 @@
 //! |------------------------|-----------------|-----------------------------------|---------|
 //! | `*mut T` (from C)      | -               | `deref_or_return_null!(ptr, T)`   | Getting object from C |
 //! | `*const c_char` (from C)| -              | `cstr_or_return_null!(s)`         | Getting string from C |
+//! | `*const c_uchar` + len | -               | `bytes_or_return_null!(p, len, "name")` | Getting byte array from C |
 //! | `Result<T, ExtErr>`    | pointer/int     | `ok_or_return_null!(r)`           | External crate errors (From trait) |
 //! | `Result<T, cimpl::Err>`| pointer/int     | `ok_or_return_null!(r)`           | Internal validation |
 //! | `Option<T>` custom     | pointer/int     | `some_or_return_null!(o, err)`    | Specific error needed |
@@ -620,14 +676,122 @@ macro_rules! option_to_c_string {
     };
 }
 
-/// Free a pointer that was allocated by cimpl
+// ============================================================================
+// Byte Array Validation Macros
+// ============================================================================
+
+/// Validate and convert raw C byte array to safe slice, returning early on error.
+///
+/// This macro combines null pointer checking with bounds validation using
+/// `safe_slice_from_raw_parts`. It's specifically for byte arrays (`*const c_uchar`)
+/// passed from C with an associated length.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// #[no_mangle]
+/// pub unsafe extern "C" fn process_data(
+///     data: *const c_uchar,
+///     len: usize
+/// ) -> *mut Result {
+///     let bytes = bytes_or_return_null!(data, len, "data");
+///     // bytes is now a safe &[u8]
+///     let result = process(bytes);
+///     box_tracked!(result)
+/// }
+/// ```
+#[macro_export]
+macro_rules! bytes_or_return {
+    ($ptr:expr, $len:expr, $name:expr, $err_val:expr) => {{
+        match $crate::safe_slice_from_raw_parts($ptr, $len, $name) {
+            Ok(slice) => slice,
+            Err(err) => {
+                $crate::CimplError::from(err).set_last();
+                return $err_val;
+            }
+        }
+    }};
+}
+
+/// Validate and convert raw C byte array to safe slice, return NULL on error.
+#[macro_export]
+macro_rules! bytes_or_return_null {
+    ($ptr:expr, $len:expr, $name:expr) => {{
+        $crate::bytes_or_return!($ptr, $len, $name, std::ptr::null_mut())
+    }};
+}
+
+/// Validate and convert raw C byte array to safe slice, return -1 on error.
+#[macro_export]
+macro_rules! bytes_or_return_int {
+    ($ptr:expr, $len:expr, $name:expr) => {{
+        $crate::bytes_or_return!($ptr, $len, $name, -1)
+    }};
+}
+
+/// Free a pointer that was allocated by cimpl.
+///
+/// This is a convenience macro wrapper around `cimpl_free` (see [`crate::cimpl::utils::cimpl_free`]).
+///
+/// # Returns
+/// - `0` on success
+/// - `-1` on error (see [`crate::cimpl::utils::cimpl_free`] for details)
+///
+/// # Error Handling
+///
+/// On error, the error is set via [`crate::CimplError::set_last`] and can be retrieved
+/// using C2PA error functions. In test mode, errors are also printed to stderr.
+///
+/// **Best Practice**: Check the return value in production code:
+/// ```rust,ignore
+/// if cimpl_free!(ptr) != 0 {
+///     // Handle error
+/// }
+/// ```
+///
 /// # Examples
 /// ```rust,ignore
-/// cimpl_free!(ptr);
+/// let ptr = box_tracked!(MyStruct::new());
+/// // ... use ptr ...
+/// cimpl_free!(ptr); // Returns 0 on success, -1 on error
 /// ```
 #[macro_export]
 macro_rules! cimpl_free {
     ($ptr:expr) => {
         $crate::cimpl_free($ptr as *mut _)
     };
+}
+
+/// Converts a `Vec<u8>` to a tracked `*const c_uchar` pointer for FFI.
+///
+/// This macro handles the boilerplate of:
+/// 1. Converting `Vec<u8>` to a boxed slice
+/// 2. Converting to a raw pointer
+/// 3. Tracking the pointer for safe deallocation via `cimpl_free`
+/// 4. Casting to the appropriate const pointer type
+///
+/// # Memory Management
+///
+/// The returned pointer **must** be freed using `cimpl_free` (see [`crate::cimpl::utils::cimpl_free`])
+/// to avoid memory leaks. The pointer is automatically tracked in the pointer registry.
+///
+/// # Safety
+///
+/// The returned pointer must be freed exactly once using `cimpl_free`. Calling
+/// `cimpl_free` twice on the same pointer will return `-1` and set an error
+/// (and print to stderr in test mode).
+///
+/// # Examples
+/// ```rust,ignore
+/// let bytes = vec![1, 2, 3, 4];
+/// let ptr = vec_to_tracked_ptr!(bytes);
+/// // C code uses ptr...
+/// // Later in C: if (cimpl_free(ptr) != 0) { /* error */ }
+/// ```
+#[macro_export]
+macro_rules! vec_to_tracked_ptr {
+    ($vec:expr) => {{
+        let ptr = Box::into_raw($vec.into_boxed_slice()) as *const std::os::raw::c_uchar;
+        $crate::track_box(ptr as *mut std::os::raw::c_uchar) as *const std::os::raw::c_uchar
+    }};
 }

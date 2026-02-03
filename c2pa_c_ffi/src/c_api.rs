@@ -27,13 +27,15 @@ use tokio::runtime::Runtime; // cawg validator requires async
 
 #[cfg(feature = "file_io")]
 use crate::json_api::{read_file, sign_file};
+#[cfg(test)]
+use crate::safe_slice_from_raw_parts;
 // Import macros and utilities from cimpl
 use crate::{
-    box_tracked, c2pa_stream::C2paStream, cimpl_free, cstr_or_return_int, cstr_or_return_null,
-    deref_mut_or_return, deref_mut_or_return_int, deref_mut_or_return_null, deref_or_return_int,
-    deref_or_return_null, error::Error, ok_or_return_int, ok_or_return_null, option_to_c_string,
-    ptr_or_return_int, ptr_or_return_null, safe_slice_from_raw_parts, signer_info::SignerInfo,
-    to_c_string, CimplError,
+    box_tracked, bytes_or_return_int, bytes_or_return_null, c2pa_stream::C2paStream, cimpl_free,
+    cstr_or_return_int, cstr_or_return_null, deref_mut_or_return, deref_mut_or_return_int,
+    deref_mut_or_return_null, deref_or_return_int, deref_or_return_null, error::Error,
+    ok_or_return_int, ok_or_return_null, option_to_c_string, ptr_or_return_int,
+    signer_info::SignerInfo, to_c_string, vec_to_tracked_ptr, CimplError,
 };
 
 /// Validates that a buffer size is within safe bounds and doesn't cause integer overflow
@@ -293,8 +295,7 @@ pub unsafe extern "C" fn c2pa_load_settings(
 ///
 /// # Safety
 ///
-/// This function is safe to call. The returned pointer must be freed
-/// by calling `c2pa_settings_free()`.
+/// The returned pointer must be freed with `c2pa_free()`.
 ///
 /// # Returns
 ///
@@ -359,46 +360,34 @@ pub unsafe extern "C" fn c2pa_settings_set_value(
     let path = cstr_or_return_int!(path);
     let value_str = cstr_or_return_int!(value);
 
-    // Parse the JSON value to determine the type
-    let parsed_value: serde_json::Value = match serde_json::from_str(&value_str) {
-        Ok(v) => v,
-        Err(e) => {
-            CimplError::from(c2pa::Error::BadParam(format!("Invalid JSON value: {e}"))).set_last();
-            return -1;
-        }
-    };
+    // Parse JSON value to determine type
+    let parsed_value: serde_json::Value = ok_or_return_int!(serde_json::from_str(&value_str)
+        .map_err(|e| c2pa::Error::BadParam(format!("Invalid JSON value: {e}"))));
 
-    // Convert JSON value to config::Value and set it
+    // Convert to appropriate type and set value
     let result = match parsed_value {
         serde_json::Value::Bool(b) => settings.set_value(&path, b),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                settings.set_value(&path, i)
-            } else if let Some(f) = n.as_f64() {
-                settings.set_value(&path, f)
-            } else {
-                Err(c2pa::Error::BadParam("Invalid number format".to_string()))
-            }
+        serde_json::Value::Number(n) if n.is_i64() => {
+            settings.set_value(&path, n.as_i64().unwrap())
+        }
+        serde_json::Value::Number(n) if n.is_f64() => {
+            settings.set_value(&path, n.as_f64().unwrap())
+        }
+        serde_json::Value::Number(_) => {
+            Err(c2pa::Error::BadParam("Invalid number format".to_string()))
         }
         serde_json::Value::String(s) => settings.set_value(&path, s),
         serde_json::Value::Array(arr) => {
-            // Convert array to Vec<String> for common use case
-            let string_vec: c2pa::Result<Vec<String>> = arr
-                .iter()
+            // Convert array to Vec<serde_json::Value> and try to extract strings
+            let strings: Result<Vec<String>, _> = arr
+                .into_iter()
                 .map(|v| {
-                    if let serde_json::Value::String(s) = v {
-                        Ok(s.clone())
-                    } else {
-                        Err(c2pa::Error::BadParam(
-                            "Array values must be strings".to_string(),
-                        ))
-                    }
+                    v.as_str().map(String::from).ok_or_else(|| {
+                        c2pa::Error::BadParam("Array values must be strings".to_string())
+                    })
                 })
                 .collect();
-            match string_vec {
-                Ok(vec) => settings.set_value(&path, vec),
-                Err(e) => Err(e),
-            }
+            strings.and_then(|vec| settings.set_value(&path, vec))
         }
         serde_json::Value::Null => Err(c2pa::Error::BadParam("Cannot set null values".to_string())),
         serde_json::Value::Object(_) => Err(c2pa::Error::BadParam(
@@ -417,7 +406,7 @@ pub unsafe extern "C" fn c2pa_settings_set_value(
 ///
 /// # Safety
 ///
-/// This function is safe to call. The returned pointer must be freed by calling
+/// The returned pointer must be freed by calling
 /// `c2pa_free()` or converted to a context with `c2pa_context_builder_build()`.
 ///
 /// # Returns
@@ -508,7 +497,7 @@ pub unsafe extern "C" fn c2pa_context_builder_build(
 ///
 /// # Safety
 ///
-/// This function is safe to call. The returned pointer must be freed with `c2pa_free()`.
+/// The returned pointer must be freed with `c2pa_free()`.
 ///
 /// # Returns
 ///
@@ -623,13 +612,29 @@ pub unsafe extern "C" fn c2pa_sign_file(
 
 /// Frees any pointer allocated by this library.
 ///
-/// This is a generic free function that works for all C2PA objects including:
+/// This is the **recommended** free function for all C2PA objects. It replaces the
+/// type-specific free functions (like `c2pa_string_free`, `c2pa_reader_free`, etc.)
+/// which are maintained only for backward compatibility.
+///
+/// ## Why use c2pa_free?
+///
+/// - **Simpler API**: One function to remember instead of multiple type-specific functions
+/// - **Less error-prone**: No need to match the correct free function to each type
+/// - **Consistent**: Works uniformly across all pointer types
+/// - **Returns error codes**: Returns 0 on success, -1 on error for better error handling
+///
+/// ## Supported Types
+///
+/// This function works for all C2PA objects including:
 /// - C2paContext
 /// - C2paSettings
 /// - C2paBuilder
 /// - C2paReader
 /// - C2paSigner
 /// - strings (c_char*)
+/// - byte arrays (c_uchar*)
+/// - manifest bytes
+/// - signatures
 /// - and any other objects created by this library
 ///
 /// # Safety
@@ -638,17 +643,34 @@ pub unsafe extern "C" fn c2pa_sign_file(
 ///   c2pa_settings_new(), c2pa_builder_from_json(), etc.)
 /// * The pointer must not have been modified in C.
 /// * The pointer can only be freed once and is invalid after this call.
-/// * Do not use type-specific free functions (like c2pa_string_free) if you use this.
+/// * Do not mix this with type-specific free functions for the same pointer.
 ///
 /// # Returns
 ///
 /// 0 on success, -1 on error (e.g., if the pointer was not allocated by this library).
+///
+/// # Example (C)
+///
+/// ```c
+/// // Create various objects
+/// C2paReader* reader = c2pa_reader_from_file("image.jpg", "json");
+/// char* json = c2pa_reader_json(reader);
+/// C2paBuilder* builder = c2pa_builder_from_json(json);
+///
+/// // Free everything with the same function
+/// c2pa_free(json);
+/// c2pa_free(reader);
+/// c2pa_free(builder);
+/// ```
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_free(ptr: *mut c_void) -> c_int {
-    cimpl_free!(ptr)
+pub unsafe extern "C" fn c2pa_free(ptr: *const c_void) -> c_int {
+    cimpl_free!(ptr as *mut c_void)
 }
 
 /// Frees a string allocated by Rust.
+///
+/// **Note**: This function is maintained for backward compatibility. New code should
+/// use [`c2pa_free`] instead, which works for all pointer types.
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
@@ -703,8 +725,15 @@ fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, 
     }
 }
 
+/// Creates a new C2paReader from a default context.
+///
 /// # Safety
-/// This function is safe to call.
+///
+/// This function is safe to call with no preconditions.
+///
+/// # Returns
+/// A pointer to a newly allocated C2paReader, or NULL on error.
+/// The returned pointer must be freed with `c2pa_free()`.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_new() -> *mut C2paReader {
     box_tracked!(C2paReader::from_context(Context::default()))
@@ -775,7 +804,7 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     format: *const c_char,
     stream: *mut C2paStream,
 ) -> *mut C2paReader {
-    // Take ownership of the reader (consumes it)
+    // Take ownership of the reader (consumes it) for builder pattern
     let reader = Box::from_raw(reader);
     let format = cstr_or_return_null!(format);
     let stream = deref_mut_or_return_null!(stream, C2paStream);
@@ -817,7 +846,7 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
     stream: *mut C2paStream,
     fragment: *mut C2paStream,
 ) -> *mut C2paReader {
-    // Take ownership of the reader (consumes it)
+    // Take ownership of the reader (consumes it) for builder pattern
     let reader = Box::from_raw(reader);
     let format = cstr_or_return_null!(format);
     let stream = deref_mut_or_return_null!(stream, C2paStream);
@@ -849,7 +878,7 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling c2pa_reader_free
+/// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 ///
 /// # Example
@@ -884,7 +913,7 @@ pub unsafe fn c2pa_reader_from_file(path: *const c_char) -> *mut C2paReader {
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling c2pa_reader_free
+/// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
@@ -893,25 +922,19 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
     manifest_data: *const c_uchar,
     manifest_size: usize,
 ) -> *mut C2paReader {
-    ptr_or_return_null!(manifest_data);
     let format = cstr_or_return_null!(format);
     let stream = deref_mut_or_return_null!(stream, C2paStream);
 
-    // Safe bounds validation for manifest data
-    let manifest_bytes =
-        match safe_slice_from_raw_parts(manifest_data, manifest_size, "manifest_data") {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                CimplError::from(err).set_last();
-                return std::ptr::null_mut();
-            }
-        };
+    let manifest_bytes = bytes_or_return_null!(manifest_data, manifest_size, "manifest_data");
 
     let result = C2paReader::from_manifest_data_and_stream(manifest_bytes, &format, stream);
     box_tracked!(ok_or_return_null!(post_validate(result)))
 }
 
 /// Frees a C2paReader allocated by Rust.
+///
+/// **Note**: This function is maintained for backward compatibility. New code should
+/// use [`c2pa_free`] instead, which works for all pointer types.
 ///
 /// # Safety
 /// The C2paReader can only be freed once and is invalid after this call.
@@ -923,7 +946,7 @@ pub unsafe extern "C" fn c2pa_reader_free(reader_ptr: *mut C2paReader) {
 /// Returns a JSON string generated from a C2paReader.
 ///
 /// # Safety
-/// The returned value MUST be released by calling c2pa_string_free
+/// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c_char {
@@ -934,7 +957,7 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
 /// Returns a detailed JSON string generated from a C2paReader.
 ///
 /// # Safety
-/// The returned value MUST be released by calling c2pa_string_free
+/// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) -> *mut c_char {
@@ -1032,7 +1055,7 @@ pub unsafe extern "C" fn c2pa_reader_supported_mime_types(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling c2pa_builder_free
+/// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 ///
 /// # Example
@@ -1088,7 +1111,7 @@ pub unsafe extern "C" fn c2pa_builder_from_context(context: *mut C2paContext) ->
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling c2pa_builder_free
+/// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 ///
 /// # Example
@@ -1125,6 +1148,9 @@ pub unsafe extern "C" fn c2pa_builder_supported_mime_types(
 }
 
 /// Frees a C2paBuilder allocated by Rust.
+///
+/// **Note**: This function is maintained for backward compatibility. New code should
+/// use [`c2pa_free`] instead, which works for all pointer types.
 ///
 /// # Safety
 /// The C2paBuilder can only be freed once and is invalid after this call.
@@ -1482,7 +1508,7 @@ pub unsafe extern "C" fn c2pa_builder_to_archive(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings
-/// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_manifest_bytes_free
+/// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_sign(
@@ -1509,12 +1535,15 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        *manifest_bytes_ptr = Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
+        *manifest_bytes_ptr = vec_to_tracked_ptr!(manifest_bytes);
     }
     len
 }
 
 /// Frees a C2PA manifest returned by c2pa_builder_sign.
+///
+/// **Note**: This function is maintained for backward compatibility. New code should
+/// use [`c2pa_free`] instead, which works for all pointer types.
 ///
 /// # Safety
 /// The bytes can only be freed once and are invalid after this call.
@@ -1538,7 +1567,7 @@ pub unsafe extern "C" fn c2pa_manifest_bytes_free(manifest_bytes_ptr: *const c_u
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_manifest_bytes_free
+/// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
@@ -1554,7 +1583,7 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        *manifest_bytes_ptr = Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
+        *manifest_bytes_ptr = vec_to_tracked_ptr!(manifest_bytes);
     }
     len
 }
@@ -1577,7 +1606,7 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_manifest_bytes_free
+/// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
@@ -1594,22 +1623,14 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     let format = cstr_or_return_int!(format);
     ptr_or_return_int!(manifest_bytes_ptr);
 
-    let mut data_hash: DataHash = match serde_json::from_str(&data_hash_json) {
-        Ok(data_hash) => data_hash,
-        Err(err) => {
-            CimplError::from(Error::from_c2pa_error(c2pa::Error::JsonError(err))).set_last();
-            return -1;
-        }
-    };
+    let mut data_hash: DataHash = ok_or_return_int!(serde_json::from_str(&data_hash_json)
+        .map_err(|e| Error::from_c2pa_error(c2pa::Error::JsonError(e))));
+
     if !asset.is_null() {
         // calc hashes from the asset stream
-        match data_hash.gen_hash_from_stream(&mut *asset) {
-            Ok(_) => {}
-            Err(err) => {
-                CimplError::from(Error::from_c2pa_error(err)).set_last();
-                return -1;
-            }
-        }
+        ok_or_return_int!(data_hash
+            .gen_hash_from_stream(&mut *asset)
+            .map_err(Error::from_c2pa_error));
     }
 
     let result =
@@ -1618,7 +1639,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        *manifest_bytes_ptr = Box::into_raw(manifest_bytes.into_boxed_slice()) as *const c_uchar;
+        *manifest_bytes_ptr = vec_to_tracked_ptr!(manifest_bytes);
     }
     len
 }
@@ -1641,7 +1662,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling c2pa_manifest_bytes_free
+/// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_format_embeddable(
@@ -1654,24 +1675,17 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     ptr_or_return_int!(manifest_bytes_ptr);
     ptr_or_return_int!(result_bytes_ptr);
 
-    // Safe bounds validation for manifest bytes
-    let bytes = match safe_slice_from_raw_parts(
+    let bytes = bytes_or_return_int!(
         manifest_bytes_ptr,
         manifest_bytes_size,
-        "manifest_bytes_ptr",
-    ) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            CimplError::from(err).set_last();
-            return -1;
-        }
-    };
+        "manifest_bytes_ptr"
+    );
 
     let result = c2pa::Builder::composed_manifest(bytes, &format);
     let result_bytes = ok_or_return_int!(result);
     let len = result_bytes.len() as i64;
     if !result_bytes_ptr.is_null() {
-        *result_bytes_ptr = Box::into_raw(result_bytes.into_boxed_slice()) as *const c_uchar;
+        *result_bytes_ptr = vec_to_tracked_ptr!(result_bytes);
     }
     len
 }
@@ -1690,7 +1704,7 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling c2pa_signer_free
+/// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 /// When binding through the C API to other languages, the callback must live long
 /// enough, possibly being re-used and called multiple times. The callback is logically
@@ -1760,7 +1774,7 @@ pub unsafe extern "C" fn c2pa_signer_create(
 /// The error string can be retrieved by calling c2pa_error.
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling c2pa_signer_free
+/// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 /// # Example
 /// ```c
@@ -1799,7 +1813,7 @@ pub unsafe extern "C" fn c2pa_signer_from_info(signer_info: &C2paSignerInfo) -> 
 /// Returns NULL if there were errors, otherwise returns a pointer to a C2paSigner.
 /// The error string can be retrieved by calling c2pa_error.
 /// # Safety
-/// The returned value MUST be released by calling c2pa_signer_free
+/// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
@@ -1828,6 +1842,9 @@ pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -
 
 /// Frees a C2paSigner allocated by Rust.
 ///
+/// **Note**: This function is maintained for backward compatibility. New code should
+/// use [`c2pa_free`] instead, which works for all pointer types.
+///
 /// # Safety
 /// The C2paSigner can only be freed once and is invalid after this call.
 #[no_mangle]
@@ -1838,39 +1855,29 @@ pub unsafe extern "C" fn c2pa_signer_free(signer_ptr: *const C2paSigner) {
 #[no_mangle]
 /// Signs a byte array using the Ed25519 algorithm.
 /// # Safety
-/// The returned value MUST be freed by calling c2pa_signature_free
+/// The returned value MUST be freed by calling c2pa_free
 /// and it is no longer valid after that call.
 pub unsafe extern "C" fn c2pa_ed25519_sign(
     bytes: *const c_uchar,
     len: usize,
     private_key: *const c_char,
 ) -> *const c_uchar {
-    ptr_or_return_null!(bytes);
     let private_key = cstr_or_return_null!(private_key);
 
-    // Safe bounds validation for input bytes
-    let bytes = match safe_slice_from_raw_parts(bytes, len, "bytes") {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            CimplError::from(err).set_last();
-            return std::ptr::null();
-        }
-    };
+    let bytes = bytes_or_return_null!(bytes, len, "bytes");
 
-    let result = CallbackSigner::ed25519_sign(bytes, private_key.as_bytes());
-    match result {
-        Ok(signed_bytes) => {
-            let signed_bytes = signed_bytes.into_boxed_slice();
-            let ptr = signed_bytes.as_ptr();
-            std::mem::forget(signed_bytes);
-            ptr
-        }
-        Err(_) => std::ptr::null(),
-    }
+    let signed_bytes =
+        ok_or_return_null!(CallbackSigner::ed25519_sign(bytes, private_key.as_bytes()));
+
+    vec_to_tracked_ptr!(signed_bytes)
 }
 
 #[no_mangle]
 /// Frees a signature allocated by Rust.
+///
+/// **Note**: This function is maintained for backward compatibility. New code should
+/// use [`c2pa_free`] instead, which works for all pointer types.
+///
 /// # Safety
 /// The signature can only be freed once and is invalid after this call.
 pub unsafe extern "C" fn c2pa_signature_free(signature_ptr: *const u8) {
