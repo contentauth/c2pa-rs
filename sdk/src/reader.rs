@@ -46,7 +46,7 @@ use crate::{
     utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
     validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
-    Ingredient, Manifest, ManifestAssertion,
+    Ingredient, Manifest, ManifestAssertion, Relationship,
 };
 
 /// MaybeSend allows for no Send bound on wasm32 targets
@@ -1236,15 +1236,14 @@ impl Reader {
     /// This method handles three different cases:
     /// 1. **Builder Archive**: Restores the builder with ingredient stores properly rebuilt
     /// 2. **Archived Ingredient**: Creates a new builder with the archived ingredient
-    /// 3. **Regular C2PA Manifest**: Creates a new builder with properly reconstructed ingredients
+    /// 3. **Regular C2PA Manifest**: Converts the entire Reader into a parent ingredient in a new builder
     ///
     /// # Errors
     /// Returns an [`Error`] if there is no active manifest.
     pub fn into_builder(self) -> Result<crate::Builder> {
         match self.archive_type() {
-            ArchiveType::Builder | ArchiveType::Manifest => {
-                // Both builder archives and regular manifests need ingredient stores
-                // rebuilt from the unified store
+            ArchiveType::Builder => {
+                // Builder archive: rebuild ingredients from unified store
                 self.manifest_into_builder()
             }
             ArchiveType::Ingredient => {
@@ -1259,7 +1258,67 @@ impl Reader {
                 builder.add_ingredient(ingredient);
                 Ok(builder)
             }
+            ArchiveType::Manifest => {
+                // Regular manifest: convert ENTIRE reader to parent ingredient
+                let (ingredient, context) = self.reader_to_parent_ingredient()?;
+                
+                let mut builder = crate::Builder::from_shared_context(&context);
+                builder.add_ingredient(ingredient);
+                Ok(builder)
+            }
         }
+    }
+
+    /// Converts the entire Reader into a single parent Ingredient.
+    /// The entire manifest store is embedded as manifest_data.
+    /// Returns the ingredient and the context to use for the new builder.
+    fn reader_to_parent_ingredient(self) -> Result<(Ingredient, Arc<Context>)> {
+        let context = self.context.clone();
+        
+        let manifest = self
+            .active_manifest()
+            .ok_or(Error::ClaimMissing {
+                label: "active manifest".to_string(),
+            })?;
+
+        // Create ingredient from manifest metadata
+        let mut ingredient = Ingredient::new(
+            manifest.title().unwrap_or(""),
+            manifest.format().unwrap_or("application/octet-stream"),
+            manifest.instance_id(),
+        );
+
+        // Set as parent ingredient
+        ingredient.set_relationship(Relationship::ParentOf);
+
+        // Copy thumbnail if present
+        if let Some(thumb_ref) = manifest.thumbnail_ref() {
+            ingredient.set_thumbnail_ref(thumb_ref.clone())?;
+        }
+
+        // Set active manifest label
+        if let Some(label) = &self.active_manifest {
+            ingredient.set_active_manifest(label.clone());
+
+            // Extract and embed the full manifest store as manifest_data
+            if let Some(claim) = self.store.get_claim(label) {
+                let ingredient_store = {
+                    let mut store = Store::new();
+                    let mut active_claim = claim.clone();
+
+                    // Recursively collect all nested ingredient claims
+                    Self::collect_ingredient_claims_for_store(&self.store, claim, &mut active_claim)?;
+
+                    store.commit_claim(active_claim)?;
+                    store
+                };
+
+                let jumbf = ingredient_store.to_jumbf_internal(0)?;
+                ingredient.set_manifest_data(jumbf)?;
+            }
+        }
+
+        Ok((ingredient, context))
     }
 
     /// Converts a Reader into a Builder by rebuilding ingredient stores from the unified store.
