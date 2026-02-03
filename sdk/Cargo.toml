@@ -103,7 +103,7 @@ async-trait = "0.1.78"
 atree = "0.5.2"
 base64 = "0.22.1"
 bcder = "0.7.3"
-bytes = "1.7.2"
+bytes = "1.11.1"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
