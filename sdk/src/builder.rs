@@ -2434,8 +2434,8 @@ impl Builder {
         reader: &crate::Reader,
     ) -> Result<&mut Ingredient> {
         // Determine the archive type and handle accordingly
-        match reader.archive_type() {
-            crate::reader::ArchiveType::Ingredient => {
+        match reader.manifest_type() {
+            crate::reader::ManifestType::ArchivedIngredient => {
                 // Simple case: just extract the ingredient without full conversion
                 let ingredient = reader.to_ingredient()?;
                 self.add_ingredient(ingredient);
@@ -4322,8 +4322,8 @@ mod tests {
         builder_archive.rewind()?;
         let reader = Reader::from_stream("application/c2pa", &mut builder_archive)?;
         assert_eq!(
-            reader.archive_type(),
-            crate::reader::ArchiveType::Builder,
+            reader.manifest_type(),
+            crate::reader::ManifestType::ArchivedBuilder,
             "Should be detected as Builder archive"
         );
 
@@ -4363,8 +4363,8 @@ mod tests {
         signed_output.rewind()?;
         let manifest_reader = Reader::from_stream("image/jpeg", &mut signed_output)?;
         assert_eq!(
-            manifest_reader.archive_type(),
-            crate::reader::ArchiveType::Manifest,
+            manifest_reader.manifest_type(),
+            crate::reader::ManifestType::SignedManifest,
             "Should be detected as regular Manifest"
         );
 
@@ -4397,8 +4397,8 @@ mod tests {
         ingredient_archive.rewind()?;
         let ingredient_reader = Reader::from_stream("application/c2pa", &mut ingredient_archive)?;
         assert_eq!(
-            ingredient_reader.archive_type(),
-            crate::reader::ArchiveType::Ingredient,
+            ingredient_reader.manifest_type(),
+            crate::reader::ManifestType::ArchivedIngredient,
             "Should be detected as archived Ingredient"
         );
 

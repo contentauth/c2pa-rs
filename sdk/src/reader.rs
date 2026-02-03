@@ -1241,12 +1241,12 @@ impl Reader {
     /// # Errors
     /// Returns an [`Error`] if there is no active manifest.
     pub fn into_builder(self) -> Result<crate::Builder> {
-        match self.archive_type() {
-            ArchiveType::Builder => {
+        match self.manifest_type() {
+            ManifestType::ArchivedBuilder => {
                 // Builder archive: rebuild ingredients from unified store
                 self.manifest_into_builder()
             }
-            ArchiveType::Ingredient => {
+            ManifestType::ArchivedIngredient => {
                 // Archived ingredient: extract and add to new builder
                 let ingredient = self
                     .active_manifest()
@@ -1258,7 +1258,7 @@ impl Reader {
                 builder.add_ingredient(ingredient);
                 Ok(builder)
             }
-            ArchiveType::Manifest => {
+            ManifestType::SignedManifest => {
                 // Regular manifest: convert ENTIRE reader to parent ingredient
                 let (ingredient, context) = self.reader_to_parent_ingredient()?;
                 
@@ -1407,13 +1407,13 @@ impl Reader {
         Ok(ingredient)
     }
 
-    /// Determines the type of archive this reader represents.
+    /// Determines the type of manifest this reader represents.
     ///
     /// Returns:
-    /// - `ArchiveType::Builder` if this is a builder archive (created with `Builder::to_archive()`)
-    /// - `ArchiveType::Ingredient` if this appears to be an archived ingredient
-    /// - `ArchiveType::Manifest` if this is a regular signed C2PA manifest
-    pub(crate) fn archive_type(&self) -> ArchiveType {
+    /// - `ManifestType::ArchivedBuilder` if this is a builder archive (created with `Builder::to_archive()`)
+    /// - `ManifestType::ArchivedIngredient` if this appears to be an archived ingredient
+    /// - `ManifestType::SignedManifest` if this is a regular signed C2PA manifest
+    pub(crate) fn manifest_type(&self) -> ManifestType {
         // Check for builder archive marker
         let is_builder = self
             .active_manifest()
@@ -1425,7 +1425,7 @@ impl Reader {
             .unwrap_or(false);
 
         if is_builder {
-            return ArchiveType::Builder;
+            return ManifestType::ArchivedBuilder;
         }
 
         // Check if this looks like an archived ingredient
@@ -1442,23 +1442,23 @@ impl Reader {
             .unwrap_or(false);
 
         if has_archived_ingredient {
-            return ArchiveType::Ingredient;
+            return ManifestType::ArchivedIngredient;
         }
 
-        // Default: regular C2PA manifest
-        ArchiveType::Manifest
+        // Default: regular signed C2PA manifest
+        ManifestType::SignedManifest
     }
 }
 
 /// Represents the type of C2PA data in a Reader
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ArchiveType {
+pub(crate) enum ManifestType {
     /// A Builder that was archived with to_archive()
-    Builder,
+    ArchivedBuilder,
     /// An ingredient that was explicitly archived
-    Ingredient,
+    ArchivedIngredient,
     /// A regular signed C2PA manifest from an asset
-    Manifest,
+    SignedManifest,
 }
 
 /// Convert the Reader to a JSON value.
