@@ -26,7 +26,7 @@ use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
     asset_io::{
         rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        ComposedManifestRef, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     status_tracker::{ErrorBehavior, StatusTracker},
@@ -1716,6 +1716,10 @@ impl AssetIO for BmffIO {
         Some(self)
     }
 
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
+        Some(self)
+    }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -2196,6 +2200,14 @@ impl AssetPatch for BmffIO {
                 "patch_cai_store store size mismatch.".to_string(),
             ))
         }
+    }
+}
+
+impl ComposedManifestRef for BmffIO {
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+        let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(manifest_data.len() * 2);
+        write_c2pa_box(&mut new_c2pa_box, manifest_data, MANIFEST, &[], 0)?;
+        Ok(new_c2pa_box)
     }
 }
 

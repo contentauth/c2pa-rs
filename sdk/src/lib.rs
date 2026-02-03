@@ -171,7 +171,7 @@ pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
 #[doc(inline)]
 pub use external_manifest::ManifestPatchCallback;
-pub use hash_utils::{hash_stream_by_alg, HashRange};
+pub use hash_utils::{hash_by_alg, hash_stream_by_alg, HashRange, Hasher};
 pub use hashed_uri::HashedUri;
 pub use ingredient::Ingredient;
 #[cfg(feature = "file_io")]

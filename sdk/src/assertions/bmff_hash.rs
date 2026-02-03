@@ -35,7 +35,6 @@ use crate::{
     },
     asset_io::CAIRead,
     cbor_types::UriT,
-    settings::Settings,
     utils::{
         hash_utils::{
             concat_and_hash, hash_stream_by_alg, vec_compare, verify_stream_by_alg, HashRange,
@@ -51,6 +50,15 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 3;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct UserHashInfo {
+    pub xpath: String, // path name of top level box, the path for the c2pa box should be "/c2pa".
+    pub start: u64, // offset to start of the boxes hash (if 0 then it is the beginning of the box)
+    pub end: u64,   // end of the boxes hash (if 0 hash until box end)
+    pub need_box_loc_hash: bool, // if true you must has the file offset of the box, the position should be a big-endian 64 bit number
+    pub excluded: bool,          // the box should not be hashed
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct ExclusionsMap {
     pub xpath: String,
     pub length: Option<u64>,
@@ -241,7 +249,7 @@ pub struct BmffMerkleMap {
     pub hashes: Option<VecByteBuf>,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct DataMap {
     pub offset: u64,
     #[serde(with = "serde_bytes")]
@@ -305,6 +313,349 @@ impl BmffHash {
         }
     }
 
+    pub fn add_merkle_map_for_mdats(
+        &mut self,
+        asset_stream: &mut dyn CAIRead,
+        merkle_chunk_size: usize,
+        max_proofs: usize,
+    ) -> crate::error::Result<()> {
+        // enable flat flat files with Merkle trees if desired
+        // we do this here because the UUID boxes must be in place
+        // for the later hash generation
+        // mdat boxes are excluded when using Merkle hashing
+        let mut mdat = ExclusionsMap::new("/mdat".to_owned());
+        let subset_mdat = SubsetMap {
+            offset: 16,
+            length: 0,
+        };
+        let subset_mdat_vec = vec![subset_mdat];
+        mdat.subset = Some(subset_mdat_vec);
+        self.exclusions.push(mdat);
+
+        // get the merkle hashes for the mdat boxes
+        let boxes = read_bmff_c2pa_boxes(asset_stream)?;
+        let mut mdat_boxes = boxes.box_infos.clone();
+        mdat_boxes.retain(|b| b.path == "mdat");
+
+        let mut merkle_maps = Vec::new();
+        let mut uuid_boxes = Vec::new();
+
+        for (index, mdat_box) in mdat_boxes.iter().enumerate() {
+            let fixed_block_size = if merkle_chunk_size > 0 {
+                Some(1024 * merkle_chunk_size as u64)
+            } else {
+                None
+            };
+
+            let mut merkle_map = MerkleMap {
+                unique_id: 0,
+                local_id: index,
+                count: 0,
+                alg: self.alg.clone(),
+                init_hash: None,
+                hashes: VecByteBuf(Vec::new()),
+                fixed_block_size,
+                variable_block_sizes: None,
+            };
+
+            // build list of ordered UUID merkle boxes
+            let mut current_uuid_boxes = self.create_merkle_map_for_mdat_box(
+                asset_stream,
+                mdat_box,
+                &mut merkle_map,
+                max_proofs,
+            )?;
+            uuid_boxes.append(&mut current_uuid_boxes);
+
+            merkle_maps.push(merkle_map);
+        }
+
+        if merkle_maps.is_empty() {
+            return Ok(());
+        }
+
+        self.merkle = Some(merkle_maps);
+        if !uuid_boxes.is_empty() {
+            self.merkle_uuid_boxes = Some(uuid_boxes.into_iter().flatten().collect::<Vec<u8>>());
+
+            // calculate the insertion point for the UUID boxes after the last mdat box
+            let last_mdat_box = mdat_boxes
+                .last()
+                .ok_or(Error::BadParam("No mdat boxes found".to_string()))?;
+            self.merkle_uuid_boxes_insertion_point = last_mdat_box.end();
+
+            // if there are existing Merkle UUID boxes we want to overwrite those
+            if let Some(last_uuid_box) = boxes.bmff_merkle_box_infos.last() {
+                self.merkle_replacement_range = last_mdat_box.end() - last_uuid_box.end();
+            }
+        }
+        Ok(())
+    }
+
+    // Extra BMFF exclusion ranges can be added as needed, the exclusions Vec will be updated
+    // to only contain unique exclusions that were added
+    pub fn add_exclusions(&mut self, exclusions: &mut Vec<ExclusionsMap>) {
+        exclusions.retain(|e| !self.exclusions().contains(e));
+        self.exclusions.append(exclusions);
+
+        exclusions.clear();
+
+        // update the exclusions
+        exclusions.clone_from(&self.exclusions().to_vec());
+    }
+
+    // Adds default exclusion ranges for BMFF hashes.  Add as needed.
+    pub fn set_default_exclusions(&mut self) -> &[ExclusionsMap] {
+        let exclusions = &mut self.exclusions;
+
+        let cp2_id: [u8; 16] = [
+            216, 254, 195, 214, 27, 14, 72, 60, 146, 151, 88, 40, 135, 126, 196, 129,
+        ];
+
+        // jumbf exclusion
+        if !exclusions.iter().any(|e| match &e.data {
+            Some(d) => d.iter().any(|data_map| data_map.value == cp2_id.to_vec()),
+            None => false,
+        }) {
+            let mut uuid = ExclusionsMap::new("/uuid".to_owned());
+            let data = DataMap {
+                offset: 8,
+                value: cp2_id.to_vec(), // C2PA identifier
+            };
+            let data_vec = vec![data];
+            uuid.data = Some(data_vec);
+            exclusions.push(uuid);
+        }
+
+        // /ftyp exclusion
+        if !exclusions.iter().any(|e| e.xpath == "/ftyp") {
+            let ftyp = ExclusionsMap::new("/ftyp".to_owned());
+            exclusions.push(ftyp);
+        }
+
+        // /mfra exclusion
+        if !exclusions.iter().any(|e| e.xpath == "/mfra") {
+            let mfra = ExclusionsMap::new("/mfra".to_owned());
+            exclusions.push(mfra);
+        }
+
+        /*  no longer mandatory
+        // meta/iloc exclusion
+        let iloc = ExclusionsMap::new("/meta/iloc".to_owned());
+        exclusions.push(iloc);
+
+        // /mfra/tfra exclusion
+        let tfra = ExclusionsMap::new("/mfra/tfra".to_owned());
+        exclusions.push(tfra);
+
+        // /moov/trak/mdia/minf/stbl/stco exclusion
+        let mut stco = ExclusionsMap::new("/moov/trak/mdia/minf/stbl/stco".to_owned());
+        let subset_stco = SubsetMap {
+            offset: 16,
+            length: 0,
+        };
+        let subset_stco_vec = vec![subset_stco];
+        stco.subset = Some(subset_stco_vec);
+        exclusions.push(stco);
+
+        // /moov/trak/mdia/minf/stbl/co64 exclusion
+        let mut co64 = ExclusionsMap::new("/moov/trak/mdia/minf/stbl/co64".to_owned());
+        let subset_co64 = SubsetMap {
+            offset: 16,
+            length: 0,
+        };
+        let subset_co64_vec = vec![subset_co64];
+        co64.subset = Some(subset_co64_vec);
+        exclusions.push(co64);
+
+        // /moof/traf/tfhd exclusion
+        let mut tfhd = ExclusionsMap::new("/moof/traf/tfhd".to_owned());
+        let subset_tfhd = SubsetMap {
+            offset: 16,
+            length: 8,
+        };
+        let subset_tfhd_vec = vec![subset_tfhd];
+        tfhd.subset = Some(subset_tfhd_vec);
+        tfhd.flags = Some(ByteBuf::from([1, 0, 0]));
+        exclusions.push(tfhd);
+
+        // /moof/traf/trun exclusion
+        let mut trun = ExclusionsMap::new("/moof/traf/trun".to_owned());
+        let subset_trun = SubsetMap {
+            offset: 16,
+            length: 4,
+        };
+        let subset_trun_vec = vec![subset_trun];
+        trun.subset = Some(subset_trun_vec);
+        trun.flags = Some(ByteBuf::from([1, 0, 0]));
+        exclusions.push(trun);
+        */
+
+        &self.exclusions
+    }
+
+    pub fn add_place_holder_hash(&mut self) -> crate::error::Result<()> {
+        // make sure hash space is reserved
+        if let Some(alg) = &self.alg {
+            match alg.as_str() {
+                "sha256" => self.set_hash([0u8; 32].to_vec()),
+                "sha384" => self.set_hash([0u8; 48].to_vec()),
+                "sha512" => self.set_hash([0u8; 64].to_vec()),
+                _ => return Err(Error::UnsupportedType),
+            }
+        }
+        Ok(())
+    }
+
+    // get regions to hash based on the list of top level boxes in file order
+    pub fn box_list_to_user_exclusions(&self, _box_paths: &[String]) -> Result<Vec<UserHashInfo>> {
+        let uhis = Vec::new();
+
+        Ok(uhis)
+
+        /*
+        for box_path in box_paths {
+            // c2pa exclusion
+            if box_path == "/c2pa" {
+                uhis.push(UserHashInfo {
+                    xpath: "/c2pa".to_string(),
+                    start: 0,
+                    end: 0,
+                    need_box_loc_hash: false,
+                    excluded: true,
+                });
+
+                continue;
+            }
+
+            if let Some(exclusion) = self.exclusions.iter().find(|e| {
+                &e.xpath == box_path
+            }) {
+                for box_token in box_token_list {
+                    let box_info = &bmff_tree[*box_token].data;
+
+                    let box_start = box_info.offset;
+                    let box_length = box_info.size;
+
+                    let exclusion_start = box_start;
+                    let exclusion_length = box_length;
+
+                    // adjust exclusion bounds as needed
+
+                    // check the length
+                    if let Some(desired_length) = bmff_exclusion.length {
+                        if desired_length != box_length {
+                            continue;
+                        }
+                    }
+
+                    // check the version
+                    if let Some(desired_version) = bmff_exclusion.version {
+                        if let Some(box_version) = box_info.version {
+                            if desired_version != box_version {
+                                continue;
+                            }
+                        }
+                    }
+
+                    // check the flags
+                    if let Some(desired_flag_bytes) = &bmff_exclusion.flags {
+                        let mut temp_bytes = [0u8; 4];
+                        if desired_flag_bytes.len() >= 3 {
+                            temp_bytes[0] = desired_flag_bytes[0];
+                            temp_bytes[1] = desired_flag_bytes[1];
+                            temp_bytes[2] = desired_flag_bytes[2];
+                        }
+                        let desired_flags = u32::from_be_bytes(temp_bytes);
+
+                        if let Some(box_flags) = box_info.flags {
+                            let exact = bmff_exclusion.exact.unwrap_or(true);
+
+                            if exact {
+                                if desired_flags != box_flags {
+                                    continue;
+                                }
+                            } else {
+                                // bitwise match
+                                if (desired_flags | box_flags) != desired_flags {
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
+                    // check data match
+                    if let Some(data_map_vec) = &bmff_exclusion.data {
+                        let mut should_add = true;
+
+                        for data_map in data_map_vec {
+                            // move to the start of exclusion
+                            skip_bytes_to(reader, box_start + data_map.offset)?;
+
+                            // match the data
+                            let buf = reader.read_to_vec(data_map.value.len() as u64)?;
+
+                            // does not match so skip
+                            if !vec_compare(&data_map.value, &buf) {
+                                should_add = false;
+                                break;
+                            }
+                        }
+                        if !should_add {
+                            continue;
+                        }
+                    }
+
+                    // reduce range if desired
+                    if let Some(subset_vec) = &bmff_exclusion.subset {
+                        for subset in subset_vec {
+                            // if the subset offset is past the end of the box, skip
+                            if subset.offset > exclusion_length {
+                                continue;
+                            }
+
+                            let new_start = exclusion_start + subset.offset;
+                            let new_length = if subset.length == 0 {
+                                exclusion_length - subset.offset
+                            } else {
+                                min(subset.length, exclusion_length - subset.offset)
+                            };
+
+                            let exclusion = HashRange::new(new_start, new_length);
+
+                            exclusions.push(exclusion);
+                        }
+                    } else {
+                        // exclude box in its entirty
+                        let exclusion = HashRange::new(exclusion_start, exclusion_length);
+
+                        exclusions.push(exclusion);
+
+                        // for BMFF V2 hashes we do not add hash offsets for top level boxes
+                        // that are completely excluded, so remove from BMFF V2 hash offset calc
+                        if let Some(pos) = tl_offsets.iter().position(|x| *x == exclusion_start) {
+                            tl_offsets.remove(pos);
+                        }
+                    }
+                }
+            }
+        }
+
+        // add remaining top level offsets to be included when generating BMFF V2 hashes
+        // note: this is technically not an exclusion but a replacement with a new range of bytes to be hashed
+        if bmff_v2 {
+            for tl_start in tl_offsets {
+                let mut exclusion = HashRange::new(tl_start, 1u64);
+                exclusion.set_bmff_offset(tl_start);
+
+                exclusions.push(exclusion);
+            }
+        }
+
+        Ok(uhi)
+        */
+    }
+
     pub fn exclusions(&self) -> &[ExclusionsMap] {
         self.exclusions.as_ref()
     }
@@ -345,7 +696,7 @@ impl BmffHash {
         self.bmff_version
     }
 
-    pub(crate) fn set_bmff_version(&mut self, version: usize) {
+    pub fn set_bmff_version(&mut self, version: usize) {
         self.bmff_version = version;
     }
 
@@ -565,7 +916,6 @@ impl BmffHash {
         // start the verification
         reader.rewind()?;
         let size = stream_len(reader)?;
-
         let curr_alg = match &self.alg {
             Some(a) => a.clone(),
             None => match alg {
@@ -1342,10 +1692,8 @@ impl BmffHash {
         reader: &mut dyn CAIRead,
         box_info: &BoxInfoLite,
         merkle_map: &mut MerkleMap,
-        settings: &Settings,
+        max_proofs: usize,
     ) -> crate::Result<Vec<Vec<u8>>> {
-        let max_proofs = settings.core.merkle_tree_max_proofs;
-
         // build the Merkle tree
         let m_tree = self.create_merkle_tree_for_merkle_map(reader, box_info, merkle_map)?;
         let num_leaves = m_tree.leaves.len();
@@ -1587,6 +1935,8 @@ impl BmffHash {
 }
 
 impl AssertionCbor for BmffHash {}
+
+//impl AssertionJson for BmffHash {}
 
 impl AssertionBase for BmffHash {
     const LABEL: &'static str = Self::LABEL;
