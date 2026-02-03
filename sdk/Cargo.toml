@@ -207,13 +207,13 @@ zip = { version = "7.0.0", default-features = false }
 
 [target.'cfg(target_os = "wasi")'.dependencies]
 wasi = { version = "0.14.3", optional = true }
-wstd = { version = "0.5.4", optional = true }
+wstd = { version = "0.6.5", optional = true }
 # Use zip 6 for WASI to avoid typed-path wasip2 issue. Fix: http://github.com/chipsenkbeil/typed-path/pull/57
 zip = { version = "6.0.0", default-features = false }
 
 # `wstd` is required for testing, but optional as a normal dependency.
 [target.'cfg(target_os = "wasi")'.dev-dependencies]
-wstd = "0.5.4"
+wstd = "0.6.5"
 
 # This list matches the `rust_native_crypto` feature since they are not optional on WASM.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
