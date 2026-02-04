@@ -580,6 +580,58 @@ impl Ingredient {
         }
     }
 
+    /// Creates an Ingredient from manifest bytes and an asset stream.
+    ///
+    /// This validates the provided manifest bytes against the stream,
+    /// similar to `from_stream()` but using pre-existing manifest data
+    /// instead of loading it from the stream.
+    ///
+    /// # Arguments
+    /// * `relationship` - The relationship type for this ingredient
+    /// * `manifest_bytes` - The C2PA manifest JUMBF bytes to validate
+    /// * `format` - The format/mime type of the asset
+    /// * `stream` - The asset stream to validate against
+    /// * `context` - The context with settings and verification options
+    ///
+    /// # Returns
+    /// A tuple of (Ingredient, manifest_bytes) where manifest_bytes are the same
+    /// ones provided (for consistency with `from_stream()`)
+    pub(crate) fn from_manifest_and_stream(
+        relationship: Relationship,
+        manifest_bytes: &[u8],
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        context: &Context,
+    ) -> Result<(Self, Option<Vec<u8>>)> {
+        let mut validation_log = StatusTracker::default();
+        let mut ingredient = Self::new_v3(relationship);
+        ingredient.format = Some(format.to_owned());
+
+        // Try to get xmp info, if this fails all XmpInfo fields will be None.
+        stream.rewind()?;
+        let xmp_info = XmpInfo::from_source(&mut stream, format);
+        stream.rewind()?;
+
+        // Use xmp info if available
+        ingredient.instance_id = xmp_info.instance_id;
+        ingredient.document_id = xmp_info.document_id;
+
+        // Load store from manifest bytes and validate against stream
+        match Store::from_manifest_data_and_stream(
+            manifest_bytes,
+            format,
+            &mut stream,
+            &mut validation_log,
+            context,
+        ) {
+            Ok(store) => {
+                ingredient.with_store(&store, &validation_log)?;
+                Ok((ingredient, Some(manifest_bytes.to_vec())))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Add store information to the ingredient assertion
     pub(crate) fn with_store(
         &mut self,

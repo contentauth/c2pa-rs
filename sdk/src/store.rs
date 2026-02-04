@@ -2663,6 +2663,46 @@ impl Store {
         Ok(jumbf_bytes)
     }
 
+    /// Returns a finalized, signed manifest. The claim must have exactly one
+    /// hard binding assertion (DataHash, BMFF Hash, or Box Hash) with pregenerated hashes.
+    #[async_generic()]
+    pub fn get_embeddable_manifest(&mut self, context: &Context) -> Result<Vec<u8>> {
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+
+        // make sure there is exactly one hard binding assertion
+        if pc.hash_assertions().len() != 1 {
+            return Err(Error::BadParam(
+                "Claim must have exactly one hard binding assertion".to_string(),
+            ));
+        }
+
+        let signer = if _sync {
+            context.signer()?
+        } else {
+            context.async_signer()?
+        };
+        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        // sign contents
+        let sig = if _sync {
+            self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?
+        } else {
+            self.sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
+                .await?
+        };
+
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        if sig_placeholder.len() != sig.len() {
+            return Err(Error::CoseSigboxTooSmall);
+        }
+
+        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
+            .map_err(|_| Error::JumbfCreationError)?;
+
+        Ok(jumbf_bytes)
+    }
+
     /// Returns the supplied manifest composed to be directly compatible with the desired format.
     /// For example, if format is JPEG function will return the set of APP11 segments that contains
     /// the manifest.  Similarly for PNG it would be the PNG chunk complete with header and  CRC.

@@ -16,13 +16,14 @@ use std::{
     io::{Read, Seek, Write},
 };
 
+use async_generic::async_generic;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 use crate::{
     assertion::AssertionBase,
-    assertions::{c2pa_action, Action, Actions, Ingredient, Relationship},
+    assertions::{c2pa_action, Action, Actions, BoxHash, Ingredient, Relationship},
     claim::Claim,
     context::Context,
     manifest::{Manifest, StoreOptions},
@@ -130,6 +131,35 @@ impl<'a> ContentCredential<'a> {
         Ok(self)
     }
 
+    pub fn from_manifest_and_stream<R>(
+        c2pa_data: &[u8],
+        format: &str,
+        stream: &mut R,
+        context: &'a Context,
+    ) -> Result<Self>
+    where
+        R: Read + Seek + Send,
+    {
+        let mut cc = Self::new(context);
+
+        // Use the new Ingredient method to create a validated parent ingredient
+        let (ingredient, manifest_bytes) = Ingredient::from_manifest_and_stream(
+            Relationship::ParentOf,
+            c2pa_data,
+            format,
+            stream,
+            context,
+        )?;
+
+        // Add the ingredient assertion (replaces store for parent)
+        let ingredient_uri = cc.add_ingredient_assertion(&ingredient, manifest_bytes.as_deref())?;
+
+        // Add OPENED action
+        cc.add_action(Action::new(c2pa_action::OPENED).add_ingredient(ingredient_uri)?)?;
+
+        Ok(cc)
+    }
+
     fn parent_ingredient(&self) -> Option<Ingredient> {
         for i in self.claim.ingredient_assertions() {
             if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
@@ -211,15 +241,39 @@ impl<'a> ContentCredential<'a> {
             .save_to_stream(format, source, dest, signer, self.context)
     }
 
+    pub fn hash_from_stream<R>(&mut self, format: &str, source: &mut R) -> Result<()>
+    where
+        R: Read + Seek + Send,
+    {
+        let alg = self.claim.alg();
+        let minimal_form = true; // TODO: make configurable via settings
+        let box_hash = BoxHash::from_stream(source, format, alg, minimal_form)?;
+        self.claim.add_assertion(&box_hash)?;
+        Ok(())
+    }
+
+    #[async_generic()]
+    pub fn sign(&mut self) -> Result<Vec<u8>> {
+        if self.claim.claim_generator_info().is_none() {
+            if let Some(cgi) = &self.context.settings().builder.claim_generator_info {
+                self.claim.add_claim_generator_info(cgi.try_into()?);
+            }
+        }
+        self.store.commit_claim(self.claim.clone())?;
+        if _sync {
+            self.store.get_embeddable_manifest(self.context)
+        } else {
+            self.store.get_embeddable_manifest_async(self.context).await
+        }
+    }
+
     /// Generates a value similar to the C2PA Reader output
     pub fn reader_value(&self) -> Result<Value> {
         // get the validation results from the parent ingredient
         let results = self
             .parent_ingredient()
             .and_then(|i| i.validation_results)
-            .ok_or(Error::ClaimMissing {
-                label: "Parent Ingredient missing".to_string(),
-            })?;
+            .unwrap_or_default();
         let report = StandardStoreReport::from_store(&self.store, &results)?;
         let json = serde_json::to_value(report).map_err(Error::JsonError)?;
         Ok(hash_to_b64(json))
@@ -230,9 +284,7 @@ impl<'a> ContentCredential<'a> {
         let results = self
             .parent_ingredient()
             .and_then(|i| i.validation_results)
-            .ok_or(Error::ClaimMissing {
-                label: "Parent Ingredient missing".to_string(),
-            })?;
+            .unwrap_or_default();
         let report = ManifestStoreReport::from_store_with_results(&self.store, &results)?;
         let json = serde_json::to_value(report).map_err(Error::JsonError)?;
         Ok(hash_to_b64(json))
@@ -241,23 +293,28 @@ impl<'a> ContentCredential<'a> {
 
 impl std::fmt::Display for ContentCredential<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = self.reader_value().map_err(|_| std::fmt::Error)?;
-        f.write_str(
-            serde_json::to_string_pretty(&value)
-                .map_err(|_| std::fmt::Error)?
-                .as_str(),
-        )
+        match self.reader_value() {
+            Ok(value) => match serde_json::to_string_pretty(&value) {
+                Ok(json) => f.write_str(&json),
+                Err(_) => write!(f, "ContentCredential [error serializing to JSON]"),
+            },
+            Err(_) => write!(f, "ContentCredential [error generating reader value]"),
+        }
     }
 }
 
 impl std::fmt::Debug for ContentCredential<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value = self.reader_value().map_err(|_| std::fmt::Error)?;
-        f.write_str(
-            serde_json::to_string_pretty(&value)
-                .map_err(|_| std::fmt::Error)?
-                .as_str(),
-        )
+        match self.reader_value() {
+            Ok(value) => match serde_json::to_string_pretty(&value) {
+                Ok(json) => f.write_str(&json),
+                Err(_) => write!(f, "ContentCredential {{ error: serialization failed }}"),
+            },
+            Err(_) => write!(
+                f,
+                "ContentCredential {{ error: could not generate reader value }}"
+            ),
+        }
     }
 }
 
@@ -323,6 +380,31 @@ mod tests {
 
         let cr2 = ContentCredential::new(&context).open_stream(format, &mut dest)?;
         println!("{cr2}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_add_hash_from_stream() -> Result<()> {
+        let (format, mut source, _dest) = create_test_streams(CA_JPEG);
+        let context = Context::new().with_settings(test_settings_json())?;
+
+        let mut cc = ContentCredential::new(&context).create(DigitalSourceType::Empty)?;
+
+        // Generate and add box hash from the stream
+        cc.hash_from_stream(format, &mut source)
+            .expect("Failed to hash from stream");
+
+        let manifest_bytes = cc.sign().expect("Failed to sign content credential");
+
+        source.rewind().expect("Failed to rewind source");
+        let cc = ContentCredential::from_manifest_and_stream(
+            &manifest_bytes,
+            format,
+            &mut source,
+            &context,
+        )
+        .expect("Failed to create content credential from manifest and stream");
+        println!("{cc}");
         Ok(())
     }
 }
