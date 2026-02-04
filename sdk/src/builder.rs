@@ -2418,6 +2418,10 @@ impl Builder {
     /// Add an ingredient to the manifest from a Reader.
     ///
     /// This method extracts ingredient(s) from the reader and adds them to the builder.
+    /// The behavior depends on the ManifestType:
+    /// - ArchivedIngredient: Extracts the first ingredient
+    /// - SignedManifest: Converts the entire reader to a parent ingredient with validation results
+    /// - ArchivedBuilder: Not supported (use from_archive or into_builder instead)
     ///
     /// # Arguments
     /// * `reader` - The Reader to get the ingredient from.
@@ -2427,9 +2431,24 @@ impl Builder {
         &mut self,
         reader: &crate::Reader,
     ) -> Result<&mut Ingredient> {
-        // Use the simple to_ingredient() extraction for backward compatibility
-        let ingredient = reader.to_ingredient()?;
-        self.add_ingredient(ingredient);
+        match reader.manifest_type() {
+            crate::reader::ManifestType::ArchivedIngredient => {
+                // Extract the archived ingredient
+                let ingredient = reader.to_ingredient()?;
+                self.add_ingredient(ingredient);
+            }
+            crate::reader::ManifestType::SignedManifest => {
+                // Convert the entire reader to a parent ingredient with validation
+                let ingredient = reader.reader_to_parent_ingredient()?;
+                self.add_ingredient(ingredient);
+            }
+            crate::reader::ManifestType::ArchivedBuilder => {
+                return Err(Error::BadParam(
+                    "Cannot add ArchivedBuilder as ingredient. Use from_archive() or into_builder() instead.".to_string()
+                ));
+            }
+        }
+        
         self.definition
             .ingredients
             .last_mut()

@@ -1259,20 +1259,18 @@ impl Reader {
                 Ok(builder)
             }
             ManifestType::SignedManifest => {
-                // Regular manifest: use existing manifest_into_builder logic
-                // TODO: In the future, this should convert the entire reader to a parent ingredient
-                // For now, preserve existing behavior for backward compatibility
-                self.manifest_into_builder()
+                // Regular manifest: convert the entire reader to a parent ingredient
+                let ingredient = self.reader_to_parent_ingredient()?;
+                let mut builder = crate::Builder::from_shared_context(&self.context);
+                builder.add_ingredient(ingredient);
+                Ok(builder)
             }
         }
     }
 
     /// Converts the entire Reader into a single parent Ingredient.
     /// The entire manifest store is embedded as manifest_data.
-    /// Returns the ingredient and the context to use for the new builder.
-    fn reader_to_parent_ingredient(self) -> Result<(Ingredient, Arc<Context>)> {
-        let context = self.context.clone();
-        
+    pub(crate) fn reader_to_parent_ingredient(&self) -> Result<Ingredient> {
         let manifest = self
             .active_manifest()
             .ok_or(Error::ClaimMissing {
@@ -1327,7 +1325,7 @@ impl Reader {
             }
         }
 
-        Ok((ingredient, context))
+        Ok(ingredient)
     }
 
     /// Converts a Reader into a Builder by rebuilding ingredient stores from the unified store.
