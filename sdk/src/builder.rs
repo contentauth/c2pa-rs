@@ -1115,12 +1115,42 @@ impl Builder {
     /// * Returns an [`Error`] if the archive cannot be written.
     pub fn to_archive(&mut self, mut stream: impl Write + Seek) -> Result<()> {
         if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
-            let c2pa_data = self.working_store_sign()?;
+            let c2pa_data = self.working_store_sign("builder")?;
             stream.write_all(&c2pa_data)?;
         } else {
             return self.old_to_archive(stream);
         }
         Ok(())
+    }
+
+    /// Creates a C2PA ingredient archive from a builder with exactly one ingredient.
+    ///
+    /// Ingredient archives use a special format (`application/x-c2pa-ingredient`) to distinguish
+    /// them from builder archives. When read back, they can be converted directly to an ingredient.
+    ///
+    /// # Arguments
+    /// * `stream` - A stream to write the archive into.
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if the builder doesn't have exactly one ingredient.
+    /// * Returns an [`Error`] if the archive cannot be written.
+    pub fn to_ingredient_archive(&mut self, stream: impl Write + Seek) -> Result<()> {
+        if self.definition.ingredients.len() != 1 {
+            return Err(Error::BadParam(
+                "Ingredient archive requires exactly one ingredient".to_string(),
+            ));
+        }
+
+        // Create an ingredient archive (different from builder archive)
+        if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
+            let c2pa_data = self.working_store_sign("ingredient")?;
+            let mut writer = stream;
+            writer.write_all(&c2pa_data)?;
+            Ok(())
+        } else {
+            // Use old ZIP format
+            self.to_archive(stream)
+        }
     }
 
     /// Add manifest store from an archive stream to the [`Builder`].
@@ -2471,19 +2501,16 @@ impl Builder {
     /// Otherwise, it falls back to a DataHash placeholder
     /// And is returned as a Vec<u8> of the c2pa_manifest bytes
     /// This works as an archive of the store that can be read back to restore the Builder state
-    fn working_store_sign(&mut self) -> Result<Vec<u8>> {
+    fn working_store_sign(&mut self, archive_type: &str) -> Result<Vec<u8>> {
+        // Add archive metadata assertion to mark this as an archive
+        let archive_metadata = serde_json::json!({
+            "@context": { "archive": "http://contentauth.org/archive/1.0/" },
+            "archive:type": archive_type
+        });
+        self.add_assertion("org.contentauth.archive.metadata", &archive_metadata)?;
+
         // Convert the builder to a claim
         let mut claim = self.to_claim()?;
-
-        // Mark this as a builder archive in the claim generator info
-        if let Some(cgi) = claim.claim_generator_info.as_mut() {
-            if let Some(first) = cgi.first_mut() {
-                first.insert(
-                    "org.contentauth.archive_type",
-                    serde_json::Value::String("builder".to_string()),
-                );
-            }
-        }
 
         // Check if we have a signer in the context
         if let Ok(signer) = self.context.signer() {
@@ -4445,9 +4472,8 @@ mod tests {
 
     // TODO: This test requires additional network-free test infrastructure
     // to avoid timestamp generation in working_store_sign
-    #[ignore]
     #[test]
-    fn test_archive_type_marker_in_claim_generator_info() -> Result<()> {
+    fn test_archive_metadata_assertion() -> Result<()> {
         use std::io::Cursor;
 
         // Use a simple Settings object that doesn't have edit intent
@@ -4461,23 +4487,26 @@ mod tests {
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive)?;
 
-        // Read it back and check for the archive type marker
+        // Read it back and check for archive metadata assertion
         archive.rewind()?;
         let reader = Reader::from_stream("application/c2pa", &mut archive)?;
 
-        // Verify the marker exists in claim_generator_info
-        let has_marker = reader
+        // Verify the archive metadata assertion is present and has correct type
+        let manifest = reader
             .active_manifest()
-            .and_then(|m| m.claim_generator_info.as_ref())
-            .and_then(|infos| infos.first())
-            .and_then(|info| info.get("org.contentauth.archive_type"))
-            .and_then(|v| v.as_str())
-            .map(|s| s == "builder")
-            .unwrap_or(false);
+            .expect("Should have active manifest");
+        let archive_metadata: crate::assertions::Metadata = manifest
+            .find_assertion("org.contentauth.archive.metadata")
+            .expect("Should have archive metadata assertion");
 
-        assert!(
-            has_marker,
-            "Builder archive should have 'org.contentauth.archive_type' marker"
+        // Parse and verify the archive type
+        assert_eq!(
+            archive_metadata
+                .value
+                .get("archive:type")
+                .and_then(|v| v.as_str()),
+            Some("builder"),
+            "Archive metadata should indicate 'builder' type"
         );
 
         Ok(())

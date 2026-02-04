@@ -1391,6 +1391,10 @@ impl Reader {
                 }
 
                 for assertion in manifest.assertions.iter() {
+                    // Skip the archive metadata assertion - it's no longer an archive
+                    if assertion.label() == "org.contentauth.archive.metadata" {
+                        continue;
+                    }
                     builder.add_assertion(assertion.label(), assertion.value()?)?;
                 }
 
@@ -1428,22 +1432,24 @@ impl Reader {
             None => return ManifestType::SignedManifest,
         };
 
-        // Check for explicit archive type marker (new archives)
-        if let Some(archive_type) = manifest
-            .claim_generator_info
-            .as_ref()
-            .and_then(|infos| infos.first())
-            .and_then(|info| info.get("org.contentauth.archive_type"))
-            .and_then(|v| v.as_str())
+        // Check for custom archive metadata assertion (new archives)
+        if let Ok(archive_metadata) = manifest
+            .find_assertion::<crate::assertions::Metadata>("org.contentauth.archive.metadata")
         {
-            return match archive_type {
-                "builder" => ManifestType::ArchivedBuilder,
-                "ingredient" => ManifestType::ArchivedIngredient,
-                _ => ManifestType::SignedManifest,
-            };
+            if let Some(archive_type) = archive_metadata
+                .value
+                .get("archive:type")
+                .and_then(|v| v.as_str())
+            {
+                match archive_type {
+                    "builder" => return ManifestType::ArchivedBuilder,
+                    "ingredient" => return ManifestType::ArchivedIngredient,
+                    _ => {}
+                }
+            }
         }
 
-        // Fallback for old archives without marker
+        // Fallback for old archives without metadata assertion (heuristics)
         let has_data_hash = manifest
             .assertions()
             .iter()
@@ -1459,12 +1465,11 @@ impl Reader {
             return ManifestType::ArchivedBuilder;
         }
 
-        // If it has ingredients, assume archived ingredient
+        // Has ingredients = old ingredient archive
         if !manifest.ingredients().is_empty() {
             return ManifestType::ArchivedIngredient;
         }
 
-        // Default: regular signed C2PA manifest
         ManifestType::SignedManifest
     }
 }
