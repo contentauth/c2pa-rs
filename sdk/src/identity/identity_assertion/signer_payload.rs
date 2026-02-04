@@ -150,7 +150,7 @@ impl SignerPayload {
 
         // Check expected_partial_claim
         if let Some(expected) = &self.expected_partial_claim {
-            // Serialize the partial claim to CBOR
+            // Serialize the partial claim to CBOR for hashing.
             let pc_bytes = c2pa_cbor::to_vec(partial_claim).map_err(|e| {
                 ValidationError::InternalError(format!("Failed to serialize PartialClaim: {}", e))
             })?;
