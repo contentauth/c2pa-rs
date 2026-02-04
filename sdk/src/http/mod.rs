@@ -234,8 +234,8 @@ pub enum HttpResolverError {
     UriDisallowed { uri: String },
 
     /// An error occured from the underlying HTTP resolver.
-    #[error("an error occurred from the underlying http resolver")]
-    Other(Box<dyn std::error::Error + Send + Sync>),
+    #[error("an error occurred from the underlying http resolver: {0}")]
+    Other(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 #[cfg(all(
