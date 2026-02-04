@@ -391,19 +391,17 @@ mod tests {
         let mut cc = ContentCredential::new(&context).create(DigitalSourceType::Empty)?;
 
         // Generate and add box hash from the stream
-        cc.hash_from_stream(format, &mut source)
-            .expect("Failed to hash from stream");
+        cc.hash_from_stream(format, &mut source)?;
 
-        let manifest_bytes = cc.sign().expect("Failed to sign content credential");
+        let manifest_bytes = cc.sign()?;
 
-        source.rewind().expect("Failed to rewind source");
+        source.rewind()?;
         let cc = ContentCredential::from_manifest_and_stream(
             &manifest_bytes,
             format,
             &mut source,
             &context,
-        )
-        .expect("Failed to create content credential from manifest and stream");
+        )?;
         println!("{cc}");
         Ok(())
     }
