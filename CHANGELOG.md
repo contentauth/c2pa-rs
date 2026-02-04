@@ -9,6 +9,33 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.75.13](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.12...c2pa-v0.75.13)
+_03 February 2026_
+
+### Fixed
+
+* Force Cargo to use sparse crates.io index
+
+## [0.75.12](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.11...c2pa-v0.75.12)
+_03 February 2026_
+
+(Re-release since the 0.75.11 release failed.)
+
+## [0.75.11](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.10...c2pa-v0.75.11)
+_03 February 2026_
+
+### Added
+
+* Adds thread safe Settings and Context support to c_ffi_api ([#1783](https://github.com/contentauth/c2pa-rs/pull/1783))
+
+### Other
+
+* Only use `reqwest` for `c2pa-c-ffi` networking ([#1807](https://github.com/contentauth/c2pa-rs/pull/1807))
+
+### Updated dependencies
+
+* Bump jumbf from 0.5.0 to 0.7.0 ([#1806](https://github.com/contentauth/c2pa-rs/pull/1806))
+
 ## [0.75.10](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.9...c2pa-v0.75.10)
 _02 February 2026_
 

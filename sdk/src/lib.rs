@@ -155,7 +155,7 @@ pub mod settings;
 #[doc(hidden)]
 pub mod status_tracker;
 
-/// The validation_results module contains the definitions for the validation results that are part of the C2PA specification.
+/// Contains the definitions for the validation results that are part of the C2PA specification.
 pub mod validation_results;
 
 /// The validation_status module contains the definitions for the validation status that are part of the C2PA specification.
@@ -210,7 +210,7 @@ pub(crate) mod jumbf;
 pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store_report;
-/// The maybe_send_sync module contains traits for conditional Send bounds based on target architecture.
+/// The `maybe_send_sync` module contains traits for conditional Send bounds based on target architecture.
 pub(crate) mod maybe_send_sync;
 pub(crate) mod reader;
 pub(crate) mod resource_store;
