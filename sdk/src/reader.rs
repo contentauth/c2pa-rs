@@ -1232,13 +1232,111 @@ impl Reader {
     }
 
     /// Convert the Reader back into a Builder.
-    /// This can be used to modify an existing manifest store.
+    ///
+    /// This method handles three different cases:
+    /// 1. **Builder Archive**: Restores the builder with ingredient stores properly rebuilt
+    /// 2. **Archived Ingredient**: Creates a new builder with the archived ingredient
+    /// 3. **Regular C2PA Manifest**: Converts the entire Reader into a parent ingredient in a new builder
+    ///
     /// # Errors
     /// Returns an [`Error`] if there is no active manifest.
-    pub fn into_builder(mut self) -> Result<crate::Builder> {
+    pub fn into_builder(self) -> Result<crate::Builder> {
+        match self.manifest_type() {
+            ManifestType::ArchivedBuilder => {
+                // Builder archive: rebuild ingredients from unified store
+                self.manifest_into_builder()
+            }
+            ManifestType::ArchivedIngredient => {
+                // Archived ingredient: extract and add to new builder
+                let ingredient = self
+                    .active_manifest()
+                    .and_then(|m| m.ingredients().first())
+                    .ok_or(Error::IngredientNotFound)?
+                    .to_owned();
+
+                let mut builder = crate::Builder::from_shared_context(&self.context);
+                builder.add_ingredient(ingredient);
+                Ok(builder)
+            }
+            ManifestType::SignedManifest => {
+                // Regular manifest: convert the entire reader to a parent ingredient
+                let ingredient = self.reader_to_parent_ingredient()?;
+                let mut builder = crate::Builder::from_shared_context(&self.context);
+                builder.add_ingredient(ingredient);
+                Ok(builder)
+            }
+        }
+    }
+
+    /// Converts the entire Reader into a single parent Ingredient.
+    /// The entire manifest store is embedded as manifest_data.
+    pub(crate) fn reader_to_parent_ingredient(&self) -> Result<Ingredient> {
+        let manifest = self.active_manifest().ok_or(Error::ClaimMissing {
+            label: "active manifest".to_string(),
+        })?;
+
+        // Create ingredient from manifest metadata
+        let mut ingredient = Ingredient::new(
+            manifest.title().unwrap_or(""),
+            manifest.format().unwrap_or("application/octet-stream"),
+            manifest.instance_id(),
+        );
+
+        // Set as parent ingredient
+        ingredient.set_relationship(Relationship::ParentOf);
+
+        // Copy thumbnail if present
+        if let Some(thumb_ref) = manifest.thumbnail_ref() {
+            ingredient.set_thumbnail_ref(thumb_ref.clone())?;
+        }
+
+        // Add validation results from the reader
+        if let Some(validation_status) = self.validation_status.clone() {
+            if !validation_status.is_empty() {
+                ingredient.set_validation_status(validation_status);
+            }
+        }
+
+        if let Some(validation_results) = self.validation_results.clone() {
+            ingredient.set_validation_results(validation_results);
+        }
+
+        // Set active manifest label
+        if let Some(label) = &self.active_manifest {
+            ingredient.set_active_manifest(label.clone());
+
+            // Extract and embed the full manifest store as manifest_data
+            if let Some(claim) = self.store.get_claim(label) {
+                let ingredient_store = {
+                    let mut store = Store::new();
+                    let mut active_claim = claim.clone();
+
+                    // Recursively collect all nested ingredient claims
+                    Self::collect_ingredient_claims_for_store(
+                        &self.store,
+                        claim,
+                        &mut active_claim,
+                    )?;
+
+                    store.commit_claim(active_claim)?;
+                    store
+                };
+
+                let jumbf = ingredient_store.to_jumbf_internal(0)?;
+                ingredient.set_manifest_data(jumbf)?;
+            }
+        }
+
+        Ok(ingredient)
+    }
+
+    /// Converts a Reader into a Builder by rebuilding ingredient stores from the unified store.
+    /// Works for both builder archives and regular manifests.
+    fn manifest_into_builder(mut self) -> Result<crate::Builder> {
         // Preserve the Reader's context in the new Builder
         let context = self.context;
         let mut builder = crate::Builder::from_shared_context(&context);
+
         if let Some(label) = &self.active_manifest {
             if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
                 builder.definition.vendor = parts.cgi.clone();
@@ -1247,6 +1345,7 @@ impl Reader {
                 }
             }
             builder.definition.label = Some(label.to_string());
+
             if let Some(mut manifest) = self.manifests.remove(label) {
                 builder.definition.claim_generator_info =
                     manifest.claim_generator_info.take().unwrap_or_default();
@@ -1255,6 +1354,7 @@ impl Reader {
                 builder.definition.instance_id = manifest.instance_id().to_owned();
                 builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
                 builder.definition.redactions = manifest.redactions.take();
+
                 let ingredients = std::mem::take(&mut manifest.ingredients);
                 for mut ingredient in ingredients {
                     if let Some(active_manifest) = ingredient.active_manifest() {
@@ -1289,9 +1389,15 @@ impl Reader {
                     }
                     builder.add_ingredient(ingredient);
                 }
+
                 for assertion in manifest.assertions.iter() {
+                    // Skip the archive metadata assertion - it's no longer an archive
+                    if assertion.label() == "org.contentauth.archive.metadata" {
+                        continue;
+                    }
                     builder.add_assertion(assertion.label(), assertion.value()?)?;
                 }
+
                 for (uri, data) in manifest.resources().resources() {
                     builder.add_resource(uri, std::io::Cursor::new(data))?;
                 }
@@ -1305,63 +1411,78 @@ impl Reader {
     /// Returns an [`Error`] if there is no parent ingredient.
     pub(crate) fn to_ingredient(&self) -> Result<Ingredient> {
         // make a copy of the parent ingredient (or return an error if not found)
-        let mut ingredient = self
+        let ingredient = self
             .active_manifest()
-            .and_then(|m| {
-                m.ingredients()
-                    .iter()
-                    .find(|&i| *i.relationship() == Relationship::ParentOf)
-            })
+            .and_then(|m| m.ingredients().first())
             .ok_or_else(|| Error::IngredientNotFound)?
             .to_owned();
-
-        // now we need to rebuild the manifest data for the ingredient
-        // strip out the active manifest claim from the store before adding it to the ingredient
-        // We only care about the ingredient and any claims it references
-        if let Some(active_label) = ingredient.active_manifest() {
-            let claim = self
-                .store
-                .get_claim(active_label)
-                .ok_or_else(|| Error::ClaimMissing {
-                    label: active_label.to_string(),
-                })?;
-
-            // build a new store with just the ingredient claim and any referenced claims
-            let ingredient_store = {
-                let mut store = Store::new();
-                let mut active_claim = claim.clone();
-
-                // Recursively collect all ingredient claims and add them to primary_claim
-                let mut visited = std::collections::HashSet::new();
-                let mut path = Vec::new();
-                self.collect_ingredient_claims_recursive(
-                    claim,
-                    &mut active_claim,
-                    &mut visited,
-                    &mut path,
-                )?;
-
-                // Add the main claim last
-                store.commit_claim(active_claim)?;
-                store
-            };
-            let c2pa_data = ingredient_store.to_jumbf_internal(0)?;
-            ingredient.set_manifest_data(c2pa_data)?;
-        }
 
         Ok(ingredient)
     }
 
-    /// Recursively collect all ingredient claims and add them to the primary claim
-    fn collect_ingredient_claims_recursive(
-        &self,
-        claim: &Claim,
-        active_claim: &mut Claim,
-        visited: &mut std::collections::HashSet<String>,
-        path: &mut Vec<String>,
-    ) -> Result<()> {
-        Self::collect_ingredient_claims_impl(&self.store, claim, active_claim, visited, path)
+    /// Determines the type of manifest this reader represents.
+    ///
+    /// Returns:
+    /// - `ManifestType::ArchivedBuilder` if this is a builder archive (created with `Builder::to_archive()`)
+    /// - `ManifestType::ArchivedIngredient` if this appears to be an archived ingredient
+    /// - `ManifestType::SignedManifest` if this is a regular signed C2PA manifest
+    pub(crate) fn manifest_type(&self) -> ManifestType {
+        let manifest = match self.active_manifest() {
+            Some(m) => m,
+            None => return ManifestType::SignedManifest,
+        };
+
+        // Check for custom archive metadata assertion (new archives)
+        if let Ok(archive_metadata) = manifest
+            .find_assertion::<crate::assertions::Metadata>("org.contentauth.archive.metadata")
+        {
+            if let Some(archive_type) = archive_metadata
+                .value
+                .get("archive:type")
+                .and_then(|v| v.as_str())
+            {
+                match archive_type {
+                    "builder" => return ManifestType::ArchivedBuilder,
+                    "ingredient" => return ManifestType::ArchivedIngredient,
+                    _ => {}
+                }
+            }
+        }
+
+        // Fallback for old archives without metadata assertion (heuristics)
+        let has_data_hash = manifest
+            .assertions()
+            .iter()
+            .any(|a| a.label() == crate::assertions::DataHash::LABEL);
+
+        let has_box_hash = manifest
+            .assertions()
+            .iter()
+            .any(|a| a.label() == crate::assertions::BoxHash::LABEL);
+
+        // Two hard bindings = old builder archive (illegal but still detect it)
+        if has_data_hash && has_box_hash {
+            return ManifestType::ArchivedBuilder;
+        }
+
+        // Has ingredients = old ingredient archive
+        if !manifest.ingredients().is_empty() {
+            return ManifestType::ArchivedIngredient;
+        }
+
+        ManifestType::SignedManifest
     }
+}
+
+/// Represents the type of C2PA data in a Reader
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ManifestType {
+    /// A Builder that was archived with to_archive()
+    ArchivedBuilder,
+    /// An ingredient that was explicitly archived
+    ArchivedIngredient,
+    /// A regular signed C2PA manifest from an asset
+    SignedManifest,
 }
 
 /// Convert the Reader to a JSON value.

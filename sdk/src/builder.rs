@@ -876,7 +876,7 @@ impl Builder {
 
         if format == "c2pa" || format == "application/c2pa" {
             let reader = Reader::from_stream(format, stream)?;
-            let parent_ingredient = self.add_ingredient_from_reader(&reader)?;
+            let parent_ingredient = self.add_ingredient_from_reader_owned(reader)?;
             parent_ingredient.merge(&ingredient);
             return self
                 .definition
@@ -1115,12 +1115,42 @@ impl Builder {
     /// * Returns an [`Error`] if the archive cannot be written.
     pub fn to_archive(&mut self, mut stream: impl Write + Seek) -> Result<()> {
         if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
-            let c2pa_data = self.working_store_sign()?;
+            let c2pa_data = self.working_store_sign("builder")?;
             stream.write_all(&c2pa_data)?;
         } else {
             return self.old_to_archive(stream);
         }
         Ok(())
+    }
+
+    /// Creates a C2PA ingredient archive from a builder with exactly one ingredient.
+    ///
+    /// Ingredient archives use a special format (`application/x-c2pa-ingredient`) to distinguish
+    /// them from builder archives. When read back, they can be converted directly to an ingredient.
+    ///
+    /// # Arguments
+    /// * `stream` - A stream to write the archive into.
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if the builder doesn't have exactly one ingredient.
+    /// * Returns an [`Error`] if the archive cannot be written.
+    pub fn to_ingredient_archive(&mut self, stream: impl Write + Seek) -> Result<()> {
+        if self.definition.ingredients.len() != 1 {
+            return Err(Error::BadParam(
+                "Ingredient archive requires exactly one ingredient".to_string(),
+            ));
+        }
+
+        // Create an ingredient archive (different from builder archive)
+        if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
+            let c2pa_data = self.working_store_sign("ingredient")?;
+            let mut writer = stream;
+            writer.write_all(&c2pa_data)?;
+            Ok(())
+        } else {
+            // Use old ZIP format
+            self.to_archive(stream)
+        }
     }
 
     /// Add manifest store from an archive stream to the [`Builder`].
@@ -2386,7 +2416,54 @@ impl Builder {
         Store::get_composed_manifest(manifest_bytes, format)
     }
 
+    /// Add an ingredient to the manifest from a Reader by value (consuming it).
+    ///
+    /// This method handles different types of readers:
+    /// - **Builder Archive**: Extracts all ingredients from the archived builder
+    /// - **Archived Ingredient**: Extracts the single archived ingredient
+    /// - **Regular C2PA Manifest**: Converts the manifest into a parent ingredient
+    ///
+    /// # Arguments
+    /// * `reader` - The Reader to get the ingredient from (consumed).
+    /// # Returns
+    /// * A reference to the added ingredient.
+    fn add_ingredient_from_reader_owned(
+        &mut self,
+        reader: crate::Reader,
+    ) -> Result<&mut Ingredient> {
+        // Detect the manifest type and handle appropriately
+        match reader.manifest_type() {
+            crate::reader::ManifestType::ArchivedIngredient => {
+                // Extract the archived ingredient
+                let ingredient = reader.to_ingredient()?;
+                self.add_ingredient(ingredient);
+            }
+            crate::reader::ManifestType::SignedManifest => {
+                // Convert the entire reader to a parent ingredient with validation
+                let ingredient = reader.reader_to_parent_ingredient()?;
+                self.add_ingredient(ingredient);
+            }
+            crate::reader::ManifestType::ArchivedBuilder => {
+                return Err(Error::BadParam(
+                    "Cannot add ArchivedBuilder as ingredient from stream. Use from_archive() instead.".to_string()
+                ));
+            }
+        }
+
+        self.definition
+            .ingredients
+            .last_mut()
+            .ok_or(Error::IngredientNotFound)
+    }
+
     /// Add an ingredient to the manifest from a Reader.
+    ///
+    /// This method extracts ingredient(s) from the reader and adds them to the builder.
+    /// The behavior depends on the ManifestType:
+    /// - ArchivedIngredient: Extracts the first ingredient
+    /// - SignedManifest: Converts the entire reader to a parent ingredient with validation results
+    /// - ArchivedBuilder: Not supported (use from_archive or into_builder instead)
+    ///
     /// # Arguments
     /// * `reader` - The Reader to get the ingredient from.
     /// # Returns
@@ -2395,8 +2472,24 @@ impl Builder {
         &mut self,
         reader: &crate::Reader,
     ) -> Result<&mut Ingredient> {
-        let ingredient = reader.to_ingredient()?;
-        self.add_ingredient(ingredient);
+        match reader.manifest_type() {
+            crate::reader::ManifestType::ArchivedIngredient => {
+                // Extract the archived ingredient
+                let ingredient = reader.to_ingredient()?;
+                self.add_ingredient(ingredient);
+            }
+            crate::reader::ManifestType::SignedManifest => {
+                // Convert the entire reader to a parent ingredient with validation
+                let ingredient = reader.reader_to_parent_ingredient()?;
+                self.add_ingredient(ingredient);
+            }
+            crate::reader::ManifestType::ArchivedBuilder => {
+                return Err(Error::BadParam(
+                    "Cannot add ArchivedBuilder as ingredient. Use from_archive() or into_builder() instead.".to_string()
+                ));
+            }
+        }
+
         self.definition
             .ingredients
             .last_mut()
@@ -2404,28 +2497,50 @@ impl Builder {
     }
 
     /// This creates a working store from the builder
-    /// The working store is signed with a BoxHash over an empty string
+    /// If a signer is available in the context, it uses box hash signing
+    /// Otherwise, it falls back to a DataHash placeholder
     /// And is returned as a Vec<u8> of the c2pa_manifest bytes
     /// This works as an archive of the store that can be read back to restore the Builder state
-    fn working_store_sign(&self) -> Result<Vec<u8>> {
-        // first we need to generate a BoxHash over an empty string
-        let mut empty_asset = std::io::Cursor::new("");
-        let boxes = jumbf_io::get_assetio_handler("application/c2pa")
-            .ok_or(Error::UnsupportedType)?
-            .asset_box_hash_ref()
-            .ok_or(Error::UnsupportedType)?
-            .get_box_map(&mut empty_asset)?;
-        let box_hash = BoxHash { boxes };
+    fn working_store_sign(&mut self, archive_type: &str) -> Result<Vec<u8>> {
+        // Add archive metadata assertion to mark this as an archive
+        let archive_metadata = serde_json::json!({
+            "@context": { "archive": "http://contentauth.org/archive/1.0/" },
+            "archive:type": archive_type
+        });
+        self.add_assertion("org.contentauth.archive.metadata", &archive_metadata)?;
 
-        // then convert the builder to a claim and add the box hash assertion
+        // Convert the builder to a claim
         let mut claim = self.to_claim()?;
-        claim.add_assertion(&box_hash)?;
 
-        // now commit and sign it. The signing will allow us to detect tampering.
-        let mut store = Store::new();
-        store.commit_claim(claim)?;
+        // Check if we have a signer in the context
+        if let Ok(signer) = self.context.signer() {
+            // With signer: add BoxHash and sign
+            // Generate a BoxHash over an empty asset (for application/c2pa format)
+            let mut empty_asset = std::io::Cursor::new("");
+            let boxes = jumbf_io::get_assetio_handler("application/c2pa")
+                .ok_or(Error::UnsupportedType)?
+                .asset_box_hash_ref()
+                .ok_or(Error::UnsupportedType)?
+                .get_box_map(&mut empty_asset)?;
+            let box_hash = BoxHash { boxes };
 
-        store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
+            claim.add_assertion(&box_hash)?;
+
+            // Commit the claim to a store
+            let mut store = Store::new();
+            store.commit_claim(claim)?;
+
+            // Sign with box hash
+            store.get_box_hashed_embeddable_manifest(signer, &self.context)
+        } else {
+            // No signer: use data hash placeholder (don't add BoxHash)
+            // Commit the claim to a store
+            let mut store = Store::new();
+            store.commit_claim(claim)?;
+
+            // get_data_hashed_manifest_placeholder will add DataHash
+            store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
+        }
     }
 }
 
@@ -4231,6 +4346,167 @@ mod tests {
         assert_eq!(
             loaded_old.definition.title,
             Some("Test Old Format".to_string())
+        );
+
+        Ok(())
+    }
+
+    // TODO: These tests require additional network-free test infrastructure
+    // to avoid timestamp generation in working_store_sign
+    #[ignore]
+    #[test]
+    fn test_three_way_archive_handling() -> Result<()> {
+        use std::io::Cursor;
+
+        // Test 1: Builder Archive - should restore original builder
+        let context1 = test_context();
+        let mut builder_original =
+            Builder::from_context(context1).with_definition(r#"{"title": "Original Builder"}"#)?;
+        builder_original.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+
+        // Add an ingredient and assertion
+        let ingredient_json = r#"{"title": "Test Ingredient", "format": "image/jpeg"}"#;
+        builder_original.add_ingredient(Ingredient::from_json(ingredient_json)?);
+        builder_original
+            .add_assertion_json("com.test.assertion", &serde_json::json!({"value": 42}))?;
+
+        // Archive the builder
+        let mut builder_archive = Cursor::new(Vec::new());
+        builder_original.to_archive(&mut builder_archive)?;
+
+        // Read back and verify it's detected as a builder archive
+        builder_archive.rewind()?;
+        let reader = Reader::from_stream("application/c2pa", &mut builder_archive)?;
+        assert_eq!(
+            reader.manifest_type(),
+            crate::reader::ManifestType::ArchivedBuilder,
+            "Should be detected as Builder archive"
+        );
+
+        // Convert back to builder and verify it's restored
+        let restored_builder = reader.into_builder()?;
+        assert_eq!(
+            restored_builder.definition.title,
+            Some("Original Builder".to_string())
+        );
+        assert_eq!(restored_builder.definition.ingredients.len(), 1);
+        assert_eq!(
+            restored_builder.definition.ingredients[0].title(),
+            Some("Test Ingredient")
+        );
+        // Check that assertion was restored (excluding BoxHash placeholder)
+        assert!(
+            restored_builder
+                .definition
+                .assertions
+                .iter()
+                .any(|a| a.label() == "com.test.assertion"),
+            "Custom assertion should be restored"
+        );
+
+        // Test 2: Regular C2PA Manifest - should create builder with manifest as parent ingredient
+        let context2 = test_context();
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut signed_output = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut regular_builder =
+            Builder::from_context(context2).with_definition(r#"{"title": "Regular Manifest"}"#)?;
+        regular_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        regular_builder.sign(&signer, "image/jpeg", &mut source, &mut signed_output)?;
+
+        // Read the signed asset
+        signed_output.rewind()?;
+        let manifest_reader = Reader::from_stream("image/jpeg", &mut signed_output)?;
+        assert_eq!(
+            manifest_reader.manifest_type(),
+            crate::reader::ManifestType::SignedManifest,
+            "Should be detected as regular Manifest"
+        );
+
+        // Convert to builder - should create new builder with manifest as ingredient
+        let builder_from_manifest = manifest_reader.into_builder()?;
+        // The manifest should become an ingredient in the new builder
+        assert!(
+            !builder_from_manifest.definition.ingredients.is_empty(),
+            "Should have ingredients from converted manifest"
+        );
+
+        // Test 3: Archived Ingredient - should create builder with that ingredient
+        // For this test, we'll simulate an archived ingredient by creating a minimal manifest
+        // with a single ingredient that has manifest_data
+        let context3 = test_context();
+        let mut ingredient_builder = Builder::from_context(context3)
+            .with_definition(r#"{"title": "Ingredient Container"}"#)?;
+        ingredient_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+
+        let mut ingredient =
+            Ingredient::from_json(r#"{"title": "Archived Ingredient", "format": "image/jpeg"}"#)?;
+        // Add some mock manifest data to make it look like an archived ingredient
+        ingredient.set_manifest_data(vec![0x00, 0x01, 0x02, 0x03])?;
+        ingredient_builder.add_ingredient(ingredient);
+
+        // Archive it
+        let mut ingredient_archive = Cursor::new(Vec::new());
+        ingredient_builder.to_archive(&mut ingredient_archive)?;
+
+        // Read back and verify detection
+        ingredient_archive.rewind()?;
+        let ingredient_reader = Reader::from_stream("application/c2pa", &mut ingredient_archive)?;
+        assert_eq!(
+            ingredient_reader.manifest_type(),
+            crate::reader::ManifestType::ArchivedIngredient,
+            "Should be detected as archived Ingredient"
+        );
+
+        // Convert to builder - should create new builder with the ingredient
+        let builder_from_ingredient = ingredient_reader.into_builder()?;
+        assert_eq!(builder_from_ingredient.definition.ingredients.len(), 1);
+        assert_eq!(
+            builder_from_ingredient.definition.ingredients[0].title(),
+            Some("Archived Ingredient")
+        );
+
+        Ok(())
+    }
+
+    // TODO: This test requires additional network-free test infrastructure
+    // to avoid timestamp generation in working_store_sign
+    #[test]
+    fn test_archive_metadata_assertion() -> Result<()> {
+        use std::io::Cursor;
+
+        // Use a simple Settings object that doesn't have edit intent
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context = Context::new().with_settings(settings)?;
+
+        // Create and archive a builder
+        let mut builder =
+            Builder::from_context(context).with_definition(r#"{"title": "Test Builder"}"#)?;
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+
+        // Read it back and check for archive metadata assertion
+        archive.rewind()?;
+        let reader = Reader::from_stream("application/c2pa", &mut archive)?;
+
+        // Verify the archive metadata assertion is present and has correct type
+        let manifest = reader
+            .active_manifest()
+            .expect("Should have active manifest");
+        let archive_metadata: crate::assertions::Metadata = manifest
+            .find_assertion("org.contentauth.archive.metadata")
+            .expect("Should have archive metadata assertion");
+
+        // Parse and verify the archive type
+        assert_eq!(
+            archive_metadata
+                .value
+                .get("archive:type")
+                .and_then(|v| v.as_str()),
+            Some("builder"),
+            "Archive metadata should indicate 'builder' type"
         );
 
         Ok(())
