@@ -19,6 +19,7 @@ use std::fs::{read, File};
 use std::{
     collections::{HashMap, HashSet},
     io::{Read, Seek, Write},
+    sync::Arc,
 };
 
 use async_generic::async_generic;
@@ -116,26 +117,17 @@ pub struct Reader {
     assertion_values: HashMap<String, Value>,
 
     #[serde(skip)]
-    context: Context,
+    context: Arc<Context>,
 }
 
 impl Reader {
-    /// Create a new Reader with a default Context.
+    /// Create a new Reader with the given [`Context`].
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use c2pa::Reader;
-    /// let reader = Reader::new();
-    /// ```
-    pub fn new() -> Self {
-        Self::from_context(Context::new())
-    }
-
-    /// Create a new Reader with the given Context.
+    /// This method takes ownership of the [`Context`] and wraps it in an [`Arc`] internally.
+    /// Use this for single-use contexts where you don't need to share the context.
     ///
     /// # Arguments
-    /// * `context` - The Context to use for the Reader
+    /// * `context` - The [`Context`] to use for the Reader
     ///
     /// # Returns
     /// A new Reader
@@ -145,26 +137,61 @@ impl Reader {
     /// ```
     /// # use c2pa::{Context, Reader, Result};
     /// # fn main() -> Result<()> {
-    /// let context = Context::new().with_settings(r#"{"verify": {"remote_manifest_fetch": true}}"#)?;
+    /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
     /// let reader = Reader::from_context(context);
     /// # Ok(())
     /// # }
     /// ```
     pub fn from_context(context: Context) -> Self {
         Self {
-            context,
+            context: Arc::new(context),
             store: Store::new(),
             assertion_values: HashMap::new(),
             ..Default::default()
         }
     }
 
-    /// Add manifest store from a stream to the Reader
+    /// Create a new Reader with a shared [`Context`].
+    ///
+    /// This method allows sharing a single [`Context`] across multiple builders or readers,
+    /// even across threads. The [`Arc`] is cloned internally, so you pass a reference.
+    ///
+    /// # Arguments
+    /// * `context` - A reference to an [`Arc<Context>`] to share.
+    ///
+    /// # Returns
+    /// A new [`Reader`]
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Reader, Result};
+    /// # use std::sync::Arc;
+    /// # fn main() -> Result<()> {
+    /// // Create a shared Context once
+    /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
+    ///
+    /// // Share it across multiple Readers (even across threads!)
+    /// let reader1 = Reader::from_shared_context(&ctx);
+    /// let reader2 = Reader::from_shared_context(&ctx);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_shared_context(context: &Arc<Context>) -> Self {
+        Self {
+            context: Arc::clone(context),
+            store: Store::new(),
+            assertion_values: HashMap::new(),
+            ..Default::default()
+        }
+    }
+
+    /// Add manifest store from a stream to the [`Reader`]
     /// # Arguments
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
     /// # Returns
-    /// The updated Reader.
+    /// The updated [`Reader`] with the added manifest store.
     #[async_generic]
     pub fn with_stream(
         mut self,
@@ -191,23 +218,52 @@ impl Reader {
     ///
     /// # Arguments
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
-    /// * `stream` - The stream to read from.  Must implement the Read and Seek traits. (NOTE: Explain Send trait, required for both sync & async?).
-    ///
+    /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
+    ///   Send trait is required for sync operations and Sync trait is required for async operations.
     /// # Returns
     /// A [`Reader`] for the manifest store.
+    /// # Note
+    /// [CAWG identity] assertions require async calls for validation.
+    ///
+    /// [CAWG identity]: https://cawg.io/identity/
+    #[async_generic]
+    pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings)?;
+
+        if _sync {
+            Reader::from_context(context).with_stream(format, stream)
+        } else {
+            Reader::from_context(context)
+                .with_stream_async(format, stream)
+                .await
+        }
+    }
+
+    #[cfg(feature = "file_io")]
+    /// Add manifest store from a file to the [`Reader`].
+    /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
+    ///
+    /// NOTE: If the file does not have a manifest store, the function will check for a sidecar manifest with the same base file name and a .c2pa extension.
+    ///
+    /// # Arguments
+    /// * `path` - The path to the file.
+    ///
+    /// # Returns
+    /// The updated [`Reader`] with the added manifest store.
     ///
     /// # Errors
-    /// Returns an [`Error`] when the manifest data cannot be read.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
+    /// Returns an [`Error`] when the manifest data cannot be read from the specified file.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
     ///
     /// # Example
-    /// This example reads from a memory buffer and prints out the JSON manifest data.
-    /// ```no_run
-    /// use std::io::Cursor;
     ///
-    /// use c2pa::Reader;
-    /// let mut stream = Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
-    /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
-    /// println!("{}", reader.json());
+    /// ```no_run
+    /// use c2pa::{Context, Reader};
+    /// # fn main() -> c2pa::Result<()> {
+    /// let reader = Reader::from_context(Context::new()).with_file("path/to/file.jpg")?;
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Note
@@ -215,15 +271,66 @@ impl Reader {
     ///
     /// [CAWG identity]: https://cawg.io/identity/
     #[async_generic]
-    pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
-        if _sync {
-            Reader::new().with_stream(format, stream)
+    pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
+        let path = path.as_ref();
+        let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
+        let mut file = File::open(path)?;
+
+        // Try loading from stream first
+        let mut validation_log = StatusTracker::default();
+        let store = if _sync {
+            Store::from_stream(&format, &mut file, &mut validation_log, &self.context)
         } else {
-            Reader::new().with_stream_async(format, stream).await
+            Store::from_stream_async(&format, &mut file, &mut validation_log, &self.context).await
+        };
+
+        match store {
+            Err(Error::JumbfNotFound) => {
+                // if not embedded or cloud, check for sidecar first and load if it exists
+                let potential_sidecar_path = path.with_extension("c2pa");
+                if potential_sidecar_path.exists() {
+                    let manifest_data = read(potential_sidecar_path)?;
+                    validation_log = StatusTracker::default();
+                    let store = if _sync {
+                        Store::from_manifest_data_and_stream(
+                            &manifest_data,
+                            &format,
+                            &mut file,
+                            &mut validation_log,
+                            &self.context,
+                        )
+                    } else {
+                        Store::from_manifest_data_and_stream_async(
+                            &manifest_data,
+                            &format,
+                            &mut file,
+                            &mut validation_log,
+                            &self.context,
+                        )
+                        .await
+                    }?;
+                    if _sync {
+                        self.with_store(store, &mut validation_log)
+                    } else {
+                        self.with_store_async(store, &mut validation_log).await
+                    }?;
+                    Ok(self)
+                } else {
+                    Err(Error::JumbfNotFound)
+                }
+            }
+            Ok(store) => {
+                if _sync {
+                    self.with_store(store, &mut validation_log)
+                } else {
+                    self.with_store_async(store, &mut validation_log).await
+                }?;
+                Ok(self)
+            }
+            Err(e) => Err(e),
         }
     }
 
-    #[cfg(feature = "file_io")]
     /// Create a manifest store [`Reader`] from a file.
     /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
     ///
@@ -249,37 +356,17 @@ impl Reader {
     /// [CAWG identity] assertions require async calls for validation.
     ///
     /// [CAWG identity]: https://cawg.io/identity/
+    #[cfg(feature = "file_io")]
     #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
-        let path = path.as_ref();
-        let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
-        let mut file = File::open(path)?;
-        let result = if _sync {
-            Self::from_stream(&format, &mut file)
+        // Legacy behavior: explicitly get thread-local settings for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings)?;
+
+        if _sync {
+            Reader::from_context(context).with_file(path)
         } else {
-            Self::from_stream_async(&format, &mut file).await
-        };
-        match result {
-            Err(Error::JumbfNotFound) => {
-                // if not embedded or cloud, check for sidecar first and load if it exists
-                let potential_sidecar_path = path.with_extension("c2pa");
-                if potential_sidecar_path.exists() {
-                    let manifest_data = read(potential_sidecar_path)?;
-                    if _sync {
-                        Self::from_manifest_data_and_stream(&manifest_data, &format, &mut file)
-                    } else {
-                        Self::from_manifest_data_and_stream_async(
-                            &manifest_data,
-                            &format,
-                            &mut file,
-                        )
-                        .await
-                    }
-                } else {
-                    Err(Error::JumbfNotFound)
-                }
-            }
-            _ => result,
+            Reader::from_context(context).with_file_async(path).await
         }
     }
 
@@ -292,6 +379,52 @@ impl Reader {
     /// This function is intended for use in testing. Don't use it in an implementation.
     pub fn from_json(json: &str) -> Result<Reader> {
         serde_json::from_str(json).map_err(crate::Error::JsonError)
+    }
+
+    /// Add manifest store from existing `c2pa_data` and a stream to the [`Reader`].
+    /// Use this to validate a remote manifest or a sidecar manifest.
+    /// # Arguments
+    /// * `c2pa_data` - A C2PA manifest store in JUMBF format.
+    /// * `format` - The format of the stream.
+    /// * `stream` - The stream to verify the store against.
+    /// # Returns
+    /// The updated [`Reader`] with the added manifest store.
+    /// # Errors
+    /// This function returns an [`Error`] if the c2pa_data is not valid, or severe errors occur in validation.
+    /// You must check validation status for non-severe errors.
+    #[async_generic]
+    pub fn with_manifest_data_and_stream(
+        mut self,
+        c2pa_data: &[u8],
+        format: &str,
+        stream: impl Read + Seek + MaybeSend,
+    ) -> Result<Self> {
+        let mut validation_log = StatusTracker::default();
+
+        let store = if _sync {
+            Store::from_manifest_data_and_stream(
+                c2pa_data,
+                format,
+                stream,
+                &mut validation_log,
+                &self.context,
+            )
+        } else {
+            Store::from_manifest_data_and_stream_async(
+                c2pa_data,
+                format,
+                stream,
+                &mut validation_log,
+                &self.context,
+            )
+            .await
+        }?;
+        if _sync {
+            self.with_store(store, &mut validation_log)
+        } else {
+            self.with_store_async(store, &mut validation_log).await
+        }?;
+        Ok(self)
     }
 
     /// Create a manifest store [`Reader`] from existing `c2pa_data` and a stream.
@@ -311,35 +444,63 @@ impl Reader {
         format: &str,
         stream: impl Read + Seek + MaybeSend,
     ) -> Result<Reader> {
-        let context = Context::new();
-        let mut reader = Reader::from_context(context);
+        // Get thread-local settings (if any) for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings).unwrap_or_default();
+        if _sync {
+            Reader::from_context(context).with_manifest_data_and_stream(c2pa_data, format, stream)
+        } else {
+            Reader::from_context(context)
+                .with_manifest_data_and_stream_async(c2pa_data, format, stream)
+                .await
+        }
+    }
 
+    /// Add manifest store from an initial segment and a fragment stream to the [`Reader`].
+    /// This would be used to load and validate fragmented MP4 files that span multiple separate asset files.
+    /// # Arguments
+    /// * `format` - The format of the stream.
+    /// * `stream` - The initial segment stream.
+    /// * `fragment` - The fragment stream.
+    /// # Returns
+    /// The updated [`Reader`] with the added manifest store.
+    /// # Errors
+    /// This function returns an [`Error`] if the streams are not valid, or severe errors occur in validation.
+    /// You must check validation status for non-severe errors.
+    #[async_generic]
+    pub fn with_fragment(
+        mut self,
+        format: &str,
+        mut stream: impl Read + Seek + MaybeSend,
+        mut fragment: impl Read + Seek + MaybeSend,
+    ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
         let store = if _sync {
-            Store::from_manifest_data_and_stream(
-                c2pa_data,
+            Store::load_fragment_from_stream(
                 format,
-                stream,
+                &mut stream,
+                &mut fragment,
                 &mut validation_log,
-                &reader.context,
+                &self.context,
             )
         } else {
-            Store::from_manifest_data_and_stream_async(
-                c2pa_data,
+            Store::load_fragment_from_stream_async(
                 format,
-                stream,
+                &mut stream,
+                &mut fragment,
                 &mut validation_log,
-                &reader.context,
+                &self.context,
             )
             .await
         }?;
+
         if _sync {
-            reader.with_store(store, &mut validation_log)
+            self.with_store(store, &mut validation_log)
         } else {
-            reader.with_store_async(store, &mut validation_log).await
+            self.with_store_async(store, &mut validation_log).await
         }?;
-        Ok(reader)
+        Ok(self)
     }
 
     /// Create a [`Reader`] from an initial segment and a fragment stream.
@@ -356,50 +517,34 @@ impl Reader {
     #[async_generic]
     pub fn from_fragment(
         format: &str,
-        mut stream: impl Read + Seek + MaybeSend,
-        mut fragment: impl Read + Seek + MaybeSend,
+        stream: impl Read + Seek + MaybeSend,
+        fragment: impl Read + Seek + MaybeSend,
     ) -> Result<Self> {
-        let mut reader = Reader::new();
-
-        let mut validation_log = StatusTracker::default();
-
-        let store = if _sync {
-            Store::load_fragment_from_stream(
-                format,
-                &mut stream,
-                &mut fragment,
-                &mut validation_log,
-                &reader.context,
-            )
-        } else {
-            Store::load_fragment_from_stream_async(
-                format,
-                &mut stream,
-                &mut fragment,
-                &mut validation_log,
-                &reader.context,
-            )
-            .await
-        }?;
-
         if _sync {
-            reader.with_store(store, &mut validation_log)
+            Reader::from_context(Context::new()).with_fragment(format, stream, fragment)
         } else {
-            reader.with_store_async(store, &mut validation_log).await
-        }?;
-        Ok(reader)
+            Reader::from_context(Context::new())
+                .with_fragment_async(format, stream, fragment)
+                .await
+        }
     }
 
-    /// Loads a [`Reader`]` from an initial segment and fragments.  This
-    /// would be used to load and validate fragmented MP4 files that span
+    /// Add manifest store from an initial segment and fragments to the [`Reader`].
+    /// This would be used to load and validate fragmented MP4 files that span
     /// multiple separate asset files.
+    /// # Arguments
+    /// * `path` - The path to the initial segment file.
+    /// * `fragments` - A vector of paths to fragment files.
+    /// # Returns
+    /// The updated [`Reader`] with the added manifest store.
+    /// # Errors
+    /// Returns an [`Error`] when the manifest data cannot be read from the specified files.
     #[cfg(feature = "file_io")]
-    pub fn from_fragmented_files<P: AsRef<std::path::Path>>(
+    pub fn with_fragmented_files<P: AsRef<std::path::Path>>(
+        mut self,
         path: P,
         fragments: &Vec<std::path::PathBuf>,
-    ) -> Result<Reader> {
-        let mut reader = Reader::new();
-
+    ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
         let asset_type = jumbf_io::get_supported_file_extension(path.as_ref())
@@ -412,14 +557,25 @@ impl Reader {
             &mut init_segment,
             fragments,
             &mut validation_log,
-            &reader.context,
+            &self.context,
         ) {
             Ok(store) => {
-                reader.with_store(store, &mut validation_log)?;
-                Ok(reader)
+                self.with_store(store, &mut validation_log)?;
+                Ok(self)
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Loads a [`Reader`]` from an initial segment and fragments.  This
+    /// would be used to load and validate fragmented MP4 files that span
+    /// multiple separate asset files.
+    #[cfg(feature = "file_io")]
+    pub fn from_fragmented_files<P: AsRef<std::path::Path>>(
+        path: P,
+        fragments: &Vec<std::path::PathBuf>,
+    ) -> Result<Reader> {
+        Reader::from_context(Context::new()).with_fragmented_files(path, fragments)
     }
 
     /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
@@ -501,19 +657,32 @@ impl Reader {
     /// Get the Reader as a JSON string
     /// This just calls to_json_formatted
     pub fn json(&self) -> String {
-        match self.to_json_formatted() {
-            Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
-            Err(_) => "{}".to_string(),
-        }
+        self.json_checked().unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Get the Reader as a JSON string, returning an error if formatting fails
+    ///
+    /// This is useful when you need to handle errors from deeply nested or malformed structures.
+    /// For a version that never fails, use [`Self::json()`].
+    pub fn json_checked(&self) -> Result<String> {
+        let value = self.to_json_formatted()?;
+        serde_json::to_string_pretty(&value).map_err(Error::JsonError)
     }
 
     /// Get the Reader as a detailed JSON string
     /// This just calls to_json_detailed_formatted
     pub fn detailed_json(&self) -> String {
-        match self.to_json_detailed_formatted() {
-            Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
-            Err(_) => "{}".to_string(),
-        }
+        self.detailed_json_checked()
+            .unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Get the Reader as a detailed JSON string, returning an error if formatting fails
+    ///
+    /// This is useful when you need to handle errors from deeply nested or malformed structures.
+    /// For a version that never fails, use [`Self::detailed_json()`].
+    pub fn detailed_json_checked(&self) -> Result<String> {
+        let value = self.to_json_detailed_formatted()?;
+        serde_json::to_string_pretty(&value).map_err(Error::JsonError)
     }
 
     /// Returns the remote url of the manifest if this [`Reader`] obtained the manifest remotely.
@@ -566,13 +735,11 @@ impl Reader {
 
     /// Get the [`ValidationState`] of the manifest store.
     pub fn validation_state(&self) -> ValidationState {
-        let context = Context::new();
-
         if let Some(validation_results) = self.validation_results() {
             return validation_results.validation_state();
         }
 
-        let verify_trust = context.settings().verify.verify_trust;
+        let verify_trust = self.context.settings().verify.verify_trust;
         match self.validation_status() {
             Some(status) => {
                 // if there are any errors, the state is invalid unless the only error is an untrusted credential
@@ -866,10 +1033,65 @@ impl Reader {
         claim: &Claim,
         active_claim: &mut Claim,
     ) -> Result<()> {
+        let mut visited = std::collections::HashSet::new();
+        let mut path = Vec::new();
+        Self::collect_ingredient_claims_for_store_impl(
+            store,
+            claim,
+            active_claim,
+            &mut visited,
+            &mut path,
+        )
+    }
+
+    /// Uses the similar cycle detection strategy as Store::get_claim_referenced_manifests_impl
+    fn collect_ingredient_claims_for_store_impl(
+        store: &Store,
+        claim: &Claim,
+        active_claim: &mut Claim,
+        visited: &mut std::collections::HashSet<String>,
+        path: &mut Vec<String>,
+    ) -> Result<()> {
+        Self::collect_ingredient_claims_impl(store, claim, active_claim, visited, path)
+    }
+
+    /// Shared implementation for recursively collecting ingredient claims.
+    ///
+    /// Uses path-based cycle detection similar to Store::get_claim_referenced_manifests_impl:
+    /// - `visited`: Claims that have been fully processed (allows DAG convergence)
+    /// - `path`: Current traversal path to detect and skip cycles
+    fn collect_ingredient_claims_impl(
+        store: &Store,
+        claim: &Claim,
+        active_claim: &mut Claim,
+        visited: &mut std::collections::HashSet<String>,
+        path: &mut Vec<String>,
+    ) -> Result<()> {
+        let claim_label = claim.label();
+
+        if visited.contains(claim_label) {
+            return Ok(());
+        }
+
+        // Check for cycle: is this claim already in our current path?
+        // If so, skip it silently (validation should have already caught this when enabled)
+        if path.iter().any(|p| p == claim_label) {
+            return Ok(());
+        }
+
+        path.push(claim_label.to_string());
+
         for ingredient in claim.claim_ingredients() {
-            if let Some(ingredient_claim) = store.get_claim(ingredient.label()) {
-                // First, recursively collect any ingredients this claim references
-                Self::collect_ingredient_claims_for_store(store, ingredient_claim, active_claim)?;
+            let ingredient_label = ingredient.label();
+
+            if let Some(ingredient_claim) = store.get_claim(ingredient_label) {
+                Self::collect_ingredient_claims_impl(
+                    store,
+                    ingredient_claim,
+                    active_claim,
+                    visited,
+                    path,
+                )?;
 
                 // Then add this ingredient claim to the primary claim
                 active_claim.replace_ingredient_or_insert(
@@ -878,6 +1100,13 @@ impl Reader {
                 );
             }
         }
+
+        // Mark as fully processed
+        visited.insert(claim_label.to_string());
+
+        // Remove from current path
+        path.pop();
+
         Ok(())
     }
 
@@ -1007,7 +1236,9 @@ impl Reader {
     /// # Errors
     /// Returns an [`Error`] if there is no active manifest.
     pub fn into_builder(mut self) -> Result<crate::Builder> {
-        let mut builder = crate::Builder::new();
+        // Preserve the Reader's context in the new Builder
+        let context = self.context;
+        let mut builder = crate::Builder::from_shared_context(&context);
         if let Some(label) = &self.active_manifest {
             if let Some(parts) = crate::jumbf::labels::manifest_label_to_parts(label) {
                 builder.definition.vendor = parts.cgi.clone();
@@ -1024,16 +1255,31 @@ impl Reader {
                 builder.definition.instance_id = manifest.instance_id().to_owned();
                 builder.definition.thumbnail = manifest.thumbnail_ref().cloned();
                 builder.definition.redactions = manifest.redactions.take();
-                let ingredients = std::mem::take(&mut manifest.ingredients); //manifest.ingredients.drain(..).collect::<Vec<_>>();
+                let ingredients = std::mem::take(&mut manifest.ingredients);
                 for mut ingredient in ingredients {
                     if let Some(active_manifest) = ingredient.active_manifest() {
-                        let ingredient_claim = self.store.remove_claim(active_manifest);
+                        let ingredient_claim = self.store.get_claim(active_manifest);
                         if let Some(claim) = ingredient_claim {
                             // recreate an ingredient store to get the jumbf data
-                            let mut ingredient_store = Store::new();
-                            ingredient_store.commit_claim(claim.clone())?;
+                            // ... recursively collect all nested ingredient claims
+                            let ingredient_store = {
+                                let mut ingredient_store = Store::new();
+                                let mut active_claim = claim.clone();
+
+                                // Recursion happens here for claims collection - re-embed nested claims from store
+                                Self::collect_ingredient_claims_for_store(
+                                    &self.store,
+                                    claim,
+                                    &mut active_claim,
+                                )?;
+
+                                // Add the main claim with all nested ingredients
+                                ingredient_store.commit_claim(active_claim)?;
+                                ingredient_store
+                            };
                             let jumbf = ingredient_store.to_jumbf_internal(0)?;
-                            let manifest_data_ref = manifest.resources_mut().add_with(
+                            // Add manifest_data to the ingredient's own resources
+                            let manifest_data_ref = ingredient.resources_mut().add_with(
                                 "manifest_data",
                                 "application/c2pa",
                                 jumbf,
@@ -1086,7 +1332,14 @@ impl Reader {
                 let mut active_claim = claim.clone();
 
                 // Recursively collect all ingredient claims and add them to primary_claim
-                self.collect_ingredient_claims_recursive(claim, &mut active_claim)?;
+                let mut visited = std::collections::HashSet::new();
+                let mut path = Vec::new();
+                self.collect_ingredient_claims_recursive(
+                    claim,
+                    &mut active_claim,
+                    &mut visited,
+                    &mut path,
+                )?;
 
                 // Add the main claim last
                 store.commit_claim(active_claim)?;
@@ -1104,20 +1357,10 @@ impl Reader {
         &self,
         claim: &Claim,
         active_claim: &mut Claim,
+        visited: &mut std::collections::HashSet<String>,
+        path: &mut Vec<String>,
     ) -> Result<()> {
-        for ingredient in claim.claim_ingredients() {
-            if let Some(ingredient_claim) = self.store.get_claim(ingredient.label()) {
-                // First, recursively collect any ingredients this claim references
-                self.collect_ingredient_claims_recursive(ingredient_claim, active_claim)?;
-
-                // Then add this ingredient claim to the primary claim
-                active_claim.replace_ingredient_or_insert(
-                    ingredient_claim.label().to_string(),
-                    ingredient_claim.clone(),
-                );
-            }
-        }
-        Ok(())
+        Self::collect_ingredient_claims_impl(&self.store, claim, active_claim, visited, path)
     }
 }
 
@@ -1140,18 +1383,16 @@ impl TryFrom<&Reader> for serde_json::Value {
 /// Prints the JSON of the manifest data.
 impl std::fmt::Display for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.json().as_str())
+        let json = self.json_checked().map_err(|_| std::fmt::Error)?;
+        f.write_str(&json)
     }
 }
 
 /// Prints the full debug details of the manifest data.
 impl std::fmt::Debug for Reader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let json = self
-            .to_json_detailed_formatted()
-            .map_err(|_| std::fmt::Error)?;
-        let output = serde_json::to_string_pretty(&json).map_err(|_| std::fmt::Error)?;
-        f.write_str(&output)
+        let json = self.detailed_json_checked().map_err(|_| std::fmt::Error)?;
+        f.write_str(&json)
     }
 }
 
@@ -1171,8 +1412,7 @@ pub mod tests {
     use std::io::Cursor;
 
     use super::*;
-    #[cfg(target_os = "wasi")]
-    use crate::settings::Settings;
+    use crate::utils::test::test_context;
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
@@ -1183,10 +1423,10 @@ pub mod tests {
     #[test]
     // Verify that we can convert a Reader back into a Builder re-sign and the read it back again
     fn test_into_builder() -> Result<()> {
-        crate::settings::Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        let context = test_context().into_shared();
         let mut source = Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST);
         let format = "image/jpeg";
-        let reader = Reader::from_stream(format, &mut source)?;
+        let reader = Reader::from_shared_context(&context).with_stream(format, &mut source)?;
         println!("{reader}");
 
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
@@ -1195,11 +1435,10 @@ pub mod tests {
 
         source.set_position(0);
         let mut dest = Cursor::new(Vec::new());
-        let signer = crate::settings::Settings::signer()?;
-        builder.sign(&signer, format, &mut source, &mut dest)?;
+        builder.save_to_stream(format, &mut source, &mut dest)?;
 
         dest.set_position(0);
-        let reader2 = Reader::from_stream(format, &mut dest)?;
+        let reader2 = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
         println!("{reader2}");
 
         assert_eq!(reader2.validation_state(), ValidationState::Trusted);
@@ -1218,8 +1457,7 @@ pub mod tests {
 
     #[test]
     fn test_reader_new_with_stream() -> Result<()> {
-        const TEST_SETTINGS: &str = include_str!("../tests/fixtures/test_settings.toml");
-        let context = Context::new().with_settings(TEST_SETTINGS)?;
+        let context = test_context();
 
         let mut source = Cursor::new(IMAGE_WITH_MANIFEST);
 
@@ -1267,11 +1505,9 @@ pub mod tests {
 
     #[test]
     fn test_reader_trusted() -> Result<()> {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
-        let reader =
-            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
+        let context = Context::new();
+        let reader = Reader::from_context(context)
+            .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         Ok(())
     }
@@ -1280,10 +1516,12 @@ pub mod tests {
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_from_file_nested_errors() -> Result<()> {
         // disable trust check so that the status is Valid vs Trusted
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
-        let reader =
-            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
+        let settings = crate::Settings::default()
+            .with_value("verify.verify_trust", false)
+            .unwrap();
+        let context = Context::new().with_settings(settings).unwrap();
+        let reader = Reader::from_context(context)
+            .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         println!("{reader}");
         assert_eq!(reader.validation_status(), None);
         assert_eq!(reader.validation_state(), ValidationState::Valid);
@@ -1435,5 +1673,20 @@ pub mod tests {
         println!("{reader}");
         //Err(Error::NotImplemented("foo".to_string()))
         Ok(())
+    }
+
+    #[test]
+    fn test_reader_is_send_sync() {
+        // Compile-time assertion that Reader is Send + Sync on non-WASM
+        // On WASM, MaybeSend/MaybeSync don't require Send + Sync, so these traits
+        // won't be implemented, but that's correct for single-threaded WASM
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            fn assert_send<T: Send>() {}
+            fn assert_sync<T: Sync>() {}
+
+            assert_send::<Reader>();
+            assert_sync::<Reader>();
+        }
     }
 }

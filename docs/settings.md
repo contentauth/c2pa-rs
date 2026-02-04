@@ -1,10 +1,45 @@
 # Configuring settings
 
-You can configure SDK settings using a JSON file that controls many aspects of the library's behavior. This definition works the same in all programming languages and platforms.
+You can configure SDK settings using a JSON or TOML file that controls many aspects of the library's behavior. This definition works the same in all programming languages and platforms.
 
 This document describes the complete JSON schema and available options.
 
-NOTE: If you don't specify a value for a property, then the SDK will use the default value.  If you specify a value of `null`, then the property will be set to `null`, not the default.
+NOTE: If you don't specify a value for a property, then the SDK will use the default value. If you specify a value of `null`, then the property will be set to `null`, not the default.
+
+## Using Settings with Context
+
+**The recommended approach** is to use the `Context` API, which wraps Settings and provides thread-safe, explicit configuration:
+
+```rust
+use c2pa::{Context, Builder, Result};
+
+fn main() -> Result<()> {
+    // Create a Context with settings from a file
+    let context = Context::new()
+        .with_settings(include_str!("settings.json"))?;
+    
+    let builder = Builder::from_context(context);
+    // ... use builder
+    Ok(())
+}
+```
+
+The Context API:
+- Is thread-safe and can be shared with `Arc<Context>`
+- Allows multiple configurations in one application
+- Makes dependencies explicit (no hidden thread-local state)
+- Automatically creates signers from settings when needed
+
+**For backwards compatibility**, you can still use thread-local Settings (not recommended for new code):
+
+```rust
+use c2pa::Settings;
+
+Settings::from_string(include_str!("settings.json"), "json")?;
+// Operations will use thread-local settings (one per thread)
+```
+
+See [Using Context for configuration](usage.md#using-context-for-configuration) for more details.
 
 ## Overview
 
@@ -23,11 +58,32 @@ The configuration JSON has the following top-level structure:
 }
 ```
 
-### Specifying settings file
+### Settings file format
 
-To specify the settings file use [`Settings::from_string`](https://docs.rs/c2pa/latest/c2pa/settings/struct.Settings.html#method.from_string) and specify the format as `"json"`. For example:
+Settings can be provided in JSON or TOML format. The SDK will automatically detect the format when you use `Context::with_settings()`:
 
-```rs
+```rust
+// JSON format
+let context = Context::new()
+    .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+
+// TOML format
+let context = Context::new()
+    .with_settings(r#"
+        [verify]
+        verify_after_sign = true
+    "#)?;
+
+// From file
+let context = Context::new()
+    .with_settings(include_str!("settings.json"))?;
+```
+
+**Legacy approach** using thread-local Settings (not recommended):
+
+```rust
+use c2pa::Settings;
+
 Settings::from_string(include_str!("fixtures/test_settings.json"), "json")?;
 ```
 
@@ -99,7 +155,7 @@ Here's the JSON with all default values:
     "certificate_status_should_override": null,
     "intent": null,
     "created_assertion_labels": null,
-    "generate_c2pa_archive": null
+    "generate_c2pa_archive": true
   },
   "signer": null,
   "cawg_x509_signer": null
@@ -128,7 +184,7 @@ The `builder` object specifies settings for the Builder API.
 | `builder.certificate_status_should_override` | Boolean | Override OCSP with certificate status assertions | null |
 | `builder.intent` | object | Default builder intent. The value uses object notation and must be one of: `{"Create": "digitalCapture"}` <br/> `"Edit"` <br/> `"Update"`. | null |
 | `builder.created_assertion_labels` | Array | Array of base assertion labels you want to treated as `created`. When the builder encounters one of these, it will become a created assertion.  | null |
-| `builder.generate_c2pa_archive` | Boolean | Generate C2PA archive format | null |
+| `builder.generate_c2pa_archive` | Boolean | Generate C2PA archive format | true |
 | `builder.actions` | Object | Action assertion configuration. |  |
 | `builder.actions.all_actions_included` | Boolean | Whether all actions are specified | null |
 | `builder.actions.templates` | Array | Action templates | null |
@@ -284,6 +340,8 @@ The `verify` object specifies verification behavior.
 | `verify.remote_manifest_fetch` | Boolean | Fetch remote manifests | true |
 | `verify.skip_ingredient_conflict_resolution` | Boolean | Skip ingredient conflict resolution | false |
 | `verify.strict_v1_validation` | Boolean | Use strict C2PA v1 validation | false |
+
+**WARNING:** Changing any of the `verify.*` settings from `true` to `false` may result in verification behavior that is not fully compliant with the C2PA specification and should generally be avoided.
 
 ## Examples
 

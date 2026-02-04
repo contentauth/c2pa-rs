@@ -19,7 +19,7 @@ use std::{
 };
 
 use async_generic::async_generic;
-use chrono::{DateTime, Utc};
+use coset::CoseSign1;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -553,7 +553,7 @@ impl Claim {
 
     // Deserializer that maps V1/V2 Claim object into our internal Claim representation.  Note:  Our Claim
     // structure is not the Claim from the spec but an amalgamation that allows us to represent any version
-    pub fn from_value(claim_value: serde_cbor::Value, label: &str, data: &[u8]) -> Result<Self> {
+    pub fn from_value(claim_value: c2pa_cbor::Value, label: &str, data: &[u8]) -> Result<Self> {
         // populate claim from the map
         // parse possible fields to figure out which version of the claim is possible.
         let claim_version = if map_cbor_to_type::<Vec<HashedUri>>("assertions", &claim_value)
@@ -603,9 +603,9 @@ impl Claim {
             ];
 
             // make sure only V1 fields are present
-            if let serde_cbor::Value::Map(m) = &claim_value {
+            if let c2pa_cbor::Value::Map(m) = &claim_value {
                 for v in m.keys() {
-                    if let serde_cbor::Value::Text(t) = v {
+                    if let c2pa_cbor::Value::Text(t) = v {
                         if !V1_FIELDS.contains(&t.as_str()) {
                             return Err(Error::ClaimDecoding(format!(
                                 "unknown V1 claim field: {t}"
@@ -701,9 +701,9 @@ impl Claim {
             ];
 
             // make sure only V2 fields are present
-            if let serde_cbor::Value::Map(m) = &claim_value {
+            if let c2pa_cbor::Value::Map(m) = &claim_value {
                 for v in m.keys() {
-                    if let serde_cbor::Value::Text(t) = v {
+                    if let c2pa_cbor::Value::Text(t) = v {
                         if !V2_FIELDS.contains(&t.as_str()) {
                             return Err(Error::ClaimDecoding(format!(
                                 "unknown V2 claim field: {t}",
@@ -1049,6 +1049,17 @@ impl Claim {
     ///  get signature of the claim
     pub fn signature_val(&self) -> &Vec<u8> {
         &self.signature_val
+    }
+
+    /// Returns the `COSE_Sign1_Tagged` structure found in the claim signature box.
+    pub fn cose_sign1(&self) -> Result<CoseSign1> {
+        let sig = self.signature_val();
+        let data = self.data()?;
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        let sign1 = parse_cose_sign1(sig, &data, &mut validation_log)?;
+        Ok(sign1)
     }
 
     /// get claim generator
@@ -1467,7 +1478,7 @@ impl Claim {
 
         // serialize to cbor
         let db_cbor =
-            serde_cbor::to_vec(&new_db).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
+            c2pa_cbor::to_vec(&new_db).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
         // get the index for the new assertion
         let mut index = 0;
@@ -1518,7 +1529,7 @@ impl Claim {
         let mut uri = C2PAAssertion::new(link, Some(self.alg().to_string()), &hash);
         uri.add_salt(salt);
 
-        let db: DataBox = serde_cbor::from_slice(databox_cbor)
+        let db: DataBox = c2pa_cbor::from_slice(databox_cbor)
             .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
         // add data box  to data box store
@@ -1802,31 +1813,6 @@ impl Claim {
         }
     }
 
-    /// Return the signing date and time for this claim, if there is one.
-    pub fn signing_time(&self) -> Option<DateTime<Utc>> {
-        if let Some(validation_data) = self.signature_info() {
-            validation_data.date
-        } else {
-            None
-        }
-    }
-
-    /// Return the signing issuer for this claim, if there is one.
-    pub fn signing_issuer(&self) -> Option<String> {
-        if let Some(validation_data) = self.signature_info() {
-            validation_data.issuer_org
-        } else {
-            None
-        }
-    }
-
-    /// Return the cert's serial number, if there is one.
-    pub fn signing_cert_serial(&self) -> Option<String> {
-        self.signature_info()
-            .and_then(|validation_info| validation_info.cert_serial_number)
-            .map(|serial| serial.to_string())
-    }
-
     /// Return information about the signature
     #[async_generic]
     pub fn signature_info(&self) -> Option<CertificateInfo> {
@@ -1835,14 +1821,10 @@ impl Claim {
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
-        // TODO: I believe we validate at an earlier point in the code, making this unecessary
-        let mut settings = crate::settings::get_settings().unwrap_or_default();
-        settings.verify.verify_timestamp_trust = false;
-
         if _sync {
-            Some(get_signing_info(sig, &data, &mut validation_log, &settings))
+            Some(get_signing_info(sig, &data, &mut validation_log, false))
         } else {
-            Some(get_signing_info_async(sig, &data, &mut validation_log, &settings).await)
+            Some(get_signing_info_async(sig, &data, &mut validation_log, false).await)
         }
     }
 
@@ -2041,7 +2023,12 @@ impl Claim {
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
 
-        let vi = get_signing_info(sig, &data, &mut validation_log, settings);
+        let vi = get_signing_info(
+            sig,
+            &data,
+            &mut validation_log,
+            settings.verify.verify_timestamp_trust,
+        );
 
         Ok(vi.cert_chain)
     }
@@ -2240,14 +2227,14 @@ impl Claim {
                     let Some(params) = action.parameters() else {
                         log_item!(
                             label.clone(),
-                            "opened, placed and removed items must have parameters",
+                            "opened, placed and removed items must have ingredient(s) parameters",
                             "verify_actions"
                         )
                         .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
                         .failure(
                             validation_log,
                             Error::ValidationRule(
-                                "opened, placed and removed items must have parameters".into(),
+                                "opened, placed and removed items must have ingredient(s) parameters".into(),
                             ),
                         )?;
                         continue; // Skip the parameter-dependent checks below
@@ -2411,44 +2398,9 @@ impl Claim {
                 if action.action() == c2pa_action::TRANSCODED
                     || action.action() == c2pa_action::REPACKAGED
                 {
-                    let Some(params) = action.parameters() else {
-                        log_item!(
-                            label.clone(),
-                            "opened, placed and removed items must have parameters",
-                            "verify_actions"
-                        )
-                        .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure(
-                            validation_log,
-                            Error::ValidationRule(
-                                "opened, placed and removed items must have parameters".into(),
-                            ),
-                        )?;
-                        continue; // Skip the parameter-dependent checks below
-                    };
-
-                    let mut parent_tested = None; // on exists if action actually pointed to an ingredient
-                    if let Some(h) = &params.ingredient {
-                        // can we find a reference in the ingredient list
-                        // is it referenced from this manifest
-                        if claim.ingredient_assertions().iter().any(|i| {
-                            if let Ok(ingredient) = Ingredient::from_assertion(i.assertion()) {
-                                if let Some(target_label) = assertion_label_from_uri(&h.url()) {
-                                    return target_label == i.label()
-                                        && ingredient.relationship == Relationship::ParentOf;
-                                }
-                            }
-                            false
-                        }) {
-                            parent_tested = Some(true);
-                        }
-
-                        match parent_tested {
-                            Some(v) => parent_tested = Some(v),
-                            None => parent_tested = Some(false),
-                        }
-                    } else if let Some(h_vec) = &params.ingredients {
-                        for h in h_vec {
+                    if let Some(params) = action.parameters() {
+                        let mut parent_tested = None; // on exists if action actually pointed to an ingredient
+                        if let Some(h) = &params.ingredient {
                             // can we find a reference in the ingredient list
                             // is it referenced from this manifest
                             if claim.ingredient_assertions().iter().any(|i| {
@@ -2462,27 +2414,55 @@ impl Claim {
                             }) {
                                 parent_tested = Some(true);
                             }
+
+                            match parent_tested {
+                                Some(v) => parent_tested = Some(v),
+                                None => parent_tested = Some(false),
+                            }
+                        } else if let Some(h_vec) = &params.ingredients {
+                            for h in h_vec {
+                                // can we find a reference in the ingredient list
+                                // is it referenced from this manifest
+                                if claim.ingredient_assertions().iter().any(|i| {
+                                    if let Ok(ingredient) =
+                                        Ingredient::from_assertion(i.assertion())
+                                    {
+                                        if let Some(target_label) =
+                                            assertion_label_from_uri(&h.url())
+                                        {
+                                            return target_label == i.label()
+                                                && ingredient.relationship
+                                                    == Relationship::ParentOf;
+                                        }
+                                    }
+                                    false
+                                }) {
+                                    parent_tested = Some(true);
+                                }
+                            }
+                            match parent_tested {
+                                Some(v) => parent_tested = Some(v),
+                                None => parent_tested = Some(false),
+                            }
                         }
-                        match parent_tested {
-                            Some(v) => parent_tested = Some(v),
-                            None => parent_tested = Some(false),
+                        // will only exist if we actual tested for an ingredient
+                        if let Some(false) = parent_tested {
+                            log_item!(
+                                label.clone(),
+                                "action must have valid ingredient with ParentOf relationship",
+                                "verify_actions"
+                            )
+                            .validation_status(
+                                validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
+                            )
+                            .failure_no_throw(
+                                validation_log,
+                                Error::ValidationRule(
+                                    "action must have valid ingredient with ParentOf relationship"
+                                        .into(),
+                                ),
+                            );
                         }
-                    }
-                    // will only exist if we actual tested for an ingredient
-                    if let Some(false) = parent_tested {
-                        log_item!(
-                            label.clone(),
-                            "action must have valid ingredient with ParentOf relationship",
-                            "verify_actions"
-                        )
-                        .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure_no_throw(
-                            validation_log,
-                            Error::ValidationRule(
-                                "action must have valid ingredient with ParentOf relationship"
-                                    .into(),
-                            ),
-                        );
                     }
                 }
 
@@ -3539,7 +3519,7 @@ impl Claim {
     pub fn data(&self) -> Result<Vec<u8>> {
         match self.original_bytes {
             Some(ref ob) => Ok(ob.clone()),
-            None => Ok(serde_cbor::ser::to_vec(&self).map_err(|_err| Error::ClaimEncoding)?),
+            None => Ok(c2pa_cbor::ser::to_vec(&self).map_err(|_err| Error::ClaimEncoding)?),
         }
     }
 
@@ -3549,7 +3529,7 @@ impl Claim {
 
     /// Create claim from binary data (not including assertions).
     pub fn from_data(label: &str, data: &[u8]) -> Result<Claim> {
-        let claim_value: serde_cbor::Value = serde_cbor::from_slice(data)
+        let claim_value: c2pa_cbor::Value = c2pa_cbor::from_slice(data)
             .map_err(|err| Error::ClaimDecoding(format!("claim_cbor: {err}")))?;
 
         Claim::from_value(claim_value, label, data)
@@ -3587,7 +3567,7 @@ impl Claim {
                             AssertionData::Cbor(x) => {
                                 // some types are not translatable to json so explicitly convert
                                 let buf: Vec<u8> = Vec::new();
-                                let mut from = serde_cbor::Deserializer::from_slice(x);
+                                let mut from = c2pa_cbor::Deserializer::from_slice(x);
                                 let mut to = serde_json::Serializer::new(buf);
 
                                 serde_transcode::transcode(&mut from, &mut to)
@@ -3677,7 +3657,7 @@ impl Claim {
                             AssertionData::Cbor(x) => {
                                 // some types are not translatable to json so explicitly convert
                                 let buf: Vec<u8> = Vec::new();
-                                let mut from = serde_cbor::Deserializer::from_slice(x);
+                                let mut from = c2pa_cbor::Deserializer::from_slice(x);
                                 let mut to = serde_json::Serializer::new(buf);
 
                                 serde_transcode::transcode(&mut from, &mut to)
@@ -3941,6 +3921,20 @@ impl Claim {
         } else {
             uri
         }
+    }
+
+    /// Return the claim JUMBF URI of the ingredient with a ParentOf relationship.
+    pub fn parent_claim_uri(&self) -> Result<Option<String>> {
+        for i in self.ingredient_assertions() {
+            let ingredient = Ingredient::from_assertion(i.assertion())?;
+            if ingredient.relationship == Relationship::ParentOf {
+                return Ok(ingredient
+                    .c2pa_manifest()
+                    .map(|hashed_uri| hashed_uri.url()));
+            }
+        }
+
+        Ok(None)
     }
 
     // Returns a HashedUri to the claim thumbnail assertion, if it exists.

@@ -48,6 +48,27 @@ use http::{Request, Response};
 
 use crate::Result;
 
+// Type aliases for boxed HTTP resolvers with conditional Send + Sync bounds
+// These are the canonical definitions used throughout the codebase
+
+/// Type alias for a boxed [`SyncHttpResolver`] with conditional Send + Sync bounds.
+/// On non-WASM targets, the resolver is Send + Sync for thread-safe usage.
+#[cfg(not(target_arch = "wasm32"))]
+pub type BoxedSyncResolver = Box<dyn SyncHttpResolver + Send + Sync>;
+
+/// Type alias for a boxed [`SyncHttpResolver`] without Send + Sync bounds (WASM only).
+#[cfg(target_arch = "wasm32")]
+pub type BoxedSyncResolver = Box<dyn SyncHttpResolver>;
+
+/// Type alias for a boxed [`AsyncHttpResolver`] with conditional Send + Sync bounds.
+/// On non-WASM targets, the resolver is Send + Sync for thread-safe usage.
+#[cfg(not(target_arch = "wasm32"))]
+pub type BoxedAsyncResolver = Box<dyn AsyncHttpResolver + Send + Sync>;
+
+/// Type alias for a boxed [`AsyncHttpResolver`] without Send + Sync bounds (WASM only).
+#[cfg(target_arch = "wasm32")]
+pub type BoxedAsyncResolver = Box<dyn AsyncHttpResolver>;
+
 mod reqwest;
 mod ureq;
 mod wasi;

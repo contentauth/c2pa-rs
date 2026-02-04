@@ -13,10 +13,10 @@
 
 use std::{collections::HashMap, fmt};
 
+use c2pa_cbor::Value;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_cbor::Value;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
@@ -458,22 +458,22 @@ impl Action {
             // This is for backwards compatibility purposes.
             Some(parameters) => {
                 let value = match key {
-                    "ingredient" => serde_cbor::value::to_value(&parameters.ingredient).ok(),
-                    "description" => serde_cbor::value::to_value(&parameters.description).ok(),
-                    "redacted" => serde_cbor::value::to_value(&parameters.redacted).ok(),
-                    "ingredients" => serde_cbor::value::to_value(&parameters.ingredients).ok(),
+                    "ingredient" => c2pa_cbor::value::to_value(&parameters.ingredient).ok(),
+                    "description" => c2pa_cbor::value::to_value(&parameters.description).ok(),
+                    "redacted" => c2pa_cbor::value::to_value(&parameters.redacted).ok(),
+                    "ingredients" => c2pa_cbor::value::to_value(&parameters.ingredients).ok(),
                     "source_language" => {
-                        serde_cbor::value::to_value(&parameters.source_language).ok()
+                        c2pa_cbor::value::to_value(&parameters.source_language).ok()
                     }
                     "target_language" => {
-                        serde_cbor::value::to_value(&parameters.target_language).ok()
+                        c2pa_cbor::value::to_value(&parameters.target_language).ok()
                     }
                     "multiple_instances" => {
-                        serde_cbor::value::to_value(parameters.multiple_instances).ok()
+                        c2pa_cbor::value::to_value(parameters.multiple_instances).ok()
                     }
                     _ => parameters.common.get(key).cloned(),
                 };
-                value.and_then(|value| serde_cbor::value::from_value(value).ok())
+                value.and_then(|value| c2pa_cbor::value::from_value(value).ok())
             }
             None => None,
         }
@@ -543,32 +543,32 @@ impl Action {
         key: S,
         value: T,
     ) -> Result<Self> {
-        let value = serde_cbor::value::to_value(value)?;
+        let value = c2pa_cbor::value::to_value(value)?;
 
         let parameters = self.parameters.get_or_insert_default();
 
         // This is for backwards compatibility purposes.
         match key.into().as_str() {
             "ingredient" => {
-                parameters.ingredient = serde_cbor::value::from_value(value)?;
+                parameters.ingredient = c2pa_cbor::value::from_value(value)?;
             }
             "description" => {
-                parameters.description = serde_cbor::value::from_value(value)?;
+                parameters.description = c2pa_cbor::value::from_value(value)?;
             }
             "redacted" => {
-                parameters.redacted = serde_cbor::value::from_value(value)?;
+                parameters.redacted = c2pa_cbor::value::from_value(value)?;
             }
             "ingredients" => {
-                parameters.ingredients = serde_cbor::value::from_value(value)?;
+                parameters.ingredients = c2pa_cbor::value::from_value(value)?;
             }
             "source_language" => {
-                parameters.source_language = serde_cbor::value::from_value(value)?;
+                parameters.source_language = c2pa_cbor::value::from_value(value)?;
             }
             "target_language" => {
-                parameters.target_language = serde_cbor::value::from_value(value)?;
+                parameters.target_language = c2pa_cbor::value::from_value(value)?;
             }
             "multiple_instances" => {
-                parameters.multiple_instances = serde_cbor::value::from_value(value)?;
+                parameters.multiple_instances = c2pa_cbor::value::from_value(value)?;
             }
             key => {
                 parameters.common.insert(key.to_owned(), value);
@@ -588,8 +588,8 @@ impl Action {
         key: S,
         value: T,
     ) -> Result<&mut Self> {
-        let value_bytes = serde_cbor::ser::to_vec(&value)?;
-        let value = serde_cbor::from_slice(&value_bytes)?;
+        let value_bytes = c2pa_cbor::ser::to_vec(&value)?;
+        let value = c2pa_cbor::from_slice(&value_bytes)?;
 
         let parameters = self.parameters.get_or_insert_default();
         parameters.common.insert(key.into(), value);
@@ -694,17 +694,17 @@ impl Action {
         let instance_id = self.instance_id.take();
         let mut ids: Vec<String> = Vec::new();
 
-        let mut convert_ids = |val: Option<serde_cbor::Value>| {
+        let mut convert_ids = |val: Option<c2pa_cbor::Value>| {
             if let Some(val) = val {
                 match val {
-                    serde_cbor::Value::Array(arr) => {
+                    c2pa_cbor::Value::Array(arr) => {
                         for v in arr {
-                            if let serde_cbor::Value::Text(s) = v {
+                            if let c2pa_cbor::Value::Text(s) = v {
                                 ids.push(s);
                             }
                         }
                     }
-                    serde_cbor::Value::Text(s) => ids.push(s),
+                    c2pa_cbor::Value::Text(s) => ids.push(s),
                     _ => {}
                 }
             }
@@ -911,12 +911,12 @@ impl Actions {
         let buf: Vec<u8> = Vec::new();
         let json_str = json.to_string();
         let mut from = serde_json::Deserializer::from_str(&json_str);
-        let mut to = serde_cbor::Serializer::new(buf);
+        let mut to = c2pa_cbor::Serializer::new(buf);
 
         serde_transcode::transcode(&mut from, &mut to)?;
         let buf2 = to.into_inner();
 
-        let actions: Actions = serde_cbor::from_slice(&buf2)?;
+        let actions: Actions = c2pa_cbor::from_slice(&buf2)?;
         Ok(actions)
     }
 }

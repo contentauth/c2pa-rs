@@ -1,3 +1,5 @@
+# This ensures that when a ticket is labeled as Done in Jira, it will close the ticket on GitHub.
+
 name: Labeling ticket "Done"
 on:
   issues:

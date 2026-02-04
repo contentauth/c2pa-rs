@@ -111,7 +111,7 @@ The default operation of C2PA signing is to embed a C2PA manifest store into an 
 
 ## Using Context for configuration
 
-The C2PA library uses a `Context` structure to configure operations. Context replaces the older global Settings pattern with a more flexible, thread-safe approach.
+The C2PA library uses a `Context` structure to configure operations. Context replaces the older thread-local Settings pattern with a more flexible, thread-safe approach.
 
 ### What is Context?
 
@@ -168,7 +168,7 @@ fn main() -> Result<()> {
 #### From Settings struct
 
 ```rust
-use c2pa::{Context, settings::Settings, Result};
+use c2pa::{Context, Settings, Result};
 
 fn main() -> Result<()> {
     let mut settings = Settings::default();
@@ -234,11 +234,11 @@ fn main() -> Result<()> {
 }
 ```
 
-### Configuring a Signer
+### Configuring a signer
 
 **In most cases, you don't need to explicitly set a signer on the Context.** Instead, configure signer settings in your configuration, and the Context will create the signer automatically when you call `save_to_stream()` or `save_to_file()`.
 
-#### Method 1: From Settings (Recommended)
+#### Method 1: From Settings (recommended)
 
 Configure signer settings in JSON:
 
@@ -278,7 +278,7 @@ fn main() -> Result<()> {
 }
 ```
 
-#### Method 2: Custom Signer (Advanced)
+#### Method 2: Custom signer (advanced)
 
 For advanced use cases like HSMs or custom signing logic, you can create and set a custom signer:
 
@@ -304,7 +304,7 @@ fn main() -> Result<()> {
 }
 ```
 
-#### Signer Configuration Options
+#### Signer configuration options
 
 The `signer` field in settings supports two types:
 
@@ -326,11 +326,11 @@ sign_cert = "cert.pem"     # Certificate for verification
 tsa_url = "http://..."     # Optional: timestamp authority URL
 ```
 
-### Custom HTTP Resolvers
+### Custom HTTP resolvers
 
 For advanced use cases, you can provide custom HTTP resolvers to control how remote manifests are fetched. Custom resolvers are useful for adding authentication, caching, logging, or mocking network calls in tests.
 
-### Thread Safety
+### Thread safety
 
 Context is designed to be used safely across threads. While Context itself doesn't implement `Clone`, you can:
 
@@ -338,14 +338,65 @@ Context is designed to be used safely across threads. While Context itself doesn
 2. Use `Arc<Context>` to share a context across threads (for read-only access)
 3. Pass contexts by reference where appropriate
 
-### Migration from Global Settings
+### When to use Context sharing
 
-If you're migrating from the older global Settings pattern:
+Understanding when to use shared contexts helps optimize your application:
+
+**Use single-use Context (no Arc needed):**
+- Single signing operation
+- Single reading operation
+- Each operation has different configuration needs
+
+```rust
+use c2pa::{Context, Builder, Reader};
+
+// Create context with explicit settings
+let context = Context::new().with_settings(config)?;
+
+// For simple, single-use cases
+let builder = Builder::from_context(context);
+let reader = Reader::from_context(context);
+```
+
+**Use shared Context (with Arc):**
+- Multi-threaded operations
+- Multiple builders or readers using the same configuration
+- Signing and reading with the same settings
+- Web servers handling multiple requests with shared configuration
+
+```rust
+use std::sync::Arc;
+
+// Shared configuration
+let ctx = Arc::new(Context::new().with_settings(config)?);
+let builder1 = Builder::from_shared_context(&ctx);
+let builder2 = Builder::from_shared_context(&ctx);
+```
+
+### Migration from thread-local Settings
+
+The Context API replaces the older thread-local settings pattern. If you're migrating existing code, here's how Settings and Context work together.
+
+#### Backwards compatibility
+
+**Settings still works:** The Settings type and its configuration format remain unchanged. All your existing settings files (JSON or TOML) work with Context without modification.
+
+**Key differences:**
+
+| Aspect | Old Global Settings | New Context API |
+|--------|---------------------|-----------------|
+| Scope | Global, affects all operations | Per-operation, explicitly passed |
+| Thread Safety | Not thread-safe | Thread-safe, shareable with Arc |
+| Configuration | Set once per thread | Can have multiple configurations |
+| Testability | Difficult (thread-local state) | Easy (isolated contexts) |
+
+#### Migration examples
 
 **Old approach (deprecated):**
 ```rust
-use c2pa::settings::Settings;
+use c2pa::Settings;
 
+// Global settings affect all operations
 Settings::from_toml(include_str!("settings.toml"))?;
 let reader = Reader::from_stream("image/jpeg", stream)?;
 ```
@@ -354,11 +405,74 @@ let reader = Reader::from_stream("image/jpeg", stream)?;
 ```rust
 use c2pa::{Context, Reader};
 
+// Explicit context per operation
 let context = Context::new()
     .with_settings(include_str!("settings.toml"))?;
-let reader = Reader::from_context(context)
+let reader = Reader::new()
+    .with_context(context)
     .with_stream("image/jpeg", stream)?;
 ```
+
+**Multiple configurations (impossible with thread-local settings):**
+```rust
+use c2pa::{Context, Builder};
+
+// Development signer for testing
+let dev_ctx = Context::new()
+    .with_settings(include_str!("dev_settings.toml"))?;
+let dev_builder = Builder::new().with_context(dev_ctx);
+
+// Production signer for real signing
+let prod_ctx = Context::new()
+    .with_settings(include_str!("prod_settings.toml"))?;
+let prod_builder = Builder::new().with_context(prod_ctx);
+```
+
+#### How Context uses Settings internally
+
+Context wraps a `Settings` instance and uses it to:
+
+1. **Create signers automatically** - When you call `context.signer()` or `builder.save_to_stream()`, the Context creates a signer from the `signer` field in Settings (if present).
+
+2. **Configure HTTP resolvers** - The Context creates default HTTP resolvers (for fetching remote manifests) and applies the `core.allowed_network_hosts` setting from Settings.
+
+3. **Control verification** - The `verify` settings control how manifests are validated.
+
+4. **Configure builder behavior** - The `builder` settings control thumbnail generation, actions, and other manifest creation options.
+
+The Settings format hasn't changed - only how you provide those settings:
+
+```rust
+// Settings can be created and passed to Context
+let settings = Settings::default();
+settings.verify.verify_after_sign = true;
+let context = Context::new().with_settings(settings)?;
+
+// Or passed directly as JSON/TOML strings
+let context = Context::new()
+    .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+```
+
+#### Thread-local Settings still available (legacy)
+
+For backwards compatibility, the thread-local Settings pattern still works, but is not recommended for new code:
+
+```rust
+use c2pa::Settings;
+
+// Thread-local settings (legacy approach - not recommended)
+Settings::from_toml(include_str!("settings.toml"))?;
+
+// Builder/Reader without explicit Context will use thread-local Settings
+let builder = Builder::new();  // Uses thread-local Settings internally
+```
+
+**Why Context is better:**
+- Explicit dependencies (no hidden thread-local state)
+- Multiple configurations in the same application
+- Thread-safe sharing with Arc
+- Easier to test (pass mock contexts)
+- FFI-friendly (contexts can be passed across language boundaries)
 
 ## Example code
 

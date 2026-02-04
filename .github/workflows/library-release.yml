@@ -71,7 +71,7 @@ jobs:
         run: make release TARGET=${{ matrix.target }}
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
           path: target/artifacts/
@@ -82,7 +82,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v7
         with:
           pattern: release-artifacts-*
           path: .

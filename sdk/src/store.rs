@@ -15,8 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::{
     collections::{HashMap, HashSet},
-    io::{Cursor, Read, Seek},
-    vec,
+    io::{Cursor, Read, Seek, SeekFrom},
 };
 
 use async_generic::async_generic;
@@ -60,7 +59,6 @@ use crate::{
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
-    http::{AsyncHttpResolver, SyncHttpResolver},
     jumbf::{
         self,
         boxes::*,
@@ -135,7 +133,7 @@ struct ManifestInfo<'a> {
 
 impl Default for Store {
     fn default() -> Self {
-        Self::with_context(&Context::new())
+        Self::from_context(&Context::new())
     }
 }
 
@@ -155,7 +153,7 @@ impl Store {
     }
 
     /// Create a new, empty claims store with the specified settings.
-    pub fn with_context(context: &Context) -> Self {
+    pub fn from_context(context: &Context) -> Self {
         let mut store = Store::new();
         let settings = context.settings();
 
@@ -486,57 +484,6 @@ impl Store {
         placeholder.resize(max(placeholder.len(), min_reserve_size), 0);
 
         placeholder
-    }
-
-    fn get_cose_sign1_signature(&self, manifest_id: &str) -> Option<Vec<u8>> {
-        let manifest = self.get_claim(manifest_id)?;
-
-        let sig = manifest.signature_val();
-        let data = manifest.data().ok()?;
-        let mut validation_log =
-            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-
-        let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
-
-        Some(sign1.signature)
-    }
-
-    /// Creates a TimeStamp (c2pa.time-stamp) assertion containing the TimeStampTokens for each
-    /// specified manifest_id.  If any time stamp request fails the assertion is not created.
-    #[allow(dead_code)]
-    #[async_generic(async_signature(
-        &self,
-        manifest_ids: &[&str],
-        tsa_url: &str,
-        http_resolver: &impl AsyncHttpResolver
-    ))]
-    pub fn get_timestamp_assertion(
-        &self,
-        manifest_ids: &[&str],
-        tsa_url: &str,
-        http_resolver: &impl SyncHttpResolver,
-    ) -> Result<TimeStamp> {
-        let mut timestamp_assertion = TimeStamp::new();
-        for manifest_id in manifest_ids {
-            // lets add a timestamp for old manifest
-            let signature = self
-                .get_cose_sign1_signature(manifest_id)
-                .ok_or(Error::ClaimMissingSignatureBox)?;
-
-            let timestamp_token = if _sync {
-                TimeStamp::send_timestamp_token_request_impl(tsa_url, &signature, http_resolver)?
-            } else {
-                TimeStamp::send_timestamp_token_request_impl_async(
-                    tsa_url,
-                    &signature,
-                    http_resolver,
-                )
-                .await?
-            };
-
-            timestamp_assertion.add_timestamp(manifest_id, &timestamp_token);
-        }
-        Ok(timestamp_assertion)
     }
 
     /// Return OCSP info if available
@@ -913,7 +860,7 @@ impl Store {
                 let assertion = Assertion::from_data_cbor(&raw_label, cbor_box.cbor());
 
                 // make sure it is CBOR
-                if let Err(e) = serde_cbor::from_slice::<serde_cbor::Value>(cbor_box.cbor()) {
+                if let Err(e) = c2pa_cbor::from_slice::<c2pa_cbor::Value>(cbor_box.cbor()) {
                     log_item!(
                         label.to_owned(),
                         "invalid assertion cbor",
@@ -1109,7 +1056,7 @@ impl Store {
                         let mut databoxes = CAIDataboxStore::new();
 
                         for (uri, db) in claim.databoxes() {
-                            let db_cbor_bytes = serde_cbor::to_vec(db)
+                            let db_cbor_bytes = c2pa_cbor::to_vec(db)
                                 .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
                             let (link, instance) = Claim::assertion_label_from_link(&uri.url());
@@ -1192,7 +1139,7 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
-        Self::from_jumbf_impl(Store::with_context(context), buffer, validation_log)
+        Self::from_jumbf_impl(Store::from_context(context), buffer, validation_log)
     }
 
     fn from_jumbf_impl(
@@ -1531,6 +1478,63 @@ impl Store {
 
             // add claim to store
             store.insert_restored_claim(cai_store_desc_box.label(), claim);
+        }
+
+        // Reconstruct nested claim relationships after all claims are loaded
+        // When claims are serialized, nested ingredients are extracted as top-level claims
+        // We need to restore them back into the parent claims' ingredient stores
+        use crate::assertions::Ingredient as IngredientAssertion;
+        let claim_labels: Vec<String> = store
+            .claims()
+            .iter()
+            .map(|c| c.label().to_string())
+            .collect();
+        for label in &claim_labels {
+            if let Some(claim) = store.get_claim(label) {
+                // Find ingredient assertions in this claim
+                let ingredient_refs: Vec<String> = claim
+                    .ingredient_assertions()
+                    .iter()
+                    .filter_map(|ing_assertion| {
+                        // Parse the ingredient assertion to get active_manifest or c2pa_manifest
+                        match IngredientAssertion::from_assertion(ing_assertion.assertion()) {
+                            Ok(ingredient) => {
+                                // Check both active_manifest (v3) and c2pa_manifest (v2)
+                                let hashed_uri = ingredient
+                                    .active_manifest
+                                    .as_ref()
+                                    .or(ingredient.c2pa_manifest.as_ref());
+
+                                if let Some(hashed_uri) = hashed_uri {
+                                    let url = hashed_uri.url();
+                                    // Extract the manifest label from the JUMBF URI
+                                    jumbf::labels::manifest_label_from_uri(&url)
+                                        .map(|l| l.to_string())
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(_) => None,
+                        }
+                    })
+                    .collect();
+
+                if !ingredient_refs.is_empty() {
+                    // Clone the claim for modification
+                    let mut claim_mut = claim.clone();
+                    for ing_ref in &ingredient_refs {
+                        // Check if this referenced claim exists in the store
+                        if let Some(nested_claim) = store.get_claim(ing_ref) {
+                            claim_mut.replace_ingredient_or_insert(
+                                ing_ref.to_string(),
+                                nested_claim.clone(),
+                            );
+                        }
+                    }
+                    // Replace the claim in the store with the updated version
+                    store.claims_map.insert(label.to_string(), claim_mut);
+                }
+            }
         }
 
         Ok(store)
@@ -1984,7 +1988,6 @@ impl Store {
         claim: &'a Claim,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
-        settings: &Settings,
     ) -> Result<StoreValidationInfo<'a>> {
         let mut svi = StoreValidationInfo::default();
         Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
@@ -2069,26 +2072,19 @@ impl Store {
 
                 // save the valid timestamps stored in the StoreValidationInfo
                 // we only use valid timestamps, otherwise just ignore
-                let mut adjusted_settings = settings.clone();
-                let original_trust_val = adjusted_settings.verify.verify_timestamp_trust;
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
-                        if rc.version() == 1 {
-                            // no trust checks for leagacy timestamps
-                            adjusted_settings.verify.verify_timestamp_trust = false;
-                        }
-
                         if let Ok(tst_info) = verify_time_stamp(
                             time_stamp_token,
                             rc.signature_val(),
                             &self.ctp,
                             validation_log,
-                            &adjusted_settings,
+                            // no trust checks for leagacy timestamps
+                            rc.version() != 1,
                         ) {
                             svi.timestamps.insert(rc.label().to_owned(), tst_info);
                         }
                     }
-                    adjusted_settings.verify.verify_timestamp_trust = original_trust_val;
                 }
             }
 
@@ -2146,12 +2142,7 @@ impl Store {
         };
 
         // get info needed to complete validation
-        let svi = store.get_store_validation_info(
-            claim,
-            asset_data,
-            validation_log,
-            context.settings(),
-        )?;
+        let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
 
         if _sync {
             // verify the provenance claim
@@ -2200,6 +2191,11 @@ impl Store {
 
         let mut hashes: Vec<DataHash> = Vec::new();
 
+        // Create a DataHash regardless of whether JUMBF is found or not...
+        // For remote manifests with no embedded JUMBF, creates a hash with no exclusions,
+        // because there is nothing to exclude from the hashing (since nothing is embedded)
+        let mut dh = DataHash::new("jumbf manifest", alg);
+
         // sort blocks by offset
         block_locations.sort_by(|a, b| a.offset.cmp(&b.offset));
 
@@ -2220,12 +2216,12 @@ impl Store {
             if found_jumbf && item.htype == HashBlockObjectType::Cai {
                 block_end = item.offset + item.length;
             }
-        }
 
-        // Create a DataHash regardless of whether JUMBF is found or not...
-        // For remote manifests with no embedded JUMBF, creates a hash with no exclusions,
-        // because there is nothing to exclude from the hashing (since nothing is embedded)
-        let mut dh = DataHash::new("jumbf manifest", alg);
+            // add explict exclusion ranges
+            if item.htype == HashBlockObjectType::OtherExclusion {
+                dh.add_exclusion(HashRange::new(item.offset as u64, item.length as u64));
+            }
+        }
 
         if found_jumbf {
             // add exclusion for embedded jumbf
@@ -2696,9 +2692,9 @@ impl Store {
         let mut assertions = Vec::new();
         for da in dyn_assertions.iter() {
             let reserve_size = da.reserve_size()?;
-            let data1 = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
+            let data1 = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
             let cbor_delta = data1.len() - reserve_size;
-            let da_data = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
+            let da_data = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
             assertions.push(UserCbor::new(&da.label(), da_data));
         }
 
@@ -3039,6 +3035,7 @@ impl Store {
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         intermediate_stream.rewind()?;
+        output_stream.rewind()?;
         match self.finish_save_stream(
             jumbf_bytes,
             format,
@@ -3052,11 +3049,12 @@ impl Store {
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc_mut.set_signature_val(s);
 
+                output_stream.flush()?;
                 output_stream.rewind()?;
 
                 let verify_after_sign = settings.verify.verify_after_sign;
                 // Also catch the case where we may have written to io::empty() or similar
-                if verify_after_sign && output_stream.stream_position()? > 0 {
+                if verify_after_sign && output_stream.seek(SeekFrom::End(0))? > 0 {
                     // verify the store
                     let mut validation_log =
                         StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
@@ -3270,6 +3268,18 @@ impl Store {
                 output_stream.rewind()?;
                 let mut new_hash_ranges = object_locations_from_stream(format, output_stream)?;
                 if !pc.update_manifest() {
+                    // if we removed the manifest fixup the hash range to be empty
+                    if remove_manifests {
+                        new_hash_ranges.iter_mut().for_each(|h| {
+                            if h.htype == HashBlockObjectType::Cai
+                                || h.htype == HashBlockObjectType::OtherExclusion
+                            {
+                                h.offset = 0;
+                                h.length = 0;
+                            }
+                        });
+                    }
+
                     let updated_hashes = Store::generate_data_hashes_for_stream(
                         output_stream,
                         pc.alg(),
@@ -3322,6 +3332,7 @@ impl Store {
             }
         }
 
+        output_stream.flush()?;
         Ok((sig, jumbf_bytes))
     }
 
@@ -3716,7 +3727,7 @@ impl Store {
                     if let Some(parent) = self.get_claim(&parent_label) {
                         // recurse until we find
                         if parent.update_manifest() {
-                            self.get_hash_binding_manifest(parent);
+                            return self.get_hash_binding_manifest(parent);
                         } else if !parent.hash_assertions().is_empty() {
                             return Some(parent.label().to_owned());
                         }
@@ -4084,8 +4095,9 @@ impl Store {
             final_redactions.append(&mut to_both);
         }
 
+        let claims_to_add: Vec<Claim> = i_store_mut.claims().into_iter().cloned().collect();
         claim.add_ingredient_data(
-            i_store_mut.claims().into_iter().cloned().collect(),
+            claims_to_add,
             Some(final_redactions),
             &svi.ingredient_references,
         )?;
@@ -4244,9 +4256,15 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::io::Seek;
     #[cfg(feature = "file_io")]
-    use std::{fs, io::Write};
+    use std::fs;
+    use std::{
+        io::{Read, Seek, SeekFrom, Write},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+    };
 
     use c2pa_macros::c2pa_test_async;
     #[cfg(feature = "file_io")]
@@ -4322,7 +4340,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v1_unit_test");
@@ -4389,7 +4407,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
@@ -4457,7 +4475,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
@@ -4508,7 +4526,7 @@ pub mod tests {
             create_test_streams("unsupported_type.txt");
         let format = "text/plain";
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -4603,7 +4621,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         let claim = create_test_claim().unwrap();
 
@@ -4638,7 +4656,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         let claim = create_test_claim().unwrap();
 
@@ -4668,7 +4686,7 @@ pub mod tests {
     fn test_jumbf_replacement_generation() {
         let context = Context::new();
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -4713,7 +4731,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = crate::utils::test::create_test_claim()?;
@@ -4803,7 +4821,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5077,7 +5095,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.wav");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5179,7 +5197,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("test.avi");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5282,7 +5300,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.webp");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5385,7 +5403,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.heic");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5438,7 +5456,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.avif");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5491,7 +5509,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.heif");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -6845,7 +6863,7 @@ pub mod tests {
         // expect action error
         assert!(store.is_err());
         assert!(report.has_error(Error::ValidationRule(
-            "opened, placed and removed items must have parameters".into()
+            "opened, placed and removed items must have ingredient(s) parameters".into()
         )));
         assert!(report.filter_errors().count() == 2);
     }
@@ -6881,7 +6899,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -6920,7 +6938,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = crate::utils::test::create_test_claim_v1().unwrap();
@@ -6951,19 +6969,21 @@ pub mod tests {
         println!("store = {new_store}");
     }
 
+    #[cfg(feature = "file_io")]
     #[test]
     fn test_jumbf_generation_with_bmffv3_fixed_block_size() {
+        // use Merkle tree with 1024 byte chunks
         let context = crate::context::Context::new();
+
+        // use Merkle tree with 1024 byte chunks
+        crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("BigBuckBunny_320x180.mp4");
 
-        // use Merkle tree with 1024 byte chunks
-        crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
-
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7005,7 +7025,7 @@ pub mod tests {
         crate::settings::set_settings_value("core.merkle_tree_max_proofs", 0).unwrap();
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7047,7 +7067,7 @@ pub mod tests {
         crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7087,7 +7107,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7191,7 +7211,7 @@ pub mod tests {
             let context = crate::context::Context::new();
 
             // Create claims store.
-            let mut store = Store::with_context(&context);
+            let mut store = Store::from_context(&context);
 
             // Create a new claim.
             let mut claim = create_test_claim().unwrap();
@@ -7267,7 +7287,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -7331,7 +7351,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7376,7 +7396,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("TUSCANY.TIF");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7445,7 +7465,7 @@ pub mod tests {
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -7521,7 +7541,7 @@ pub mod tests {
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -7598,7 +7618,7 @@ pub mod tests {
         let signer = async_test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -7674,7 +7694,7 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -7751,7 +7771,7 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -7826,7 +7846,7 @@ pub mod tests {
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
-                Ok(serde_cbor::to_vec(&assertion)?.len())
+                Ok(c2pa_cbor::to_vec(&assertion)?.len())
             }
 
             fn content(
@@ -7847,7 +7867,7 @@ pub mod tests {
                 };
 
                 Ok(DynamicAssertionContent::Cbor(
-                    serde_cbor::to_vec(&assertion).unwrap(),
+                    c2pa_cbor::to_vec(&assertion).unwrap(),
                 ))
             }
         }
@@ -7900,7 +7920,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7955,7 +7975,7 @@ pub mod tests {
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
-                Ok(serde_cbor::to_vec(&assertion)?.len())
+                Ok(c2pa_cbor::to_vec(&assertion)?.len())
             }
 
             async fn content(
@@ -7976,7 +7996,7 @@ pub mod tests {
                 };
 
                 Ok(DynamicAssertionContent::Cbor(
-                    serde_cbor::to_vec(&assertion).unwrap(),
+                    c2pa_cbor::to_vec(&assertion).unwrap(),
                 ))
             }
         }
@@ -8031,7 +8051,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -8104,7 +8124,7 @@ pub mod tests {
                     }
 
                     // Create claims store.
-                    let mut store = Store::with_context(&context);
+                    let mut store = Store::from_context(&context);
 
                     // Create a new claim.
                     let claim = create_test_claim().unwrap();
@@ -8177,6 +8197,10 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_bogus_cert() {
         use crate::builder::{Builder, BuilderIntent};
+
+        // bypass auto sig check
+        crate::settings::set_settings_value("verify.verify_after_sign", false).unwrap();
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let png = include_bytes!("../tests/fixtures/libpng-test.png"); // Randomly generated local Ed25519
         let ed25519 = include_bytes!("../tests/fixtures/certs/ed25519.pem");
@@ -8288,5 +8312,316 @@ pub mod tests {
                 panic!("Failed to load fragment from stream: {e:?}");
             }
         }
+    }
+
+    #[test]
+    fn test_stream_context_handling_for_c_ffi_layer() {
+        // Building a stream wrapper that simulates C FFI behavior
+
+        /// Stream wrapper that simulates the streams like it would be in C FFI layer.
+        /// Needed to repro a use-after-free bug from the FFI layer.
+        struct FlushTrackingStream<T: CAIReadWrite> {
+            inner: T,
+            buffer: Vec<u8>,
+            flush_called: Arc<AtomicBool>,
+            dropped: Arc<AtomicBool>,
+        }
+
+        impl<T: CAIReadWrite> FlushTrackingStream<T> {
+            fn new(inner: T, flush_called: Arc<AtomicBool>, dropped: Arc<AtomicBool>) -> Self {
+                Self {
+                    inner,
+                    buffer: Vec::new(),
+                    flush_called,
+                    dropped,
+                }
+            }
+        }
+
+        impl<T: CAIReadWrite> Read for FlushTrackingStream<T> {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                self.inner.read(buf)
+            }
+        }
+
+        impl<T: CAIReadWrite> Write for FlushTrackingStream<T> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                // Simulate buffering behavior
+                if !self.buffer.is_empty() {
+                    // Write previous buffer first
+                    self.inner.write_all(&self.buffer)?;
+                }
+                // Keep the current write in the buffer
+                self.buffer = buf.to_vec();
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                // Mark that flush was called
+                self.flush_called.store(true, Ordering::SeqCst);
+
+                // Actually write the buffered data
+                if !self.buffer.is_empty() {
+                    self.inner.write_all(&self.buffer)?;
+                    self.buffer.clear();
+                }
+                self.inner.flush()
+            }
+        }
+
+        impl<T: CAIReadWrite> Seek for FlushTrackingStream<T> {
+            fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+                // Check if we're trying to seek without flushing first
+                // Simulates a crash scenario where the stream is accessed
+                // after data should have been written but wasn't
+                if !self.buffer.is_empty() && !self.flush_called.load(Ordering::SeqCst) {
+                    // This is a use-after-free error simulation for the way the FFI layer handles streams
+                    return Err(std::io::Error::other(
+                        "Simulated use-after-free: attempting to seek with unflushed buffer (similar to accessing freed FFI context)",
+                    ));
+                }
+                self.inner.seek(pos)
+            }
+
+            fn rewind(&mut self) -> std::io::Result<()> {
+                // Suffer the same troubles as seek
+                if !self.buffer.is_empty() && !self.flush_called.load(Ordering::SeqCst) {
+                    return Err(std::io::Error::other(
+                        "Simulated use-after-free: attempting to rewind with unflushed buffer (similar to accessing freed FFI context)",
+                    ));
+                }
+                self.inner.rewind()
+            }
+
+            fn stream_position(&mut self) -> std::io::Result<u64> {
+                self.inner.stream_position()
+            }
+        }
+
+        impl<T: CAIReadWrite> Drop for FlushTrackingStream<T> {
+            fn drop(&mut self) {
+                self.dropped.store(true, Ordering::SeqCst);
+                // Dropping without flush frees the context
+            }
+        }
+
+        // The actual test starts here...
+        let context = Context::new();
+
+        let (format, mut input_stream, output_stream) = create_test_streams("earth_apollo17.jpg");
+
+        let flush_called = Arc::new(AtomicBool::new(false));
+        let dropped = Arc::new(AtomicBool::new(false));
+
+        let mut tracking_stream =
+            FlushTrackingStream::new(output_stream, flush_called.clone(), dropped.clone());
+
+        let mut store = Store::from_context(&context);
+
+        let cgi = ClaimGeneratorInfo::new("flush_test");
+        let mut claim = Claim::new("test", Some("flush_test"), 1);
+        create_capture_claim(&mut claim).unwrap();
+        claim.add_claim_generator_info(cgi);
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        store.commit_claim(claim).unwrap();
+
+        store
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut tracking_stream,
+                signer.as_ref(),
+                &context,
+            )
+            .expect("save_to_stream should succeed and properly flush the stream");
+
+        // Verify that flush was called: if not, we would have crashed on rewind
+        // when used through the C FFI layers with streams
+        assert!(
+            flush_called.load(Ordering::SeqCst),
+            "flush() must be called during save_to_stream to prevent use-after-free in FFI scenarios"
+        );
+
+        // Verify buffer is empty (data was actually written), nothing dangling
+        assert!(
+            tracking_stream.buffer.is_empty(),
+            "buffer should be empty after flush"
+        );
+    }
+
+    /// Another test for stream context issues, with unsafe pointers
+    #[test]
+    fn test_stream_context_handling_for_c_ffi_layer_no_use_after_free() {
+        use std::io::Cursor;
+
+        // This struct simulates an FFI stream context that could be freed any time
+        #[repr(C)]
+        struct StreamContext {
+            data: Cursor<Vec<u8>>,
+            // Used to detect if memory has been freed
+            magic: u64,
+        }
+
+        impl StreamContext {
+            fn new() -> Self {
+                Self {
+                    data: Cursor::new(Vec::new()),
+                    // Magic number to detect valid context (not unintialized)
+                    magic: 0xdeadbeefcafebabe,
+                }
+            }
+
+            fn mark_freed(&mut self) {
+                // 0xCCCCCCCCCCCCCCCC is a value used by some compilers
+                // to flag uninitialized memory, so we'll do the same here
+                self.magic = 0xcccccccccccccccc;
+            }
+
+            fn check_valid(&self) -> std::io::Result<()> {
+                if self.magic != 0xdeadbeefcafebabe {
+                    return Err(std::io::Error::other(
+                        format!(
+                            "Use-after-free detected: StreamContext magic is 0x{:X} (expected 0xDEADBEEFCAFEBABE)",
+                            self.magic
+                        ),
+                    ));
+                }
+                Ok(())
+            }
+        }
+
+        struct UnsafeStream {
+            context: *mut StreamContext,
+            flush_called: Arc<AtomicBool>,
+        }
+
+        impl UnsafeStream {
+            fn new(flush_called: Arc<AtomicBool>) -> Self {
+                let context = Box::into_raw(Box::new(StreamContext::new()));
+                Self {
+                    context,
+                    flush_called,
+                }
+            }
+
+            unsafe fn context_ref(&self) -> &StreamContext {
+                &*self.context
+            }
+
+            unsafe fn context_mut(&mut self) -> &mut StreamContext {
+                &mut *self.context
+            }
+        }
+
+        impl Read for UnsafeStream {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                unsafe {
+                    self.context_ref().check_valid()?;
+                    self.context_mut().data.read(buf)
+                }
+            }
+        }
+
+        impl Write for UnsafeStream {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                unsafe {
+                    self.context_ref().check_valid()?;
+                    self.context_mut().data.write(buf)
+                }
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                unsafe {
+                    self.context_ref().check_valid()?;
+                    self.flush_called.store(true, Ordering::SeqCst);
+                    self.context_mut().data.flush()
+                }
+            }
+        }
+
+        impl Seek for UnsafeStream {
+            fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+                unsafe {
+                    // This is where the crash would happen in the FFI layer
+                    // if the context was freed before flush
+                    self.context_ref().check_valid()?;
+                    self.context_mut().data.seek(pos)
+                }
+            }
+
+            fn rewind(&mut self) -> std::io::Result<()> {
+                unsafe {
+                    self.context_ref().check_valid()?;
+                    self.context_mut().data.rewind()
+                }
+            }
+
+            fn stream_position(&mut self) -> std::io::Result<u64> {
+                unsafe {
+                    self.context_ref().check_valid()?;
+                    self.context_mut().data.stream_position()
+                }
+            }
+        }
+
+        impl Drop for UnsafeStream {
+            fn drop(&mut self) {
+                unsafe {
+                    if !self.context.is_null() {
+                        // Simulate what happens in FFI: if flush wasn't called,
+                        // mark the context as freed aka uninitialized memory
+                        if !self.flush_called.load(Ordering::SeqCst) {
+                            (*self.context).mark_freed();
+                        }
+                        // Clean up the context
+                        drop(Box::from_raw(self.context));
+                    }
+                }
+            }
+        }
+
+        unsafe impl Send for UnsafeStream {}
+        unsafe impl Sync for UnsafeStream {}
+
+        let context = Context::new();
+
+        let (format, mut input_stream, _) = create_test_streams("earth_apollo17.jpg");
+
+        let flush_called = Arc::new(AtomicBool::new(false));
+        let mut unsafe_stream = UnsafeStream::new(flush_called.clone());
+
+        let mut store = Store::from_context(&context);
+
+        let cgi = ClaimGeneratorInfo::new("unsafe_flush_test");
+        let mut claim = Claim::new("test", Some("unsafe_flush_test"), 1);
+        create_capture_claim(&mut claim).unwrap();
+        claim.add_claim_generator_info(cgi);
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        store.commit_claim(claim).unwrap();
+
+        // Save to stream: without the flush calls, this triggers
+        // a use-after-free error when trying to rewind the stream,
+        // because the stream context is freed before the flush is called
+        let result = store.save_to_stream(
+            format,
+            &mut input_stream,
+            &mut unsafe_stream,
+            signer.as_ref(),
+            &context,
+        );
+
+        // flushing should prevent the lifetimes issues at C FFI level
+        assert!(
+            result.is_ok(),
+            "save_to_stream should succeed. Error: {:?}",
+            result.err()
+        );
+
+        // Verify that flush was called
+        assert!(flush_called.load(Ordering::SeqCst));
     }
 }
