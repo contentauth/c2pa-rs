@@ -606,8 +606,18 @@ pub unsafe extern "C" fn c2pa_sign_file(
     };
     // Read manifest from JSON and then sign and write it.
     let result = sign_file(&source_path, &dest_path, &manifest, &signer_info, data_dir);
-    let bytes = ok_or_return_null!(result);
-    let json = String::from_utf8_lossy(&bytes).to_string();
+    let manifest_bytes = ok_or_return_null!(result);
+
+    // Convert the binary manifest bytes to JSON by reading from the signed bytes directly
+    let reader: c2pa::Reader = ok_or_return_null!(
+        c2pa::Reader::from_manifest_data_and_stream(
+            &manifest_bytes,
+            "application/c2pa",
+            &mut std::io::empty()
+        ).map_err(Error::from_c2pa_error)
+    );
+    let json: String = reader.json();
+    // Using the Reader here is necessary so we don't have null btyes that could break `to_c_string`
     to_c_string(json)
 }
 
