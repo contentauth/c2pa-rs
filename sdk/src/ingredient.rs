@@ -406,6 +406,18 @@ impl Ingredient {
         self
     }
 
+    /// Sets the validation status for this ingredient.
+    pub(crate) fn set_validation_status(&mut self, status: Vec<ValidationStatus>) -> &mut Self {
+        self.validation_status = Some(status);
+        self
+    }
+
+    /// Sets the validation results for this ingredient.
+    pub(crate) fn set_validation_results(&mut self, results: ValidationResults) -> &mut Self {
+        self.validation_results = Some(results);
+        self
+    }
+
     /// Sets the thumbnail from a ResourceRef.
     pub fn set_thumbnail_ref(&mut self, thumbnail: ResourceRef) -> Result<&mut Self> {
         self.thumbnail = Some(thumbnail);

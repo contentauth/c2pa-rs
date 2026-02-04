@@ -1294,6 +1294,17 @@ impl Reader {
             ingredient.set_thumbnail_ref(thumb_ref.clone())?;
         }
 
+        // Add validation results from the reader
+        if let Some(validation_status) = self.validation_status.clone() {
+            if !validation_status.is_empty() {
+                ingredient.set_validation_status(validation_status);
+            }
+        }
+        
+        if let Some(validation_results) = self.validation_results.clone() {
+            ingredient.set_validation_results(validation_results);
+        }
+
         // Set active manifest label
         if let Some(label) = &self.active_manifest {
             ingredient.set_active_manifest(label.clone());
