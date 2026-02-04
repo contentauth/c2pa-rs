@@ -83,7 +83,7 @@ impl AsyncCredentialHolder for AsyncX509CredentialHolder {
         // TO DO: Check signing cert (see signing_cert_valid in c2pa-rs's cose_sign).
 
         let mut sp_cbor: Vec<u8> = vec![];
-        ciborium::into_writer(signer_payload, &mut sp_cbor)
+        c2pa_cbor::to_writer(&mut sp_cbor, signer_payload)
             .map_err(|e| IdentityBuilderError::CborGenerationError(e.to_string()))?;
 
         Ok(sign_async(
