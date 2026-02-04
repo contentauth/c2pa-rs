@@ -333,6 +333,7 @@ mod tests {
                 )],
                 roles: vec!(),
                 sig_type: "cawg.identity_claims_aggregation".to_owned(),
+                ..Default::default()
             }
         );
 

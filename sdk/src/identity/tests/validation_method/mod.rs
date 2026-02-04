@@ -14,10 +14,12 @@
 //! This test suite checks the enforcement of generic identity assertion
 //! validation as described in [§7.1, Validation method].
 //!
-//! IMPORTANT: The CAWG SDK does not currently support the optional fields named
+//! IMPORTANT: The CAWG SDK does not currently enforce the optional fields named
 //! * `expected_partial_claim`
 //! * `expected_claim_generator`
 //! * `expected_countersigners`
+//!
+//! even though they are supported in the `SignerPayload` struct.
 //!
 //! [§7.1, Validation method]: https://cawg.io/identity/1.1-draft/#_validation_method
 

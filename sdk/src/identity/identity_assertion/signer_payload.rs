@@ -43,8 +43,31 @@ pub struct SignerPayload {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[serde(rename = "role")]
     pub roles: Vec<String>,
-    // TO DO: Add expected_* fields.
-    // (https://github.com/contentauth/c2pa-rs/issues/816)
+
+    /// Hash of an expected partial claim
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_partial_claim: Option<HashedUri>,
+
+    /// Hash of the expected claim signer credential
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_claim_generator: Option<HashedUri>,
+
+    /// Descriptions of other expected identity assertions
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expected_countersigners: Vec<HashedUri>,
+}
+
+impl Default for SignerPayload {
+    fn default() -> Self {
+        Self {
+            referenced_assertions: vec![],
+            sig_type: String::new(),
+            roles: vec![],
+            expected_partial_claim: None,
+            expected_claim_generator: None,
+            expected_countersigners: vec![],
+        }
+    }
 }
 
 impl SignerPayload {
@@ -255,11 +278,45 @@ mod tests {
         &hex!("53d1b2cf4e6d9a97ed9281183fa5d836c32751b9d2fca724b40836befee7d67f"));
 
         let signer_payload = SignerPayload {
-            referenced_assertions: vec![{ data_hash_ref }],
-            roles: vec![],
+            referenced_assertions: vec![data_hash_ref],
+            roles: vec!["author".to_owned()],
             sig_type: "NONSENSE".to_owned(),
+            expected_partial_claim: None,
+            expected_claim_generator: None,
+            expected_countersigners: vec![],
         };
 
         assert_eq!(signer_payload, signer_payload.clone());
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn test_serialization() {
+        let data_hash_ref = HashedUri::new(
+            "self#jumbf=c2pa/assertions/c2pa.hash.data".to_owned(),
+            Some("sha256".to_owned()),
+            &hex!("53d1b2cf4e6d9a97ed9281183fa5d836c32751b9d2fca724b40836befee7d67f"),
+        );
+
+        let signer_payload = SignerPayload {
+            referenced_assertions: vec![data_hash_ref.clone()],
+            roles: vec!["author".to_owned()],
+            sig_type: "test_sig".to_owned(),
+            expected_partial_claim: Some(data_hash_ref.clone()),
+            expected_claim_generator: Some(data_hash_ref.clone()),
+            expected_countersigners: vec![data_hash_ref],
+        };
+
+        let json = serde_json::to_string(&signer_payload).unwrap();
+        let decoded: SignerPayload = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(signer_payload, decoded);
+        assert!(json.contains("\"expected_partial_claim\""));
+        assert!(json.contains("\"expected_claim_generator\""));
+        assert!(json.contains("\"expected_countersigners\""));
+        assert!(json.contains("\"role\""));
     }
 }
