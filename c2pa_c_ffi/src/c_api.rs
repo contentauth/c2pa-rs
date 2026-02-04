@@ -616,6 +616,7 @@ pub unsafe extern "C" fn c2pa_sign_file(
 /// # Safety
 /// The string must not have been modified in C.
 /// The string can only be freed once and is invalid after this call.
+#[no_mangle]
 pub unsafe extern "C" fn c2pa_release_string(s: *mut c_char) {
     cimpl_free!(s);
 }
@@ -3531,6 +3532,19 @@ verify_after_sign = true
             c2pa_string_free(std::ptr::null_mut());
         }
         // If we get here, it handled null without crashing
+    }
+
+    #[test]
+    fn test_c2pa_release_string() {
+        // Test the deprecated c2pa_release_string function
+        let test_str = CString::new("test string for release").unwrap();
+        let c_str = to_c_string(test_str.to_str().unwrap().to_string());
+        assert!(!c_str.is_null());
+
+        // Should not crash
+        unsafe {
+            c2pa_release_string(c_str);
+        }
     }
 
     #[test]
