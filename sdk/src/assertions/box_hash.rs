@@ -86,6 +86,50 @@ pub struct BoxHash {
 impl BoxHash {
     pub const LABEL: &'static str = labels::BOX_HASH;
 
+    /// Generate a BoxHash from a stream for a given format.
+    ///
+    /// # Arguments
+    /// * `stream` - The asset stream to hash
+    /// * `format` - The format/mime type of the asset (e.g., "image/jpeg", "image/png")
+    /// * `alg` - The hash algorithm to use (e.g., "sha256")
+    /// * `minimal_form` - If true, collapses boxes before/after C2PA into single hashes
+    ///
+    /// # Returns
+    /// A BoxHash with all hashes computed
+    ///
+    /// # Example
+    /// ```
+    /// use std::fs::File;
+    ///
+    /// use c2pa::assertions::BoxHash;
+    ///
+    /// # fn main() -> c2pa::Result<()> {
+    /// let mut stream = File::open("tests/fixtures/CA.jpg")?;
+    /// let box_hash = BoxHash::from_stream(&mut stream, "image/jpeg", "sha256", true)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_stream(
+        stream: &mut dyn crate::asset_io::CAIRead,
+        format: &str,
+        alg: &str,
+        minimal_form: bool,
+    ) -> Result<Self> {
+        use crate::jumbf_io::get_assetio_handler;
+
+        let bhp = get_assetio_handler(format)
+            .ok_or(Error::UnsupportedType)?
+            .asset_box_hash_ref()
+            .ok_or_else(|| {
+                Error::BadParam(format!("Box hash not supported for format: {}", format))
+            })?;
+
+        let mut box_hash = BoxHash { boxes: Vec::new() };
+        box_hash.generate_box_hash_from_stream(stream, alg, bhp, minimal_form)?;
+
+        Ok(box_hash)
+    }
+
     pub fn verify_hash(
         &self,
         asset_path: &Path,
@@ -673,5 +717,27 @@ mod tests {
         assert_eq!(bh.boxes[0].names[0], "test");
         assert_eq!(bh.boxes[1].names[0], "C2PA");
         assert_eq!(bh.boxes[2].names[0], "test1");
+    }
+
+    #[test]
+    fn test_from_stream() {
+        let ap = fixture_path("CA.jpg");
+
+        let mut input = File::open(&ap).unwrap();
+
+        // Use the new from_stream method
+        let bh = BoxHash::from_stream(&mut input, "image/jpeg", "sha256", true).unwrap();
+
+        // Verify box hash was created
+        assert!(!bh.boxes.is_empty());
+
+        // Verify it works with verification
+        let bhp = get_assetio_handler_from_path(&ap)
+            .unwrap()
+            .asset_box_hash_ref()
+            .unwrap();
+
+        bh.verify_stream_hash(&mut input, Some("sha256"), bhp)
+            .unwrap();
     }
 }
