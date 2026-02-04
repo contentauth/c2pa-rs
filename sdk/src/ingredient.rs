@@ -548,9 +548,10 @@ impl Ingredient {
             .unwrap_or_else(|| "".into())
             .to_lowercase();
 
-        let format = extension_to_mime(&extension)
-            .unwrap_or("application/octet-stream")
-            .to_owned();
+        let format = crate::utils::mime::detect_format_from_path(path)
+            .or_else(|| extension_to_mime(&extension).map(|m| m.to_owned()))
+            .unwrap_or_else(|| "application/octet-stream".to_owned());
+
         (title, extension, format)
     }
 
