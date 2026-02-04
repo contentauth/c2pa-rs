@@ -17,7 +17,7 @@ use std::io::{Cursor, Seek};
 use anyhow::Result;
 use c2pa::{
     crypto::raw_signature::SigningAlg, settings::Settings, validation_results::ValidationState,
-    Builder, CallbackSigner, Reader,
+    Builder, CallbackSigner, Context, Reader,
 };
 use serde_json::json;
 
@@ -71,7 +71,7 @@ fn manifest_def(title: &str, format: &str) -> String {
 /// It uses only streaming apis, showing how to avoid file i/o
 /// This example uses the `ed25519` signing algorithm
 fn main() -> Result<()> {
-    let title = "v2_edited.jpg";
+    let title = "edited.jpg";
     let format = "image/jpeg";
     let parent_name = "CA.jpg";
     let mut source = Cursor::new(TEST_IMAGE);
@@ -84,13 +84,23 @@ fn main() -> Result<()> {
     }
     .to_string();
 
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let mut settings =
+        Settings::new().with_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    settings.update_from_str(&modified_core, "toml")?;
 
-    Settings::from_toml(&modified_core)?;
+    let ed_signer =
+        |_context: *const (), data: &[u8]| CallbackSigner::ed25519_sign(data, PRIVATE_KEY);
+    let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
 
-    let json = manifest_def(title, format);
+    // The context here holds loaded settings for further use
+    let context = Context::new()
+        .with_settings(settings)?
+        .with_signer(signer)
+        .into_shared();
 
-    let mut builder = Builder::from_json(&json)?;
+    // Create a builder using the context to propagate settings usage to the Builder
+    let mut builder =
+        Builder::from_shared_context(&context).with_definition(manifest_def(title, format))?;
     builder.add_ingredient_from_stream(
         json!({
             "title": parent_name,
@@ -123,30 +133,26 @@ fn main() -> Result<()> {
         }
     }
 
-    // write the manifest builder to a zipped stream
-    let mut zipped = Cursor::new(Vec::new());
-    builder.to_archive(&mut zipped)?;
+    // write the manifest builder to an archived stream
+    let mut archive = Cursor::new(Vec::new());
+    builder.to_archive(&mut archive)?;
 
-    // write the zipped stream to a file for debugging
-    //let debug_path = format!("{}/../target/test.zip", env!("CARGO_MANIFEST_DIR"));
-    // std::fs::write(debug_path, zipped.get_ref())?;
+    // write the archived stream to a file for debugging
+    //let debug_path = format!("{}/../target/test.c2pa", env!("CARGO_MANIFEST_DIR"));
+    // std::fs::write(debug_path, archive.get_ref())?;
 
-    // unzip the manifest builder from the zipped stream
-    zipped.rewind()?;
+    // unzip the manifest builder from the archived stream
+    archive.rewind()?;
 
-    let ed_signer =
-        |_context: *const (), data: &[u8]| CallbackSigner::ed25519_sign(data, PRIVATE_KEY);
-    let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
-
-    let mut builder = Builder::from_archive(&mut zipped)?;
+    let mut builder = Builder::from_shared_context(&context).with_archive(&mut archive)?;
     // sign the ManifestStoreBuilder and write it to the output stream
     let mut dest = Cursor::new(Vec::new());
-    builder.sign(&signer, format, &mut source, &mut dest)?;
+    builder.save_to_stream(format, &mut source, &mut dest)?;
 
     // read and validate the signed manifest store
     dest.rewind()?;
 
-    let reader = Reader::from_stream(format, &mut dest)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
 
     // extract a thumbnail image from the ManifestStore
     let mut thumbnail = Cursor::new(Vec::new());
@@ -177,7 +183,7 @@ mod tests {
     use super::*;
 
     #[c2pa_test_async]
-    async fn test_v2_api() -> Result<()> {
+    async fn test_api() -> Result<()> {
         main()
     }
 }

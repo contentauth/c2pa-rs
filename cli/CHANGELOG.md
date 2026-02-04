@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.24](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.23...c2patool-v0.26.24)
+_03 February 2026_
+
+## [0.26.23](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.22...c2patool-v0.26.23)
+_03 February 2026_
+
+## [0.26.22](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.21...c2patool-v0.26.22)
+_03 February 2026_
+
+## [0.26.21](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.20...c2patool-v0.26.21)
+_02 February 2026_
+
+## [0.26.20](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.19...c2patool-v0.26.20)
+_30 January 2026_
+
+## [0.26.19](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.18...c2patool-v0.26.19)
+_28 January 2026_
+
+## [0.26.18](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.17...c2patool-v0.26.18)
+_27 January 2026_
+
+### Documented
+
+* Remove outdated ref to CreativeWork, other small edits ([#1770](https://github.com/contentauth/c2pa-rs/pull/1770))
+
+## [0.26.17](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.16...c2patool-v0.26.17)
+_22 January 2026_
+
+## [0.26.16](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.15...c2patool-v0.26.16)
+_21 January 2026_
+
+## [0.26.15](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.14...c2patool-v0.26.15)
+_16 January 2026_
+
+## [0.26.14](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.13...c2patool-v0.26.14)
+_16 January 2026_
+
+## [0.26.13](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.12...c2patool-v0.26.13)
+_15 January 2026_
+
+## [0.26.12](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.11...c2patool-v0.26.12)
+_15 January 2026_
+
+### Fixed
+
+* Verify after sign not executing ([#1638](https://github.com/contentauth/c2pa-rs/pull/1638))
+
+## [0.26.11](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.10...c2patool-v0.26.11)
+_14 January 2026_
+
+### Updated dependencies
+
+* Bump toml from 0.8.23 to 0.9.10+spec-1.1.0 ([#1713](https://github.com/contentauth/c2pa-rs/pull/1713))
+* Bump etcetera from 0.10.0 to 0.11.0 ([#1712](https://github.com/contentauth/c2pa-rs/pull/1712))
+* Bump env_logger from 0.10.2 to 0.11.8 ([#1711](https://github.com/contentauth/c2pa-rs/pull/1711))
+* Bump mockall from 0.13.1 to 0.14.0 ([#1708](https://github.com/contentauth/c2pa-rs/pull/1708))
+
 ## [0.26.10](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.9...c2patool-v0.26.10)
 _07 January 2026_
 

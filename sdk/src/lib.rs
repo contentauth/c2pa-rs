@@ -63,16 +63,16 @@
 //! }
 //!
 //! # fn main() -> Result<()> {
-//! // Create context with signer configuration
+//! // Create context with signer configuration.
 //! let context =
 //!     Context::new().with_settings(include_str!("../tests/fixtures/test_settings.toml"))?;
 //!
-//! // Build manifest
+//! // Build manifest.
 //! let mut builder = Builder::from_context(context)
 //!     .with_definition(json!({"title": "Test"}))?;
 //! builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 //!
-//! // Save with automatic signer from context (created from settings)
+//! // Save with automatic signer from context (created from settings).
 //! let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
 //! let mut dest = Cursor::new(Vec::new());
 //! let _c2pa_data = builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
@@ -108,10 +108,10 @@
 //! - **http_wasi**: Enables `wasi` for sync HTTP requests on WASI.
 //! - **http_wstd**: Enables `wstd` for async HTTP requests on WASI.
 
-/// The internal name of the C2PA SDK
+/// The internal name of the C2PA SDK.
 pub const NAME: &str = "c2pa-rs";
 
-/// The version of this C2PA SDK
+/// The version of this C2PA SDK.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Public modules
@@ -152,7 +152,7 @@ pub mod settings;
 #[doc(hidden)]
 pub mod status_tracker;
 
-/// The validation_results module contains the definitions for the validation results that are part of the C2PA specification.
+/// Contains the definitions for the validation results that are part of the C2PA specification.
 pub mod validation_results;
 
 /// The validation_status module contains the definitions for the validation status that are part of the C2PA specification.
@@ -181,6 +181,7 @@ pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 pub use reader::Reader;
 #[doc(inline)]
 pub use resource_store::{ResourceRef, ResourceStore};
+pub use settings::Settings;
 pub use signer::{AsyncSigner, BoxedAsyncSigner, BoxedSigner, Signer};
 pub use utils::mime::format_from_path;
 #[doc(inline)]
@@ -206,7 +207,7 @@ pub(crate) mod jumbf;
 pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store_report;
-/// The maybe_send_sync module contains traits for conditional Send bounds based on target architecture.
+/// The `maybe_send_sync` module contains traits for conditional Send bounds based on target architecture.
 pub(crate) mod maybe_send_sync;
 pub(crate) mod reader;
 pub(crate) mod resource_store;

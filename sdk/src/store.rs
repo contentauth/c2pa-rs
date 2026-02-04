@@ -15,8 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::{
     collections::{HashMap, HashSet},
-    io::{Cursor, Read, Seek},
-    vec,
+    io::{Cursor, Read, Seek, SeekFrom},
 };
 
 use async_generic::async_generic;
@@ -60,7 +59,6 @@ use crate::{
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
-    http::{AsyncHttpResolver, SyncHttpResolver},
     jumbf::{
         self,
         boxes::*,
@@ -135,7 +133,7 @@ struct ManifestInfo<'a> {
 
 impl Default for Store {
     fn default() -> Self {
-        Self::with_context(&Context::new())
+        Self::from_context(&Context::new())
     }
 }
 
@@ -155,7 +153,7 @@ impl Store {
     }
 
     /// Create a new, empty claims store with the specified settings.
-    pub fn with_context(context: &Context) -> Self {
+    pub fn from_context(context: &Context) -> Self {
         let mut store = Store::new();
         let settings = context.settings();
 
@@ -486,57 +484,6 @@ impl Store {
         placeholder.resize(max(placeholder.len(), min_reserve_size), 0);
 
         placeholder
-    }
-
-    fn get_cose_sign1_signature(&self, manifest_id: &str) -> Option<Vec<u8>> {
-        let manifest = self.get_claim(manifest_id)?;
-
-        let sig = manifest.signature_val();
-        let data = manifest.data().ok()?;
-        let mut validation_log =
-            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-
-        let sign1 = parse_cose_sign1(sig, &data, &mut validation_log).ok()?;
-
-        Some(sign1.signature)
-    }
-
-    /// Creates a TimeStamp (c2pa.time-stamp) assertion containing the TimeStampTokens for each
-    /// specified manifest_id.  If any time stamp request fails the assertion is not created.
-    #[allow(dead_code)]
-    #[async_generic(async_signature(
-        &self,
-        manifest_ids: &[&str],
-        tsa_url: &str,
-        http_resolver: &impl AsyncHttpResolver
-    ))]
-    pub fn get_timestamp_assertion(
-        &self,
-        manifest_ids: &[&str],
-        tsa_url: &str,
-        http_resolver: &impl SyncHttpResolver,
-    ) -> Result<TimeStamp> {
-        let mut timestamp_assertion = TimeStamp::new();
-        for manifest_id in manifest_ids {
-            // lets add a timestamp for old manifest
-            let signature = self
-                .get_cose_sign1_signature(manifest_id)
-                .ok_or(Error::ClaimMissingSignatureBox)?;
-
-            let timestamp_token = if _sync {
-                TimeStamp::send_timestamp_token_request_impl(tsa_url, &signature, http_resolver)?
-            } else {
-                TimeStamp::send_timestamp_token_request_impl_async(
-                    tsa_url,
-                    &signature,
-                    http_resolver,
-                )
-                .await?
-            };
-
-            timestamp_assertion.add_timestamp(manifest_id, &timestamp_token);
-        }
-        Ok(timestamp_assertion)
     }
 
     /// Return OCSP info if available
@@ -913,7 +860,7 @@ impl Store {
                 let assertion = Assertion::from_data_cbor(&raw_label, cbor_box.cbor());
 
                 // make sure it is CBOR
-                if let Err(e) = serde_cbor::from_slice::<serde_cbor::Value>(cbor_box.cbor()) {
+                if let Err(e) = c2pa_cbor::from_slice::<c2pa_cbor::Value>(cbor_box.cbor()) {
                     log_item!(
                         label.to_owned(),
                         "invalid assertion cbor",
@@ -1109,7 +1056,7 @@ impl Store {
                         let mut databoxes = CAIDataboxStore::new();
 
                         for (uri, db) in claim.databoxes() {
-                            let db_cbor_bytes = serde_cbor::to_vec(db)
+                            let db_cbor_bytes = c2pa_cbor::to_vec(db)
                                 .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
                             let (link, instance) = Claim::assertion_label_from_link(&uri.url());
@@ -1192,7 +1139,7 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
-        Self::from_jumbf_impl(Store::with_context(context), buffer, validation_log)
+        Self::from_jumbf_impl(Store::from_context(context), buffer, validation_log)
     }
 
     fn from_jumbf_impl(
@@ -2041,7 +1988,6 @@ impl Store {
         claim: &'a Claim,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
-        settings: &Settings,
     ) -> Result<StoreValidationInfo<'a>> {
         let mut svi = StoreValidationInfo::default();
         Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
@@ -2126,26 +2072,19 @@ impl Store {
 
                 // save the valid timestamps stored in the StoreValidationInfo
                 // we only use valid timestamps, otherwise just ignore
-                let mut adjusted_settings = settings.clone();
-                let original_trust_val = adjusted_settings.verify.verify_timestamp_trust;
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
-                        if rc.version() == 1 {
-                            // no trust checks for leagacy timestamps
-                            adjusted_settings.verify.verify_timestamp_trust = false;
-                        }
-
                         if let Ok(tst_info) = verify_time_stamp(
                             time_stamp_token,
                             rc.signature_val(),
                             &self.ctp,
                             validation_log,
-                            &adjusted_settings,
+                            // no trust checks for leagacy timestamps
+                            rc.version() != 1,
                         ) {
                             svi.timestamps.insert(rc.label().to_owned(), tst_info);
                         }
                     }
-                    adjusted_settings.verify.verify_timestamp_trust = original_trust_val;
                 }
             }
 
@@ -2203,12 +2142,7 @@ impl Store {
         };
 
         // get info needed to complete validation
-        let svi = store.get_store_validation_info(
-            claim,
-            asset_data,
-            validation_log,
-            context.settings(),
-        )?;
+        let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
 
         if _sync {
             // verify the provenance claim
@@ -2257,6 +2191,11 @@ impl Store {
 
         let mut hashes: Vec<DataHash> = Vec::new();
 
+        // Create a DataHash regardless of whether JUMBF is found or not...
+        // For remote manifests with no embedded JUMBF, creates a hash with no exclusions,
+        // because there is nothing to exclude from the hashing (since nothing is embedded)
+        let mut dh = DataHash::new("jumbf manifest", alg);
+
         // sort blocks by offset
         block_locations.sort_by(|a, b| a.offset.cmp(&b.offset));
 
@@ -2277,12 +2216,12 @@ impl Store {
             if found_jumbf && item.htype == HashBlockObjectType::Cai {
                 block_end = item.offset + item.length;
             }
-        }
 
-        // Create a DataHash regardless of whether JUMBF is found or not...
-        // For remote manifests with no embedded JUMBF, creates a hash with no exclusions,
-        // because there is nothing to exclude from the hashing (since nothing is embedded)
-        let mut dh = DataHash::new("jumbf manifest", alg);
+            // add explict exclusion ranges
+            if item.htype == HashBlockObjectType::OtherExclusion {
+                dh.add_exclusion(HashRange::new(item.offset as u64, item.length as u64));
+            }
+        }
 
         if found_jumbf {
             // add exclusion for embedded jumbf
@@ -2753,9 +2692,9 @@ impl Store {
         let mut assertions = Vec::new();
         for da in dyn_assertions.iter() {
             let reserve_size = da.reserve_size()?;
-            let data1 = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
+            let data1 = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
             let cbor_delta = data1.len() - reserve_size;
-            let da_data = serde_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
+            let da_data = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
             assertions.push(UserCbor::new(&da.label(), da_data));
         }
 
@@ -3096,6 +3035,7 @@ impl Store {
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         intermediate_stream.rewind()?;
+        output_stream.rewind()?;
         match self.finish_save_stream(
             jumbf_bytes,
             format,
@@ -3114,7 +3054,7 @@ impl Store {
 
                 let verify_after_sign = settings.verify.verify_after_sign;
                 // Also catch the case where we may have written to io::empty() or similar
-                if verify_after_sign && output_stream.stream_position()? > 0 {
+                if verify_after_sign && output_stream.seek(SeekFrom::End(0))? > 0 {
                     // verify the store
                     let mut validation_log =
                         StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
@@ -3328,6 +3268,18 @@ impl Store {
                 output_stream.rewind()?;
                 let mut new_hash_ranges = object_locations_from_stream(format, output_stream)?;
                 if !pc.update_manifest() {
+                    // if we removed the manifest fixup the hash range to be empty
+                    if remove_manifests {
+                        new_hash_ranges.iter_mut().for_each(|h| {
+                            if h.htype == HashBlockObjectType::Cai
+                                || h.htype == HashBlockObjectType::OtherExclusion
+                            {
+                                h.offset = 0;
+                                h.length = 0;
+                            }
+                        });
+                    }
+
                     let updated_hashes = Store::generate_data_hashes_for_stream(
                         output_stream,
                         pc.alg(),
@@ -4388,7 +4340,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v1_unit_test");
@@ -4455,7 +4407,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
@@ -4523,7 +4475,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
@@ -4574,7 +4526,7 @@ pub mod tests {
             create_test_streams("unsupported_type.txt");
         let format = "text/plain";
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -4669,7 +4621,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         let claim = create_test_claim().unwrap();
 
@@ -4704,7 +4656,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("earth_apollo17.jpg");
 
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         let claim = create_test_claim().unwrap();
 
@@ -4734,7 +4686,7 @@ pub mod tests {
     fn test_jumbf_replacement_generation() {
         let context = Context::new();
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -4779,7 +4731,7 @@ pub mod tests {
             create_test_streams("earth_apollo17.jpg");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = crate::utils::test::create_test_claim()?;
@@ -4869,7 +4821,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5143,7 +5095,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.wav");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5245,7 +5197,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("test.avi");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5348,7 +5300,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.webp");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5451,7 +5403,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.heic");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5504,7 +5456,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.avif");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -5557,7 +5509,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("sample1.heif");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -6911,7 +6863,7 @@ pub mod tests {
         // expect action error
         assert!(store.is_err());
         assert!(report.has_error(Error::ValidationRule(
-            "opened, placed and removed items must have parameters".into()
+            "opened, placed and removed items must have ingredient(s) parameters".into()
         )));
         assert!(report.filter_errors().count() == 2);
     }
@@ -6947,7 +6899,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -6986,7 +6938,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = crate::utils::test::create_test_claim_v1().unwrap();
@@ -7017,19 +6969,21 @@ pub mod tests {
         println!("store = {new_store}");
     }
 
+    #[cfg(feature = "file_io")]
     #[test]
     fn test_jumbf_generation_with_bmffv3_fixed_block_size() {
+        // use Merkle tree with 1024 byte chunks
         let context = crate::context::Context::new();
+
+        // use Merkle tree with 1024 byte chunks
+        crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) =
             create_test_streams("BigBuckBunny_320x180.mp4");
 
-        // use Merkle tree with 1024 byte chunks
-        crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
-
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7071,7 +7025,7 @@ pub mod tests {
         crate::settings::set_settings_value("core.merkle_tree_max_proofs", 0).unwrap();
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7113,7 +7067,7 @@ pub mod tests {
         crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7153,7 +7107,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7257,7 +7211,7 @@ pub mod tests {
             let context = crate::context::Context::new();
 
             // Create claims store.
-            let mut store = Store::with_context(&context);
+            let mut store = Store::from_context(&context);
 
             // Create a new claim.
             let mut claim = create_test_claim().unwrap();
@@ -7333,7 +7287,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -7397,7 +7351,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7442,7 +7396,7 @@ pub mod tests {
         let (format, mut input_stream, mut output_stream) = create_test_streams("TUSCANY.TIF");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -7511,7 +7465,7 @@ pub mod tests {
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -7587,7 +7541,7 @@ pub mod tests {
         let box_hash_path = fixture_path("boxhash.json");
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let mut claim = create_test_claim().unwrap();
@@ -7664,7 +7618,7 @@ pub mod tests {
         let signer = async_test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -7740,7 +7694,7 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -7817,7 +7771,7 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim = create_test_claim().unwrap();
@@ -7892,7 +7846,7 @@ pub mod tests {
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
-                Ok(serde_cbor::to_vec(&assertion)?.len())
+                Ok(c2pa_cbor::to_vec(&assertion)?.len())
             }
 
             fn content(
@@ -7913,7 +7867,7 @@ pub mod tests {
                 };
 
                 Ok(DynamicAssertionContent::Cbor(
-                    serde_cbor::to_vec(&assertion).unwrap(),
+                    c2pa_cbor::to_vec(&assertion).unwrap(),
                 ))
             }
         }
@@ -7966,7 +7920,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -8021,7 +7975,7 @@ pub mod tests {
                 let assertion = TestAssertion {
                     my_tag: "some value I will replace".to_string(),
                 };
-                Ok(serde_cbor::to_vec(&assertion)?.len())
+                Ok(c2pa_cbor::to_vec(&assertion)?.len())
             }
 
             async fn content(
@@ -8042,7 +7996,7 @@ pub mod tests {
                 };
 
                 Ok(DynamicAssertionContent::Cbor(
-                    serde_cbor::to_vec(&assertion).unwrap(),
+                    c2pa_cbor::to_vec(&assertion).unwrap(),
                 ))
             }
         }
@@ -8097,7 +8051,7 @@ pub mod tests {
         let mut buf_io = Cursor::new(file_buffer);
 
         // Create claims store.
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         // Create a new claim.
         let claim1 = create_test_claim().unwrap();
@@ -8170,7 +8124,7 @@ pub mod tests {
                     }
 
                     // Create claims store.
-                    let mut store = Store::with_context(&context);
+                    let mut store = Store::from_context(&context);
 
                     // Create a new claim.
                     let claim = create_test_claim().unwrap();
@@ -8243,6 +8197,10 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_bogus_cert() {
         use crate::builder::{Builder, BuilderIntent};
+
+        // bypass auto sig check
+        crate::settings::set_settings_value("verify.verify_after_sign", false).unwrap();
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let png = include_bytes!("../tests/fixtures/libpng-test.png"); // Randomly generated local Ed25519
         let ed25519 = include_bytes!("../tests/fixtures/certs/ed25519.pem");
@@ -8458,7 +8416,7 @@ pub mod tests {
         let mut tracking_stream =
             FlushTrackingStream::new(output_stream, flush_called.clone(), dropped.clone());
 
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         let cgi = ClaimGeneratorInfo::new("flush_test");
         let mut claim = Claim::new("test", Some("flush_test"), 1);
@@ -8634,7 +8592,7 @@ pub mod tests {
         let flush_called = Arc::new(AtomicBool::new(false));
         let mut unsafe_stream = UnsafeStream::new(flush_called.clone());
 
-        let mut store = Store::with_context(&context);
+        let mut store = Store::from_context(&context);
 
         let cgi = ClaimGeneratorInfo::new("unsafe_flush_test");
         let mut claim = Claim::new("test", Some("unsafe_flush_test"), 1);
