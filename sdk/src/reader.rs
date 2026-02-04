@@ -1271,11 +1271,9 @@ impl Reader {
     /// Converts the entire Reader into a single parent Ingredient.
     /// The entire manifest store is embedded as manifest_data.
     pub(crate) fn reader_to_parent_ingredient(&self) -> Result<Ingredient> {
-        let manifest = self
-            .active_manifest()
-            .ok_or(Error::ClaimMissing {
-                label: "active manifest".to_string(),
-            })?;
+        let manifest = self.active_manifest().ok_or(Error::ClaimMissing {
+            label: "active manifest".to_string(),
+        })?;
 
         // Create ingredient from manifest metadata
         let mut ingredient = Ingredient::new(
@@ -1298,7 +1296,7 @@ impl Reader {
                 ingredient.set_validation_status(validation_status);
             }
         }
-        
+
         if let Some(validation_results) = self.validation_results.clone() {
             ingredient.set_validation_results(validation_results);
         }
@@ -1314,7 +1312,11 @@ impl Reader {
                     let mut active_claim = claim.clone();
 
                     // Recursively collect all nested ingredient claims
-                    Self::collect_ingredient_claims_for_store(&self.store, claim, &mut active_claim)?;
+                    Self::collect_ingredient_claims_for_store(
+                        &self.store,
+                        claim,
+                        &mut active_claim,
+                    )?;
 
                     store.commit_claim(active_claim)?;
                     store
@@ -1446,7 +1448,7 @@ impl Reader {
             .assertions()
             .iter()
             .any(|a| a.label() == crate::assertions::DataHash::LABEL);
-        
+
         let has_box_hash = manifest
             .assertions()
             .iter()

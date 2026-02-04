@@ -2401,12 +2401,23 @@ impl Builder {
         &mut self,
         reader: crate::Reader,
     ) -> Result<&mut Ingredient> {
-        // Use into_builder which handles all three archive types appropriately
-        let ingredient_builder = reader.into_builder()?;
-
-        // Extract all ingredients from the converted builder and add to this builder
-        for ingredient in ingredient_builder.definition.ingredients {
-            self.add_ingredient(ingredient);
+        // Detect the manifest type and handle appropriately
+        match reader.manifest_type() {
+            crate::reader::ManifestType::ArchivedIngredient => {
+                // Extract the archived ingredient
+                let ingredient = reader.to_ingredient()?;
+                self.add_ingredient(ingredient);
+            }
+            crate::reader::ManifestType::SignedManifest => {
+                // Convert the entire reader to a parent ingredient with validation
+                let ingredient = reader.reader_to_parent_ingredient()?;
+                self.add_ingredient(ingredient);
+            }
+            crate::reader::ManifestType::ArchivedBuilder => {
+                return Err(Error::BadParam(
+                    "Cannot add ArchivedBuilder as ingredient from stream. Use from_archive() instead.".to_string()
+                ));
+            }
         }
 
         self.definition
@@ -2448,7 +2459,7 @@ impl Builder {
                 ));
             }
         }
-        
+
         self.definition
             .ingredients
             .last_mut()
@@ -2463,7 +2474,7 @@ impl Builder {
     fn working_store_sign(&mut self) -> Result<Vec<u8>> {
         // Convert the builder to a claim
         let mut claim = self.to_claim()?;
-        
+
         // Mark this as a builder archive in the claim generator info
         if let Some(cgi) = claim.claim_generator_info.as_mut() {
             if let Some(first) = cgi.first_mut() {
@@ -2485,13 +2496,13 @@ impl Builder {
                 .ok_or(Error::UnsupportedType)?
                 .get_box_map(&mut empty_asset)?;
             let box_hash = BoxHash { boxes };
-            
+
             claim.add_assertion(&box_hash)?;
-            
+
             // Commit the claim to a store
             let mut store = Store::new();
             store.commit_claim(claim)?;
-            
+
             // Sign with box hash
             store.get_box_hashed_embeddable_manifest(signer, &self.context)
         } else {
@@ -2499,7 +2510,7 @@ impl Builder {
             // Commit the claim to a store
             let mut store = Store::new();
             store.commit_claim(claim)?;
-            
+
             // get_data_hashed_manifest_placeholder will add DataHash
             store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
         }
@@ -4322,14 +4333,15 @@ mod tests {
 
         // Test 1: Builder Archive - should restore original builder
         let context1 = test_context();
-        let mut builder_original = Builder::from_context(context1)
-            .with_definition(r#"{"title": "Original Builder"}"#)?;
+        let mut builder_original =
+            Builder::from_context(context1).with_definition(r#"{"title": "Original Builder"}"#)?;
         builder_original.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
 
         // Add an ingredient and assertion
         let ingredient_json = r#"{"title": "Test Ingredient", "format": "image/jpeg"}"#;
         builder_original.add_ingredient(Ingredient::from_json(ingredient_json)?);
-        builder_original.add_assertion_json("com.test.assertion", &serde_json::json!({"value": 42}))?;
+        builder_original
+            .add_assertion_json("com.test.assertion", &serde_json::json!({"value": 42}))?;
 
         // Archive the builder
         let mut builder_archive = Cursor::new(Vec::new());
@@ -4371,8 +4383,8 @@ mod tests {
         let mut signed_output = Cursor::new(Vec::new());
         let signer = test_signer(SigningAlg::Ps256);
 
-        let mut regular_builder = Builder::from_context(context2)
-            .with_definition(r#"{"title": "Regular Manifest"}"#)?;
+        let mut regular_builder =
+            Builder::from_context(context2).with_definition(r#"{"title": "Regular Manifest"}"#)?;
         regular_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
         regular_builder.sign(&signer, "image/jpeg", &mut source, &mut signed_output)?;
 
@@ -4401,7 +4413,8 @@ mod tests {
             .with_definition(r#"{"title": "Ingredient Container"}"#)?;
         ingredient_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
 
-        let mut ingredient = Ingredient::from_json(r#"{"title": "Archived Ingredient", "format": "image/jpeg"}"#)?;
+        let mut ingredient =
+            Ingredient::from_json(r#"{"title": "Archived Ingredient", "format": "image/jpeg"}"#)?;
         // Add some mock manifest data to make it look like an archived ingredient
         ingredient.set_manifest_data(vec![0x00, 0x01, 0x02, 0x03])?;
         ingredient_builder.add_ingredient(ingredient);
@@ -4442,8 +4455,8 @@ mod tests {
         let context = Context::new().with_settings(settings)?;
 
         // Create and archive a builder
-        let mut builder = Builder::from_context(context)
-            .with_definition(r#"{"title": "Test Builder"}"#)?;
+        let mut builder =
+            Builder::from_context(context).with_definition(r#"{"title": "Test Builder"}"#)?;
 
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive)?;
