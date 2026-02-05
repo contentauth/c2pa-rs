@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa"
-version = "0.75.13"
+version = "0.75.14"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -525,12 +525,12 @@ dependencies = [
  "x509-parser",
  "zeroize",
  "zip 6.0.0",
- "zip 7.2.0",
+ "zip 7.3.0",
 ]
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.75.13"
+version = "0.75.14"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -555,7 +555,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.75.13"
+version = "0.75.14"
 dependencies = [
  "quote",
  "syn 2.0.114",
@@ -1308,7 +1308,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.75.13"
+version = "0.75.14"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -1734,9 +1734,9 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "httpmock"
-version = "0.8.2"
+version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "511f510e9b1888d67f10bab4397f8b019d2a9b249a2c10acbce2d705b1b32e26"
+checksum = "bf4888a4d02d8e1f92ffb6b4965cf5ff56dda36ef41975f41c6fa0f6bde78c4e"
 dependencies = [
  "assert-json-diff",
  "async-object-pool",
@@ -2305,7 +2305,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.75.13"
+version = "0.75.14"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -5274,9 +5274,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "7.2.0"
+version = "7.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c42e33efc22a0650c311c2ef19115ce232583abbe80850bc8b66509ebef02de0"
+checksum = "268bf6f9ceb991e07155234071501490bb41fd1e39c6a588106dad10ae2a5804"
 dependencies = [
  "crc32fast",
  "indexmap 2.13.0",
