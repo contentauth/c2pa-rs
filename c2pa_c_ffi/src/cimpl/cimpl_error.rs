@@ -13,7 +13,7 @@
 
 use std::cell::RefCell;
 
-pub type Result<T> = std::result::Result<T, CimplError>;
+pub type Result<T> = std::result::Result<T, crate::C2paError>;
 
 // LAST_ERROR handling borrowed from Copyright (c) 2018 Michael Bryan
 thread_local! {
@@ -78,6 +78,16 @@ impl CimplError {
             code,
             message: message.into(),
         }
+    }
+
+    /// Returns the error code
+    pub fn code(&self) -> i32 {
+        self.code
+    }
+
+    /// Returns the error message
+    pub fn message(&self) -> &str {
+        &self.message
     }
 
     pub fn null_parameter<S: Into<String>>(param: S) -> Self {
