@@ -165,11 +165,11 @@ impl Reader {
     /// # Examples
     ///
     /// ```
-    /// # use c2pa::{Context, Reader, Result};
+    /// # use c2pa::{Context, Reader, Result, Settings};
     /// # use std::sync::Arc;
     /// # fn main() -> Result<()> {
     /// // Create a shared Context once
-    /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
+    /// let ctx = Context::new().with_settings(Settings::new())?.into_shared();
     ///
     /// // Share it across multiple Readers (even across threads!)
     /// let reader1 = Reader::from_shared_context(&ctx);
@@ -186,7 +186,7 @@ impl Reader {
         }
     }
 
-    /// Add manifest store from a stream to the [`Reader`]
+    /// Add manifest store from a stream to the [`Reader`].
     /// # Arguments
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
@@ -223,9 +223,7 @@ impl Reader {
     /// # Returns
     /// A [`Reader`] for the manifest store.
     /// # Note
-    /// [CAWG identity] assertions require async calls for validation.
-    ///
-    /// [CAWG identity]: https://cawg.io/identity/
+    /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[async_generic]
     pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -267,9 +265,7 @@ impl Reader {
     /// ```
     ///
     /// # Note
-    /// [CAWG identity] assertions require async calls for validation.
-    ///
-    /// [CAWG identity]: https://cawg.io/identity/
+    /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[async_generic]
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
@@ -353,9 +349,7 @@ impl Reader {
     /// ```
     ///
     /// # Note
-    /// [CAWG identity] assertions require async calls for validation.
-    ///
-    /// [CAWG identity]: https://cawg.io/identity/
+    /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[cfg(feature = "file_io")]
     #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
@@ -806,20 +800,23 @@ impl Reader {
     /// The number of bytes written.
     /// # Errors
     /// Returns [`Error`] if the resource does not exist.
-    ///
     /// # Example
     /// ```no_run
+    /// use std::io::Cursor;
+    ///
     /// use c2pa::Reader;
-    /// #[cfg(feature = "file_io")]
-    /// {
-    ///     let stream = std::io::Cursor::new(Vec::new());
-    ///     let reader = Reader::from_file("path/to/file.jpg").unwrap();
-    ///     let manifest = reader.active_manifest().unwrap();
-    ///     let uri = &manifest.thumbnail_ref().unwrap().identifier;
-    ///     let bytes_written = reader.resource_to_stream(uri, stream).unwrap();
-    /// }
+    /// // Create a Reader from an in-memory stream (placeholder bytes shown here).
+    /// let input = Cursor::new(Vec::new());
+    /// let reader = Reader::from_stream("image/jpeg", input).unwrap();
+    ///
+    /// // Get a resource identifier from the active manifest (e.g., a thumbnail).
+    /// let manifest = reader.active_manifest().unwrap();
+    /// let uri = &manifest.thumbnail_ref().unwrap().identifier;
+    ///
+    /// // Write that resource to an output stream.
+    /// let out = Cursor::new(Vec::new());
+    /// let bytes_written = reader.resource_to_stream(uri, out).unwrap();
     /// ```
-    /// TODO: Fix the example to not read from a file.
     pub fn resource_to_stream(
         &self,
         uri: &str,

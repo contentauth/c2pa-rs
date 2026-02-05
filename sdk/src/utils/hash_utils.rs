@@ -189,6 +189,7 @@ pub fn hash_asset_by_alg_with_inclusions(
 
     The data is again split into range sets breaking at the exclusion points and now also the markers.
 */
+/// May be used to generate hashes in combination with embeddable APIs.
 pub fn hash_stream_by_alg<R>(
     alg: &str,
     data: &mut R,

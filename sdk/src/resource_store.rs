@@ -401,7 +401,7 @@ impl ResourceResolver for ResourceStore {
 pub fn mime_from_uri(uri: &str) -> String {
     if let Some(label) = assertion_label_from_uri(uri) {
         if label.starts_with(labels::THUMBNAIL) {
-            // https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_thumbnail
+            // https://spec.c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_thumbnail
             if let Some(ext) = label.rsplit('.').next() {
                 return format!("image/{ext}");
             }
