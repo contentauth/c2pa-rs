@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.75.16](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.15...c2pa-c-ffi-v0.75.16)
+_05 February 2026_
+
+### Fixed
+
+* Add additional conversions for C FFI Errors ([#1829](https://github.com/contentauth/c2pa-rs/pull/1829))
+
 ## [0.75.15](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.14...c2pa-c-ffi-v0.75.15)
 _05 February 2026_
 

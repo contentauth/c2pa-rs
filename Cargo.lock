@@ -114,9 +114,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.100"
+version = "1.0.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
+checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
 name = "approx"
@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa"
-version = "0.75.15"
+version = "0.75.16"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -530,7 +530,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.75.15"
+version = "0.75.16"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -555,7 +555,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.75.15"
+version = "0.75.16"
 dependencies = [
  "quote",
  "syn 2.0.114",
@@ -1308,7 +1308,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.75.15"
+version = "0.75.16"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2159,9 +2159,9 @@ checksum = "68cf72bc7b75b6615ffd06bfe6840f3c57e7e4ea615558a2a452f458ebf5551e"
 
 [[package]]
 name = "jiff"
-version = "0.2.18"
+version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e67e8da4c49d6d9909fe03361f9b620f58898859f5c7aded68351e85e71ecf50"
+checksum = "d89a5b5e10d5a9ad6e5d1f4bd58225f655d6fe9767575a5e8ac5a6fe64e04495"
 dependencies = [
  "jiff-static",
  "jiff-tzdb-platform",
@@ -2174,9 +2174,9 @@ dependencies = [
 
 [[package]]
 name = "jiff-static"
-version = "0.2.18"
+version = "0.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0c84ee7f197eca9a86c6fd6cb771e55eb991632f15f2bc3ca6ec838929e6e78"
+checksum = "ff7a39c8862fc1369215ccf0a8f12dd4598c7f6484704359f0351bd617034dbf"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2305,7 +2305,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.75.15"
+version = "0.75.16"
 dependencies = [
  "anyhow",
  "c2pa",
