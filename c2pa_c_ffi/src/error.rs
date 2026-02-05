@@ -187,6 +187,20 @@ impl From<C2paError> for crate::cimpl::CimplError {
     }
 }
 
+impl From<std::io::Error> for crate::cimpl::CimplError {
+    fn from(err: std::io::Error) -> Self {
+        let c2pa_error = C2paError::Io(err.to_string());
+        crate::cimpl::CimplError::new(c2pa_error.code(), c2pa_error.to_string())
+    }
+}
+
+impl From<serde_json::Error> for crate::cimpl::CimplError {
+    fn from(err: serde_json::Error) -> Self {
+        let c2pa_error = C2paError::Json(err.to_string());
+        crate::cimpl::CimplError::new(c2pa_error.code(), c2pa_error.to_string())
+    }
+}
+
 impl From<crate::cimpl::CimplError> for C2paError {
     fn from(err: crate::cimpl::CimplError) -> Self {
         // Map CimplError codes to appropriate C2paError variants
@@ -330,6 +344,21 @@ mod tests {
                 original_str, recovered_str
             );
         }
+    }
+
+    #[test]
+    fn test_remote_manifest_fetch_maps_to_remote_prefix_for_c2pa_c() {
+        // c2pa-c Builder.SignStreamCloudUrl test expects error_message.rfind("Remote:", 0) == 0
+        let c2pa_err = c2pa::Error::RemoteManifestFetch(
+            "an error occurred from the underlying http resolver".to_string(),
+        );
+        let cimpl_err: CimplError = c2pa_err.into();
+        let msg = cimpl_err.message();
+        assert!(
+            msg.starts_with("Remote:"),
+            "C2paException in c2pa-c checks for 'Remote:' prefix; got: {}",
+            msg
+        );
     }
 
     #[test]
