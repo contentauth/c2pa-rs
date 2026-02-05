@@ -427,7 +427,7 @@ macro_rules! ok_or_return {
         match $result {
             Ok(value) => $transform(value),
             Err(e) => {
-                $crate::CimplError::other(format!("{}", e)).set_last();
+                $crate::CimplError::from(e).set_last();
                 return $err_val;
             }
         }
