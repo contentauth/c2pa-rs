@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.75.14](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.13...c2pa-c-ffi-v0.75.14)
+_05 February 2026_
+
+### Fixed
+
+* Restores empty string return on c2pa_sign_file, and c2pa_release_string ([#1821](https://github.com/contentauth/c2pa-rs/pull/1821))
+
 ## [0.75.13](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.12...c2pa-c-ffi-v0.75.13)
 _03 February 2026_
 
