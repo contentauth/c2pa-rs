@@ -33,6 +33,7 @@ use crate::{
     store::Store,
     utils::hash_utils::hash_to_b64,
     validation_status::ValidationStatus,
+    validation_results::ValidationState,
     DigitalSourceType, Error, HashedUri, Result, ValidationResults,
 };
 
@@ -50,6 +51,8 @@ pub struct StandardStoreReport {
     manifests: HashMap<String, Manifest>,
 
     validation_results: ValidationResults,
+
+    validation_state: Option<ValidationState>,
 }
 
 impl StandardStoreReport {
@@ -81,10 +84,12 @@ impl StandardStoreReport {
                 }
             };
         }
+        let validation_state = Some(validation_results.validation_state());
         Ok(Self {
             active_manifest,
             manifests,
             validation_results,
+            validation_state,
             ..Default::default()
         })
     }
@@ -131,33 +136,31 @@ impl<'a> ContentCredential<'a> {
         Ok(self)
     }
 
-    pub fn from_manifest_and_stream<R>(
-        c2pa_data: &[u8],
+    pub fn open_stream_and_manifest<R>(
+        mut self,
         format: &str,
         stream: &mut R,
-        context: &'a Context,
+        c2pa_data: &[u8],
     ) -> Result<Self>
     where
         R: Read + Seek + Send,
     {
-        let mut cc = Self::new(context);
-
         // Use the new Ingredient method to create a validated parent ingredient
         let (ingredient, manifest_bytes) = Ingredient::from_manifest_and_stream(
             Relationship::ParentOf,
             c2pa_data,
             format,
             stream,
-            context,
+            self.context,
         )?;
 
         // Add the ingredient assertion (replaces store for parent)
-        let ingredient_uri = cc.add_ingredient_assertion(&ingredient, manifest_bytes.as_deref())?;
+        let ingredient_uri = self.add_ingredient_assertion(&ingredient, manifest_bytes.as_deref())?;
 
         // Add OPENED action
-        cc.add_action(Action::new(c2pa_action::OPENED).add_ingredient(ingredient_uri)?)?;
+        self.add_action(Action::new(c2pa_action::OPENED).add_ingredient(ingredient_uri)?)?;
 
-        Ok(cc)
+        Ok(self)
     }
 
     fn parent_ingredient(&self) -> Option<Ingredient> {
@@ -266,6 +269,29 @@ impl<'a> ContentCredential<'a> {
             self.store.get_embeddable_manifest_async(self.context).await
         }
     }
+
+    /// Writes a signed credential to a stream 
+    /// This does not sign or hash the credential, it only adds the jumbf to the stream
+    pub fn write_to_stream<R, W>(
+        &self,
+        format: &str,
+        source: &mut R,
+        dest: &mut W,
+    ) -> Result<Vec<u8>>
+    where
+        R: Read + Seek + Send,
+        W: Write + Read + Seek + Send,
+    {
+        let jumbf_bytes = self.store.to_jumbf_internal(self.context.signer()?.reserve_size())?;
+
+        crate::jumbf_io::save_jumbf_to_stream(
+            format,
+            source,
+            dest,
+            &jumbf_bytes,
+        )?;
+        Ok(jumbf_bytes)
+     }
 
     /// Generates a value similar to the C2PA Reader output
     pub fn reader_value(&self) -> Result<Value> {
@@ -395,14 +421,20 @@ mod tests {
 
         let manifest_bytes = cc.sign()?;
 
+        // validate from data and stream
         source.rewind()?;
-        let cc = ContentCredential::from_manifest_and_stream(
-            &manifest_bytes,
+        let cc = ContentCredential::new(&context).open_stream_and_manifest(
             format,
             &mut source,
-            &context,
+            &manifest_bytes,
         )?;
         println!("{cc}");
+
+        let mut dest = std::io::Cursor::new(Vec::new());
+        cc.write_to_stream(format, &mut source, &mut dest)?;
+        dest.rewind()?;
+        let cc2 = ContentCredential::new(&context).open_stream(format, &mut dest)?;
+        println!("{cc2}");
         Ok(())
     }
 }
