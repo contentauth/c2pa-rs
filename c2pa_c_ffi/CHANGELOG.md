@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.75.15](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.14...c2pa-c-ffi-v0.75.15)
+_05 February 2026_
+
+### Fixed
+
+* C_ffi bindings were not returning C2paErrors correctly ([#1825](https://github.com/contentauth/c2pa-rs/pull/1825))
+
 ## [0.75.14](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.13...c2pa-c-ffi-v0.75.14)
 _05 February 2026_
 
