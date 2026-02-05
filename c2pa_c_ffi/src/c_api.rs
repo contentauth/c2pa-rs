@@ -606,9 +606,19 @@ pub unsafe extern "C" fn c2pa_sign_file(
     };
     // Read manifest from JSON and then sign and write it.
     let result = sign_file(&source_path, &dest_path, &manifest, &signer_info, data_dir);
-    let bytes = ok_or_return_null!(result);
-    let json = String::from_utf8_lossy(&bytes).to_string();
-    to_c_string(json)
+    ok_or_return_null!(result); // we don't return the bytes, just an empty string for ok
+    to_c_string("".to_string())
+}
+
+/// Frees a string allocated by Rust.
+/// Deprecated, use c2pa_free instead
+///
+/// # Safety
+/// The string must not have been modified in C.
+/// The string can only be freed once and is invalid after this call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_release_string(s: *mut c_char) {
+    cimpl_free!(s);
 }
 
 /// Frees any pointer allocated by this library.
@@ -2384,6 +2394,67 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "file_io")]
+    fn test_c2pa_sign_file_success() {
+        use std::{fs, path::PathBuf};
+
+        // Setup paths
+        let base = env!("CARGO_MANIFEST_DIR");
+        let source = format!("{base}/../sdk/tests/fixtures/IMG_0003.jpg");
+        let temp_dir = PathBuf::from(base).join("../target/tmp");
+        fs::create_dir_all(&temp_dir).unwrap();
+        let dest = temp_dir.join("c2pa_sign_file_test_output.jpg");
+
+        let source_path = CString::new(source).unwrap();
+        let dest_path = CString::new(dest.to_str().unwrap()).unwrap();
+        let manifest = CString::new("{}").unwrap();
+
+        // Setup signer info
+        let alg = CString::new("es256").unwrap();
+        let cert = CString::new(include_str!(fixture_path!("certs/es256.pub"))).unwrap();
+        let key =
+            CString::new(include_bytes!(fixture_path!("certs/es256.pem")).as_slice()).unwrap();
+
+        let signer_info = C2paSignerInfo {
+            alg: alg.as_ptr(),
+            sign_cert: cert.as_ptr(),
+            private_key: key.as_ptr(),
+            ta_url: std::ptr::null(),
+        };
+
+        // Call c2pa_sign_file
+        let result = unsafe {
+            c2pa_sign_file(
+                source_path.as_ptr(),
+                dest_path.as_ptr(),
+                manifest.as_ptr(),
+                &signer_info,
+                std::ptr::null(),
+            )
+        };
+
+        // Verify result is not null and is an empty string
+        assert!(
+            !result.is_null(),
+            "c2pa_sign_file should return non-null on success"
+        );
+        let result_str = unsafe { CString::from_raw(result) };
+        assert_eq!(
+            result_str.to_str().unwrap(),
+            "",
+            "c2pa_sign_file should return empty string on success"
+        );
+
+        // Verify the output file was created and has content
+        assert!(dest.exists(), "Output file should exist");
+        let metadata = fs::metadata(&dest).unwrap();
+        assert!(metadata.len() > 0, "Output file should have content");
+
+        // Clean up
+        fs::remove_file(dest).ok();
+    }
+
+    #[test]
     fn test_c2pa_reader_remote_url() {
         let mut stream = TestStream::new(include_bytes!(fixture_path!("cloud.jpg")).to_vec());
 
@@ -3464,6 +3535,19 @@ verify_after_sign = true
     }
 
     #[test]
+    fn test_c2pa_release_string() {
+        // Test the deprecated c2pa_release_string function
+        let test_str = CString::new("test string for release").unwrap();
+        let c_str = to_c_string(test_str.to_str().unwrap().to_string());
+        assert!(!c_str.is_null());
+
+        // Should not crash
+        unsafe {
+            c2pa_release_string(c_str);
+        }
+    }
+
+    #[test]
     fn test_c2pa_ed25519_sign_actually_calls_function() {
         // Fix: The existing test_ed25519_sign doesn't call c2pa_ed25519_sign!
         let bytes = b"test data to sign";
@@ -3534,6 +3618,202 @@ verify_after_sign = true
         unsafe {
             c2pa_free(json as *mut c_void);
             c2pa_free(reader as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_error_set_last() {
+        let error_msg = CString::new("Custom error message").unwrap();
+        let result = unsafe { c2pa_error_set_last(error_msg.as_ptr()) };
+        assert_eq!(result, 0, "c2pa_error_set_last should return 0 on success");
+
+        // Verify the error was set
+        let error = unsafe { c2pa_error() };
+        assert!(
+            !error.is_null(),
+            "Error should be retrievable after set_last"
+        );
+        let error_str = unsafe { CString::from_raw(error) };
+        // Error messages are prefixed with "Other: "
+        assert_eq!(
+            error_str.to_str().unwrap(),
+            "Other: Custom error message",
+            "Error message should match what was set"
+        );
+    }
+
+    #[test]
+    fn test_c2pa_error_set_last_null() {
+        let result = unsafe { c2pa_error_set_last(std::ptr::null()) };
+        assert_eq!(
+            result, -1,
+            "c2pa_error_set_last should return -1 for null parameter"
+        );
+    }
+
+    #[test]
+    fn test_c2pa_reader_from_manifest_data_and_stream() {
+        // First, create a signed image to get manifest bytes
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestStream::new(dest_vec);
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+
+        // Sign to get manifest bytes
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert!(result > 0, "Signing should succeed");
+        assert!(
+            !manifest_bytes_ptr.is_null(),
+            "Manifest bytes should be returned"
+        );
+
+        let manifest_size = result as usize;
+
+        // Now test c2pa_reader_from_manifest_data_and_stream
+        // Reset the source stream for validation
+        let mut validation_stream = TestStream::new(source_image.to_vec());
+
+        let reader = unsafe {
+            c2pa_reader_from_manifest_data_and_stream(
+                format.as_ptr(),
+                validation_stream.as_ptr(),
+                manifest_bytes_ptr,
+                manifest_size,
+            )
+        };
+
+        assert!(
+            !reader.is_null(),
+            "Reader should be created from manifest data and stream"
+        );
+
+        // Verify we can get JSON from the reader
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null(), "Should be able to get JSON from reader");
+
+        // Clean up
+        unsafe {
+            c2pa_free(json as *const c_void);
+            c2pa_free(reader as *const c_void);
+            c2pa_free(manifest_bytes_ptr as *const c_void);
+            c2pa_free(builder as *const c_void);
+            c2pa_free(signer as *const c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_reader_from_manifest_data_and_stream_null_format() {
+        let source_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let mut stream = TestStream::new(source_image.to_vec());
+        let manifest_data = [0u8; 100];
+
+        let reader = unsafe {
+            c2pa_reader_from_manifest_data_and_stream(
+                std::ptr::null(),
+                stream.as_ptr(),
+                manifest_data.as_ptr(),
+                manifest_data.len(),
+            )
+        };
+
+        assert!(reader.is_null(), "Reader should be null for null format");
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: format");
+    }
+
+    #[test]
+    fn test_c2pa_reader_resource_to_stream() {
+        // Use an existing fixture with C2PA data
+        let source_image = include_bytes!(fixture_path!("C.jpg"));
+        let mut stream = TestStream::new(source_image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
+        assert!(
+            !reader.is_null(),
+            "Reader should be created from C2PA image"
+        );
+
+        // Try to get a resource (use a generic URI pattern)
+        let resource_uri =
+            CString::new("self#jumbf=c2pa.assertions/c2pa.thumbnail.claim.jpeg").unwrap();
+        let mut output_stream = TestStream::new(Vec::new());
+
+        let result = unsafe {
+            c2pa_reader_resource_to_stream(reader, resource_uri.as_ptr(), output_stream.as_ptr())
+        };
+
+        // Result can be 0 if resource doesn't exist (which is fine)
+        // or positive if resource was written. Either is valid.
+        assert!(result >= 0, "resource_to_stream should return >= 0");
+
+        // Clean up
+        unsafe {
+            c2pa_free(reader as *const c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_reader_resource_to_stream_null_reader() {
+        let resource_uri = CString::new("some_uri").unwrap();
+        let mut output_stream = TestStream::new(Vec::new());
+
+        let result = unsafe {
+            c2pa_reader_resource_to_stream(
+                std::ptr::null_mut(),
+                resource_uri.as_ptr(),
+                output_stream.as_ptr(),
+            )
+        };
+
+        assert_eq!(
+            result, -1,
+            "resource_to_stream should return -1 for null reader"
+        );
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: reader_ptr");
+    }
+
+    #[test]
+    fn test_c2pa_reader_resource_to_stream_null_uri() {
+        // Use an existing fixture with C2PA data
+        let source_image = include_bytes!(fixture_path!("C.jpg"));
+        let mut stream = TestStream::new(source_image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
+        assert!(!reader.is_null());
+
+        let mut output_stream = TestStream::new(Vec::new());
+
+        let result = unsafe {
+            c2pa_reader_resource_to_stream(reader, std::ptr::null(), output_stream.as_ptr())
+        };
+
+        assert_eq!(
+            result, -1,
+            "resource_to_stream should return -1 for null uri"
+        );
+
+        // Clean up
+        unsafe {
+            c2pa_free(reader as *const c_void);
         }
     }
 }
