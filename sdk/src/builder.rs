@@ -1275,7 +1275,8 @@ impl Builder {
                 definition.vendor.as_deref(),
                 self.claim_version().into(),
             ),
-        };
+        }
+        .with_context(self.context.clone());
 
         // add claim generator info to claim and resolve icons
         for info in &claim_generator_info {
