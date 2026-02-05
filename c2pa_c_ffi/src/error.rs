@@ -333,21 +333,40 @@ mod tests {
     }
 
     #[test]
+    fn test_cimpl_null_parameter_maps_to_c2pa_null_parameter() {
+        let cimpl_err = CimplError::null_parameter("my_param");
+        let c2pa_err: C2paError = cimpl_err.into();
+        assert!(
+            matches!(c2pa_err, C2paError::NullParameter(_)),
+            "Expected NullParameter, got: {:?}",
+            c2pa_err
+        );
+    }
+
+    #[test]
     fn test_cimpl_infrastructure_errors_map_to_other() {
         // StringTooLong (code 2)
         let err: C2paError = CimplError::string_too_long("param").into();
         assert!(matches!(err, C2paError::Other(_)));
 
-        // InvalidHandle (code 3)
-        let err: C2paError = CimplError::invalid_handle(123).into();
+        // UntrackedPointer (code 3)
+        let err: C2paError = CimplError::untracked_pointer(123).into();
         assert!(matches!(err, C2paError::Other(_)));
 
-        // WrongHandleType (code 4)
-        let err: C2paError = CimplError::wrong_handle_type(456).into();
+        // WrongPointerType (code 4)
+        let err: C2paError = CimplError::wrong_pointer_type(456).into();
         assert!(matches!(err, C2paError::Other(_)));
 
         // Other (code 5)
         let err: C2paError = CimplError::other("generic error").into();
+        assert!(matches!(err, C2paError::Other(_)));
+
+        // MutexPoisoned (code 6)
+        let err: C2paError = CimplError::mutex_poisoned().into();
+        assert!(matches!(err, C2paError::Other(_)));
+
+        // InvalidBufferSize (code 7)
+        let err: C2paError = CimplError::invalid_buffer_size(999, "data").into();
         assert!(matches!(err, C2paError::Other(_)));
     }
 }

@@ -98,12 +98,20 @@ impl CimplError {
         Self::new(2, format!("StringTooLong: {}", param.into()))
     }
 
-    pub fn invalid_handle(id: u64) -> Self {
-        Self::new(3, format!("InvalidHandle: {}", id))
+    pub fn untracked_pointer(ptr: u64) -> Self {
+        Self::new(3, format!("UntrackedPointer: 0x{:x}", ptr))
     }
 
-    pub fn wrong_handle_type(id: u64) -> Self {
-        Self::new(4, format!("WrongHandleType: {}", id))
+    pub fn wrong_pointer_type(ptr: u64) -> Self {
+        Self::new(4, format!("WrongPointerType: 0x{:x}", ptr))
+    }
+
+    pub fn mutex_poisoned() -> Self {
+        Self::new(6, "MutexPoisoned: thread panic detected".to_string())
+    }
+
+    pub fn invalid_buffer_size(size: usize, param: &str) -> Self {
+        Self::new(7, format!("InvalidBufferSize: {} for '{}'", size, param))
     }
 
     pub fn other<S: Into<String>>(msg: S) -> Self {
