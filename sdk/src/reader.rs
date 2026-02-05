@@ -25,7 +25,6 @@ use std::{
 use async_generic::async_generic;
 use async_trait::async_trait;
 #[cfg(feature = "json_schema")]
-//use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
@@ -89,7 +88,11 @@ pub trait AsyncPostValidator {
 /// Use a Reader to read and validate a manifest store.
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize)]
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema), schemars(default))]
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(default)
+)]
 #[derive(Default)]
 pub struct Reader {
     /// A label for the active (most recent) manifest in the store
