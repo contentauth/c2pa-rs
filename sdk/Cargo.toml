@@ -50,17 +50,11 @@ rust_native_crypto = [
 ]
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364
-# Enables default http features for sync and async http resolvers.
 default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
-# Enable `reqwest` sync http resolver, not supported on WASM/WASI.
 http_reqwest_blocking = ["dep:reqwest", "reqwest/blocking"]
-# Enable `ureq` sync http resolver, not supported on WASM/WASI.
 http_ureq = ["dep:ureq"]
-# Enable `wasi` sync http resolver, only supported on WASI.
 http_wasi = ["dep:wasi"]
-# Enable `wstd` async http resolver, only supported on WASI.
 http_wstd = ["dep:wstd"]
-# Enable `reqwest` async http resolver, not supported on WASI.
 http_reqwest = ["dep:reqwest"]
 
 # The diagnostics feature is unsupported and might be removed.
@@ -103,11 +97,11 @@ async-trait = "0.1.78"
 atree = "0.5.2"
 base64 = "0.22.1"
 bcder = "0.7.3"
-bytes = "1.7.2"
+bytes = "1.11.1"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
-c2pa_cbor = "0.77.1"
+c2pa_cbor = "0.77.2"
 config = { version = "0.14.0", default-features = false, features = [
     "json",
     "toml",
@@ -289,7 +283,7 @@ zip = { version = "7.0.0", default-features = false }
 anyhow = "1.0.97"
 glob = "0.3.1"
 hex-literal = "1.0.0"
-jumbf = "0.4.0"
+jumbf = "0.7.0"
 c2pa_macros = { path = "../macros" }
 mockall = "0.14.0"
 

@@ -289,7 +289,7 @@ pub(crate) mod jumbf;
 pub(crate) mod manifest;
 pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store_report;
-/// The maybe_send_sync module contains traits for conditional Send bounds based on target architecture.
+/// The `maybe_send_sync` module contains traits for conditional Send bounds based on target architecture.
 pub(crate) mod maybe_send_sync;
 pub(crate) mod reader;
 pub(crate) mod resource_store;

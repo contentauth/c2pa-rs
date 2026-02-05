@@ -46,7 +46,7 @@ use crate::{
     utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
     validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
-    Ingredient, Manifest, ManifestAssertion, Relationship,
+    Ingredient, Manifest, ManifestAssertion,
 };
 
 /// MaybeSend allows for no Send bound on wasm32 targets
@@ -1302,62 +1302,13 @@ impl Reader {
     /// Returns an [`Error`] if there is no parent ingredient.
     pub(crate) fn to_ingredient(&self) -> Result<Ingredient> {
         // make a copy of the parent ingredient (or return an error if not found)
-        let mut ingredient = self
+        let ingredient = self
             .active_manifest()
-            .and_then(|m| {
-                m.ingredients()
-                    .iter()
-                    .find(|&i| *i.relationship() == Relationship::ParentOf)
-            })
+            .and_then(|m| m.ingredients().first())
             .ok_or_else(|| Error::IngredientNotFound)?
             .to_owned();
 
-        // now we need to rebuild the manifest data for the ingredient
-        // strip out the active manifest claim from the store before adding it to the ingredient
-        // We only care about the ingredient and any claims it references
-        if let Some(active_label) = ingredient.active_manifest() {
-            let claim = self
-                .store
-                .get_claim(active_label)
-                .ok_or_else(|| Error::ClaimMissing {
-                    label: active_label.to_string(),
-                })?;
-
-            // build a new store with just the ingredient claim and any referenced claims
-            let ingredient_store = {
-                let mut store = Store::new();
-                let mut active_claim = claim.clone();
-
-                // Recursively collect all ingredient claims and add them to primary_claim
-                let mut visited = std::collections::HashSet::new();
-                let mut path = Vec::new();
-                self.collect_ingredient_claims_recursive(
-                    claim,
-                    &mut active_claim,
-                    &mut visited,
-                    &mut path,
-                )?;
-
-                // Add the main claim last
-                store.commit_claim(active_claim)?;
-                store
-            };
-            let c2pa_data = ingredient_store.to_jumbf_internal(0)?;
-            ingredient.set_manifest_data(c2pa_data)?;
-        }
-
         Ok(ingredient)
-    }
-
-    /// Recursively collect all ingredient claims and add them to the primary claim
-    fn collect_ingredient_claims_recursive(
-        &self,
-        claim: &Claim,
-        active_claim: &mut Claim,
-        visited: &mut std::collections::HashSet<String>,
-        path: &mut Vec<String>,
-    ) -> Result<()> {
-        Self::collect_ingredient_claims_impl(&self.store, claim, active_claim, visited, path)
     }
 }
 
