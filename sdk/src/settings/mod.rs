@@ -48,8 +48,7 @@ pub(crate) trait SettingsValidate {
 }
 
 /// Settings to configure the trust list.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
-#[cfg_attr(feature = "json_schema", schemars(default))]
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema), schemars(default))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Trust {
     /// Whether to verify certificates against the trust lists specified in [`Trust`]. This
@@ -189,8 +188,7 @@ impl SettingsValidate for Trust {
 }
 
 /// Settings to configure core features.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
-#[cfg_attr(feature = "json_schema", schemars(default))]
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema), schemars(default))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Core {
     /// Size of the [`BmffHash`] merkle tree chunks in kilobytes.
@@ -290,8 +288,7 @@ impl SettingsValidate for Core {
 }
 
 /// Settings to configure the verification process.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
-#[cfg_attr(feature = "json_schema", schemars(default))]
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema), schemars(default))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Verify {
     /// Whether to verify the manifest after reading in the [`Reader`].
@@ -391,8 +388,7 @@ impl SettingsValidate for Verify {}
 ///
 /// [Settings::default] will be set thread-locally by default. Any settings set via
 /// [Settings::from_toml] or [Settings::from_file] will also be thread-local.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
-#[cfg_attr(feature = "json_schema", schemars(default))]
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema), schemars(default))]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Settings {
     /// Version of the configuration.
