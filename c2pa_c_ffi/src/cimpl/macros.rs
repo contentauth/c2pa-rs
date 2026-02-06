@@ -350,11 +350,11 @@ macro_rules! arc_tracked {
 }
 
 /// Maximum length for C strings when using bounded conversion (64KB)
-pub const MAX_CSTRING_LEN: usize = 65536;
+pub const MAX_CSTRING_LEN: usize = 1048576;
 
 /// Convert C string with bounded length check or early-return with error value
 /// Uses a safe bounded approach to prevent reading unbounded memory.
-/// Maximum string length is MAX_CSTRING_LEN (64KB).
+/// Maximum string length is MAX_CSTRING_LEN (1MB).
 #[macro_export]
 macro_rules! cstr_or_return {
     ($ptr:expr, $err_val:expr) => {{
