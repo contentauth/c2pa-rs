@@ -29,9 +29,12 @@ use serde_with::skip_serializing_none;
 use x509_parser::{certificate::X509Certificate, prelude::FromDer};
 
 use crate::{
+    assertion::AssertionData,
+    claim::Claim,
     context::Context,
     crypto::base64,
     error::{Error, Result},
+    jumbf::labels::to_absolute_uri,
     reader::{AsyncPostValidator, MaybeSend, PostValidator, Reader},
     utils::hash_utils::hash_stream_by_alg,
     validation_results::ValidationState,
@@ -480,6 +483,52 @@ impl JpegTrustReader {
                 };
                 
                 assertions_obj.insert(label, fixed_ingredient);
+            }
+        }
+
+        // Add gathered assertions (e.g. c2pa.icon) that are not in manifest.assertions().
+        // Manifest::from_store skips binary assertions like icon (AssertionData::Binary => {}),
+        // so they must be added from the claim's gathered_assertions for JPEG Trust output.
+        if let Some(claim) = self.inner.store.get_claim(manifest_label) {
+            if let Some(gathered) = claim.gathered_assertions() {
+                for assertion_ref in gathered {
+                    let (label, instance) = Claim::assertion_label_from_link(&assertion_ref.url());
+                    let final_label = if instance > 0 {
+                        format!("{}_{}", label, instance + 1)
+                    } else {
+                        label.clone()
+                    };
+                    if assertions_obj.contains_key(&final_label) {
+                        continue;
+                    }
+                    if let Some(claim_assertion) = claim.get_claim_assertion(&label, instance) {
+                        let assertion = claim_assertion.assertion();
+                        // Binary/Uuid assertions (e.g. c2pa.icon EmbeddedData): emit format, identifier, hash
+                        // instead of raw bytes so the output is usable and matches claim_generator_info icon refs
+                        let use_ref_format = matches!(
+                            assertion.decode_data(),
+                            AssertionData::Binary(_) | AssertionData::Uuid(_, _)
+                        );
+                        if use_ref_format {
+                            let absolute_uri =
+                                to_absolute_uri(manifest_label, &assertion_ref.url());
+                            let mut ref_obj = Map::new();
+                            ref_obj.insert(
+                                "format".to_string(),
+                                json!(assertion.content_type()),
+                            );
+                            ref_obj.insert("identifier".to_string(), json!(absolute_uri));
+                            ref_obj.insert(
+                                "hash".to_string(),
+                                json!(base64::encode(&assertion_ref.hash())),
+                            );
+                            assertions_obj.insert(final_label, Value::Object(ref_obj));
+                        } else if let Ok(assertion_obj) = assertion.as_json_object() {
+                            let fixed_value = Self::fix_hash_encoding(assertion_obj);
+                            assertions_obj.insert(final_label, fixed_value);
+                        }
+                    }
+                }
             }
         }
 
