@@ -371,9 +371,11 @@ impl JpegTrustReader {
         })
     }
 
-    /// Convert manifests from HashMap to Array format
+    /// Convert manifests from HashMap to Array format.
+    /// The first element is always the active manifest (if any); the rest are in deterministic order.
     fn convert_manifests_to_array(&self) -> Result<Value> {
-        let mut manifests_array = Vec::new();
+        let active_label = self.inner.active_label();
+        let mut labeled: Vec<(String, Value)> = Vec::new();
 
         for (label, manifest) in self.inner.manifests() {
             let mut manifest_obj = Map::new();
@@ -397,9 +399,21 @@ impl JpegTrustReader {
                 manifest_obj.insert("status".to_string(), status);
             }
 
-            manifests_array.push(Value::Object(manifest_obj));
+            labeled.push((label.clone(), Value::Object(manifest_obj)));
         }
 
+        // Order: active manifest first, then others in stable (label) order
+        labeled.sort_by(|a, b| {
+            let a_active = active_label.map_or(false, |l| l == a.0);
+            let b_active = active_label.map_or(false, |l| l == b.0);
+            match (a_active, b_active) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.0.cmp(&b.0),
+            }
+        });
+
+        let manifests_array = labeled.into_iter().map(|(_, v)| v).collect();
         Ok(Value::Array(manifests_array))
     }
 
