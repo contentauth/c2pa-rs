@@ -90,8 +90,6 @@ pub trait AsyncPostValidator {
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema), schemars(default))]
-//#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-//#[cfg_attr(feature = "json_schema", schemars(default))]
 #[derive(Default)]
 pub struct Reader {
     /// A label for the active (most recent) manifest in the store
