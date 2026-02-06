@@ -2442,6 +2442,8 @@ impl Store {
     /// the Signer you plan to use.  This function is not needed when using Box Hash. This function is used
     /// in conjunction with `get_data_hashed_embeddable_manifest`.  The manifest returned
     /// from `get_data_hashed_embeddable_manifest` will have a size that matches this function.
+    /// Note: This function does not support dynamic assertions. Use `get_placeholder`
+    /// if you need dynamic assertion support.
     pub fn get_data_hashed_manifest_placeholder(
         &mut self,
         reserve_size: usize,
@@ -2468,6 +2470,42 @@ impl Store {
         let composed = Self::get_composed_manifest(&jumbf_bytes, format)?;
 
         Ok(composed)
+    }
+
+    /// This function is used to get a placeholder manifest with dynamic assertion support.
+    /// The placeholder is then injected into the asset before calculating hashes.
+    /// Unlike [`data_hashed_placeholder`], this function supports dynamic assertions
+    /// (e.g., CAWG identity assertions) by accepting a signer.
+    ///
+    /// # Arguments
+    /// * `context` - The context to use.
+    /// # Returns
+    /// * The bytes of the `c2pa_manifest` placeholder.
+    /// # Errors
+    /// * Returns an [`Error`] if the placeholder cannot be created.
+    pub fn get_placeholder(&mut self, context: &Context) -> Result<Vec<u8>> {
+        let signer = context.signer()?;
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+        // if user did not supply a hash
+        if pc.hash_assertions().is_empty() {
+            // create placeholder DataHash large enough for 10 Exclusions
+            let mut ph = DataHash::new("jumbf manifest", pc.alg());
+            for _ in 0..10 {
+                ph.add_exclusion(HashRange::new(0u64, 2u64));
+            }
+            let data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+            let mut stream = Cursor::new(data);
+            ph.gen_hash_from_stream(&mut stream)?;
+
+            pc.add_assertion(&ph)?;
+        }
+
+        // add dynamic assertions to the store
+        let dynamic_assertions = signer.dynamic_assertions();
+        let _da_uris = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+
+        self.to_jumbf_internal(signer.reserve_size())
     }
 
     fn prep_embeddable_store(
@@ -2545,6 +2583,38 @@ impl Store {
         let mut jumbf_bytes =
             self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
 
+        // Write dynamic assertions only if placeholders were added during placeholder generation.
+        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
+        // weren't added and we should skip writing to avoid size mismatches.
+        let dynamic_assertions = signer.dynamic_assertions();
+        if !dynamic_assertions.is_empty() {
+            // Check if placeholders exist for these dynamic assertions
+            let has_placeholders = {
+                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                dynamic_assertions
+                    .iter()
+                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
+            };
+
+            if has_placeholders {
+                let mut preliminary_claim = PartialClaim::default();
+                {
+                    let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                    for assertion in pc.assertions() {
+                        preliminary_claim.add_assertion(assertion);
+                    }
+                }
+
+                let modified =
+                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+
+                // Regenerate JUMBF if dynamic assertions were written
+                if modified {
+                    jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+                }
+            }
+        }
+
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
@@ -2575,6 +2645,39 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let mut jumbf_bytes =
             self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
+
+        // Write dynamic assertions only if placeholders were added during placeholder generation.
+        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
+        // weren't added and we should skip writing to avoid size mismatches.
+        let dynamic_assertions = signer.dynamic_assertions();
+        if !dynamic_assertions.is_empty() {
+            // Check if placeholders exist for these dynamic assertions
+            let has_placeholders = {
+                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                dynamic_assertions
+                    .iter()
+                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
+            };
+
+            if has_placeholders {
+                let mut preliminary_claim = PartialClaim::default();
+                {
+                    let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                    for assertion in pc.assertions() {
+                        preliminary_claim.add_assertion(assertion);
+                    }
+                }
+
+                let modified = self
+                    .write_dynamic_assertions_async(&dynamic_assertions, &mut preliminary_claim)
+                    .await?;
+
+                // Regenerate JUMBF if dynamic assertions were written
+                if modified {
+                    jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+                }
+            }
+        }
 
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
@@ -2704,17 +2807,17 @@ impl Store {
     }
 
     /// Write the dynamic assertions to the manifest.
+    /// Note: This assumes each dynamic assertion label is unique (no instance suffixes).
+    /// Multiple dynamic assertions with different labels are supported.
     #[async_generic(async_signature(
         &mut self,
         dyn_assertions: &[Box<dyn AsyncDynamicAssertion>],
-        dyn_uris: &[HashedUri],
         preliminary_claim: &mut PartialClaim,
     ))]
     #[allow(unused_variables)]
     fn write_dynamic_assertions(
         &mut self,
         dyn_assertions: &[Box<dyn DynamicAssertion>],
-        dyn_uris: &[HashedUri],
         preliminary_claim: &mut PartialClaim,
     ) -> Result<bool> {
         if dyn_assertions.is_empty() {
@@ -2723,9 +2826,10 @@ impl Store {
 
         let mut final_assertions = Vec::new();
 
-        for (da, uri) in dyn_assertions.iter().zip(dyn_uris.iter()) {
-            let label = crate::jumbf::labels::assertion_label_from_uri(&uri.url())
-                .ok_or(Error::BadParam("write_dynamic_assertions".to_string()))?;
+        for da in dyn_assertions.iter() {
+            // Use the dynamic assertion's label directly.
+            // This assumes each dynamic assertion label is unique (no instance suffixes needed).
+            let label = da.label();
 
             let da_size = da.reserve_size()?;
             let da_data = if _sync {
@@ -2855,7 +2959,7 @@ impl Store {
 
         // add dynamic assertions to the store
         let dynamic_assertions = signer.dynamic_assertions();
-        let da_uris = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+        let _ = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
 
         // get temp store as JUMBF
         let jumbf = self.to_jumbf(signer)?;
@@ -2880,11 +2984,8 @@ impl Store {
         }
 
         // Now add the dynamic assertions and update the JUMBF.
-        let modified = temp_store.write_dynamic_assertions(
-            &dynamic_assertions,
-            &da_uris,
-            &mut preliminary_claim,
-        )?;
+        let modified =
+            temp_store.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
 
         // update the JUMBF if modified with dynamic assertions
         if modified {
@@ -2956,12 +3057,13 @@ impl Store {
         let settings = context.settings();
         let dynamic_assertions = signer.dynamic_assertions();
 
-        let da_uris = if _sync {
-            self.add_dynamic_assertion_placeholders(&dynamic_assertions)?
+        // Add dynamic assertion placeholders (URIs no longer needed, we use da.label() directly)
+        if _sync {
+            self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
         } else {
             self.add_dynamic_assertion_placeholders_async(&dynamic_assertions)
-                .await?
-        };
+                .await?;
+        }
 
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
@@ -2986,14 +3088,10 @@ impl Store {
 
         // Now add the dynamic assertions and update the JUMBF.
         let modified = if _sync {
-            self.write_dynamic_assertions(&dynamic_assertions, &da_uris, &mut preliminary_claim)
+            self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)
         } else {
-            self.write_dynamic_assertions_async(
-                &dynamic_assertions,
-                &da_uris,
-                &mut preliminary_claim,
-            )
-            .await
+            self.write_dynamic_assertions_async(&dynamic_assertions, &mut preliminary_claim)
+                .await
         }?;
         // update the JUMBF if modified with dynamic assertions
         if modified {

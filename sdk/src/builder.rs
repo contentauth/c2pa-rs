@@ -1896,6 +1896,8 @@ impl Builder {
     /// Create a placeholder for a hashed data manifest.
     ///
     /// This is only used for applications doing their own data_hashed asset management.
+    /// This function does not support dynamic assertions (e.g., CAWG identity).
+    /// Use [`placeholder`] if you need dynamic assertion support.
     ///
     /// # Arguments
     /// * `reserve_size` - The size to reserve for the signature (taken from the signer).
@@ -1909,6 +1911,7 @@ impl Builder {
         reserve_size: usize,
         format: &str,
     ) -> Result<Vec<u8>> {
+        // Add DataHash to builder's definition if not present, so it persists for sign_data_hashed_embeddable
         let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
         if dh.is_err() {
             let mut ph = DataHash::new("jumbf manifest", "sha256");
@@ -1922,6 +1925,21 @@ impl Builder {
         let mut store = self.to_store()?;
         let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
         Ok(placeholder)
+    }
+
+    /// Create a placeholder manifest with dynamic assertion support.
+    ///
+    /// This returns raw JUMBF bytes for the placeholder manifest.
+    /// Use [`Builder::composed_manifest`] to compose for a specific format if needed.
+    /// The signer is obtained from the Builder's context.
+    ///
+    /// # Returns
+    /// * The raw JUMBF bytes of the `c2pa_manifest` placeholder.
+    /// # Errors
+    /// * Returns an [`Error`] if the placeholder cannot be created.
+    pub fn placeholder(&self) -> Result<Vec<u8>> {
+        let mut store = self.to_store()?;
+        store.get_placeholder(self.context())
     }
 
     /// Create a signed data hashed embeddable manifest using a supplied signer.
