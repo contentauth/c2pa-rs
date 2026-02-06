@@ -1240,8 +1240,8 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                     box_type: BoxType::UuidBox,
                     parent: Some(*current_node),
                     user_type: Some(extended_type.to_vec()),
-                    version: version,
-                    flags: flags,
+                    version,
+                    flags,
                 };
 
                 let new_token = current_node.append(bmff_tree, b);
@@ -2291,7 +2291,7 @@ impl RemoteRefEmbed for BmffIO {
                 let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
 
                 let xmp = match &c2pa_boxes.xmp {
-                    Some(xmp) => add_provenance(&xmp, &manifest_uri)?,
+                    Some(xmp) => add_provenance(xmp, &manifest_uri)?,
                     None => {
                         let xmp = MIN_XMP.to_string();
                         add_provenance(&xmp, &manifest_uri)?
