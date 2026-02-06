@@ -20,6 +20,8 @@ mod ecdsa_signer;
 mod ed25519_signer;
 mod rsa_signer;
 
+mod remote_signer;
+
 /// Return a built-in [`RawSigner`] instance using the provided signing
 /// certificate and private key.
 ///
@@ -61,4 +63,20 @@ pub(crate) fn signer_from_cert_chain_and_private_key(
             )?,
         )),
     }
+}
+
+pub(crate) fn signer_from_cert_chain_and_url(
+    cert_chain: &[u8],
+    url: url::Url,
+    alg: SigningAlg,
+    time_stamp_service_url: Option<String>,
+) -> Result<Box<dyn RawSigner + Send + Sync>, RawSignerError> {
+    Ok(Box::new(
+        remote_signer::RemoteRawSigner::from_cert_chain_and_url(
+            cert_chain,
+            url,
+            alg,
+            time_stamp_service_url,
+        )?,
+    ))
 }

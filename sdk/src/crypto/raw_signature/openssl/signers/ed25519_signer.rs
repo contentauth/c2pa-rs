@@ -19,7 +19,10 @@ use openssl::{
 
 use crate::crypto::{
     raw_signature::{
-        openssl::{cert_chain::check_chain_order, OpenSslMutex},
+        openssl::{
+            cert_chain::{cert_chain_to_der, check_chain_order},
+            OpenSslMutex,
+        },
         RawSigner, RawSignerError, SigningAlg,
     },
     time_stamp::TimeStampProvider,
@@ -54,16 +57,7 @@ impl Ed25519Signer {
         }
 
         // certs in DER format
-        let cert_chain = cert_chain
-            .iter()
-            .map(|cert| {
-                cert.to_der().map_err(|_| {
-                    RawSignerError::CryptoLibraryError(
-                        "could not encode certificate to DER".to_string(),
-                    )
-                })
-            })
-            .collect::<Result<Vec<_>, RawSignerError>>()?;
+        let cert_chain = cert_chain_to_der!(cert_chain)?;
 
         // get the actual length of the certificate chain
         let cert_chain_len = cert_chain.iter().fold(0usize, |sum, c| sum + c.len());

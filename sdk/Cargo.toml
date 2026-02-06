@@ -48,6 +48,10 @@ rust_native_crypto = [
     "dep:rsa",
     "dep:spki",
 ]
+remote_signing = [
+    "openssl",
+    "dep:reqwest",
+]
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364
 default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]

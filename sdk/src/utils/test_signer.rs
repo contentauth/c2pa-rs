@@ -14,6 +14,7 @@
 #![allow(clippy::unwrap_used)] // This mod is only used in test code.
 
 use async_trait::async_trait;
+use httpmock::{HttpMockRequest, HttpMockResponse};
 
 use crate::{
     crypto::raw_signature::{
@@ -21,7 +22,7 @@ use crate::{
         AsyncRawSigner, SigningAlg,
     },
     signer::{BoxedAsyncSigner, BoxedSigner, RawSignerWrapper},
-    AsyncSigner, Result,
+    AsyncSigner, Result, Signer,
 };
 
 /// Creates a [`Signer`] instance for testing purposes using test credentials.
@@ -106,6 +107,34 @@ pub(crate) fn cert_chain_and_private_key_for_alg(
             include_bytes!("../../tests/fixtures/certs/ed25519.pem"),
         ),
     }
+}
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn remote_signer_mock_server<'a>(
+    server: &'a httpmock::MockServer,
+    signed_bytes: &[u8],
+) -> httpmock::Mock<'a> {
+    server.mock(|when, then| {
+        when.method(httpmock::Method::POST);
+        then.status(200).body(signed_bytes);
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn remote_signer_respond_with_signature(
+    server: &'_ httpmock::MockServer,
+    signer: BoxedSigner,
+) -> httpmock::Mock<'_> {
+    server.mock(|when, then| {
+        when.path("/").method(httpmock::Method::POST);
+        then.respond_with(move |req: &HttpMockRequest| {
+            let signature = signer.sign(req.body_ref()).unwrap();
+            HttpMockResponse::builder()
+                .status(200)
+                .header("content-type", "application/octet-stream")
+                .body(signature)
+                .build()
+        });
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]

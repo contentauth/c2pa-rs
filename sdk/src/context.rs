@@ -187,11 +187,11 @@ impl Default for Context {
             settings: Settings::default(),
             sync_resolver: SyncResolverState::Default(OnceLock::new()),
             async_resolver: AsyncResolverState::Default(OnceLock::new()),
-            #[cfg(test)]
+            #[cfg(all(test, not(feature = "remote_signing")))]
             signer: SignerState::Custom(crate::utils::test_signer::test_signer(
                 crate::SigningAlg::Ps256,
             )),
-            #[cfg(not(test))]
+            #[cfg(any(not(test), feature = "remote_signing"))]
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
         }
