@@ -796,12 +796,6 @@ macro_rules! cimpl_free {
 #[macro_export]
 macro_rules! vec_to_tracked_ptr {
     ($vec:expr) => {{
-        let vec = $vec;
-        if vec.is_empty() {
-            std::ptr::null()
-        } else {
-            let ptr = Box::into_raw(vec.into_boxed_slice()) as *const std::os::raw::c_uchar;
-            $crate::track_box(ptr as *mut std::os::raw::c_uchar) as *const std::os::raw::c_uchar
-        }
+        $crate::to_c_bytes($vec)
     }};
 }
