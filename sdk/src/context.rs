@@ -100,9 +100,9 @@ impl IntoSettings for serde_json::Value {
 ///
 /// Context replaces the global Settings pattern with a more flexible, thread-safe approach.
 /// It encapsulates:
-/// - **Settings**: Configuration options for C2PA operations
-/// - **HTTP Resolvers**: Customizable sync and async HTTP resolvers for fetching remote manifests
-/// - **Signer**: The cryptographic signer used to sign manifests
+/// - **Settings**: Configuration options for C2PA operations.
+/// - **HTTP Resolvers**: Customizable sync and async HTTP resolvers for fetching remote manifests.
+/// - **Signer**: The cryptographic signer used to sign manifests.
 ///
 /// # Creating a Signer
 ///
@@ -135,7 +135,9 @@ impl IntoSettings for serde_json::Value {
 /// 2. **Custom Signer**: Use [`with_signer()`](Context::with_signer) to provide a custom signer
 ///    directly. This is useful for HSMs, remote signing services, or custom signing logic.
 ///
-/// # Usage with Builder and Reader
+/// # Examples
+///
+/// ## Usage with Builder and Reader
 ///
 /// Both [`Builder`](crate::Builder) and [`Reader`](crate::Reader) can be created with a Context:
 ///
@@ -155,8 +157,6 @@ impl IntoSettings for serde_json::Value {
 /// # }
 /// ```
 ///
-/// # Examples
-///
 /// ## Basic usage with default settings
 ///
 /// ```
@@ -170,20 +170,6 @@ impl IntoSettings for serde_json::Value {
 /// # use c2pa::{Context, Result};
 /// # fn main() -> Result<()> {
 /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## Configure with TOML settings
-///
-/// ```
-/// # use c2pa::{Context, Result};
-/// # fn main() -> Result<()> {
-/// let toml = r#"
-///     [verify]
-///     verify_after_sign = true
-/// "#;
-/// let context = Context::new().with_settings(toml)?;
 /// # Ok(())
 /// # }
 /// ```
