@@ -629,9 +629,18 @@ impl JpegTrustReader {
         // Add instanceID
         claim_v2.insert("instanceID".to_string(), json!(manifest.instance_id()));
 
-        // Add claim_generator
+        // Add claim_generator (string, e.g. for V1)
         if let Some(claim_generator) = manifest.claim_generator() {
             claim_v2.insert("claim_generator".to_string(), json!(claim_generator));
+        }
+
+        // Add claim_generator_info (full info including name, version, icon) when present.
+        // This ensures icons and other generator details are exported to JPEG Trust format.
+        if let Some(ref info_vec) = manifest.claim_generator_info {
+            if let Ok(info_value) = serde_json::to_value(info_vec) {
+                let fixed_info = Self::fix_hash_encoding(info_value);
+                claim_v2.insert("claim_generator_info".to_string(), fixed_info);
+            }
         }
 
         // Add algorithm (from data hash assertion if available)
