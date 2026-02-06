@@ -36,7 +36,7 @@ use crate::{
     cstr_or_return_int, cstr_or_return_null, deref_mut_or_return, deref_mut_or_return_int,
     deref_mut_or_return_null, deref_or_return_int, deref_or_return_null, error::Error,
     ok_or_return_int, ok_or_return_null, option_to_c_string, ptr_or_return_int,
-    signer_info::SignerInfo, to_c_string, to_c_bytes, CimplError,
+    signer_info::SignerInfo, to_c_bytes, to_c_string, CimplError,
 };
 
 /// Validates that a buffer size is within safe bounds and doesn't cause integer overflow
