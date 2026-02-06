@@ -19,12 +19,16 @@ use c2pa::{JpegTrustReader, Result};
 
 #[cfg(feature = "file_io")]
 fn main() -> Result<()> {
+    let path = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "tests/fixtures/CA.jpg".to_string());
+
     // Create a JpegTrustReader from a file
-    let mut reader = JpegTrustReader::from_file("tests/fixtures/CA.jpg")?;
+    let mut reader = JpegTrustReader::from_file(&path)?;
 
     // Compute the asset hash to include asset_info in the output
-    println!("Computing asset hash...");
-    let hash = reader.compute_asset_hash_from_file("tests/fixtures/CA.jpg")?;
+    println!("Computing asset hash for {}...", path);
+    let hash = reader.compute_asset_hash_from_file(&path)?;
     println!("Asset hash: {}\n", hash);
 
     // Get the JPEG Trust format JSON

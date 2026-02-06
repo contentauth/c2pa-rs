@@ -1562,4 +1562,67 @@ mod tests {
 
         Ok(())
     }
+
+    /// Test that claim_generator_info (including icon) is exported to claim.v2 when present.
+    /// Uses an image produced by crTool with a claim generator icon.
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_claim_generator_info_with_icon_exported() -> Result<()> {
+        use std::path::Path;
+
+        let path = Path::new("/Users/lrosenth/Development/crTool/target/test_output/testset/p-actions-created-with-icon.jpg");
+        if !path.exists() {
+            eprintln!("Skipping test_claim_generator_info_with_icon_exported: fixture not found at {:?}", path);
+            return Ok(());
+        }
+
+        let reader = JpegTrustReader::from_file(path)?;
+        let json_value = reader.to_json_value()?;
+
+        let manifests = json_value["manifests"]
+            .as_array()
+            .expect("manifests should be an array");
+        let manifest = manifests
+            .first()
+            .expect("should have at least one manifest");
+
+        let claim_v2 = manifest
+            .get("claim.v2")
+            .expect("claim.v2 should be present");
+
+        let claim_generator_info = claim_v2
+            .get("claim_generator_info")
+            .expect("claim.v2 should include claim_generator_info when manifest has an icon");
+
+        let info_arr = claim_generator_info
+            .as_array()
+            .expect("claim_generator_info should be an array");
+        assert!(
+            !info_arr.is_empty(),
+            "claim_generator_info should have at least one entry"
+        );
+
+        // At least one entry should have an icon. Icon may be serialized as:
+        // - ResourceRef { format, identifier } (when resolved from HashedUri in reader), or
+        // - HashedUri { url, alg?, hash } with hash as base64 string (not byte array)
+        let has_icon = info_arr.iter().any(|entry| {
+            let icon = match entry.get("icon") {
+                Some(icon) => icon,
+                None => return false,
+            };
+            // If icon has "hash" (HashedUri), it must be a base64 string after fix_hash_encoding
+            if let Some(hash) = icon.get("hash") {
+                return hash.is_string();
+            }
+            // ResourceRef has format and identifier
+            icon.get("format").is_some() && icon.get("identifier").is_some()
+        });
+
+        assert!(
+            has_icon,
+            "claim_generator_info should include an entry with icon (ResourceRef or HashedUri with base64 hash)"
+        );
+
+        Ok(())
+    }
 }
