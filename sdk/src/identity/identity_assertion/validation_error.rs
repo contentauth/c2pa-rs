@@ -54,6 +54,18 @@ pub enum ValidationError<SignatureError> {
     #[error("invalid padding")]
     InvalidPadding,
 
+    /// The `expected_partial_claim` hash does not match the actual partial claim.
+    #[error("expected partial claim mismatch")]
+    ExpectedPartialClaimMismatch,
+
+    /// The `expected_claim_generator` hash does not match the actual claim generator.
+    #[error("expected claim generator mismatch")]
+    ExpectedClaimGeneratorMismatch,
+
+    /// One or more `expected_countersigners` were not found or did not match.
+    #[error("expected countersigner mismatch: {0}")]
+    ExpectedCountersignerMismatch(String),
+
     /// Signature-specific error.
     #[error(transparent)]
     SignatureError(#[from] SignatureError),
