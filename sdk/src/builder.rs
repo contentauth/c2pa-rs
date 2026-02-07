@@ -49,6 +49,11 @@ use crate::{
     AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
     Reader, Relationship, Signer,
 };
+#[cfg(feature = "self_signed_certs")]
+use crate::{
+    crypto::raw_signature::{signer_from_cert_chain_and_private_key, SigningAlg},
+    signer::RawSignerWrapper,
+};
 
 /// Version of the Builder Archive file
 const ARCHIVE_VERSION: &str = "1";
@@ -1176,7 +1181,7 @@ impl Builder {
             let mut no_verify_settings = self.context.settings().clone();
             no_verify_settings.verify.verify_after_reading = false;
 
-            let temp_context = Context::new().with_settings(no_verify_settings)?;
+            let temp_context = Arc::new(Context::new().with_settings(no_verify_settings)?);
 
             // Load the store without verification to avoid CBOR parsing errors on placeholder signatures
             let store = Store::from_stream(
@@ -1186,10 +1191,15 @@ impl Builder {
                 &temp_context,
             )?;
 
-            // Now use the user's original context for the Reader and Builder
-            let mut reader = Reader::from_shared_context(&self.context);
+            // Use the no-verify context to avoid validating archive signatures,
+            // then restore the caller's context on the resulting `Builder`.
+            let mut reader = Reader::from_shared_context(&temp_context);
             reader.with_store(store, &mut validation_log)?;
-            reader.into_builder()
+
+            let mut builder = reader.into_builder()?;
+            builder.context = Arc::clone(&self.context);
+
+            Ok(builder)
         })
     }
 
@@ -2413,13 +2423,21 @@ impl Builder {
             .ok_or(Error::IngredientNotFound)
     }
 
-    /// This creates a working store from the builder
-    /// The working store is signed with a BoxHash over an empty string
-    /// And is returned as a Vec<u8> of the c2pa_manifest bytes
-    /// This works as an archive of the store that can be read back to restore the Builder state
+    /// Creates a working store from the builder.
+    ///
+    /// The working store is signed with a `BoxHash` over an empty string and is returned as a
+    /// `Vec<u8>` of the `c2pa_manifest` bytes. This works as an archive of the store that can
+    /// be read back to restore the `Builder` state.
+    ///
+    /// When the `self_signed_certs` feature is enabled, an ephemeral self-signed
+    /// certificate is generated and used to sign the manifest.
+    ///
+    /// IMPORTANT: This certificate is useful only in a private context and will not be considered
+    /// trusted in the C2PA conformance sense.
     fn working_store_sign(&self) -> Result<Vec<u8>> {
-        // first we need to generate a BoxHash over an empty string
+        // First we need to generate a `BoxHash` over an empty string.
         let mut empty_asset = std::io::Cursor::new("");
+
         let boxes = jumbf_io::get_assetio_handler("application/c2pa")
             .ok_or(Error::UnsupportedType)?
             .asset_box_hash_ref()
@@ -2427,15 +2445,59 @@ impl Builder {
             .get_box_map(&mut empty_asset)?;
         let box_hash = BoxHash { boxes };
 
-        // then convert the builder to a claim and add the box hash assertion
+        // ... then convert the `Builder` to a claim and add the box hash assertion.
         let mut claim = self.to_claim()?;
         claim.add_assertion(&box_hash)?;
 
-        // now commit and sign it. The signing will allow us to detect tampering.
+        // Now commit and sign it. The signing will allow us to detect tampering.
         let mut store = Store::new();
         store.commit_claim(claim)?;
 
-        store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
+        #[cfg(feature = "self_signed_certs")]
+        {
+            let mut params = rcgen::CertificateParams::new(vec!["c2pa-archive.local".into()])
+                .map_err(|err| Error::OtherError(Box::new(err)))?;
+
+            params.use_authority_key_identifier_extension = true;
+
+            params
+                .key_usages
+                .push(rcgen::KeyUsagePurpose::DigitalSignature);
+
+            params
+                .extended_key_usages
+                .push(rcgen::ExtendedKeyUsagePurpose::EmailProtection);
+
+            let keypair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+                .map_err(|err| Error::OtherError(Box::new(err)))?;
+
+            let cert = params
+                .self_signed(&keypair)
+                .map_err(|err| Error::OtherError(Box::new(err)))?;
+
+            let cert_pem = cert.pem();
+            let key_pem = keypair.serialize_pem();
+
+            let raw_signer = signer_from_cert_chain_and_private_key(
+                cert_pem.as_bytes(),
+                key_pem.as_bytes(),
+                SigningAlg::Ed25519,
+                None,
+            )?;
+
+            let signer = RawSignerWrapper(raw_signer);
+
+            let mut archive_settings = self.context.settings().clone();
+            archive_settings.verify.verify_after_sign = false;
+
+            let archive_context = Context::new().with_settings(archive_settings)?;
+            return store.get_box_hashed_embeddable_manifest(&signer, &archive_context);
+        }
+
+        #[cfg(not(feature = "self_signed_certs"))]
+        {
+            store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
+        }
     }
 }
 
@@ -4242,6 +4304,44 @@ mod tests {
             loaded_old.definition.title,
             Some("Test Old Format".to_string())
         );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "self_signed_certs")]
+    #[test]
+    fn test_archive_self_signed_ed25519_signature() -> Result<()> {
+        let settings = Settings::new()
+            .with_value("builder.generate_c2pa_archive", true)?
+            .with_value("verify.verify_after_reading", false)?;
+
+        let context = Context::new().with_settings(settings.clone())?;
+        let mut builder =
+            Builder::from_context(context).with_definition(r#"{"title": "Test Self Signed"}"#)?;
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+        archive.rewind()?;
+
+        let mut validation_log = crate::status_tracker::StatusTracker::default();
+        let read_context = Context::new().with_settings(settings)?;
+
+        let store = Store::from_stream(
+            "application/c2pa",
+            &mut archive,
+            &mut validation_log,
+            &read_context,
+        )?;
+
+        let claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let sign1 = claim.cose_sign1()?;
+
+        assert!(matches!(
+            sign1.protected.header.alg,
+            Some(coset::RegisteredLabelWithPrivate::Assigned(
+                coset::iana::Algorithm::EdDSA
+            ))
+        ));
 
         Ok(())
     }
