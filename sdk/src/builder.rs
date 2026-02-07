@@ -562,6 +562,11 @@ impl Builder {
     /// # Errors
     /// * Returns an [`Error`] if the JSON is malformed or incorrect.
     pub fn from_json(json: &str) -> Result<Self> {
+        if json.trim().is_empty() {
+            let json_err = serde_json::from_str::<serde_json::Value>("")
+                .expect_err("empty string is invalid JSON");
+            return Err(Error::JsonError(json_err));
+        }
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = crate::settings::get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;

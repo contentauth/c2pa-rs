@@ -191,6 +191,10 @@ impl CAIReader for JpegIO {
         asset_reader.rewind()?;
         asset_reader.read_to_end(&mut buf).map_err(Error::IoError)?;
 
+        if buf.is_empty() {
+            return Err(Error::JumbfNotFound);
+        }
+
         let dimg_opt = DynImage::from_bytes(buf.into()).map_err(|err| match err {
             img_parts::Error::WrongSignature => JpegError::InvalidFileSignature {
                 reason: format!(
