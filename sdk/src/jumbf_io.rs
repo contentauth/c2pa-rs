@@ -37,26 +37,24 @@ use crate::{
 
 // initialize asset handlers
 lazy_static! {
-    static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
-        let handlers: Vec<Box<dyn AssetIO>> = vec![
-            #[cfg(feature = "pdf")]
-            Box::new(PdfIO::new("")),
-            Box::new(BmffIO::new("")),
-            Box::new(C2paIO::new("")),
-            Box::new(JpegIO::new("")),
-            Box::new(PngIO::new("")),
-            Box::new(RiffIO::new("")),
-            Box::new(SvgIO::new("")),
-            Box::new(TiffIO::new("")),
-            Box::new(Mp3IO::new("")),
-            Box::new(GifIO::new("")),
-        ];
+    static ref HANDLERS: Vec<Box<dyn AssetIO>> = vec![
+        #[cfg(feature = "pdf")]
+        Box::new(PdfIO::new("")),
+        Box::new(BmffIO::new("")),
+        Box::new(C2paIO::new("")),
+        Box::new(JpegIO::new("")),
+        Box::new(PngIO::new("")),
+        Box::new(RiffIO::new("")),
+        Box::new(SvgIO::new("")),
+        Box::new(TiffIO::new("")),
+        Box::new(Mp3IO::new("")),
+        Box::new(GifIO::new("")),
+    ];
 
+    static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
         let mut handler_map = HashMap::new();
 
-        // build handler map
-        for h in handlers {
-            // get the supported types add entry for each
+        for h in HANDLERS.iter() {
             for supported_type in h.supported_types() {
                 handler_map.insert(supported_type.to_string(), h.get_handler(supported_type));
             }
@@ -64,27 +62,11 @@ lazy_static! {
 
         handler_map
     };
-}
 
-// initialize streaming write handlers
-lazy_static! {
     static ref CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>> = {
-        let handlers: Vec<Box<dyn AssetIO>> = vec![
-            Box::new(BmffIO::new("")),
-            Box::new(C2paIO::new("")),
-            Box::new(JpegIO::new("")),
-            Box::new(PngIO::new("")),
-            Box::new(RiffIO::new("")),
-            Box::new(SvgIO::new("")),
-            Box::new(TiffIO::new("")),
-            Box::new(Mp3IO::new("")),
-            Box::new(GifIO::new("")),
-        ];
         let mut handler_map = HashMap::new();
 
-        // build handler map
-        for h in handlers {
-            // get the supported types add entry for each
+        for h in HANDLERS.iter() {
             for supported_type in h.supported_types() {
                 if let Some(writer) = h.get_writer(supported_type) { // get streaming writer if supported
                     handler_map.insert(supported_type.to_string(), writer);
@@ -94,6 +76,16 @@ lazy_static! {
 
         handler_map
     };
+}
+
+/// Detects the format from the data by asking registered handlers.
+pub fn format_from_bytes(data: &[u8]) -> Option<String> {
+    for handler in HANDLERS.iter() {
+        if let Some(fmt) = handler.get_handler_type_from_bytes(data) {
+            return Some(fmt.to_string());
+        }
+    }
+    None
 }
 
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
@@ -111,7 +103,14 @@ pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> 
 
 /// Return jumbf block from stream asset
 pub fn load_jumbf_from_stream(asset_type: &str, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
-    let cai_block = match get_cailoader_handler(asset_type) {
+    let mut asset_type = asset_type.to_lowercase();
+    if asset_type.is_empty() || asset_type == "application/octet-stream" {
+        if let Some(detected) = crate::utils::mime::detect_format_from_stream(input_stream) {
+            asset_type = detected;
+        }
+    }
+
+    let cai_block = match get_cailoader_handler(&asset_type) {
         Some(asset_handler) => asset_handler.read_cai(input_stream)?,
         None => return Err(Error::UnsupportedType),
     };
@@ -152,8 +151,15 @@ pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -
 
 #[cfg(feature = "file_io")]
 pub(crate) fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn AssetIO> {
-    let ext = get_file_extension(asset_path)?;
+    // try to detect from content first
+    if let Some(format) = crate::utils::mime::detect_format_from_path(asset_path) {
+        if let Some(h) = CAI_READERS.get(&format) {
+            return Some(h.as_ref());
+        }
+    }
 
+    // if not found by content, try to use extension
+    let ext = get_file_extension(asset_path).unwrap_or_default();
     CAI_READERS.get(&ext).map(|h| h.as_ref())
 }
 
@@ -186,13 +192,21 @@ pub(crate) fn get_file_extension(path: &Path) -> Option<String> {
 
 #[cfg(feature = "file_io")]
 pub(crate) fn get_supported_file_extension(path: &Path) -> Option<String> {
-    let ext = get_file_extension(path)?;
-
-    if CAI_READERS.get(&ext).is_some() {
-        Some(ext)
-    } else {
-        None
+    // try to detect from content first
+    if let Some(format) = crate::utils::mime::detect_format_from_path(path) {
+        if CAI_READERS.get(&format).is_some() {
+            return Some(format);
+        }
     }
+
+    // fallback to extension
+    if let Some(ext) = get_file_extension(path) {
+        if CAI_READERS.get(&ext).is_some() {
+            return Some(ext);
+        }
+    }
+
+    None
 }
 
 /// Returns a [Vec<String>] of supported mime types for reading manifests.
@@ -220,7 +234,7 @@ pub fn save_jumbf_to_file<P1: AsRef<Path>, P2: AsRef<Path>>(
     in_path: P1,
     out_path: Option<P2>,
 ) -> Result<()> {
-    let ext = get_file_extension(in_path.as_ref()).ok_or(Error::UnsupportedType)?;
+    let ext = get_supported_file_extension(in_path.as_ref()).ok_or(Error::UnsupportedType)?;
 
     // if no output path make a new file based off of source file name
     let asset_out_path: PathBuf = match out_path.as_ref() {
@@ -286,7 +300,7 @@ pub(crate) fn update_file_jumbf(
 #[cfg(feature = "file_io")]
 /// load the JUMBF block from an asset if available
 pub fn load_jumbf_from_file<P: AsRef<Path>>(in_path: P) -> Result<Vec<u8>> {
-    let ext = get_file_extension(in_path.as_ref()).ok_or(Error::UnsupportedType)?;
+    let ext = get_supported_file_extension(in_path.as_ref()).ok_or(Error::UnsupportedType)?;
 
     match get_assetio_handler(&ext) {
         Some(asset_handler) => asset_handler.read_cai_store(in_path.as_ref()),
@@ -326,7 +340,7 @@ where
     let mut reader = CAIReadAdapter { reader: stream };
     match get_caiwriter_handler(format) {
         Some(handler) => handler.get_object_locations_from_stream(&mut reader),
-        _ => Err(Error::UnsupportedType),
+        _ => Ok(Vec::new()),
     }
 }
 
@@ -338,7 +352,7 @@ where
 /// returns Unsupported type or errors from remove_cai_store
 #[cfg(feature = "file_io")]
 pub fn remove_jumbf_from_file<P: AsRef<Path>>(path: P) -> Result<()> {
-    let ext = get_file_extension(path.as_ref()).ok_or(Error::UnsupportedType)?;
+    let ext = get_supported_file_extension(path.as_ref()).ok_or(Error::UnsupportedType)?;
     match get_assetio_handler(&ext) {
         Some(asset_handler) => asset_handler.remove_cai_store(path.as_ref()),
         _ => Err(Error::UnsupportedType),

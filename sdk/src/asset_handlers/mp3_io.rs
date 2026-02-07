@@ -349,6 +349,20 @@ impl AssetIO for Mp3IO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    fn get_handler_type_from_bytes(&self, data: &[u8]) -> Option<&'static str> {
+        if data.len() < 3 {
+            return None;
+        }
+        if data.starts_with(crate::utils::signatures::MP3_ID3) {
+            return Some("audio/mpeg");
+        }
+        // MP3 sync frame (simplified)
+        if data.len() >= 2 && data[0] == 0xff && (data[1] & 0xe0) == 0xe0 {
+            return Some("audio/mpeg");
+        }
+        None
+    }
 }
 
 impl CAIWriter for Mp3IO {

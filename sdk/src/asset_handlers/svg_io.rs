@@ -159,6 +159,21 @@ impl AssetIO for SvgIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    fn get_handler_type_from_bytes(&self, data: &[u8]) -> Option<&'static str> {
+        // Check for "<svg" or "<?xml" followed by "<svg"
+        let header_len = std::cmp::min(data.len(), 512);
+        if let Ok(header) = std::str::from_utf8(&data[..header_len]) {
+            let header = header.trim_start();
+            if header.starts_with(crate::utils::signatures::SVG_TAG)
+                || (header.starts_with(crate::utils::signatures::SVG_XML_TAG)
+                    && header.contains(crate::utils::signatures::SVG_TAG))
+            {
+                return Some("image/svg+xml");
+            }
+        }
+        None
+    }
 }
 
 // create manifest entry

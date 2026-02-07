@@ -379,6 +379,15 @@ impl AssetIO for GifIO {
     fn supported_types(&self) -> &[&str] {
         &["gif", "image/gif"]
     }
+
+    fn get_handler_type_from_bytes(&self, data: &[u8]) -> Option<&'static str> {
+        if data.starts_with(crate::utils::signatures::GIF87A)
+            || data.starts_with(crate::utils::signatures::GIF89A)
+        {
+            return Some("image/gif");
+        }
+        None
+    }
 }
 
 impl GifIO {

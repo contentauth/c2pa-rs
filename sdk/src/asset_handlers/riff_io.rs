@@ -398,6 +398,23 @@ impl AssetIO for RiffIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    fn get_handler_type_from_bytes(&self, data: &[u8]) -> Option<&'static str> {
+        if data.len() < 12 || &data[0..4] != crate::utils::signatures::RIFF {
+            return None;
+        }
+        let form_type = &data[8..12];
+        if form_type == crate::utils::signatures::AVI {
+            return Some("video/avi");
+        }
+        if form_type == crate::utils::signatures::WEBP {
+            return Some("image/webp");
+        }
+        if form_type == crate::utils::signatures::WAVE {
+            return Some("audio/wav");
+        }
+        None
+    }
 }
 
 impl CAIWriter for RiffIO {

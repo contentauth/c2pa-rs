@@ -133,6 +133,17 @@ impl AssetIO for C2paIO {
         &SUPPORTED_TYPES
     }
 
+    fn get_handler_type_from_bytes(&self, data: &[u8]) -> Option<&'static str> {
+        // JUMBF starts with a box size then 'jumb'
+        if data.len() < 8 {
+            return None;
+        }
+        if &data[4..8] == crate::utils::signatures::JUMBF_TYPE {
+            return Some("application/c2pa");
+        }
+        None
+    }
+
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }

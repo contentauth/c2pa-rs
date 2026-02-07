@@ -109,6 +109,13 @@ impl AssetIO for PdfIO {
         &SUPPORTED_TYPES
     }
 
+    fn get_handler_type_from_bytes(&self, data: &[u8]) -> Option<&'static str> {
+        if data.starts_with(crate::utils::signatures::PDF) {
+            return Some("application/pdf");
+        }
+        None
+    }
+
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }

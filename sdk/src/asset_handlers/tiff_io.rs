@@ -1678,6 +1678,18 @@ impl AssetIO for TiffIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    fn get_handler_type_from_bytes(&self, data: &[u8]) -> Option<&'static str> {
+        if data.len() < 4 {
+            return None;
+        }
+        if data.starts_with(crate::utils::signatures::TIFF_LE)
+            || data.starts_with(crate::utils::signatures::TIFF_BE)
+        {
+            return Some("image/tiff");
+        }
+        None
+    }
 }
 
 impl CAIWriter for TiffIO {

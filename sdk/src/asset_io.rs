@@ -183,6 +183,11 @@ pub trait AssetIO: Sync + Send {
 
     // OPTIONAL INTERFACES
 
+    // Checks if the data matches the file signature for this handler and returns the mime type.
+    fn get_handler_type_from_bytes(&self, _data: &[u8]) -> Option<&'static str> {
+        None
+    }
+
     // Returns [`AssetPatch`] trait if this I/O handler supports patching.
     #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {

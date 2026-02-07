@@ -269,10 +269,19 @@ impl Reader {
     #[async_generic]
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
-        let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
         let mut file = File::open(path)?;
 
-        // Try loading from stream first
+        // attempt to detect format from content first
+        let format = crate::utils::mime::detect_format_from_stream(&mut file)
+            .or_else(|| {
+                // fallback to extension
+                path.extension()
+                    .and_then(|ext| crate::utils::mime::extension_to_mime(ext.to_string_lossy().to_lowercase().as_ref()))
+                    .map(|m| m.to_owned())
+            })
+            .unwrap_or_else(|| "application/octet-stream".to_string());
+
+        // Try loading from stream
         let mut validation_log = StatusTracker::default();
         let store = if _sync {
             Store::from_stream(&format, &mut file, &mut validation_log, &self.context)
@@ -281,7 +290,7 @@ impl Reader {
         };
 
         match store {
-            Err(Error::JumbfNotFound) => {
+            Err(Error::JumbfNotFound) | Err(Error::UnsupportedType) => {
                 // if not embedded or cloud, check for sidecar first and load if it exists
                 let potential_sidecar_path = path.with_extension("c2pa");
                 if potential_sidecar_path.exists() {
@@ -312,7 +321,8 @@ impl Reader {
                     }?;
                     Ok(self)
                 } else {
-                    Err(Error::JumbfNotFound)
+                    // return original error
+                    store.map(|_| self)
                 }
             }
             Ok(store) => {

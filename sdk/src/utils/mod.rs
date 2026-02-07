@@ -23,6 +23,7 @@ pub(crate) mod merkle;
 pub(crate) mod mime;
 #[allow(dead_code)] // for wasm build
 pub(crate) mod patch;
+pub(crate) mod signatures;
 #[cfg(feature = "add_thumbnails")]
 pub(crate) mod thumbnail;
 pub(crate) mod time_it;

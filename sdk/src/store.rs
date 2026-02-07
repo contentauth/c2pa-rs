@@ -2012,31 +2012,46 @@ impl Store {
         let locations = match asset_data {
             #[cfg(feature = "file_io")]
             ClaimAssetData::Path(path) => {
-                let format = get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
+                let format = get_supported_file_extension(path).unwrap_or_else(|| "application/octet-stream".to_string());
                 let mut reader = std::fs::File::open(path)?;
 
-                object_locations_from_stream(&format, &mut reader)
+                object_locations_from_stream(&format, &mut reader).or_else(|e| match e {
+                    Error::UnsupportedType => Ok(Vec::new()),
+                    _ => Err(e),
+                })
             }
             ClaimAssetData::Bytes(items, typ) => {
                 let format = typ.to_owned();
                 let mut reader = Cursor::new(items);
 
-                object_locations_from_stream(&format, &mut reader)
+                object_locations_from_stream(&format, &mut reader).or_else(|e| match e {
+                    Error::UnsupportedType => Ok(Vec::new()),
+                    _ => Err(e),
+                })
             }
             ClaimAssetData::Stream(reader, typ) => {
                 let format = typ.to_owned();
-                let positions = object_locations_from_stream(&format, reader);
+                let positions = object_locations_from_stream(&format, reader).or_else(|e| match e {
+                    Error::UnsupportedType => Ok(Vec::new()),
+                    _ => Err(e),
+                });
                 reader.rewind()?;
                 positions
             }
             ClaimAssetData::StreamFragment(reader, _read1, typ) => {
                 let format = typ.to_owned();
-                object_locations_from_stream(&format, reader)
+                object_locations_from_stream(&format, reader).or_else(|e| match e {
+                    Error::UnsupportedType => Ok(Vec::new()),
+                    _ => Err(e),
+                })
             }
             #[cfg(feature = "file_io")]
             ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
                 let format = typ.to_owned();
-                object_locations_from_stream(&format, reader)
+                object_locations_from_stream(&format, reader).or_else(|e| match e {
+                    Error::UnsupportedType => Ok(Vec::new()),
+                    _ => Err(e),
+                })
             }
         };
 
@@ -3106,47 +3121,55 @@ impl Store {
             RemoteManifest::EmbedWithRemote(url) => (Some(url), false),
         };
 
-        let io_handler = get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
+        let io_handler = get_assetio_handler(format);
 
-        // Do not assume the handler supports XMP or removing manifests unless we need it to
-        if let Some(url) = url {
-            let external_ref_writer = io_handler
-                .remote_ref_writer_ref()
-                .ok_or(Error::XmpNotSupported)?;
+        if let Some(io_handler) = io_handler {
+            // Do not assume the handler supports XMP or removing manifests unless we need it to
+            if let Some(url) = url {
+                let external_ref_writer = io_handler
+                    .remote_ref_writer_ref()
+                    .ok_or(Error::XmpNotSupported)?;
 
-            if remove_manifests {
-                let manifest_writer = io_handler
-                    .get_writer(format)
-                    .ok_or(Error::UnsupportedType)?;
+                if remove_manifests {
+                    let manifest_writer = io_handler.get_writer(format).ok_or(Error::UnsupportedType)?;
 
-                let mut tmp_stream = io_utils::stream_with_fs_fallback(threshold);
-                manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
+                    let mut tmp_stream = io_utils::stream_with_fs_fallback(threshold);
+                    manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
 
-                // add external ref if possible
-                tmp_stream.rewind()?;
-                external_ref_writer.embed_reference_to_stream(
-                    &mut tmp_stream,
-                    &mut intermediate_stream,
-                    RemoteRefEmbedType::Xmp(url),
-                )?;
+                    // add external ref if possible
+                    tmp_stream.rewind()?;
+                    external_ref_writer.embed_reference_to_stream(
+                        &mut tmp_stream,
+                        &mut intermediate_stream,
+                        RemoteRefEmbedType::Xmp(url),
+                    )?;
+                } else {
+                    // add external ref if possible
+                    external_ref_writer.embed_reference_to_stream(
+                        input_stream,
+                        &mut intermediate_stream,
+                        RemoteRefEmbedType::Xmp(url),
+                    )?;
+                }
+            } else if remove_manifests {
+                let manifest_writer = io_handler.get_writer(format).ok_or(Error::UnsupportedType)?;
+
+                manifest_writer
+                    .remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
             } else {
-                // add external ref if possible
-                external_ref_writer.embed_reference_to_stream(
-                    input_stream,
-                    &mut intermediate_stream,
-                    RemoteRefEmbedType::Xmp(url),
-                )?;
+                // just clone stream
+                input_stream.rewind()?;
+                std::io::copy(input_stream, &mut intermediate_stream)?;
             }
-        } else if remove_manifests {
-            let manifest_writer = io_handler
-                .get_writer(format)
-                .ok_or(Error::UnsupportedType)?;
-
-            manifest_writer.remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
         } else {
-            // just clone stream
-            input_stream.rewind()?;
-            std::io::copy(input_stream, &mut intermediate_stream)?;
+            // no handler
+            if matches!(pc.remote_manifest(), RemoteManifest::SideCar) {
+                // just clone stream
+                input_stream.rewind()?;
+                std::io::copy(input_stream, &mut intermediate_stream)?;
+            } else {
+                return Err(Error::UnsupportedType);
+            }
         }
 
         let is_bmff = is_bmff_format(format);
