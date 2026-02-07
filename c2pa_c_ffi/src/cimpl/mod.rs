@@ -73,5 +73,5 @@ pub use cimpl_error::CimplError;
 pub use utils::validate_pointer;
 pub use utils::{
     cimpl_free, safe_slice_from_raw_parts, to_c_bytes, to_c_string, track_arc, track_arc_mutex,
-    track_box,
+    track_box, untrack_ptr,
 };

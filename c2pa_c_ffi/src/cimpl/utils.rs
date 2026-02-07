@@ -74,6 +74,21 @@ impl PointerRegistry {
         }
     }
 
+    /// Remove a pointer from tracking without running its cleanup function.
+    ///
+    /// This is used when ownership of a tracked pointer is being transferred
+    /// (e.g., via `Box::from_raw`) and the caller will handle cleanup themselves.
+    /// The pointer is removed from the registry so it won't cause stale entries
+    /// or double-frees.
+    pub fn untrack(&self, ptr: usize) {
+        if ptr == 0 {
+            return;
+        }
+        if let Ok(mut tracked) = self.tracked.lock() {
+            tracked.remove(&ptr);
+        }
+    }
+
     /// Free a tracked pointer by calling its cleanup function
     pub fn free(&self, ptr: usize) -> Result<(), Error> {
         if ptr == 0 {
@@ -198,6 +213,15 @@ pub fn track_arc_mutex<T: 'static + Send>(ptr: *mut Mutex<T>) -> *mut Mutex<T> {
     };
     get_registry().track(ptr as usize, TypeId::of::<Mutex<T>>(), Box::new(cleanup));
     ptr
+}
+
+/// Remove a pointer from tracking without freeing it.
+///
+/// Use this before consuming a tracked pointer via `Box::from_raw()` in
+/// functions that transfer ownership (e.g., `with_*` pattern). This prevents
+/// stale registry entries that could cause double-frees or UB at shutdown.
+pub fn untrack_ptr<T>(ptr: *mut T) {
+    get_registry().untrack(ptr as usize);
 }
 
 /// Validate that a pointer is tracked and has the expected type

@@ -4577,4 +4577,46 @@ mod tests {
 
         assert!(reader.active_manifest().is_some());
     }
+
+    #[test]
+    fn from_json_empty_string_returns_error() {
+        let result = Builder::from_json("");
+        assert!(result.is_err(), "Empty JSON should return an error");
+    }
+
+    #[test]
+    fn from_json_malformed_returns_error() {
+        let result = Builder::from_json("{ invalid json }");
+        assert!(result.is_err(), "Malformed JSON should return an error");
+    }
+
+    #[test]
+    fn with_definition_empty_string_returns_error() {
+        let builder = Builder::from_json("{}").expect("valid empty object");
+        let result = builder.with_definition("");
+        assert!(result.is_err(), "Empty JSON definition should return an error");
+    }
+
+    #[test]
+    fn with_definition_malformed_returns_error() {
+        let builder = Builder::from_json("{}").expect("valid empty object");
+        let result = builder.with_definition("{ invalid json }");
+        assert!(result.is_err(), "Malformed JSON definition should return an error");
+    }
+
+    #[test]
+    fn from_shared_context_with_definition_empty_returns_error() {
+        let context = Arc::new(Context::default());
+        let builder = Builder::from_shared_context(&context);
+        let result = builder.with_definition("");
+        assert!(result.is_err(), "Empty JSON definition on context builder should return an error");
+    }
+
+    #[test]
+    fn from_shared_context_with_definition_malformed_returns_error() {
+        let context = Arc::new(Context::default());
+        let builder = Builder::from_shared_context(&context);
+        let result = builder.with_definition("{ invalid json }");
+        assert!(result.is_err(), "Malformed JSON definition on context builder should return an error");
+    }
 }
