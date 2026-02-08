@@ -2483,7 +2483,7 @@ impl Store {
     /// * The bytes of the `c2pa_manifest` placeholder.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be created.
-    pub fn get_placeholder(&mut self, context: &Context) -> Result<Vec<u8>> {
+    pub fn get_placeholder(&mut self, _format: &str, context: &Context) -> Result<Vec<u8>> {
         let signer = context.signer()?;
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 

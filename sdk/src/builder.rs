@@ -1937,9 +1937,9 @@ impl Builder {
     /// * The raw JUMBF bytes of the `c2pa_manifest` placeholder.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be created.
-    pub fn placeholder(&self) -> Result<Vec<u8>> {
+    pub fn placeholder(&self, format: &str) -> Result<Vec<u8>> {
         let mut store = self.to_store()?;
-        store.get_placeholder(self.context())
+        store.get_placeholder(format, self.context())
     }
 
     /// Create a signed data hashed embeddable manifest using a supplied signer.
