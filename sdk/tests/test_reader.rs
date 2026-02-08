@@ -97,9 +97,7 @@ fn write_known_goods() -> Result<()> {
 fn test_reader_validation_state_uses_context_settings() -> Result<()> {
     use std::io::Cursor;
 
-    // Use same source as test_settings(): TOML. If JSON were used and context.signer() returned
-    // MissingSignerSettings in CI, run test_test_settings_json_has_signer there to confirm.
-    let settings = Settings::new().with_toml(include_str!("fixtures/test_settings.toml"))?;
+    let settings = Settings::new().with_json(include_str!("fixtures/test_settings.json"))?;
     let context = Context::new().with_settings(settings)?.into_shared();
 
     // No embedding here
