@@ -2492,7 +2492,7 @@ impl Builder {
             archive_settings.verify.verify_after_sign = false;
 
             let archive_context = Context::new().with_settings(archive_settings)?;
-            return store.get_box_hashed_embeddable_manifest(&signer, &archive_context);
+            store.get_box_hashed_embeddable_manifest(&signer, &archive_context)
         }
 
         #[cfg(not(feature = "self_signed_certs"))]
