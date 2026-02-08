@@ -308,7 +308,7 @@ fn write_box_header_ext<W: Write>(w: &mut W, v: u8, f: u32) -> Result<u64> {
 }
 
 /// Detect if a `meta` box uses FullBox format (ISO BMFF) or regular box format (QuickTime mov).
-/// In ISO BMFF (standard), `meta` is a FullBox with 4 bytes of version/flags before its children. 
+/// In ISO BMFF (standard), `meta` is a FullBox with 4 bytes of version/flags before its children.
 /// In QuickTime mov files, `meta` is a normal/usual box where children start immediately after the 8-byte header.
 /// This tries to detect that by peeking at the 8 bytes right after the header
 /// (otherwise offsets are wrong depending on which kind of mov/bmff flavor we have):
