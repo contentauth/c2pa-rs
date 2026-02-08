@@ -15,7 +15,7 @@ mod common;
 use c2pa::{validation_status, Builder, Context, Error, Reader, Result, Settings, ValidationState};
 #[cfg(feature = "fetch_remote_manifests")]
 use c2pa_macros::c2pa_test_async;
-use common::{assert_err, compare_to_known_good, fixture_stream};
+use common::{assert_err, check_validation_status, compare_to_known_good, fixture_stream};
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -58,17 +58,8 @@ fn test_reader_xca_jpg() -> Result<()> {
 
     let (format, mut stream) = fixture_stream("XCA.jpg")?;
     let reader = Reader::from_context(context).with_stream(&format, &mut stream)?;
-    // validation_results should have the expected failure
-    assert_eq!(
-        reader
-            .validation_results()
-            .unwrap()
-            .active_manifest()
-            .unwrap()
-            .failure[0]
-            .code(),
-        validation_status::ASSERTION_DATAHASH_MISMATCH
-    );
+    // Validation failures can appear in any order (e.g. signingCredential.untrusted vs assertion.dataHash.mismatch).
+    check_validation_status(&reader, validation_status::ASSERTION_DATAHASH_MISMATCH);
     compare_to_known_good(&reader, "XCA.json")
 }
 
