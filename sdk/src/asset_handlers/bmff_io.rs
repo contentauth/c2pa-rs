@@ -332,7 +332,7 @@ fn is_meta_full_box<R: Read + Seek + ?Sized>(reader: &mut R, box_size: u64) -> R
     // A valid fourcc consists of printable ASCII characters
     let is_valid_fourcc = potential_child_type
         .iter()
-        .all(|&b| (0x20..=0x7E).contains(&b));
+        .all(|&b| (0x20..=0x7e).contains(&b));
 
     // Check if this looks like a valid child box header (QuickTime style):
     // - size > 0 and fits within the remaining container space
