@@ -37,7 +37,13 @@ use crate::{
     jumbf::labels::to_absolute_uri,
     reader::{AsyncPostValidator, MaybeSend, PostValidator, Reader},
     utils::hash_utils::hash_stream_by_alg,
-    validation_results::ValidationState,
+    validation_results::{
+        validation_codes::{
+            SIGNING_CREDENTIAL_EXPIRED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
+            SIGNING_CREDENTIAL_UNTRUSTED,
+        },
+        ValidationState,
+    },
     validation_status::ValidationStatus,
     Manifest,
 };
@@ -372,7 +378,7 @@ impl JpegTrustReader {
     }
 
     /// Convert manifests from HashMap to Array format.
-    /// The first element is always the active manifest (if any); the rest are in deterministic order.
+    /// The first element is always the active manifest (if any); the rest are in manifest store order (most recent first, earliest last).
     fn convert_manifests_to_array(&self) -> Result<Value> {
         let active_label = self.inner.active_label();
         let mut labeled: Vec<(String, Value)> = Vec::new();
@@ -402,14 +408,26 @@ impl JpegTrustReader {
             labeled.push((label.clone(), Value::Object(manifest_obj)));
         }
 
-        // Order: active manifest first, then others in stable (label) order
+        // Order: active manifest first, then others by manifest store order (most recent first)
+        let store_order: std::collections::HashMap<String, usize> = self
+            .inner
+            .store
+            .claims()
+            .into_iter()
+            .enumerate()
+            .map(|(i, claim)| (claim.label().to_string(), i))
+            .collect();
         labeled.sort_by(|a, b| {
             let a_active = active_label.map_or(false, |l| l == a.0);
             let b_active = active_label.map_or(false, |l| l == b.0);
             match (a_active, b_active) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
-                _ => a.0.cmp(&b.0),
+                _ => {
+                    let a_idx = store_order.get(&a.0).copied().unwrap_or(0);
+                    let b_idx = store_order.get(&b.0).copied().unwrap_or(0);
+                    b_idx.cmp(&a_idx) // descending: most recent (higher index) first
+                }
             }
         });
 
@@ -1036,8 +1054,12 @@ impl JpegTrustReader {
             status.insert("signature".to_string(), json!(sig_code));
         }
 
-        // Trust status
+        // Trust status: prefer trusted, invalid, untrusted, expired; else first signingCredential code
         if let Some(trust_code) =
+            Self::find_preferred_trust_code(&active_manifest)
+        {
+            status.insert("trust".to_string(), json!(trust_code));
+        } else if let Some(trust_code) =
             Self::find_validation_code(&active_manifest.success, "signingCredential")
         {
             status.insert("trust".to_string(), json!(trust_code));
@@ -1069,6 +1091,27 @@ impl JpegTrustReader {
         }
 
         Ok(Some(Value::Object(status)))
+    }
+
+    /// Find a preferred trust status (trusted, invalid, untrusted, expired) in the active manifest.
+    /// Returns the first match in that order; if none found, returns None (caller should fall back
+    /// to first signingCredential code).
+    fn find_preferred_trust_code(active_manifest: &crate::validation_results::StatusCodes) -> Option<String> {
+        // Trusted is in success
+        if active_manifest.success.iter().any(|s| s.code() == SIGNING_CREDENTIAL_TRUSTED) {
+            return Some(SIGNING_CREDENTIAL_TRUSTED.to_string());
+        }
+        // Invalid, untrusted, expired are in failure (check in that order)
+        for code in &[
+            SIGNING_CREDENTIAL_INVALID,
+            SIGNING_CREDENTIAL_UNTRUSTED,
+            SIGNING_CREDENTIAL_EXPIRED,
+        ] {
+            if active_manifest.failure.iter().any(|s| s.code() == *code) {
+                return Some((*code).to_string());
+            }
+        }
+        None
     }
 
     /// Find a validation code matching a prefix in a list of validation statuses
