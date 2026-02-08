@@ -307,6 +307,44 @@ fn write_box_header_ext<W: Write>(w: &mut W, v: u8, f: u32) -> Result<u64> {
     Ok(4)
 }
 
+/// Detect if a `meta` box uses FullBox format (ISO BMFF) or regular box format (QuickTime mov).
+///
+/// In ISO BMFF (ISO 14496-12), `meta` is a FullBox with 4 bytes of version/flags before its children. 
+/// In Apple QuickTime MOV files, `meta` is a regular box where children start immediately after the 8-byte header.
+///
+/// THis tries to detect that by peeking at the 8 bytes right after the header:
+/// - If they form a valid child box header it's a regular box (QuickTime style).
+/// - Otherwise, the first 4 bytes are version/flags (ISO BMFF style).
+fn is_meta_full_box<R: Read + Seek + ?Sized>(reader: &mut R, box_size: u64) -> Result<bool> {
+    let pos = reader.stream_position()?;
+    let mut buf = [0u8; 8];
+
+    if reader.read_exact(&mut buf).is_err() {
+        reader.seek(SeekFrom::Start(pos))?;
+        return Ok(true); // fallback to FullBox if we can't read enough bytes
+    }
+    reader.seek(SeekFrom::Start(pos))?;
+
+    // Interpret first 4 bytes as a potential child box size
+    let potential_child_size = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as u64;
+    // Interpret next 4 bytes as a potential child box fourcc
+    let potential_child_type = &buf[4..8];
+
+    // A valid fourcc consists of printable ASCII characters
+    let is_valid_fourcc = potential_child_type
+        .iter()
+        .all(|&b| (0x20..=0x7E).contains(&b));
+
+    // Check if this looks like a valid child box header (QuickTime style):
+    // - size > 0 and fits within the remaining container space
+    // - fourcc is printable ASCII
+    if potential_child_size > 0 && potential_child_size <= box_size && is_valid_fourcc {
+        Ok(false) // QuickTime style: children start right after the 8-byte header
+    } else {
+        Ok(true) // ISO BMFF style: 4 bytes of version/flags first
+    }
+}
+
 fn box_start<R: Read + Seek + ?Sized>(reader: &mut R, is_large: bool) -> Result<u64> {
     if is_large {
         Ok(reader.stream_position()? - HEADER_SIZE_LARGE)
@@ -1271,7 +1309,15 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
             | BoxType::SchiBox => {
                 let start = box_start(reader, header.large_size)?;
 
-                let b = if FULL_BOX_TYPES.contains(&header.fourcc.as_str()) {
+                // Determine if this is a FullBox. For 'meta' boxes (Quicktime style), we need to
+                // detect the format because  MOV uses regular box while ISO BMFF uses FullBox (with version/flags).
+                let is_full_box = if header.name == BoxType::MetaBox {
+                    is_meta_full_box(reader, s)?
+                } else {
+                    FULL_BOX_TYPES.contains(&header.fourcc.as_str())
+                };
+
+                let b = if is_full_box {
                     let (version, flags) = read_box_header_ext(reader)?; // box extensions
                     BoxInfo {
                         path: header.fourcc.clone(),
