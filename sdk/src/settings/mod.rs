@@ -1480,6 +1480,19 @@ pub mod tests {
         assert!(result.is_err());
     }
 
+    /// Proves that test_settings.json deserializes with a signer via config crate.
+    /// If this test fails (e.g. in CI), JSON parsing is dropping signer; use TOML in that environment.
+    #[test]
+    fn test_test_settings_json_has_signer() {
+        let settings = Settings::new()
+            .with_json(include_str!("../../tests/fixtures/test_settings.json"))
+            .expect("test_settings.json should parse");
+        assert!(
+            settings.signer.is_some(),
+            "test_settings.json must deserialize signer (config crate JSON); if this fails use TOML"
+        );
+    }
+
     #[test]
     fn test_test_settings() {
         // Test that test_settings loads correctly
