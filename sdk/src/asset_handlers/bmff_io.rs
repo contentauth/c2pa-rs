@@ -308,11 +308,9 @@ fn write_box_header_ext<W: Write>(w: &mut W, v: u8, f: u32) -> Result<u64> {
 }
 
 /// Detect if a `meta` box uses FullBox format (ISO BMFF) or regular box format (QuickTime mov).
-///
 /// In ISO BMFF (ISO 14496-12), `meta` is a FullBox with 4 bytes of version/flags before its children. 
-/// In Apple QuickTime MOV files, `meta` is a regular box where children start immediately after the 8-byte header.
-///
-/// THis tries to detect that by peeking at the 8 bytes right after the header:
+/// In QuickTime mov files, `meta` is a regular box where children start immediately after the 8-byte header.
+/// This tries to detect that by peeking at the 8 bytes right after the header (otherwise offsets are wrong):
 /// - If they form a valid child box header it's a regular box (QuickTime style).
 /// - Otherwise, the first 4 bytes are version/flags (ISO BMFF style).
 fn is_meta_full_box<R: Read + Seek + ?Sized>(reader: &mut R, box_size: u64) -> Result<bool> {
@@ -337,11 +335,11 @@ fn is_meta_full_box<R: Read + Seek + ?Sized>(reader: &mut R, box_size: u64) -> R
 
     // Check if this looks like a valid child box header (QuickTime style):
     // - size > 0 and fits within the remaining container space
-    // - fourcc is printable ASCII
+    // - four characters chode id is printable ASCII
     if potential_child_size > 0 && potential_child_size <= box_size && is_valid_fourcc {
-        Ok(false) // QuickTime style: children start right after the 8-byte header
+        Ok(false)
     } else {
-        Ok(true) // ISO BMFF style: 4 bytes of version/flags first
+        Ok(true)
     }
 }
 
