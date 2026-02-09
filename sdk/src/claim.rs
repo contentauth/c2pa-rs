@@ -16,6 +16,7 @@ use std::path::Path;
 use std::{
     collections::{HashMap, HashSet},
     fmt,
+    sync::Arc,
 };
 
 use async_generic::async_generic;
@@ -327,6 +328,9 @@ pub struct Claim {
     data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
 
     claim_version: usize,
+
+    // Optional context for settings access (set when created from Builder)
+    context: Option<Arc<Context>>,
 }
 
 /// Enum to define how assertions are are stored when output to json
@@ -450,6 +454,7 @@ impl Claim {
             claim_version,
             created_assertions: Vec::new(),
             gathered_assertions: None,
+            context: None,
         }
     }
 
@@ -548,7 +553,16 @@ impl Claim {
             claim_version,
             created_assertions: Vec::new(),
             gathered_assertions: None,
+            context: None,
         })
+    }
+
+    /// Set the context for this claim, enabling access to settings.
+    ///
+    /// This is typically called by the Builder when creating a claim.
+    pub fn with_context(mut self, context: Arc<Context>) -> Self {
+        self.context = Some(context);
+        self
     }
 
     // Deserializer that maps V1/V2 Claim object into our internal Claim representation.  Note:  Our Claim
@@ -672,6 +686,7 @@ impl Claim {
                 claim_version,
                 created_assertions: Vec::new(),
                 gathered_assertions: None,
+                context: None,
             })
         } else {
             /* Claim V2 fields
@@ -779,6 +794,7 @@ impl Claim {
                 claim_version,
                 created_assertions,
                 gathered_assertions,
+                context: None,
             })
         }
     }
@@ -1385,13 +1401,11 @@ impl Claim {
         if self.version() > 1 {
             if labels::HASH_LABELS.contains(&base_label) || add_as_created_assertion {
                 ClaimAssertionType::Created
-            } else if let Some(created_assertions) = {
-                Context::new()
-                    .settings()
-                    .builder
-                    .created_assertion_labels
-                    .clone()
-            } {
+            } else if let Some(created_assertions) = self
+                .context
+                .as_ref()
+                .and_then(|c| c.settings().builder.created_assertion_labels.as_ref())
+            {
                 if created_assertions.iter().any(|label| label == base_label) {
                     ClaimAssertionType::Created
                 } else {

@@ -36,7 +36,7 @@ use crate::{
     cstr_or_return_int, cstr_or_return_null, deref_mut_or_return, deref_mut_or_return_int,
     deref_mut_or_return_null, deref_or_return_int, deref_or_return_null, error::Error,
     ok_or_return_int, ok_or_return_null, option_to_c_string, ptr_or_return_int,
-    signer_info::SignerInfo, to_c_string, vec_to_tracked_ptr, CimplError,
+    signer_info::SignerInfo, to_c_bytes, to_c_string, CimplError,
 };
 
 /// Validates that a buffer size is within safe bounds and doesn't cause integer overflow
@@ -1550,7 +1550,7 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        *manifest_bytes_ptr = vec_to_tracked_ptr!(manifest_bytes);
+        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
     }
     len
 }
@@ -1598,7 +1598,7 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        *manifest_bytes_ptr = vec_to_tracked_ptr!(manifest_bytes);
+        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
     }
     len
 }
@@ -1654,7 +1654,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        *manifest_bytes_ptr = vec_to_tracked_ptr!(manifest_bytes);
+        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
     }
     len
 }
@@ -1700,7 +1700,7 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     let result_bytes = ok_or_return_int!(result);
     let len = result_bytes.len() as i64;
     if !result_bytes_ptr.is_null() {
-        *result_bytes_ptr = vec_to_tracked_ptr!(result_bytes);
+        *result_bytes_ptr = to_c_bytes(result_bytes);
     }
     len
 }
@@ -1884,7 +1884,7 @@ pub unsafe extern "C" fn c2pa_ed25519_sign(
     let signed_bytes =
         ok_or_return_null!(CallbackSigner::ed25519_sign(bytes, private_key.as_bytes()));
 
-    vec_to_tracked_ptr!(signed_bytes)
+    to_c_bytes(signed_bytes)
 }
 
 #[no_mangle]
