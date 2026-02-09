@@ -2470,7 +2470,6 @@ impl Builder {
             None,
         )?;
 
-
         let signer = RawSignerWrapper(raw_signer);
         store.get_box_hashed_embeddable_manifest(&signer, &self.context)
     }
