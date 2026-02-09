@@ -1174,31 +1174,19 @@ impl Builder {
             let mut validation_log = crate::status_tracker::StatusTracker::default();
             stream.rewind()?; // Ensure stream is at the start
 
-            // Create a temporary context with verify_after_reading disabled, since archives
-            // contain placeholder signatures that will fail CBOR parsing during verification.
-            // The user's context settings will be preserved for the Builder.
-            let mut no_verify_settings = self.context.settings().clone();
-            no_verify_settings.verify.verify_after_reading = false;
-
-            let temp_context = Arc::new(Context::new().with_settings(no_verify_settings)?);
-
             // Load the store without verification to avoid CBOR parsing errors on placeholder signatures
             let store = Store::from_stream(
                 "application/c2pa",
                 &mut stream,
                 &mut validation_log,
-                &temp_context,
+                &self.context,
             )?;
 
             // Use the no-verify context to avoid validating archive signatures,
             // then restore the caller's context on the resulting `Builder`.
-            let mut reader = Reader::from_shared_context(&temp_context);
-            reader.with_store(store, &mut validation_log)?;
-
-            let mut builder = reader.into_builder()?;
-            builder.context = Arc::clone(&self.context);
-
-            Ok(builder)
+            let mut reader = Reader::from_shared_context(&self.context);
+            reader.with_store(store, &mut validation_log).unwrap();
+            reader.into_builder()
         })
     }
 
@@ -2482,13 +2470,9 @@ impl Builder {
             None,
         )?;
 
+
         let signer = RawSignerWrapper(raw_signer);
-
-        let mut archive_settings = self.context.settings().clone();
-        archive_settings.verify.verify_after_sign = false;
-
-        let archive_context = Context::new().with_settings(archive_settings)?;
-        store.get_box_hashed_embeddable_manifest(&signer, &archive_context)
+        store.get_box_hashed_embeddable_manifest(&signer, &self.context)
     }
 }
 
