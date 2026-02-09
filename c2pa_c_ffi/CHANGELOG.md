@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.75.19](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.18...c2pa-c-ffi-v0.75.19)
+_09 February 2026_
+
+### Fixed
+
+* Vec_to_tracked_ptr macro merged with to_c_bytes ([#1834](https://github.com/contentauth/c2pa-rs/pull/1834))
+
 ## [0.75.18](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.17...c2pa-c-ffi-v0.75.18)
 _06 February 2026_
 
