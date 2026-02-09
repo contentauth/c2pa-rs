@@ -327,7 +327,7 @@ fn read_ftyp_box<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<FileTypeBox>
     if header.name != BoxType::FtypBox {
         // when no ftyp is present ISOBMFF parsers typically treat the file as if it had an ftyp box with major_brand of 'mp41' and minor_version of 0, so we will do the same for our purposes
         return Ok(FileTypeBox {
-            major_brand: From::from(0x6D703431), // 'mp41'
+            major_brand: From::from(0x6d703431), // 'mp41'
             minor_version: 0,
             compatible_brands: Vec::new(),
         });
