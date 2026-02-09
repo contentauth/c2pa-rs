@@ -1338,17 +1338,14 @@ impl Builder {
             }
         }
         // add all ingredients to the claim
-        // We use a map to track the ingredient IDs and their hashed URIs
+        // We use a map to track the ingredient IDs and their hashed URIs.
+        // Both label and instance_id are indexed so that ingredientIds in actions
+        // can reference ingredients by either identifier. This is essential when
+        // ingredients are merged from multiple archives (via add_ingredients_from_archive),
+        // because their labels may collide across archives while instance_ids remain unique.
         let mut ingredient_map = HashMap::new();
 
         for ingredient in &definition.ingredients {
-            // use the label if it exists and is not empty, otherwise use the instance_id
-            let id = ingredient
-                .label()
-                .filter(|label| !label.is_empty())
-                .map(|label| label.to_string())
-                .unwrap_or_else(|| ingredient.instance_id().to_string());
-
             // add it to the claim
             let uri = ingredient.add_to_claim(
                 &mut claim,
@@ -1356,8 +1353,22 @@ impl Builder {
                 Some(&self.resources),
                 &self.context,
             )?;
-            if !id.is_empty() {
-                ingredient_map.insert(id, (ingredient.relationship(), uri));
+
+            // Index by label if present and non-empty
+            if let Some(label) = ingredient.label().filter(|l| !l.is_empty()) {
+                ingredient_map.insert(
+                    label.to_string(),
+                    (ingredient.relationship(), uri.clone()),
+                );
+            }
+
+            // Also index by instance_id if present and non-empty
+            let iid = ingredient.instance_id();
+            if iid != "None" && !iid.is_empty() {
+                ingredient_map.insert(
+                    iid.to_string(),
+                    (ingredient.relationship(), uri),
+                );
             }
         }
 
