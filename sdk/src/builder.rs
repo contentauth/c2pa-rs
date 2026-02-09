@@ -38,21 +38,20 @@ use crate::{
     },
     claim::Claim,
     context::Context,
-    crypto::cose,
+    crypto::{
+        cose,
+        raw_signature::{signer_from_cert_chain_and_private_key, SigningAlg},
+    },
     error::{Error, Result},
     jumbf::labels::manifest_label_from_uri,
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::builder::TimeStampFetchScope,
+    signer::RawSignerWrapper,
     store::Store,
     utils::{hash_utils::hash_to_b64, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
     Reader, Relationship, Signer,
-};
-#[cfg(feature = "self_signed_certs")]
-use crate::{
-    crypto::raw_signature::{signer_from_cert_chain_and_private_key, SigningAlg},
-    signer::RawSignerWrapper,
 };
 
 /// Version of the Builder Archive file
@@ -2430,8 +2429,7 @@ impl Builder {
     /// `Vec<u8>` of the `c2pa_manifest` bytes. This works as an archive of the store that can
     /// be read back to restore the `Builder` state.
     ///
-    /// When the `self_signed_certs` feature is enabled, an ephemeral self-signed
-    /// certificate is generated and used to sign the manifest.
+    /// An ephemeral self-signed certificate is generated and used to sign the manifest.
     ///
     /// IMPORTANT: This certificate is useful only in a private context and will not be considered
     /// trusted in the C2PA conformance sense.
@@ -2454,51 +2452,43 @@ impl Builder {
         let mut store = Store::new();
         store.commit_claim(claim)?;
 
-        #[cfg(feature = "self_signed_certs")]
-        {
-            let mut params = rcgen::CertificateParams::new(vec!["c2pa-archive.local".into()])
-                .map_err(|err| Error::OtherError(Box::new(err)))?;
+        let mut params = rcgen::CertificateParams::new(vec!["c2pa-archive.local".into()])
+            .map_err(|err| Error::OtherError(Box::new(err)))?;
 
-            params.use_authority_key_identifier_extension = true;
+        params.use_authority_key_identifier_extension = true;
 
-            params
-                .key_usages
-                .push(rcgen::KeyUsagePurpose::DigitalSignature);
+        params
+            .key_usages
+            .push(rcgen::KeyUsagePurpose::DigitalSignature);
 
-            params
-                .extended_key_usages
-                .push(rcgen::ExtendedKeyUsagePurpose::EmailProtection);
+        params
+            .extended_key_usages
+            .push(rcgen::ExtendedKeyUsagePurpose::EmailProtection);
 
-            let keypair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
-                .map_err(|err| Error::OtherError(Box::new(err)))?;
+        let keypair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
+            .map_err(|err| Error::OtherError(Box::new(err)))?;
 
-            let cert = params
-                .self_signed(&keypair)
-                .map_err(|err| Error::OtherError(Box::new(err)))?;
+        let cert = params
+            .self_signed(&keypair)
+            .map_err(|err| Error::OtherError(Box::new(err)))?;
 
-            let cert_pem = cert.pem();
-            let key_pem = keypair.serialize_pem();
+        let cert_pem = cert.pem();
+        let key_pem = keypair.serialize_pem();
 
-            let raw_signer = signer_from_cert_chain_and_private_key(
-                cert_pem.as_bytes(),
-                key_pem.as_bytes(),
-                SigningAlg::Ed25519,
-                None,
-            )?;
+        let raw_signer = signer_from_cert_chain_and_private_key(
+            cert_pem.as_bytes(),
+            key_pem.as_bytes(),
+            SigningAlg::Ed25519,
+            None,
+        )?;
 
-            let signer = RawSignerWrapper(raw_signer);
+        let signer = RawSignerWrapper(raw_signer);
 
-            let mut archive_settings = self.context.settings().clone();
-            archive_settings.verify.verify_after_sign = false;
+        let mut archive_settings = self.context.settings().clone();
+        archive_settings.verify.verify_after_sign = false;
 
-            let archive_context = Context::new().with_settings(archive_settings)?;
-            store.get_box_hashed_embeddable_manifest(&signer, &archive_context)
-        }
-
-        #[cfg(not(feature = "self_signed_certs"))]
-        {
-            store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
-        }
+        let archive_context = Context::new().with_settings(archive_settings)?;
+        store.get_box_hashed_embeddable_manifest(&signer, &archive_context)
     }
 }
 
@@ -4309,7 +4299,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "self_signed_certs")]
     #[test]
     fn test_archive_self_signed_ed25519_signature() -> Result<()> {
         let settings = Settings::new()

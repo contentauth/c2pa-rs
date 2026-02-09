@@ -48,9 +48,6 @@ rust_native_crypto = [
     "dep:rsa",
     "dep:spki",
 ]
-self_signed_certs = [
-    "dep:rcgen"
-]
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364
 default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
@@ -158,7 +155,7 @@ rasn = "0.28.2"
 rasn-cms = "0.28.2"
 rasn-ocsp = "0.28.2"
 rasn-pkix = "0.28.2"
-rcgen = { version = "0.14.7", optional = true }
+rcgen = "0.14.7"
 regex = "1.11"
 riff = "2.0.0"
 rsa = { version = "0.9.10", features = ["pem", "sha2", "std"], optional = true }
