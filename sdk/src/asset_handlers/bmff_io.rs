@@ -1304,8 +1304,7 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
             | BoxType::SchiBox => {
                 let start = box_start(reader, header.large_size)?;
 
-                // Determine if this is a FullBox. For 'meta' boxes (Quicktime style), we need to
-                // detect the format because  MOV uses regular box while ISO BMFF uses FullBox (with version/flags).
+                // MOV and ISO BMFF differ in box handling
                 let is_full_box = if header.name == BoxType::MetaBox {
                     is_meta_full_box(reader, s)?
                 } else {
