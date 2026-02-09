@@ -1404,6 +1404,34 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     0 // returns 0 on success
 }
 
+/// Adds all ingredients from an archive stream to the Builder.
+///
+/// Unlike `c2pa_builder_add_ingredient_from_stream` with "application/c2pa" format
+/// (which only transfers the first ingredient), this transfers every ingredient
+/// from the archive's active manifest, preserving relationships and resources
+/// including the full chain of provenance.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * stream: pointer to a C2paStream containing the archive data.
+///
+/// # Returns
+/// 0 on success, or -1 on error. Use `c2pa_error` to get the error details.
+///
+/// # Safety
+/// Both pointers must be valid and non-null.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_add_ingredients_from_archive(
+    builder_ptr: *mut C2paBuilder,
+    stream: *mut C2paStream,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let stream = deref_mut_or_return_int!(stream, C2paStream);
+    let result = builder.add_ingredients_from_archive(&mut (*stream));
+    ok_or_return_int!(result);
+    0
+}
+
 /// Adds an action to the manifest the Builder is constructing.
 ///
 /// # Parameters

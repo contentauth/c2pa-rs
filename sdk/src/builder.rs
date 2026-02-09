@@ -2414,6 +2414,80 @@ impl Builder {
             .ok_or(Error::IngredientNotFound)
     }
 
+    /// Adds all ingredients from a [`Reader`] to this builder.
+    ///
+    /// Unlike [`add_ingredient_from_reader`](Self::add_ingredient_from_reader) which only
+    /// transfers the first ingredient, this method transfers every ingredient from the
+    /// reader's active manifest, preserving their relationships (parentOf, componentOf,
+    /// inputTo) and all associated resources (thumbnails, manifest_data with full
+    /// provenance chain).
+    ///
+    /// This is intended for merging ingredients from multiple sources into a single builder,
+    /// such as combining ingredients from several archived builders.
+    ///
+    /// # Arguments
+    /// * `reader` - The [`Reader`] whose active manifest's ingredients will be added.
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if there is no active manifest (which should not happen in this case).
+    pub fn add_all_ingredients_from_reader(
+        &mut self,
+        reader: &crate::Reader,
+    ) -> Result<()> {
+        let manifest = reader
+            .active_manifest()
+            .ok_or(Error::IngredientNotFound)?;
+
+        for ingredient in manifest.ingredients() {
+            self.add_ingredient(ingredient.clone());
+        }
+        Ok(())
+    }
+
+    /// Adds all ingredients from an archive stream to this builder.
+    ///
+    /// This loads the archive as a [`Reader`] (with verification disabled for working
+    /// stores) and transfers every ingredient from its active manifest into this builder,
+    /// preserving relationships and resources.
+    ///
+    /// Unlike [`add_ingredient_from_stream`](Self::add_ingredient_from_stream) with
+    /// `"application/c2pa"` format (which only transfers the first ingredient), this
+    /// method transfers all ingredients.
+    ///
+    /// # Arguments
+    /// * `stream` - A stream containing the archive data.
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if the archive cannot be read or has no active manifest.
+    /// ```
+    pub fn add_ingredients_from_archive(
+        &mut self,
+        stream: impl Read + Seek + Send,
+    ) -> Result<()> {
+        let mut stream = stream;
+
+        // Create a temporary context with verify_after_reading disabled, since archives
+        // contain placeholder signatures that will fail CBOR parsing during verification.
+        let mut no_verify_settings = self.context.settings().clone();
+        no_verify_settings.verify.verify_after_reading = false;
+
+        let temp_context = crate::Context::new().with_settings(no_verify_settings)?;
+
+        let mut validation_log = crate::status_tracker::StatusTracker::default();
+
+        let store = Store::from_stream(
+            "application/c2pa",
+            &mut stream,
+            &mut validation_log,
+            &temp_context,
+        )?;
+
+        let mut reader = crate::Reader::from_shared_context(&self.context);
+        reader.with_store(store, &mut validation_log)?;
+
+        self.add_all_ingredients_from_reader(&reader)
+    }
+
     /// This creates a working store from the builder
     /// The working store is signed with a BoxHash over an empty string
     /// And is returned as a Vec<u8> of the c2pa_manifest bytes
@@ -4576,5 +4650,299 @@ mod tests {
         }
 
         assert!(reader.active_manifest().is_some());
+    }
+
+    /// Helper: create a builder with ingredients, archive it, and return the archive bytes.
+    fn build_archive_with_ingredients(
+        ingredients: &[(&str, &str)], // (title, relationship)
+    ) -> Vec<u8> {
+        let manifest = simple_manifest_json();
+        let mut builder = Builder::from_json(&manifest).unwrap();
+
+        for (title, relationship) in ingredients {
+            let json = json!({
+                "title": title,
+                "relationship": relationship,
+            })
+            .to_string();
+            builder
+                .add_ingredient_from_stream(&json, "image/jpeg", &mut Cursor::new(TEST_IMAGE_CLEAN))
+                .unwrap();
+        }
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        archive.into_inner()
+    }
+
+    #[test]
+    fn test_add_all_ingredients_from_reader_transfers_all() {
+        let archive_data = build_archive_with_ingredients(&[
+            ("Parent image", "parentOf"),
+            ("Component A", "componentOf"),
+            ("Component B", "componentOf"),
+        ]);
+
+        // Load the archive as a Reader
+        let settings = Settings::new()
+            .with_value("verify.verify_after_reading", false)
+            .unwrap();
+        let ctx = crate::Context::new().with_settings(settings).unwrap();
+        let mut stream = Cursor::new(archive_data);
+        let reader = Reader::from_context(ctx)
+            .with_stream("application/c2pa", &mut stream)
+            .unwrap();
+
+        // Create a new empty builder and...
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        // Add all ingredients from the reader
+        builder.add_all_ingredients_from_reader(&reader).unwrap();
+
+        assert_eq!(builder.definition.ingredients.len(), 3);
+
+        // Verify we got the right info, aka relationships
+        let relationships: Vec<_> = builder
+            .definition
+            .ingredients
+            .iter()
+            .map(|i| (i.title().unwrap_or("").to_string(), i.relationship().clone()))
+            .collect();
+
+        assert!(relationships
+            .iter()
+            .any(|(t, r)| t == "Parent image" && *r == crate::assertions::Relationship::ParentOf));
+        assert!(relationships
+            .iter()
+            .any(|(t, r)| t == "Component A" && *r == crate::assertions::Relationship::ComponentOf));
+        assert!(relationships
+            .iter()
+            .any(|(t, r)| t == "Component B" && *r == crate::assertions::Relationship::ComponentOf));
+    }
+
+    #[test]
+    fn test_add_ingredients_from_archive_merges_two_archives() {
+        // Archive 1: 1 parent + 2 components
+        let archive1 = build_archive_with_ingredients(&[
+            ("Imported image", "parentOf"),
+            ("Placed #1", "componentOf"),
+            ("Placed #2", "componentOf"),
+        ]);
+
+        // Archive 2: 3 components
+        let archive2 = build_archive_with_ingredients(&[
+            ("Extra A", "componentOf"),
+            ("Extra B", "componentOf"),
+            ("Extra C", "componentOf"),
+        ]);
+
+        // New Builder
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+
+        builder
+            .add_ingredients_from_archive(Cursor::new(archive1))
+            .unwrap();
+        builder
+            .add_ingredients_from_archive(Cursor::new(archive2))
+            .unwrap();
+
+        assert_eq!(
+            builder.definition.ingredients.len(),
+            6,
+            "Should now have all 6 ingredients"
+        );
+
+        // Sign and verify the result
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut output)
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let manifest = reader.active_manifest().unwrap();
+        let ingredients = manifest.ingredients();
+
+        assert_eq!(
+            ingredients.len(),
+            6,
+            "Signed manifest should have 6 ingredients"
+        );
+
+        // Check all titles are present
+        let titles: Vec<_> = ingredients
+            .iter()
+            .map(|i| i.title().unwrap_or("").to_string())
+            .collect();
+        assert!(titles.contains(&"Imported image".to_string()));
+        assert!(titles.contains(&"Placed #1".to_string()));
+        assert!(titles.contains(&"Placed #2".to_string()));
+        assert!(titles.contains(&"Extra A".to_string()));
+        assert!(titles.contains(&"Extra B".to_string()));
+        assert!(titles.contains(&"Extra C".to_string()));
+
+        // Check relationships
+        let parent_count = ingredients
+            .iter()
+            .filter(|i| i.is_parent())
+            .count();
+        assert_eq!(parent_count, 1, "Should have exactly 1 parentOf");
+        assert_eq!(
+            ingredients.iter().find(|i| i.is_parent()).unwrap().title().unwrap(),
+            "Imported image"
+        );
+    }
+
+    #[test]
+    fn test_add_ingredients_from_archive_empty_archive() {
+        // Archive with 0 ingredients
+        let manifest = simple_manifest_json();
+        let mut builder = Builder::from_json(&manifest).unwrap();
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        let archive_data = archive.into_inner();
+
+        // Build a target with one ingredient
+        let mut target = Builder::from_json(&manifest).unwrap();
+        target
+            .add_ingredient_from_stream(
+                r#"{"title": "Existing", "relationship": "parentOf"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+
+        // Merging an empty archive should add 0 ingredients
+        target
+            .add_ingredients_from_archive(Cursor::new(archive_data))
+            .unwrap();
+        assert_eq!(
+            target.definition.ingredients.len(),
+            1,
+            "Original ingredient should remain"
+        );
+    }
+
+    #[test]
+    fn test_add_ingredients_from_archive_preserves_c2pa_chain() {
+        // Create a signed asset (which will have C2PA provenance)
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut builder1 = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut source1 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut signed_asset = Cursor::new(Vec::new());
+        builder1
+            .sign(signer.as_ref(), "image/jpeg", &mut source1, &mut signed_asset)
+            .unwrap();
+
+        // Create a second builder that uses the signed asset as an ingredient
+        let mut builder2 = Builder::from_json(&simple_manifest_json()).unwrap();
+        signed_asset.rewind().unwrap();
+        builder2
+            .add_ingredient_from_stream(
+                r#"{"title": "Signed source", "relationship": "parentOf"}"#,
+                "image/jpeg",
+                &mut signed_asset,
+            )
+            .unwrap();
+
+        // Archive builder2
+        let mut archive = Cursor::new(Vec::new());
+        builder2.to_archive(&mut archive).unwrap();
+        let archive_data = archive.into_inner();
+
+        // Create a third builder and merge the archive's ingredients
+        let mut builder3 = Builder::from_json(&simple_manifest_json()).unwrap();
+        builder3
+            .add_ingredients_from_archive(Cursor::new(archive_data))
+            .unwrap();
+
+        // Sign builder3 and verify the ingredient has manifest_data (provenance chain)
+        let mut source3 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut output = Cursor::new(Vec::new());
+        builder3
+            .sign(signer.as_ref(), "image/jpeg", &mut source3, &mut output)
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let manifest = reader.active_manifest().unwrap();
+        let ingredients = manifest.ingredients();
+
+        assert_eq!(ingredients.len(), 1);
+        let ingredient = &ingredients[0];
+        assert_eq!(ingredient.title().unwrap(), "Signed source");
+        assert!(ingredient.is_parent());
+        // The ingredient should have an active_manifest indicating it carried C2PA data
+        assert!(
+            ingredient.active_manifest().is_some(),
+            "Ingredient should carry its C2PA provenance chain (active_manifest)"
+        );
+    }
+
+    #[test]
+    fn test_add_ingredients_from_archive_multiple_merges() {
+        // Merge from 3 separate archives sequentially into a clean builder
+        let archive1 = build_archive_with_ingredients(&[("A1", "parentOf")]);
+        let archive2 = build_archive_with_ingredients(&[("B1", "componentOf"), ("B2", "componentOf")]);
+        let archive3 = build_archive_with_ingredients(&[("C1", "componentOf")]);
+
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+
+        builder
+            .add_ingredients_from_archive(Cursor::new(archive1))
+            .unwrap();
+        assert_eq!(builder.definition.ingredients.len(), 1);
+
+        builder
+            .add_ingredients_from_archive(Cursor::new(archive2))
+            .unwrap();
+        assert_eq!(builder.definition.ingredients.len(), 3);
+
+        builder
+            .add_ingredients_from_archive(Cursor::new(archive3))
+            .unwrap();
+        assert_eq!(builder.definition.ingredients.len(), 4);
+
+        // Sign and verify
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut output)
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let ingredients = reader.active_manifest().unwrap().ingredients();
+        assert_eq!(ingredients.len(), 4);
+
+        let titles: Vec<_> = ingredients.iter().map(|i| i.title().unwrap()).collect();
+        assert!(titles.contains(&"A1"));
+        assert!(titles.contains(&"B1"));
+        assert!(titles.contains(&"B2"));
+        assert!(titles.contains(&"C1"));
+    }
+
+    #[test]
+    fn test_add_all_ingredients_from_reader_into_fresh_builder() {
+        // Verify that add_all_ingredients_from_reader works on a completely empty builder
+        let archive_data = build_archive_with_ingredients(&[
+            ("Src", "parentOf"),
+            ("Overlay", "componentOf"),
+        ]);
+
+        let settings = Settings::new()
+            .with_value("verify.verify_after_reading", false)
+            .unwrap();
+        let ctx = crate::Context::new().with_settings(settings).unwrap();
+        let mut stream = Cursor::new(archive_data);
+        let reader = Reader::from_context(ctx)
+            .with_stream("application/c2pa", &mut stream)
+            .unwrap();
+
+        let mut builder = Builder::new();
+        builder.add_all_ingredients_from_reader(&reader).unwrap();
+        assert_eq!(builder.definition.ingredients.len(), 2);
     }
 }
