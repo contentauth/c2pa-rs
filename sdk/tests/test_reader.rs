@@ -58,7 +58,7 @@ fn test_reader_xca_jpg() -> Result<()> {
 
     let (format, mut stream) = fixture_stream("XCA.jpg")?;
     let reader = Reader::from_context(context).with_stream(&format, &mut stream)?;
-    // Validation failures can appear in any order (e.g. signingCredential.untrusted vs assertion.dataHash.mismatch).
+    // Validation failures can appear in any order, so we just look for that error anywhere.
     check_validation_status(&reader, validation_status::ASSERTION_DATAHASH_MISMATCH);
     compare_to_known_good(&reader, "XCA.json")
 }
