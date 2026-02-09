@@ -6931,6 +6931,45 @@ pub mod tests {
     }
 
     #[test]
+    fn test_bmff_jumbf_generation_qt() {
+        let context = crate::context::Context::new();
+
+        // test adding to actual image
+        let (format, mut input_stream, mut output_stream) = create_test_streams("c.mov");
+
+        // Create claims store.
+        let mut store = Store::from_context(&context);
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Move the claim to claims list.
+        store.commit_claim(claim1).unwrap();
+        store
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut output_stream,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+
+        let mut report = StatusTracker::default();
+
+        // can we read back in
+        output_stream.set_position(0);
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
+
+        assert!(!report.has_any_error());
+
+        println!("store = {new_store}");
+    }
+
+    #[test]
     fn test_bmff_jumbf_generation_claim_v1() {
         let context = crate::context::Context::new();
 
