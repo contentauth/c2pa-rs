@@ -73,7 +73,7 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
-static SUPPORTED_TYPES: [&str; 15] = [
+static SUPPORTED_TYPES: [&str; 19] = [
     "avif",
     "heif",
     "heic",
@@ -81,6 +81,8 @@ static SUPPORTED_TYPES: [&str; 15] = [
     "m4a",
     "mov",
     "m4v",
+    "3gp",
+    "3g2",
     "application/mp4",
     "audio/mp4",
     "image/avif",
@@ -89,6 +91,8 @@ static SUPPORTED_TYPES: [&str; 15] = [
     "video/mp4",
     "video/quicktime",
     "video/x-m4v",
+    "video/3gpp",
+    "video/3g2",
 ];
 
 macro_rules! boxtype {
@@ -1823,6 +1827,27 @@ impl AssetIO for BmffIO {
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+
+    fn get_handler_type_from_bytes(&self, data: &[u8]) -> Option<&'static str> {
+        if data.len() < 12 || &data[4..8] != crate::utils::signatures::BMFF_FTYP {
+            return None;
+        }
+        let brand = &data[8..12];
+        match brand {
+            b"mp41" | b"mp42" | b"isom" | b"iso2" | b"iso3" | b"iso4" | b"iso5" | b"iso6"
+            | b"avc1" | b"mp71" => Some("video/mp4"),
+            b"m4a " => Some("audio/mp4"),
+            b"m4v " => Some("video/x-m4v"),
+            b"heic" | b"heix" | b"mif1" | b"msf1" => Some("image/heic"),
+            b"hevc" | b"hevx" => Some("image/heif"),
+            b"avif" | b"avis" => Some("image/avif"),
+            b"qt  " => Some("video/quicktime"),
+            b"3gp1" | b"3gp2" | b"3gp3" | b"3gp4" | b"3gp5" | b"3gp6" | b"3gr6" | b"3gs6"
+            | b"3ge6" => Some("video/3gpp"),
+            b"3g2a" | b"3g2b" | b"3g2c" => Some("video/3g2"),
+            _ => None,
+        }
     }
 }
 

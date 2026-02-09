@@ -572,6 +572,16 @@ impl AssetIO for PngIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    fn get_handler_type_from_bytes(&self, data: &[u8]) -> Option<&'static str> {
+        if data.len() < 8 {
+            return None;
+        }
+        if data.starts_with(crate::utils::signatures::PNG) {
+            return Some("image/png");
+        }
+        None
+    }
 }
 
 fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
