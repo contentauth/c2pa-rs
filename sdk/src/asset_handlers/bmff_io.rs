@@ -44,6 +44,8 @@ pub struct BmffIO {
     bmff_format: String, // can be used for specialized BMFF cases
 }
 
+const QT_FOURCC: u32 = 0x71742020; // 'qt  ' - used to identify QuickTime format which has some differences from standard BMFF/MP4
+
 const MAX_BOX_DEPTH: usize = 32; // reasonable BMFF box depth, to prevent stack overflow
 
 const HEADER_SIZE: u64 = 8; // 4 byte type + 4 byte size
@@ -296,6 +298,68 @@ impl BoxInfoLite {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FourCC {
+    pub value: [u8; 4],
+}
+
+impl From<u32> for FourCC {
+    fn from(number: u32) -> Self {
+        FourCC {
+            value: number.to_be_bytes(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FileTypeBox {
+    pub major_brand: FourCC,
+    pub minor_version: u32,
+    pub compatible_brands: Vec<FourCC>,
+}
+
+fn read_ftyp_box<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<FileTypeBox> {
+    let start = reader.stream_position()?;
+
+    let header = BoxHeaderLite::read(reader)
+        .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {err}")))?;
+
+    if header.name != BoxType::FtypBox {
+        // when no ftyp is present ISOBMFF parsers typically treat the file as if it had an ftyp box with major_brand of 'mp41' and minor_version of 0, so we will do the same for our purposes
+        return Ok(FileTypeBox {
+            major_brand: From::from(0x6d703431), // 'mp41'
+            minor_version: 0,
+            compatible_brands: Vec::new(),
+        });
+    }
+
+    let size = header.size;
+
+    if size < 16 || size % 4 != 0 {
+        return Err(Error::InvalidAsset(
+            "ftyp size too small or not aligned".to_string(),
+        ));
+    }
+
+    let brand_count = (size - 16) / 4; // header + major + minor
+    let major = reader.read_u32::<BigEndian>()?;
+    let minor = reader.read_u32::<BigEndian>()?;
+
+    let mut brands = Vec::new();
+    for _ in 0..brand_count {
+        let b = reader.read_u32::<BigEndian>()?;
+        brands.push(From::from(b));
+    }
+
+    skip_bytes_to(reader, start + size)?;
+
+    Ok(FileTypeBox {
+        major_brand: From::from(major),
+        minor_version: minor,
+        compatible_brands: brands,
+    })
+}
+
 fn read_box_header_ext<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<(u8, u32)> {
     let version = reader.read_u8()?;
     let flags = reader.read_u24::<BigEndian>()?;
@@ -482,6 +546,9 @@ where
     let size = stream_len(reader)?;
     reader.rewind()?;
 
+    let ftyp = read_ftyp_box(reader)?;
+    reader.rewind()?;
+
     // create root node
     let root_box = BoxInfo {
         path: "".to_string(),
@@ -506,6 +573,7 @@ where
         &root_token,
         &mut bmff_map,
         &mut rl,
+        &ftyp,
     )?;
 
     // get top level box offsets
@@ -1189,6 +1257,7 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     current_node: &Token,
     bmff_path_map: &mut HashMap<String, Vec<Token>>,
     recursion_level: &mut usize,
+    ftyp: &FileTypeBox,
 ) -> Result<()> {
     *recursion_level += 1;
     if *recursion_level > MAX_BOX_DEPTH {
@@ -1224,8 +1293,7 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                 let mut extended_type = [0u8; 16]; // 16 bytes of UUID
                 reader.read_exact(&mut extended_type)?;
 
-                // if this is a C2PA UUID box it is a FullBox it has version and flags
-                // so read those too
+                // if this is a C2PA ContentProvenanceBox it is a FullBox so it has version and flags
                 let (version, flags) = if extended_type == C2PA_UUID {
                     let (v, f) = read_box_header_ext(reader)?;
                     (Some(v), Some(f))
@@ -1272,7 +1340,19 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                 let start = box_start(reader, header.large_size)?;
 
                 let b = if FULL_BOX_TYPES.contains(&header.fourcc.as_str()) {
-                    let (version, flags) = read_box_header_ext(reader)?; // box extensions
+                    // FullBox has version and flags after the header, but for some boxes like QT "meta"
+                    // the version and flags are not present even though it is technically a full box,
+                    // so we need to conditionally read the extended header based on the box type and in
+                    // the case of "meta" the ftyp major brand of "qt  " indicates the QuickTime exception.
+                    let (version, flags) = if BoxType::MetaBox == header.name
+                        && ftyp.major_brand == QT_FOURCC.into()
+                    {
+                        (None, None)
+                    } else {
+                        let (v, f) = read_box_header_ext(reader)?;
+                        (Some(v), Some(f))
+                    };
+
                     BoxInfo {
                         path: header.fourcc.clone(),
                         offset: start,
@@ -1280,8 +1360,8 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                         box_type: header.name,
                         parent: Some(*current_node),
                         user_type: None,
-                        version: Some(version),
-                        flags: Some(flags),
+                        version,
+                        flags,
                     }
                 } else {
                     BoxInfo {
@@ -1315,6 +1395,7 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                         &new_token,
                         bmff_path_map,
                         recursion_level,
+                        ftyp,
                     )?;
                     current = reader.stream_position()?;
                 }
@@ -1591,6 +1672,9 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
     let size = stream_len(reader)?;
     reader.rewind()?;
 
+    let ftyp = read_ftyp_box(reader)?;
+    reader.rewind()?;
+
     // create root node
     let root_box = BoxInfo {
         path: "".to_string(),
@@ -1615,6 +1699,7 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
         &root_token,
         &mut bmff_map,
         &mut rl,
+        &ftyp,
     )?;
     c2pa_boxes_from_tree_and_map(reader, &bmff_tree, &bmff_map)
 }
@@ -1751,6 +1836,9 @@ impl CAIWriter for BmffIO {
         let size = stream_len(input_stream)?;
         input_stream.rewind()?;
 
+        let ftyp = read_ftyp_box(input_stream)?;
+        input_stream.rewind()?;
+
         // create root node
         let root_box = BoxInfo {
             path: "".to_string(),
@@ -1775,6 +1863,7 @@ impl CAIWriter for BmffIO {
             &root_token,
             &mut bmff_map,
             &mut rl,
+            &ftyp,
         )?;
 
         // figure out what state we are in
@@ -1996,6 +2085,7 @@ impl CAIWriter for BmffIO {
                 &root_token,
                 &mut output_bmff_map,
                 &mut rl,
+                &ftyp,
             )?;
 
             // adjust offsets based on current layout
@@ -2027,6 +2117,9 @@ impl CAIWriter for BmffIO {
         let size = stream_len(input_stream)?;
         input_stream.rewind()?;
 
+        let ftyp = read_ftyp_box(input_stream)?;
+        input_stream.rewind()?;
+
         // create root node
         let root_box = BoxInfo {
             path: "".to_string(),
@@ -2051,6 +2144,7 @@ impl CAIWriter for BmffIO {
             &root_token,
             &mut bmff_map,
             &mut rl,
+            &ftyp,
         )?;
 
         // get position of c2pa manifest
@@ -2124,6 +2218,7 @@ impl CAIWriter for BmffIO {
             &root_token,
             &mut output_bmff_map,
             &mut rl,
+            &ftyp,
         )?;
 
         // adjust offsets based on current layout
@@ -2145,6 +2240,9 @@ impl AssetPatch for BmffIO {
             .create(false)
             .open(asset_path)?;
         let size = stream_len(&mut asset)?;
+        asset.rewind()?;
+
+        let ftyp = read_ftyp_box(&mut asset)?;
         asset.rewind()?;
 
         // create root node
@@ -2171,6 +2269,7 @@ impl AssetPatch for BmffIO {
             &root_token,
             &mut bmff_map,
             &mut rl,
+            &ftyp,
         )?;
 
         // get position to insert c2pa
@@ -2262,6 +2361,9 @@ impl RemoteRefEmbed for BmffIO {
                 let size = stream_len(input_stream)?;
                 input_stream.rewind()?;
 
+                let ftyp = read_ftyp_box(input_stream)?;
+                input_stream.rewind()?;
+
                 // create root node
                 let root_box = BoxInfo {
                     path: "".to_string(),
@@ -2286,6 +2388,7 @@ impl RemoteRefEmbed for BmffIO {
                     &root_token,
                     &mut bmff_map,
                     &mut rl,
+                    &ftyp,
                 )?;
 
                 let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
@@ -2383,6 +2486,7 @@ impl RemoteRefEmbed for BmffIO {
                     &root_token,
                     &mut output_bmff_map,
                     &mut rl,
+                    &ftyp,
                 )?;
 
                 // adjust offsets based on current layout
