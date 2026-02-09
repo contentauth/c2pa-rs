@@ -1304,7 +1304,7 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
             | BoxType::SchiBox => {
                 let start = box_start(reader, header.large_size)?;
 
-                // MOV and ISO BMFF differ in box handling
+                // mov impl differ slightly in box handling from ISO bmff
                 let is_full_box = if header.name == BoxType::MetaBox {
                     is_meta_full_box(reader, s)?
                 } else {
