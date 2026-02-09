@@ -309,11 +309,9 @@ fn write_box_header_ext<W: Write>(w: &mut W, v: u8, f: u32) -> Result<u64> {
 
 /// Detect if a meta box uses FullBox format (ISO BMFF) or regular (QuickTime mov).
 /// In ISO BMFF (standard), `meta` is a FullBox with 4 bytes of version/flags before its children.
-/// In QuickTime mov files, `meta` is a normal/usual box where children start immediately after the 8-byte header.
+/// In QuickTime mov files, `meta` is a normal box where children start immediately after the 8-byte header.
 /// This tries to detect that by peeking at the 8 bytes right after the header
-/// (otherwise offsets are wrong depending on which kind of mov/bmff flavor we have):
-/// - If they form a valid child box header it's a regular box (QuickTime style).
-/// - Otherwise, the first 4 bytes are version/flags (ISO BMFF style).
+/// (otherwise offsets are wrong depending on which kind of flavor we have)
 fn is_meta_full_box<R: Read + Seek + ?Sized>(reader: &mut R, box_size: u64) -> Result<bool> {
     let pos = reader.stream_position()?;
     let mut buf = [0u8; 8];
@@ -326,17 +324,15 @@ fn is_meta_full_box<R: Read + Seek + ?Sized>(reader: &mut R, box_size: u64) -> R
 
     // Interpret first 4 bytes as a potential child box size
     let potential_child_size = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as u64;
-    // Interpret next 4 bytes as a potential child box fourcc
-    let potential_child_type = &buf[4..8];
 
-    // A valid fourcc consists of printable ASCII characters
+    // Interpret next 4 bytes as a potential child box fourcc
+    // A valid fourcc should consist of printable ASCII characters
+    let potential_child_type = &buf[4..8];
     let is_valid_fourcc = potential_child_type
         .iter()
         .all(|&b| (0x20..=0x7e).contains(&b));
 
-    // Check if this looks like a valid child box header (QuickTime style):
-    // - size > 0 and fits within the remaining container space
-    // - four characters chode id is printable ASCII
+    // Knowing all of the above, what does this look like now?
     if potential_child_size > 0 && potential_child_size <= box_size && is_valid_fourcc {
         Ok(false)
     } else {
