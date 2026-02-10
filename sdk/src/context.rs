@@ -331,7 +331,7 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `AsyncHttpResolver`
-    pub fn with_resolver_async<T: AsyncHttpResolver + MaybeSend + MaybeSync + 'static>(
+    pub fn with_resolver_async<T: AsyncHttpResolver + MaybeSend + Sync + 'static>(
         mut self,
         resolver: T,
     ) -> Self {
@@ -339,7 +339,7 @@ impl Context {
         self
     }
 
-    pub fn set_resolver_async<T: AsyncHttpResolver + MaybeSend + MaybeSync + 'static>(
+    pub fn set_resolver_async<T: AsyncHttpResolver + MaybeSend + Sync + 'static>(
         &mut self,
         resolver: T,
     ) -> Result<()> {

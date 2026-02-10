@@ -67,7 +67,7 @@ pub type BoxedAsyncResolver = Box<dyn AsyncHttpResolver + Send + Sync>;
 
 /// Type alias for a boxed [`AsyncHttpResolver`] without Send + Sync bounds (WASM only).
 #[cfg(target_arch = "wasm32")]
-pub type BoxedAsyncResolver = Box<dyn AsyncHttpResolver>;
+pub type BoxedAsyncResolver = Box<dyn AsyncHttpResolver + Sync>;
 
 mod reqwest;
 mod ureq;
