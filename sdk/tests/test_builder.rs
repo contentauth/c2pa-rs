@@ -665,3 +665,103 @@ fn test_archive_path_traversal_protection() -> Result<()> {
 
     Ok(())
 }
+
+/// Test that arbitrary key/value pairs in AssertionMetadata make it through
+/// to the final ingredient assertion in the manifest
+#[test]
+fn test_ingredient_arbitrary_metadata_fields() -> Result<()> {
+    use serde_json::json;
+
+    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
+
+    // Create an ingredient with custom metadata fields
+    let manifest_json = json!({
+        "title": "Test with Custom Metadata",
+        "format": "image/jpeg",
+        "claim_generator_info": [{
+            "name": "test",
+            "version": "1.0"
+        }],
+        "ingredients": [{
+            "title": "Test Ingredient",
+            "format": "image/jpeg",
+            "relationship": "componentOf",
+            "metadata": {
+                "dateTime": "2024-01-23T10:00:00Z",
+                "customString": "my custom value",
+                "customNumber": 42,
+                "customBool": true,
+                "customObject": {
+                    "nested": "value",
+                    "count": 123
+                },
+                "customArray": ["item1", "item2", "item3"]
+            }
+        }]
+    });
+
+    let mut builder =
+        Builder::from_shared_context(&context).with_definition(manifest_json.to_string())?;
+
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/no_manifest.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+    let mut dest = Cursor::new(Vec::new());
+
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    // Read back and verify the custom fields made it through
+    dest.set_position(0);
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+
+    // Get the manifest JSON representation
+    let manifest_json_str = reader.json();
+    let manifest_json: serde_json::Value =
+        serde_json::from_str(&manifest_json_str).expect("should parse JSON");
+
+    // Navigate to the ingredient in the manifest
+    let ingredients = manifest_json["manifests"]
+        .as_object()
+        .and_then(|m| m.values().next().and_then(|v| v["ingredients"].as_array()))
+        .expect("should have ingredients");
+
+    assert!(
+        !ingredients.is_empty(),
+        "should have at least one ingredient"
+    );
+
+    let ingredient = &ingredients[0];
+
+    assert_eq!(
+        ingredient["metadata"]["dateTime"].as_str(),
+        Some("2024-01-23T10:00:00Z")
+    );
+
+    // Verify custom fields made it through
+    assert_eq!(
+        ingredient["metadata"]["customString"].as_str(),
+        Some("my custom value")
+    );
+    assert_eq!(ingredient["metadata"]["customNumber"].as_i64(), Some(42));
+    assert_eq!(ingredient["metadata"]["customBool"].as_bool(), Some(true));
+    assert_eq!(
+        ingredient["metadata"]["customObject"]["nested"].as_str(),
+        Some("value")
+    );
+    assert_eq!(
+        ingredient["metadata"]["customObject"]["count"].as_i64(),
+        Some(123)
+    );
+
+    // Verify array field
+    let custom_array = ingredient["metadata"]["customArray"]
+        .as_array()
+        .expect("should have customArray");
+    assert_eq!(custom_array.len(), 3);
+    assert_eq!(custom_array[0].as_str(), Some("item1"));
+    assert_eq!(custom_array[1].as_str(), Some("item2"));
+    assert_eq!(custom_array[2].as_str(), Some("item3"));
+
+    Ok(())
+}

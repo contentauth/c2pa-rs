@@ -9,6 +9,100 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.75.19](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.18...c2pa-v0.75.19)
+_09 February 2026_
+
+### Fixed
+
+* Support QT style 'meta' boxes ([#1844](https://github.com/contentauth/c2pa-rs/pull/1844))
+* Settings.builder.created_assertion_lables was not being applied. ([#1828](https://github.com/contentauth/c2pa-rs/pull/1828))
+
+## [0.75.18](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.17...c2pa-v0.75.18)
+_06 February 2026_
+
+### Fixed
+
+* Wrong size being written out for XMP box ([#1835](https://github.com/contentauth/c2pa-rs/pull/1835))
+
+## [0.75.17](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.16...c2pa-v0.75.17)
+_06 February 2026_
+
+### Fixed
+
+* Capture default values in schema generation ([#1824](https://github.com/contentauth/c2pa-rs/pull/1824))
+
+## [0.75.13](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.12...c2pa-v0.75.13)
+_03 February 2026_
+
+### Fixed
+
+* Force Cargo to use sparse crates.io index
+
+## [0.75.12](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.11...c2pa-v0.75.12)
+_03 February 2026_
+
+(Re-release since the 0.75.11 release failed.)
+
+## [0.75.11](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.10...c2pa-v0.75.11)
+_03 February 2026_
+
+### Added
+
+* Adds thread safe Settings and Context support to c_ffi_api ([#1783](https://github.com/contentauth/c2pa-rs/pull/1783))
+
+### Other
+
+* Only use `reqwest` for `c2pa-c-ffi` networking ([#1807](https://github.com/contentauth/c2pa-rs/pull/1807))
+
+### Updated dependencies
+
+* Bump jumbf from 0.5.0 to 0.7.0 ([#1806](https://github.com/contentauth/c2pa-rs/pull/1806))
+
+## [0.75.10](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.9...c2pa-v0.75.10)
+_02 February 2026_
+
+### Fixed
+
+* Updates to c2pa_cbor 0.77.2 ([#1804](https://github.com/contentauth/c2pa-rs/pull/1804))
+
+### Updated dependencies
+
+* Bump jumbf from 0.4.1 to 0.5.0 ([#1794](https://github.com/contentauth/c2pa-rs/pull/1794))
+
+## [0.75.9](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.8...c2pa-v0.75.9)
+_30 January 2026_
+
+### Added
+
+* Public API for timestamp assertions ([#1603](https://github.com/contentauth/c2pa-rs/pull/1603))
+* Add support for arbitrary key/value pairs in assertion metadata ([#1782](https://github.com/contentauth/c2pa-rs/pull/1782))
+
+### Updated dependencies
+
+* Bump c2pa-cbor from 0.77.0 to 0.77.1 ([#1800](https://github.com/contentauth/c2pa-rs/pull/1800))
+
+## [0.75.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.7...c2pa-v0.75.8)
+_28 January 2026_
+
+### Fixed
+
+* MP3's GEOB MIME type ([#1790](https://github.com/contentauth/c2pa-rs/pull/1790))
+* Removed dependency on unmaintained `serde_cbor` crate ([#1739](https://github.com/contentauth/c2pa-rs/pull/1739))
+
+## [0.75.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.6...c2pa-v0.75.7)
+_27 January 2026_
+
+### Fixed
+
+* Retrigger release-plz release workflow ([#1781](https://github.com/contentauth/c2pa-rs/pull/1781))
+
+## [0.75.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.5...c2pa-v0.75.6)
+_22 January 2026_
+
+### Added
+
+* Trigger a new release to allow generated binaries to be published
+
 ## [0.75.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.4...c2pa-v0.75.5)
 _21 January 2026_
 

@@ -44,6 +44,8 @@ pub struct BmffIO {
     bmff_format: String, // can be used for specialized BMFF cases
 }
 
+const QT_FOURCC: u32 = 0x71742020; // 'qt  ' - used to identify QuickTime format which has some differences from standard BMFF/MP4
+
 const MAX_BOX_DEPTH: usize = 32; // reasonable BMFF box depth, to prevent stack overflow
 
 const HEADER_SIZE: u64 = 8; // 4 byte type + 4 byte size
@@ -296,6 +298,68 @@ impl BoxInfoLite {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FourCC {
+    pub value: [u8; 4],
+}
+
+impl From<u32> for FourCC {
+    fn from(number: u32) -> Self {
+        FourCC {
+            value: number.to_be_bytes(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FileTypeBox {
+    pub major_brand: FourCC,
+    pub minor_version: u32,
+    pub compatible_brands: Vec<FourCC>,
+}
+
+fn read_ftyp_box<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<FileTypeBox> {
+    let start = reader.stream_position()?;
+
+    let header = BoxHeaderLite::read(reader)
+        .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {err}")))?;
+
+    if header.name != BoxType::FtypBox {
+        // when no ftyp is present ISOBMFF parsers typically treat the file as if it had an ftyp box with major_brand of 'mp41' and minor_version of 0, so we will do the same for our purposes
+        return Ok(FileTypeBox {
+            major_brand: From::from(0x6d703431), // 'mp41'
+            minor_version: 0,
+            compatible_brands: Vec::new(),
+        });
+    }
+
+    let size = header.size;
+
+    if size < 16 || size % 4 != 0 {
+        return Err(Error::InvalidAsset(
+            "ftyp size too small or not aligned".to_string(),
+        ));
+    }
+
+    let brand_count = (size - 16) / 4; // header + major + minor
+    let major = reader.read_u32::<BigEndian>()?;
+    let minor = reader.read_u32::<BigEndian>()?;
+
+    let mut brands = Vec::new();
+    for _ in 0..brand_count {
+        let b = reader.read_u32::<BigEndian>()?;
+        brands.push(From::from(b));
+    }
+
+    skip_bytes_to(reader, start + size)?;
+
+    Ok(FileTypeBox {
+        major_brand: From::from(major),
+        minor_version: minor,
+        compatible_brands: brands,
+    })
+}
+
 fn read_box_header_ext<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<(u8, u32)> {
     let version = reader.read_u8()?;
     let flags = reader.read_u24::<BigEndian>()?;
@@ -371,7 +435,7 @@ pub(crate) fn write_c2pa_box<W: Write>(
 }
 
 fn write_xmp_box<W: Write>(w: &mut W, data: &[u8]) -> Result<()> {
-    let size = 8 + 16 + 4 + data.len(); // header + UUID + data
+    let size = 8 + 16 + data.len(); // header + UUID + data
     let bh = BoxHeaderLite::new(BoxType::UuidBox, size as u64, "uuid");
 
     // write out header
@@ -482,6 +546,9 @@ where
     let size = stream_len(reader)?;
     reader.rewind()?;
 
+    let ftyp = read_ftyp_box(reader)?;
+    reader.rewind()?;
+
     // create root node
     let root_box = BoxInfo {
         path: "".to_string(),
@@ -506,6 +573,7 @@ where
         &root_token,
         &mut bmff_map,
         &mut rl,
+        &ftyp,
     )?;
 
     // get top level box offsets
@@ -1189,6 +1257,7 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     current_node: &Token,
     bmff_path_map: &mut HashMap<String, Vec<Token>>,
     recursion_level: &mut usize,
+    ftyp: &FileTypeBox,
 ) -> Result<()> {
     *recursion_level += 1;
     if *recursion_level > MAX_BOX_DEPTH {
@@ -1210,6 +1279,12 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
             break;
         }
 
+        if current + s > end {
+            return Err(Error::InvalidAsset(
+                "Box size extends beyond asset bounds".to_string(),
+            ));
+        }
+
         // Match and parse the supported atom boxes.
         match header.name {
             BoxType::UuidBox => {
@@ -1218,7 +1293,13 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                 let mut extended_type = [0u8; 16]; // 16 bytes of UUID
                 reader.read_exact(&mut extended_type)?;
 
-                let (version, flags) = read_box_header_ext(reader)?;
+                // if this is a C2PA ContentProvenanceBox it is a FullBox so it has version and flags
+                let (version, flags) = if extended_type == C2PA_UUID {
+                    let (v, f) = read_box_header_ext(reader)?;
+                    (Some(v), Some(f))
+                } else {
+                    (None, None)
+                };
 
                 let b = BoxInfo {
                     path: header.fourcc.clone(),
@@ -1227,8 +1308,8 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                     box_type: BoxType::UuidBox,
                     parent: Some(*current_node),
                     user_type: Some(extended_type.to_vec()),
-                    version: Some(version),
-                    flags: Some(flags),
+                    version,
+                    flags,
                 };
 
                 let new_token = current_node.append(bmff_tree, b);
@@ -1259,7 +1340,19 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                 let start = box_start(reader, header.large_size)?;
 
                 let b = if FULL_BOX_TYPES.contains(&header.fourcc.as_str()) {
-                    let (version, flags) = read_box_header_ext(reader)?; // box extensions
+                    // FullBox has version and flags after the header, but for some boxes like QT "meta"
+                    // the version and flags are not present even though it is technically a full box,
+                    // so we need to conditionally read the extended header based on the box type and in
+                    // the case of "meta" the ftyp major brand of "qt  " indicates the QuickTime exception.
+                    let (version, flags) = if BoxType::MetaBox == header.name
+                        && ftyp.major_brand == QT_FOURCC.into()
+                    {
+                        (None, None)
+                    } else {
+                        let (v, f) = read_box_header_ext(reader)?;
+                        (Some(v), Some(f))
+                    };
+
                     BoxInfo {
                         path: header.fourcc.clone(),
                         offset: start,
@@ -1267,8 +1360,8 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                         box_type: header.name,
                         parent: Some(*current_node),
                         user_type: None,
-                        version: Some(version),
-                        flags: Some(flags),
+                        version,
+                        flags,
                     }
                 } else {
                     BoxInfo {
@@ -1302,6 +1395,7 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                         &new_token,
                         bmff_path_map,
                         recursion_level,
+                        ftyp,
                     )?;
                     current = reader.stream_position()?;
                 }
@@ -1444,6 +1538,8 @@ pub(crate) struct C2PABmffBoxes {
     pub manifest_box_offset: Option<u64>,
     pub update_box_offset: Option<u64>,
     pub first_aux_uuid_offset: u64,
+    pub xmp_box_offset: u64,
+    pub xmp_box_size: u64,
 }
 
 fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
@@ -1462,6 +1558,8 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
     let mut first_aux_uuid_offset = 0u64;
     let mut merkle_boxes: Vec<BmffMerkleMap> = Vec::new();
     let mut merkle_box_infos: Vec<BoxInfoLite> = Vec::new();
+    let mut xmp_box_offset = 0;
+    let mut xmp_box_size = 0;
 
     // grab top level (for now) C2PA box
     if let Some(uuid_list) = bmff_map.get("/uuid") {
@@ -1520,8 +1618,7 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             let merkle = reader.read_to_vec(data_len)?;
 
                             // use this method since it will strip trailing zeros padding if there
-                            let mut deserializer =
-                                serde_cbor::de::Deserializer::from_slice(&merkle);
+                            let mut deserializer = c2pa_cbor::de::Deserializer::from_slice(&merkle);
                             let mm: BmffMerkleMap =
                                 serde::Deserialize::deserialize(&mut deserializer)?;
                             merkle_boxes.push(mm);
@@ -1540,6 +1637,8 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                         let xmp_vec = reader.read_to_vec(data_len)?;
                         if let Ok(xmp_string) = String::from_utf8(xmp_vec) {
                             xmp = Some(xmp_string);
+                            xmp_box_offset = box_info.data.offset;
+                            xmp_box_size = box_info.data.size;
                         }
                     }
                 }
@@ -1564,11 +1663,16 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
         manifest_box_offset,
         update_box_offset,
         first_aux_uuid_offset,
+        xmp_box_offset,
+        xmp_box_size,
     })
 }
 
 pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
     let size = stream_len(reader)?;
+    reader.rewind()?;
+
+    let ftyp = read_ftyp_box(reader)?;
     reader.rewind()?;
 
     // create root node
@@ -1595,6 +1699,7 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
         &root_token,
         &mut bmff_map,
         &mut rl,
+        &ftyp,
     )?;
     c2pa_boxes_from_tree_and_map(reader, &bmff_tree, &bmff_map)
 }
@@ -1735,6 +1840,9 @@ impl CAIWriter for BmffIO {
         let size = stream_len(input_stream)?;
         input_stream.rewind()?;
 
+        let ftyp = read_ftyp_box(input_stream)?;
+        input_stream.rewind()?;
+
         // create root node
         let root_box = BoxInfo {
             path: "".to_string(),
@@ -1759,6 +1867,7 @@ impl CAIWriter for BmffIO {
             &root_token,
             &mut bmff_map,
             &mut rl,
+            &ftyp,
         )?;
 
         // figure out what state we are in
@@ -1980,6 +2089,7 @@ impl CAIWriter for BmffIO {
                 &root_token,
                 &mut output_bmff_map,
                 &mut rl,
+                &ftyp,
             )?;
 
             // adjust offsets based on current layout
@@ -2011,6 +2121,9 @@ impl CAIWriter for BmffIO {
         let size = stream_len(input_stream)?;
         input_stream.rewind()?;
 
+        let ftyp = read_ftyp_box(input_stream)?;
+        input_stream.rewind()?;
+
         // create root node
         let root_box = BoxInfo {
             path: "".to_string(),
@@ -2035,6 +2148,7 @@ impl CAIWriter for BmffIO {
             &root_token,
             &mut bmff_map,
             &mut rl,
+            &ftyp,
         )?;
 
         // get position of c2pa manifest
@@ -2108,6 +2222,7 @@ impl CAIWriter for BmffIO {
             &root_token,
             &mut output_bmff_map,
             &mut rl,
+            &ftyp,
         )?;
 
         // adjust offsets based on current layout
@@ -2129,6 +2244,9 @@ impl AssetPatch for BmffIO {
             .create(false)
             .open(asset_path)?;
         let size = stream_len(&mut asset)?;
+        asset.rewind()?;
+
+        let ftyp = read_ftyp_box(&mut asset)?;
         asset.rewind()?;
 
         // create root node
@@ -2155,6 +2273,7 @@ impl AssetPatch for BmffIO {
             &root_token,
             &mut bmff_map,
             &mut rl,
+            &ftyp,
         )?;
 
         // get position to insert c2pa
@@ -2251,15 +2370,10 @@ impl RemoteRefEmbed for BmffIO {
     ) -> Result<()> {
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let xmp = match self.get_reader().read_xmp(input_stream) {
-                    Some(xmp) => add_provenance(&xmp, &manifest_uri)?,
-                    None => {
-                        let xmp = MIN_XMP.to_string();
-                        add_provenance(&xmp, &manifest_uri)?
-                    }
-                };
-
                 let size = stream_len(input_stream)?;
+                input_stream.rewind()?;
+
+                let ftyp = read_ftyp_box(input_stream)?;
                 input_stream.rewind()?;
 
                 // create root node
@@ -2286,26 +2400,33 @@ impl RemoteRefEmbed for BmffIO {
                     &root_token,
                     &mut bmff_map,
                     &mut rl,
+                    &ftyp,
                 )?;
 
-                // get ftyp location
-                // start after ftyp
-                let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-                let ftyp_info = &bmff_tree[ftyp_token[0]].data;
-                let ftyp_offset = ftyp_info.offset;
-                let ftyp_size = ftyp_info.size;
+                let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
+
+                let xmp = match &c2pa_boxes.xmp {
+                    Some(xmp) => add_provenance(xmp, &manifest_uri)?,
+                    None => {
+                        let xmp = MIN_XMP.to_string();
+                        add_provenance(&xmp, &manifest_uri)?
+                    }
+                };
 
                 // get position to insert xmp
-                let (xmp_start, xmp_length) =
-                    match get_uuid_token(input_stream, &bmff_tree, &bmff_map, &XMP_UUID, None) {
-                        Ok(c2pa_token) => {
-                            let uuid_info = &bmff_tree[c2pa_token].data;
+                let (xmp_start, xmp_length) = match &c2pa_boxes.xmp {
+                    Some(_xmp) => (c2pa_boxes.xmp_box_offset, Some(c2pa_boxes.xmp_box_size)),
+                    None => {
+                        // get ftyp location
+                        // start after ftyp
+                        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+                        let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+                        let ftyp_offset = ftyp_info.offset;
+                        let ftyp_size = ftyp_info.size;
 
-                            (uuid_info.offset, Some(uuid_info.size))
-                        }
-                        Err(Error::NotFound) => ((ftyp_offset + ftyp_size), None),
-                        Err(e) => return Err(e),
-                    };
+                        ((ftyp_offset + ftyp_size), None)
+                    }
+                };
 
                 let mut new_xmp_box: Vec<u8> = Vec::with_capacity(xmp.len() * 2);
                 write_xmp_box(&mut new_xmp_box, xmp.as_bytes())?;
@@ -2329,8 +2450,8 @@ impl RemoteRefEmbed for BmffIO {
 
                 // write content before XMP box
                 input_stream.rewind()?;
-                let mut before_manifest = input_stream.take(start as u64);
-                std::io::copy(&mut before_manifest, output_stream)?;
+                let mut before_xmp = input_stream.take(start as u64);
+                std::io::copy(&mut before_xmp, output_stream)?;
 
                 // write ContentProvenanceBox
                 output_stream.write_all(&new_xmp_box)?;
@@ -2377,6 +2498,7 @@ impl RemoteRefEmbed for BmffIO {
                     &root_token,
                     &mut output_bmff_map,
                     &mut rl,
+                    &ftyp,
                 )?;
 
                 // adjust offsets based on current layout

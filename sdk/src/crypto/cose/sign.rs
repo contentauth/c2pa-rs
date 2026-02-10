@@ -13,8 +13,8 @@
 
 use asn1_rs::FromDer;
 use async_generic::async_generic;
-use ciborium::value::Value;
 use coset::{
+    cbor::value::Value,
     iana::{self, EnumI64},
     ContentType, CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, ProtectedHeader,
     RegisteredLabel, TaggedCborSerializable,
@@ -74,7 +74,7 @@ use crate::crypto::{
 /// > * If multiple certificates are conveyed, a CBOR array of byte strings is
 /// > used, with each certificate being in its own byte string.
 ///
-/// [§14.5, X.509 Certificates]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#x509_certificates
+/// [§14.5, X.509 Certificates]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#x509_certificates
 /// [RFC 9360]: https://datatracker.ietf.org/doc/html/rfc9360
 #[async_generic(async_signature(
     signer: &dyn AsyncRawSigner,
@@ -271,7 +271,7 @@ pub enum CosePayload {
 /// > * If multiple certificates are conveyed, a CBOR array of byte strings is
 /// > used, with each certificate being in its own byte string.
 ///
-/// [§14.5, X.509 Certificates]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#x509_certificates
+/// [§14.5, X.509 Certificates]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#x509_certificates
 /// [RFC 9360]: https://datatracker.ietf.org/doc/html/rfc9360
 #[async_generic(async_signature(
     signer: &dyn AsyncRawSigner,
@@ -358,7 +358,7 @@ pub fn sign_v2_embedded(
 
     let sig_data = ByteBuf::from(sign1.signature.clone());
     let mut sig_data_cbor: Vec<u8> = vec![];
-    ciborium::into_writer(&sig_data, &mut sig_data_cbor)
+    coset::cbor::into_writer(&sig_data, &mut sig_data_cbor)
         .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
 
     // Fill in the unprotected header with time stamp data.

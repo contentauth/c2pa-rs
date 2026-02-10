@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.75.19](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.18...c2pa-c-ffi-v0.75.19)
+_09 February 2026_
+
+### Fixed
+
+* Vec_to_tracked_ptr macro merged with to_c_bytes ([#1834](https://github.com/contentauth/c2pa-rs/pull/1834))
+
+## [0.75.18](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.17...c2pa-c-ffi-v0.75.18)
+_06 February 2026_
+
+## [0.75.17](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.16...c2pa-c-ffi-v0.75.17)
+_06 February 2026_
+
+### Fixed
+
+* Bump max settings string limit to 1MB ([#1833](https://github.com/contentauth/c2pa-rs/pull/1833))
+
+## [0.75.16](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.15...c2pa-c-ffi-v0.75.16)
+_05 February 2026_
+
+### Fixed
+
+* Add additional conversions for C FFI Errors ([#1829](https://github.com/contentauth/c2pa-rs/pull/1829))
+
+## [0.75.15](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.14...c2pa-c-ffi-v0.75.15)
+_05 February 2026_
+
+### Fixed
+
+* C_ffi bindings were not returning C2paErrors correctly ([#1825](https://github.com/contentauth/c2pa-rs/pull/1825))
+
+## [0.75.14](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.13...c2pa-c-ffi-v0.75.14)
+_05 February 2026_
+
+### Fixed
+
+* Restores empty string return on c2pa_sign_file, and c2pa_release_string ([#1821](https://github.com/contentauth/c2pa-rs/pull/1821))
+
+## [0.75.13](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.12...c2pa-c-ffi-v0.75.13)
+_03 February 2026_
+
+## [0.75.12](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.11...c2pa-c-ffi-v0.75.12)
+_03 February 2026_
+
+## [0.75.11](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.10...c2pa-c-ffi-v0.75.11)
+_03 February 2026_
+
+### Added
+
+* Adds thread safe Settings and Context support to c_ffi_api ([#1783](https://github.com/contentauth/c2pa-rs/pull/1783))
+
+### Other
+
+* Only use `reqwest` for `c2pa-c-ffi` networking ([#1807](https://github.com/contentauth/c2pa-rs/pull/1807))
+
+## [0.75.10](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.9...c2pa-c-ffi-v0.75.10)
+_02 February 2026_
+
+## [0.75.9](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.8...c2pa-c-ffi-v0.75.9)
+_30 January 2026_
+
+## [0.75.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.7...c2pa-c-ffi-v0.75.8)
+_28 January 2026_
+
+## [0.75.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.6...c2pa-c-ffi-v0.75.7)
+_27 January 2026_
+
+## [0.75.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.5...c2pa-c-ffi-v0.75.6)
+_22 January 2026_
+
 ## [0.75.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.4...c2pa-c-ffi-v0.75.5)
 _21 January 2026_
 

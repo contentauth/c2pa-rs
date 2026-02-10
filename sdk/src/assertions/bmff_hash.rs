@@ -1475,7 +1475,7 @@ impl BmffHash {
             }
 
             let mm_cbor =
-                serde_cbor::to_vec(&mm).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
+                c2pa_cbor::to_vec(&mm).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
             // generate the UUID box
             let mut uuid_box_data: Vec<u8> = Vec::with_capacity(mm_cbor.len() * 2);
@@ -1569,7 +1569,7 @@ impl BmffHash {
                     bmff_mm.hashes = Some(VecByteBuf(proof_vec));
                 }
 
-                let mm_cbor = serde_cbor::to_vec(&bmff_mm)
+                let mm_cbor = c2pa_cbor::to_vec(&bmff_mm)
                     .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
                 // generate the C2PA Merkle box with final hash
@@ -1742,7 +1742,7 @@ impl BmffHash {
         // generate UUID C2PA Merkle boxes containing each BmffMerkleMap
         let mut uuid_boxes = Vec::new();
         for bmff_mm in bmff_merkle_maps {
-            let mm_cbor = serde_cbor::to_vec(&bmff_mm)
+            let mm_cbor = c2pa_cbor::to_vec(&bmff_mm)
                 .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
             uuid_boxes.push(mm_cbor);
