@@ -1908,7 +1908,7 @@ impl Builder {
     ///
     /// This is only used for applications doing their own data_hashed asset management.
     /// This function does not support dynamic assertions (e.g., CAWG identity).
-    /// Use [`placeholder`] if you need dynamic assertion support.
+    /// Use [`Builder::placeholder`] if you need dynamic assertion support.
     ///
     /// # Arguments
     /// * `reserve_size` - The size to reserve for the signature (taken from the signer).
