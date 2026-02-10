@@ -367,7 +367,7 @@ impl Context {
     ///
     /// The default resolver is an `AsyncGenericResolver` wrapped with `RestrictedResolver`
     /// to apply host filtering from the settings.
-    pub fn resolver_async(&self) -> &dyn AsyncHttpResolver {
+    pub fn resolver_async(&self) -> &(dyn AsyncHttpResolver + Sync) {
         match &self.async_resolver {
             AsyncResolverState::Custom(resolver) => resolver.as_ref(),
             AsyncResolverState::Default(once_lock) => once_lock.get_or_init(|| {
