@@ -235,7 +235,7 @@ pub enum HttpResolverError {
 
     /// An error occured from the underlying HTTP resolver.
     #[error("an error occurred from the underlying http resolver")]
-    Other(Box<dyn std::error::Error + Send + Sync>),
+    Other(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 #[cfg(all(
