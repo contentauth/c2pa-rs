@@ -38,20 +38,16 @@ use crate::{
     },
     claim::Claim,
     context::Context,
-    crypto::{
-        cose,
-        raw_signature::{signer_from_cert_chain_and_private_key, SigningAlg},
-    },
+    crypto::cose,
     error::{Error, Result},
     jumbf::labels::manifest_label_from_uri,
     jumbf_io,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::builder::TimeStampFetchScope,
-    signer::RawSignerWrapper,
     store::Store,
     utils::{hash_utils::hash_to_b64, mime::format_to_mime},
-    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
-    Reader, Relationship, Signer,
+    AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
+    ManifestAssertionKind, Reader, Relationship, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -2440,37 +2436,7 @@ impl Builder {
         let mut store = Store::new();
         store.commit_claim(claim)?;
 
-        let mut params = rcgen::CertificateParams::new(vec!["c2pa-archive.local".into()])
-            .map_err(|err| Error::OtherError(Box::new(err)))?;
-
-        params.use_authority_key_identifier_extension = true;
-
-        params
-            .key_usages
-            .push(rcgen::KeyUsagePurpose::DigitalSignature);
-
-        params
-            .extended_key_usages
-            .push(rcgen::ExtendedKeyUsagePurpose::EmailProtection);
-
-        let keypair = rcgen::KeyPair::generate_for(&rcgen::PKCS_ED25519)
-            .map_err(|err| Error::OtherError(Box::new(err)))?;
-
-        let cert = params
-            .self_signed(&keypair)
-            .map_err(|err| Error::OtherError(Box::new(err)))?;
-
-        let cert_pem = cert.pem();
-        let key_pem = keypair.serialize_pem();
-
-        let raw_signer = signer_from_cert_chain_and_private_key(
-            cert_pem.as_bytes(),
-            key_pem.as_bytes(),
-            SigningAlg::Ed25519,
-            None,
-        )?;
-
-        let signer = RawSignerWrapper(raw_signer);
+        let signer = EphemeralSigner::new("c2pa-archive.local")?;
         store.get_box_hashed_embeddable_manifest(&signer, &self.context)
     }
 }
