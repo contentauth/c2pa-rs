@@ -49,7 +49,7 @@ fn user_data_hash_with_placeholder_api() -> Result<()> {
 
     // Use Settings to configure signer with CAWG support
     let settings =
-        Settings::new().with_json(include_str!("../tests/fixtures/test_settings.json"))?;
+        Settings::new().with_toml(include_str!("../tests/fixtures/test_settings_with_cawg_signing.toml"))?;
 
     let src = "sdk/tests/fixtures/earth_apollo17.jpg";
     let format = "image/jpeg";
