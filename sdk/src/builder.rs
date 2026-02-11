@@ -2424,14 +2424,16 @@ impl Builder {
 
     /// Creates a working store from the builder.
     ///
-    /// The working store is signed with a `BoxHash` over an empty string and is returned as a
-    /// `Vec<u8>` of the `c2pa_manifest` bytes. This works as an archive of the store that can
-    /// be read back to restore the `Builder` state.
+    /// The working store is signed with a `BoxHash` over an empty string and is
+    /// returned as a `Vec<u8>` of the `c2pa_manifest` bytes. This works as
+    /// an archive of the store that can be read back to restore the
+    /// `Builder` state.
     ///
-    /// An ephemeral self-signed certificate is generated and used to sign the manifest.
+    /// An ephemeral self-signed certificate is generated and used to sign the
+    /// manifest.
     ///
-    /// IMPORTANT: This certificate is useful only in a private context and will not be considered
-    /// trusted in the C2PA conformance sense.
+    /// IMPORTANT: This certificate is useful only in a private context and will
+    /// not be considered trusted in the C2PA conformance sense.
     ///
     /// This function is not currently available on Wasm platform.
     #[cfg(not(target_arch = "wasm32"))]

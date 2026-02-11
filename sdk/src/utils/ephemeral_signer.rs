@@ -11,13 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Ephemeral self-signed certificate generation for testing and local C2PA manifests.
+//! Ephemeral self-signed certificate generation for testing and local C2PA
+//! manifests.
 //!
-//! Generates a certificate authority (CA) and an end-entity (EE) certificate signed by that CA,
-//! and returns an [`EphemeralSigner`] that implements [`Signer`](crate::Signer) and holds
-//! the full certificate chain (EE then CA) in DER form.
+//! Generates a certificate authority (CA) and an end-entity (EE) certificate
+//! signed by that CA, and returns an [`EphemeralSigner`] that implements
+//! [`Signer`](crate::Signer) and holds the full certificate chain (EE then CA)
+//! in DER form.
 //!
-//! **WARNING:** These certificates are for testing and local use only and will not be considered trusted in the C2PA conformance sense.
+//! **WARNING:** These certificates are for testing and local use only and will
+//! not be considered trusted in the C2PA conformance sense.
 
 use asn1_rs::FromDer;
 use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair, KeyUsagePurpose};
@@ -28,13 +31,15 @@ use crate::{
     Error, Result, Signer,
 };
 
-/// A [`Signer`](crate::Signer) that holds an ephemeral CA + end-entity certificate chain.
+/// A [`Signer`](crate::Signer) that holds an ephemeral CA + end-entity
+/// certificate chain.
 ///
-/// The full certificate chain (end-entity first, then CA) is stored as DER and returned from
-/// [`Signer::certs`](crate::Signer::certs). Signing is performed by the end-entity key.
+/// The full certificate chain (end-entity first, then CA) is stored as DER and
+/// returned from [`Signer::certs`](crate::Signer::certs). Signing is performed
+/// by the end-entity key.
 ///
-/// **WARNING:** These certificates are for testing and local use only and will not
-/// be considered trusted in the C2PA conformance sense.
+/// **WARNING:** These certificates are for testing and local use only and will
+/// not be considered trusted in the C2PA conformance sense.
 pub struct EphemeralSigner {
     /// Raw signer (EE key) used for signing.
     pub(crate) raw_signer: Box<dyn RawSigner>,
@@ -44,28 +49,30 @@ pub struct EphemeralSigner {
 }
 
 impl EphemeralSigner {
-    /// Generates an ephemeral self-signed CA and an end-entity certificate signed by that CA,
-    /// and returns an [`EphemeralSigner`] that implements [`Signer`](crate::Signer).
+    /// Generates an ephemeral self-signed CA and an end-entity certificate
+    /// signed by that CA, and returns an [`EphemeralSigner`] that
+    /// implements [`Signer`](crate::Signer).
     ///
-    /// The signer holds the full certificate chain (EE then CA) in DER form and returns it
-    /// from [`Signer::certs`](crate::Signer::certs).
+    /// The signer holds the full certificate chain (EE then CA) in DER form and
+    /// returns it from [`Signer::certs`](crate::Signer::certs).
     ///
-    /// The CA and EE use Ed25519 and the same parameter style as used for C2PA manifest
-    /// signing (e.g. Digital Signature and EmailProtection usage). The EE certificate
-    /// subject/common name and SAN are set from `ee_cert_name`.
+    /// The CA and EE use Ed25519 and the same parameter style as used for C2PA
+    /// manifest signing (e.g. Digital Signature and EmailProtection usage).
+    /// The EE certificate subject/common name and SAN are set from
+    /// `ee_cert_name`.
     ///
-    /// **WARNING:** These certificates are for testing and local use only and will not
-    /// be considered trusted in the C2PA conformance sense.
+    /// **WARNING:** These certificates are for testing and local use only and
+    /// will not be considered trusted in the C2PA conformance sense.
     ///
     /// # Arguments
     ///
-    /// * `ee_cert_name` - Subject/common name and SAN for the end-entity certificate
-    ///   (e.g. `"c2pa-archive.local"`).
+    /// * `ee_cert_name` - Subject/common name and SAN for the end-entity
+    ///   certificate (e.g. `"c2pa-archive.local"`).
     ///
     /// # Errors
     ///
-    /// Returns an error if certificate or key generation fails, or if the raw signer cannot
-    /// be created from the generated credentials.
+    /// Returns an error if certificate or key generation fails, or if the raw
+    /// signer cannot be created from the generated credentials.
     pub fn new(ee_cert_name: impl Into<String>) -> Result<Self> {
         let ee_cert_name = ee_cert_name.into();
 
@@ -102,7 +109,8 @@ impl EphemeralSigner {
         let mut ee_params = CertificateParams::new(vec![ee_cert_name])
             .map_err(|e| Error::OtherError(Box::new(e)))?;
 
-        // Verifier expects an Organization in the subject for issuer_org in CertificateInfo.
+        // Verifier expects an Organization in the subject for issuer_org in
+        // CertificateInfo.
         ee_params
             .distinguished_name
             .push(rcgen::DnType::OrganizationName, "C2PA Ephemeral");
@@ -127,7 +135,8 @@ impl EphemeralSigner {
         // Full chain as DER: end-entity first, then CA (per C2PA / Signer convention).
         let cert_chain_der = vec![ee_cert.der().to_vec(), ca_cert.der().to_vec()];
 
-        // Ensure each certificate is valid X.509 DER (same format COSE x5chain expects).
+        // Ensure each certificate is valid X.509 DER (same format COSE x5chain
+        // expects).
         for (i, der) in cert_chain_der.iter().enumerate() {
             X509Certificate::from_der(der).map_err(|e| {
                 Error::OtherError(Box::new(std::io::Error::new(
@@ -137,7 +146,8 @@ impl EphemeralSigner {
             })?;
         }
 
-        // PEM chain and key for the raw signer (newline between certs so both are parsed).
+        // PEM chain and key for the raw signer (newline between certs so both are
+        // parsed).
         let cert_chain_pem = format!("{}\n{}", ee_cert.pem().trim_end(), ca_cert.pem().trim_end());
         let private_key_pem = ee_keypair.serialize_pem();
 
@@ -149,7 +159,8 @@ impl EphemeralSigner {
         )
         .map_err(|e| Error::OtherError(Box::new(e)))?;
 
-        // Ensure the raw signer's chain matches our DER chain (PEM decode must equal rcgen .der()).
+        // Ensure the raw signer's chain matches our DER chain (PEM decode must equal
+        // rcgen .der()).
         let raw_chain = raw_signer
             .cert_chain()
             .map_err(|e| Error::OtherError(Box::new(e)))?;
@@ -242,8 +253,9 @@ mod tests {
         Signer,
     };
 
-    /// Diagnostic: produce COSE bytes with EphemeralSigner (no verify), then inspect
-    /// the parsed protected header to see why cert_chain_from_sign1 fails.
+    /// Diagnostic: produce COSE bytes with EphemeralSigner (no verify), then
+    /// inspect the parsed protected header to see why cert_chain_from_sign1
+    /// fails.
     #[test]
     fn ephemeral_signer_protected_header_inspection() {
         let signer = EphemeralSigner::new("c2pa-archive.local").unwrap();
@@ -278,9 +290,9 @@ mod tests {
         );
     }
 
-    /// Same flow as signature_from_ephemeral_signer_is_valid but split: get bytes via
-    /// cose_sign, then run verify_cose on those bytes. Inspect whether the bytes
-    /// parse with x5chain before calling verify_cose.
+    /// Same flow as signature_from_ephemeral_signer_is_valid but split: get
+    /// bytes via cose_sign, then run verify_cose on those bytes. Inspect
+    /// whether the bytes parse with x5chain before calling verify_cose.
     #[test]
     fn ephemeral_signer_cose_sign_then_verify_cose() {
         let signer = EphemeralSigner::new("c2pa-archive.local").unwrap();
@@ -320,8 +332,9 @@ mod tests {
         assert!(info.validated, "signature must be validated");
     }
 
-    /// Signs a minimal claim with [`EphemeralSigner`] and verifies the COSE signature
-    /// (cert chain in protected header and signature over the claim).
+    /// Signs a minimal claim with [`EphemeralSigner`] and verifies the COSE
+    /// signature (cert chain in protected header and signature over the
+    /// claim).
     #[test]
     fn signature_from_ephemeral_signer_is_valid() {
         let signer = EphemeralSigner::new("c2pa-archive.local").unwrap();
@@ -358,7 +371,8 @@ mod tests {
         );
     }
 
-    /// EphemeralSigner must place the full cert chain (EE + CA) in the COSE signature.
+    /// EphemeralSigner must place the full cert chain (EE + CA) in the COSE
+    /// signature.
     #[test]
     fn ephemeral_signer_cose_chain_is_valid() {
         let signer = EphemeralSigner::new("c2pa-archive.local").expect("ephemeral signer");
