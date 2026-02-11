@@ -20,6 +20,7 @@ use crate::{
         async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
         AsyncRawSigner, SigningAlg,
     },
+    http::AsyncHttpResolver,
     signer::{BoxedAsyncSigner, BoxedSigner, RawSignerWrapper},
     AsyncSigner, Result,
 };
@@ -155,9 +156,13 @@ impl AsyncSigner for AsyncRawSignerWrapper {
             .map_err(|e| e.into())
     }
 
-    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+    async fn send_timestamp_request(
+        &self,
+        http_resolver: &(dyn AsyncHttpResolver + Sync),
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>>> {
         self.0
-            .send_time_stamp_request(message)
+            .send_time_stamp_request(http_resolver, message)
             .await
             .map(|r| r.map_err(|e| e.into()))
     }

@@ -22,7 +22,7 @@ use crate::{
         raw_signature::oids::{ans1_oid_bcder_oid, SHA256_OID},
         time_stamp::TimeStampError,
     },
-    http::SyncGenericResolver,
+    http::{AsyncHttpResolver, SyncHttpResolver},
     maybe_send_sync::MaybeSync,
 };
 
@@ -59,7 +59,11 @@ pub trait TimeStampProvider {
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     ///
     /// todo: THIS CODE IS NOT COMPATIBLE WITH C2PA 2.x sigTst2
-    fn send_time_stamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>, TimeStampError>> {
+    fn send_time_stamp_request(
+        &self,
+        http_resolver: &dyn SyncHttpResolver,
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>, TimeStampError>> {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
@@ -68,7 +72,7 @@ pub trait TimeStampProvider {
                     headers,
                     &body,
                     message,
-                    &SyncGenericResolver::new(),
+                    http_resolver,
                 ));
             }
         }
@@ -115,12 +119,11 @@ pub trait AsyncTimeStampProvider: MaybeSync {
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     async fn send_time_stamp_request(
         &self,
+        http_resolver: &(dyn AsyncHttpResolver + Sync),
         message: &[u8],
     ) -> Option<Result<Vec<u8>, TimeStampError>> {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
-                use crate::http::AsyncGenericResolver;
-
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
                 return Some(
                     super::http_request::default_rfc3161_request_async(
@@ -128,7 +131,7 @@ pub trait AsyncTimeStampProvider: MaybeSync {
                         headers,
                         &body,
                         message,
-                        &AsyncGenericResolver::new(),
+                        http_resolver,
                     )
                     .await,
                 );

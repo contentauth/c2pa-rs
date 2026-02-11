@@ -18,6 +18,7 @@ use crate::{
         cose::{sign_async, TimeStampStorage},
         raw_signature::AsyncRawSigner,
     },
+    http::AsyncGenericResolver,
     identity::{
         builder::{AsyncCredentialHolder, IdentityBuilderError},
         SignerPayload,
@@ -91,6 +92,8 @@ impl AsyncCredentialHolder for AsyncX509CredentialHolder {
             &sp_cbor,
             None,
             TimeStampStorage::V2_sigTst2_CTT,
+            // TODO: pass in as parameter
+            &AsyncGenericResolver::new(),
         )
         .await
         .map_err(|e| IdentityBuilderError::SignerError(e.to_string()))?)
