@@ -1944,13 +1944,85 @@ impl Builder {
     /// Use [`Builder::composed_manifest`] to compose for a specific format if needed.
     /// The signer is obtained from the Builder's context.
     ///
+    /// **Important:** You must add a hash assertion (DataHash or BmffHash) to the Builder
+    /// before calling this method. The hash doesn't need final values, but should be sized
+    /// large enough to hold the final hash (e.g., with enough exclusions).
+    ///
+    /// # Workflow
+    /// 1. Add a placeholder hash assertion to the Builder with proper sizing
+    /// 2. Call this method to create a placeholder manifest
+    /// 3. Embed the placeholder into your asset
+    /// 4. Calculate the hash of the asset (excluding the placeholder)
+    /// 5. Update the hash assertion in the Builder: `builder.add_assertion(DataHash::LABEL, &updated_hash)`
+    /// 6. Call [`Builder::sign_placeholder`] to sign the manifest
+    ///
     /// # Returns
     /// * The raw JUMBF bytes of the `c2pa_manifest` placeholder.
+    ///
     /// # Errors
-    /// * Returns an [`Error`] if the placeholder cannot be created.
+    /// * Returns an [`Error`] if the placeholder cannot be created or if no hash assertion exists.
     pub fn placeholder(&self, format: &str) -> Result<Vec<u8>> {
+        // Check that a hash assertion exists before proceeding
+        let has_data_hash = self.find_assertion::<DataHash>(DataHash::LABEL).is_ok();
+        let has_bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL).is_ok();
+
+        if !has_data_hash && !has_bmff_hash {
+            return Err(Error::BadParam(
+                "Builder must have a hash assertion (DataHash or BmffHash) before calling placeholder()".to_string()
+            ));
+        }
+
         let mut store = self.to_store()?;
         store.get_placeholder(format, self.context())
+    }
+
+    /// Sign a placeholder manifest with updated hash assertions from the Builder.
+    ///
+    /// This method takes a placeholder JUMBF created by [`Builder::placeholder`], updates
+    /// any hash assertions (DataHash, BmffHash) from the Builder's current state, and signs
+    /// the manifest. This supports dynamic assertions if configured in the signer.
+    ///
+    /// # Workflow
+    /// 1. Call [`Builder::placeholder`] to create a placeholder manifest
+    /// 2. Embed the placeholder into your asset
+    /// 3. Calculate the hash of the asset (excluding the placeholder)
+    /// 4. Update the hash assertion in the Builder: `builder.add_assertion(DataHash::LABEL, &updated_hash)`
+    /// 5. Call this method to sign: `builder.sign_placeholder(&placeholder, signer, format)`
+    ///
+    /// # Arguments
+    /// * `placeholder_jumbf` - The placeholder JUMBF bytes from [`Builder::placeholder`]
+    ///
+    /// # Returns
+    /// * The signed manifest bytes ready for embedding
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if the placeholder cannot be deserialized or signed
+    pub fn sign_placeholder(&mut self, placeholder_jumbf: &[u8], format: &str) -> Result<Vec<u8>> {
+        // Deserialize placeholder without validation (it has a placeholder signature)
+        let mut validation_log = crate::status_tracker::StatusTracker::default();
+        let mut no_verify_settings = self.context.settings().clone();
+        no_verify_settings.verify.verify_after_reading = false;
+        let temp_context = Context::new().with_settings(no_verify_settings)?;
+
+        let mut store =
+            Store::from_jumbf_with_context(placeholder_jumbf, &mut validation_log, &temp_context)?;
+
+        // Update hash assertions from Builder into the Store
+        let pc = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+        if let Ok(data_hash) = self.find_assertion::<DataHash>(DataHash::LABEL) {
+            pc.update_data_hash(data_hash)?;
+        }
+
+        if let Ok(bmff_hash) = self.find_assertion::<BmffHash>(BmffHash::LABEL) {
+            pc.update_bmff_hash(bmff_hash)?;
+        }
+
+        let signer = self.context().signer()?;
+        let jumbf = store.sign_manifest(signer, self.context().settings())?;
+
+        // Compose for the target format
+        Store::get_composed_manifest(&jumbf, format)
     }
 
     /// Create a signed data hashed embeddable manifest using a supplied signer.

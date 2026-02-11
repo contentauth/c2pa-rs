@@ -356,20 +356,17 @@ impl ResourceStore {
 
     /// Returns `true` if the resource has been added or exists as file.
     pub fn exists(&self, id: &str) -> bool {
-        if !self.resources.contains_key(id) {
-            #[cfg(feature = "file_io")]
-            match self.base_path.as_ref() {
-                Some(base) => {
-                    let path = base.join(id);
-                    path.exists()
-                }
-                None => false,
-            }
-            #[cfg(not(feature = "file_io"))]
-            false
-        } else {
-            true
+        if self.resources.contains_key(id) {
+            return true;
         }
+
+        #[cfg(feature = "file_io")]
+        if let Some(base) = self.base_path.as_ref() {
+            let path = base.join(id);
+            return path.exists();
+        }
+
+        false
     }
 
     #[cfg(feature = "file_io")]

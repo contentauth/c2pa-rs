@@ -11,118 +11,33 @@
 // specific language governing permissions and limitations under
 // each license.
 
-// Example code (in unit test) for how you might use client DataHash values.  This allows clients
-// to perform the manifest embedding and optionally the hashing
-
-const EXIF_METADATA: &str = r#"{
-    "@context" : {
-    "exif": "http://ns.adobe.com/exif/1.0/"
-    },
-    "exif:GPSVersionID": "2.2.0.0",
-    "exif:GPSLatitude": "39,21.102N",
-    "exif:GPSLongitude": "74,26.5737W",
-    "exif:GPSAltitudeRef": 0,
-    "exif:GPSAltitude": "100963/29890",
-    "exif:GPSTimeStamp": "2019-09-22T18:22:57Z"
-}"#;
+// Example demonstrating the placeholder/sign workflow for data-hashed embeddable manifests.
+//
+// This workflow allows clients to:
+// 1. Create a placeholder manifest with a pre-sized DataHash assertion
+// 2. Embed the placeholder into their asset
+// 3. Calculate the hash of the asset (excluding the placeholder)
+// 4. Update the DataHash in the Builder with the calculated hash
+// 5. Sign the placeholder to create the final manifest
+//
+// This approach supports dynamic assertions (e.g., CAWG) and gives clients
+// full control over the embedding and hashing process.
 
 use std::{
-    io::{Cursor, Read, Seek, Write},
+    io::{Cursor, Seek, Write},
     path::PathBuf,
 };
 
 use c2pa::{
-    assertions::{c2pa_action, Action, DataHash, Metadata},
-    hash_stream_by_alg, Builder, ClaimGeneratorInfo, Context, HashRange, Reader, Result, Settings,
+    assertions::{c2pa_action, Action, DataHash},
+    hash_stream_by_alg, Builder, ClaimGeneratorInfo, HashRange, Reader, Result,
 };
 use serde_json::json;
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     println!("DataHash demo");
 
-    user_data_hash_with_user_hashing()?;
-    println!("Done with SDK hashing2");
-
     user_data_hash_with_placeholder_api()?;
-    println!("Done with new placeholder API");
-    Ok(())
-}
-
-fn user_data_hash_with_user_hashing() -> Result<()> {
-    let src = "sdk/tests/fixtures/earth_apollo17.jpg";
-    let dst = "target/tmp/output_hashed.jpg";
-    let format = "image/jpeg";
-
-    let source = PathBuf::from(src);
-    let dest = PathBuf::from(dst);
-
-    let mut input_file = std::fs::OpenOptions::new().read(true).open(&source)?;
-
-    let mut output_file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(dest)?;
-
-    let settings =
-        Settings::new().with_json(include_str!("../tests/fixtures/test_settings.json"))?;
-    let context = Context::new().with_settings(settings)?.into_shared();
-    let signer = context.signer()?;
-
-    let mut claim_generator = ClaimGeneratorInfo::new("test_app".to_string());
-    claim_generator.set_version("0.1");
-
-    let mut builder = Builder::from_shared_context(&context);
-    builder.set_claim_generator_info(claim_generator);
-
-    let parent_json = json!({"relationship": "parentOf", "label": "parent_label"});
-    builder.add_ingredient_from_stream(parent_json.to_string(), format, &mut input_file)?;
-    builder.add_action(
-        Action::new(c2pa_action::OPENED).set_parameter("ingredientIds", ["parent_label"])?,
-    )?;
-    let metadata = Metadata::new("c2pa.metadata", EXIF_METADATA)?;
-    builder.add_assertion_json(metadata.get_label(), &metadata)?;
-
-    // get the composed manifest ready to insert into a file (returns manifest of same length as finished manifest)
-    let placeholder_manifest = builder.placeholder(format)?;
-
-    // Figure out where you want to put the manifest, let's put it at the beginning of the JPEG as first segment
-    // we will need to add a data hash that excludes the manifest
-    let mut dh = DataHash::new("my_manifest", "sha265");
-    let hr = HashRange::new(2, placeholder_manifest.len() as u64);
-    dh.add_exclusion(hr);
-
-    // since the only thing we are excluding in this example is the manifest we can just hash all the bytes
-    // if you have additional exclusions you can add them to the DataHash and pass them to this function to be '
-    // excluded from the hash generation
-    let hash = hash_stream_by_alg("sha256", &mut input_file, None, true)?;
-    dh.set_hash(hash);
-
-    // tell SDK to fill in the hash and sign to complete the manifest
-    let final_manifest: Vec<u8> = builder.sign_data_hashed_embeddable(signer, &dh, "image/jpeg")?;
-
-    // generate new file inserting final manifest into file
-    input_file.rewind().unwrap();
-    let mut before = vec![0u8; 2];
-    input_file.read_exact(before.as_mut_slice()).unwrap();
-
-    output_file.write_all(&before).unwrap();
-
-    // write completed final manifest
-    output_file.write_all(&final_manifest).unwrap();
-
-    // write bytes after
-    let mut after_buf = Vec::new();
-    input_file.read_to_end(&mut after_buf).unwrap();
-    output_file.write_all(&after_buf).unwrap();
-
-    // make sure the output file is correct
-    output_file.rewind()?;
-    let reader = Reader::from_stream("image/jpeg", output_file)?;
-
-    // example of how to print out the whole manifest as json
-    println!("{reader}\n");
-
+    println!("Done with placeholder API");
     Ok(())
 }
 
@@ -151,11 +66,21 @@ fn user_data_hash_with_placeholder_api() -> Result<()> {
         &mut std::fs::File::open(&source)?,
     )?;
     builder.add_action(
-        Action::new(c2pa_action::PLACED).set_parameter("ingredientIds", ["parent_label"])?,
+        Action::new(c2pa_action::OPENED).set_parameter("ingredientIds", ["parent_label"])?,
     )?;
 
-    // Use the new placeholder() API which supports dynamic assertions
-    // Returns raw JUMBF bytes, format is only used here if the hard binding isn't already in the builder.
+    // Add a placeholder DataHash with enough space for the exclusion we'll need
+    // The hash value doesn't need to be final, but the structure should be sized correctly
+    let mut placeholder_dh = DataHash::new("jumbf manifest", "sha256");
+    // Add a placeholder exclusion for where the manifest will be embedded
+    // We don't know the exact size yet, but we'll update it later
+    placeholder_dh.add_exclusion(HashRange::new(0, 1000)); // Placeholder range
+                                                           // Set a dummy hash (will be replaced with actual hash later)
+    let dummy_hash = vec![0u8; 32]; // 32 bytes for SHA-256
+    placeholder_dh.set_hash(dummy_hash);
+    builder.add_assertion(DataHash::LABEL, &placeholder_dh)?;
+
+    // Create the placeholder manifest (supports dynamic assertions)
     let placeholder = builder.placeholder("image/jpeg")?;
 
     // Compose the manifest for the target format (JPEG)
@@ -172,8 +97,8 @@ fn user_data_hash_with_placeholder_api() -> Result<()> {
 
     let mut output_stream = Cursor::new(output);
 
-    // Create data hash with exclusion for the manifest
-    let mut dh = DataHash::new("my_manifest", "sha256");
+    // Now create the final DataHash with the actual exclusion range
+    let mut dh = DataHash::new("jumbf manifest", "sha256");
     let hr = HashRange::new(manifest_pos as u64, jpeg_placeholder.len() as u64);
     dh.add_exclusion(hr.clone());
 
@@ -181,10 +106,16 @@ fn user_data_hash_with_placeholder_api() -> Result<()> {
     let hash = hash_stream_by_alg("sha256", &mut output_stream, Some([hr].to_vec()), true)?;
     dh.set_hash(hash);
 
-    // Sign with dynamic assertions (if configured)
-    // The signer from context is used automatically
-    let signer = context.signer()?;
-    let final_manifest = builder.sign_data_hashed_embeddable(signer, &dh, "image/jpeg")?;
+    // Remove the old placeholder DataHash and add the updated one
+    builder
+        .definition
+        .assertions
+        .retain(|a| !a.label.starts_with(DataHash::LABEL));
+    builder.add_assertion(DataHash::LABEL, &dh)?;
+
+    // Sign the placeholder with the updated hash from the Builder
+    // The signer is obtained from the Builder's context
+    let final_manifest = builder.sign_placeholder(&placeholder, "image/jpeg")?;
 
     // Replace placeholder with final signed manifest
     output_stream.seek(std::io::SeekFrom::Start(manifest_pos as u64))?;

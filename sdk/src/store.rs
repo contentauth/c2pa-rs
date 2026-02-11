@@ -2489,23 +2489,96 @@ impl Store {
 
         // if user did not supply a hash
         if pc.hash_assertions().is_empty() {
-            // create placeholder DataHash large enough for 10 Exclusions
-            let mut ph = DataHash::new("jumbf manifest", pc.alg());
-            for _ in 0..10 {
-                ph.add_exclusion(HashRange::new(0u64, 2u64));
-            }
-            let data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-            let mut stream = Cursor::new(data);
-            ph.gen_hash_from_stream(&mut stream)?;
-
-            pc.add_assertion(&ph)?;
-        }
+            return Err(Error::BadParam(
+                "Claim must have a hard binding assertion".to_string(),
+            ));
+        };
 
         // add dynamic assertions to the store
         let dynamic_assertions = signer.dynamic_assertions();
         let _da_uris = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
 
         self.to_jumbf_internal(signer.reserve_size())
+    }
+
+    /// Signs an already hashed manifest with dynamic assertion support.
+    ///
+    /// # Arguments
+    /// * `signer` - The signer to use.
+    /// * `settings` - The settings to use.
+    /// # Returns
+    /// * The signed manifest bytes.
+    /// # Errors
+    /// * Returns an [`Error`] if the placeholder cannot be signed.
+    pub fn sign_manifest(&mut self, signer: &dyn Signer, settings: &Settings) -> Result<Vec<u8>> {
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+        // if user did not supply a hash
+        if pc.hash_assertions().is_empty() {
+            return Err(Error::BadParam(
+                "Claim must have a valid hard binding assertion".to_string(),
+            ));
+        };
+
+        // Write dynamic assertions only if placeholders were added during placeholder generation.
+        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
+        // weren't added and we should skip writing to avoid size mismatches.
+        let dynamic_assertions = signer.dynamic_assertions();
+        if !dynamic_assertions.is_empty() {
+            // Check if placeholders exist for these dynamic assertions
+            let has_placeholders = {
+                dynamic_assertions
+                    .iter()
+                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
+            };
+
+            if has_placeholders {
+                let mut preliminary_claim = PartialClaim::default();
+                {
+                    for assertion in pc.assertions() {
+                        preliminary_claim.add_assertion(assertion);
+                    }
+                }
+
+                // Drop pc before calling write_dynamic_assertions
+                let _ = pc;
+
+                let _modified =
+                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+
+                // Get pc again
+                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+                let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+                if sig_placeholder.len() != sig.len() {
+                    return Err(Error::CoseSigboxTooSmall);
+                }
+
+                let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+                patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
+                    .map_err(|_| Error::JumbfCreationError)?;
+
+                return Ok(jumbf_bytes);
+            }
+        }
+
+        // No dynamic assertions - sign directly
+        // Drop pc and get an immutable reference for signing
+        let _ = pc;
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        if sig_placeholder.len() != sig.len() {
+            return Err(Error::CoseSigboxTooSmall);
+        }
+
+        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
+            .map_err(|_| Error::JumbfCreationError)?;
+
+        Ok(jumbf_bytes)
     }
 
     fn prep_embeddable_store(
