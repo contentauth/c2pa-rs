@@ -24,7 +24,7 @@ enum AsyncResolverState {
     /// User-provided custom resolver.
     Custom(BoxedAsyncResolver),
     /// Default resolver with lazy initialization.
-    Default(OnceLock<RestrictedResolver<AsyncGenericResolver>>),
+    Default(OnceLock<BoxedAsyncResolver>),
 }
 
 /// Internal state for signer selection.
@@ -331,7 +331,7 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `AsyncHttpResolver`
-    pub fn with_resolver_async<T: AsyncHttpResolver + MaybeSend + Sync + 'static>(
+    pub fn with_resolver_async<T: AsyncHttpResolver + MaybeSend + MaybeSync + 'static>(
         mut self,
         resolver: T,
     ) -> Self {
@@ -339,7 +339,7 @@ impl Context {
         self
     }
 
-    pub fn set_resolver_async<T: AsyncHttpResolver + MaybeSend + Sync + 'static>(
+    pub fn set_resolver_async<T: AsyncHttpResolver + MaybeSend + MaybeSync + 'static>(
         &mut self,
         resolver: T,
     ) -> Result<()> {
@@ -367,14 +367,14 @@ impl Context {
     ///
     /// The default resolver is an `AsyncGenericResolver` wrapped with `RestrictedResolver`
     /// to apply host filtering from the settings.
-    pub fn resolver_async(&self) -> &(dyn AsyncHttpResolver + Sync) {
+    pub fn resolver_async(&self) -> &BoxedAsyncResolver {
         match &self.async_resolver {
-            AsyncResolverState::Custom(resolver) => resolver.as_ref(),
+            AsyncResolverState::Custom(resolver) => resolver,
             AsyncResolverState::Default(once_lock) => once_lock.get_or_init(|| {
                 let inner = AsyncGenericResolver::new();
                 let mut resolver = RestrictedResolver::new(inner);
                 resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                resolver
+                Box::new(resolver)
             }),
         }
     }
