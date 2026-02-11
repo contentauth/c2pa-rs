@@ -1178,10 +1178,8 @@ impl Builder {
                 &self.context,
             )?;
 
-            // Use the no-verify context to avoid validating archive signatures,
-            // then restore the caller's context on the resulting `Builder`.
             let mut reader = Reader::from_shared_context(&self.context);
-            reader.with_store(store, &mut validation_log).unwrap();
+            reader.with_store(store, &mut validation_log)?;
             reader.into_builder()
         })
     }
