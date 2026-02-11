@@ -29,6 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 #[allow(deprecated)]
 use crate::assertions::CreativeWork;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::EphemeralSigner;
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
@@ -46,8 +48,8 @@ use crate::{
     settings::builder::TimeStampFetchScope,
     store::Store,
     utils::{hash_utils::hash_to_b64, mime::format_to_mime},
-    AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
-    ManifestAssertionKind, Reader, Relationship, Signer,
+    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
+    Reader, Relationship, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -1118,19 +1120,34 @@ impl Builder {
 
     /// Convert the Builder into a .c2pa asset.
     ///
-    /// This will be stored in the standard application/c2pa .c2pa JUMBF format.
+    /// This will be stored in the standard application/c2pa .c2pa JUMBF format
+    /// unless the settings flag `builder.generate_c2pa_archive` is overridden
+    /// from its default value and set to `false` in which case a legacy format,
+    /// based on ZIP file, will be written instead.
+    ///
+    /// See docs/working-stores.md for more information.
+    ///
     /// # Arguments
-    /// * `stream` - A stream to write the zip into.
+    /// * `stream` - A stream to write the C2PA archive or ZIP file into.
+    ///
     /// # Errors
     /// * Returns an [`Error`] if the archive cannot be written.
     pub fn to_archive(&mut self, mut stream: impl Write + Seek) -> Result<()> {
         if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
-            let c2pa_data = self.working_store_sign()?;
-            stream.write_all(&c2pa_data)?;
-        } else {
-            return self.old_to_archive(stream);
+            #[cfg(target_arch = "wasm32")]
+            // Generating a C2PA archive is not supported on Wasm32 because the rcgen
+            // crate has dependencies that can not be used.
+            return Err(Error::WasmFeatureUnsupported);
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let c2pa_data = self.working_store_sign()?;
+                stream.write_all(&c2pa_data)?;
+                return Ok(());
+            }
         }
-        Ok(())
+
+        self.old_to_archive(stream)
     }
 
     /// Add manifest store from an archive stream to the [`Builder`].
@@ -2415,6 +2432,9 @@ impl Builder {
     ///
     /// IMPORTANT: This certificate is useful only in a private context and will not be considered
     /// trusted in the C2PA conformance sense.
+    ///
+    /// This function is not currently available on Wasm platform.
+    #[cfg(not(target_arch = "wasm32"))]
     fn working_store_sign(&self) -> Result<Vec<u8>> {
         // First we need to generate a `BoxHash` over an empty string.
         let mut empty_asset = std::io::Cursor::new("");
@@ -2424,6 +2444,7 @@ impl Builder {
             .asset_box_hash_ref()
             .ok_or(Error::UnsupportedType)?
             .get_box_map(&mut empty_asset)?;
+
         let box_hash = BoxHash { boxes };
 
         // ... then convert the `Builder` to a claim and add the box hash assertion.

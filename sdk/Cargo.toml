@@ -155,7 +155,6 @@ rasn = "0.28.2"
 rasn-cms = "0.28.2"
 rasn-ocsp = "0.28.2"
 rasn-pkix = "0.28.2"
-rcgen = "0.14.7"
 regex = "1.11"
 riff = "2.0.0"
 rsa = { version = "0.9.10", features = ["pem", "sha2", "std"], optional = true }
@@ -201,6 +200,7 @@ reqwest = { version = "0.12.23", default-features = false, features = [
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 openssl = { version = "0.10.72", features = ["vendored"], optional = true }
+rcgen = "0.14.7"
 ureq = { version = "3.1.0", default-features = false, features = [
     "rustls"
 ], optional = true }
