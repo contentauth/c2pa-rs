@@ -264,8 +264,8 @@ pub use resource_store::{ResourceRef, ResourceStore};
 #[doc(inline)]
 pub use settings::Settings;
 pub use signer::{AsyncSigner, BoxedAsyncSigner, BoxedSigner, Signer};
-#[cfg(not(target_arch = "wasm32"))]
-#[cfg_attr(docsrs, doc(cfg(not(target_arch = "wasm32"))))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+#[cfg_attr(docsrs, doc(cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))))]
 pub use utils::ephemeral_signer::EphemeralSigner;
 pub use utils::mime::format_from_path;
 #[doc(inline)]
