@@ -4269,9 +4269,7 @@ mod tests {
 
     #[test]
     fn test_archive_self_signed_ed25519_signature() -> Result<()> {
-        let settings = Settings::new()
-            .with_value("builder.generate_c2pa_archive", true)?
-            .with_value("verify.verify_after_reading", false)?;
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
 
         let context = Context::new().with_settings(settings.clone())?;
         let mut builder =
@@ -4281,25 +4279,19 @@ mod tests {
         builder.to_archive(&mut archive)?;
         archive.rewind()?;
 
-        let mut validation_log = crate::status_tracker::StatusTracker::default();
         let read_context = Context::new().with_settings(settings)?;
+        let reader =
+            Reader::from_context(read_context).with_stream("application/c2pa", &mut archive)?;
 
-        let store = Store::from_stream(
-            "application/c2pa",
-            &mut archive,
-            &mut validation_log,
-            &read_context,
-        )?;
+        let manifest = reader
+            .active_manifest()
+            .expect("archive should have active manifest");
 
-        let claim = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sign1 = claim.cose_sign1()?;
+        let sig_info = manifest
+            .signature_info()
+            .expect("manifest should have signature info");
 
-        assert!(matches!(
-            sign1.protected.header.alg,
-            Some(coset::RegisteredLabelWithPrivate::Assigned(
-                coset::iana::Algorithm::EdDSA
-            ))
-        ));
+        assert_eq!(sig_info.alg, Some(SigningAlg::Ed25519));
 
         Ok(())
     }
