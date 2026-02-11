@@ -239,8 +239,9 @@ impl Signer for EphemeralSigner {
 
 #[cfg(test)]
 mod tests {
-    #[allow(clippy::expect_used)]
-    #[allow(clippy::unwrap_used)]
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::unwrap_used)]
+
     use coset::iana::{self, EnumI64};
 
     use super::*;
