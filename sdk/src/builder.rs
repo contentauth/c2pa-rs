@@ -388,10 +388,10 @@ pub struct Builder {
     /// In most cases, you create this from a JSON manifest definition.
     pub definition: ManifestDefinition,
 
-    /// Optional remote URL for the manifest
+    /// Optional remote URL for the manifest.
     pub remote_url: Option<String>,
 
-    /// If true, the manifest store will not be embedded in the asset on sign
+    /// If true, the manifest store will not be embedded in the asset on sign.
     pub no_embed: bool,
 
     /// Base path to search for resources.
@@ -523,13 +523,13 @@ impl Builder {
     /// Sets the [`BuilderIntent`] for this [`Builder`].
     ///
     /// An intent lets the API know what kind of manifest to create.
-    /// Intents are `Create`, `Edit`, or `Update`.
-    /// This allows the API to check that you are doing the right thing.
+    /// and check that you are doing the right thing.
     /// It can also do things for you, like add parent ingredients from the source asset
     /// and automatically add required c2pa.created or c2pa.opened actions.
-    /// Create requires a `DigitalSourceType`. It is used for assets without a parent ingredient.
-    /// Edit requires a parent ingredient and is used for most assets that are being edited.
-    /// Update is a special case with many restrictions but is more compact than Edit.
+    /// Intents are `Create`, `Edit`, or `Update`:
+    /// - `Create` requires a `DigitalSourceType` and is used for assets without a parent ingredient.
+    /// - `Edit` requires a parent ingredient and is used for most assets that are being edited.
+    /// - `Update` is a special case with many restrictions but is more compact than `Edit`.
     /// # Arguments
     /// * `intent` - The [`BuilderIntent`] for this [`Builder`].
     /// # Returns
@@ -617,7 +617,7 @@ impl Builder {
         Ok(self)
     }
 
-    /// Returns a [Vec] of mime types that [c2pa-rs] is able to sign.
+    /// Returns a [Vec] of MIME types that the API is able to sign.
     pub fn supported_mime_types() -> Vec<String> {
         jumbf_io::supported_builder_mime_types()
     }
@@ -630,7 +630,17 @@ impl Builder {
     }
 
     /// Sets the [`ClaimGeneratorInfo`] for this [`Builder`].
-    // TODO: Add example of a good ClaimGeneratorInfo.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Builder, ClaimGeneratorInfo, Result};
+    /// # fn main() -> Result<()> {
+    /// let mut builder = Builder::new();
+    /// builder.set_claim_generator_info(ClaimGeneratorInfo::new("my_app"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn set_claim_generator_info<I>(&mut self, claim_generator_info: I) -> &mut Self
     where
         I: Into<ClaimGeneratorInfo>,
@@ -1275,7 +1285,8 @@ impl Builder {
                 definition.vendor.as_deref(),
                 self.claim_version().into(),
             ),
-        };
+        }
+        .with_context(self.context.clone());
 
         // add claim generator info to claim and resolve icons
         for info in &claim_generator_info {
@@ -1560,7 +1571,7 @@ impl Builder {
         actions: &mut Actions,
     ) -> Result<()> {
         let settings = self.context.settings();
-        // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
+        // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
         let auto_created = settings.builder.actions.auto_created_action.enabled;
         let auto_opened = settings.builder.actions.auto_opened_action.enabled;
 
@@ -1633,7 +1644,7 @@ impl Builder {
             }
         }
 
-        // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
+        // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_relationship
         if settings.builder.actions.auto_placed_action.enabled {
             // Get a list of ingredient URIs referenced by "c2pa.placed" actions.
             let mut referenced_uris = HashSet::new();

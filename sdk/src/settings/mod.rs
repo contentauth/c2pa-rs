@@ -48,7 +48,11 @@ pub(crate) trait SettingsValidate {
 }
 
 /// Settings to configure the trust list.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(default)
+)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Trust {
     /// Whether to verify certificates against the trust lists specified in [`Trust`]. This
@@ -188,7 +192,11 @@ impl SettingsValidate for Trust {
 }
 
 /// Settings to configure core features.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(default)
+)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Core {
     /// Size of the [`BmffHash`] merkle tree chunks in kilobytes.
@@ -196,7 +204,7 @@ pub struct Core {
     /// This option is associated with the [`MerkleMap::fixed_block_size`] field.
     ///
     /// See more information in the spec here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash>
+    /// [bmff_based_hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_based_hash)
     ///
     /// [`MerkleMap::fixed_block_size`]: crate::assertions::MerkleMap::fixed_block_size
     /// [`BmffHash`]: crate::assertions::BmffHash
@@ -206,7 +214,7 @@ pub struct Core {
     /// This option defaults to 5.
     ///
     /// See more information in the spec here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash>
+    /// [bmff_based_hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_based_hash)
     ///
     /// [`BmffHash`]: crate::assertions::BmffHash
     pub merkle_tree_max_proofs: usize,
@@ -224,7 +232,7 @@ pub struct Core {
     pub decode_identity_assertions: bool,
     /// <div class="warning">
     /// The CAWG identity assertion does not currently respect this setting.
-    /// See <a href="https://github.com/contentauth/c2pa-rs/issues/1645">issue #1645</a>.
+    /// See [Issue #1645](https://github.com/contentauth/c2pa-rs/issues/1645).
     /// </div>
     ///
     /// List of host patterns that are allowed for network requests.
@@ -288,7 +296,11 @@ impl SettingsValidate for Core {
 }
 
 /// Settings to configure the verification process.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(default)
+)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Verify {
     /// Whether to verify the manifest after reading in the [`Reader`].
@@ -359,7 +371,7 @@ pub struct Verify {
     /// The default value is false.
     ///
     /// See more information in the spec here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_versioning_manifests_due_to_conflicts>
+    /// [versioning_manifests_due_to_conflicts - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_versioning_manifests_due_to_conflicts)
     pub(crate) skip_ingredient_conflict_resolution: bool,
     /// Whether to do strictly C2PA v1 validation or otherwise the latest validation.
     ///
@@ -388,7 +400,11 @@ impl SettingsValidate for Verify {}
 ///
 /// [Settings::default] will be set thread-locally by default. Any settings set via
 /// [Settings::from_toml] or [Settings::from_file] will also be thread-local.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(default)
+)]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Settings {
     /// Version of the configuration.
@@ -419,6 +435,7 @@ impl Settings {
     #[cfg(feature = "file_io")]
     /// Load thread-local [Settings] from a file.
     /// to be deprecated - use [Settings::with_file] instead
+    #[doc(hidden)]
     pub fn from_file<P: AsRef<Path>>(settings_path: P) -> Result<Self> {
         let ext = settings_path
             .as_ref()
@@ -433,6 +450,7 @@ impl Settings {
     /// Load thread-local [Settings] from string representation of the configuration.
     /// Format of configuration must be supplied (json or toml).
     /// to be deprecated - use [Settings::with_json] or [Settings::with_toml] instead
+    #[doc(hidden)]
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
@@ -752,12 +770,14 @@ impl Settings {
     }
 
     /// Serializes the thread-local [Settings] into a toml string.
+    #[doc(hidden)]
     pub fn to_toml() -> Result<String> {
         let settings = get_thread_local_settings();
         Ok(toml::to_string(&settings)?)
     }
 
     /// Serializes the thread-local [Settings] into a pretty (formatted) toml string.
+    #[doc(hidden)]
     pub fn to_pretty_toml() -> Result<String> {
         let settings = get_thread_local_settings();
         Ok(toml::to_string_pretty(&settings)?)

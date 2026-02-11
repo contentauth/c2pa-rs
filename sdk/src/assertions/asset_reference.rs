@@ -25,7 +25,7 @@ use crate::{
 /// This assertion contains a list of references, each one declaring a location expressed as a URI and
 /// optionally a description. The URI may be either a single asset or it may reference a directory.
 ///
-/// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference>
+/// See [Asset reference - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_asset_reference).
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 pub struct AssetReference {
     pub references: Vec<Reference>,

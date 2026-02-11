@@ -46,7 +46,7 @@ use crate::{
     utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
     validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
-    Ingredient, Manifest, ManifestAssertion, Relationship,
+    Ingredient, Manifest, ManifestAssertion,
 };
 
 /// MaybeSend allows for no Send bound on wasm32 targets
@@ -89,7 +89,7 @@ pub trait AsyncPostValidator {
 /// Use a Reader to read and validate a manifest store.
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema), schemars(default))]
 #[derive(Default)]
 pub struct Reader {
     /// A label for the active (most recent) manifest in the store
@@ -165,11 +165,11 @@ impl Reader {
     /// # Examples
     ///
     /// ```
-    /// # use c2pa::{Context, Reader, Result};
+    /// # use c2pa::{Context, Reader, Result, Settings};
     /// # use std::sync::Arc;
     /// # fn main() -> Result<()> {
     /// // Create a shared Context once
-    /// let ctx = Arc::new(Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?);
+    /// let ctx = Context::new().with_settings(Settings::new())?.into_shared();
     ///
     /// // Share it across multiple Readers (even across threads!)
     /// let reader1 = Reader::from_shared_context(&ctx);
@@ -186,7 +186,7 @@ impl Reader {
         }
     }
 
-    /// Add manifest store from a stream to the [`Reader`]
+    /// Add manifest store from a stream to the [`Reader`].
     /// # Arguments
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
@@ -223,9 +223,7 @@ impl Reader {
     /// # Returns
     /// A [`Reader`] for the manifest store.
     /// # Note
-    /// [CAWG identity] assertions require async calls for validation.
-    ///
-    /// [CAWG identity]: https://cawg.io/identity/
+    /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[async_generic]
     pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -267,9 +265,7 @@ impl Reader {
     /// ```
     ///
     /// # Note
-    /// [CAWG identity] assertions require async calls for validation.
-    ///
-    /// [CAWG identity]: https://cawg.io/identity/
+    /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[async_generic]
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
@@ -353,9 +349,7 @@ impl Reader {
     /// ```
     ///
     /// # Note
-    /// [CAWG identity] assertions require async calls for validation.
-    ///
-    /// [CAWG identity]: https://cawg.io/identity/
+    /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[cfg(feature = "file_io")]
     #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
@@ -806,20 +800,23 @@ impl Reader {
     /// The number of bytes written.
     /// # Errors
     /// Returns [`Error`] if the resource does not exist.
-    ///
     /// # Example
     /// ```no_run
+    /// use std::io::Cursor;
+    ///
     /// use c2pa::Reader;
-    /// #[cfg(feature = "file_io")]
-    /// {
-    ///     let stream = std::io::Cursor::new(Vec::new());
-    ///     let reader = Reader::from_file("path/to/file.jpg").unwrap();
-    ///     let manifest = reader.active_manifest().unwrap();
-    ///     let uri = &manifest.thumbnail_ref().unwrap().identifier;
-    ///     let bytes_written = reader.resource_to_stream(uri, stream).unwrap();
-    /// }
+    /// // Create a Reader from an in-memory stream (placeholder bytes shown here).
+    /// let input = Cursor::new(Vec::new());
+    /// let reader = Reader::from_stream("image/jpeg", input).unwrap();
+    ///
+    /// // Get a resource identifier from the active manifest (e.g., a thumbnail).
+    /// let manifest = reader.active_manifest().unwrap();
+    /// let uri = &manifest.thumbnail_ref().unwrap().identifier;
+    ///
+    /// // Write that resource to an output stream.
+    /// let out = Cursor::new(Vec::new());
+    /// let bytes_written = reader.resource_to_stream(uri, out).unwrap();
     /// ```
-    /// TODO: Fix the example to not read from a file.
     pub fn resource_to_stream(
         &self,
         uri: &str,
@@ -1305,62 +1302,13 @@ impl Reader {
     /// Returns an [`Error`] if there is no parent ingredient.
     pub(crate) fn to_ingredient(&self) -> Result<Ingredient> {
         // make a copy of the parent ingredient (or return an error if not found)
-        let mut ingredient = self
+        let ingredient = self
             .active_manifest()
-            .and_then(|m| {
-                m.ingredients()
-                    .iter()
-                    .find(|&i| *i.relationship() == Relationship::ParentOf)
-            })
+            .and_then(|m| m.ingredients().first())
             .ok_or_else(|| Error::IngredientNotFound)?
             .to_owned();
 
-        // now we need to rebuild the manifest data for the ingredient
-        // strip out the active manifest claim from the store before adding it to the ingredient
-        // We only care about the ingredient and any claims it references
-        if let Some(active_label) = ingredient.active_manifest() {
-            let claim = self
-                .store
-                .get_claim(active_label)
-                .ok_or_else(|| Error::ClaimMissing {
-                    label: active_label.to_string(),
-                })?;
-
-            // build a new store with just the ingredient claim and any referenced claims
-            let ingredient_store = {
-                let mut store = Store::new();
-                let mut active_claim = claim.clone();
-
-                // Recursively collect all ingredient claims and add them to primary_claim
-                let mut visited = std::collections::HashSet::new();
-                let mut path = Vec::new();
-                self.collect_ingredient_claims_recursive(
-                    claim,
-                    &mut active_claim,
-                    &mut visited,
-                    &mut path,
-                )?;
-
-                // Add the main claim last
-                store.commit_claim(active_claim)?;
-                store
-            };
-            let c2pa_data = ingredient_store.to_jumbf_internal(0)?;
-            ingredient.set_manifest_data(c2pa_data)?;
-        }
-
         Ok(ingredient)
-    }
-
-    /// Recursively collect all ingredient claims and add them to the primary claim
-    fn collect_ingredient_claims_recursive(
-        &self,
-        claim: &Claim,
-        active_claim: &mut Claim,
-        visited: &mut std::collections::HashSet<String>,
-        path: &mut Vec<String>,
-    ) -> Result<()> {
-        Self::collect_ingredient_claims_impl(&self.store, claim, active_claim, visited, path)
     }
 }
 
