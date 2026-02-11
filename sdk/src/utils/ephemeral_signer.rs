@@ -82,7 +82,7 @@ impl EphemeralSigner {
 
         ca_params.distinguished_name.push(
             rcgen::DnType::OrganizationName,
-            "c2pa-rs self-signed ephemeral CA",
+            "Self-signed ephemeral CA (Content Authenticity SDK)",
         );
 
         ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
@@ -111,9 +111,10 @@ impl EphemeralSigner {
 
         // Verifier expects an Organization in the subject for issuer_org in
         // CertificateInfo.
-        ee_params
-            .distinguished_name
-            .push(rcgen::DnType::OrganizationName, "C2PA Ephemeral");
+        ee_params.distinguished_name.push(
+            rcgen::DnType::OrganizationName,
+            "Self-signed ephemeral certificate (Content Authenticity SDK) -- LOCAL USE ONLY",
+        );
 
         ee_params.use_authority_key_identifier_extension = true;
 
