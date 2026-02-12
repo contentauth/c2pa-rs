@@ -92,7 +92,7 @@ impl AsyncCredentialHolder for AsyncX509CredentialHolder {
             &sp_cbor,
             None,
             TimeStampStorage::V2_sigTst2_CTT,
-            // TODO: pass in as parameter
+            // TODO: https://github.com/contentauth/c2pa-rs/issues/1645
             &AsyncGenericResolver::new(),
         )
         .await
