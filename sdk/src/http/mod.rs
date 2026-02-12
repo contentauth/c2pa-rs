@@ -41,14 +41,19 @@
 //! [`CertificateStatus`]: crate::assertions::CertificateStatus
 //! [`SignerSettings::Remote`]: crate::settings::signer::SignerSettings::Remote
 
-use std::io::{self, Read};
+use std::{
+    io::{self, Read},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use http::{Request, Response};
 
-use crate::Result;
+use crate::{
+    maybe_send_sync::{MaybeSend, MaybeSync},
+    Result,
+};
 
-mod interop;
 mod reqwest;
 mod ureq;
 mod wasi;
@@ -57,10 +62,15 @@ pub mod restricted;
 
 // Since we expose `http::Request` and `http::Response` in the public API, we also expose the `http` crate.
 pub use http;
-pub use interop::*;
 
 /// A resolver for sync (blocking) HTTP requests.
-pub trait SyncHttpResolver {
+///
+/// This trait is a supertrait of [`MaybeSend`] and [`MaybeSync`] for consistency with the
+/// [`AsyncHttpResolver`]. For more information on the rationale, see [`AsyncHttpResolver`].
+///
+/// [`MaybeSend`]: crate::maybe_send_sync::MaybeSend
+/// [`MaybeSync`]: crate::maybe_send_sync::MaybeSync
+pub trait SyncHttpResolver: MaybeSend + MaybeSync {
     /// Resolve a [`Request`] into a [`Response`] with a streaming body.
     ///
     /// [`Request`]: http::Request
@@ -71,10 +81,32 @@ pub trait SyncHttpResolver {
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError>;
 }
 
+/// This implementation is particularly useful for compatibility with the return
+/// type of [`Context::sync_resolver`].
+///
+/// [`Context::sync_resolver`]: crate::Context::sync_resolver
+impl<T: SyncHttpResolver + ?Sized> SyncHttpResolver for Arc<T> {
+    fn http_resolve(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        (**self).http_resolve(request)
+    }
+}
+
 /// A resolver for non-blocking (async) HTTP requests.
+///
+/// This trait is a supertrait of [`MaybeSend`] and [`MaybeSync`] because in many cases
+/// we use the pattern `&dyn AsyncHttpResolver`. For that to cross an await point, it
+/// must implement `Send`, and for that to happen, it must also implement `Sync`. Thus,
+/// rather than creating a new trait that combines `AsyncHttpResolver + MaybeSend + MaybeSync`,
+/// we require it here to reduce complexity.
+///
+/// [`MaybeSend`]: crate::maybe_send_sync::MaybeSend
+/// [`MaybeSync`]: crate::maybe_send_sync::MaybeSync
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait AsyncHttpResolver {
+pub trait AsyncHttpResolver: MaybeSend + MaybeSync {
     /// Resolve a [`Request`] into a [`Response`] with a streaming body.
     ///
     /// [`Request`]: http::Request
@@ -83,6 +115,21 @@ pub trait AsyncHttpResolver {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError>;
+}
+
+/// This implementation is particularly useful for compatibility with the return
+/// type of [`Context::async_resolver`].
+///
+/// [`Context::async_resolver`]: crate::Context::async_resolver
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<T: AsyncHttpResolver + ?Sized> AsyncHttpResolver for Arc<T> {
+    async fn http_resolve_async(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        (**self).http_resolve_async(request).await
+    }
 }
 
 /// A generic resolver for [`SyncHttpResolver`].
