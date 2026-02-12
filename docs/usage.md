@@ -32,6 +32,10 @@ Add the `add_thumbnails` dependency to generate thumbnails for JPEG and PNG file
 c2pa = { version = "0.72.0", features = ["file_io", "add_thumbnails"] }
 ```
 
+## Example code
+
+The [sdk/examples](https://github.com/contentauth/c2pa-rs/tree/main/sdk/examples) directory contains some minimal example code.  The [client/client.rs](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/client/client.rs) is the most instructive and provides and example of reading the contents of a manifest store, recursively displaying nested manifests.
+
 ## Features
 
 The crate provides numerous features that you can enable.
@@ -120,6 +124,3 @@ The default operation of C2PA signing is to embed a C2PA manifest store into an 
 - The remote URL can be set with `builder.remote_url`.
 - If embedding is not needed, set the `builder.no_embed` flag to `true`.
 
-## Example code
-
-The [sdk/examples](https://github.com/contentauth/c2pa-rs/tree/main/sdk/examples) directory contains some minimal example code.  The [client/client.rs](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/client/client.rs) is the most instructive and provides and example of reading the contents of a manifest store, recursively displaying nested manifests.

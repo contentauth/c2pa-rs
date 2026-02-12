@@ -85,7 +85,7 @@ fn main() -> Result<()> {
 
 ## Using `Context` with `Reader`
 
-`Reader` uses `Context` to control how manifests are validated and how remote resources are fetched:
+`Reader` uses `Context` to control how to validate manifests and how to fetch remote resources:
 
 ```rust
 use c2pa::{Context, Reader, Result};
@@ -210,7 +210,7 @@ fn main() -> Result<()> {
 
 ### Signer configuration options
 
-The `signer` field in settings supports two types:
+The `signer` field in `Settings` supports two types:
 
 **Local Signer** - for local certificate and private key:
 
@@ -240,9 +240,9 @@ For advanced use cases, you can provide custom HTTP resolvers to control how rem
 
 `Context` is designed to be used safely across threads. While `Context` itself doesn't implement `Clone`, you can:
 
-1. Create separate contexts for different threads
-2. Use `Arc<Context>` to share a context across threads (for read-only access)
-3. Pass contexts by reference where appropriate
+1. Create separate contexts for different threads.
+2. Use `Arc<Context>` to share a context across threads (for read-only access).
+3. Pass contexts by reference where appropriate.
 
 ## When to use `Context` sharing
 
@@ -257,12 +257,10 @@ Understanding when to use a shared `Context` helps optimize your application:
 ```rust
 use c2pa::{Context, Builder, Reader};
 
-// Create context with explicit settings
-let context = Context::new().with_settings(config)?;
-
-// For simple, single-use cases
-let builder = Builder::from_context(context);
-let reader = Reader::from_context(context);
+// For simple, single-use cases create a fresh Context per operation
+let builder = Builder::from_context(Context::new().with_settings(config)?);
+// or, for reading:
+let reader = Reader::from_context(Context::new().with_settings(config)?);
 ```
 
 **Use shared Context (with Arc):**
@@ -315,8 +313,7 @@ use c2pa::{Context, Reader};
 // Explicit context per operation
 let context = Context::new()
     .with_settings(include_str!("settings.toml"))?;
-let reader = Reader::new()
-    .with_context(context)
+let reader = Reader::from_context(context)
     .with_stream("image/jpeg", stream)?;
 ```
 
@@ -327,12 +324,12 @@ use c2pa::{Context, Builder};
 // Development signer for testing
 let dev_ctx = Context::new()
     .with_settings(include_str!("dev_settings.toml"))?;
-let dev_builder = Builder::new().with_context(dev_ctx);
+let dev_builder = Builder::from_context(dev_ctx);
 
 // Production signer for real signing
 let prod_ctx = Context::new()
     .with_settings(include_str!("prod_settings.toml"))?;
-let prod_builder = Builder::new().with_context(prod_ctx);
+let prod_builder = Builder::from_context(prod_ctx);
 ```
 
 ### How Context uses `Settings` internally
@@ -347,18 +344,7 @@ Context wraps a `Settings` instance and uses it to:
 
 4. **Configure builder behavior** - The `builder` settings control thumbnail generation, actions, and other manifest creation options.
 
-The `Settings` format hasn't changed - only how you provide those settings:
-
-```rust
-// Settings can be created and passed to Context
-let settings = Settings::default();
-settings.verify.verify_after_sign = true;
-let context = Context::new().with_settings(settings)?;
-
-// Or passed directly as JSON/TOML strings
-let context = Context::new()
-    .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
-```
+The `Settings` format hasn't changed—only how you provide those settings.
 
 ### Thread-local `Settings` still available (legacy)
 
@@ -370,7 +356,6 @@ use c2pa::Settings;
 // Thread-local settings (legacy approach - not recommended)
 Settings::from_toml(include_str!("settings.toml"))?;
 
-// Builder/Reader without explicit Context will use thread-local Settings
-let builder = Builder::new();  // Uses thread-local Settings internally
+// Operations without an explicit Context will use thread-local Settings
 ```
 
