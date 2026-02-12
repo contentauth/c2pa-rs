@@ -200,12 +200,14 @@ reqwest = { version = "0.12.23", default-features = false, features = [
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 openssl = { version = "0.10.72", features = ["vendored"], optional = true }
+rcgen = "0.14.7"
 ureq = { version = "3.1.0", default-features = false, features = [
     "rustls"
 ], optional = true }
 zip = { version = "7.0.0", default-features = false }
 
 [target.'cfg(target_os = "wasi")'.dependencies]
+rcgen = "0.14.7"
 wasi = { version = "0.14.3", optional = true }
 wstd = { version = "0.5.4", optional = true }
 # Use zip 6 for WASI to avoid typed-path wasip2 issue. Fix: http://github.com/chipsenkbeil/typed-path/pull/57
