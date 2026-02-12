@@ -1,12 +1,16 @@
-# C2PA intents API and archives overview
+# Intents and archives
 
-## Builder intents API
+## Builder intents
 
-### What are intents?
-
-Intents tell the C2PA Builder what kind of manifest you are creating. They help the API validate your operations and automatically add required elements.
+_Intents_ tell the C2PA Builder what kind of manifest you are creating, helping it validate your operations and automatically add required elements.
 
 ### Intent types
+
+There are three types of intents:
+
+- Create: `BuilderIntent::Create(DigitalSourceType)`
+- Edit: `BuilderIntent::Edit`
+- Update: `BuilderIntent::Update`
 
 #### `BuilderIntent::Create(DigitalSourceType)`
 
@@ -89,7 +93,6 @@ Available with `Create` intent:
 - `CompositeCapture` - HDR and multi-frame processing
 - And more...
 
----
 
 ## C2PA archives for ingredients and builders
 
@@ -115,7 +118,6 @@ Available with `Create` intent:
 1. **Save validated ingredients.** Add them to Builders later without re-validation
 2. **Archive `Builder` state.** Save and restore work-in-progress manifests
 
----
 
 ## Working with archives
 
@@ -265,7 +267,6 @@ let mut dest = Cursor::new(Vec::new());
 builder.save_to_stream(FORMAT, &mut source, &mut dest)?;
 ```
 
----
 
 ## Key use cases
 
@@ -322,7 +323,6 @@ builder.save_to_stream(FORMAT, &mut source, &mut dest)?;
 - Fast composition workflows
 - Consistent provenance tracking
 
----
 
 ## Important technical details
 
@@ -398,7 +398,6 @@ builder.sign(
 
 This returns the raw C2PA manifest store as `Vec<u8>`.
 
----
 
 ## Common Patterns Reference
 
@@ -470,9 +469,8 @@ builder.add_action(json!({
 }))?;
 ```
 
----
 
-## 8. Best practices
+## Best practices
 
 ### Do's ✅
 
@@ -490,7 +488,6 @@ builder.add_action(json!({
 4. **Don't modify archive format.** Use standard `application/c2pa` format.
 5. **Don't ignore errors.** Handle `Result` types properly.
 
----
 
 ## Demo code location
 
@@ -509,7 +506,6 @@ cd sdk
 cargo run --example builder_sample
 ```
 
----
 
 ## Summary
 
@@ -535,8 +531,6 @@ cargo run --example builder_sample
 - Support iterative editing processes
 - Maintain provenance across operations
 
----
-
 ## FAQ
 
 **Q: Can I use both old and new archive formats?**
@@ -557,7 +551,6 @@ A: No, intents are about the operation (create/edit/update), not the asset type.
 **Q: Can I have multiple parent ingredients?**
 A: No, only one parent is allowed. Other ingredients use different relationships (componentOf, inputTo, etc.).
 
----
 
 ## Additional resources
 
