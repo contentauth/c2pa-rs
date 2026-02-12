@@ -43,6 +43,7 @@ jobs:
           tar -xzf release-plz.tar.gz
           REPLZ=$(find . -maxdepth 2 -name 'release-plz' -type f | head -1)
           chmod +x "$REPLZ" && sudo mv "$REPLZ" /usr/local/bin/release-plz
+          rm -f release-plz.tar.gz
 
       - name: Install cargo-semver-checks
         uses: taiki-e/install-action@90b40388b8931b1c39e248959515e295e02e9066
