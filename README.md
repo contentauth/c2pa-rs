@@ -19,6 +19,9 @@ You can also read the documentation directly in GitHub:
 - [Usage](https://github.com/contentauth/c2pa-rs/blob/main/docs/usage.md)
 - [Supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md)
 - [Using the CAWG identity assertion](https://github.com/contentauth/c2pa-rs/blob/main/docs/cawg-id.md)
+- [Configuring SDK operations using Context](https://github.com/contentauth/c2pa-rs/blob/main/docs/context.md)
+- [Intents and archives](https://github.com/contentauth/c2pa-rs/blob/main/docs/intents-and-archives.md)
+- [Working stores and C2PA archives](https://github.com/contentauth/c2pa-rs/blob/main/docs/intents-and-archives.md)
 - [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
 - [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md)
 
@@ -53,7 +56,7 @@ This is a beta release (version 0.x.x) of the project. The minor version number 
 
 ### New API
 
-NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes) for more information.
+NOTE: The current release API replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes) for more information.
 
 ### Context API for configuration
 
@@ -64,7 +67,7 @@ The library uses a `Context` structure to configure C2PA operations, replacing t
 - **Backwards compatible**: All existing Settings (JSON/TOML) files work unchanged with Context
 - **Automatic signer creation**: Signers are created automatically from settings when needed
 
-See [Using Context for configuration](docs/usage.md#using-context-for-configuration) for details. 
+See [Configuring SDK operations using Context](docs/context.md) for details. 
 
 ## Installation
 
