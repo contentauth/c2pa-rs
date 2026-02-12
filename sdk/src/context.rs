@@ -16,7 +16,7 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     http::{
         restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver, AsyncResolver,
-        BoxedSyncResolver, SyncGenericResolver, SyncHttpResolver,
+        SyncGenericResolver, SyncHttpResolver, SyncResolver,
     },
     maybe_send_sync::{MaybeSend, MaybeSync},
     settings::Settings,
@@ -27,9 +27,9 @@ use crate::{
 /// Internal state for sync HTTP resolver selection.
 enum SyncResolverState {
     /// User-provided custom resolver.
-    Custom(BoxedSyncResolver),
+    Custom(Arc<SyncResolver>),
     /// Default resolver with lazy initialization.
-    Default(OnceLock<RestrictedResolver<SyncGenericResolver>>),
+    Default(OnceLock<Arc<SyncResolver>>),
 }
 
 /// Internal state for async HTTP resolver selection.
@@ -325,7 +325,7 @@ impl Context {
         mut self,
         resolver: T,
     ) -> Self {
-        self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
+        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
         self
     }
 
@@ -333,7 +333,7 @@ impl Context {
         &mut self,
         resolver: T,
     ) -> Result<()> {
-        self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
+        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
         Ok(())
     }
 
@@ -364,15 +364,17 @@ impl Context {
     ///
     /// The default resolver is a `SyncGenericResolver` wrapped with `RestrictedResolver`
     /// to apply host filtering from the settings.
-    pub fn resolver(&self) -> &dyn SyncHttpResolver {
+    pub fn resolver(&self) -> Arc<SyncResolver> {
         match &self.sync_resolver {
-            SyncResolverState::Custom(resolver) => resolver.as_ref(),
-            SyncResolverState::Default(once_lock) => once_lock.get_or_init(|| {
-                let inner = SyncGenericResolver::new();
-                let mut resolver = RestrictedResolver::new(inner);
-                resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                resolver
-            }),
+            SyncResolverState::Custom(resolver) => resolver.clone(),
+            SyncResolverState::Default(once_lock) => once_lock
+                .get_or_init(|| {
+                    let inner = SyncGenericResolver::new();
+                    let mut resolver = RestrictedResolver::new(inner);
+                    resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
+                    Arc::new(resolver)
+                })
+                .clone(),
         }
     }
 

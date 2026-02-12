@@ -26,11 +26,11 @@ use crate::http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver};
 /// Type alias for a boxed [`SyncHttpResolver`] with conditional Send + Sync bounds.
 /// On non-WASM targets, the resolver is Send + Sync for thread-safe usage.
 #[cfg(not(target_arch = "wasm32"))]
-pub type BoxedSyncResolver = Box<dyn SyncHttpResolver + Send + Sync>;
+pub type SyncResolver = dyn SyncHttpResolver + Send + Sync;
 
 /// Type alias for a boxed [`SyncHttpResolver`] without Send + Sync bounds (WASM only).
 #[cfg(target_arch = "wasm32")]
-pub type BoxedSyncResolver = Box<dyn SyncHttpResolver>;
+pub type SyncResolver = dyn SyncHttpResolver;
 
 /// Type alias for a trait object [`AsyncHttpResolver`] with Send + Sync bounds.
 /// On non-WASM targets, the resolver is Send + Sync for thread-safe usage.
@@ -40,6 +40,15 @@ pub type AsyncResolver = dyn AsyncHttpResolver + Send + Sync;
 /// Type alias for a trait object [`AsyncHttpResolver`] without Send + Sync bounds (WASM only).
 #[cfg(target_arch = "wasm32")]
 pub type AsyncResolver = dyn AsyncHttpResolver;
+
+impl<T: SyncHttpResolver + ?Sized> SyncHttpResolver for Arc<T> {
+    fn http_resolve(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        (**self).http_resolve(request)
+    }
+}
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]

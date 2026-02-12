@@ -1864,7 +1864,7 @@ impl Builder {
                         tsa_url,
                         &manifest_label,
                         &signature,
-                        self.context().resolver(),
+                        &self.context().resolver(),
                     )?;
                 } else {
                     timestamp_assertion

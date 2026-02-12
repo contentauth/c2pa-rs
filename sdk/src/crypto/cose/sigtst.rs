@@ -32,6 +32,7 @@ use crate::{
     },
     http::{AsyncHttpResolver, SyncHttpResolver},
     log_item,
+    maybe_send_sync::MaybeSync,
     status_tracker::StatusTracker,
     validation_status, Result,
 };
@@ -220,7 +221,7 @@ impl TstContainer {
         p_header: &ProtectedHeader,
         mut header_builder: HeaderBuilder,
         tss: TimeStampStorage,
-        http_resolver: &(dyn AsyncHttpResolver + Sync),
+        http_resolver: &(impl AsyncHttpResolver + MaybeSync),
     ))
 ]
 pub(crate) fn add_sigtst_header(
@@ -229,7 +230,7 @@ pub(crate) fn add_sigtst_header(
     p_header: &ProtectedHeader,
     mut header_builder: HeaderBuilder,
     tss: TimeStampStorage,
-    http_resolver: &dyn SyncHttpResolver,
+    http_resolver: &impl SyncHttpResolver,
 ) -> Result<HeaderBuilder, CoseError> {
     let sd = cose_countersign_data(data, p_header);
 

@@ -74,7 +74,7 @@ use crate::{
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
-    maybe_send_sync::MaybeSend,
+    maybe_send_sync::{MaybeSend, MaybeSync},
     settings::{builder::OcspFetchScope, Settings},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
@@ -549,7 +549,7 @@ impl Store {
         signer: &dyn AsyncSigner,
         box_size: usize,
         settings: &Settings,
-        http_resolver: &(dyn AsyncHttpResolver + Sync),
+        http_resolver: &(impl AsyncHttpResolver + MaybeSync),
     ))]
     pub fn sign_claim(
         &self,
@@ -557,7 +557,7 @@ impl Store {
         signer: &dyn Signer,
         box_size: usize,
         settings: &Settings,
-        http_resolver: &dyn SyncHttpResolver,
+        http_resolver: &impl SyncHttpResolver,
     ) -> Result<Vec<u8>> {
         let claim_bytes = claim.data()?;
 
@@ -2562,7 +2562,7 @@ impl Store {
             signer,
             signer.reserve_size(),
             context.settings(),
-            context.resolver(),
+            &context.resolver(),
         )?;
 
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
@@ -2600,7 +2600,7 @@ impl Store {
                 signer,
                 signer.reserve_size(),
                 context.settings(),
-                context.resolver_async().as_ref(),
+                &context.resolver_async(),
             )
             .await?;
 
@@ -2638,7 +2638,7 @@ impl Store {
             signer,
             signer.reserve_size(),
             context.settings(),
-            context.resolver(),
+            &context.resolver(),
         )?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
@@ -2682,7 +2682,7 @@ impl Store {
                 signer,
                 signer.reserve_size(),
                 context.settings(),
-                context.resolver_async().as_ref(),
+                &context.resolver_async(),
             )
             .await?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
@@ -2956,7 +2956,7 @@ impl Store {
             signer,
             signer.reserve_size(),
             context.settings(),
-            context.resolver(),
+            &context.resolver(),
         )?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
@@ -3072,7 +3072,7 @@ impl Store {
                 signer,
                 signer.reserve_size(),
                 settings,
-                context.resolver(),
+                &context.resolver(),
             )
         } else {
             self.sign_claim_async(
@@ -3080,7 +3080,7 @@ impl Store {
                 signer,
                 signer.reserve_size(),
                 settings,
-                context.resolver_async().as_ref(),
+                &context.resolver_async(),
             )
             .await
         }?;

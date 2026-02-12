@@ -30,6 +30,7 @@ use crate::{
         time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     },
     http::{AsyncHttpResolver, SyncHttpResolver},
+    maybe_send_sync::MaybeSync,
     settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
     AsyncSigner, Error, Result, Signer,
@@ -57,14 +58,14 @@ use crate::{
     signer: &dyn AsyncSigner,
     box_size: usize,
     settings: &Settings,
-    http_resolver: &(dyn AsyncHttpResolver + Sync),
+    http_resolver: &(impl AsyncHttpResolver + MaybeSync),
 ))]
 pub fn sign_claim(
     claim_bytes: &[u8],
     signer: &dyn Signer,
     box_size: usize,
     settings: &Settings,
-    http_resolver: &dyn SyncHttpResolver,
+    http_resolver: &impl SyncHttpResolver,
 ) -> Result<Vec<u8>> {
     // Must be a valid claim.
     let label = "dummy_label";
@@ -120,7 +121,7 @@ pub fn sign_claim(
     box_size: usize,
     time_stamp_storage: TimeStampStorage,
     settings: &Settings,
-    http_resolver: &(dyn AsyncHttpResolver + Sync),
+    http_resolver: &(impl AsyncHttpResolver + MaybeSync),
 ))]
 pub(crate) fn cose_sign(
     signer: &dyn Signer,
@@ -128,7 +129,7 @@ pub(crate) fn cose_sign(
     box_size: usize,
     time_stamp_storage: TimeStampStorage,
     settings: &Settings,
-    http_resolver: &dyn SyncHttpResolver,
+    http_resolver: &impl SyncHttpResolver,
 ) -> Result<Vec<u8>> {
     // Make sure the signing cert is valid.
     let certs = signer.certs()?;

@@ -30,6 +30,7 @@ use crate::{
         raw_signature::{AsyncRawSigner, RawSigner, SigningAlg},
     },
     http::{AsyncHttpResolver, SyncHttpResolver},
+    maybe_send_sync::MaybeSync,
 };
 
 /// Given an arbitrary block of data and a [`RawSigner`] or [`AsyncRawSigner`]
@@ -84,14 +85,14 @@ use crate::{
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
-    http_resolver: &(dyn AsyncHttpResolver + Sync),
+    http_resolver: &(impl AsyncHttpResolver + MaybeSync),
 ))]
 pub fn sign(
     signer: &dyn RawSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
-    http_resolver: &dyn SyncHttpResolver,
+    http_resolver: &impl SyncHttpResolver,
 ) -> Result<Vec<u8>, CoseError> {
     if _sync {
         match tss {
@@ -115,14 +116,14 @@ pub fn sign(
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
-    http_resolver: &(dyn AsyncHttpResolver + Sync),
+    http_resolver: &(impl AsyncHttpResolver + MaybeSync),
 ))]
 pub fn sign_v1(
     signer: &dyn RawSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
-    http_resolver: &dyn SyncHttpResolver,
+    http_resolver: &impl SyncHttpResolver,
 ) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
 
@@ -204,14 +205,14 @@ pub fn sign_v1(
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
-    http_resolver: &(dyn AsyncHttpResolver + Sync),
+    http_resolver: &(impl AsyncHttpResolver + MaybeSync),
 ))]
 pub fn sign_v2(
     signer: &dyn RawSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
-    http_resolver: &dyn SyncHttpResolver,
+    http_resolver: &impl SyncHttpResolver,
 ) -> Result<Vec<u8>, CoseError> {
     if _sync {
         sign_v2_embedded(
@@ -310,7 +311,7 @@ pub enum CosePayload {
     payload: CosePayload,
     content_type: Option<ContentType>,
     tss: TimeStampStorage,
-    http_resolver: &(dyn AsyncHttpResolver + Sync),
+    http_resolver: &(impl AsyncHttpResolver + MaybeSync),
 ))]
 pub fn sign_v2_embedded(
     signer: &dyn RawSigner,
@@ -319,7 +320,7 @@ pub fn sign_v2_embedded(
     payload: CosePayload,
     content_type: Option<ContentType>,
     tss: TimeStampStorage,
-    http_resolver: &dyn SyncHttpResolver,
+    http_resolver: &impl SyncHttpResolver,
 ) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
 
@@ -475,7 +476,7 @@ fn build_protected_header(
         data: &[u8],
         p_header: &ProtectedHeader,
         tss: TimeStampStorage,
-        http_resolver: &(dyn AsyncHttpResolver + Sync),
+        http_resolver: &(impl AsyncHttpResolver + MaybeSync),
     ))
 ]
 fn build_unprotected_header(
@@ -483,7 +484,7 @@ fn build_unprotected_header(
     data: &[u8],
     p_header: &ProtectedHeader,
     tss: TimeStampStorage,
-    http_resolver: &dyn SyncHttpResolver,
+    http_resolver: &impl SyncHttpResolver,
 ) -> Result<Header, CoseError> {
     // signed_data_from_time_stamp_response
 
