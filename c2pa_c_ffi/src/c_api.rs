@@ -20,8 +20,13 @@ use std::{
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 use c2pa::{
-    assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
-    CallbackSigner, Context, Reader as C2paReader, Settings as C2paSettings, SigningAlg,
+    assertions::{
+        labels::{parse_label, BMFF_HASH},
+        BmffHash, DataHash,
+    },
+    identity::validator::CawgValidator,
+    Builder as C2paBuilder, CallbackSigner, Context, Hasher as C2paHasher, Reader as C2paReader,
+    Settings as C2paSettings, SigningAlg,
 };
 use tokio::runtime::Runtime; // cawg validator requires async
 
@@ -88,6 +93,10 @@ mod cbindgen_fix {
     #[repr(C)]
     #[allow(dead_code)]
     pub struct C2paSettings;
+
+    #[repr(C)]
+    #[allow(dead_code)]
+    pub struct C2paHasher;
 }
 
 type C2paContextBuilder = Context;
@@ -870,16 +879,6 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
     box_tracked!(result)
 }
 
-/// Creates a new C2paReader from a shared Context.
-///
-/// # Safety
-///
-/// * `context` must be a valid pointer to a C2paContext object.
-/// * The context pointer remains valid after this call and can be reused.
-///
-/// # Returns
-///
-/// A pointer to a newly allocated C2paReader, or NULL on error.
 /// Creates and verifies a C2paReader from a file path.
 /// This allows a client to use Rust's file I/O to read the file
 /// Parameters
@@ -1565,6 +1564,302 @@ pub unsafe extern "C" fn c2pa_builder_sign(
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_manifest_bytes_free(manifest_bytes_ptr: *const c_uchar) {
     cimpl_free!(manifest_bytes_ptr);
+}
+
+/// Get a C2paHasher for the specified algorithm
+///
+/// #Parameters
+/// * alg: pointer to a C string specifying the supported algorithm {"sha256, "sha284", "sha512"}.
+///
+/// # Errors
+/// Returns NULL if there were errors, otherwise returns a pointer to a C2pHasher.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// The returned value MUST be released by calling c2pa_reader_free or c2pa_hasher_finalize
+/// and it is no longer valid after that call.
+///
+/// # Example
+/// ```c
+/// auto result = c2pa_hasher_from_alg("sha256");
+/// if (result == NULL) {
+///     let error = c2pa_error();
+///     printf("Error: %s\n", error);
+///     c2pa_hasher_free(result);
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_hasher_from_alg(alg: *const c_char) -> *mut C2paHasher {
+    let alg = cstr_or_return_null!(alg);
+    let result = ok_or_return_null!(C2paHasher::new(&alg));
+    box_tracked!(result)
+}
+
+/// Update the hasher with supplied data
+///
+/// #Parameters
+/// * hasher_ptr: point to C2paHasher from c2pa_hasher_from_alg.
+/// * data_ptr: pointer to data to hash.
+/// * data_len: length of data to hash.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// hasher_ptr and data_ptr must not be NULL..
+///
+/// # Example
+/// ```c
+/// auto hasher = c2pa_hasher_from_alg("sha256");
+/// if (hasher == NULL) {
+///     let error = c2pa_error();
+///     printf("Error: %s\n", error);
+///
+///     auto data = std::vector<std::uint8_t> buffer(1024);
+///
+///     c2pa_hasher_update(hasher, (const uint8_t*)data.data(), 1024);
+///
+///     c2pa_string_free(error);
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_hasher_update(
+    hasher_ptr: *mut C2paHasher,
+    data_ptr: *const c_uchar,
+    data_len: usize,
+) -> i64 {
+    ptr_or_return_int!(data_ptr);
+
+    let hasher = deref_mut_or_return_int!(hasher_ptr, C2paHasher);
+    let hash_bytes = bytes_or_return_int!(data_ptr, data_len, "hash bytes");
+
+    hasher.update(hash_bytes);
+
+    0
+}
+/// Finalize the hasher and return the hash bytes
+///
+/// #Parameters
+/// * hasher_ptr: point to C2paHasher from c2pa_hasher_from_alg.
+/// * hash_bytes_ptr: pointer to receive the hash bytes pointer.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns the length of the hash bytes.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// hasher_ptr and hash_bytes_ptr must not be NULL.
+/// The returned hash_bytes_ptr must be freed by calling c2pa_hashed_bytes_free.
+///
+/// # Example
+/// ```c
+/// auto hasher = c2pa_hasher_from_alg("sha256");
+/// if (hasher == NULL) {
+///     let error = c2pa_error();
+///     printf("Error: %s\n", error);
+///
+///     auto data = std::vector<std::uint8_t> buffer(1024);
+///
+///     c2pa_hasher_update(hasher, (const uint8_t*)data.data(), 1024);
+///
+///    const uint8_t* hash_bytes = NULL;    
+///    auto hash_len = c2pa_hasher_finalize(hasher, &hash_bytes);
+///
+///    c2pa_string_free(error);
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_hasher_finalize(
+    hasher_ptr: *mut C2paHasher,
+    hash_bytes_ptr: *mut *const c_uchar,
+) -> i64 {
+    ptr_or_return_int!(hash_bytes_ptr);
+
+    let hasher = deref_mut_or_return_int!(hasher_ptr, C2paHasher);
+
+    let hash_bytes = hasher.finalize_reset();
+
+    let len = hash_bytes.len() as i64;
+    if !hash_bytes_ptr.is_null() {
+        *hash_bytes_ptr = to_c_bytes(hash_bytes);
+    }
+    len
+}
+/// Hash a u64 offset value into the hasher per C2PA BMFF hashing rules
+///
+/// #Parameters
+/// * hasher_ptr: point to C2paHasher from c2pa_hasher_from_alg.
+/// * hash_offset: u64 offset value to hash.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// hasher_ptr must not be NULL..
+///
+/// # Example
+/// ```c
+/// auto hasher = c2pa_hasher_from_alg("sha256");
+/// if (hasher == NULL) {
+///     let error = c2pa_error();
+///     printf("Error: %s\n", error);
+///
+///     auto offset = 12345678u64;
+///     c2pa_hasher_hash_offset(hasher, offset);
+///
+///     c2pa_string_free(error);
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_hasher_hash_offset(
+    hasher_ptr: *mut C2paHasher,
+    hash_offset: u64,
+) -> i64 {
+    let hasher = deref_mut_or_return_int!(hasher_ptr, C2paHasher);
+    let offset_be = hash_offset.to_be_bytes();
+
+    hasher.update(&offset_be);
+
+    0
+}
+
+/// Frees a C2paHasher allocated by Rust.
+///
+///
+/// /// **Note**: This function is maintained for backward compatibility. New code should
+/// use [`c2pa_free`] instead, which works for all pointer types.
+///
+/// # Safety
+/// The C2paHasher can only be freed once and is invalid after this call.
+/// /// # Safety
+/// hasher_ptr must not be NULL..
+///
+/// # Example
+/// ```c
+/// auto hasher = c2pa_hasher_from_alg("sha256");
+/// if (hasher == NULL) {
+///     c2pa_string_free(error);
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_hasher_free(hasher_ptr: *mut C2paHasher) {
+    cimpl_free!(hasher_ptr);
+}
+
+/// Frees hash bytes pointer returned by c2pa_hasher_finalize allocated by Rust.
+///
+/// # Safety
+/// The hashed_bytes_ptr can only be freed once and is invalid after this call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_hashed_bytes_free(hashed_bytes_ptr: *mut *const c_uchar) {
+    cimpl_free!(hashed_bytes_ptr);
+}
+
+/// Creates a hashed placeholder from a Builder.
+/// The placeholder is used to reserve size in an asset for later signing.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * reserved_size: the size required for a signature from the intended signer.
+/// * exclusion_map_json: is an optional pointer to use add BMFF exclusions
+/// * manifest_bytes_ptr: pointer to a pointer to a c_uchar to return manifest_bytes.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns the size of the manifest_bytes.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+/// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_manifest_bytes_free
+/// and it is no longer valid after that call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_bmff_hashed_placeholder(
+    builder_ptr: *mut C2paBuilder,
+    reserved_size: usize,
+    exclusion_map_json: *const c_char,
+    manifest_bytes_ptr: *mut *const c_uchar,
+) -> i64 {
+    ptr_or_return_int!(manifest_bytes_ptr);
+    let exclusion_map_str = cstr_option!(exclusion_map_json);
+
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let result =
+        builder.get_bmff_hashed_manifest_placeholder(reserved_size, exclusion_map_str.as_deref());
+
+    let manifest_bytes = ok_or_return_int!(result);
+
+    let len = manifest_bytes.len() as i64;
+    if !manifest_bytes_ptr.is_null() {
+        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
+    }
+    len
+}
+
+/// Sign a Builder using the specified signer and bmff hash.
+/// The hasher_ptr contains a C2paHasher that was used to accumulate the hash the file was written.
+/// This is a low-level method for advanced use cases where the caller handles embedding the manifest in BMFF assets.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * signer: pointer to a C2paSigner.
+/// * hasher_ptr: pointer to C2paHasher.  Can be null if you pass in asset.
+/// * asset: pointer to C2paStream.  If present it will used in lieu of the value passed in hasher_ptr.
+/// * manifest_bytes_ptr: pointer to a pointer to a c_uchar to return manifest_bytes (optional, can be NULL).
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns the size of the manifest_bytes.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+/// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_manifest_bytes_free
+/// and it is no longer valid after that call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_sign_bmff_hashed_embeddable(
+    builder_ptr: *mut C2paBuilder,
+    signer_ptr: *mut C2paSigner,
+    hasher_ptr: *mut C2paHasher,
+    asset_stream_ptr: *mut C2paStream,
+    manifest_bytes_ptr: *mut *const c_uchar,
+) -> i64 {
+    ptr_or_return_int!(manifest_bytes_ptr);
+
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
+
+    let hash = if !asset_stream_ptr.is_null() {
+        let asset_stream = deref_mut_or_return_int!(asset_stream_ptr, C2paStream);
+        // generate the hash from the asset
+        if let Some((mut bmff_hash, label)) = builder.find_assertion_by_label::<BmffHash>(BMFF_HASH)
+        {
+            let (_label, version, _instance) = parse_label(&label);
+
+            bmff_hash.set_bmff_version(version);
+
+            ok_or_return_int!(bmff_hash.gen_hash_from_stream(&mut *asset_stream));
+            bmff_hash.hash().map_or(Vec::new(), |v| v.clone())
+        } else {
+            return -1;
+        }
+    } else if !hasher_ptr.is_null() {
+        // grab the value from the user generated hash
+        let hasher = deref_mut_or_return_int!(hasher_ptr, C2paHasher);
+        hasher.finalize_reset()
+    } else {
+        return -1;
+    };
+
+    let result = builder.sign_bmff_hashed_embeddable(c2pa_signer.signer.as_ref(), &hash);
+
+    let manifest_bytes = ok_or_return_int!(result);
+
+    let len = manifest_bytes.len() as i64;
+    if !manifest_bytes_ptr.is_null() {
+        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
+    }
+    len
 }
 
 /// Creates a hashed placeholder from a Builder.
@@ -2863,7 +3158,146 @@ mod tests {
         assert!(!signer.is_null());
         unsafe { c2pa_signer_free(signer) };
     }
+    #[test]
+    fn test_bmff_embeddable() {
+        let manifest_def = r#"{
+        "title": "Video Test",
+        "format": "video/mp4",
+        "claim_generator_info": [
+            {
+                "name": "ffmpeg_sample_app",
+                "version": "1.0.0"
+            }
+        ],
+        "metadata": [
+            {
+                "dateTime": "1985-04-12T23:20:50.52Z",
+                "my_custom_metadata": "my custom metatdata value"
+            }
+        ],
+        "ingredients": [
+            {
+                "title": "Some Source Video",
+                "format": "video/mp4",
+                "instance_id": "12345",
+                "relationship": "inputTo",
+                "metadata": {
+                    "dateTime": "1985-04-12T23:20:50.52Z",
+                    "my_custom_metadata": "my custom metatdata value"
+                }
+            }
+        ],
+        "assertions": [
+            {
+                "label": "c2pa.actions",
+                "data": {
+                    "actions": [
+                        {
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia",
+                            "softwareAgent": {
+                                "name": "ffmpeg_sample_app",
+                                "version": "1.0.0"
+                            },
+                            "description": "This video was created by ffmpeg_sample_app",
+                            "when": "2025-04-22T17:25:28Z",
+                            "parameters": {
+                                "description": "This image was edited by Adobe Firefly"
+                            },
+                            "softwareAgentIndex": 0
+                        }
+                    ]
+                }
+            },
+            {
+                "label": "c2pa.metadata",
+                "data": {
+                    "@context" : {
+                        "exif": "http://ns.adobe.com/exif/1.0/",
+                        "exifEX": "http://cipa.jp/exif/1.0/",
+                        "tiff": "http://ns.adobe.com/tiff/1.0/",
+                        "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
+                        "photoshop" : "http://ns.adobe.com/photoshop/1.0/"
+                    },
+                    "photoshop:DateCreated": "Aug 31, 2022",
+                    "Iptc4xmpExt:DigitalSourceType": "https://cv.iptc.org/newscodes/digitalsourcetype/digitalCapture",
+                    "exif:GPSVersionID": "2.2.0.0",
+                    "exif:GPSLatitude": "39,21.102N",
+                    "exif:GPSLongitude": "74,26.5737W",
+                    "exif:GPSAltitudeRef": 0,
+                    "exif:GPSAltitude": "100963/29890",
+                    "exifEX:LensSpecification": { "@list": [ 1.55, 4.2, 1.6, 2.4 ] }
+                },
+                "kind": "Json"
+            }
+        ]
+    }"#;
 
+        let signer_def = r#"{
+        "signer": {
+            "local": {
+              "alg": "ps256",
+              "sign_cert": "-----BEGIN CERTIFICATE-----\\n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\\n-----END CERTIFICATE-----\\n-----BEGIN CERTIFICATE-----\\n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\\nwvq03sA=\\n-----END CERTIFICATE-----\\n-----BEGIN CERTIFICATE-----\\nMIIGezCCBC+gAwIBAgIUDAG5+sfGspprX+hlkn1SuB2f5VQwQQYJKoZIhvcNAQEK\\nMDSgDzANBglghkgBZQMEAgEFAKEcMBoGCSqGSIb3DQEBCDANBglghkgBZQMEAgEF\\nAKIDAgEgMHcxCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29t\\nZXdoZXJlMRowGAYDVQQKDBFDMlBBIFRlc3QgUm9vdCBDQTEZMBcGA1UECwwQRk9S\\nIFRFU1RJTkdfT05MWTEQMA4GA1UEAwwHUm9vdCBDQTAeFw0yMjA2MTAxODQ2MjVa\\nFw0zMjA2MDcxODQ2MjVaMHcxCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAG\\nA1UEBwwJU29tZXdoZXJlMRowGAYDVQQKDBFDMlBBIFRlc3QgUm9vdCBDQTEZMBcG\\nA1UECwwQRk9SIFRFU1RJTkdfT05MWTEQMA4GA1UEAwwHUm9vdCBDQTCCAlYwQQYJ\\nKoZIhvcNAQEKMDSgDzANBglghkgBZQMEAgEFAKEcMBoGCSqGSIb3DQEBCDANBglg\\nhkgBZQMEAgEFAKIDAgEgA4ICDwAwggIKAoICAQC4q3t327HRHDs7Y9NR+ZqernwU\\nbZ1EiEBR8vKTZ9StXmSfkzgSnvVfsFanvrKuZvFIWq909t/gH2z0klI2ZtChwLi6\\nTFYXQjzQt+x5CpRcdWnB9zfUhOpdUHAhRd03Q14H2MyAiI98mqcVreQOiLDydlhP\\nDla7Ign4PqedXBH+NwUCEcbQIEr2LvkZ5fzX1GzBtqymClT/Gqz75VO7zM1oV4gq\\nElFHLsTLgzv5PR7pydcHauoTvFWhZNgz5s3olXJDKG/n3h0M3vIsjn11OXkcwq99\\nNe5Nm9At2tC1w0Huu4iVdyTLNLIAfM368ookf7CJeNrVJuYdERwLwICpetYvOnid\\nVTLSDt/YK131pR32XCkzGnrIuuYBm/k6IYgNoWqUhojGJai6o5hI1odAzFIWr9T0\\nsa9f66P6RKl4SUqa/9A/uSS8Bx1gSbTPBruOVm6IKMbRZkSNN/O8dgDa1OftYCHD\\nblCCQh9DtOSh6jlp9I6iOUruLls7d4wPDrstPefi0PuwsfWAg4NzBtQ3uGdzl/lm\\nyusq6g94FVVq4RXHN/4QJcitE9VPpzVuP41aKWVRM3X/q11IH80rtaEQt54QMJwi\\nsIv4eEYW3TYY9iQtq7Q7H9mcz60ClJGYQJvd1DR7lA9LtUrnQJIjNY9v6OuHVXEX\\nEFoDH0viraraHozMdwIDAQABo2MwYTAdBgNVHQ4EFgQURW8b4nQuZgIteSw5+foy\\nTZQrGVAwHwYDVR0jBBgwFoAURW8b4nQuZgIteSw5+foyTZQrGVAwDwYDVR0TAQH/\\nBAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwQQYJKoZIhvcNAQEKMDSgDzANBglghkgB\\nZQMEAgEFAKEcMBoGCSqGSIb3DQEBCDANBglghkgBZQMEAgEFAKIDAgEgA4ICAQBB\\nWnUOG/EeQoisgC964H5+ns4SDIYFOsNeksJM3WAd0yG2L3CEjUksUYugQzB5hgh4\\nBpsxOajrkKIRxXN97hgvoWwbA7aySGHLgfqH1vsGibOlA5tvRQX0WoQ+GMnuliVM\\npLjpHdYE2148DfgaDyIlGnHpc4gcXl7YHDYcvTN9NV5Y4P4x/2W/Lh11NC/VOSM9\\naT+jnFE7s7VoiRVfMN2iWssh2aihecdE9rs2w+Wt/E/sCrVClCQ1xaAO1+i4+mBS\\na7hW+9lrQKSx2bN9c8K/CyXgAcUtutcIh5rgLm2UWOaB9It3iw0NVaxwyAgWXC9F\\nqYJsnia4D3AP0TJL4PbpNUaA4f2H76NODtynMfEoXSoG3TYYpOYKZ65lZy3mb26w\\nfvBfrlASJMClqdiEFHfGhP/dTAZ9eC2cf40iY3ta84qSJybSYnqst8Vb/Gn+dYI9\\nqQm0yVHtJtvkbZtgBK5Vg6f5q7I7DhVINQJUVlWzRo6/Vx+/VBz5tC5aVDdqtBAs\\nq6ZcYS50ECvK/oGnVxjpeOafGvaV2UroZoGy7p7bEoJhqOPrW2yZ4JVNp9K6CCRg\\nzR6jFN/gUe42P1lIOfcjLZAM1GHixtjP5gLAp6sJS8X05O8xQRBtnOsEwNLj5w0y\\nMAdtwAzT/Vfv7b08qfx4FfQPFmtjvdu4s82gNatxSA==\\n-----END CERTIFICATE-----",
+              "private_key": "-----BEGIN PRIVATE KEY-----\\n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\\nG/dZR0Qj3j0T5F9GX719XpmzYbVFKIKPTsKF\\n-----END PRIVATE KEY-----\\n"
+            }
+          }
+        }"#;
+
+        let manifest_def = CString::new(manifest_def.as_bytes()).unwrap();
+        let signer_def = CString::new(signer_def.as_bytes()).unwrap();
+        let format = CString::new("json").unwrap();
+
+        let data = "Some data to hash";
+        let alg = CString::new("sha256").unwrap();
+
+        let source_image = include_bytes!(fixture_path!("sample1.heic"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+
+        // set up full write simulate sequence
+        unsafe {
+            let hasher = c2pa_hasher_from_alg(alg.as_ptr());
+            let _setting = c2pa_load_settings(signer_def.as_ptr(), format.as_ptr());
+            let builder = c2pa_builder_from_json(manifest_def.as_ptr());
+            let signer = c2pa_signer_from_settings();
+            let reserve_size = c2pa_signer_reserve_size(signer);
+
+            assert!(!hasher.is_null());
+            assert!(!builder.is_null());
+            assert!(!signer.is_null());
+
+            // get embedded placeholder
+            let mut placeholder_bytes = std::ptr::null();
+            let placeholder_len = c2pa_builder_bmff_hashed_placeholder(
+                builder,
+                reserve_size as usize,
+                std::ptr::null(),
+                &mut placeholder_bytes,
+            );
+
+            // gen some hash values
+            let c = c2pa_hasher_update(hasher, data.as_ptr(), data.len());
+            assert!(c == 0);
+
+            // gen final manifest
+            let mut manifest_bytes = std::ptr::null();
+
+            let manifest_len = c2pa_builder_sign_bmff_hashed_embeddable(
+                builder,
+                signer,
+                hasher,
+                source_stream.as_ptr(),
+                &mut manifest_bytes,
+            );
+            assert_ne!(manifest_len, -1);
+            assert_eq!(placeholder_len, manifest_len);
+
+            c2pa_builder_free(builder);
+            c2pa_signer_free(signer);
+            c2pa_manifest_bytes_free(placeholder_bytes);
+            c2pa_manifest_bytes_free(manifest_bytes);
+            c2pa_hasher_free(hasher);
+        }
+    }
     #[test]
     fn test_c2pa_settings_new() {
         let settings = unsafe { c2pa_settings_new() };
