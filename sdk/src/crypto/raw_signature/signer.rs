@@ -268,12 +268,16 @@ impl AsyncTimeStampProvider for AsyncRawSignerWrapper {
         self.0.time_stamp_request_body(message)
     }
 
-    async fn send_time_stamp_request(
-        &self,
-        message: &[u8],
-    ) -> Option<Result<Vec<u8>, TimeStampError>> {
-        self.0.send_time_stamp_request(message)
-    }
+    // TODO: this feels hacky but the problem is that we can't pass an AsyncHttpResolver as a SyncHttpResolver
+    //       We create an AsyncRawSignerWrapper from the actual crypto signers which is never supposed to
+    //       implement its own timestamping code anyways(?) because of that I thikn we can remove most of this trait impl
+    // async fn send_time_stamp_request(
+    //     &self,
+    //     http_resolver: &dyn AsyncHttpResolver,
+    //     message: &[u8],
+    // ) -> Option<Result<Vec<u8>, TimeStampError>> {
+    //     self.0.send_time_stamp_request(message)
+    // }
 }
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ use crate::{
     error::Result,
     http::{AsyncHttpResolver, SyncHttpResolver},
     status_tracker::StatusTracker,
-    Error,
+    AsyncSigner, Error, Signer,
 };
 
 /// Helper class to create a `TimeStamp` assertion.
@@ -60,22 +60,24 @@ impl TimeStamp {
     /// The signature is expected to be the `signature` field of the `COSE_Sign1_Tagged` structure
     /// found in the C2PA claim signature box of the manifest corresponding to the `manifest_id`.
     //
-    // The `signature` is normally obtained from [`Store::get_cose_sign1_signature`].
+    // The `signature` is normally obtained via [`Claim::cose_sign1`] using the [`CoseSign1::signature`]
+    // field.
     //
-    // [`Store::get_cose_sign1_signature`][crate::store::Store::get_cose_sign1_structure].
+    // [`Claim::cose_sign1`][crate::claim::Claim::cose_sign1].
+    // [`CoseSign1::signature`][coset::CoseSign1::signature].
     #[async_generic(async_signature(
         &mut self,
         tsa_url: &str,
         manifest_id: &str,
         signature: &[u8],
-        http_resolver: &(impl AsyncHttpResolver + ?Sized),
+        http_resolver: &impl AsyncHttpResolver,
     ))]
-    pub(crate) fn refresh_timestamp(
+    pub fn refresh_timestamp(
         &mut self,
         tsa_url: &str,
         manifest_id: &str,
         signature: &[u8],
-        http_resolver: &(impl SyncHttpResolver + ?Sized),
+        http_resolver: &impl SyncHttpResolver,
     ) -> Result<()> {
         let timestamp_token = if _sync {
             TimeStamp::send_timestamp_token_request(tsa_url, signature, http_resolver)?
@@ -97,12 +99,12 @@ impl TimeStamp {
     #[async_generic(async_signature(
         tsa_url: &str,
         message: &[u8],
-        http_resolver: &(impl AsyncHttpResolver + ?Sized),
+        http_resolver: &impl AsyncHttpResolver,
     ))]
-    pub(crate) fn send_timestamp_token_request(
+    pub fn send_timestamp_token_request(
         tsa_url: &str,
         message: &[u8],
-        http_resolver: &(impl SyncHttpResolver + ?Sized),
+        http_resolver: &impl SyncHttpResolver,
     ) -> Result<Vec<u8>> {
         let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
         let headers = None;
@@ -127,27 +129,10 @@ impl TimeStamp {
         }
         .map_err(|err| Error::OtherError(format!("timestamp token not found: {err:?}").into()))?;
 
-        // make sure it is a good response
-        let ctp = CertificateTrustPolicy::passthrough();
-        let mut tracker = StatusTracker::default();
-
         if _sync {
-            crate::crypto::time_stamp::verify_time_stamp(
-                &bytes,
-                message,
-                &ctp,
-                &mut tracker,
-                false,
-            )?;
+            Self::verify_timestamp_response(&bytes, message)?;
         } else {
-            crate::crypto::time_stamp::verify_time_stamp_async(
-                &bytes,
-                message,
-                &ctp,
-                &mut tracker,
-                false,
-            )
-            .await?;
+            Self::verify_timestamp_response_async(&bytes, message).await?;
         }
 
         let token =
@@ -156,6 +141,107 @@ impl TimeStamp {
             })?;
 
         Ok(token)
+    }
+
+    /// Equivalent to [`TimeStamp::refresh_timestamp`] except using a [`Signer`].
+    ///
+    /// [`Signer`]: crate::Signer
+    #[async_generic(async_signature(
+        &mut self,
+        manifest_id: &str,
+        signature: &[u8],
+        http_resolver: &impl AsyncHttpResolver,
+        signer: &(impl AsyncSigner + ?Sized),
+    ))]
+    pub(crate) fn refresh_timestamp_with_signer(
+        &mut self,
+        manifest_id: &str,
+        signature: &[u8],
+        http_resolver: &impl SyncHttpResolver,
+        signer: &(impl Signer + ?Sized),
+    ) -> Result<()> {
+        let timestamp_token = if _sync {
+            TimeStamp::send_timestamp_token_request_with_signer(signature, http_resolver, signer)?
+        } else {
+            TimeStamp::send_timestamp_token_request_with_signer_async(
+                signature,
+                http_resolver,
+                signer,
+            )
+            .await?
+        };
+
+        self.0
+            .insert(manifest_id.to_owned(), ByteBuf::from(timestamp_token));
+
+        Ok(())
+    }
+
+    /// Equivalent to [`TimeStamp::send_timestamp_token_request`] except using a [`Signer`].
+    ///
+    /// [`Signer`]: crate::Signer
+    #[async_generic(async_signature(
+        message: &[u8],
+        http_resolver: &impl AsyncHttpResolver,
+        signer: &(impl AsyncSigner + ?Sized),
+    ))]
+    pub(crate) fn send_timestamp_token_request_with_signer(
+        message: &[u8],
+        http_resolver: &impl SyncHttpResolver,
+        signer: &(impl Signer + ?Sized),
+    ) -> Result<Vec<u8>> {
+        let bytes = if _sync {
+            signer.send_timestamp_request(http_resolver, message)
+        } else {
+            signer.send_timestamp_request(http_resolver, message).await
+        }
+        // TODO: more explicit error
+        .ok_or_else(|| Error::UnsupportedType)?
+        .map_err(|err| Error::OtherError(format!("timestamp token not found: {err:?}").into()))?;
+
+        if _sync {
+            Self::verify_timestamp_response(&bytes, message)?;
+        } else {
+            Self::verify_timestamp_response_async(&bytes, message).await?;
+        }
+
+        let token =
+            crate::crypto::cose::timestamptoken_from_timestamprsp(&bytes).map_err(|err| {
+                Error::OtherError(format!("timestamp token not found: {err:?}").into())
+            })?;
+
+        Ok(token)
+    }
+
+    /// Verifies a timestamp respponse given the response bytes and original message.
+    #[async_generic(async_signature(
+        bytes: &[u8],
+        message: &[u8],
+    ))]
+    fn verify_timestamp_response(bytes: &[u8], message: &[u8]) -> Result<()> {
+        let ctp = CertificateTrustPolicy::passthrough();
+        let mut tracker = StatusTracker::default();
+
+        if _sync {
+            crate::crypto::time_stamp::verify_time_stamp(
+                bytes,
+                message,
+                &ctp,
+                &mut tracker,
+                false,
+            )?;
+        } else {
+            crate::crypto::time_stamp::verify_time_stamp_async(
+                bytes,
+                message,
+                &ctp,
+                &mut tracker,
+                false,
+            )
+            .await?;
+        }
+
+        Ok(())
     }
 }
 
