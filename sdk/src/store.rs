@@ -74,7 +74,7 @@ use crate::{
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
-    maybe_send_sync::{MaybeSend, MaybeSync},
+    maybe_send_sync::MaybeSend,
     settings::{builder::OcspFetchScope, Settings},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
@@ -549,7 +549,7 @@ impl Store {
         signer: &dyn AsyncSigner,
         box_size: usize,
         settings: &Settings,
-        http_resolver: &(impl AsyncHttpResolver + MaybeSync),
+        http_resolver: &impl AsyncHttpResolver,
     ))]
     pub fn sign_claim(
         &self,

@@ -30,7 +30,6 @@ use crate::{
         raw_signature::{AsyncRawSigner, RawSigner, SigningAlg},
     },
     http::{AsyncHttpResolver, SyncHttpResolver},
-    maybe_send_sync::MaybeSync,
 };
 
 /// Given an arbitrary block of data and a [`RawSigner`] or [`AsyncRawSigner`]
@@ -85,7 +84,7 @@ use crate::{
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
-    http_resolver: &(impl AsyncHttpResolver + MaybeSync),
+    http_resolver: &impl AsyncHttpResolver,
 ))]
 pub fn sign(
     signer: &dyn RawSigner,
@@ -116,7 +115,7 @@ pub fn sign(
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
-    http_resolver: &(impl AsyncHttpResolver + MaybeSync),
+    http_resolver: &impl AsyncHttpResolver,
 ))]
 pub fn sign_v1(
     signer: &dyn RawSigner,
@@ -205,7 +204,7 @@ pub fn sign_v1(
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
-    http_resolver: &(impl AsyncHttpResolver + MaybeSync),
+    http_resolver: &impl AsyncHttpResolver,
 ))]
 pub fn sign_v2(
     signer: &dyn RawSigner,
@@ -311,7 +310,7 @@ pub enum CosePayload {
     payload: CosePayload,
     content_type: Option<ContentType>,
     tss: TimeStampStorage,
-    http_resolver: &(impl AsyncHttpResolver + MaybeSync),
+    http_resolver: &impl AsyncHttpResolver,
 ))]
 pub fn sign_v2_embedded(
     signer: &dyn RawSigner,
@@ -476,7 +475,7 @@ fn build_protected_header(
         data: &[u8],
         p_header: &ProtectedHeader,
         tss: TimeStampStorage,
-        http_resolver: &(impl AsyncHttpResolver + MaybeSync),
+        http_resolver: &impl AsyncHttpResolver,
     ))
 ]
 fn build_unprotected_header(

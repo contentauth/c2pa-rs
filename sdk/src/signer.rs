@@ -222,7 +222,7 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
     /// provided by [`Self::time_authority_url()`], if any.
     async fn send_timestamp_request(
         &self,
-        http_resolver: &(dyn AsyncHttpResolver + Sync),
+        http_resolver: &dyn AsyncHttpResolver,
         message: &[u8],
     ) -> Option<Result<Vec<u8>>> {
         if let Some(url) = self.time_authority_url() {
@@ -423,7 +423,7 @@ impl<T: ?Sized + AsyncSigner> AsyncSigner for Box<T> {
 
     async fn send_timestamp_request(
         &self,
-        http_resolver: &(dyn AsyncHttpResolver + Sync),
+        http_resolver: &dyn AsyncHttpResolver,
         message: &[u8],
     ) -> Option<Result<Vec<u8>>> {
         (**self)

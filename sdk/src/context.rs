@@ -15,8 +15,8 @@ use std::sync::{Arc, OnceLock};
 
 use crate::{
     http::{
-        restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver, AsyncResolver,
-        SyncGenericResolver, SyncHttpResolver, SyncResolver,
+        restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
+        SyncGenericResolver, SyncHttpResolver,
     },
     maybe_send_sync::{MaybeSend, MaybeSync},
     settings::Settings,
@@ -27,17 +27,17 @@ use crate::{
 /// Internal state for sync HTTP resolver selection.
 enum SyncResolverState {
     /// User-provided custom resolver.
-    Custom(Arc<SyncResolver>),
+    Custom(Arc<dyn SyncHttpResolver>),
     /// Default resolver with lazy initialization.
-    Default(OnceLock<Arc<SyncResolver>>),
+    Default(OnceLock<Arc<dyn SyncHttpResolver>>),
 }
 
 /// Internal state for async HTTP resolver selection.
 enum AsyncResolverState {
     /// User-provided custom resolver.
-    Custom(Arc<AsyncResolver>),
+    Custom(Arc<dyn AsyncHttpResolver>),
     /// Default resolver with lazy initialization.
-    Default(OnceLock<Arc<AsyncResolver>>),
+    Default(OnceLock<Arc<dyn AsyncHttpResolver>>),
 }
 
 /// Internal state for signer selection.
@@ -364,7 +364,7 @@ impl Context {
     ///
     /// The default resolver is a `SyncGenericResolver` wrapped with `RestrictedResolver`
     /// to apply host filtering from the settings.
-    pub fn resolver(&self) -> Arc<SyncResolver> {
+    pub fn resolver(&self) -> Arc<dyn SyncHttpResolver> {
         match &self.sync_resolver {
             SyncResolverState::Custom(resolver) => resolver.clone(),
             SyncResolverState::Default(once_lock) => once_lock
@@ -382,7 +382,7 @@ impl Context {
     ///
     /// The default resolver is an `AsyncGenericResolver` wrapped with `RestrictedResolver`
     /// to apply host filtering from the settings.
-    pub fn resolver_async(&self) -> Arc<AsyncResolver> {
+    pub fn resolver_async(&self) -> Arc<dyn AsyncHttpResolver> {
         match &self.async_resolver {
             AsyncResolverState::Custom(resolver) => resolver.clone(),
             AsyncResolverState::Default(once_lock) => once_lock

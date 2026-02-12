@@ -739,7 +739,7 @@ impl AsyncSigner for AsyncTestGoodSigner {
 
     async fn send_timestamp_request(
         &self,
-        _http_resolver: &(dyn AsyncHttpResolver + Sync),
+        _http_resolver: &dyn AsyncHttpResolver,
         _message: &[u8],
     ) -> Option<crate::error::Result<Vec<u8>>> {
         Some(Ok(Vec::new()))

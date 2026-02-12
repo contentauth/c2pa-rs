@@ -32,7 +32,6 @@ use crate::{
     },
     http::{AsyncHttpResolver, SyncHttpResolver},
     log_item,
-    maybe_send_sync::MaybeSync,
     status_tracker::StatusTracker,
     validation_status, Result,
 };
@@ -221,7 +220,7 @@ impl TstContainer {
         p_header: &ProtectedHeader,
         mut header_builder: HeaderBuilder,
         tss: TimeStampStorage,
-        http_resolver: &(impl AsyncHttpResolver + MaybeSync),
+        http_resolver: &impl AsyncHttpResolver,
     ))
 ]
 pub(crate) fn add_sigtst_header(

@@ -158,7 +158,7 @@ impl AsyncSigner for AsyncRawSignerWrapper {
 
     async fn send_timestamp_request(
         &self,
-        http_resolver: &(dyn AsyncHttpResolver + Sync),
+        http_resolver: &dyn AsyncHttpResolver,
         message: &[u8],
     ) -> Option<Result<Vec<u8>>> {
         self.0

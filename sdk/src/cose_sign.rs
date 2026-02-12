@@ -30,7 +30,6 @@ use crate::{
         time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     },
     http::{AsyncHttpResolver, SyncHttpResolver},
-    maybe_send_sync::MaybeSync,
     settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
     AsyncSigner, Error, Result, Signer,
@@ -58,7 +57,7 @@ use crate::{
     signer: &dyn AsyncSigner,
     box_size: usize,
     settings: &Settings,
-    http_resolver: &(impl AsyncHttpResolver + MaybeSync),
+    http_resolver: &impl AsyncHttpResolver,
 ))]
 pub fn sign_claim(
     claim_bytes: &[u8],
@@ -121,7 +120,7 @@ pub fn sign_claim(
     box_size: usize,
     time_stamp_storage: TimeStampStorage,
     settings: &Settings,
-    http_resolver: &(impl AsyncHttpResolver + MaybeSync),
+    http_resolver: &impl AsyncHttpResolver,
 ))]
 pub(crate) fn cose_sign(
     signer: &dyn Signer,
@@ -304,7 +303,7 @@ impl AsyncTimeStampProvider for AsyncSignerWrapper<'_> {
 
     async fn send_time_stamp_request(
         &self,
-        http_resolver: &(dyn AsyncHttpResolver + Sync),
+        http_resolver: &dyn AsyncHttpResolver,
         message: &[u8],
     ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
         self.0

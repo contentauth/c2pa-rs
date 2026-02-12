@@ -119,7 +119,7 @@ pub trait AsyncTimeStampProvider: MaybeSync {
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     async fn send_time_stamp_request(
         &self,
-        http_resolver: &(dyn AsyncHttpResolver + Sync),
+        http_resolver: &dyn AsyncHttpResolver,
         message: &[u8],
     ) -> Option<Result<Vec<u8>, TimeStampError>> {
         if let Some(url) = self.time_stamp_service_url() {

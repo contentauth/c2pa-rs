@@ -273,7 +273,7 @@ impl AsyncTimeStampProvider for AsyncRawSignerWrapper {
     //       implement its own timestamping code anyways(?) because of that I thikn we can remove most of this trait impl
     // async fn send_time_stamp_request(
     //     &self,
-    //     http_resolver: &(dyn AsyncHttpResolver + Sync),
+    //     http_resolver: &dyn AsyncHttpResolver,
     //     message: &[u8],
     // ) -> Option<Result<Vec<u8>, TimeStampError>> {
     //     self.0.send_time_stamp_request(message)
