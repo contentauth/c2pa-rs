@@ -29,8 +29,8 @@ use std::{
 };
 
 use c2pa::{
-    assertions::{c2pa_action, Action, DataHash},
-    hash_stream_by_alg, Builder, ClaimGeneratorInfo, HashRange, Reader, Result,
+    assertions::{c2pa_action, Action},
+    Builder, ClaimGeneratorInfo, HashRange, Reader, Result,
 };
 use serde_json::json;
 fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
@@ -48,8 +48,9 @@ fn user_data_hash_with_placeholder_api() -> Result<()> {
     claim_generator.set_version("0.1");
 
     // Use Settings to configure signer with CAWG support
-    let settings =
-        Settings::new().with_toml(include_str!("../tests/fixtures/test_settings_with_cawg_signing.toml"))?;
+    let settings = Settings::new().with_toml(include_str!(
+        "../tests/fixtures/test_settings_with_cawg_signing.toml"
+    ))?;
 
     let src = "sdk/tests/fixtures/earth_apollo17.jpg";
     let format = "image/jpeg";
@@ -69,18 +70,8 @@ fn user_data_hash_with_placeholder_api() -> Result<()> {
         Action::new(c2pa_action::OPENED).set_parameter("ingredientIds", ["parent_label"])?,
     )?;
 
-    // Add a placeholder DataHash with enough space for the exclusion we'll need
-    // The hash value doesn't need to be final, but the structure should be sized correctly
-    let mut placeholder_dh = DataHash::new("jumbf manifest", "sha256");
-    // Add a placeholder exclusion for where the manifest will be embedded
-    // We don't know the exact size yet, but we'll update it later
-    placeholder_dh.add_exclusion(HashRange::new(0, 1000)); // Placeholder range
-                                                           // Set a dummy hash (will be replaced with actual hash later)
-    let dummy_hash = vec![0u8; 32]; // 32 bytes for SHA-256
-    placeholder_dh.set_hash(dummy_hash);
-    builder.add_assertion(DataHash::LABEL, &placeholder_dh)?;
-
-    // Create the placeholder manifest (supports dynamic assertions)
+    // Create the placeholder manifest (automatically adds a DataHash if none exists)
+    // The placeholder supports dynamic assertions if configured in the signer
     let placeholder = builder.placeholder("image/jpeg")?;
 
     // Compose the manifest for the target format (JPEG)
@@ -98,20 +89,8 @@ fn user_data_hash_with_placeholder_api() -> Result<()> {
     let mut output_stream = Cursor::new(output);
 
     // Now create the final DataHash with the actual exclusion range
-    let mut dh = DataHash::new("jumbf manifest", "sha256");
     let hr = HashRange::new(manifest_pos as u64, jpeg_placeholder.len() as u64);
-    dh.add_exclusion(hr.clone());
-
-    // Hash the bytes excluding the manifest
-    let hash = hash_stream_by_alg("sha256", &mut output_stream, Some([hr].to_vec()), true)?;
-    dh.set_hash(hash);
-
-    // Remove the old placeholder DataHash and add the updated one
-    builder
-        .definition
-        .assertions
-        .retain(|a| !a.label.starts_with(DataHash::LABEL));
-    builder.add_assertion(DataHash::LABEL, &dh)?;
+    builder.update_hash_from_stream(&mut output_stream, vec![hr], "sha256")?;
 
     // Sign the placeholder with the updated hash from the Builder
     // The signer is obtained from the Builder's context
