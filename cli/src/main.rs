@@ -19,6 +19,7 @@
 /// in that file. If a manifest definition JSON file is specified,
 /// the claim will be added to any existing claims.
 use std::{
+    convert::Infallible,
     env,
     fs::{self, copy, create_dir_all, remove_dir_all, remove_file, File},
     io::Write,
@@ -170,17 +171,20 @@ fn default_settings_path() -> PathBuf {
 
 #[derive(Clone, Debug)]
 enum TrustResource {
-    File(PathBuf),
     Url(Url),
+    File(PathBuf),
 }
 
-fn parse_resource_string(s: &str) -> Result<TrustResource> {
-    if let Ok(url) = s.parse::<Url>() {
-        Ok(TrustResource::Url(url))
-    } else {
-        let p = PathBuf::from_str(s)?;
+impl FromStr for TrustResource {
+    type Err = Infallible;
 
-        Ok(TrustResource::File(p))
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(url) = s.parse::<Url>() {
+            Ok(TrustResource::Url(url))
+        } else {
+            let p = PathBuf::from(s);
+            Ok(TrustResource::File(p))
+        }
     }
 }
 
@@ -190,17 +194,21 @@ fn parse_resource_string(s: &str) -> Result<TrustResource> {
 enum Commands {
     /// Sub-command to configure trust store options, "trust --help for more details"
     Trust {
+        /// URL or path to file containing list of user trust anchors in PEM format
+        #[arg(long = "user_trust_anchors", env = "C2PATOOL_USER_TRUST_ANCHORS")]
+        user_trust_anchors: Option<Vec<TrustResource>>,
+
         /// URL or path to file containing list of trust anchors in PEM format
-        #[arg(long = "trust_anchors", env="C2PATOOL_TRUST_ANCHORS", value_parser = parse_resource_string)]
-        trust_anchors: Option<TrustResource>,
+        #[arg(long = "trust_anchors", env = "C2PATOOL_TRUST_ANCHORS")]
+        trust_anchors: Option<Vec<TrustResource>>,
 
         /// URL or path to file containing specific manifest signing certificates in PEM format to implicitly trust
-        #[arg(long = "allowed_list", env="C2PATOOL_ALLOWED_LIST", value_parser = parse_resource_string)]
-        allowed_list: Option<TrustResource>,
+        #[arg(long = "allowed_list", env = "C2PATOOL_ALLOWED_LIST")]
+        allowed_list: Option<Vec<TrustResource>>,
 
         /// URL or path to file containing configured EKUs in Oid dot notation
-        #[arg(long = "trust_config", env="C2PATOOL_TRUST_CONFIG", value_parser = parse_resource_string)]
-        trust_config: Option<TrustResource>,
+        #[arg(long = "trust_config", env = "C2PATOOL_TRUST_CONFIG")]
+        trust_config: Option<Vec<TrustResource>>,
     },
     /// Sub-command to add manifest to fragmented BMFF content
     ///
@@ -275,6 +283,14 @@ fn load_ingredient(path: &Path) -> Result<Ingredient> {
     } else {
         Ok(Ingredient::from_file(path)?)
     }
+}
+
+fn load_trust_resources(resources: &[TrustResource]) -> Result<String> {
+    Ok(resources
+        .iter()
+        .map(load_trust_resource)
+        .collect::<Result<Vec<String>>>()?
+        .join("\n"))
 }
 
 fn load_trust_resource(resource: &TrustResource) -> Result<String> {
@@ -396,15 +412,31 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
     let mut enable_trust_checks = false;
 
     if let Some(Commands::Trust {
+        user_trust_anchors,
         trust_anchors,
         allowed_list,
         trust_config,
     }) = &args.command
     {
+        if let Some(user_trust_anchors) = &user_trust_anchors {
+            debug!("Using C2PA user trust anchors from {user_trust_anchors:?}");
+
+            let data = load_trust_resources(user_trust_anchors)?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [trust]
+                    user_anchors = data
+                }
+                .to_string(),
+            )?;
+
+            enable_trust_checks = true;
+        }
+
         if let Some(trust_list) = &trust_anchors {
             debug!("Using trust anchors from {trust_list:?}");
 
-            let data = load_trust_resource(trust_list)?;
+            let data = load_trust_resources(trust_list)?;
             Settings::from_toml(
                 &toml::toml! {
                     [trust]
@@ -419,7 +451,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
         if let Some(allowed_list) = &allowed_list {
             debug!("Using allowed list from {allowed_list:?}");
 
-            let data = load_trust_resource(allowed_list)?;
+            let data = load_trust_resources(allowed_list)?;
             Settings::from_toml(
                 &toml::toml! {
                     [trust]
@@ -434,7 +466,7 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
         if let Some(trust_config) = &trust_config {
             debug!("Using trust config from {trust_config:?}");
 
-            let data = load_trust_resource(trust_config)?;
+            let data = load_trust_resources(trust_config)?;
             Settings::from_toml(
                 &toml::toml! {
                     [trust]
