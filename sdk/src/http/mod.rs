@@ -82,9 +82,9 @@ pub trait SyncHttpResolver: MaybeSend + MaybeSync {
 }
 
 /// This implementation is particularly useful for compatibility with the return
-/// type of [`Context::sync_resolver`].
+/// type of [`Context::resolver`].
 ///
-/// [`Context::sync_resolver`]: crate::Context::sync_resolver
+/// [`Context::resolver`]: crate::Context::resolver
 impl<T: SyncHttpResolver + ?Sized> SyncHttpResolver for Arc<T> {
     fn http_resolve(
         &self,
@@ -118,9 +118,9 @@ pub trait AsyncHttpResolver: MaybeSend + MaybeSync {
 }
 
 /// This implementation is particularly useful for compatibility with the return
-/// type of [`Context::async_resolver`].
+/// type of [`Context::resolver_async`].
 ///
-/// [`Context::async_resolver`]: crate::Context::async_resolver
+/// [`Context::resolver_async`]: crate::Context::resolver_async
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<T: AsyncHttpResolver + ?Sized> AsyncHttpResolver for Arc<T> {
@@ -153,7 +153,7 @@ pub struct SyncGenericResolver {
 impl SyncGenericResolver {
     /// Create a new [`SyncGenericResolver`] with an auto-specified [`SyncHttpResolver`].
     ///
-    /// This function will create a [`SyncHttpResolver`] that returns [`Error::SyncHttpResolverNotImplemented`]
+    /// This function will create a [`SyncHttpResolver`] that returns [`HttpResolverError::SyncHttpResolverNotImplemented`]
     /// under any of the following conditions:
     /// * If both `http_reqwest_blocking` and `http_ureq` aren't enabled.
     /// * If the platform is WASM.
@@ -198,7 +198,7 @@ pub struct AsyncGenericResolver {
 impl AsyncGenericResolver {
     /// Create a new [`AsyncGenericResolver`] with an auto-specified [`AsyncHttpResolver`].
     ///
-    /// This function will create a [`AsyncHttpResolver`] that returns [`Error::AsyncHttpResolverNotImplemented`]
+    /// This function will create a [`AsyncHttpResolver`] that returns [`HttpResolverError::AsyncHttpResolverNotImplemented`]
     /// under any of the following conditions:
     /// * If `http_reqwest` isn't enabled.
     /// * If the platform is WASI and `http_wstd` isn't enabled.
@@ -252,7 +252,6 @@ pub enum HttpResolverError {
     /// The remote URI is blocked by the allowed list.
     ///
     /// The allowed list can be set via:
-    /// - [`SyncGenericResolver::set_allowed_hosts`] / [`AsyncGenericResolver::set_allowed_hosts`]
     /// - [`RestrictedResolver`] (for wrapping custom resolvers)
     /// - SDK settings via [`Core::allowed_network_hosts`]
     ///
