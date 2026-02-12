@@ -32,9 +32,12 @@ pub type BoxedSyncResolver = Box<dyn SyncHttpResolver + Send + Sync>;
 #[cfg(target_arch = "wasm32")]
 pub type BoxedSyncResolver = Box<dyn SyncHttpResolver>;
 
+/// Type alias for a trait object [`AsyncHttpResolver`] with Send + Sync bounds.
+/// On non-WASM targets, the resolver is Send + Sync for thread-safe usage.
 #[cfg(not(target_arch = "wasm32"))]
 pub type AsyncResolver = dyn AsyncHttpResolver + Send + Sync;
 
+/// Type alias for a trait object [`AsyncHttpResolver`] without Send + Sync bounds (WASM only).
 #[cfg(target_arch = "wasm32")]
 pub type AsyncResolver = dyn AsyncHttpResolver;
 
