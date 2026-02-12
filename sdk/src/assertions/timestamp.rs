@@ -68,7 +68,7 @@ impl TimeStamp {
         tsa_url: &str,
         manifest_id: &str,
         signature: &[u8],
-        http_resolver: &(impl AsyncHttpResolver + ?Sized),
+        http_resolver: &impl AsyncHttpResolver,
     ))]
     pub(crate) fn refresh_timestamp(
         &mut self,
@@ -97,7 +97,7 @@ impl TimeStamp {
     #[async_generic(async_signature(
         tsa_url: &str,
         message: &[u8],
-        http_resolver: &(impl AsyncHttpResolver + ?Sized),
+        http_resolver: &impl AsyncHttpResolver,
     ))]
     pub(crate) fn send_timestamp_token_request(
         tsa_url: &str,

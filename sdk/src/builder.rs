@@ -1872,7 +1872,7 @@ impl Builder {
                             tsa_url,
                             &manifest_label,
                             &signature,
-                            self.context().resolver_async().as_ref(),
+                            &self.context().resolver_async(),
                         )
                         .await?;
                 }
