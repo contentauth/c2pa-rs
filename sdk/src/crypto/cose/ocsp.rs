@@ -77,14 +77,15 @@ pub fn check_ocsp_status(
 
     match get_ocsp_der(sign1) {
         Some(ocsp_response_der) => {
-            if _sync {
+            let mut ocsp_log = StatusTracker::default();
+            let result = if _sync {
                 check_stapled_ocsp_response(
                     sign1,
                     &ocsp_response_der,
                     data,
                     ctp,
                     tst_info,
-                    validation_log,
+                    &mut ocsp_log,
                 )
             } else {
                 check_stapled_ocsp_response_async(
@@ -93,9 +94,18 @@ pub fn check_ocsp_status(
                     data,
                     ctp,
                     tst_info,
-                    validation_log,
+                    &mut ocsp_log,
                 )
                 .await
+            };
+
+            // we only care about OCSP value log info the result is OK
+            if result.is_ok() {
+                validation_log.append(&ocsp_log);
+                result
+            } else {
+                // errors mean we don't interpret the value
+                Ok(OcspResponse::default())
             }
         }
 
@@ -206,7 +216,7 @@ fn process_ocsp_responses(
             }
         }
     }
-    validation_log.append(&current_validation_log);
+    validation_log.append(&mut current_validation_log);
     Ok(OcspResponse::default())
 }
 
@@ -261,15 +271,27 @@ fn check_stapled_ocsp_response(
     };
 
     // If we get a valid response, validate the certs.
-    if ocsp_data.revoked_at.is_none() {
-        if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-            check_end_entity_certificate_profile(
-                &ocsp_certs[0],
-                ctp,
-                validation_log,
-                tst_info.as_ref(),
-            )?;
-        }
+    if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+        // make sure this is a OCSP signing EKU
+        let mut new_ctp = ctp.clone();
+        new_ctp.clear_ekus();
+        new_ctp.add_valid_ekus("1.3.6 .1 .5 .5 .7 .3 .9".as_bytes()); // ocsp signing EKU
+        check_end_entity_certificate_profile(
+            &ocsp_certs[0],
+            ctp,
+            validation_log,
+            tst_info.as_ref(),
+        )?;
+
+        // validate the trust
+        ctp.check_certificate_trust(
+            &ocsp_certs,
+            &ocsp_certs[0],
+            signing_time.map(|t| t.timestamp()),
+        )?;
+    } else {
+        // we cannot validate the OCSP response was signed by a valid authorized responder so treat as unknown
+        return Ok(OcspResponse::default());
     }
 
     Ok(ocsp_data)
@@ -295,6 +317,15 @@ pub(crate) fn fetch_and_check_ocsp_response(
         let certs = cert_chain_from_sign1(sign1)?;
 
         let Some(ocsp_der) = crate::crypto::ocsp::fetch_ocsp_response(&certs) else {
+            use crate::validation_status::SIGNING_CREDENTIAL_OCSP_INACCESSIBLE;
+
+            log_item!(
+                "",
+                "signing cert not fetched".to_string(),
+                "fetch_and_check_ocsp_response"
+            )
+            .validation_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE)
+            .informational(validation_log);
             return Ok(OcspResponse::default());
         };
 
@@ -310,8 +341,7 @@ pub(crate) fn fetch_and_check_ocsp_response(
         let Ok(ocsp_data) =
             OcspResponse::from_der_checked(&ocsp_response_der, signing_time, validation_log)
         else {
-            // TO REVIEW: This is how the old code worked, but is it correct to ignore a
-            // malformed OCSP response?
+            // Errors are treated as if no OCSP response was present
             return Ok(OcspResponse::default());
         };
 

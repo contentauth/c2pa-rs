@@ -338,6 +338,11 @@ impl CertificateTrustPolicy {
         }
     }
 
+    /// Remove the current EKUs
+    pub fn clear_ekus(&mut self) {
+        self.additional_ekus.clear();
+    }
+
     /// Remove all trust anchors, private credentials, and EKUs previously
     /// configured.
     pub fn clear(&mut self) {

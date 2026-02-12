@@ -139,11 +139,12 @@ impl OcspResponse {
             };
 
             // if not valid we will not add the cert to list to be checked for trust later
-            if validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der).is_ok()
-                && output.ocsp_certs.is_none()
-            {
+            if validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der).is_ok() {
                 output.ocsp_certs = Some(cert_der_vec);
             }
+        } else {
+            // we cannot validate the OCSP response signature, so treat as unknown
+            return Ok(OcspResponse::default());
         }
 
         for single_response in &response_data.responses {
