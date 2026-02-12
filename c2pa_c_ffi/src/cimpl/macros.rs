@@ -350,11 +350,11 @@ macro_rules! arc_tracked {
 }
 
 /// Maximum length for C strings when using bounded conversion (64KB)
-pub const MAX_CSTRING_LEN: usize = 65536;
+pub const MAX_CSTRING_LEN: usize = 1048576;
 
 /// Convert C string with bounded length check or early-return with error value
 /// Uses a safe bounded approach to prevent reading unbounded memory.
-/// Maximum string length is MAX_CSTRING_LEN (64KB).
+/// Maximum string length is MAX_CSTRING_LEN (1MB).
 #[macro_export]
 macro_rules! cstr_or_return {
     ($ptr:expr, $err_val:expr) => {{
@@ -427,7 +427,7 @@ macro_rules! ok_or_return {
         match $result {
             Ok(value) => $transform(value),
             Err(e) => {
-                $crate::CimplError::other(format!("{}", e)).set_last();
+                $crate::CimplError::from(e).set_last();
                 return $err_val;
             }
         }
@@ -760,48 +760,4 @@ macro_rules! cimpl_free {
     ($ptr:expr) => {
         $crate::cimpl_free($ptr as *mut _)
     };
-}
-
-/// Converts a `Vec<u8>` to a tracked `*const c_uchar` pointer for FFI.
-///
-/// This macro handles the boilerplate of:
-/// 1. Converting `Vec<u8>` to a boxed slice
-/// 2. Converting to a raw pointer
-/// 3. Tracking the pointer for safe deallocation via `cimpl_free`
-/// 4. Casting to the appropriate const pointer type
-///
-/// # Memory Management
-///
-/// The returned pointer **must** be freed using `cimpl_free` (see [`crate::cimpl::utils::cimpl_free`])
-/// to avoid memory leaks. The pointer is automatically tracked in the pointer registry.
-///
-/// # Empty Vectors
-///
-/// Returns `null` for empty vectors to avoid dangling pointers from zero-sized allocations.
-/// This is consistent with the FFI's policy that zero-sized buffers are not allowed.
-///
-/// # Safety
-///
-/// The returned pointer must be freed exactly once using `cimpl_free`. Calling
-/// `cimpl_free` twice on the same pointer will return `-1` and set an error
-/// (and print to stderr in test mode).
-///
-/// # Examples
-/// ```rust,ignore
-/// let bytes = vec![1, 2, 3, 4];
-/// let ptr = vec_to_tracked_ptr!(bytes);
-/// // C code uses ptr...
-/// // Later in C: if (cimpl_free(ptr) != 0) { /* error */ }
-/// ```
-#[macro_export]
-macro_rules! vec_to_tracked_ptr {
-    ($vec:expr) => {{
-        let vec = $vec;
-        if vec.is_empty() {
-            std::ptr::null()
-        } else {
-            let ptr = Box::into_raw(vec.into_boxed_slice()) as *const std::os::raw::c_uchar;
-            $crate::track_box(ptr as *mut std::os::raw::c_uchar) as *const std::os::raw::c_uchar
-        }
-    }};
 }

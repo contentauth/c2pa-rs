@@ -63,13 +63,14 @@ impl PointerRegistry {
             return Err(Error::from(CimplError::null_parameter("pointer")));
         }
 
-        let tracked = self.tracked.lock().map_err(|_| {
-            Error::from(CimplError::other("mutex poisoned - thread panic detected"))
-        })?;
+        let tracked = self
+            .tracked
+            .lock()
+            .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
         match tracked.get(&ptr) {
             Some((actual_type, _)) if *actual_type == expected_type => Ok(()),
-            Some(_) => Err(Error::from(CimplError::wrong_handle_type(ptr as u64))),
-            None => Err(Error::from(CimplError::invalid_handle(ptr as u64))),
+            Some(_) => Err(Error::from(CimplError::wrong_pointer_type(ptr as u64))),
+            None => Err(Error::from(CimplError::untracked_pointer(ptr as u64))),
         }
     }
 
@@ -80,12 +81,13 @@ impl PointerRegistry {
         }
 
         let mut cleanup = {
-            let mut tracked = self.tracked.lock().map_err(|_| {
-                Error::from(CimplError::other("mutex poisoned - thread panic detected"))
-            })?;
+            let mut tracked = self
+                .tracked
+                .lock()
+                .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
             match tracked.remove(&ptr) {
                 Some((_, cleanup)) => cleanup,
-                None => return Err(Error::from(CimplError::invalid_handle(ptr as u64))),
+                None => return Err(Error::from(CimplError::untracked_pointer(ptr as u64))),
             }
         }; // Release lock before cleanup
 
@@ -342,9 +344,9 @@ pub unsafe fn safe_slice_from_raw_parts(
     }
 
     if !is_safe_buffer_size(len, ptr) {
-        return Err(Error::from(CimplError::other(format!(
-            "Buffer size {len} is invalid for parameter '{param_name}'",
-        ))));
+        return Err(Error::from(CimplError::invalid_buffer_size(
+            len, param_name,
+        )));
     }
 
     Ok(std::slice::from_raw_parts(ptr, len))

@@ -202,7 +202,7 @@ impl CertificateTrustPolicy {
     ///
     ///  The function can be called multiple times to add multiple trust anchors. For example,
     ///  the C2PA trust anchors and timestamping trust anchors can be added separately.
-    /// [§14.4.1, C2PA Signers]: <https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_c2pa_signers>
+    /// [§14.4.1, C2PA Signers]: <https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_c2pa_signers>
     pub fn add_trust_anchors(
         &mut self,
         trust_anchor_pems: &[u8],
@@ -271,7 +271,7 @@ impl CertificateTrustPolicy {
     ///
     /// Lines that match neither format (PEM or hash) are ignored.
     ///
-    /// [§14.4.3, Private Credential Storage]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_private_credential_storage
+    /// [§14.4.3, Private Credential Storage]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_private_credential_storage
     pub fn add_end_entity_credentials(
         &mut self,
         end_entity_cert_pems: &[u8],
@@ -338,7 +338,7 @@ impl CertificateTrustPolicy {
     /// input or lines within the input such as comments or blank lines that can
     /// not be parsed as OIDs.
     ///
-    /// [§14.4.1, C2PA Signers]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_c2pa_signers
+    /// [§14.4.1, C2PA Signers]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_c2pa_signers
     pub fn add_valid_ekus(&mut self, eku_oids: &[u8]) {
         let Ok(eku_oids) = std::str::from_utf8(eku_oids) else {
             return;

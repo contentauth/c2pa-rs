@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.75.20](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.19...c2pa-c-ffi-v0.75.20)
+_12 February 2026_
+
+## [0.75.19](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.18...c2pa-c-ffi-v0.75.19)
+_09 February 2026_
+
+### Fixed
+
+* Vec_to_tracked_ptr macro merged with to_c_bytes ([#1834](https://github.com/contentauth/c2pa-rs/pull/1834))
+
+## [0.75.18](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.17...c2pa-c-ffi-v0.75.18)
+_06 February 2026_
+
+## [0.75.17](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.16...c2pa-c-ffi-v0.75.17)
+_06 February 2026_
+
+### Fixed
+
+* Bump max settings string limit to 1MB ([#1833](https://github.com/contentauth/c2pa-rs/pull/1833))
+
+## [0.75.16](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.15...c2pa-c-ffi-v0.75.16)
+_05 February 2026_
+
+### Fixed
+
+* Add additional conversions for C FFI Errors ([#1829](https://github.com/contentauth/c2pa-rs/pull/1829))
+
+## [0.75.15](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.14...c2pa-c-ffi-v0.75.15)
+_05 February 2026_
+
+### Fixed
+
+* C_ffi bindings were not returning C2paErrors correctly ([#1825](https://github.com/contentauth/c2pa-rs/pull/1825))
+
+## [0.75.14](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.13...c2pa-c-ffi-v0.75.14)
+_05 February 2026_
+
+### Fixed
+
+* Restores empty string return on c2pa_sign_file, and c2pa_release_string ([#1821](https://github.com/contentauth/c2pa-rs/pull/1821))
+
 ## [0.75.13](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.12...c2pa-c-ffi-v0.75.13)
 _03 February 2026_
 

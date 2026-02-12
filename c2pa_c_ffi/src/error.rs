@@ -187,15 +187,43 @@ impl From<C2paError> for crate::cimpl::CimplError {
     }
 }
 
+impl From<std::io::Error> for crate::cimpl::CimplError {
+    fn from(err: std::io::Error) -> Self {
+        let c2pa_error = C2paError::Io(err.to_string());
+        crate::cimpl::CimplError::new(c2pa_error.code(), c2pa_error.to_string())
+    }
+}
+
+impl From<serde_json::Error> for crate::cimpl::CimplError {
+    fn from(err: serde_json::Error) -> Self {
+        let c2pa_error = C2paError::Json(err.to_string());
+        crate::cimpl::CimplError::new(c2pa_error.code(), c2pa_error.to_string())
+    }
+}
+
 impl From<crate::cimpl::CimplError> for C2paError {
     fn from(err: crate::cimpl::CimplError) -> Self {
-        C2paError::Other(err.to_string())
+        // Map CimplError codes to appropriate C2paError variants
+        match err.code() {
+            1 => C2paError::NullParameter(err.message().to_string()),
+            2 => C2paError::Other(err.message().to_string()), // StringTooLong
+            3 => C2paError::Other(err.message().to_string()), // InvalidHandle
+            4 => C2paError::Other(err.message().to_string()), // WrongHandleType
+            5 => C2paError::Other(err.message().to_string()), // Other
+            // Codes 100+ are C2paError codes - parse the message to reconstruct
+            code if code >= 100 => {
+                // The message format is "ErrorType: message"
+                C2paError::from(err.message())
+            }
+            _ => C2paError::Other(err.to_string()),
+        }
     }
 }
 
 impl From<&str> for C2paError {
     fn from(err: &str) -> Self {
-        let parts: Vec<&str> = err.split(": ").collect();
+        // Split only on the first ": " to handle messages that contain ": "
+        let parts: Vec<&str> = err.splitn(2, ": ").collect();
         if parts.len() == 2 {
             Self::from_type_and_message(parts[0], parts[1])
         } else {
@@ -232,3 +260,142 @@ impl From<String> for C2paError {
 //         Error::Other(err.to_string())
 //     }
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cimpl::CimplError;
+
+    #[test]
+    fn test_c2pa_error_roundtrip_manifest_not_found() {
+        // Create a C2paError
+        let original = C2paError::ManifestNotFound("test label".to_string());
+        assert!(matches!(original, C2paError::ManifestNotFound(_)));
+
+        // Convert to CimplError (as happens when storing)
+        let cimpl_err: CimplError = original.into();
+        assert_eq!(cimpl_err.code(), 108); // ManifestNotFound code
+        assert_eq!(cimpl_err.message(), "ManifestNotFound: test label");
+
+        // Convert back to C2paError
+        let recovered: C2paError = cimpl_err.into();
+        assert!(
+            matches!(recovered, C2paError::ManifestNotFound(ref msg) if msg == "test label"),
+            "Expected ManifestNotFound, got: {:?}",
+            recovered
+        );
+    }
+
+    #[test]
+    fn test_c2pa_error_roundtrip_with_colon_in_message() {
+        // Message contains ": " which could break naive splitting
+        let original = C2paError::ManifestNotFound("claim missing: some label".to_string());
+
+        let cimpl_err: CimplError = original.into();
+        assert_eq!(
+            cimpl_err.message(),
+            "ManifestNotFound: claim missing: some label"
+        );
+
+        let recovered: C2paError = cimpl_err.into();
+        assert!(
+            matches!(recovered, C2paError::ManifestNotFound(ref msg) if msg == "claim missing: some label"),
+            "Expected ManifestNotFound with full message, got: {:?}",
+            recovered
+        );
+    }
+
+    #[test]
+    fn test_c2pa_error_roundtrip_all_variants() {
+        let test_cases = vec![
+            (C2paError::Assertion("test".into()), 100),
+            (C2paError::AssertionNotFound("test".into()), 101),
+            (C2paError::Decoding("test".into()), 102),
+            (C2paError::Encoding("test".into()), 103),
+            (C2paError::FileNotFound("test".into()), 104),
+            (C2paError::Io("test".into()), 105),
+            (C2paError::Json("test".into()), 106),
+            (C2paError::Manifest("test".into()), 107),
+            (C2paError::ManifestNotFound("test".into()), 108),
+            (C2paError::NotSupported("test".into()), 109),
+            (C2paError::Other("test".into()), 110),
+            (C2paError::NullParameter("test".into()), 111),
+            (C2paError::RemoteManifest("test".into()), 112),
+            (C2paError::ResourceNotFound("test".into()), 113),
+            (C2paError::Signature("test".into()), 114),
+            (C2paError::Verify("test".into()), 115),
+        ];
+
+        for (original, expected_code) in test_cases {
+            let original_str = original.to_string();
+            let cimpl_err: CimplError = original.into();
+            assert_eq!(
+                cimpl_err.code(),
+                expected_code,
+                "Code mismatch for {}",
+                original_str
+            );
+
+            let recovered: C2paError = cimpl_err.into();
+            let recovered_str = recovered.to_string();
+            assert_eq!(
+                original_str, recovered_str,
+                "Round-trip failed: {} -> {}",
+                original_str, recovered_str
+            );
+        }
+    }
+
+    #[test]
+    fn test_remote_manifest_fetch_maps_to_remote_prefix_for_c2pa_c() {
+        // c2pa-c Builder.SignStreamCloudUrl test expects error_message.rfind("Remote:", 0) == 0
+        let c2pa_err = c2pa::Error::RemoteManifestFetch(
+            "an error occurred from the underlying http resolver".to_string(),
+        );
+        let cimpl_err: CimplError = c2pa_err.into();
+        let msg = cimpl_err.message();
+        assert!(
+            msg.starts_with("Remote:"),
+            "C2paException in c2pa-c checks for 'Remote:' prefix; got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_cimpl_null_parameter_maps_to_c2pa_null_parameter() {
+        let cimpl_err = CimplError::null_parameter("my_param");
+        let c2pa_err: C2paError = cimpl_err.into();
+        assert!(
+            matches!(c2pa_err, C2paError::NullParameter(_)),
+            "Expected NullParameter, got: {:?}",
+            c2pa_err
+        );
+    }
+
+    #[test]
+    fn test_cimpl_infrastructure_errors_map_to_other() {
+        // StringTooLong (code 2)
+        let err: C2paError = CimplError::string_too_long("param").into();
+        assert!(matches!(err, C2paError::Other(_)));
+
+        // UntrackedPointer (code 3)
+        let err: C2paError = CimplError::untracked_pointer(123).into();
+        assert!(matches!(err, C2paError::Other(_)));
+
+        // WrongPointerType (code 4)
+        let err: C2paError = CimplError::wrong_pointer_type(456).into();
+        assert!(matches!(err, C2paError::Other(_)));
+
+        // Other (code 5)
+        let err: C2paError = CimplError::other("generic error").into();
+        assert!(matches!(err, C2paError::Other(_)));
+
+        // MutexPoisoned (code 6)
+        let err: C2paError = CimplError::mutex_poisoned().into();
+        assert!(matches!(err, C2paError::Other(_)));
+
+        // InvalidBufferSize (code 7)
+        let err: C2paError = CimplError::invalid_buffer_size(999, "data").into();
+        assert!(matches!(err, C2paError::Other(_)));
+    }
+}

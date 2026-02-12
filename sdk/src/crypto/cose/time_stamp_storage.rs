@@ -17,7 +17,7 @@
 /// This is as defined in [§10.3.2.5.4, Storing the time-stamp], of version 2.1
 /// of the C2PA Technical Specification.
 ///
-/// [§10.3.2.5.4, Storing the time-stamp]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_storing_the_time_stamp
+/// [§10.3.2.5.4, Storing the time-stamp]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_storing_the_time_stamp
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 #[allow(non_camel_case_types)] // We choose to match the exact header names as used in the C2PA specification.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -29,7 +29,7 @@ pub enum TimeStampStorage {
     /// in reply from the TSA shall be stored as the value of the `val property
     /// of an element of `tstTokens`.
     ///
-    /// [Example 2, “CDDL for `tstContainer`”]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#tstContainer-CDDL
+    /// [Example 2, “CDDL for `tstContainer`”]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#tstContainer-CDDL
     V1_sigTst,
 
     /// v2 time-stamps shall be stored in a COSE unprotected header whose label
@@ -45,7 +45,7 @@ pub enum TimeStampStorage {
     /// thus enabling the time-stamp to serve as a countersignature on the
     /// entire signature structure, including the actual certificate.
     ///
-    /// [Example 2, “CDDL for `tstContainer`”]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#tstContainer-CDDL
+    /// [Example 2, “CDDL for `tstContainer`”]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#tstContainer-CDDL
     /// [COSE Header parameter for RFC 3161 Time-Stamp Tokens Draft]: https://datatracker.ietf.org/doc/draft-ietf-cose-tsa-tst-header-parameter/
     V2_sigTst2_CTT,
 }

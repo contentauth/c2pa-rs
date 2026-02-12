@@ -29,6 +29,8 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 #[allow(deprecated)]
 use crate::assertions::CreativeWork;
+#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+use crate::EphemeralSigner;
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
@@ -388,10 +390,10 @@ pub struct Builder {
     /// In most cases, you create this from a JSON manifest definition.
     pub definition: ManifestDefinition,
 
-    /// Optional remote URL for the manifest
+    /// Optional remote URL for the manifest.
     pub remote_url: Option<String>,
 
-    /// If true, the manifest store will not be embedded in the asset on sign
+    /// If true, the manifest store will not be embedded in the asset on sign.
     pub no_embed: bool,
 
     /// Base path to search for resources.
@@ -523,13 +525,13 @@ impl Builder {
     /// Sets the [`BuilderIntent`] for this [`Builder`].
     ///
     /// An intent lets the API know what kind of manifest to create.
-    /// Intents are `Create`, `Edit`, or `Update`.
-    /// This allows the API to check that you are doing the right thing.
+    /// and check that you are doing the right thing.
     /// It can also do things for you, like add parent ingredients from the source asset
     /// and automatically add required c2pa.created or c2pa.opened actions.
-    /// Create requires a `DigitalSourceType`. It is used for assets without a parent ingredient.
-    /// Edit requires a parent ingredient and is used for most assets that are being edited.
-    /// Update is a special case with many restrictions but is more compact than Edit.
+    /// Intents are `Create`, `Edit`, or `Update`:
+    /// - `Create` requires a `DigitalSourceType` and is used for assets without a parent ingredient.
+    /// - `Edit` requires a parent ingredient and is used for most assets that are being edited.
+    /// - `Update` is a special case with many restrictions but is more compact than `Edit`.
     /// # Arguments
     /// * `intent` - The [`BuilderIntent`] for this [`Builder`].
     /// # Returns
@@ -617,7 +619,7 @@ impl Builder {
         Ok(self)
     }
 
-    /// Returns a [Vec] of mime types that [c2pa-rs] is able to sign.
+    /// Returns a [Vec] of MIME types that the API is able to sign.
     pub fn supported_mime_types() -> Vec<String> {
         jumbf_io::supported_builder_mime_types()
     }
@@ -630,7 +632,17 @@ impl Builder {
     }
 
     /// Sets the [`ClaimGeneratorInfo`] for this [`Builder`].
-    // TODO: Add example of a good ClaimGeneratorInfo.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Builder, ClaimGeneratorInfo, Result};
+    /// # fn main() -> Result<()> {
+    /// let mut builder = Builder::new();
+    /// builder.set_claim_generator_info(ClaimGeneratorInfo::new("my_app"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn set_claim_generator_info<I>(&mut self, claim_generator_info: I) -> &mut Self
     where
         I: Into<ClaimGeneratorInfo>,
@@ -1108,19 +1120,34 @@ impl Builder {
 
     /// Convert the Builder into a .c2pa asset.
     ///
-    /// This will be stored in the standard application/c2pa .c2pa JUMBF format.
+    /// This will be stored in the standard application/c2pa .c2pa JUMBF format
+    /// unless the settings flag `builder.generate_c2pa_archive` is overridden
+    /// from its default value and set to `false` in which case a legacy format,
+    /// based on ZIP file, will be written instead.
+    ///
+    /// See docs/working-stores.md for more information.
+    ///
     /// # Arguments
-    /// * `stream` - A stream to write the zip into.
+    /// * `stream` - A stream to write the C2PA archive or ZIP file into.
+    ///
     /// # Errors
     /// * Returns an [`Error`] if the archive cannot be written.
     pub fn to_archive(&mut self, mut stream: impl Write + Seek) -> Result<()> {
         if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
-            let c2pa_data = self.working_store_sign()?;
-            stream.write_all(&c2pa_data)?;
-        } else {
-            return self.old_to_archive(stream);
+            #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+            // Generating a C2PA archive is not supported on browser Wasm because the rcgen
+            // crate has dependencies that can not be used. It is supported on WASI.
+            return Err(Error::WasmFeatureUnsupported);
+
+            #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+            {
+                let c2pa_data = self.working_store_sign()?;
+                stream.write_all(&c2pa_data)?;
+                return Ok(());
+            }
         }
-        Ok(())
+
+        self.old_to_archive(stream)
     }
 
     /// Add manifest store from an archive stream to the [`Builder`].
@@ -1160,23 +1187,14 @@ impl Builder {
             let mut validation_log = crate::status_tracker::StatusTracker::default();
             stream.rewind()?; // Ensure stream is at the start
 
-            // Create a temporary context with verify_after_reading disabled, since archives
-            // contain placeholder signatures that will fail CBOR parsing during verification.
-            // The user's context settings will be preserved for the Builder.
-            let mut no_verify_settings = self.context.settings().clone();
-            no_verify_settings.verify.verify_after_reading = false;
-
-            let temp_context = Context::new().with_settings(no_verify_settings)?;
-
             // Load the store without verification to avoid CBOR parsing errors on placeholder signatures
             let store = Store::from_stream(
                 "application/c2pa",
                 &mut stream,
                 &mut validation_log,
-                &temp_context,
+                &self.context,
             )?;
 
-            // Now use the user's original context for the Reader and Builder
             let mut reader = Reader::from_shared_context(&self.context);
             reader.with_store(store, &mut validation_log)?;
             reader.into_builder()
@@ -1275,7 +1293,8 @@ impl Builder {
                 definition.vendor.as_deref(),
                 self.claim_version().into(),
             ),
-        };
+        }
+        .with_context(self.context.clone());
 
         // add claim generator info to claim and resolve icons
         for info in &claim_generator_info {
@@ -1560,7 +1579,7 @@ impl Builder {
         actions: &mut Actions,
     ) -> Result<()> {
         let settings = self.context.settings();
-        // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
+        // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
         let auto_created = settings.builder.actions.auto_created_action.enabled;
         let auto_opened = settings.builder.actions.auto_opened_action.enabled;
 
@@ -1633,7 +1652,7 @@ impl Builder {
             }
         }
 
-        // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship
+        // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_relationship
         if settings.builder.actions.auto_placed_action.enabled {
             // Get a list of ingredient URIs referenced by "c2pa.placed" actions.
             let mut referenced_uris = HashSet::new();
@@ -2403,29 +2422,43 @@ impl Builder {
             .ok_or(Error::IngredientNotFound)
     }
 
-    /// This creates a working store from the builder
-    /// The working store is signed with a BoxHash over an empty string
-    /// And is returned as a Vec<u8> of the c2pa_manifest bytes
-    /// This works as an archive of the store that can be read back to restore the Builder state
+    /// Creates a working store from the builder.
+    ///
+    /// The working store is signed with a `BoxHash` over an empty string and is
+    /// returned as a `Vec<u8>` of the `c2pa_manifest` bytes. This works as
+    /// an archive of the store that can be read back to restore the
+    /// `Builder` state.
+    ///
+    /// An ephemeral self-signed certificate is generated and used to sign the
+    /// manifest.
+    ///
+    /// IMPORTANT: This certificate is useful only in a private context and will
+    /// not be considered trusted in the C2PA conformance sense.
+    ///
+    /// This function is not currently available on browser Wasm (it is available on WASI).
+    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
     fn working_store_sign(&self) -> Result<Vec<u8>> {
-        // first we need to generate a BoxHash over an empty string
+        // First we need to generate a `BoxHash` over an empty string.
         let mut empty_asset = std::io::Cursor::new("");
+
         let boxes = jumbf_io::get_assetio_handler("application/c2pa")
             .ok_or(Error::UnsupportedType)?
             .asset_box_hash_ref()
             .ok_or(Error::UnsupportedType)?
             .get_box_map(&mut empty_asset)?;
+
         let box_hash = BoxHash { boxes };
 
-        // then convert the builder to a claim and add the box hash assertion
+        // ... then convert the `Builder` to a claim and add the box hash assertion.
         let mut claim = self.to_claim()?;
         claim.add_assertion(&box_hash)?;
 
-        // now commit and sign it. The signing will allow us to detect tampering.
+        // Now commit and sign it. The signing will allow us to detect tampering.
         let mut store = Store::new();
         store.commit_claim(claim)?;
 
-        store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
+        let signer = EphemeralSigner::new("c2pa-archive.local")?;
+        store.get_box_hashed_embeddable_manifest(&signer, &self.context)
     }
 }
 
@@ -4232,6 +4265,35 @@ mod tests {
             loaded_old.definition.title,
             Some("Test Old Format".to_string())
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_archive_self_signed_ed25519_signature() -> Result<()> {
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+
+        let context = Context::new().with_settings(settings.clone())?;
+        let mut builder =
+            Builder::from_context(context).with_definition(r#"{"title": "Test Self Signed"}"#)?;
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+        archive.rewind()?;
+
+        let read_context = Context::new().with_settings(settings)?;
+        let reader =
+            Reader::from_context(read_context).with_stream("application/c2pa", &mut archive)?;
+
+        let manifest = reader
+            .active_manifest()
+            .expect("archive should have active manifest");
+
+        let sig_info = manifest
+            .signature_info()
+            .expect("manifest should have signature info");
+
+        assert_eq!(sig_info.alg, Some(SigningAlg::Ed25519));
 
         Ok(())
     }

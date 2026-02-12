@@ -9,6 +9,35 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.75.20](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.19...c2pa-v0.75.20)
+_12 February 2026_
+
+### Added
+
+* Use ephemeral self-signed cert to sign working store / archive ([#1839](https://github.com/contentauth/c2pa-rs/pull/1839))
+
+## [0.75.19](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.18...c2pa-v0.75.19)
+_09 February 2026_
+
+### Fixed
+
+* Support QT style 'meta' boxes ([#1844](https://github.com/contentauth/c2pa-rs/pull/1844))
+* Settings.builder.created_assertion_lables was not being applied. ([#1828](https://github.com/contentauth/c2pa-rs/pull/1828))
+
+## [0.75.18](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.17...c2pa-v0.75.18)
+_06 February 2026_
+
+### Fixed
+
+* Wrong size being written out for XMP box ([#1835](https://github.com/contentauth/c2pa-rs/pull/1835))
+
+## [0.75.17](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.16...c2pa-v0.75.17)
+_06 February 2026_
+
+### Fixed
+
+* Capture default values in schema generation ([#1824](https://github.com/contentauth/c2pa-rs/pull/1824))
+
 ## [0.75.13](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.12...c2pa-v0.75.13)
 _03 February 2026_
 
