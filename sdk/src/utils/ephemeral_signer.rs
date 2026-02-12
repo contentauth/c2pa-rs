@@ -28,6 +28,7 @@ use x509_parser::prelude::X509Certificate;
 
 use crate::{
     crypto::raw_signature::{signer_from_cert_chain_and_private_key, RawSigner, SigningAlg},
+    http::SyncHttpResolver,
     Error, Result, Signer,
 };
 
@@ -230,9 +231,13 @@ impl Signer for EphemeralSigner {
             .map_err(|e| e.into())
     }
 
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+    fn send_timestamp_request(
+        &self,
+        http_resolver: &dyn SyncHttpResolver,
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>>> {
         self.raw_signer
-            .send_time_stamp_request(message)
+            .send_time_stamp_request(http_resolver, message)
             .map(|r| r.map_err(|e| e.into()))
     }
 }
@@ -252,6 +257,7 @@ mod tests {
         crypto::cose::{
             cert_chain_from_sign1, parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage,
         },
+        http::SyncGenericResolver,
         settings::Settings,
         status_tracker::StatusTracker,
         Signer,
@@ -273,8 +279,15 @@ mod tests {
 
         let tss = TimeStampStorage::V1_sigTst;
 
-        let cose_bytes = cose_sign(&signer, &claim_bytes, signer.reserve_size(), tss, &settings)
-            .expect("cose_sign with EphemeralSigner");
+        let cose_bytes = cose_sign(
+            &signer,
+            &claim_bytes,
+            signer.reserve_size(),
+            tss,
+            &settings,
+            &SyncGenericResolver::new(),
+        )
+        .expect("cose_sign with EphemeralSigner");
 
         let mut log = StatusTracker::default();
         let sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut log)
@@ -310,8 +323,15 @@ mod tests {
 
         let tss = TimeStampStorage::V1_sigTst;
 
-        let cose_bytes = cose_sign(&signer, &claim_bytes, signer.reserve_size(), tss, &settings)
-            .expect("cose_sign with EphemeralSigner");
+        let cose_bytes = cose_sign(
+            &signer,
+            &claim_bytes,
+            signer.reserve_size(),
+            tss,
+            &settings,
+            &SyncGenericResolver::new(),
+        )
+        .expect("cose_sign with EphemeralSigner");
 
         let mut log = StatusTracker::default();
         let sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut log).expect("parse COSE");
@@ -351,8 +371,14 @@ mod tests {
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
 
-        let cose_bytes = sign_claim(&claim_bytes, &signer, signer.reserve_size(), &settings)
-            .expect("sign_claim with EphemeralSigner");
+        let cose_bytes = sign_claim(
+            &claim_bytes,
+            &signer,
+            signer.reserve_size(),
+            &settings,
+            &SyncGenericResolver::new(),
+        )
+        .expect("sign_claim with EphemeralSigner");
 
         let mut validation_log = StatusTracker::default();
         let ctp = CertificateTrustPolicy::default();
@@ -395,9 +421,14 @@ mod tests {
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
 
-        let cose_bytes =
-            crate::cose_sign::sign_claim(&claim_bytes, &signer, signer.reserve_size(), &settings)
-                .expect("sign_claim with EphemeralSigner");
+        let cose_bytes = crate::cose_sign::sign_claim(
+            &claim_bytes,
+            &signer,
+            signer.reserve_size(),
+            &settings,
+            &SyncGenericResolver::new(),
+        )
+        .expect("sign_claim with EphemeralSigner");
 
         let mut validation_log = StatusTracker::default();
 
