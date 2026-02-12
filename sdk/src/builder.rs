@@ -1872,7 +1872,7 @@ impl Builder {
                             tsa_url,
                             &manifest_label,
                             &signature,
-                            self.context().resolver_async().as_ref(),
+                            &self.context().resolver_async(),
                         )
                         .await?;
                 }
@@ -2453,7 +2453,10 @@ impl std::fmt::Display for Builder {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
-    use std::{io::Cursor, vec};
+    use std::{
+        io::{self, Cursor},
+        vec,
+    };
 
     use c2pa_macros::c2pa_test_async;
     use serde_json::json;
@@ -2467,6 +2470,7 @@ mod tests {
         assertions::{c2pa_action, BoxHash, DigitalSourceType},
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
+        maybe_send_sync::MaybeSend,
         settings::Settings,
         utils::{
             test::{test_context, write_jpeg_placeholder_stream},
@@ -4576,5 +4580,20 @@ mod tests {
         }
 
         assert!(reader.active_manifest().is_some());
+    }
+
+    // Ensures that the future returned by `Builder::sign_async` implements `Send`, thus making it
+    // possible to spawn on a Tokio runtime.
+    #[test]
+    fn test_sign_async_future_is_send() {
+        fn assert_send<T: MaybeSend>(_: T) {}
+
+        let signer = async_test_signer(SigningAlg::Ps256);
+        let mut builder = Builder::new();
+        let mut src = io::empty();
+        let mut dst = io::empty();
+
+        let future = builder.sign_async(&signer, "image/jpeg", &mut src, &mut dst);
+        assert_send(future);
     }
 }

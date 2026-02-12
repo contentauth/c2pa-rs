@@ -211,9 +211,8 @@ pub mod crypto;
 #[doc(hidden)]
 pub mod dynamic_assertion;
 
-// TODO: pub it when we expose in high-level API
 /// The `http` module contains generic traits for configuring sync and async HTTP resolvers.
-pub(crate) mod http;
+pub mod http;
 
 /// The `identity` module provides support for the [CAWG identity assertion](https://cawg.io/identity).
 #[doc(hidden)]
