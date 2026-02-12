@@ -16,6 +16,7 @@ use crate::{
         cose::{sign, TimeStampStorage},
         raw_signature::RawSigner,
     },
+    http::SyncGenericResolver,
     identity::{
         builder::{CredentialHolder, IdentityBuilderError},
         SignerPayload,
@@ -64,6 +65,8 @@ impl CredentialHolder for X509CredentialHolder {
             &sp_cbor,
             None,
             TimeStampStorage::V2_sigTst2_CTT,
+            // TODO: https://github.com/contentauth/c2pa-rs/issues/1645
+            &SyncGenericResolver::new(),
         )
         .map_err(|e| IdentityBuilderError::SignerError(e.to_string()))
     }
