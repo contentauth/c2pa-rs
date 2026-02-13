@@ -65,13 +65,13 @@ For a complete reference to all the Settings properties, see the [SDK object ref
 | Property | Description |
 |----------|-------------|
 | `version` | Settings format version (integer). The default and only supported value is 1. |
-| [`trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration for C2PA trust lists. |
-| [`cawg_trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration CAWG trust lists. |
-| [`core`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#core) | Configuration for core features. |
-| [`verify`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#verify) | Configuration for verification (validation). |
 | [`builder`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#buildersettings) | Configuration for [Builder](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html). |
-| [`signer`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#signersettings) | Configuration for the base [C2PA signer](https://docs.rs/c2pa/latest/c2pa/struct.Settings.html#structfield.signer) |
+| [`cawg_trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration CAWG trust lists. |
 | [`cawg_x509_signer`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#signersettings) | Configuration for the [CAWG x.509 signer](https://docs.rs/c2pa/latest/c2pa/struct.Settings.html#structfield.signer). |
+| [`core`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#core) | Configuration for core features. |
+| [`signer`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#signersettings) | Configuration for the base [C2PA signer](https://docs.rs/c2pa/latest/c2pa/struct.Settings.html#structfield.signer) |
+| [`trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration for C2PA trust lists. |
+| [`verify`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#verify) | Configuration for verification (validation). |
 
 ### Default configuration
 
@@ -80,46 +80,13 @@ Here's the Settings JSON with all default values:
 ```json
 {
   "version": 1,
-  "trust": {
-    "user_anchors": null,
-    "trust_anchors": null,
-    "trust_config": null,
-    "allowed_list": null
-  },
-  "cawg_trust": {
-    "verify_trust_list": true,
-    "user_anchors": null,
-    "trust_anchors": null,
-    "trust_config": null,
-    "allowed_list": null
-  },
-  "core": {
-    "merkle_tree_chunk_size_in_kb": null,
-    "merkle_tree_max_proofs": 5,
-    "backing_store_memory_threshold_in_mb": 512,
-    "decode_identity_assertions": true
-    "allowed_network_hosts": null
-  },
-  "verify": {
-    "verify_after_reading": true,
-    "verify_after_sign": true,
-    "verify_trust": true,
-    "verify_timestamp_trust": true,
-    "ocsp_fetch": false,
-    "remote_manifest_fetch": true,
-    "skip_ingredient_conflict_resolution": false,
-    "strict_v1_validation": false
-  },
   "builder": {
     "claim_generator_info": null,
-    "thumbnail": {
-      "enabled": true,
-      "ignore_errors": true,
-      "long_edge": 1024,
-      "format": null,
-      "prefer_smallest_format": true,
-      "quality": "medium"
-    },
+    "created_assertion_labels": null,    
+    "certificate_status_fetch": null,
+    "certificate_status_should_override": null,
+    "generate_c2pa_archive": true,
+    "intent": null,
     "actions": {
       "all_actions_included": null,
       "templates": null,
@@ -137,14 +104,47 @@ Here's the Settings JSON with all default values:
         "source_type": null
       }
     },
-    "certificate_status_fetch": null,
-    "certificate_status_should_override": null,
-    "intent": null,
-    "created_assertion_labels": null,
-    "generate_c2pa_archive": true
+    "thumbnail": {
+      "enabled": true,
+      "ignore_errors": true,
+      "long_edge": 1024,
+      "format": null,
+      "prefer_smallest_format": true,
+      "quality": "medium"
+    },    
+  },
+  "cawg_trust": {
+    "verify_trust_list": true,
+    "user_anchors": null,
+    "trust_anchors": null,
+    "trust_config": null,
+    "allowed_list": null
+  },
+  "cawg_x509_signer": null,
+  "core": {
+    "merkle_tree_chunk_size_in_kb": null,
+    "merkle_tree_max_proofs": 5,
+    "backing_store_memory_threshold_in_mb": 512,
+    "decode_identity_assertions": true,
+    "allowed_network_hosts": null
   },
   "signer": null,
-  "cawg_x509_signer": null
+  "trust": {
+    "user_anchors": null,
+    "trust_anchors": null,
+    "trust_config": null,
+    "allowed_list": null
+  },
+  "verify": {
+    "verify_after_reading": true,
+    "verify_after_sign": true,
+    "verify_trust": true,
+    "verify_timestamp_trust": true,
+    "ocsp_fetch": false,
+    "remote_manifest_fetch": true,
+    "skip_ingredient_conflict_resolution": false,
+    "strict_v1_validation": false
+  }
 }
 ```
 
@@ -165,7 +165,7 @@ Here's the Settings JSON with all default values:
 }
 ```
 
-### Local signer configuration
+### Local signer
 
 ```json
 {
@@ -184,7 +184,7 @@ Here's the Settings JSON with all default values:
 }
 ```
 
-### Remote signer configuration
+### Remote signer
 
 ```json
 {
@@ -200,7 +200,7 @@ Here's the Settings JSON with all default values:
 }
 ```
 
-### CAWG dual signer configuration
+### CAWG dual signer
 
 ```json
 {
