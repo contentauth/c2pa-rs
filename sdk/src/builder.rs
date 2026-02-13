@@ -29,8 +29,6 @@ use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
 
 #[allow(deprecated)]
 use crate::assertions::CreativeWork;
-#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
-use crate::EphemeralSigner;
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
@@ -48,8 +46,8 @@ use crate::{
     settings::builder::TimeStampFetchScope,
     store::Store,
     utils::{hash_utils::hash_to_b64, mime::format_to_mime},
-    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
-    Reader, Relationship, Signer,
+    AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
+    ManifestAssertionKind, Reader, Relationship, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -1134,17 +1132,9 @@ impl Builder {
     /// * Returns an [`Error`] if the archive cannot be written.
     pub fn to_archive(&mut self, mut stream: impl Write + Seek) -> Result<()> {
         if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
-            #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-            // Generating a C2PA archive is not supported on browser Wasm because the rcgen
-            // crate has dependencies that can not be used. It is supported on WASI.
-            return Err(Error::WasmFeatureUnsupported);
-
-            #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
-            {
-                let c2pa_data = self.working_store_sign()?;
-                stream.write_all(&c2pa_data)?;
-                return Ok(());
-            }
+            let c2pa_data = self.working_store_sign()?;
+            stream.write_all(&c2pa_data)?;
+            return Ok(());
         }
 
         self.old_to_archive(stream)
@@ -2434,9 +2424,6 @@ impl Builder {
     ///
     /// IMPORTANT: This certificate is useful only in a private context and will
     /// not be considered trusted in the C2PA conformance sense.
-    ///
-    /// This function is not currently available on browser Wasm (it is available on WASI).
-    #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
     fn working_store_sign(&self) -> Result<Vec<u8>> {
         // First we need to generate a `BoxHash` over an empty string.
         let mut empty_asset = std::io::Cursor::new("");

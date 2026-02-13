@@ -16,7 +16,7 @@ pub(crate) mod cbor_types;
 mod debug_byte_slice;
 pub(crate) use debug_byte_slice::DebugByteSlice;
 
-#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+mod ephemeral_cert;
 pub mod ephemeral_signer;
 
 #[allow(dead_code)]
