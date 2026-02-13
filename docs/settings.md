@@ -39,7 +39,7 @@ Settings::from_string(include_str!("settings.json"), "json")?;
 // Operations will use thread-local settings (one per thread)
 ```
 
-See [Using Context for configuration](usage.md#using-context-for-configuration) for more details.
+See [Configuring the SDK using Context](context.md) for more details.
 
 ## Overview
 

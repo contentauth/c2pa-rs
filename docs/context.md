@@ -1,4 +1,4 @@
-# Configuring SDK operations using Context
+# Configuring the SDK using Context
 
 Use the `Context` structure to configure the C2PA Rust library.
 `Context` replaces the older thread-local `Settings` pattern with a more flexible, thread-safe approach.
