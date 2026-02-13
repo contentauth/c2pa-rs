@@ -227,6 +227,13 @@ pub fn async_signer_from_cert_chain_and_private_key(
     Ok(Box::new(AsyncRawSignerWrapper(sync_signer)))
 }
 
+// NOTE: The implementation of `AsyncTimeStampProvider` for this struct does not pass through
+//       `AsyncTimeStampProvider::send_time_stamp_request` because a conversion for
+//       `AsyncHttpResolver`->`SyncHttpResolver` does not exist (and probably shouldn't).
+//
+//       At the time this was written, this implementation is only used in
+//       `async_signer_from_cert_chain_and_private_key` which wraps a `RawSigner` that
+//       does not implement timestamping.
 struct AsyncRawSignerWrapper(Box<dyn RawSigner + Send + Sync>);
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -267,17 +274,6 @@ impl AsyncTimeStampProvider for AsyncRawSignerWrapper {
     fn time_stamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>, TimeStampError> {
         self.0.time_stamp_request_body(message)
     }
-
-    // TODO: this feels hacky but the problem is that we can't pass an AsyncHttpResolver as a SyncHttpResolver
-    //       We create an AsyncRawSignerWrapper from the actual crypto signers which is never supposed to
-    //       implement its own timestamping code anyways(?) because of that I thikn we can remove most of this trait impl
-    // async fn send_time_stamp_request(
-    //     &self,
-    //     http_resolver: &dyn AsyncHttpResolver,
-    //     message: &[u8],
-    // ) -> Option<Result<Vec<u8>, TimeStampError>> {
-    //     self.0.send_time_stamp_request(message)
-    // }
 }
 
 #[cfg(test)]
