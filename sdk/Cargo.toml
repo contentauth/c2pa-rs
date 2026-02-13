@@ -111,7 +111,7 @@ const-oid = { version = "0.9.6", optional = true }
 coset = "0.4.0"
 der = { version = "0.7.9", features = ["alloc"] }
 extfmt = "0.2.0"
-getrandom = { version = "0.3", default-features = false, features = ["std"] }
+getrandom = { version = "0.3.4", default-features = false, features = ["std"] }
 ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
 ed25519-dalek = { version = "2.1.1", features = [
     "alloc",
