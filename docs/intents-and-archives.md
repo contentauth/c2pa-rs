@@ -4,6 +4,17 @@
 
 Intents tell the C2PA `Builder` what kind of manifest you are creating. They enable validation, add required default actions, and help prevent invalid operations.
 
+<div style={{display: 'none'}}>
+
+**References**:
+
+- [C2PA specification](https://spec.c2pa.org/specifications/specifications/2.1/index.html)
+- [Rust library docs](https://opensource.contentauthenticity.org/docs/rust-sdk/)
+- [GitHub repository](https://github.com/contentauth/c2pa-rs)
+- [Content Credentials](https://contentcredentials.org/)
+
+</div>
+
 ### Intent types
 
 There are three types of intents:
@@ -123,8 +134,13 @@ let ingredient_c2pa = builder.sign(
     &mut io::empty(),
     &mut io::empty(),
 )?;
+```
 
-// Later: add that archived ingredient to a new manifest
+This returns the raw C2PA manifest store as `Vec<u8>`.
+
+Later, you can add that archived ingredient to a new manifest as follows:
+
+```rust
 let mut builder = Builder::from_shared_context(&context)
     .with_definition(manifest_def("New Work", FORMAT))?;
 builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
@@ -145,13 +161,19 @@ builder.add_action(json!({
 }))?;
 ```
 
+When you call `add_ingredient_from_stream()` with format `"application/c2pa"`, the API:
+
+1. Reads the archive.
+2. Extracts the first ingredient from the active manifest.
+3. Merges with provided JSON properties, but your overrides take precedence.
+
 ## Best practices
 
-1. **Use intents.** Always set an intent to get automatic validation and action generation.
-2. **Archive validated ingredients.** Save expensive validation results.
-3. **Use shared context.** Create once, share across operations.
-4. **Label ingredients.** Use labels to link ingredients to actions.
-5. **Store archives flexibly.** Files, databases, and cloud storage all work.
+1. [**Use intents**](intents-and-archives.md): Always set an intent to get automatic validation and action generation.
+2. **Archive validated ingredients**: Save expensive validation results.
+3. [**Use shared context**](context.md): Create once, share across operations.
+4. **Label ingredients**: Use labels to link ingredients to actions.
+5. **Store archives flexibly**: Files, databases, and cloud storage all work.
 
 ## Examples
 
@@ -165,9 +187,9 @@ cd sdk
 cargo run --example builder_sample
 ```
 
-## Important technical details
+<!-- This largely duplicated the section above; moved there, but the code is slightly different. Is it OK to combine the two?
 
-### Adding ingredients from archives
+Important technical details - Adding ingredients from archives
 
 When you call `add_ingredient_from_stream()` with format `"application/c2pa"`, the API:
 
@@ -189,22 +211,11 @@ builder.add_ingredient_from_stream(
 
 For creating and sharing a `Context` (including using `Arc`), see: [Configuring the SDK using Context](context.md).
 
-### Signing C2PA-only manifests
-
-```rust
-builder.sign(
-    signer,
-    "application/c2pa",    // Special format
-    &mut io::empty(),      // No source asset
-    &mut io::empty(),      // No destination asset
-)?;
-```
-
-This returns the raw C2PA manifest store as `Vec<u8>`.
+-->
 
 ## Common patterns
 
-Create new content:
+### Create new content
 
 ```rust
 let mut builder = Builder::from_shared_context(&context)
@@ -212,7 +223,7 @@ let mut builder = Builder::from_shared_context(&context)
 builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 ```
 
-Edit existing content:
+### Edit existing content
 
 ```rust
 builder.set_intent(BuilderIntent::Edit);
@@ -223,7 +234,7 @@ builder.add_ingredient_from_stream(
 )?;
 ```
 
-Add archived ingredient:
+### Add archived ingredient
 
 ```rs
 builder.add_ingredient_from_stream(
@@ -238,7 +249,7 @@ builder.add_ingredient_from_stream(
 )?;
 ```
 
-Link ingredients to actions:
+### Link ingredients to actions
 
 ```rs
 builder.add_action(json!({
@@ -274,14 +285,3 @@ No. Intents are about the operation (create/edit/update), not the asset type.
 **Can I have multiple parent ingredients?**
 
 No. Only one parent is allowed. Other ingredients use different relationships (for example, `componentOf`, `inputTo`).
-
-<div style={{display: 'none'}}>
-
-## References
-
-- [C2PA specification](https://c2pa.org/specifications/)
-- [Rust library docs](https://opensource.contentauthenticity.org/docs/rust-sdk/)
-- [GitHub repository](https://github.com/contentauth/c2pa-rs)
-- [Content Credentials](https://contentcredentials.org/)
-
-</div>
