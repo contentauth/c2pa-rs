@@ -63,6 +63,7 @@ NOTES:
 For a complete reference to all the Settings properties, see the [SDK object reference - Settings](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema).  
 
 | Property | Description |
+|----------|-------------|
 | `version` | Settings format version (integer). The default and only supported value is 1. |
 | [`trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration for C2PA trust lists. |
 | [`cawg_trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration CAWG trust lists. |
