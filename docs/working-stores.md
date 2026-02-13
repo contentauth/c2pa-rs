@@ -31,7 +31,7 @@ Practical distinction:
 | Restore to a new `Builder` | `Builder::from_archive(stream)` | Creates a default-context `Builder` and loads the archive into it. |
 | Restore (existing context) | `builder.with_archive(stream)` | Loads the archive into an existing `Builder` (preserving its context). |
 
-For more examples and patterns (for example, saving to a file, adding archived ingredients to a new manifest), see [intents-and-archives.md](intents-and-archives.md) and [content_credentials.md](content_credentials.md).
+For more examples and patterns (for example, saving to a file, adding archived ingredients to a new manifest), see [Intents and archives](intents-and-archives.md) and [Content Credentials proposal](https://github.com/contentauth/c2pa-rs/blob/main/docs/content_credentials.md).
 
 ### Legacy ZIP archive format
 

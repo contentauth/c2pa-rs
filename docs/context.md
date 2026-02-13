@@ -252,7 +252,7 @@ For advanced use cases, you can provide custom HTTP resolvers to control how rem
 2. Use `Arc<Context>` to share a context across threads (for read-only access).
 3. Pass contexts by reference where appropriate.
 
-## When to use `Context` sharing
+## When to use Context sharing
 
 Understanding when to use a shared `Context` helps optimize your application:
 
@@ -286,7 +286,7 @@ let builder1 = Builder::from_shared_context(&ctx);
 let builder2 = Builder::from_shared_context(&ctx);
 ```
 
-## Migration from thread-local `Settings`
+## Migration from thread-local Settings
 
 The Context API replaces the older thread-local `Settings` pattern. If you're migrating existing code, here's how `Settings` and `Context` work together.
 
@@ -354,16 +354,4 @@ Context wraps a `Settings` instance and uses it to:
 
 The `Settings` format hasn't changed—only how you provide those settings.
 
-### Legacy thread-local Settings 
-
-For backwards compatibility, the thread-local `Settings` pattern still works, but is not recommended for new code:
-
-```rust
-use c2pa::Settings;
-
-// Thread-local settings (legacy approach - not recommended)
-Settings::from_toml(include_str!("settings.toml"))?;
-
-// Operations without an explicit Context will use thread-local Settings
-```
 
