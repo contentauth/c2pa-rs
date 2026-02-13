@@ -56,7 +56,7 @@ builder.set_intent(BuilderIntent::Edit);
 
 Use `BuilderIntent::Update` for non-editorial (metadata-only) changes. It is a restricted version of the edit intent.  This intent:
 
-- Allows exactly one ingredient (the parent)l.
+- Allows exactly one ingredient (the parent).
 - Does not allow changes to the parent’s hashed content.
 - Is more compact than an edit intent.
 - Is suitable for metadata-only updates.
@@ -67,17 +67,17 @@ Example:
 builder.set_intent(BuilderIntent::Update);
 ```
 
-## C2PA archives for ingredients and builders
+## Archives for ingredients and builders
 
-Many workflows need to pause and resume manifest authoring or reuse previously validated ingredients. Archives provide a standard way to save and restore this state:
+Many workflows need to pause and resume manifest authoring or reuse previously validated ingredients. An archive provides a standard way to save and restore this state and:
 
 - Uses the standard JUMBF store (`application/c2pa`)
 - Works for signed manifests, working stores, and saved ingredients
 - Can be embedded in files, stored as sidecars (for example, `.c2pa`), or kept in cloud/database
 - Unsigned working stores use placeholder signatures (`BoxHash`)
-- Validate once, then reuse without re-validation
+- Validate once, then can be reuses without re-validation
 
-### Save and restore a `Builder`
+### Save and restore a Builder
 
 Use `to_archive()` to save a `Builder`:
 
@@ -105,8 +105,7 @@ pub fn with_archive(self, stream: impl Read + Seek + Send) -> Result<Self>
 // Restore (default context)
 let builder = Builder::from_archive(Cursor::new(std::fs::read("work.c2pa")?))?;
 
-// Or restore with a custom, shared context
-let context = Context::new().with_settings(settings)?;
+// Or restore with a custom, shared context (see: docs/context.md)
 let builder = Builder::from_shared_context(&context)
     .with_archive(Cursor::new(std::fs::read("work.c2pa")?))?;
 ```
@@ -146,9 +145,29 @@ builder.add_action(json!({
 }))?;
 ```
 
+## Best practices
+
+1. **Use intents.** Always set an intent to get automatic validation and action generation.
+2. **Archive validated ingredients.** Save expensive validation results.
+3. **Use shared context.** Create once, share across operations.
+4. **Label ingredients.** Use labels to link ingredients to actions.
+5. **Store archives flexibly.** Files, databases, and cloud storage all work.
+
+## Examples
+
+- [`sdk/examples/builder_sample.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/builder_sample.rs)
+- [`sdk/examples/api.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/api.rs)
+
+Run the builder example:
+
+```bash
+cd sdk
+cargo run --example builder_sample
+```
+
 ## Important technical details
 
-### Adding ingredients from C2PA archives
+### Adding ingredients from archives
 
 When you call `add_ingredient_from_stream()` with format `"application/c2pa"`, the API:
 
@@ -168,20 +187,7 @@ builder.add_ingredient_from_stream(
 )?;
 ```
 
-### Context management with `Arc`
-
-Share a single `Context` across builders and readers for consistent configuration:
-
-```rust
-let context = Context::new()
-    .with_settings(settings)?
-    .with_signer(signer)
-    .into_shared();  // Arc
-
-let builder1 = Builder::from_shared_context(&context);
-let builder2 = Builder::from_shared_context(&context);
-let reader = Reader::from_shared_context(&context);
-```
+For creating and sharing a `Context` (including using `Arc`), see: [Configuring the SDK using Context](context.md).
 
 ### Signing C2PA-only manifests
 
@@ -198,21 +204,28 @@ This returns the raw C2PA manifest store as `Vec<u8>`.
 
 ## Common patterns
 
+Create new content:
+
 ```rust
-// Create new content
 let mut builder = Builder::from_shared_context(&context)
     .with_definition(manifest_def("title", "image/jpeg"))?;
 builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+```
 
-// Edit existing content
+Edit existing content:
+
+```rust
 builder.set_intent(BuilderIntent::Edit);
 builder.add_ingredient_from_stream(
     json!({"title": "Original", "relationship": "parentOf", "label": "parent"}),
     "image/jpeg",
     &mut source_stream,
 )?;
+```
 
-// Add archived ingredient
+Add archived ingredient:
+
+```rs
 builder.add_ingredient_from_stream(
     json!({
         "title": "Ingredient",
@@ -223,34 +236,17 @@ builder.add_ingredient_from_stream(
     "application/c2pa",
     &mut archived_ingredient_stream,
 )?;
+```
 
-// Link ingredients to actions
+Link ingredients to actions:
+
+```rs
 builder.add_action(json!({
     "action": "c2pa.placed",
     "parameters": {
         "ingredientIds": ["ing_1"],  // References the label
     }
 }))?;
-```
-
-## Best practices
-
-1. **Use intents.** Always set an intent to get automatic validation and action generation.
-2. **Archive validated ingredients.** Save expensive validation results.
-3. **Use shared context.** Create once, share across operations.
-4. **Label ingredients.** Use labels to link ingredients to actions.
-5. **Store archives flexibly.** Files, databases, and cloud storage all work.
-
-## Examples
-
-- [`sdk/examples/builder_sample.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/builder_sample.rs)
-- [`sdk/examples/api.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/api.rs)
-
-Run the builder example:
-
-```bash
-cd sdk
-cargo run --example builder_sample
 ```
 
 ## FAQs

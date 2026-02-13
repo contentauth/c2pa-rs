@@ -2,14 +2,16 @@
 
 This document explains how **working stores** and **C2PA archives** work in the SDK, how they relate to each other, and how to save and restore `Builder` state.
 
-## Working stores vs C2PA archives
+## Overview
 
-“Working store” and “C2PA archive” refer to the same underlying concept. “Working store” emphasizes the editable state; “C2PA archive” emphasizes the saved, portable representation.
+“Working store” and “C2PA archive” refer to the same underlying concept:
+- “Working store” emphasizes the editable state.
+- “C2PA archive” emphasizes the saved, portable representation.
 
 | Term | Emphasis |
 |------|----------|
 | **Working store** | The *content*: an editable C2PA manifest state (claims, ingredients, assertions) that has not yet been bound to a final asset. Often used when describing “work in progress” manifest data. |
-| **C2PA archive** | The *artifact*: the saved bytes (e.g. in a `.c2pa` file or stream) that you get from saving a working store and read back to restore a `Builder`. |
+| **C2PA archive** | The *artifact*: the saved bytes (in a `.c2pa` file or stream) from saving a working store that you can read back to restore a `Builder`. |
 
 Both use the same standard JUMBF format (`application/c2pa`). A C2PA archive is simply a working store serialized as a normal C2PA manifest store. The specification does not define a separate archive format; the SDK reuses the standard manifest store format so that:
 
@@ -21,13 +23,21 @@ Practical distinction:
 - When you save a `Builder` with `to_archive()`, you produce a working store serialized as JUMBF `application/c2pa` (a C2PA archive).
 - When you restore with `from_archive()` or `with_archive()`, you read that C2PA archive back into a `Builder` to continue editing. Note: you can’t merge working stores by calling `with_archive()` repeatedly.
 
+### API summary
+
+| Operation | API | Description |
+|-----------|-----|-------------|
+| Save | `builder.to_archive(&mut stream)` | Writes the working store to `stream`. By default, generates the current C2PA archive format. Use the setting `builder.generate_c2pa_archive = false` if you need the legacy ZIP format. |
+| Restore to a new `Builder` | `Builder::from_archive(stream)` | Creates a default-context `Builder` and loads the archive into it. |
+| Restore (existing context) | `builder.with_archive(stream)` | Loads the archive into an existing `Builder` (preserving its context). |
+
+For more examples and patterns (for example, saving to a file, adding archived ingredients to a new manifest), see [intents-and-archives.md](intents-and-archives.md) and [content_credentials.md](content_credentials.md).
+
 ### Legacy ZIP archive format
 
 The SDK also supports an older format: a ZIP file containing `manifest.json`, `resources/`, and `manifests/` (see [Settings](./settings.md)). This ZIP format is generated when `builder.generate_c2pa_archive = false`. When `builder.generate_c2pa_archive = true` (default), `to_archive()` writes the C2PA working-store format. Restore accepts both (`with_archive` / `from_archive`): it tries ZIP first, then falls back to the C2PA format.
 
----
-
-## How a working store is saved (C2PA format)
+## Saving a working store 
 
 When using the C2PA archive format, saving a `Builder` does the following:
 
@@ -58,9 +68,7 @@ sequenceDiagram
     Builder-->>App: Ok(())
 ```
 
----
-
-## How a working store is restored
+## Restoring a working store
 
 Restoring from a C2PA archive does the following:
 
@@ -94,15 +102,3 @@ sequenceDiagram
         Builder-->>App: Ok(builder)
     end
 ```
-
----
-
-## API summary
-
-| Operation | API | Description |
-|-----------|-----|-------------|
-| Save | `builder.to_archive(&mut stream)` | Writes the working store to `stream`. By default, generates the current C2PA archive format. Use the setting `builder.generate_c2pa_archive = false` if you need the legacy ZIP format. |
-| Restore to a new `Builder` | `Builder::from_archive(stream)` | Creates a default-context `Builder` and loads the archive into it. |
-| Restore (existing context) | `builder.with_archive(stream)` | Loads the archive into an existing `Builder` (preserving its context). |
-
-For more examples and patterns (for example, saving to a file, adding archived ingredients to a new manifest), see [intents-and-archives.md](intents-and-archives.md) and [content_credentials.md](content_credentials.md).

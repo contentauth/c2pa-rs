@@ -77,7 +77,7 @@ fn main() -> Result<()> {
 }
 ```
 
-### From a `Settings` struct
+### From a Settings struct
 
 ```rust
 use c2pa::{Context, Settings, Result};
@@ -91,7 +91,7 @@ fn main() -> Result<()> {
 }
 ```
 
-## Using `Context` with `Reader`
+## Using Context with Reader
 
 `Reader` uses `Context` to control how to validate manifests and how to fetch remote resources:
 
@@ -114,7 +114,7 @@ fn main() -> Result<()> {
 }
 ```
 
-## Using `Context` with `Builder`
+## Using Context with Builder
 
 `Builder` uses Context to configure signing operations. The `Context` automatically creates a signer from settings when needed:
 
@@ -150,7 +150,7 @@ fn main() -> Result<()> {
 
 **In most cases, you don't need to explicitly set a signer on the `Context`.** Instead, configure signer settings in your configuration, and the `Context` will create the signer automatically when you call `save_to_stream()` or `save_to_file()`.
 
-### Configuring a signer from `Settings` (recommended)
+### Configuring a signer from Settings (recommended)
 
 Configure signer settings in JSON:
 
@@ -340,7 +340,7 @@ let prod_ctx = Context::new()
 let prod_builder = Builder::from_context(prod_ctx);
 ```
 
-### How Context uses `Settings` internally
+### How Context uses Settings internally
 
 Context wraps a `Settings` instance and uses it to:
 
@@ -354,7 +354,7 @@ Context wraps a `Settings` instance and uses it to:
 
 The `Settings` format hasn't changed—only how you provide those settings.
 
-### Thread-local `Settings` still available (legacy)
+### Legacy thread-local Settings 
 
 For backwards compatibility, the thread-local `Settings` pattern still works, but is not recommended for new code:
 
