@@ -19,6 +19,14 @@ Context is better than thread-local `Settings` because it has:
 - Easier testability (can pass mock contexts).
 - Ability to pass across language barriers, so it's FFI-friendly.
 
+<!--
+The Context API:
+- Is thread-safe and can be shared with `Arc<Context>`
+- Allows multiple configurations in one application
+- Makes dependencies explicit (no hidden thread-local state)
+- Automatically creates signers from settings when needed
+-->
+
 While the old `Settings` pattern is supported for [backwards compatibility](#backwards-compatibility), it is not recommended. For information on moving from the old pattern, see [Migration from thread-local settings](#migration-from-thread-local-settings).
 
 ## Creating a Context
