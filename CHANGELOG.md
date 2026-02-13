@@ -9,6 +9,18 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.75.21](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.20...c2pa-v0.75.21)
+_12 February 2026_
+
+No-op re-release to address previous build failure.
+
+## [0.75.20](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.19...c2pa-v0.75.20)
+_12 February 2026_
+
+### Added
+
+* Use ephemeral self-signed cert to sign working store / archive ([#1839](https://github.com/contentauth/c2pa-rs/pull/1839))
+
 ## [0.75.19](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.18...c2pa-v0.75.19)
 _09 February 2026_
 
