@@ -1,9 +1,22 @@
-use std::sync::OnceLock;
+// Copyright 2026 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
+use std::sync::{Arc, OnceLock};
 
 use crate::{
     http::{
         restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
-        BoxedAsyncResolver, BoxedSyncResolver, SyncGenericResolver, SyncHttpResolver,
+        SyncGenericResolver, SyncHttpResolver,
     },
     maybe_send_sync::{MaybeSend, MaybeSync},
     settings::Settings,
@@ -14,17 +27,17 @@ use crate::{
 /// Internal state for sync HTTP resolver selection.
 enum SyncResolverState {
     /// User-provided custom resolver.
-    Custom(BoxedSyncResolver),
+    Custom(Arc<dyn SyncHttpResolver>),
     /// Default resolver with lazy initialization.
-    Default(OnceLock<RestrictedResolver<SyncGenericResolver>>),
+    Default(OnceLock<Arc<dyn SyncHttpResolver>>),
 }
 
 /// Internal state for async HTTP resolver selection.
 enum AsyncResolverState {
     /// User-provided custom resolver.
-    Custom(BoxedAsyncResolver),
+    Custom(Arc<dyn AsyncHttpResolver>),
     /// Default resolver with lazy initialization.
-    Default(OnceLock<RestrictedResolver<AsyncGenericResolver>>),
+    Default(OnceLock<Arc<dyn AsyncHttpResolver>>),
 }
 
 /// Internal state for signer selection.
@@ -312,7 +325,7 @@ impl Context {
         mut self,
         resolver: T,
     ) -> Self {
-        self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
+        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
         self
     }
 
@@ -320,7 +333,7 @@ impl Context {
         &mut self,
         resolver: T,
     ) -> Result<()> {
-        self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
+        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
         Ok(())
     }
 
@@ -335,7 +348,7 @@ impl Context {
         mut self,
         resolver: T,
     ) -> Self {
-        self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
+        self.async_resolver = AsyncResolverState::Custom(Arc::new(resolver));
         self
     }
 
@@ -343,7 +356,7 @@ impl Context {
         &mut self,
         resolver: T,
     ) -> Result<()> {
-        self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
+        self.async_resolver = AsyncResolverState::Custom(Arc::new(resolver));
         Ok(())
     }
 
@@ -351,15 +364,17 @@ impl Context {
     ///
     /// The default resolver is a `SyncGenericResolver` wrapped with `RestrictedResolver`
     /// to apply host filtering from the settings.
-    pub fn resolver(&self) -> &dyn SyncHttpResolver {
+    pub fn resolver(&self) -> Arc<dyn SyncHttpResolver> {
         match &self.sync_resolver {
-            SyncResolverState::Custom(resolver) => resolver.as_ref(),
-            SyncResolverState::Default(once_lock) => once_lock.get_or_init(|| {
-                let inner = SyncGenericResolver::new();
-                let mut resolver = RestrictedResolver::new(inner);
-                resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                resolver
-            }),
+            SyncResolverState::Custom(resolver) => resolver.clone(),
+            SyncResolverState::Default(once_lock) => once_lock
+                .get_or_init(|| {
+                    let inner = SyncGenericResolver::new();
+                    let mut resolver = RestrictedResolver::new(inner);
+                    resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
+                    Arc::new(resolver)
+                })
+                .clone(),
         }
     }
 
@@ -367,15 +382,17 @@ impl Context {
     ///
     /// The default resolver is an `AsyncGenericResolver` wrapped with `RestrictedResolver`
     /// to apply host filtering from the settings.
-    pub fn resolver_async(&self) -> &dyn AsyncHttpResolver {
+    pub fn resolver_async(&self) -> Arc<dyn AsyncHttpResolver> {
         match &self.async_resolver {
-            AsyncResolverState::Custom(resolver) => resolver.as_ref(),
-            AsyncResolverState::Default(once_lock) => once_lock.get_or_init(|| {
-                let inner = AsyncGenericResolver::new();
-                let mut resolver = RestrictedResolver::new(inner);
-                resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                resolver
-            }),
+            AsyncResolverState::Custom(resolver) => resolver.clone(),
+            AsyncResolverState::Default(once_lock) => once_lock
+                .get_or_init(|| {
+                    let inner = AsyncGenericResolver::new();
+                    let mut resolver = RestrictedResolver::new(inner);
+                    resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
+                    Arc::new(resolver)
+                })
+                .clone(),
         }
     }
 

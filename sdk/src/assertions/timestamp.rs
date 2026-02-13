@@ -68,14 +68,14 @@ impl TimeStamp {
         tsa_url: &str,
         manifest_id: &str,
         signature: &[u8],
-        http_resolver: &(impl AsyncHttpResolver + ?Sized),
+        http_resolver: &impl AsyncHttpResolver,
     ))]
     pub(crate) fn refresh_timestamp(
         &mut self,
         tsa_url: &str,
         manifest_id: &str,
         signature: &[u8],
-        http_resolver: &(impl SyncHttpResolver + ?Sized),
+        http_resolver: &impl SyncHttpResolver,
     ) -> Result<()> {
         let timestamp_token = if _sync {
             TimeStamp::send_timestamp_token_request(tsa_url, signature, http_resolver)?
@@ -97,12 +97,12 @@ impl TimeStamp {
     #[async_generic(async_signature(
         tsa_url: &str,
         message: &[u8],
-        http_resolver: &(impl AsyncHttpResolver + ?Sized),
+        http_resolver: &impl AsyncHttpResolver,
     ))]
     pub(crate) fn send_timestamp_token_request(
         tsa_url: &str,
         message: &[u8],
-        http_resolver: &(impl SyncHttpResolver + ?Sized),
+        http_resolver: &impl SyncHttpResolver,
     ) -> Result<Vec<u8>> {
         let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
         let headers = None;

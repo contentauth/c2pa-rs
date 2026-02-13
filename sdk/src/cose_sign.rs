@@ -29,6 +29,7 @@ use crate::{
         raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
         time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     },
+    http::{AsyncHttpResolver, SyncHttpResolver},
     settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
     AsyncSigner, Error, Result, Signer,
@@ -56,12 +57,14 @@ use crate::{
     signer: &dyn AsyncSigner,
     box_size: usize,
     settings: &Settings,
+    http_resolver: &impl AsyncHttpResolver,
 ))]
 pub fn sign_claim(
     claim_bytes: &[u8],
     signer: &dyn Signer,
     box_size: usize,
     settings: &Settings,
+    http_resolver: &impl SyncHttpResolver,
 ) -> Result<Vec<u8>> {
     // Must be a valid claim.
     let label = "dummy_label";
@@ -74,9 +77,9 @@ pub fn sign_claim(
     };
 
     let signed_bytes = if _sync {
-        cose_sign(signer, claim_bytes, box_size, tss, settings)
+        cose_sign(signer, claim_bytes, box_size, tss, settings, http_resolver)
     } else {
-        cose_sign_async(signer, claim_bytes, box_size, tss, settings).await
+        cose_sign_async(signer, claim_bytes, box_size, tss, settings, http_resolver).await
     };
 
     match signed_bytes {
@@ -117,6 +120,7 @@ pub fn sign_claim(
     box_size: usize,
     time_stamp_storage: TimeStampStorage,
     settings: &Settings,
+    http_resolver: &impl AsyncHttpResolver,
 ))]
 pub(crate) fn cose_sign(
     signer: &dyn Signer,
@@ -124,6 +128,7 @@ pub(crate) fn cose_sign(
     box_size: usize,
     time_stamp_storage: TimeStampStorage,
     settings: &Settings,
+    http_resolver: &impl SyncHttpResolver,
 ) -> Result<Vec<u8>> {
     // Make sure the signing cert is valid.
     let certs = signer.certs()?;
@@ -135,20 +140,44 @@ pub(crate) fn cose_sign(
 
     if _sync {
         match signer.raw_signer() {
-            Some(raw_signer) => Ok(sign(*raw_signer, data, Some(box_size), time_stamp_storage)?),
+            Some(raw_signer) => Ok(sign(
+                *raw_signer,
+                data,
+                Some(box_size),
+                time_stamp_storage,
+                http_resolver,
+            )?),
             None => {
                 let wrapper = SignerWrapper(signer);
-                Ok(sign(&wrapper, data, Some(box_size), time_stamp_storage)?)
+                Ok(sign(
+                    &wrapper,
+                    data,
+                    Some(box_size),
+                    time_stamp_storage,
+                    http_resolver,
+                )?)
             }
         }
     } else {
         match signer.async_raw_signer() {
-            Some(raw_signer) => {
-                Ok(sign_async(*raw_signer, data, Some(box_size), time_stamp_storage).await?)
-            }
+            Some(raw_signer) => Ok(sign_async(
+                *raw_signer,
+                data,
+                Some(box_size),
+                time_stamp_storage,
+                http_resolver,
+            )
+            .await?),
             None => {
                 let wrapper = AsyncSignerWrapper(signer);
-                Ok(sign_async(&wrapper, data, Some(box_size), time_stamp_storage).await?)
+                Ok(sign_async(
+                    &wrapper,
+                    data,
+                    Some(box_size),
+                    time_stamp_storage,
+                    http_resolver,
+                )
+                .await?)
             }
         }
     }
@@ -219,10 +248,11 @@ impl TimeStampProvider for SignerWrapper<'_> {
 
     fn send_time_stamp_request(
         &self,
+        http_resolver: &dyn SyncHttpResolver,
         message: &[u8],
     ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
         self.0
-            .send_timestamp_request(message)
+            .send_timestamp_request(http_resolver, message)
             .map(|r| r.map_err(|e| e.into()))
     }
 }
@@ -273,10 +303,11 @@ impl AsyncTimeStampProvider for AsyncSignerWrapper<'_> {
 
     async fn send_time_stamp_request(
         &self,
+        http_resolver: &dyn AsyncHttpResolver,
         message: &[u8],
     ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
         self.0
-            .send_timestamp_request(message)
+            .send_timestamp_request(http_resolver, message)
             .await
             .map(|r| r.map_err(|e| e.into()))
     }
@@ -294,6 +325,7 @@ mod tests {
     use crate::{
         claim::Claim,
         crypto::raw_signature::SigningAlg,
+        http::{AsyncGenericResolver, SyncGenericResolver, SyncHttpResolver},
         settings::Settings,
         utils::test_signer::{async_test_signer, test_signer},
         Result, Signer,
@@ -317,7 +349,14 @@ mod tests {
         let signer = test_signer(SigningAlg::Ps256);
         let box_size = Signer::reserve_size(signer.as_ref());
 
-        let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size, &settings).unwrap();
+        let cose_sign1 = sign_claim(
+            &claim_bytes,
+            signer.as_ref(),
+            box_size,
+            &settings,
+            &SyncGenericResolver::new(),
+        )
+        .unwrap();
 
         assert_eq!(cose_sign1.len(), box_size);
     }
@@ -342,9 +381,15 @@ mod tests {
         let signer = async_test_signer(SigningAlg::Ps256);
         let box_size = signer.reserve_size();
 
-        let cose_sign1 = sign_claim_async(&claim_bytes, &signer, box_size, &settings)
-            .await
-            .unwrap();
+        let cose_sign1 = sign_claim_async(
+            &claim_bytes,
+            &signer,
+            box_size,
+            &settings,
+            &AsyncGenericResolver::new(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(cose_sign1.len(), box_size);
     }
@@ -377,7 +422,11 @@ mod tests {
             1024
         }
 
-        fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
+        fn send_timestamp_request(
+            &self,
+            _http_resolver: &dyn SyncHttpResolver,
+            _message: &[u8],
+        ) -> Option<crate::error::Result<Vec<u8>>> {
             Some(Ok(Vec::new()))
         }
     }
@@ -395,7 +444,13 @@ mod tests {
 
         let signer = BogusSigner::new();
 
-        let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size, &settings);
+        let _cose_sign1 = sign_claim(
+            &claim_bytes,
+            &signer,
+            box_size,
+            &settings,
+            &SyncGenericResolver::new(),
+        );
 
         assert!(_cose_sign1.is_err());
     }

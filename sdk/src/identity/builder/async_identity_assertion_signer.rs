@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use crate::{
     crypto::raw_signature::{AsyncRawSigner, SigningAlg},
     dynamic_assertion::AsyncDynamicAssertion,
+    http::AsyncHttpResolver,
     identity::builder::AsyncIdentityAssertionBuilder,
     AsyncSigner, Result,
 };
@@ -134,9 +135,13 @@ impl AsyncSigner for AsyncIdentityAssertionSigner {
             .map_err(|e| e.into())
     }
 
-    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+    async fn send_timestamp_request(
+        &self,
+        http_resolver: &dyn AsyncHttpResolver,
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>>> {
         self.signer
-            .send_time_stamp_request(message)
+            .send_time_stamp_request(http_resolver, message)
             .await
             .map(|r| r.map_err(|e| e.into()))
     }

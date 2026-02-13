@@ -16,6 +16,7 @@ use std::sync::RwLock;
 use crate::{
     crypto::raw_signature::{RawSigner, SigningAlg},
     dynamic_assertion::DynamicAssertion,
+    http::SyncHttpResolver,
     identity::builder::IdentityAssertionBuilder,
     Result, Signer,
 };
@@ -111,9 +112,13 @@ impl Signer for IdentityAssertionSigner {
             .map_err(|e| e.into())
     }
 
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+    fn send_timestamp_request(
+        &self,
+        http_resolver: &dyn SyncHttpResolver,
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>>> {
         self.signer
-            .send_time_stamp_request(message)
+            .send_time_stamp_request(http_resolver, message)
             .map(|r| r.map_err(|e| e.into()))
     }
 

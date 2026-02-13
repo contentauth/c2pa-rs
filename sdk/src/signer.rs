@@ -19,7 +19,7 @@ use crate::{
         time_stamp::{TimeStampError, TimeStampProvider},
     },
     dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
-    http::SyncGenericResolver,
+    http::{AsyncHttpResolver, SyncHttpResolver},
     maybe_send_sync::{MaybeSend, MaybeSync},
     Result,
 };
@@ -87,7 +87,11 @@ pub trait Signer {
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+    fn send_timestamp_request(
+        &self,
+        http_resolver: &dyn SyncHttpResolver,
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>>> {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
@@ -97,7 +101,7 @@ pub trait Signer {
                         headers,
                         &body,
                         message,
-                        &SyncGenericResolver::new(),
+                        http_resolver,
                     )
                     .map_err(|e| e.into()),
                 );
@@ -216,11 +220,13 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_authority_url()`], if any.
-    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+    async fn send_timestamp_request(
+        &self,
+        http_resolver: &dyn AsyncHttpResolver,
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>>> {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
-                use crate::http::AsyncGenericResolver;
-
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
                 return Some(
                     crate::crypto::time_stamp::default_rfc3161_request_async(
@@ -228,7 +234,7 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
                         headers,
                         &body,
                         message,
-                        &AsyncGenericResolver::new(),
+                        http_resolver,
                     )
                     .await
                     .map_err(|e| e.into()),
@@ -319,8 +325,12 @@ impl<T: ?Sized + Signer> Signer for Box<T> {
         (**self).timestamp_request_body(message)
     }
 
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        (**self).send_timestamp_request(message)
+    fn send_timestamp_request(
+        &self,
+        http_resolver: &dyn SyncHttpResolver,
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>>> {
+        (**self).send_timestamp_request(http_resolver, message)
     }
 
     fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
@@ -369,10 +379,11 @@ impl TimeStampProvider for Box<dyn Signer> {
 
     fn send_time_stamp_request(
         &self,
+        http_resolver: &dyn SyncHttpResolver,
         message: &[u8],
     ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
         self.as_ref()
-            .send_timestamp_request(message)
+            .send_timestamp_request(http_resolver, message)
             .map(|r| Ok(r?))
     }
 }
@@ -410,8 +421,14 @@ impl<T: ?Sized + AsyncSigner> AsyncSigner for Box<T> {
         (**self).timestamp_request_body(message)
     }
 
-    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        (**self).send_timestamp_request(message).await
+    async fn send_timestamp_request(
+        &self,
+        http_resolver: &dyn AsyncHttpResolver,
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>>> {
+        (**self)
+            .send_timestamp_request(http_resolver, message)
+            .await
     }
 
     async fn ocsp_val(&self) -> Option<Vec<u8>> {
@@ -469,9 +486,13 @@ impl Signer for RawSignerWrapper {
             .map_err(|e| e.into())
     }
 
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+    fn send_timestamp_request(
+        &self,
+        http_resolver: &dyn SyncHttpResolver,
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>>> {
         self.0
-            .send_time_stamp_request(message)
+            .send_time_stamp_request(http_resolver, message)
             .map(|r| r.map_err(|e| e.into()))
     }
 
