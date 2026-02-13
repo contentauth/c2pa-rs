@@ -1915,6 +1915,8 @@ impl Builder {
     /// Create a placeholder for a hashed data manifest.
     ///
     /// This is only used for applications doing their own data_hashed asset management.
+    /// This function does not support dynamic assertions (e.g., CAWG identity).
+    /// Use [`Builder::placeholder`] if you need dynamic assertion support.
     ///
     /// # Arguments
     /// * `reserve_size` - The size to reserve for the signature (taken from the signer).
@@ -1928,6 +1930,7 @@ impl Builder {
         reserve_size: usize,
         format: &str,
     ) -> Result<Vec<u8>> {
+        // Add DataHash to builder's definition if not present, so it persists for sign_data_hashed_embeddable
         let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
         if dh.is_err() {
             let mut ph = DataHash::new("jumbf manifest", "sha256");
@@ -1941,6 +1944,193 @@ impl Builder {
         let mut store = self.to_store()?;
         let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
         Ok(placeholder)
+    }
+
+    /// Create a placeholder manifest with dynamic assertion support.
+    ///
+    /// This returns raw JUMBF bytes for the placeholder manifest.
+    /// Use [`Builder::composed_manifest`] to compose for a specific format if needed.
+    /// The signer is obtained from the Builder's context.
+    ///
+    /// This method automatically adds an appropriate hash assertion if none exists,
+    /// based on the asset format. For BMFF formats, it adds a BmffHash; otherwise,
+    /// it adds a DataHash. If a hash assertion already exists, it is used as-is.
+    ///
+    /// # Workflow
+    /// 1. (Optional) Add a pre-sized hash assertion to the Builder
+    /// 2. Call this method to create a placeholder manifest
+    /// 3. Embed the placeholder into your asset
+    /// 4. Calculate the hash of the asset (excluding the placeholder)
+    /// 5. Update the hash assertion in the Builder
+    /// 6. Call [`Builder::sign_placeholder`] to sign the manifest
+    ///
+    /// # Returns
+    /// * The raw JUMBF bytes of the `c2pa_manifest` placeholder.
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if the placeholder cannot be created or if multiple hash assertions exist.
+    pub fn placeholder(&mut self, format: &str) -> Result<Vec<u8>> {
+        // Check existing hash assertions
+        let has_data_hash = self.find_assertion::<DataHash>(DataHash::LABEL).is_ok();
+        let has_bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL).is_ok();
+        let has_box_hash = self.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok();
+
+        let hash_count = [has_data_hash, has_bmff_hash, has_box_hash]
+            .iter()
+            .filter(|&&x| x)
+            .count();
+
+        // Error if more than one hash binding exists
+        if hash_count > 1 {
+            return Err(Error::BadParam(
+                "Builder cannot have multiple hash binding assertions (DataHash, BmffHash, or BoxHash)".to_string()
+            ));
+        }
+
+        // If no hash exists, add an appropriate placeholder based on format
+        if hash_count == 0 {
+            if crate::jumbf_io::is_bmff_format(format) {
+                // For BMFF formats, add a placeholder BmffHash
+                let placeholder_bmff = BmffHash::new("jumbf manifest", "sha256", None);
+                self.add_assertion(BmffHash::LABEL, &placeholder_bmff)?;
+            } else {
+                // For non-BMFF formats, add a placeholder DataHash
+                let mut placeholder_dh = DataHash::new("jumbf manifest", "sha256");
+                // Add placeholder exclusions to ensure proper sizing
+                for _ in 0..10 {
+                    placeholder_dh.add_exclusion(HashRange::new(0, 2));
+                }
+                let dummy_hash = vec![0u8; 32]; // 32 bytes for SHA-256
+                placeholder_dh.set_hash(dummy_hash);
+                self.add_assertion(DataHash::LABEL, &placeholder_dh)?;
+            }
+        }
+
+        let mut store = self.to_store()?;
+        store.get_placeholder(format, self.context())
+    }
+
+    /// Update the hash assertion in the Builder by calculating hash from a stream.
+    ///
+    /// This method automatically detects the type of hash assertion in the Builder
+    /// and updates it with the calculated hash from the stream.
+    /// The hash calculation excludes the specified ranges (e.g., the embedded manifest).
+    ///
+    /// # Arguments
+    /// * `stream` - The stream to hash (e.g., the asset with embedded placeholder)
+    /// * `exclusions` - Ranges to exclude from hashing (e.g., where the manifest is embedded)
+    /// * `alg` - The hash algorithm to use (e.g., "sha256")
+    ///
+    /// # Returns
+    /// * A mutable reference to the [`Builder`] for method chaining
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if no hash assertion exists or if hashing fails
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use c2pa::{Builder, HashRange, Result};
+    /// # use std::io::Cursor;
+    /// # fn example() -> Result<()> {
+    /// # let mut builder = Builder::default();
+    /// # let placeholder = builder.placeholder("image/jpeg")?;
+    /// # let mut stream = Cursor::new(vec![0u8; 1000]);
+    /// // After embedding the placeholder at position 2
+    /// let exclusion = HashRange::new(2, placeholder.len() as u64);
+    /// builder.update_hash_from_stream(&mut stream, vec![exclusion], "sha256")?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn update_hash_from_stream<R>(
+        &mut self,
+        stream: &mut R,
+        exclusions: Vec<HashRange>,
+        alg: &str,
+    ) -> Result<&mut Self>
+    where
+        R: Read + Seek + ?Sized,
+    {
+        // Determine which hash type exists in the builder
+        let has_data_hash = self.find_assertion::<DataHash>(DataHash::LABEL).is_ok();
+        let has_bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL).is_ok();
+
+        if has_data_hash {
+            // Calculate hash for DataHash
+            let hash = crate::hash_stream_by_alg(alg, stream, Some(exclusions.clone()), true)?;
+
+            // Create new DataHash with calculated hash
+            let mut dh = DataHash::new("jumbf manifest", alg);
+            for exclusion in exclusions {
+                dh.add_exclusion(exclusion);
+            }
+            dh.set_hash(hash);
+
+            // Replace the old DataHash
+            self.definition
+                .assertions
+                .retain(|a| !a.label.starts_with(DataHash::LABEL));
+            self.add_assertion(DataHash::LABEL, &dh)?;
+        } else if has_bmff_hash {
+            return Err(Error::BadParam(
+                "BmffHash update from stream not yet implemented. Please update manually."
+                    .to_string(),
+            ));
+        } else {
+            return Err(Error::BadParam(
+                "No hash assertion found in Builder. Call placeholder() first.".to_string(),
+            ));
+        }
+
+        Ok(self)
+    }
+
+    /// Sign a placeholder manifest with updated hash assertions from the Builder.
+    ///
+    /// This method takes a placeholder JUMBF created by [`Builder::placeholder`], updates
+    /// any hash assertions (DataHash, BmffHash) from the Builder's current state, and signs
+    /// the manifest. This supports dynamic assertions if configured in the signer.
+    ///
+    /// # Workflow
+    /// 1. Call [`Builder::placeholder`] to create a placeholder manifest
+    /// 2. Embed the placeholder into your asset
+    /// 3. Calculate the hash of the asset (excluding the placeholder)
+    /// 4. Update the hash assertion in the Builder: `builder.add_assertion(DataHash::LABEL, &updated_hash)`
+    /// 5. Call this method to sign: `builder.sign_placeholder(&placeholder, signer, format)`
+    ///
+    /// # Arguments
+    /// * `placeholder_jumbf` - The placeholder JUMBF bytes from [`Builder::placeholder`]
+    ///
+    /// # Returns
+    /// * The signed manifest bytes ready for embedding
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if the placeholder cannot be deserialized or signed
+    pub fn sign_placeholder(&mut self, placeholder: &[u8], format: &str) -> Result<Vec<u8>> {
+        // Deserialize placeholder without validation (it has a placeholder signature)
+        let mut validation_log = crate::status_tracker::StatusTracker::default();
+        let mut no_verify_settings = self.context.settings().clone();
+        no_verify_settings.verify.verify_after_reading = false;
+        let temp_context = Context::new().with_settings(no_verify_settings)?;
+
+        let mut store =
+            Store::from_jumbf_with_context(placeholder, &mut validation_log, &temp_context)?;
+
+        // Update hash assertions from Builder into the Store
+        let pc = store.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+        if let Ok(data_hash) = self.find_assertion::<DataHash>(DataHash::LABEL) {
+            pc.update_data_hash(data_hash)?;
+        }
+
+        if let Ok(bmff_hash) = self.find_assertion::<BmffHash>(BmffHash::LABEL) {
+            pc.update_bmff_hash(bmff_hash)?;
+        }
+
+        let signer = self.context().signer()?;
+        let jumbf = store.sign_manifest(signer, self.context().settings())?;
+
+        // Compose for the target format
+        Store::get_composed_manifest(&jumbf, format)
     }
 
     /// Create a signed data hashed embeddable manifest using a supplied signer.
