@@ -124,20 +124,14 @@ impl From<std::io::Error> for RawSignerError {
     }
 }
 
-#[cfg(all(
-    feature = "openssl",
-    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
-))]
+#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
 impl From<openssl::error::ErrorStack> for RawSignerError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::CryptoLibraryError(err.to_string())
     }
 }
 
-#[cfg(all(
-    feature = "openssl",
-    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
-))]
+#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
 impl From<crate::crypto::raw_signature::openssl::OpenSslMutexUnavailable> for RawSignerError {
     fn from(err: crate::crypto::raw_signature::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())
@@ -184,10 +178,7 @@ pub fn signer_from_cert_chain_and_private_key(
         }
     }
 
-    #[cfg(all(
-        feature = "openssl",
-        not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
-    ))]
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
     {
         return crate::crypto::raw_signature::openssl::signers::signer_from_cert_chain_and_private_key(
             &cert_chain,

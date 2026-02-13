@@ -23,11 +23,11 @@
 //! not be considered trusted in the C2PA conformance sense.
 
 use asn1_rs::FromDer;
-use rcgen::{BasicConstraints, CertificateParams, IsCa, KeyPair, KeyUsagePurpose};
 use x509_parser::prelude::X509Certificate;
 
 use crate::{
     crypto::raw_signature::{signer_from_cert_chain_and_private_key, RawSigner, SigningAlg},
+    utils::ephemeral_cert,
     Error, Result, Signer,
 };
 
@@ -76,65 +76,10 @@ impl EphemeralSigner {
     pub fn new(ee_cert_name: impl Into<String>) -> Result<Self> {
         let ee_cert_name = ee_cert_name.into();
 
-        // Create a self-signed CA using the same approach as the EE (Ed25519, etc.).
-        let mut ca_params = CertificateParams::new(vec!["c2pa-ephemeral-ca.local".into()])
-            .map_err(|e| Error::OtherError(Box::new(e)))?;
-
-        ca_params.distinguished_name.push(
-            rcgen::DnType::OrganizationName,
-            "Self-signed ephemeral CA (Content Authenticity SDK)",
-        );
-
-        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-
-        ca_params.key_usages = vec![
-            KeyUsagePurpose::DigitalSignature,
-            KeyUsagePurpose::KeyCertSign,
-            KeyUsagePurpose::CrlSign,
-        ];
-
-        ca_params.use_authority_key_identifier_extension = true;
-
-        let ca_keypair = KeyPair::generate_for(&rcgen::PKCS_ED25519)
-            .map_err(|e| Error::OtherError(Box::new(e)))?;
-
-        let ca_cert = ca_params
-            .self_signed(&ca_keypair)
-            .map_err(|e| Error::OtherError(Box::new(e)))?;
-
-        // Issuer from the same CA params and key (used to sign the EE cert).
-        let issuer = rcgen::Issuer::new(ca_params, ca_keypair);
-
-        // End-entity certificate parameters (aligned with working_store_sign).
-        let mut ee_params = CertificateParams::new(vec![ee_cert_name])
-            .map_err(|e| Error::OtherError(Box::new(e)))?;
-
-        // Verifier expects an Organization in the subject for issuer_org in
-        // CertificateInfo.
-        ee_params.distinguished_name.push(
-            rcgen::DnType::OrganizationName,
-            "Self-signed ephemeral certificate (Content Authenticity SDK) -- LOCAL USE ONLY",
-        );
-
-        ee_params.use_authority_key_identifier_extension = true;
-
-        ee_params
-            .key_usages
-            .push(rcgen::KeyUsagePurpose::DigitalSignature);
-
-        ee_params
-            .extended_key_usages
-            .push(rcgen::ExtendedKeyUsagePurpose::EmailProtection);
-
-        let ee_keypair = KeyPair::generate_for(&rcgen::PKCS_ED25519)
-            .map_err(|e| Error::OtherError(Box::new(e)))?;
-
-        let ee_cert = ee_params
-            .signed_by(&ee_keypair, &issuer)
-            .map_err(|e| Error::OtherError(Box::new(e)))?;
+        let chain = ephemeral_cert::generate_ephemeral_chain(&ee_cert_name)?;
 
         // Full chain as DER: end-entity first, then CA (per C2PA / Signer convention).
-        let cert_chain_der = vec![ee_cert.der().to_vec(), ca_cert.der().to_vec()];
+        let cert_chain_der = vec![chain.ee_der.clone(), chain.ca_der.clone()];
 
         // Ensure each certificate is valid X.509 DER (same format COSE x5chain
         // expects).
@@ -149,19 +94,22 @@ impl EphemeralSigner {
 
         // PEM chain and key for the raw signer (newline between certs so both are
         // parsed).
-        let cert_chain_pem = format!("{}\n{}", ee_cert.pem().trim_end(), ca_cert.pem().trim_end());
-        let private_key_pem = ee_keypair.serialize_pem();
+        let cert_chain_pem = format!(
+            "{}\n{}",
+            ephemeral_cert::der_to_pem(&chain.ee_der),
+            ephemeral_cert::der_to_pem(&chain.ca_der)
+        );
 
         let raw_signer = signer_from_cert_chain_and_private_key(
             cert_chain_pem.as_bytes(),
-            private_key_pem.as_bytes(),
+            chain.ee_private_key_pem.as_bytes(),
             SigningAlg::Ed25519,
             None,
         )
         .map_err(|e| Error::OtherError(Box::new(e)))?;
 
         // Ensure the raw signer's chain matches our DER chain (PEM decode must equal
-        // rcgen .der()).
+        // our DER).
         let raw_chain = raw_signer
             .cert_chain()
             .map_err(|e| Error::OtherError(Box::new(e)))?;
@@ -170,21 +118,21 @@ impl EphemeralSigner {
             return Err(Error::OtherError(Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 format!(
-                "ephemeral cert chain length mismatch: raw_signer has {}, cert_chain_der has {}",
-                raw_chain.len(),
-                cert_chain_der.len()
-            ),
+                    "ephemeral cert chain length mismatch: raw_signer has {}, cert_chain_der has {}",
+                    raw_chain.len(),
+                    cert_chain_der.len()
+                ),
             ))));
         }
 
         for (i, (a, b)) in raw_chain.iter().zip(cert_chain_der.iter()).enumerate() {
             if a != b {
                 return Err(Error::OtherError(Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "ephemeral cert chain entry {i} differs between raw_signer and cert_chain_der (PEM decode vs rcgen .der())"
-                ),
-            ))));
+                    std::io::ErrorKind::InvalidData,
+                    format!(
+                        "ephemeral cert chain entry {i} differs between raw_signer and cert_chain_der (PEM decode vs our DER)"
+                    ),
+                ))));
             }
         }
 
