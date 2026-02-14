@@ -21,7 +21,7 @@ You can also read the documentation directly in GitHub:
 - [Using the CAWG identity assertion](https://github.com/contentauth/c2pa-rs/blob/main/docs/cawg-id.md)
 - [Configuring SDK operations using Context](https://github.com/contentauth/c2pa-rs/blob/main/docs/context.md)
 - [Intents and archives](https://github.com/contentauth/c2pa-rs/blob/main/docs/intents-and-archives.md)
-- [Working stores and C2PA archives](https://github.com/contentauth/c2pa-rs/blob/main/docs/intents-and-archives.md)
+- [Working stores and C2PA archives](https://github.com/contentauth/c2pa-rs/blob/main/docs/working-stores.md)
 - [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
 - [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md)
 
