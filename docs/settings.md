@@ -4,7 +4,7 @@ You can configure how the SDK works in any programming language using declarativ
 
 ## Loading settings
 
-Load settings either inline or from a file using the [`Context::with_settings()`](https://docs.rs/c2pa/latest/c2pa/struct.Context.html#method.with_settings) method. This method automatically detects the format (JSON or TOML). Using `Context` is thread-safe and can be shared with `Arc<Context>` and allows multiple configurations in one application.
+Load settings either inline or from a file using the [`Context::new().with_settings()`](https://docs.rs/c2pa/latest/c2pa/struct.Context.html#method.with_settings) method. This method automatically detects the format (JSON or TOML). Using `Context` is thread-safe and can be shared with `Arc<Context>` and allows multiple configurations in one application.
 
 
 ```rust
