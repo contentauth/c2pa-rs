@@ -20,7 +20,7 @@ use c2pa::{CrJsonReader, Result};
 use serde_json::Value;
 use std::io::Cursor;
 
-const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("fixtures/CA.jpg");
+const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
 
 /// Recursively check that all "hash" fields in the JSON are strings (base64),
 /// not arrays of integers.

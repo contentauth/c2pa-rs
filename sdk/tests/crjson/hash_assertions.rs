@@ -9,7 +9,7 @@ use std::io::Cursor;
 use c2pa::{CrJsonReader, Result};
 
 // Test image with manifest
-const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("fixtures/C.jpg");
+const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/C.jpg");
 
 #[test]
 fn test_hash_data_assertion_included() -> Result<()> {

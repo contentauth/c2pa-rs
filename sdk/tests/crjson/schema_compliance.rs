@@ -11,20 +11,20 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Schema compliance tests for crJSON format
+//! Schema compliance tests for crJSON format.
+//! These tests validate CrJSON output structure and alignment with `export_schema/crJSON-schema.json`.
 
 use c2pa::{CrJsonReader, Result};
 use std::io::Cursor;
 
-const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("fixtures/CA.jpg");
+const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
+
+/// CrJSON schema (export_schema/crJSON-schema.json) - used to verify output structure.
+const CRJSON_SCHEMA: &str = include_str!("../../../export_schema/crJSON-schema.json");
 
 #[test]
 fn test_validation_status_schema_compliance() -> Result<()> {
-    let mut reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-
-    // Compute asset hash
-    let mut stream = Cursor::new(IMAGE_WITH_MANIFEST);
-    reader.compute_asset_hash(&mut stream)?;
+    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
 
     let json_value = reader.to_json_value()?;
 
@@ -183,47 +183,6 @@ fn test_manifest_status_schema_compliance() -> Result<()> {
 }
 
 #[test]
-fn test_asset_info_schema_compliance() -> Result<()> {
-    let mut reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-
-    // Compute hash to populate asset_info
-    let mut stream = Cursor::new(IMAGE_WITH_MANIFEST);
-    reader.compute_asset_hash(&mut stream)?;
-
-    let json_value = reader.to_json_value()?;
-
-    // Verify asset_info exists
-    let asset_info = json_value
-        .get("asset_info")
-        .expect("asset_info should exist when hash is computed");
-
-    assert!(asset_info.is_object(), "asset_info should be an object");
-    let asset_info_obj = asset_info.as_object().unwrap();
-
-    // Required: alg
-    assert!(
-        asset_info_obj.contains_key("alg"),
-        "asset_info should have alg field"
-    );
-    assert!(
-        asset_info_obj.get("alg").unwrap().is_string(),
-        "alg should be string"
-    );
-
-    // Required: hash
-    assert!(
-        asset_info_obj.contains_key("hash"),
-        "asset_info should have hash field"
-    );
-    assert!(
-        asset_info_obj.get("hash").unwrap().is_string(),
-        "hash should be string"
-    );
-
-    Ok(())
-}
-
-#[test]
 fn test_context_schema_compliance() -> Result<()> {
     let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_json_value()?;
@@ -285,46 +244,97 @@ fn test_manifests_array_schema_compliance() -> Result<()> {
 }
 
 #[test]
-fn test_content_object_exists() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
-
-    // content object should exist (can be empty)
-    let content = json_value.get("content").expect("content should exist");
-    assert!(content.is_object(), "content should be an object");
-
-    Ok(())
-}
-
-#[test]
 fn test_complete_schema_structure() -> Result<()> {
-    let mut reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-
-    // Compute hash for complete output
-    let mut stream = Cursor::new(IMAGE_WITH_MANIFEST);
-    reader.compute_asset_hash(&mut stream)?;
+    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
 
     let json_value = reader.to_json_value()?;
 
-    // Verify all top-level required/expected fields
+    // Verify all top-level required fields (no asset_info, content, or metadata)
     assert!(json_value.get("@context").is_some(), "@context missing");
-    assert!(
-        json_value.get("asset_info").is_some(),
-        "asset_info missing (with hash)"
-    );
     assert!(json_value.get("manifests").is_some(), "manifests missing");
-    assert!(json_value.get("content").is_some(), "content missing");
     assert!(
         json_value.get("extras:validation_status").is_some(),
         "extras:validation_status missing"
     );
 
+    // CrJSON does not include asset_info, content, or metadata
+    assert!(json_value.get("asset_info").is_none());
+    assert!(json_value.get("content").is_none());
+    assert!(json_value.get("metadata").is_none());
+
     // Verify types
     assert!(json_value["@context"].is_object());
-    assert!(json_value["asset_info"].is_object());
     assert!(json_value["manifests"].is_array());
-    assert!(json_value["content"].is_object());
     assert!(json_value["extras:validation_status"].is_object());
+
+    Ok(())
+}
+
+/// Load and parse the CrJSON schema file; ensure it defines the expected root properties
+/// and does not include declaration, asset_info, content, or metadata.
+#[test]
+fn test_cr_json_schema_file_valid_and_matches_format() -> Result<()> {
+    let schema_value: serde_json::Value =
+        serde_json::from_str(CRJSON_SCHEMA).expect("crJSON-schema.json must be valid JSON");
+
+    let props = schema_value
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .expect("schema must have properties");
+
+    // CrJSON schema must define these root properties
+    assert!(props.contains_key("@context"), "schema must define @context");
+    assert!(props.contains_key("manifests"), "schema must define manifests");
+    assert!(
+        props.contains_key("extras:validation_status") || props.contains_key("validation_status"),
+        "schema must define validation_status or extras:validation_status"
+    );
+
+    // CrJSON schema must NOT include removed sections
+    assert!(!props.contains_key("declaration"), "schema must not include declaration");
+    assert!(!props.contains_key("asset_info"), "schema must not include asset_info");
+    assert!(!props.contains_key("content"), "schema must not include content");
+    assert!(!props.contains_key("metadata"), "schema must not include metadata");
+
+    // Schema $id should reference crJSON-schema
+    let id = schema_value.get("$id").and_then(|i| i.as_str()).unwrap_or("");
+    assert!(
+        id.contains("crJSON-schema"),
+        "schema $id should reference crJSON-schema.json, got: {}",
+        id
+    );
+
+    Ok(())
+}
+
+/// Verify CrJSON output from the reader conforms to the schema's root shape
+/// (no declaration, asset_info, content, metadata).
+#[test]
+fn test_cr_json_output_matches_schema_root() -> Result<()> {
+    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_json_value()?;
+
+    let schema_value: serde_json::Value =
+        serde_json::from_str(CRJSON_SCHEMA).expect("crJSON-schema.json must be valid JSON");
+    let props = schema_value
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .expect("schema must have properties");
+
+    // Every top-level key in output should be allowed by the schema (or be additionalProperties)
+    for key in json_value.as_object().unwrap().keys() {
+        assert!(
+            props.contains_key(key),
+            "CrJSON output key {:?} is not in crJSON-schema.json properties (schema may allow via additionalProperties)",
+            key
+        );
+    }
+
+    // Output must not contain removed root keys
+    assert!(json_value.get("declaration").is_none());
+    assert!(json_value.get("asset_info").is_none());
+    assert!(json_value.get("content").is_none());
+    assert!(json_value.get("metadata").is_none());
 
     Ok(())
 }

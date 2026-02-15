@@ -17,8 +17,8 @@ use std::io::Cursor;
 
 use c2pa::{Builder, Context, CrJsonReader, Result, Settings};
 
-const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
-const TEST_SETTINGS: &str = include_str!("../tests/fixtures/test_settings.toml");
+const TEST_IMAGE: &[u8] = include_bytes!("../fixtures/CA.jpg");
+const TEST_SETTINGS: &str = include_str!("../fixtures/test_settings.toml");
 
 #[test]
 fn test_created_and_gathered_assertions_separated() -> Result<()> {
@@ -70,28 +70,20 @@ fn test_created_and_gathered_assertions_separated() -> Result<()> {
         .as_array()
         .expect("manifests should be array");
 
-    // We need to find the manifest with our test assertions (the newly created one)
-    // This is the most recent manifest with claim version 2 (which has created_assertions/gathered_assertions)
+    // Find the manifest that contains our test assertions (org.test.created, org.test.gathered, org.test.regular)
     let active_manifest = manifests
         .iter()
-        .filter(|m| {
-            // Filter for claim v2 manifests (which have non-empty created_assertions or gathered_assertions)
-            if let Some(claim_v2) = m.get("claim.v2") {
-                if let Some(created) = claim_v2.get("created_assertions") {
-                    if let Some(arr) = created.as_array() {
-                        return !arr.is_empty();
-                    }
-                }
-                if let Some(gathered) = claim_v2.get("gathered_assertions") {
-                    if let Some(arr) = gathered.as_array() {
-                        return !arr.is_empty();
-                    }
-                }
-            }
-            false
+        .find(|m| {
+            m.get("assertions")
+                .and_then(|a| a.as_object())
+                .map(|obj| {
+                    obj.contains_key("org.test.created")
+                        && obj.contains_key("org.test.gathered")
+                        && obj.contains_key("org.test.regular")
+                })
+                .unwrap_or(false)
         })
-        .last()
-        .expect("should have at least one claim v2 manifest");
+        .expect("should have a manifest with our test assertions (org.test.created, org.test.gathered, org.test.regular)");
 
     // Print the label for debugging
     println!("Manifest label: {:?}", active_manifest.get("label"));
@@ -283,4 +275,3 @@ fn test_hash_assertions_in_created() -> Result<()> {
 
     Ok(())
 }
-

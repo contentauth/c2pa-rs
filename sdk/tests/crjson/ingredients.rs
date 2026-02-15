@@ -16,7 +16,7 @@
 use c2pa::{CrJsonReader, Result};
 use std::io::Cursor;
 
-const IMAGE_WITH_INGREDIENT: &[u8] = include_bytes!("fixtures/CA.jpg");
+const IMAGE_WITH_INGREDIENT: &[u8] = include_bytes!("../fixtures/CA.jpg");
 
 #[test]
 fn test_ingredient_assertions_included() -> Result<()> {

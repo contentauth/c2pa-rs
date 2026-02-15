@@ -36,7 +36,6 @@ use crate::{
     error::{Error, Result},
     jumbf::labels::to_absolute_uri,
     reader::{AsyncPostValidator, MaybeSend, PostValidator, Reader},
-    utils::hash_utils::hash_stream_by_alg,
     validation_results::{
         validation_codes::{
             SIGNING_CREDENTIAL_EXPIRED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
@@ -54,17 +53,6 @@ use crate::{
 pub struct CrJsonReader {
     #[serde(skip)]
     inner: Reader,
-
-    /// Optional asset hash computed from the original asset
-    #[serde(skip)]
-    asset_hash: Option<AssetHash>,
-}
-
-/// Represents the hash of an asset
-#[derive(Debug, Clone)]
-struct AssetHash {
-    algorithm: String,
-    hash: String,
 }
 
 impl CrJsonReader {
@@ -72,7 +60,6 @@ impl CrJsonReader {
     pub fn from_context(context: Context) -> Self {
         Self {
             inner: Reader::from_context(context),
-            asset_hash: None,
         }
     }
 
@@ -80,7 +67,6 @@ impl CrJsonReader {
     pub fn from_shared_context(context: &Arc<Context>) -> Self {
         Self {
             inner: Reader::from_shared_context(context),
-            asset_hash: None,
         }
     }
 
@@ -105,12 +91,10 @@ impl CrJsonReader {
         if _sync {
             Ok(Self {
                 inner: Reader::from_stream(format, stream)?,
-                asset_hash: None,
             })
         } else {
             Ok(Self {
                 inner: Reader::from_stream_async(format, stream).await?,
-                asset_hash: None,
             })
         }
     }
@@ -134,12 +118,10 @@ impl CrJsonReader {
         if _sync {
             Ok(Self {
                 inner: Reader::from_file(path)?,
-                asset_hash: None,
             })
         } else {
             Ok(Self {
                 inner: Reader::from_file_async(path).await?,
-                asset_hash: None,
             })
         }
     }
@@ -175,13 +157,11 @@ impl CrJsonReader {
         if _sync {
             Ok(Self {
                 inner: Reader::from_manifest_data_and_stream(c2pa_data, format, stream)?,
-                asset_hash: None,
             })
         } else {
             Ok(Self {
                 inner: Reader::from_manifest_data_and_stream_async(c2pa_data, format, stream)
                     .await?,
-                asset_hash: None,
             })
         }
     }
@@ -218,27 +198,14 @@ impl CrJsonReader {
     pub fn to_json_value(&self) -> Result<Value> {
         let mut result = json!({
             "@context": {
-                "@vocab": "https://jpeg.org/jpegtrust",
-                "extras": "https://jpeg.org/jpegtrust/extras"
+                "@vocab": "https://contentcredentials.org/crjson",
+                "extras": "https://contentcredentials.org/crjson/extras"
             }
         });
-
-        // Add asset_info if we have computed the hash
-        if let Some(asset_info) = self.get_asset_hash_json() {
-            result["asset_info"] = asset_info;
-        }
 
         // Convert manifests from HashMap to Array
         let manifests_array = self.convert_manifests_to_array()?;
         result["manifests"] = manifests_array;
-
-        // Add content (typically empty)
-        result["content"] = json!({});
-
-        // Add metadata if available
-        if let Some(metadata) = self.extract_metadata()? {
-            result["metadata"] = metadata;
-        }
 
         // Add extras:validation_status
         if let Some(validation_status) = self.build_validation_status()? {
@@ -254,127 +221,6 @@ impl CrJsonReader {
             Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
             Err(_) => "{}".to_string(),
         }
-    }
-
-    /// Compute and store the asset hash from a stream.
-    ///
-    /// This method computes the SHA-256 hash of the asset and stores it for inclusion
-    /// in the crJSON format output. The stream will be rewound to the beginning
-    /// before computing the hash.
-    ///
-    /// # Arguments
-    /// * `stream` - A readable and seekable stream containing the asset data
-    ///
-    /// # Returns
-    /// The computed hash as a base64-encoded string
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use c2pa::{CrJsonReader, Result};
-    /// # fn main() -> Result<()> {
-    /// use std::fs::File;
-    ///
-    /// let mut reader = CrJsonReader::from_file("image.jpg")?;
-    ///
-    /// // Compute hash from the same file
-    /// let mut file = File::open("image.jpg")?;
-    /// let hash = reader.compute_asset_hash(&mut file)?;
-    ///
-    /// // Now the JSON output will include asset_info
-    /// let json = reader.json();
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn compute_asset_hash(&mut self, stream: &mut (impl Read + Seek)) -> Result<String> {
-        // Rewind to the beginning
-        stream.rewind()?;
-
-        // Compute SHA-256 hash of the entire stream
-        let hash = hash_stream_by_alg("sha256", stream, None, true)?;
-        let hash_b64 = base64::encode(&hash);
-
-        // Store for later use
-        self.asset_hash = Some(AssetHash {
-            algorithm: "sha256".to_string(),
-            hash: hash_b64.clone(),
-        });
-
-        Ok(hash_b64)
-    }
-
-    /// Compute and store the asset hash from a file.
-    ///
-    /// This is a convenience method that opens the file and computes its hash.
-    ///
-    /// # Arguments
-    /// * `path` - Path to the asset file
-    ///
-    /// # Returns
-    /// The computed hash as a base64-encoded string
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use c2pa::{CrJsonReader, Result};
-    /// # fn main() -> Result<()> {
-    /// let mut reader = CrJsonReader::from_file("image.jpg")?;
-    /// let hash = reader.compute_asset_hash_from_file("image.jpg")?;
-    /// println!("Asset hash: {}", hash);
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(feature = "file_io")]
-    pub fn compute_asset_hash_from_file<P: AsRef<std::path::Path>>(
-        &mut self,
-        path: P,
-    ) -> Result<String> {
-        let mut file = std::fs::File::open(path)?;
-        self.compute_asset_hash(&mut file)
-    }
-
-    /// Set the asset hash directly without computing it.
-    ///
-    /// This method allows you to provide a pre-computed hash, which can be useful
-    /// if you've already computed the hash elsewhere or want to use a different
-    /// algorithm.
-    ///
-    /// # Arguments
-    /// * `algorithm` - The hash algorithm used (e.g., "sha256")
-    /// * `hash` - The base64-encoded hash value
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use c2pa::{CrJsonReader, Result};
-    /// # fn main() -> Result<()> {
-    /// let mut reader = CrJsonReader::from_file("image.jpg")?;
-    /// reader.set_asset_hash("sha256", "JPkcXXC5DfT9IUUBPK5UaKxGsJ8YIE67BayL+ei3ats=");
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn set_asset_hash(&mut self, algorithm: &str, hash: &str) {
-        self.asset_hash = Some(AssetHash {
-            algorithm: algorithm.to_string(),
-            hash: hash.to_string(),
-        });
-    }
-
-    /// Get the currently stored asset hash, if any.
-    ///
-    /// # Returns
-    /// A tuple of (algorithm, hash) if the hash has been set, or None
-    pub fn asset_hash(&self) -> Option<(&str, &str)> {
-        self.asset_hash
-            .as_ref()
-            .map(|h| (h.algorithm.as_str(), h.hash.as_str()))
-    }
-
-    /// Get asset hash info for JSON output
-    fn get_asset_hash_json(&self) -> Option<Value> {
-        self.asset_hash.as_ref().map(|h| {
-            json!({
-                "alg": h.algorithm,
-                "hash": h.hash
-            })
-        })
     }
 
     /// Convert manifests from HashMap to Array format.
@@ -1137,13 +983,6 @@ impl CrJsonReader {
             .map(|s| s.code().to_string())
     }
 
-    /// Extract metadata from manifest (placeholder - not fully available)
-    fn extract_metadata(&self) -> Result<Option<Value>> {
-        // TODO: This would require extracting EXIF/XMP metadata from the asset
-        // which is not currently available from the Reader API.
-        Ok(None)
-    }
-
     /// Build extras:validation_status from validation results
     fn build_validation_status(&self) -> Result<Option<Value>> {
         let validation_results = match self.inner.validation_results() {
@@ -1314,7 +1153,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_jpeg_trust_reader_from_file() -> Result<()> {
+    fn test_cr_json_reader_from_file() -> Result<()> {
         let reader = CrJsonReader::from_file("tests/fixtures/CA.jpg")?;
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
@@ -1326,183 +1165,10 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_asset_hash_from_stream() -> Result<()> {
-        // Create reader
-        let mut reader =
-            CrJsonReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
-
-        // Initially no asset hash
-        assert!(reader.asset_hash().is_none());
-
-        // Compute hash from stream
-        let mut stream = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
-        let hash = reader.compute_asset_hash(&mut stream)?;
-
-        // Verify hash was computed
-        assert!(!hash.is_empty());
-        assert!(reader.asset_hash().is_some());
-
-        // Verify hash is accessible
-        let (alg, stored_hash) = reader.asset_hash().unwrap();
-        assert_eq!(alg, "sha256");
-        assert_eq!(stored_hash, hash);
-
-        // Verify JSON output includes asset_info
-        let json_value = reader.to_json_value()?;
-        assert!(json_value.get("asset_info").is_some());
-
-        let asset_info = &json_value["asset_info"];
-        assert_eq!(asset_info["alg"], "sha256");
-        assert_eq!(asset_info["hash"], hash);
-
-        Ok(())
-    }
-
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_compute_asset_hash_from_file() -> Result<()> {
-        // Create reader
-        let mut reader = CrJsonReader::from_file("tests/fixtures/CA.jpg")?;
-
-        // Compute hash from same file
-        let hash = reader.compute_asset_hash_from_file("tests/fixtures/CA.jpg")?;
-
-        // Verify hash was computed
-        assert!(!hash.is_empty());
-        assert!(reader.asset_hash().is_some());
-
-        // Verify JSON includes asset_info
-        let json_value = reader.to_json_value()?;
-        assert!(json_value.get("asset_info").is_some());
-
-        let asset_info = &json_value["asset_info"];
-        assert_eq!(asset_info["alg"], "sha256");
-        assert_eq!(asset_info["hash"], hash);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_set_asset_hash_directly() -> Result<()> {
-        // Create reader
-        let mut reader =
-            CrJsonReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
-
-        // Set hash directly
-        let test_hash = "JPkcXXC5DfT9IUUBPK5UaKxGsJ8YIE67BayL+ei3ats=";
-        reader.set_asset_hash("sha256", test_hash);
-
-        // Verify hash is set
-        let (alg, hash) = reader.asset_hash().unwrap();
-        assert_eq!(alg, "sha256");
-        assert_eq!(hash, test_hash);
-
-        // Verify JSON includes asset_info
-        let json_value = reader.to_json_value()?;
-        let asset_info = &json_value["asset_info"];
-        assert_eq!(asset_info["alg"], "sha256");
-        assert_eq!(asset_info["hash"], test_hash);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_asset_hash_consistency() -> Result<()> {
-        // Create two readers from the same data
-        let mut reader1 =
-            CrJsonReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
-
-        let mut reader2 =
-            CrJsonReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
-
-        // Compute hashes
-        let mut stream1 = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
-        let hash1 = reader1.compute_asset_hash(&mut stream1)?;
-
-        let mut stream2 = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
-        let hash2 = reader2.compute_asset_hash(&mut stream2)?;
-
-        // Hashes should be identical
-        assert_eq!(hash1, hash2);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_json_without_asset_hash() -> Result<()> {
-        // Create reader without computing hash
-        let reader =
-            CrJsonReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
-
-        // JSON should not include asset_info
-        let json_value = reader.to_json_value()?;
-        assert!(json_value.get("asset_info").is_none());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_json_with_asset_hash() -> Result<()> {
-        // Create reader and compute hash
-        let mut reader =
-            CrJsonReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
-
-        let mut stream = std::io::Cursor::new(IMAGE_WITH_MANIFEST);
-        reader.compute_asset_hash(&mut stream)?;
-
-        // JSON should include asset_info
-        let json_value = reader.to_json_value()?;
-        assert!(json_value.get("asset_info").is_some());
-
-        // Verify structure
-        let asset_info = &json_value["asset_info"];
-        assert!(asset_info.get("alg").is_some());
-        assert!(asset_info.get("hash").is_some());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_asset_hash_update() -> Result<()> {
-        // Create reader
-        let mut reader =
-            CrJsonReader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
-
-        // Set initial hash
-        reader.set_asset_hash("sha256", "hash1");
-        assert_eq!(reader.asset_hash().unwrap().1, "hash1");
-
-        // Update hash
-        reader.set_asset_hash("sha512", "hash2");
-        let (alg, hash) = reader.asset_hash().unwrap();
-        assert_eq!(alg, "sha512");
-        assert_eq!(hash, "hash2");
-
-        Ok(())
-    }
-
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_asset_hash_with_different_files() -> Result<()> {
-        // Test with two different files
-        let mut reader1 = CrJsonReader::from_file("tests/fixtures/CA.jpg")?;
-        let hash1 = reader1.compute_asset_hash_from_file("tests/fixtures/CA.jpg")?;
-
-        let mut reader2 = CrJsonReader::from_file("tests/fixtures/C.jpg")?;
-        let hash2 = reader2.compute_asset_hash_from_file("tests/fixtures/C.jpg")?;
-
-        // Different files should have different hashes
-        assert_ne!(hash1, hash2);
-
-        Ok(())
-    }
-
-    #[test]
     #[cfg(feature = "file_io")]
     fn test_claim_signature_decoding() -> Result<()> {
         // Test that claim_signature is decoded with full certificate details
-        let mut reader = CrJsonReader::from_file("tests/fixtures/CA.jpg")?;
-        reader.compute_asset_hash_from_file("tests/fixtures/CA.jpg")?;
+        let reader = CrJsonReader::from_file("tests/fixtures/CA.jpg")?;
 
         let json_value = reader.to_json_value()?;
         let manifests = json_value["manifests"].as_array().unwrap();
@@ -1542,8 +1208,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     fn test_cawg_identity_x509_signature_decoding() -> Result<()> {
         // Test that cawg.identity with X.509 signature is fully decoded
-        let mut reader = CrJsonReader::from_file("tests/fixtures/C_with_CAWG_data.jpg")?;
-        reader.compute_asset_hash_from_file("tests/fixtures/C_with_CAWG_data.jpg")?;
+        let reader = CrJsonReader::from_file("tests/fixtures/C_with_CAWG_data.jpg")?;
 
         let json_value = reader.to_json_value()?;
         let manifests = json_value["manifests"].as_array().unwrap();
@@ -1607,10 +1272,8 @@ mod tests {
         // Test that cawg.identity with ICA signature extracts VC information
         // Note: This test uses a fixture from the identity tests
         let test_image = include_bytes!("identity/tests/fixtures/claim_aggregation/adobe_connected_identities.jpg");
-        
-        let mut reader = CrJsonReader::from_stream("image/jpeg", std::io::Cursor::new(&test_image[..]))?;
-        let mut stream = std::io::Cursor::new(&test_image[..]);
-        reader.compute_asset_hash(&mut stream)?;
+
+        let reader = CrJsonReader::from_stream("image/jpeg", std::io::Cursor::new(&test_image[..]))?;
 
         let json_value = reader.to_json_value()?;
         let manifests = json_value["manifests"].as_array().unwrap();
