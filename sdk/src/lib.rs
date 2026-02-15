@@ -222,6 +222,9 @@ pub mod identity;
 /// The `jumbf_io` module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
 
+/// The cr_json_reader module provides a Reader-like API that exports C2PA manifests in crJSON format.
+pub mod cr_json_reader;
+
 /// The settings module provides a way to configure the C2PA SDK.
 pub mod settings;
 
@@ -261,6 +264,7 @@ pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use manifest::{Manifest, SignatureInfo};
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 pub use reader::Reader;
+pub use cr_json_reader::CrJsonReader;
 #[doc(inline)]
 pub use resource_store::{ResourceRef, ResourceStore};
 #[doc(inline)]

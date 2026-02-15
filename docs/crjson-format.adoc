@@ -1,0 +1,290 @@
+= Content Credential JSON (CrJSON) File Format Specification
+:doctype: article
+:toc: left
+:toclevels: 3
+:sectnums:
+
+== 1. Scope
+
+This document describes a JSON serialization for Content Credentials (aka a C2PA manifest store) known as the *Content Credential JSON* format (abbreviated *CrJSON*).  It's purpose is to provide a JSON-based representation of a C2PA manifest store for profile evaluation, interoperability testing, and validation reporting.
+
+== 2. Normative References
+
+* C2PA Technical Specification v2.3: https://c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html
+* Local CrJSON JSON Schema: `/Users/lrosenth/Development/c2pa-rs/export_schema/indicators-schema.json`
+
+== 3. Relationship to C2PA v2.3
+
+CrJSON does not replace C2PA claim stores, JUMBF, or COSE structures. Instead, it is a *derived JSON view* over C2PA data.
+
+The following C2PA concepts are directly represented:
+
+* C2PA manifests -> `manifests[]`
+* C2PA assertions -> `manifests[].assertions` (object keyed by assertion label)
+* C2PA claim data -> `manifests[].claim.v2`
+* C2PA claim signature and credential details -> `manifests[].claim_signature`
+* C2PA validation results -> `manifests[].status` and `extras:validation_status`
+
+== 4. Data Model Overview
+
+[source,text]
+----
+C2PA Asset/Manifest Store
+  -> Reader validation + manifest extraction
+  -> CrJSON transformation
+  -> Output JSON object
+       |- @context
+       |- asset_info (optional)
+       |- manifests[]
+       |    |- label
+       |    |- claim.v2
+       |    |- assertions{...}
+       |    |- claim_signature (optional)
+       |    |- status (optional)
+       |- content
+       |- metadata (optional)
+       |- extras:validation_status (optional)
+----
+
+== 5. Serialization Requirements
+
+=== 5.1 Root Object
+
+A CrJSON document SHALL be a JSON object.
+
+The following top-level properties are used:
+
+[cols="1,1,3"]
+|===
+|Property |Presence |Description
+
+|`@context`
+|REQUIRED
+|JSON-LD context. Implementation emits an object with `@vocab` and `extras`.
+
+|`asset_info`
+|OPTIONAL
+|Asset-level hash descriptor containing `alg` and `hash`.
+
+|`manifests`
+|REQUIRED
+|Array of manifest objects.
+
+|`content`
+|REQUIRED
+|Content metadata object. Current implementation emits `{}`.
+
+|`metadata`
+|OPTIONAL
+|Extended metadata object. Currently not populated by implementation.
+
+|`extras:validation_status`
+|OPTIONAL
+|Overall validation report for the active manifest.
+|===
+
+=== 5.2 `@context`
+
+Implementation output:
+
+[source,json]
+----
+"@context": {
+  "@vocab": "https://jpeg.org/jpegtrust",
+  "extras": "https://jpeg.org/jpegtrust/extras"
+}
+----
+
+=== 5.3 `asset_info`
+
+`asset_info` SHALL contain:
+
+* `alg`: hash algorithm identifier (for computed hash, `sha256`)
+* `hash`: Base64-encoded digest bytes
+
+The implementation provides two paths:
+
+* `compute_asset_hash(...)` / `compute_asset_hash_from_file(...)`: computes SHA-256 and stores result.
+* `set_asset_hash(algorithm, hash)`: caller supplies precomputed values.
+
+=== 5.4 `manifests`
+
+`manifests` SHALL be an array. Ordering rules:
+
+1. Active manifest first, if present.
+2. Remaining manifests in store order, most recent first.
+
+Each manifest object includes:
+
+* `label` (manifest label/URN)
+* `assertions` (object)
+* `claim.v2` (object)
+* `claim_signature` (optional)
+* `status` (optional)
+
+=== 5.5 `claim.v2`
+
+`claim.v2` is a normalized object built from C2PA manifest/claim data. Typical fields:
+
+* `dc:title`
+* `instanceID`
+* `claim_generator`
+* `claim_generator_info`
+* `alg` (implementation currently emits `SHA-256`)
+* `signature` (`self#jumbf=/c2pa/{label}/c2pa.signature`)
+* `created_assertions[]` (`{url, hash}`)
+* `gathered_assertions[]` (`{url, hash}`)
+* `redacted_assertions[]` (currently empty array)
+
+All `hash` values in assertion references SHALL be Base64 strings.
+
+=== 5.6 `assertions`
+
+`assertions` SHALL be an object keyed by assertion label.
+
+==== 5.6.1 Included assertion sources
+
+CrJSON aggregates assertions from multiple C2PA sources:
+
+* Regular manifest assertions (`manifest.assertions()`)
+* Hash assertions from claim store (`c2pa.hash.data`, `c2pa.hash.bmff`, `c2pa.hash.boxes`, including versioned variants)
+* Ingredient assertions from `manifest.ingredients()`
+* Gathered assertions not present in regular list (including binary/UUID payload cases)
+
+==== 5.6.2 Labeling and instance rules
+
+* Base label is the assertion label string.
+* For repeated hash/gathered assertion instances, suffix `_N` is used where `N = instance + 1`.
+* For multiple ingredient assertions, suffix `__N` is used where `N` is 1-based index.
+
+Examples:
+
+* `c2pa.hash.data`
+* `c2pa.hash.bmff.v2`
+* `c2pa.ingredient`
+* `c2pa.ingredient.v3__2`
+
+==== 5.6.3 Binary normalization and hash encoding
+
+CrJSON normalizes byte-array encodings into Base64 string encodings.
+
+If fields are serialized as integer arrays, they are converted to Base64 strings for:
+
+* `hash`
+* `pad`
+* `pad1`
+* `pad2`
+* Certain `signature` byte payloads (decoded when possible; otherwise Base64)
+
+This rule applies recursively to nested objects/arrays.
+
+==== 5.6.4 Gathered binary assertion representation
+
+For gathered binary/UUID assertions, CrJSON emits a reference form:
+
+[source,json]
+----
+{
+  "format": "<content-type>",
+  "identifier": "<absolute-jumbf-uri>",
+  "hash": "<base64>"
+}
+----
+
+=== 5.7 `claim_signature`
+
+When signature information is available, `claim_signature` includes:
+
+* `algorithm`
+* `serial_number`
+* `issuer` (DN map, e.g., `C`, `ST`, `L`, `O`, `OU`, `CN`)
+* `subject` (DN map)
+* `validity.not_before`
+* `validity.not_after`
+
+The implementation parses the first certificate in the chain and serializes times as RFC 3339 strings.
+
+=== 5.8 `status` (per manifest)
+
+Per-manifest `status` is derived from active-manifest validation results and may include:
+
+* `signature`: first code prefixed by `claimSignature`
+* `trust`: preferred signing credential code (`trusted`, else `invalid`, `untrusted`, `expired`, then fallback)
+* `content`: first code prefixed by `assertion.dataHash`
+* `assertion`: map of assertion label -> validation code (when found)
+
+=== 5.9 `extras:validation_status` (global)
+
+Global validation object includes:
+
+* `isValid` (boolean)
+* `error` (`null` or first failure explanation)
+* `validationErrors[]` objects with:
+** `code`
+** `message` (optional)
+** `severity` (`error`)
+* `entries[]` objects with:
+** `code`
+** `url` (optional)
+** `explanation` (optional)
+** `severity` (`info`, `warning`, or `error`)
+
+== 6. Constraints and Current Implementation Limits
+
+* `content` is currently emitted as an empty object.
+* `metadata` extraction is currently not implemented by `JpegTrustReader` and is omitted.
+* CrJSON is export-oriented; it is not the canonical source of cryptographic truth. Canonical validation remains bound to C2PA/JUMBF/COSE data structures per C2PA v2.3.
+
+== 7. Minimal Example
+
+[source,json]
+----
+{
+  "@context": {
+    "@vocab": "https://jpeg.org/jpegtrust",
+    "extras": "https://jpeg.org/jpegtrust/extras"
+  },
+  "asset_info": {
+    "alg": "sha256",
+    "hash": "<base64>"
+  },
+  "manifests": [
+    {
+      "label": "urn:uuid:...",
+      "claim.v2": {
+        "instanceID": "xmp:iid:...",
+        "signature": "self#jumbf=/c2pa/urn:uuid:.../c2pa.signature",
+        "created_assertions": [],
+        "gathered_assertions": [],
+        "redacted_assertions": []
+      },
+      "assertions": {
+        "c2pa.actions.v2": {"actions": []},
+        "c2pa.hash.data": {"alg": "sha256", "hash": "<base64>"}
+      },
+      "status": {
+        "signature": "claimSignature.validated",
+        "trust": "signingCredential.trusted"
+      }
+    }
+  ],
+  "content": {},
+  "extras:validation_status": {
+    "isValid": true,
+    "error": null,
+    "validationErrors": [],
+    "entries": []
+  }
+}
+----
+
+== 8. Conformance Guidance
+
+A CrJSON producer is conformant to this implementation profile when it:
+
+* Emits the root structure and field types described above.
+* Emits Base64 strings for hash-bearing binary fields.
+* Includes hash and ingredient assertions in `assertions`.
+* Serializes validation output into both per-manifest `status` and global `extras:validation_status` when validation results are available.
+
+A CrJSON consumer should tolerate additional fields and assertion labels not explicitly listed here, consistent with C2PA extensibility.
