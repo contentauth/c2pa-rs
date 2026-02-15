@@ -1,0 +1,254 @@
+= Content Credential JSON (CrJSON) File Format Specification
+:doctype: article
+:toc: left
+:toclevels: 3
+:sectnums:
+
+== Scope
+
+This document describes a JSON serialization for Content Credentials (aka a C2PA manifest store) known as the *Content Credential JSON* format (abbreviated *CrJSON*).  It's purpose is to provide a JSON-based representation of a C2PA manifest store for profile evaluation, interoperability testing, and validation reporting.
+
+== Normative References
+
+* C2PA Technical Specification v2.3: https://c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html
+* CrJSON JSON Schema: `export_schema/crJSON-schema.json` (in this repository)
+
+== Relationship to C2PA v2.3
+
+CrJSON does not replace C2PA claim stores, JUMBF, or COSE structures. Instead, it is a *derived JSON view* over C2PA data.
+
+The following C2PA concepts are directly represented:
+
+* C2PA manifests -> `manifests[]`
+* C2PA assertions -> `manifests[].assertions` (object keyed by assertion label)
+* C2PA claim data -> `manifests[].claim.v2`
+* C2PA claim signature and credential details -> `manifests[].signature`
+* C2PA validation results -> `manifests[].status` and `validationResults`
+
+== Data Model Overview
+
+[source,text]
+----
+C2PA Asset/Manifest Store
+  -> Reader validation + manifest extraction
+  -> CrJSON transformation
+  -> Output JSON object
+       |- @context
+       |- manifests[]
+       |    |- label
+       |    |- assertions{...}
+       |    |- signature (required)
+       |    |- status (required)
+       |    |- claim or claim.v2 (one required)
+       |- validationResults (optional)
+----
+
+== Serialization Requirements
+
+=== Root Object
+
+A CrJSON document SHALL be a JSON object.
+
+The following top-level properties are used:
+
+[cols="1,1,3"]
+|===
+|Property |Presence |Description
+
+|`@context`
+|REQUIRED
+|JSON-LD context. Implementation emits an object with `@vocab` and `extras`. Schema allows object or array of URI strings.
+
+|`manifests`
+|REQUIRED
+|Array of manifest objects. Each item conforms to the manifest definition (required: label, assertions, signature, status; one of claim or claim.v2).
+
+|`validationResults`
+|OPTIONAL
+|Output of `validation_results()`: active manifest status codes and ingredient deltas (success, informational, failure arrays).
+|===
+
+=== `@context`
+
+Implementation output:
+
+[source,json]
+----
+"@context": {
+  "@vocab": "https://contentcredentials.org/crjson",
+  "extras": "https://contentcredentials.org/crjson/extras"
+}
+----
+
+=== `manifests`
+
+`manifests` SHALL be an array with at least one entry. Ordering rules:
+
+1. Active manifest first.
+2. Remaining manifests in (reverse) store order, most recent first.
+
+Each manifest object SHALL include the following properties (per schema: required `label`, `assertions`, `signature`, `status`; exactly one of `claim` or `claim.v2`):
+
+* `label` (manifest label/URN)
+* `assertions` (object keyed by assertion label)
+* `signature` (signature and credential details object)
+* `status` (per-manifest validation results object)
+* either `claim` (v1, per C2PA `claim-map`) or `claim.v2` (v2, per C2PA `claim-map-v2`)
+
+The manifest object does not allow additional properties (schema `additionalProperties: false`).
+
+=== `claim.v2` (v2 claim, claim-map-v2)
+
+`claim.v2` conforms to the C2PA CDDL claim-map-v2. Required properties:
+
+* `instanceID` — uniquely identifies a specific version of an asset
+* `claim_generator_info` — single generator-info map (object with e.g. `name`, `version`, optional `icon`, `operating_system`)
+* `signature` — JUMBF URI reference to the signature of this claim (e.g. `self#jumbf=/c2pa/{label}/c2pa.signature`)
+* `created_assertions` — array of one or more hashed URI maps; each entry has `url`, `hash`, and optionally `alg`
+
+Optional properties:
+
+* `gathered_assertions` — array of hashed URI maps (same structure as created_assertions)
+* `dc:title` — name of the asset
+* `redacted_assertions` — array of JUMBF URI strings (references to redacted ingredient manifest assertions)
+* `alg` — cryptographic hash algorithm for data hash assertions (e.g. `SHA-256`)
+* `alg_soft` — algorithm for soft binding assertions
+* `specVersion` — specification version (SemVer)
+* `metadata` — (DEPRECATED) additional information
+
+All `hash` values in hashed URI maps SHALL be Base64 strings.
+
+=== `claim` (v1 claim, claim-map)
+
+When a manifest uses `claim` instead of `claim.v2`, it conforms to the C2PA CDDL claim-map (claimV1). Required properties:
+
+* `claim_generator` — User-Agent string for the claim generator
+* `claim_generator_info` — array of one or more generator-info maps
+* `signature` — JUMBF URI reference to the signature
+* `assertions` — array of one or more hashed URI maps (`url`, `hash`, optional `alg`)
+* `dc:format` — media type of the asset
+* `instanceID` — uniquely identifies a specific version of an asset
+
+Optional: `dc:title`, `redacted_assertions` (JUMBF URI strings), `alg`, `alg_soft`, `metadata`.
+
+All `hash` values in hashed URI maps SHALL be Base64 strings.
+
+=== `assertions`
+
+`assertions` SHALL be an object keyed by assertion label. The contents of the object are the assertion payloads, as defined by the C2PA specification.
+
+
+==== Binary normalization and hash encoding
+
+CrJSON normalizes byte-array encodings into Base64 string encodings.
+
+If fields are serialized as integer arrays, they are converted to Base64 strings for:
+
+* `hash`
+* `pad`
+* `pad1`
+* `pad2`
+* Certain `signature` byte payloads (decoded when possible; otherwise Base64)
+
+This rule applies recursively to nested objects/arrays.
+
+==== Gathered binary assertion representation
+
+For gathered binary/UUID assertions, CrJSON emits a reference form:
+
+[source,json]
+----
+{
+  "format": "<content-type>",
+  "identifier": "<absolute-jumbf-uri>",
+  "hash": "<base64>"
+}
+----
+
+=== `signature` (per manifest)
+
+Each manifest SHALL include `signature`. When signature information is available, it includes:
+
+* `algorithm`
+* `serial_number`
+* `issuer` (DN map, e.g., `C`, `ST`, `L`, `O`, `OU`, `CN`)
+* `subject` (DN map)
+* `validity.not_before`
+* `validity.not_after`
+
+The implementation parses the first certificate in the chain and serializes times as RFC 3339 strings. When signature information is unavailable, `signature` SHALL be present as an empty object `{}`.
+
+=== `status` (per manifest)
+
+Each manifest SHALL include `status`. It is derived from active-manifest validation results and may include:
+
+* `signature`: first code prefixed by `claimSignature`
+* `trust`: preferred signing credential code (`trusted`, else `invalid`, `untrusted`, `expired`, then fallback)
+* `content`: first code prefixed by `assertion.dataHash`
+* `assertion`: map of assertion label -> validation code (when found)
+
+When validation results are unavailable, `status` SHALL be present as an empty object `{}`.
+
+=== `validationResults` (global)
+
+Optional top-level property containing the output of the Reader's `validation_results()` method. When present, it includes:
+
+* `activeManifest` (optional): status codes for the active manifest:
+** `success`: array of validation status entries (code, optional url, optional explanation)
+** `informational`: array of validation status entries
+** `failure`: array of validation status entries
+* `ingredientDeltas` (optional): array of per-ingredient validation deltas:
+** `ingredientAssertionURI`: JUMBF URI of the ingredient assertion
+** `validationDeltas`: object with `success`, `informational`, and `failure` arrays (same entry shape as above)
+
+Each validation status entry is an object with `code` (required), and optionally `url` and `explanation`.
+
+== Constraints and Current Implementation Limits
+
+* CrJSON is export-oriented; it is not the canonical source of cryptographic truth. Canonical validation remains bound to C2PA/JUMBF/COSE data structures per C2PA v2.3.
+
+== Minimal Example
+
+The following example conforms to the CrJSON schema. In many of the example values, a `...` placeholder is used for a value that is not relevant to the example.  Also, any values which would be Base64-encoded are represented as `<base64>`.
+
+[source,json]
+----
+{
+  "@context": {
+    "@vocab": "https://contentcredentials.org/crjson",
+    "extras": "https://contentcredentials.org/crjson/extras"
+  },
+  "manifests": [
+    {
+      "label": "urn:uuid:...",
+      "claim.v2": {
+        "instanceID": "xmp:iid:...",
+        "claim_generator_info": {"name": "Example Tool", "version": "1.0"},
+        "signature": "self#jumbf=/c2pa/urn:uuid:.../c2pa.signature",
+        "created_assertions": [
+          {"url": "self#jumbf=c2pa.assertions/c2pa.hash.data", "hash": "<base64>"}
+        ],
+        "gathered_assertions": [],
+        "redacted_assertions": []
+      },
+      "assertions": {
+        "c2pa.actions.v2": {"actions": []},
+        "c2pa.hash.data": {"alg": "sha256", "hash": "<base64>"}
+      },
+      "signature": {},
+      "status": {
+        "signature": "claimSignature.validated",
+        "trust": "signingCredential.trusted"
+      }
+    }
+  ],
+  "validationResults": {
+    "activeManifest": {
+      "success": [],
+      "informational": [],
+      "failure": []
+    }
+  }
+}
+----
+
