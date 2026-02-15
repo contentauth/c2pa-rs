@@ -241,15 +241,17 @@ impl CrJsonReader {
             let claim_v2 = self.build_claim_v2(manifest, label)?;
             manifest_obj.insert("claim.v2".to_string(), claim_v2);
 
-            // Build claim_signature object
-            if let Some(claim_signature) = self.build_claim_signature(manifest)? {
-                manifest_obj.insert("claim_signature".to_string(), claim_signature);
-            }
+            // Build signature object (required per manifest schema; use empty object when no signature info)
+            let signature = self
+                .build_claim_signature(manifest)?
+                .unwrap_or_else(|| Value::Object(Map::new()));
+            manifest_obj.insert("signature".to_string(), signature);
 
-            // Build status object
-            if let Some(status) = self.build_manifest_status(manifest, label)? {
-                manifest_obj.insert("status".to_string(), status);
-            }
+            // Build status object (required; use empty object when no validation results)
+            let status = self
+                .build_manifest_status(manifest, label)?
+                .unwrap_or_else(|| Value::Object(Map::new()));
+            manifest_obj.insert("status".to_string(), status);
 
             labeled.push((label.clone(), Value::Object(manifest_obj)));
         }
@@ -1132,10 +1134,12 @@ mod tests {
         // Verify manifests is an array
         assert!(json_value["manifests"].is_array());
 
-        // Verify first manifest structure
+        // Verify first manifest structure (required: label, assertions, signature, status; oneOf: claim or claim.v2)
         if let Some(manifest) = json_value["manifests"].as_array().and_then(|a| a.first()) {
             assert!(manifest.get("label").is_some());
             assert!(manifest.get("assertions").is_some());
+            assert!(manifest.get("signature").is_some());
+            assert!(manifest.get("status").is_some());
             assert!(manifest.get("claim.v2").is_some());
 
             // Verify assertions is an object (not array)
@@ -1167,38 +1171,42 @@ mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_claim_signature_decoding() -> Result<()> {
-        // Test that claim_signature is decoded with full certificate details
+        // Test that signature (manifest-level) is decoded with full certificate details
         let reader = CrJsonReader::from_file("tests/fixtures/CA.jpg")?;
 
         let json_value = reader.to_json_value()?;
         let manifests = json_value["manifests"].as_array().unwrap();
-        
-        // Find a manifest with claim_signature
-        let manifest = manifests.iter().find(|m| m.get("claim_signature").is_some());
-        assert!(manifest.is_some(), "Should have a manifest with claim_signature");
-        
-        let claim_sig = &manifest.unwrap()["claim_signature"];
-        
+        // Every manifest has required "signature"; find one with decoded certificate details
+        let manifest = manifests
+            .iter()
+            .find(|m| m.get("signature").and_then(|s| s.get("algorithm")).is_some());
+        assert!(
+            manifest.is_some(),
+            "Should have a manifest with signature containing algorithm"
+        );
+
+        let sig = &manifest.unwrap()["signature"];
+
         // Verify algorithm is present
-        assert!(claim_sig.get("algorithm").is_some(), "claim_signature should have algorithm");
-        
+        assert!(sig.get("algorithm").is_some(), "signature should have algorithm");
+
         // Verify certificate details are decoded (not just algorithm)
         // Should have serial_number, issuer, subject, and validity for X.509 certificates
         assert!(
-            claim_sig.get("serial_number").is_some(),
-            "claim_signature should have serial_number from decoded certificate"
+            sig.get("serial_number").is_some(),
+            "signature should have serial_number from decoded certificate"
         );
         assert!(
-            claim_sig.get("issuer").is_some(),
-            "claim_signature should have issuer from decoded certificate"
+            sig.get("issuer").is_some(),
+            "signature should have issuer from decoded certificate"
         );
         assert!(
-            claim_sig.get("subject").is_some(),
-            "claim_signature should have subject from decoded certificate"
+            sig.get("subject").is_some(),
+            "signature should have subject from decoded certificate"
         );
         assert!(
-            claim_sig.get("validity").is_some(),
-            "claim_signature should have validity from decoded certificate"
+            sig.get("validity").is_some(),
+            "signature should have validity from decoded certificate"
         );
 
         Ok(())

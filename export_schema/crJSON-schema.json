@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://contentcredentials.org/crjson/crJSON-schema.json",
   "title": "Content Credential JSON (CrJSON) Document Schema",
   "description": "JSON Schema for Content Credential JSON (CrJSON) documents. CrJSON does not include asset_info, content, or metadata.",
@@ -59,177 +59,207 @@
   "definitions": {
     "manifest": {
       "type": "object",
+      "required": [
+        "label",
+        "assertions",
+        "signature",
+        "status"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "claim"
+          ]
+        },
+        {
+          "required": [
+            "claim.v2"
+          ]
+        }
+      ],
       "properties": {
         "label": {
           "type": "string",
           "description": "Manifest label or URN identifier"
         },
         "claim": {
-          "$ref": "#/definitions/claim"
+          "$ref": "#/definitions/claimV1",
+          "description": "Claim map (v1) per C2PA CDDL claim-map; alternative to claim.v2. A manifest SHALL contain either claim or claim.v2."
         },
         "claim.v2": {
-          "$ref": "#/definitions/claim"
-        },
-        "assertions": {
-          "$ref": "#/definitions/assertions"
-        },
-        "created_assertions": {
-          "type": "object",
-          "description": "Created assertions at manifest level (alternate location)",
-          "additionalProperties": true
-        },
-        "generated_assertions": {
-          "type": "object",
-          "description": "Generated assertions",
-          "additionalProperties": true
-        },
-        "redacted_assertions": {
-          "type": "object",
-          "description": "Redacted assertions",
-          "additionalProperties": true
+          "$ref": "#/definitions/claim",
+          "description": "Normalized claim (v2) per C2PA CDDL claim-map-v2; alternative to claim. A manifest SHALL contain either claim or claim.v2."
         },
         "signature": {
-          "$ref": "#/definitions/signature"
-        },
-        "claim_signature": {
-          "$ref": "#/definitions/signature"
-        },
-        "claimSignature": {
           "$ref": "#/definitions/signature"
         },
         "status": {
           "$ref": "#/definitions/status"
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
-    "claim": {
+    "claimV1": {
       "type": "object",
+      "description": "Claim map (v1) per C2PA CDDL claim-map. Alternative to claim.v2; each manifest may contain either claim or claim.v2.",
+      "required": [
+        "claim_generator",
+        "claim_generator_info",
+        "signature",
+        "assertions",
+        "dc:format",
+        "instanceID"
+      ],
       "properties": {
-        "version": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "description": "Claim version number"
-        },
-        "title": {
-          "type": "string",
-          "description": "Title of the claim"
-        },
-        "instanceID": {
-          "type": "string",
-          "description": "Unique identifier for this claim instance"
-        },
-        "alg": {
-          "type": "string",
-          "description": "Algorithm used for hashing (e.g., sha256, SHA-256)"
-        },
         "claim_generator": {
           "type": "string",
-          "description": "String identifier of the claim generator"
-        },
-        "claimGenerator": {
-          "type": "string",
-          "description": "Alternate field name for claim generator"
+          "description": "User-Agent string for the claim generator that created the claim (RFC 7231 §5.5.3)"
         },
         "claim_generator_info": {
-          "description": "Detailed information about the claim generator",
-          "oneOf": [
-            {
-              "type": "array",
-              "items": {
-                "$ref": "#/definitions/softwareAgent"
-              }
-            },
-            {
-              "$ref": "#/definitions/softwareAgent"
-            }
-          ]
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/softwareAgent"
+          },
+          "description": "Detailed information about the claim generator (one or more generator-info maps)"
         },
         "signature": {
           "type": "string",
-          "description": "Reference to signature location (e.g., self#jumbf=...)"
+          "description": "JUMBF URI reference to the signature of this claim"
         },
-        "signatureRef": {
-          "type": "string",
-          "description": "Alternate field name for signature reference"
-        },
-        "default_algorithm": {
-          "type": "string",
-          "description": "Default hashing algorithm"
-        },
-        "defaultAlgorithm": {
-          "type": "string",
-          "description": "Alternate field name for default algorithm"
+        "assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/hashedUriMap"
+          },
+          "description": "Hashed URI references to assertions in this claim"
         },
         "dc:format": {
           "type": "string",
-          "description": "MIME type of the content"
+          "description": "Media type of the asset"
+        },
+        "instanceID": {
+          "type": "string",
+          "description": "Uniquely identifies a specific version of an asset"
         },
         "dc:title": {
           "type": "string",
-          "description": "Title of the claim (Dublin Core)"
-        },
-        "created_assertions": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "url": {
-                "type": "string"
-              },
-              "hash": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "url",
-              "hash"
-            ]
-          }
-        },
-        "gathered_assertions": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "url": {
-                "type": "string"
-              },
-              "hash": {
-                "type": "string"
-              }
-            }
-          }
+          "description": "Name of the asset (Dublin Core)"
         },
         "redacted_assertions": {
           "type": "array",
           "items": {
-            "type": "object"
-          }
-        },
-        "signature_status": {
-          "type": "string",
-          "description": "Status of the signature validation"
-        },
-        "assertion_status": {
-          "type": "object",
-          "description": "Status of each assertion by assertion label",
-          "additionalProperties": {
             "type": "string"
-          }
+          },
+          "description": "JUMBF URI references to redacted ingredient manifest assertions"
         },
-        "content_status": {
+        "alg": {
           "type": "string",
-          "description": "Status of content hash validation"
+          "description": "Cryptographic hash algorithm for data hash assertions in this claim (C2PA data hash algorithm identifier registry)"
         },
-        "trust_status": {
+        "alg_soft": {
           "type": "string",
-          "description": "Trust validation status"
+          "description": "Algorithm for soft binding assertions in this claim (C2PA soft binding algorithm identifier registry)"
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Additional information about the assertion",
+          "additionalProperties": true
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
+    },
+    "hashedUriMap": {
+      "type": "object",
+      "description": "Hashed URI reference (url and hash) per C2PA CDDL $hashed-uri-map",
+      "required": [
+        "url",
+        "hash"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "JUMBF URI reference"
+        },
+        "hash": {
+          "type": "string",
+          "description": "Hash value (e.g. Base64-encoded)"
+        },
+        "alg": {
+          "type": "string",
+          "description": "Hash algorithm identifier; if absent, taken from enclosing structure"
+        }
+      },
+      "additionalProperties": false
+    },
+    "claim": {
+      "type": "object",
+      "description": "Claim (v2) per C2PA CDDL claim-map-v2.",
+      "required": [
+        "instanceID",
+        "claim_generator_info",
+        "signature",
+        "created_assertions"
+      ],
+      "properties": {
+        "instanceID": {
+          "type": "string",
+          "description": "Uniquely identifies a specific version of an asset"
+        },
+        "claim_generator_info": {
+          "$ref": "#/definitions/softwareAgent",
+          "description": "The claim generator of this claim (single generator-info map)"
+        },
+        "signature": {
+          "type": "string",
+          "description": "JUMBF URI reference to the signature of this claim"
+        },
+        "created_assertions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/hashedUriMap"
+          },
+          "description": "Hashed URI references to created assertions"
+        },
+        "gathered_assertions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/hashedUriMap"
+          },
+          "description": "Hashed URI references to gathered assertions"
+        },
+        "dc:title": {
+          "type": "string",
+          "description": "Name of the asset (Dublin Core)"
+        },
+        "redacted_assertions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "JUMBF URI references to the assertions of ingredient manifests being redacted"
+        },
+        "alg": {
+          "type": "string",
+          "description": "Cryptographic hash algorithm for data hash assertions in this claim (C2PA data hash algorithm identifier registry)"
+        },
+        "alg_soft": {
+          "type": "string",
+          "description": "Algorithm for soft binding assertions in this claim (C2PA soft binding algorithm identifier registry)"
+        },
+        "specVersion": {
+          "type": "string",
+          "description": "The version of the specification used to produce this claim (SemVer)"
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Additional information about the assertion (DEPRECATED)",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
     },
     "assertions": {
       "type": "object",
@@ -258,48 +288,9 @@
         "c2pa.thumbnail.ingredient.jpeg": {
           "$ref": "#/definitions/thumbnailAssertion"
         },
-        "c2pa.training-mining": {
-          "type": "object",
-          "description": "Training and mining assertion",
-          "properties": {
-            "isCAWG": {
-              "type": "boolean"
-            },
-            "entries": {
-              "type": "object"
-            }
-          },
-          "additionalProperties": true
-        },
         "c2pa.soft-binding": {
           "type": "object",
           "description": "Soft binding assertion",
-          "additionalProperties": true
-        },
-        "cawg.metadata": {
-          "$ref": "#/definitions/cawgMetadataAssertion"
-        },
-        "stds.schema-org.CreativeWork": {
-          "$ref": "#/definitions/creativeWorkAssertion"
-        },
-        "com.adobe.generative-ai": {
-          "type": "object",
-          "description": "Adobe generative AI assertion",
-          "additionalProperties": true
-        },
-        "adobe.crypto.addresses": {
-          "type": "object",
-          "description": "Adobe crypto addresses assertion",
-          "additionalProperties": true
-        },
-        "jpt.mod-extent": {
-          "type": "object",
-          "description": "JPEG Trust modification extent assertion",
-          "additionalProperties": true
-        },
-        "jpt.rights": {
-          "type": "object",
-          "description": "JPEG Trust rights assertion",
           "additionalProperties": true
         }
       },
@@ -365,7 +356,7 @@
           }
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "actionsAssertion": {
       "type": "object",
@@ -418,7 +409,7 @@
       "required": [
         "action"
       ],
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "softwareAgent": {
       "type": "object",
@@ -436,7 +427,7 @@
           "description": "Operating system the software runs on"
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "signature": {
       "type": "object",
@@ -552,7 +543,7 @@
           }
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "distinguishedName": {
       "type": "object",
@@ -591,7 +582,7 @@
           "description": "Organization identifier OID"
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "status": {
       "type": "object",
@@ -617,7 +608,7 @@
           "description": "Trust validation status"
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "ingredientAssertion": {
       "type": "object",
@@ -716,7 +707,7 @@
           "additionalProperties": true
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "thumbnailAssertion": {
       "type": "object",
@@ -731,50 +722,7 @@
           "description": "MIME type of thumbnail"
         }
       },
-      "additionalProperties": true
-    },
-    "cawgMetadataAssertion": {
-      "type": "object",
-      "description": "Camera-Aware Working Group metadata assertion",
-      "properties": {
-        "entries": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "namespace": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              },
-              "value": {}
-            }
-          }
-        },
-        "namespacePrefixes": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        }
-      },
-      "additionalProperties": true
-    },
-    "creativeWorkAssertion": {
-      "type": "object",
-      "description": "Schema.org CreativeWork assertion",
-      "properties": {
-        "item": {
-          "type": "object",
-          "additionalProperties": true
-        },
-        "creativeWork": {
-          "type": "object",
-          "additionalProperties": true
-        }
-      },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "hashBmffAssertion": {
       "type": "object",
@@ -840,7 +788,7 @@
           "type": "string"
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "validationStatus": {
       "type": "object",
@@ -918,7 +866,7 @@
           }
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     }
   }
 }

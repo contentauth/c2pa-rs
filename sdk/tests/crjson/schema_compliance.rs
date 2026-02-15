@@ -13,6 +13,18 @@
 
 //! Schema compliance tests for crJSON format.
 //! These tests validate CrJSON output structure and alignment with `export_schema/crJSON-schema.json`.
+//!
+//! **Reviewing generated crJSON when tests run:** set the environment variable
+//! `C2PA_WRITE_CRJSON=1` (or any value), then run the crjson tests. Generated crJSON
+//! for the fixture (CA.jpg) will be written to `target/crjson_test_output/` under
+//! the build target directory (e.g. `target/crjson_test_output/CA.jpg.json` when
+//! running from the workspace root, or `sdk/target/crjson_test_output/CA.jpg.json`
+//! when building from the sdk directory). Example:
+//!
+//! ```sh
+//! C2PA_WRITE_CRJSON=1 cargo test crjson
+//! # then open target/crjson_test_output/CA.jpg.json
+//! ```
 
 use c2pa::{CrJsonReader, Result};
 use std::io::Cursor;
@@ -22,9 +34,22 @@ const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
 /// CrJSON schema (export_schema/crJSON-schema.json) - used to verify output structure.
 const CRJSON_SCHEMA: &str = include_str!("../../../export_schema/crJSON-schema.json");
 
+/// When C2PA_WRITE_CRJSON is set, write generated crJSON to target/crjson_test_output/
+/// so you can review the exact output. Called at the start of tests that build CrJsonReader.
+fn maybe_write_crjson_output(name: &str, json: &str) {
+    if std::env::var("C2PA_WRITE_CRJSON").is_ok() {
+        let out_dir = std::path::PathBuf::from("target/crjson_test_output");
+        let _ = std::fs::create_dir_all(&out_dir);
+        let path = out_dir.join(name);
+        let _ = std::fs::write(&path, json);
+        eprintln!("CrJSON written to {:?} (C2PA_WRITE_CRJSON=1)", path);
+    }
+}
+
 #[test]
 fn test_validation_status_schema_compliance() -> Result<()> {
     let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    maybe_write_crjson_output("CA.jpg.json", &reader.json());
 
     let json_value = reader.to_json_value()?;
 
@@ -216,27 +241,43 @@ fn test_manifests_array_schema_compliance() -> Result<()> {
 
     assert!(manifests.is_array(), "manifests should be an array");
 
-    // Check each manifest
+    // Check each manifest (schema required: label, assertions, signature, status; oneOf: claim or claim.v2)
     for manifest in manifests.as_array().unwrap() {
         assert!(manifest.is_object(), "Each manifest should be an object");
         let manifest_obj = manifest.as_object().unwrap();
 
-        // Should have label
-        if let Some(label) = manifest_obj.get("label") {
-            assert!(label.is_string(), "label should be string");
-        }
+        // Required: label
+        let label = manifest_obj.get("label").expect("manifest should have label");
+        assert!(label.is_string(), "label should be string");
 
-        // Should have claim.v2
+        // Required: assertions (object, not array)
+        let assertions = manifest_obj
+            .get("assertions")
+            .expect("manifest should have assertions");
+        assert!(
+            assertions.is_object(),
+            "assertions should be object, not array"
+        );
+
+        // Required: signature (object with optional algorithm, issuer, etc.)
+        let signature = manifest_obj
+            .get("signature")
+            .expect("manifest should have signature");
+        assert!(signature.is_object(), "signature should be object");
+
+        // Required: status (object)
+        let status = manifest_obj.get("status").expect("manifest should have status");
+        assert!(status.is_object(), "status should be object");
+
+        // oneOf: either claim or claim.v2 (implementation emits claim.v2)
+        let has_claim = manifest_obj.get("claim").is_some();
+        let has_claim_v2 = manifest_obj.get("claim.v2").is_some();
+        assert!(
+            has_claim || has_claim_v2,
+            "manifest should have either claim or claim.v2"
+        );
         if let Some(claim) = manifest_obj.get("claim.v2") {
             assert!(claim.is_object(), "claim.v2 should be object");
-        }
-
-        // Should have assertions as object (not array)
-        if let Some(assertions) = manifest_obj.get("assertions") {
-            assert!(
-                assertions.is_object(),
-                "assertions should be object, not array"
-            );
         }
     }
 
