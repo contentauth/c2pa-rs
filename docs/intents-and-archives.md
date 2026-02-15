@@ -305,7 +305,7 @@ builder.save_to_stream(FORMAT, &mut source, &mut dest)?;
 - Better user experience
 - Supports iterative workflows
 
-### Use case 3: Ingredient libraries
+### Ingredient libraries
 
 **Scenario:** Content library with pre-validated assets.
 
