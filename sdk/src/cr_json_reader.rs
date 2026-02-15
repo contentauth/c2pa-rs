@@ -207,9 +207,9 @@ impl CrJsonReader {
         let manifests_array = self.convert_manifests_to_array()?;
         result["manifests"] = manifests_array;
 
-        // Add extras:validation_status
-        if let Some(validation_status) = self.build_validation_status()? {
-            result["extras:validation_status"] = validation_status;
+        // Add validationResults (output of validation_results() method)
+        if let Some(validation_results) = self.inner.validation_results() {
+            result["validationResults"] = serde_json::to_value(validation_results)?;
         }
 
         Ok(result)
@@ -983,90 +983,6 @@ impl CrJsonReader {
                     .unwrap_or(false)
             })
             .map(|s| s.code().to_string())
-    }
-
-    /// Build extras:validation_status from validation results
-    fn build_validation_status(&self) -> Result<Option<Value>> {
-        let validation_results = match self.inner.validation_results() {
-            Some(results) => results,
-            None => return Ok(None),
-        };
-
-        let mut validation_status = Map::new();
-
-        // Determine overall validity
-        let is_valid = validation_results.validation_state() != ValidationState::Invalid;
-        validation_status.insert("isValid".to_string(), json!(is_valid));
-
-        // Add error field (null if valid, or first error message if not)
-        let error_message = if !is_valid {
-            if let Some(active_manifest) = validation_results.active_manifest() {
-                active_manifest
-                    .failure
-                    .first()
-                    .and_then(|s| s.explanation())
-                    .map(|e| Value::String(e.to_string()))
-                    .unwrap_or(Value::Null)
-            } else {
-                Value::Null
-            }
-        } else {
-            Value::Null
-        };
-        validation_status.insert("error".to_string(), error_message);
-
-        // Build validationErrors array from failures (as objects with code, message, severity)
-        let mut errors = Vec::new();
-        if let Some(active_manifest) = validation_results.active_manifest() {
-            for status in active_manifest.failure.iter() {
-                let mut error_obj = Map::new();
-                error_obj.insert("code".to_string(), json!(status.code()));
-                if let Some(explanation) = status.explanation() {
-                    error_obj.insert("message".to_string(), json!(explanation));
-                }
-                error_obj.insert("severity".to_string(), json!("error"));
-                errors.push(Value::Object(error_obj));
-            }
-        }
-        validation_status.insert("validationErrors".to_string(), json!(errors));
-
-        // Build entries array from all validation statuses
-        let mut entries = Vec::new();
-
-        if let Some(active_manifest) = validation_results.active_manifest() {
-            // Add success entries
-            for status in active_manifest.success.iter() {
-                entries.push(self.build_validation_entry(status, "info")?);
-            }
-
-            // Add informational entries
-            for status in active_manifest.informational.iter() {
-                entries.push(self.build_validation_entry(status, "warning")?);
-            }
-
-            // Add failure entries
-            for status in active_manifest.failure.iter() {
-                entries.push(self.build_validation_entry(status, "error")?);
-            }
-        }
-
-        validation_status.insert("entries".to_string(), json!(entries));
-
-        Ok(Some(Value::Object(validation_status)))
-    }
-
-    /// Build a single validation entry for the entries array
-    fn build_validation_entry(&self, status: &ValidationStatus, severity: &str) -> Result<Value> {
-        let mut entry = Map::new();
-        entry.insert("code".to_string(), json!(status.code()));
-        if let Some(url) = status.url() {
-            entry.insert("url".to_string(), json!(url));
-        }
-        if let Some(explanation) = status.explanation() {
-            entry.insert("explanation".to_string(), json!(explanation));
-        }
-        entry.insert("severity".to_string(), json!(severity));
-        Ok(Value::Object(entry))
     }
 
     /// Get a reference to the underlying Reader

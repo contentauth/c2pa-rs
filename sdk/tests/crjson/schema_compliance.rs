@@ -47,112 +47,61 @@ fn maybe_write_crjson_output(name: &str, json: &str) {
 }
 
 #[test]
-fn test_validation_status_schema_compliance() -> Result<()> {
+fn test_validation_results_schema_compliance() -> Result<()> {
     let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     maybe_write_crjson_output("CA.jpg.json", &reader.json());
 
     let json_value = reader.to_json_value()?;
 
-    // Verify extras:validation_status exists
-    let validation_status = json_value
-        .get("extras:validation_status")
-        .expect("extras:validation_status should exist");
-
-    // Verify required fields
+    // Verify validationResults exists
+    let validation_results = json_value
+        .get("validationResults")
+        .expect("validationResults should exist");
     assert!(
-        validation_status.get("isValid").is_some(),
-        "isValid field should exist"
-    );
-    assert!(
-        validation_status.get("isValid").unwrap().is_boolean(),
-        "isValid should be boolean"
+        validation_results.is_object(),
+        "validationResults should be an object"
     );
 
-    // Verify error field (should be null or string)
-    let error = validation_status
-        .get("error")
-        .expect("error field should exist");
-    assert!(
-        error.is_null() || error.is_string(),
-        "error should be null or string"
-    );
+    let vr = validation_results.as_object().unwrap();
 
-    // Verify validationErrors is an array
-    let validation_errors = validation_status
-        .get("validationErrors")
-        .expect("validationErrors should exist");
-    assert!(
-        validation_errors.is_array(),
-        "validationErrors should be an array"
-    );
-
-    // Verify each validationError object has required fields
-    for error_obj in validation_errors.as_array().unwrap() {
-        assert!(error_obj.is_object(), "Each error should be an object");
-        let obj = error_obj.as_object().unwrap();
-
-        // Required: code
-        assert!(obj.contains_key("code"), "Error should have code field");
-        assert!(
-            obj.get("code").unwrap().is_string(),
-            "code should be string"
-        );
-
-        // Optional: message
-        if let Some(message) = obj.get("message") {
-            assert!(message.is_string(), "message should be string");
+    // Optional: activeManifest with success, informational, failure arrays
+    if let Some(active_manifest) = vr.get("activeManifest") {
+        assert!(active_manifest.is_object(), "activeManifest should be object");
+        let am = active_manifest.as_object().unwrap();
+        for key in &["success", "informational", "failure"] {
+            if let Some(arr) = am.get(*key) {
+                assert!(arr.is_array(), "{} should be array", key);
+                for entry in arr.as_array().unwrap() {
+                    assert!(entry.is_object(), "Each entry should be object");
+                    let obj = entry.as_object().unwrap();
+                    assert!(obj.contains_key("code"), "Entry should have code");
+                    assert!(obj.get("code").unwrap().is_string(), "code should be string");
+                    if let Some(url) = obj.get("url") {
+                        assert!(url.is_string(), "url should be string");
+                    }
+                    if let Some(explanation) = obj.get("explanation") {
+                        assert!(explanation.is_string(), "explanation should be string");
+                    }
+                }
+            }
         }
-
-        // Required: severity
-        assert!(
-            obj.contains_key("severity"),
-            "Error should have severity field"
-        );
-        let severity = obj.get("severity").unwrap().as_str().unwrap();
-        assert!(
-            severity == "error" || severity == "warning" || severity == "info",
-            "severity should be error, warning, or info"
-        );
     }
 
-    // Verify entries array
-    let entries = validation_status
-        .get("entries")
-        .expect("entries should exist");
-    assert!(entries.is_array(), "entries should be an array");
-
-    // Verify each entry object has required fields
-    for entry_obj in entries.as_array().unwrap() {
-        assert!(entry_obj.is_object(), "Each entry should be an object");
-        let obj = entry_obj.as_object().unwrap();
-
-        // Required: code
-        assert!(obj.contains_key("code"), "Entry should have code field");
-        assert!(
-            obj.get("code").unwrap().is_string(),
-            "code should be string"
-        );
-
-        // Optional: url
-        if let Some(url) = obj.get("url") {
-            assert!(url.is_string(), "url should be string");
+    // Optional: ingredientDeltas array
+    if let Some(deltas) = vr.get("ingredientDeltas") {
+        assert!(deltas.is_array(), "ingredientDeltas should be array");
+        for item in deltas.as_array().unwrap() {
+            assert!(item.is_object(), "Each delta should be object");
+            let obj = item.as_object().unwrap();
+            assert!(
+                obj.contains_key("ingredientAssertionURI"),
+                "Delta should have ingredientAssertionURI"
+            );
+            assert!(
+                obj.contains_key("validationDeltas"),
+                "Delta should have validationDeltas"
+            );
         }
-
-        // Optional: explanation
-        if let Some(explanation) = obj.get("explanation") {
-            assert!(explanation.is_string(), "explanation should be string");
-        }
-
-        // Required: severity
-        assert!(
-            obj.contains_key("severity"),
-            "Entry should have severity field"
-        );
-        let severity = obj.get("severity").unwrap().as_str().unwrap();
-        assert!(
-            severity == "error" || severity == "warning" || severity == "info",
-            "severity should be error, warning, or info"
-        );
     }
 
     Ok(())
@@ -294,8 +243,8 @@ fn test_complete_schema_structure() -> Result<()> {
     assert!(json_value.get("@context").is_some(), "@context missing");
     assert!(json_value.get("manifests").is_some(), "manifests missing");
     assert!(
-        json_value.get("extras:validation_status").is_some(),
-        "extras:validation_status missing"
+        json_value.get("validationResults").is_some(),
+        "validationResults missing"
     );
 
     // CrJSON does not include asset_info, content, or metadata
@@ -306,7 +255,7 @@ fn test_complete_schema_structure() -> Result<()> {
     // Verify types
     assert!(json_value["@context"].is_object());
     assert!(json_value["manifests"].is_array());
-    assert!(json_value["extras:validation_status"].is_object());
+    assert!(json_value["validationResults"].is_object());
 
     Ok(())
 }
@@ -327,8 +276,8 @@ fn test_cr_json_schema_file_valid_and_matches_format() -> Result<()> {
     assert!(props.contains_key("@context"), "schema must define @context");
     assert!(props.contains_key("manifests"), "schema must define manifests");
     assert!(
-        props.contains_key("extras:validation_status") || props.contains_key("validation_status"),
-        "schema must define validation_status or extras:validation_status"
+        props.contains_key("validationResults"),
+        "schema must define validationResults"
     );
 
     // CrJSON schema must NOT include removed sections

@@ -40,19 +40,9 @@
         "$ref": "#/definitions/manifest"
       }
     },
-    "validation_status": {
-      "description": "Validation status without namespace prefix",
-      "$ref": "#/definitions/validationStatus"
-    },
-    "extras:validation_status": {
-      "description": "Validation status with extras namespace prefix",
-      "$ref": "#/definitions/validationStatus"
-    }
-  },
-  "patternProperties": {
-    "^[a-zA-Z0-9]+:validation_status$": {
-      "description": "Validation status with any namespace prefix",
-      "$ref": "#/definitions/validationStatus"
+    "validationResults": {
+      "description": "Validation results from validation_results() (active manifest and ingredient deltas)",
+      "$ref": "#/definitions/validationResults"
     }
   },
   "additionalProperties": true,
@@ -790,82 +780,62 @@
       },
       "additionalProperties": false
     },
-    "validationStatus": {
+    "validationResults": {
       "type": "object",
-      "description": "Validation status information",
+      "description": "Output of validation_results(): status codes for active manifest and ingredient deltas",
       "properties": {
-        "isValid": {
-          "type": "boolean",
-          "description": "Overall validation result"
+        "activeManifest": {
+          "$ref": "#/definitions/statusCodes",
+          "description": "Validation status codes for the active manifest"
         },
-        "error": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Error message if validation failed"
-        },
-        "code": {
-          "type": "string",
-          "description": "Error code"
-        },
-        "explanation": {
-          "type": "string",
-          "description": "Explanation of the error"
-        },
-        "uri": {
-          "type": "string",
-          "description": "URI where error occurred"
-        },
-        "validationErrors": {
+        "ingredientDeltas": {
           "type": "array",
-          "description": "List of validation errors",
+          "description": "Validation deltas per ingredient assertion",
           "items": {
-            "type": "object",
-            "description": "Validation error object with code, message, and severity",
-            "properties": {
-              "code": {
-                "type": "string",
-                "description": "Error code"
-              },
-              "message": {
-                "type": "string",
-                "description": "Error message"
-              },
-              "severity": {
-                "type": "string",
-                "description": "Error severity level",
-                "enum": [
-                  "error",
-                  "warning",
-                  "info"
-                ]
-              }
-            }
-          }
-        },
-        "entries": {
-          "type": "array",
-          "description": "List of validation entries",
-          "items": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string"
-              },
-              "url": {
-                "type": "string"
-              },
-              "severity": {
-                "type": "string"
-              },
-              "explanation": {
-                "type": "string"
-              }
-            }
+            "$ref": "#/definitions/ingredientDeltaValidationResult"
           }
         }
       },
+      "additionalProperties": false
+    },
+    "statusCodes": {
+      "type": "object",
+      "description": "Success, informational, and failure validation status codes",
+      "properties": {
+        "success": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/validationStatusEntry" }
+        },
+        "informational": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/validationStatusEntry" }
+        },
+        "failure": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/validationStatusEntry" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "validationStatusEntry": {
+      "type": "object",
+      "description": "Single validation status (code, optional url and explanation)",
+      "properties": {
+        "code": { "type": "string", "description": "Validation status code" },
+        "url": { "type": "string", "description": "JUMBF URI where status applies" },
+        "explanation": { "type": "string", "description": "Human-readable explanation" }
+      },
+      "required": [ "code" ],
+      "additionalProperties": false
+    },
+    "ingredientDeltaValidationResult": {
+      "type": "object",
+      "description": "Validation deltas for one ingredient's manifest",
+      "properties": {
+        "ingredientAssertionURI": { "type": "string" },
+        "validationDeltas": { "$ref": "#/definitions/statusCodes" }
+      },
+      "required": [ "ingredientAssertionURI", "validationDeltas" ],
       "additionalProperties": false
     }
   }

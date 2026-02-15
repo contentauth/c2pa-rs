@@ -23,7 +23,7 @@ The following C2PA concepts are directly represented:
 * C2PA assertions -> `manifests[].assertions` (object keyed by assertion label)
 * C2PA claim data -> `manifests[].claim.v2`
 * C2PA claim signature and credential details -> `manifests[].signature`
-* C2PA validation results -> `manifests[].status` and `extras:validation_status`
+* C2PA validation results -> `manifests[].status` and `validationResults`
 
 == Data Model Overview
 
@@ -40,7 +40,7 @@ C2PA Asset/Manifest Store
        |    |- signature (required)
        |    |- status (required)
        |    |- claim or claim.v2 (one required)
-       |- extras:validation_status (optional)
+       |- validationResults (optional)
 ----
 
 == Serialization Requirements
@@ -63,17 +63,9 @@ The following top-level properties are used:
 |REQUIRED
 |Array of manifest objects. Each item conforms to the manifest definition (required: label, assertions, signature, status; one of claim or claim.v2).
 
-|`extras:validation_status`
+|`validationResults`
 |OPTIONAL
-|Overall validation report for the active manifest.
-
-|`validation_status` (no prefix)
-|OPTIONAL
-|Same structure as extras:validation_status; schema allows this alternate key.
-
-|Namespaced `*:validation_status`
-|OPTIONAL
-|Schema allows any key matching the pattern for validation status (e.g. extras:validation_status).
+|Output of `validation_results()`: active manifest status codes and ingredient deltas (success, informational, failure arrays).
 |===
 
 === `@context`
@@ -197,21 +189,19 @@ Each manifest SHALL include `status`. It is derived from active-manifest validat
 
 When validation results are unavailable, `status` SHALL be present as an empty object `{}`.
 
-=== `extras:validation_status` (global)
+=== `validationResults` (global)
 
-Global validation object includes:
+Optional top-level property containing the output of the Reader's `validation_results()` method. When present, it includes:
 
-* `isValid` (boolean)
-* `error` (`null` or first failure explanation)
-* `validationErrors[]` objects with:
-** `code`
-** `message` (optional)
-** `severity` (`error`)
-* `entries[]` objects with:
-** `code`
-** `url` (optional)
-** `explanation` (optional)
-** `severity` (`info`, `warning`, or `error`)
+* `activeManifest` (optional): status codes for the active manifest:
+** `success`: array of validation status entries (code, optional url, optional explanation)
+** `informational`: array of validation status entries
+** `failure`: array of validation status entries
+* `ingredientDeltas` (optional): array of per-ingredient validation deltas:
+** `ingredientAssertionURI`: JUMBF URI of the ingredient assertion
+** `validationDeltas`: object with `success`, `informational`, and `failure` arrays (same entry shape as above)
+
+Each validation status entry is an object with `code` (required), and optionally `url` and `explanation`.
 
 == Constraints and Current Implementation Limits
 
@@ -252,11 +242,12 @@ The following example conforms to the CrJSON schema. In many of the example valu
       }
     }
   ],
-  "extras:validation_status": {
-    "isValid": true,
-    "error": null,
-    "validationErrors": [],
-    "entries": []
+  "validationResults": {
+    "activeManifest": {
+      "success": [],
+      "informational": [],
+      "failure": []
+    }
   }
 }
 ----
