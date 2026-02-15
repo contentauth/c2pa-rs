@@ -99,9 +99,9 @@ Each manifest object SHALL include the following properties (per schema: require
 
 * `label` (manifest label/URN)
 * `assertions` (object keyed by assertion label)
-* `signature` (required; signature and credential details object)
-* `status` (required; per-manifest validation results object)
-* either `claim` (v1, per claimV1 / C2PA claim-map) or `claim.v2` (v2, per C2PA claim-map-v2; implementation emits `claim.v2`)
+* `signature` (signature and credential details object)
+* `status` (per-manifest validation results object)
+* either `claim` (v1, per C2PA `claim-map`) or `claim.v2` (v2, per C2PA `claim-map-v2`)
 
 The manifest object does not allow additional properties (schema `additionalProperties: false`).
 
@@ -139,31 +139,12 @@ When a manifest uses `claim` instead of `claim.v2`, it conforms to the C2PA CDDL
 
 Optional: `dc:title`, `redacted_assertions` (JUMBF URI strings), `alg`, `alg_soft`, `metadata`.
 
+All `hash` values in hashed URI maps SHALL be Base64 strings.
+
 === `assertions`
 
-`assertions` SHALL be an object keyed by assertion label.
+`assertions` SHALL be an object keyed by assertion label. The contents of the object are the assertion payloads, as defined by the C2PA specification.
 
-==== Included assertion sources
-
-CrJSON aggregates assertions from multiple C2PA sources:
-
-* Regular manifest assertions (`manifest.assertions()`)
-* Hash assertions from claim store (`c2pa.hash.data`, `c2pa.hash.bmff`, `c2pa.hash.boxes`, including versioned variants)
-* Ingredient assertions from `manifest.ingredients()`
-* Gathered assertions not present in regular list (including binary/UUID payload cases)
-
-==== Labeling and instance rules
-
-* Base label is the assertion label string.
-* For repeated hash/gathered assertion instances, suffix `_N` is used where `N = instance + 1`.
-* For multiple ingredient assertions, suffix `__N` is used where `N` is 1-based index.
-
-Examples:
-
-* `c2pa.hash.data`
-* `c2pa.hash.bmff.v2`
-* `c2pa.ingredient`
-* `c2pa.ingredient.v3__2`
 
 ==== Binary normalization and hash encoding
 
@@ -234,13 +215,11 @@ Global validation object includes:
 
 == Constraints and Current Implementation Limits
 
-* CrJSON does not include `asset_info`, `content`, or `metadata`. The root object defines `@context` (required), `manifests` (required), and optionally validation-status properties (`extras:validation_status` or other namespaced keys per schema). The schema allows `additionalProperties` at root.
-* Manifest objects do not allow additional properties (schema `additionalProperties: false` for manifest).
 * CrJSON is export-oriented; it is not the canonical source of cryptographic truth. Canonical validation remains bound to C2PA/JUMBF/COSE data structures per C2PA v2.3.
 
 == Minimal Example
 
-The following example conforms to the CrJSON schema. Each manifest SHALL have `label`, `assertions`, `signature`, `status`, and either `claim` or `claim.v2`. For `claim.v2`, required fields are `instanceID`, `claim_generator_info`, `signature`, and `created_assertions` (at least one entry).
+The following example conforms to the CrJSON schema. In many of the example values, a `...` placeholder is used for a value that is not relevant to the example.  Also, any values which would be Base64-encoded are represented as `<base64>`.
 
 [source,json]
 ----
@@ -282,13 +261,3 @@ The following example conforms to the CrJSON schema. Each manifest SHALL have `l
 }
 ----
 
-== Conformance Guidance
-
-A CrJSON producer is conformant to this implementation profile when it:
-
-* Emits the root structure and field types described above.
-* Emits Base64 strings for hash-bearing binary fields.
-* Includes hash and ingredient assertions in `assertions`.
-* Serializes validation output into both per-manifest `status` and global `extras:validation_status` when validation results are available.
-
-A CrJSON consumer should tolerate additional root-level fields (schema allows `additionalProperties` at root). Manifest objects do not allow additional properties per schema. Assertion labels and assertion payloads remain extensible per C2PA.
