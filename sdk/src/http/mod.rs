@@ -64,12 +64,12 @@ pub mod restricted;
 pub use http;
 
 /// A resolver for sync (blocking) HTTP requests.
-///
-/// This trait is a supertrait of [`MaybeSend`] and [`MaybeSync`] for consistency with the
-/// [`AsyncHttpResolver`]. For more information on the rationale, see [`AsyncHttpResolver`].
-///
-/// [`MaybeSend`]: crate::maybe_send_sync::MaybeSend
-/// [`MaybeSync`]: crate::maybe_send_sync::MaybeSync
+//
+// This trait is a supertrait of [`MaybeSend`] and [`MaybeSync`] for consistency with the
+// [`AsyncHttpResolver`]. For more information on the rationale, see [`AsyncHttpResolver`].
+//
+// [`MaybeSend`]: crate::maybe_send_sync::MaybeSend
+// [`MaybeSync`]: crate::maybe_send_sync::MaybeSync
 pub trait SyncHttpResolver: MaybeSend + MaybeSync {
     /// Resolve a [`Request`] into a [`Response`] with a streaming body.
     ///
@@ -95,15 +95,15 @@ impl<T: SyncHttpResolver + ?Sized> SyncHttpResolver for Arc<T> {
 }
 
 /// A resolver for non-blocking (async) HTTP requests.
-///
-/// This trait is a supertrait of [`MaybeSend`] and [`MaybeSync`] because in many cases
-/// we use the pattern `&dyn AsyncHttpResolver`. For that to cross an await point, it
-/// must implement `Send`, and for that to happen, it must also implement `Sync`. Thus,
-/// rather than creating a new trait that combines `AsyncHttpResolver + MaybeSend + MaybeSync`,
-/// we require it here to reduce complexity.
-///
-/// [`MaybeSend`]: crate::maybe_send_sync::MaybeSend
-/// [`MaybeSync`]: crate::maybe_send_sync::MaybeSync
+//
+// This trait is a supertrait of [`MaybeSend`] and [`MaybeSync`] because in many cases
+// we use the pattern `&dyn AsyncHttpResolver`. For that to cross an await point, it
+// must implement `Send`, and for that to happen, it must also implement `Sync`. Thus,
+// rather than creating a new trait that combines `AsyncHttpResolver + MaybeSend + MaybeSync`,
+// we require it here to reduce complexity.
+//
+// [`MaybeSend`]: crate::maybe_send_sync::MaybeSend
+// [`MaybeSync`]: crate::maybe_send_sync::MaybeSync
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait AsyncHttpResolver: MaybeSend + MaybeSync {

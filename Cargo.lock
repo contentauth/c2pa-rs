@@ -128,15 +128,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arbitrary"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
-dependencies = [
- "derive_arbitrary",
-]
-
-[[package]]
 name = "asn1-rs"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -426,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa"
-version = "0.75.20"
+version = "0.75.21"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -525,13 +516,12 @@ dependencies = [
  "wstd",
  "x509-parser",
  "zeroize",
- "zip 6.0.0",
- "zip 7.4.0",
+ "zip",
 ]
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.75.20"
+version = "0.75.21"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -556,7 +546,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.75.20"
+version = "0.75.21"
 dependencies = [
  "quote",
  "syn 2.0.115",
@@ -564,7 +554,7 @@ dependencies = [
 
 [[package]]
 name = "c2patool"
-version = "0.26.28"
+version = "0.26.29"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1100,17 +1090,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "derive_arbitrary"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.115",
-]
-
-[[package]]
 name = "difflib"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1309,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.75.20"
+version = "0.75.21"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2346,7 +2325,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.75.20"
+version = "0.75.21"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2473,9 +2452,9 @@ dependencies = [
 
 [[package]]
 name = "native-tls"
-version = "0.2.14"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87de3442987e9dbec73158d5c715e7ad9072fda936bb03d19d7fa10e00520f0e"
+checksum = "6cdede44f9a69cab2899a2049e2c3bd49bf911a157f6a3353d4a91c61abbce44"
 dependencies = [
  "libc",
  "log",
@@ -5462,18 +5441,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.115",
-]
-
-[[package]]
-name = "zip"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb2a05c7c36fde6c09b08576c9f7fb4cda705990f73b58fe011abf7dfb24168b"
-dependencies = [
- "arbitrary",
- "crc32fast",
- "indexmap 2.13.0",
- "memchr",
 ]
 
 [[package]]
