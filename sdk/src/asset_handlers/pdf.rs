@@ -213,7 +213,7 @@ impl C2paPdf for Pdf {
     ///
     /// A `Vec<&[u8]>` is returned because it's possible for a PDF's manifests to be stored
     /// separately, due to PDF's "Incremental Update" feature. See the spec for more details:
-    /// <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_embedding_manifests_into_pdfs>
+    /// [embedding_manifests_into_pdfs - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_embedding_manifests_into_pdfs)
     fn read_manifest_bytes(&self) -> Result<Option<Vec<&[u8]>>, Error> {
         let Some(id) = self.c2pa_file_spec_object_id() else {
             return Ok(None);
@@ -278,13 +278,14 @@ impl C2paPdf for Pdf {
             .and_then(Object::as_stream)
             .ok()
             .and_then(|stream_dict| {
-                let Ok(subtype_str) = stream_dict
+                let Ok(subtype_bytes) = stream_dict
                     .dict
                     .get_deref(SUBTYPE_KEY, &self.document)
-                    .and_then(Object::as_name_str)
+                    .and_then(Object::as_name)
                 else {
                     return None;
                 };
+                let subtype_str = str::from_utf8(subtype_bytes).ok()?;
 
                 if subtype_str.to_lowercase() != "xml" {
                     return None;
@@ -478,8 +479,8 @@ impl Pdf {
                 .retain(|obj| {
                     obj.as_dict()
                         .and_then(|annot| annot.get(TYPE_KEY))
-                        .and_then(Object::as_name_str)
-                        .map(|str| str != CONTENT_CREDS)
+                        .and_then(Object::as_name)
+                        .map(|str| str::from_utf8(str) != Ok(CONTENT_CREDS))
                         .unwrap_or(true)
                 });
         }
@@ -519,8 +520,8 @@ impl Pdf {
             .iter()
             .position(|value| {
                 value
-                    .as_string()
-                    .map(|value| value == CONTENT_CREDS)
+                    .as_str()
+                    .map(|value| str::from_utf8(value) == Ok(CONTENT_CREDS))
                     .unwrap_or_default()
             })
             .ok_or(Error::UnableToFindEmbeddedFileManifest)?;

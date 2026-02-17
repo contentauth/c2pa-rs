@@ -14,9 +14,12 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::crypto::{
-    raw_signature::SigningAlg,
-    time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
+use crate::{
+    crypto::{
+        raw_signature::SigningAlg,
+        time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
+    },
+    maybe_send_sync::{MaybeSend, MaybeSync},
 };
 
 /// Implementations of the `RawSigner` trait generate a cryptographic signature
@@ -57,45 +60,9 @@ pub trait RawSigner: TimeStampProvider {
 /// signature over an arbitrary byte array.
 ///
 /// Use this trait only when the implementation must be asynchronous.
-#[cfg(not(target_arch = "wasm32"))]
-#[async_trait]
-pub trait AsyncRawSigner: AsyncTimeStampProvider + Sync {
-    /// Return a raw signature over the original byte slice.
-    async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>, RawSignerError>;
-
-    /// Return the algorithm implemented by this signer.
-    fn alg(&self) -> SigningAlg;
-
-    /// Return the signing certificate chain.
-    ///
-    /// Each certificate should be encoded in DER format and sequenced from
-    /// end-entity certificate to the outermost certificate authority.
-    fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError>;
-
-    /// Return the size in bytes of the largest possible expected signature.
-    /// Signing will fail if the result of the [`sign`] function is larger
-    /// than this value.
-    ///
-    /// [`sign`]: Self::sign
-    fn reserve_size(&self) -> usize;
-
-    /// Return an OCSP response for the signing certificate if available.
-    ///
-    /// By pre-querying the value for the signing certificate, the value can be
-    /// cached which will reduce load on the certificate authority, as
-    /// recommended by the C2PA spec.
-    async fn ocsp_response(&self) -> Option<Vec<u8>> {
-        None
-    }
-}
-
-/// Implementations of the `AsyncRawSigner` trait generate a cryptographic
-/// signature over an arbitrary byte array.
-///
-/// Use this trait only when the implementation must be asynchronous.
-#[cfg(target_arch = "wasm32")]
-#[async_trait(?Send)]
-pub trait AsyncRawSigner: AsyncTimeStampProvider {
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait AsyncRawSigner: AsyncTimeStampProvider + MaybeSync + MaybeSend {
     /// Return a raw signature over the original byte slice.
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>, RawSignerError>;
 
@@ -157,18 +124,31 @@ impl From<std::io::Error> for RawSignerError {
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 impl From<openssl::error::ErrorStack> for RawSignerError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::CryptoLibraryError(err.to_string())
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 impl From<crate::crypto::raw_signature::openssl::OpenSslMutexUnavailable> for RawSignerError {
     fn from(err: crate::crypto::raw_signature::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())
     }
+}
+
+/// Convert JSON-encoded PEM data (with \n) to proper PEM format
+fn fix_json_pem(data: &[u8]) -> Vec<u8> {
+    String::from_utf8_lossy(data)
+        .replace("\\n", "\n")
+        .into_bytes()
 }
 
 /// Return a built-in [`RawSigner`] instance using the provided signing
@@ -187,11 +167,14 @@ pub fn signer_from_cert_chain_and_private_key(
     alg: SigningAlg,
     time_stamp_service_url: Option<String>,
 ) -> Result<Box<dyn RawSigner + Send + Sync>, RawSignerError> {
-    #[cfg(feature = "rust_native_crypto")]
+    let cert_chain = fix_json_pem(cert_chain);
+    let private_key = fix_json_pem(private_key);
+
+    #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
     {
         match crate::crypto::raw_signature::rust_native::signers::signer_from_cert_chain_and_private_key(
-            cert_chain,
-            private_key,
+            &cert_chain,
+            &private_key,
             alg,
             time_stamp_service_url.clone(),
         ) {
@@ -201,11 +184,14 @@ pub fn signer_from_cert_chain_and_private_key(
         }
     }
 
-    #[cfg(feature = "openssl")]
+    #[cfg(all(
+        feature = "openssl",
+        not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+    ))]
     {
         return crate::crypto::raw_signature::openssl::signers::signer_from_cert_chain_and_private_key(
-            cert_chain,
-            private_key,
+            &cert_chain,
+            &private_key,
             alg,
             time_stamp_service_url,
         );

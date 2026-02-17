@@ -33,22 +33,13 @@ use crate::{
     assertions::{labels, AssetType, EmbeddedData},
     asset_io::CAIRead,
     claim::Claim,
+    error::Error,
     hashed_uri::HashedUri,
     jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
-    salt::DefaultSalt,
+    maybe_send_sync::MaybeSend,
     utils::mime::format_to_mime,
-    Error, Result,
+    Result,
 };
-
-/// Function that is used by serde to determine whether or not we should serialize
-/// resources based on the `serialize_resources` flag.
-/// (Serialization is disabled by default.)
-pub(crate) fn skip_serializing_resources(_: &ResourceStore) -> bool {
-    //TODO: Why is this disabled for wasm32?
-    !cfg!(feature = "serialize_thumbnails")
-        || cfg!(test)
-        || cfg!(not(all(target_arch = "wasm32", not(target_os = "wasi"))))
-}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -74,7 +65,7 @@ impl UriOrResource {
                             format_to_mime(&r.format),
                             data.to_vec(),
                         );
-                        claim.add_assertion_with_salt(&icon_assertion, &DefaultSalt::default())?
+                        claim.add_assertion(&icon_assertion)?
                     }
                 };
                 Ok(UriOrResource::HashedUri(hash_uri))
@@ -169,7 +160,7 @@ impl ResourceRef {
 }
 
 /// Resource store to contain binary objects referenced from JSON serializable structures
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[doc(hidden)]
 pub struct ResourceStore {
@@ -340,7 +331,7 @@ impl ResourceStore {
     pub fn write_stream(
         &self,
         id: &str,
-        mut stream: impl Write + Read + Seek + Send,
+        mut stream: impl Write + Read + Seek + MaybeSend,
     ) -> Result<u64> {
         #[cfg(feature = "file_io")]
         if !self.resources.contains_key(id) {
@@ -410,7 +401,7 @@ impl ResourceResolver for ResourceStore {
 pub fn mime_from_uri(uri: &str) -> String {
     if let Some(label) = assertion_label_from_uri(uri) {
         if label.starts_with(labels::THUMBNAIL) {
-            // https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_thumbnail
+            // https://spec.c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_thumbnail
             if let Some(ext) = label.rsplit('.').next() {
                 return format!("image/{ext}");
             }

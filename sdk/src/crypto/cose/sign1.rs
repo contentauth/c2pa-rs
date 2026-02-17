@@ -12,8 +12,8 @@
 // each license.
 
 use async_generic::async_generic;
-use ciborium::value::Value;
 use coset::{
+    cbor::value::Value,
     iana::{self, Algorithm, EnumI64},
     CoseSign1, Label, RegisteredLabelWithPrivate, TaggedCborSerializable,
 };
@@ -177,6 +177,7 @@ fn cert_chain_from_cbor_value(value: Value) -> Result<Vec<Vec<u8>>, CoseError> {
 pub fn signing_time_from_sign1(
     sign1: &coset::CoseSign1,
     data: &[u8],
+    verify_trust: bool,
 ) -> Option<chrono::DateTime<chrono::Utc>> {
     // get timestamp info if available
 
@@ -185,9 +186,9 @@ pub fn signing_time_from_sign1(
     let local_ctp = CertificateTrustPolicy::passthrough();
 
     let time_stamp_info = if _sync {
-        validate_cose_tst_info(sign1, data, &local_ctp, &mut local_log)
+        validate_cose_tst_info(sign1, data, &local_ctp, &mut local_log, verify_trust)
     } else {
-        validate_cose_tst_info_async(sign1, data, &local_ctp, &mut local_log).await
+        validate_cose_tst_info_async(sign1, data, &local_ctp, &mut local_log, verify_trust).await
     };
 
     if let Ok(tst_info) = time_stamp_info {

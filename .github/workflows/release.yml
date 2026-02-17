@@ -14,12 +14,16 @@ jobs:
     name: Release-plz
     runs-on: ubuntu-latest
 
+    env:
+      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
     outputs:
       c2patool-release-tag: ${{ steps.sniff-c2patool-release-tag.outputs.tag }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
@@ -27,12 +31,72 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # Hopefully temporary step while we sort out build issues.
+      - name: Work around crates.io git index issues
+        run: |
+          rm -rf ~/.cargo/registry/index/github.com-1ecc6299db9ec823/ || true
+
+      - name: Install release-plz from fork
+        run: |
+          curl -sL -o release-plz.tar.gz \
+            https://github.com/scouten-adobe/release-plz/releases/download/patched-2026-02-12/release-plz-linux-x86_64.tar.gz
+          tar -xzf release-plz.tar.gz
+          REPLZ=$(find . -maxdepth 2 -name 'release-plz' -type f | head -1)
+          chmod +x "$REPLZ" && sudo mv "$REPLZ" /usr/local/bin/release-plz
+          rm -f release-plz.tar.gz
+
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@90b40388b8931b1c39e248959515e295e02e9066
+        with:
+          tool: cargo-semver-checks@0.46
+
+      - name: Configure git user from GitHub token
+        uses: release-plz/git-config@59144859caf016f8b817a2ac9b051578729173c4
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
       - name: Run release-plz
         id: release-plz
-        uses: MarcoIeni/release-plz-action@v0.5.112
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
+        run: |
+          echo "-- Running release-plz release-pr --"
+          release_pr_output=$(release-plz release-pr \
+            --git-token "${GITHUB_TOKEN}" \
+            --repo-url "https://github.com/${GITHUB_REPOSITORY}" \
+            -o json)
+          echo "release_pr_output: $release_pr_output"
+          prs=$(echo "$release_pr_output" | jq -c .prs)
+          echo "prs=$prs" >> "$GITHUB_OUTPUT"
+          prs_length=$(echo "$prs" | jq 'length')
+          if [ "$prs_length" != "0" ]; then
+            prs_created=true
+            first_pr=$(echo "$prs" | jq -c '.[0]')
+          else
+            prs_created=false
+            first_pr="{}"
+          fi
+          echo "pr=$first_pr" >> "$GITHUB_OUTPUT"
+          echo "prs_created=$prs_created" >> "$GITHUB_OUTPUT"
+
+          echo "-- Running release-plz release --"
+          release_output=$(release-plz release \
+            --git-token "${GITHUB_TOKEN}" \
+            -o json)
+          echo "release_output: $release_output"
+          releases=$(echo "$release_output" | jq -c .releases)
+          echo "releases=$releases" >> "$GITHUB_OUTPUT"
+          releases_length=$(echo "$releases" | jq 'length')
+          if [ "$releases_length" != "0" ]; then
+            releases_created=true
+          else
+            releases_created=false
+          fi
+          echo "releases_created=$releases_created" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch newly created tags
+        run: git fetch --tags
 
       - name: Debug release-plz outputs
         env:
@@ -50,18 +114,19 @@ jobs:
           # Ensure we're on a clean main branch
           git checkout main
           git pull origin main
-          
+
           # Extract the new version of c2pa from the release PR output JSON
           NEW_VERSION=$(echo "$PR" | jq -r '.releases[] | select(.package_name == "c2pa") | .version')
-          
-          # Add a comment to the lib.rs file to trigger a change
-          echo "// Updated to use c2pa crate version $NEW_VERSION" >> c2pa_c_ffi/src/lib.rs
-          
+
+          # Update the c2pa dependency version in c2pa_c_ffi/Cargo.toml
+          sed -i.bak "s/\(c2pa = { path = \"..\/sdk\", version = \"\)[^\"]*\"/\1$NEW_VERSION\"/" c2pa_c_ffi/Cargo.toml
+          rm c2pa_c_ffi/Cargo.toml.bak
+
           # Configure git and commit the changes
           git config user.name "CAI Open Source Builds"
           git config user.email "caiopensrc@adobe.com"
-          git add c2pa_c_ffi/src/lib.rs
-          git commit -m "fix: Pick up latest c2pa-rs build"
+          git add c2pa_c_ffi/Cargo.toml
+          git commit -m "fix: Update c2pa dependency to $NEW_VERSION"
           git push origin main
 
       - name: Force update of c2patool if only c2pa-rs is updated
@@ -72,18 +137,19 @@ jobs:
           # Ensure we're on a clean main branch
           git checkout main
           git pull origin main
-          
+
           # Extract the new version of c2pa from the release PR output JSON
           NEW_VERSION=$(echo "$PR" | jq -r '.releases[] | select(.package_name == "c2pa") | .version')
-          
-          # Add a comment to the lib.rs file to trigger a change
-          echo "// Updated to use c2pa crate version $NEW_VERSION" >> cli/src/lib.rs
-          
+
+          # Update the c2pa dependency version in cli/Cargo.toml
+          sed -i.bak "s/\(c2pa = { path = \"..\/sdk\", version = \"\)[^\"]*\"/\1$NEW_VERSION\"/" cli/Cargo.toml
+          rm cli/Cargo.toml.bak
+
           # Configure git and commit the changes
           git config user.name "CAI Open Source Builds"
           git config user.email "caiopensrc@adobe.com"
-          git add cli/src/lib.rs
-          git commit -m "fix: Pick up latest c2pa-rs build"
+          git add cli/Cargo.toml
+          git commit -m "fix: Update c2pa dependency to $NEW_VERSION"
           git push origin main
 
       - name: Clean up stale release-plz branches
@@ -94,12 +160,16 @@ jobs:
             tail -n +2 |\
             sed 's/origin\///' |\
             xargs -I {} git push origin --delete {}
-  
+
       - name: Identify c2patool release
         id: sniff-c2patool-release-tag
         run: |
+          echo "All tags on HEAD:"
+          git tag --contains HEAD
+          echo "Filtered c2patool tags:"
+          git tag --contains HEAD | grep '^c2patool-' || echo "No c2patool tags found"
           echo tag=`git tag --contains HEAD | grep '^c2patool-'` >> "$GITHUB_OUTPUT" || true
-    
+
   publish-c2patool-binaries:
     name: Publish c2patool binaries
     runs-on: ${{ matrix.os }}
@@ -128,7 +198,7 @@ jobs:
     steps:
       - name: Checkout repository
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust toolchain
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
@@ -154,7 +224,7 @@ jobs:
 
       - name: Upload binary to GitHub
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: svenstaro/upload-release-action@2.9.0
+        uses: svenstaro/upload-release-action@2.11.3
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/${{ matrix.artifact_name }}
@@ -168,7 +238,7 @@ jobs:
 
       - name: Upload SBOM to Github
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: svenstaro/upload-release-action@2.9.0
+        uses: svenstaro/upload-release-action@2.11.3
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: cli/c2patool-sbom.json

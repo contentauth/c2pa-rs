@@ -12,31 +12,41 @@
 // each license.
 
 use async_generic::async_generic;
-use ciborium::value::Value;
-use coset::{CoseSign1, Label};
-#[cfg(not(target_arch = "wasm32"))]
-use {
-    crate::crypto::cose::cert_chain_from_sign1,
-    chrono::{DateTime, Utc},
-};
+use chrono::{DateTime, Utc};
+use coset::{cbor::value::Value, CoseSign1, Label};
 
 use crate::{
+    context::Context,
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            check_end_entity_certificate_profile, validate_cose_tst_info,
+            cert_chain_from_sign1, check_end_entity_certificate_profile, validate_cose_tst_info,
             validate_cose_tst_info_async, CertificateTrustError, CertificateTrustPolicy, CoseError,
         },
         ocsp::OcspResponse,
     },
     log_item,
+    settings::Settings,
     status_tracker::StatusTracker,
-    validation_status::{self, SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_REVOKED},
+    validation_status::{
+        self, SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_OCSP_INACCESSIBLE,
+        SIGNING_CREDENTIAL_REVOKED,
+    },
 };
 
 /// Given a COSE signature, extract the OCSP data and validate the status of
 /// that report.
-#[async_generic]
+#[async_generic(async_signature(
+    sign1: &CoseSign1,
+    data: &[u8],
+    fetch_policy: OcspFetchPolicy,
+    ctp: &CertificateTrustPolicy,
+    ocsp_responses: Option<&Vec<Vec<u8>>>,
+    tst_info: Option<&TstInfo>,
+    validation_log: &mut StatusTracker,
+    context: &Context,
+))]
+#[allow(clippy::too_many_arguments)]
 pub fn check_ocsp_status(
     sign1: &CoseSign1,
     data: &[u8],
@@ -45,8 +55,12 @@ pub fn check_ocsp_status(
     ocsp_responses: Option<&Vec<Vec<u8>>>,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    context: &Context,
 ) -> Result<OcspResponse, CoseError> {
-    if crate::settings::get_settings_value::<bool>("builder.certificate_status_should_override")
+    if context
+        .settings()
+        .builder
+        .certificate_status_should_override
         .unwrap_or(false)
     {
         if let Some(ocsp_response_ders) = ocsp_responses {
@@ -59,6 +73,7 @@ pub fn check_ocsp_status(
                         ocsp_response_ders,
                         tst_info,
                         validation_log,
+                        context.settings(),
                     )
                 } else {
                     process_ocsp_responses_async(
@@ -68,6 +83,7 @@ pub fn check_ocsp_status(
                         ocsp_response_ders,
                         tst_info,
                         validation_log,
+                        context.settings(),
                     )
                     .await
                 };
@@ -86,6 +102,7 @@ pub fn check_ocsp_status(
                     ctp,
                     tst_info,
                     &mut ocsp_log,
+                    context.settings(),
                 )
             } else {
                 check_stapled_ocsp_response_async(
@@ -95,23 +112,72 @@ pub fn check_ocsp_status(
                     ctp,
                     tst_info,
                     &mut ocsp_log,
+                    context.settings(),
                 )
                 .await
             };
 
             // we only care about OCSP value log info the result is OK
-            if result.is_ok() {
-                validation_log.append(&ocsp_log);
-                result
-            } else {
-                // errors mean we don't interpret the value
-                Ok(OcspResponse::default())
+            if let Ok(ocsp_response) = result {
+                if ocsp_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
+                    log_item!(
+                        "",
+                        format!(
+                            "signing cert revoked: {}",
+                            ocsp_response.certificate_serial_num
+                        ),
+                        "check_ocsp_status"
+                    )
+                    .validation_status(SIGNING_CREDENTIAL_REVOKED)
+                    .informational(validation_log);
+
+                    return Err(CoseError::CertificateTrustError(
+                        CertificateTrustError::CertificateNotTrusted,
+                    ));
+                }
+
+                // If certificate is confirmed not revoked, return success
+                if ocsp_log.has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED) {
+                    log_item!(
+                        "",
+                        format!(
+                            "signing cert not revoked: {}",
+                            ocsp_response.certificate_serial_num
+                        ),
+                        "check_ocsp_status"
+                    )
+                    .validation_status(SIGNING_CREDENTIAL_NOT_REVOKED)
+                    .informational(validation_log);
+
+                    return Ok(ocsp_response);
+                }
             }
+            // errors mean we don't interpret the value
+            return Ok(OcspResponse::default());
         }
 
         None => match fetch_policy {
             OcspFetchPolicy::FetchAllowed => {
-                fetch_and_check_ocsp_response(sign1, data, ctp, tst_info, validation_log)
+                if _sync {
+                    fetch_and_check_ocsp_response(
+                        sign1,
+                        data,
+                        ctp,
+                        tst_info,
+                        validation_log,
+                        context,
+                    )
+                } else {
+                    fetch_and_check_ocsp_response_async(
+                        sign1,
+                        data,
+                        ctp,
+                        tst_info,
+                        validation_log,
+                        context,
+                    )
+                    .await
+                }
             }
             OcspFetchPolicy::DoNotFetch => {
                 if let Some(ocsp_response_ders) = ocsp_responses {
@@ -124,6 +190,7 @@ pub fn check_ocsp_status(
                                 ocsp_response_ders,
                                 tst_info,
                                 validation_log,
+                                context.settings(),
                             )
                         } else {
                             process_ocsp_responses_async(
@@ -133,6 +200,7 @@ pub fn check_ocsp_status(
                                 ocsp_response_ders,
                                 tst_info,
                                 validation_log,
+                                context.settings(),
                             )
                             .await
                         }
@@ -157,10 +225,10 @@ fn process_ocsp_responses(
     ocsp_response_ders: &[Vec<u8>],
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<OcspResponse, CoseError> {
-    let mut current_validation_log = StatusTracker::default();
     for ocsp_response_der in ocsp_response_ders {
-        current_validation_log = StatusTracker::default();
+        let mut current_validation_log = StatusTracker::default();
         if let Ok(ocsp_response) = if _sync {
             check_stapled_ocsp_response(
                 sign1,
@@ -168,7 +236,8 @@ fn process_ocsp_responses(
                 data,
                 ctp,
                 tst_info,
-                validation_log,
+                &mut current_validation_log,
+                settings,
             )
         } else {
             check_stapled_ocsp_response_async(
@@ -177,12 +246,13 @@ fn process_ocsp_responses(
                 data,
                 ctp,
                 tst_info,
-                validation_log,
+                &mut current_validation_log,
+                settings,
             )
             .await
         } {
             // If certificate is revoked, return error immediately
-            if validation_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
+            if current_validation_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
                 log_item!(
                     "",
                     format!(
@@ -192,14 +262,15 @@ fn process_ocsp_responses(
                     "check_ocsp_status"
                 )
                 .validation_status(SIGNING_CREDENTIAL_REVOKED)
-                .informational(&mut current_validation_log);
+                .informational(validation_log);
 
                 return Err(CoseError::CertificateTrustError(
                     CertificateTrustError::CertificateNotTrusted,
                 ));
             }
             // If certificate is confirmed not revoked, return success
-            if validation_log.has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED) {
+            if current_validation_log.has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+            {
                 log_item!(
                     "",
                     format!(
@@ -209,14 +280,13 @@ fn process_ocsp_responses(
                     "check_ocsp_status"
                 )
                 .validation_status(SIGNING_CREDENTIAL_NOT_REVOKED)
-                .informational(&mut current_validation_log);
+                .informational(validation_log);
 
-                validation_log.append(&current_validation_log);
                 return Ok(ocsp_response);
             }
         }
     }
-    validation_log.append(&mut current_validation_log);
+
     Ok(OcspResponse::default())
 }
 
@@ -238,6 +308,7 @@ fn check_stapled_ocsp_response(
     ctp: &CertificateTrustPolicy,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    settings: &Settings,
 ) -> Result<OcspResponse, CoseError> {
     // this timestamp is checked as part of Cose Signature so don't need to log its results here
     let mut local_log_sync = StatusTracker::default();
@@ -247,9 +318,22 @@ fn check_stapled_ocsp_response(
         Some(tst_info) => Ok(tst_info.clone()),
         None => {
             if _sync {
-                validate_cose_tst_info(sign1, data, ctp, &mut local_log_sync)
+                validate_cose_tst_info(
+                    sign1,
+                    data,
+                    ctp,
+                    &mut local_log_sync,
+                    settings.verify.verify_timestamp_trust,
+                )
             } else {
-                validate_cose_tst_info_async(sign1, data, ctp, &mut local_log_sync).await
+                validate_cose_tst_info_async(
+                    sign1,
+                    data,
+                    ctp,
+                    &mut local_log_sync,
+                    settings.verify.verify_timestamp_trust,
+                )
+                .await
             }
         }
     };
@@ -264,96 +348,131 @@ fn check_stapled_ocsp_response(
         Err(_) => (None, None),
     };
 
-    let Ok(ocsp_data) =
-        OcspResponse::from_der_checked(ocsp_response_der, signing_time, validation_log)
-    else {
+    let mut current_validation_log = StatusTracker::default();
+    let Ok(ocsp_data) = OcspResponse::from_der_checked(
+        ocsp_response_der,
+        signing_time,
+        &mut current_validation_log,
+    ) else {
         return Ok(OcspResponse::default());
     };
 
     // If we get a valid response, validate the certs.
     if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-        // make sure this is a OCSP signing EKU
+        // make sure this is an OCSP signing EKU
         let mut new_ctp = ctp.clone();
         new_ctp.clear_ekus();
         new_ctp.add_valid_ekus("1.3.6 .1 .5 .5 .7 .3 .9".as_bytes()); // ocsp signing EKU
-        check_end_entity_certificate_profile(
+        if check_end_entity_certificate_profile(
             &ocsp_certs[0],
-            ctp,
+            &new_ctp,
             validation_log,
             tst_info.as_ref(),
-        )?;
+        )
+        .is_err()
+        {
+            return Ok(OcspResponse::default());
+        }
 
         // validate the trust
-        ctp.check_certificate_trust(
-            &ocsp_certs,
-            &ocsp_certs[0],
-            signing_time.map(|t| t.timestamp()),
-        )?;
+        if new_ctp
+            .check_certificate_trust(
+                &ocsp_certs,
+                &ocsp_certs[0],
+                signing_time.map(|t| t.timestamp()),
+            )
+            .is_err()
+        {
+            return Ok(OcspResponse::default());
+        }
     } else {
         // we cannot validate the OCSP response was signed by a valid authorized responder so treat as unknown
         return Ok(OcspResponse::default());
     }
-
+    // only append usable OCSP responses to validation_log
+    validation_log.append(&current_validation_log);
     Ok(ocsp_data)
 }
 
 /// Fetches and validates an OCSP response for the given COSE signature.
-// TO DO: Add async version of this?
+#[async_generic(async_signature(
+    sign1: &CoseSign1,
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    tst_info: Option<&TstInfo>,
+    validation_log: &mut StatusTracker,
+    context: &crate::context::Context,
+))]
 pub(crate) fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
     ctp: &CertificateTrustPolicy,
-    _tst_info: Option<&TstInfo>,
+    tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    context: &crate::context::Context,
 ) -> Result<OcspResponse, CoseError> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let _ = (sign1, data, ctp, validation_log);
-        Ok(OcspResponse::default())
-    }
+    let certs = cert_chain_from_sign1(sign1)?;
 
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let certs = cert_chain_from_sign1(sign1)?;
+    let ocsp_der = if _sync {
+        crate::crypto::ocsp::fetch_ocsp_response(&certs, context)
+    } else {
+        crate::crypto::ocsp::fetch_ocsp_response_async(&certs, context).await
+    };
 
-        let Some(ocsp_der) = crate::crypto::ocsp::fetch_ocsp_response(&certs) else {
-            use crate::validation_status::SIGNING_CREDENTIAL_OCSP_INACCESSIBLE;
+    let Some(ocsp_response_der) = ocsp_der else {
+        log_item!(
+            "",
+            "signing cert not fetched".to_string(),
+            "fetch_and_check_ocsp_response"
+        )
+        .validation_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE)
+        .informational(validation_log);
 
-            log_item!(
-                "",
-                "signing cert not fetched".to_string(),
-                "fetch_and_check_ocsp_response"
-            )
-            .validation_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE)
-            .informational(validation_log);
-            return Ok(OcspResponse::default());
+        return Ok(OcspResponse::default());
+    };
+
+    // use supplied override time if provided
+    let signing_time: Option<DateTime<Utc>> = match tst_info {
+        Some(tst_info) => Some(tst_info.gen_time.clone().into()),
+        None => validate_cose_tst_info(
+            sign1,
+            data,
+            ctp,
+            validation_log,
+            context.settings().verify.verify_timestamp_trust,
+        )
+        .ok()
+        .map(|tst_info| tst_info.gen_time.clone().into()),
+    };
+
+    // Check the OCSP response, but only if it is well-formed.
+    // Revocation errors are reported in the validation log.
+    let ocsp_data =
+        match OcspResponse::from_der_checked(&ocsp_response_der, signing_time, validation_log) {
+            Ok(data) => data,
+            Err(_) => return Ok(OcspResponse::default()),
         };
 
-        let ocsp_response_der = ocsp_der;
+    // If we get a valid response validate the certs.
+    if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+        // make sure this is an OCSP signing EKU
+        let mut new_ctp = ctp.clone();
+        new_ctp.clear_ekus();
+        new_ctp.add_valid_ekus("1.3.6 .1 .5 .5 .7 .3 .9".as_bytes()); // ocsp signing EKU
 
-        let signing_time: Option<DateTime<Utc>> =
-            validate_cose_tst_info(sign1, data, ctp, validation_log)
-                .ok()
-                .map(|tst_info| tst_info.gen_time.clone().into());
-
-        // Check the OCSP response, but only if it is well-formed.
-        // Revocation errors are reported in the validation log.
-        let Ok(ocsp_data) =
-            OcspResponse::from_der_checked(&ocsp_response_der, signing_time, validation_log)
-        else {
-            // Errors are treated as if no OCSP response was present
+        if check_end_entity_certificate_profile(&ocsp_certs[0], &new_ctp, validation_log, None)
+            .is_err()
+        {
             return Ok(OcspResponse::default());
-        };
-
-        // If we get a valid response validate the certs.
-        if ocsp_data.revoked_at.is_none() {
-            if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
-                check_end_entity_certificate_profile(&ocsp_certs[0], ctp, validation_log, None)?;
-            }
         }
 
-        Ok(ocsp_data)
+        // no need to check trust here, that is checked during validation
+    } else {
+        // OCSP response must be signed by and the cert chain provided
+        return Ok(OcspResponse::default());
     }
+
+    Ok(ocsp_data)
 }
 
 /// Returns the DER-encoded OCSP response from the "rVals" unprotected header in a COSE_Sign1 message.

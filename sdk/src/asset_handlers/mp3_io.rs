@@ -18,7 +18,6 @@ use std::{
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
-use conv::ValueFrom;
 use id3::{
     frame::{EncapsulatedObject, Private},
     *,
@@ -40,7 +39,8 @@ use crate::{
 
 static SUPPORTED_TYPES: [&str; 2] = ["mp3", "audio/mpeg"];
 
-const GEOB_FRAME_MIME_TYPE: &str = "application/x-c2pa-manifest-store";
+const GEOB_FRAME_MIME_TYPE: &str = "application/c2pa";
+const GEOB_FRAME_MIME_TYPE_DEPRECATED: &str = "application/x-c2pa-manifest-store";
 const GEOB_FRAME_FILE_NAME: &str = "c2pa";
 const GEOB_FRAME_DESCRIPTION: &str = "c2pa manifest store";
 
@@ -102,6 +102,10 @@ impl ID3V2Header {
     }
 }
 
+fn is_c2pa_mime_type(mime_type: &String) -> bool {
+    mime_type == GEOB_FRAME_MIME_TYPE || mime_type == GEOB_FRAME_MIME_TYPE_DEPRECATED
+}
+
 fn get_manifest_pos(mut input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
     input_stream.rewind().ok()?;
     let header = ID3V2Header::read_header(input_stream).ok()?;
@@ -115,7 +119,7 @@ fn get_manifest_pos(mut input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
         let mut manifests = Vec::new();
 
         for eo in tag.encapsulated_objects() {
-            if eo.mime_type == GEOB_FRAME_MIME_TYPE {
+            if is_c2pa_mime_type(&eo.mime_type) {
                 manifests.push(eo.data.clone());
             }
         }
@@ -147,7 +151,7 @@ impl CAIReader for Mp3IO {
 
         if let Ok(tag) = Tag::read_from2(input_stream) {
             for eo in tag.encapsulated_objects() {
-                if eo.mime_type == GEOB_FRAME_MIME_TYPE {
+                if is_c2pa_mime_type(&eo.mime_type) {
                     match manifest {
                         Some(_) => {
                             return Err(Error::TooManyManifestStores);
@@ -432,9 +436,9 @@ impl CAIWriter for Mp3IO {
             get_manifest_pos(&mut output_stream).ok_or(Error::EmbeddingError)?;
 
         positions.push(HashObjectPositions {
-            offset: usize::value_from(manifest_pos)
+            offset: usize::try_from(manifest_pos)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
-            length: usize::value_from(manifest_len)
+            length: usize::try_from(manifest_len)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
             htype: HashBlockObjectType::Cai,
         });
@@ -442,21 +446,21 @@ impl CAIWriter for Mp3IO {
         // add hash of chunks before cai
         positions.push(HashObjectPositions {
             offset: 0,
-            length: usize::value_from(manifest_pos)
+            length: usize::try_from(manifest_pos)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
             htype: HashBlockObjectType::Other,
         });
 
         // add position from cai to end
-        let end = u64::value_from(manifest_pos)
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
-            + u64::value_from(manifest_len)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+        let Some(end) = u64::checked_add(manifest_pos, manifest_len as u64) else {
+            return Err(Error::InvalidAsset("value out of range".to_string()));
+        };
+
         let file_end = stream_len(&mut output_stream)?;
         positions.push(HashObjectPositions {
-            offset: usize::value_from(end)
+            offset: usize::try_from(end)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?, // len of cai
-            length: usize::value_from(file_end - end)
+            length: usize::try_from(file_end - end)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
             htype: HashBlockObjectType::Other,
         });
@@ -495,6 +499,9 @@ impl AssetPatch for Mp3IO {
         }
     }
 }
+
+#[derive(Debug, thiserror::Error)]
+pub enum Mp3Error {}
 
 #[cfg(test)]
 pub mod tests {

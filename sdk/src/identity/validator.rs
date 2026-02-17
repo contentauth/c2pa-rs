@@ -39,16 +39,13 @@ impl AsyncPostValidator for CawgValidator {
     ) -> crate::Result<Option<Value>> {
         if label == "cawg.identity" || label.starts_with("cawg.identity__") {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
-            tracker.push_current_uri(uri);
-
+            tracker.push_current_uri(uri.to_string());
             let result = identity_assertion
                 .validate_partial_claim(partial_claim, tracker)
                 .await
-                .map(Some)
-                .map_err(|e| crate::Error::ClaimVerification(e.to_string()));
-
+                .ok();
             tracker.pop_current_uri();
-            return result;
+            return Ok(result);
         };
         Ok(None)
     }
@@ -64,7 +61,6 @@ mod tests {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use super::*;
     use crate::{Reader, ValidationState};
 
     const CONNECTED_IDENTITIES_VALID: &[u8] =
@@ -81,9 +77,13 @@ mod tests {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
-        let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
-        reader.post_validate_async(&CawgValidator {}).await.unwrap();
+
+        let reader = Reader::from_stream_async("image/jpeg", &mut stream)
+            .await
+            .unwrap();
+
         //println!("validation results: {}", reader);
+
         assert_eq!(
             reader
                 .validation_results()
@@ -103,9 +103,13 @@ mod tests {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let mut stream = Cursor::new(MULTIPLE_IDENTITIES_VALID);
-        let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
-        reader.post_validate_async(&CawgValidator {}).await.unwrap();
+
+        let reader = Reader::from_stream_async("image/jpeg", &mut stream)
+            .await
+            .unwrap();
+
         println!("validation results: {reader}");
+
         assert_eq!(
             reader
                 .validation_results()
@@ -119,10 +123,13 @@ mod tests {
     }
 
     #[c2pa_test_async]
-    async fn test_post_validate_with_hard_binding_missing() {
+    async fn test_cawg_validate_with_hard_binding_missing() {
         let mut stream = Cursor::new(NO_HARD_BINDING);
-        let mut reader = Reader::from_stream("image/jpeg", &mut stream).unwrap();
-        reader.post_validate_async(&CawgValidator {}).await.unwrap();
+
+        let reader = Reader::from_stream_async("image/jpeg", &mut stream)
+            .await
+            .unwrap();
+
         assert_eq!(
             reader
                 .validation_results()

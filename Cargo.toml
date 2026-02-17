@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 
 members = [
     "c2pa_c_ffi",
@@ -12,7 +12,7 @@ members = [
 
 # members in this workspace can share this version setting
 [workspace.package]
-version = "0.59.1"
+version = "0.75.21"
 
 [workspace.dependencies]
 c2pa = { path = "sdk", default-features = false }

@@ -65,7 +65,7 @@ pub trait AsyncRawSignatureValidator {
 /// Which validators are available may vary depending on the platform and
 /// which crate features were enabled.
 pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignatureValidator>> {
-    #[cfg(feature = "rust_native_crypto")]
+    #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
     {
         if let Some(validator) =
             crate::crypto::raw_signature::rust_native::validators::validator_for_signing_alg(alg)
@@ -74,7 +74,10 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
         }
     }
 
-    #[cfg(feature = "openssl")]
+    #[cfg(all(
+        feature = "openssl",
+        not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+    ))]
     if let Some(validator) =
         crate::crypto::raw_signature::openssl::validators::validator_for_signing_alg(alg)
     {
@@ -90,12 +93,12 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
 ///
 /// Which validators are available may vary depending on the platform and
 /// which crate features were enabled.
-pub(crate) fn validator_for_sig_and_hash_algs(
-    sig_alg: &Oid,
-    hash_alg: &Oid,
+pub(crate) fn validator_for_sig_and_hash_algs<T: AsRef<[u8]>, U: AsRef<[u8]>>(
+    sig_alg: &Oid<T>,
+    hash_alg: &Oid<U>,
 ) -> Option<Box<dyn RawSignatureValidator>> {
     // TO REVIEW: Do we need any of the RSA-PSS algorithms for this use case?
-    #[cfg(feature = "rust_native_crypto")]
+    #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
     {
         if let Some(validator) =
             crate::crypto::raw_signature::rust_native::validators::validator_for_sig_and_hash_algs(
@@ -106,7 +109,10 @@ pub(crate) fn validator_for_sig_and_hash_algs(
         }
     }
 
-    #[cfg(feature = "openssl")]
+    #[cfg(all(
+        feature = "openssl",
+        not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+    ))]
     if let Some(validator) =
         crate::crypto::raw_signature::openssl::validators::validator_for_sig_and_hash_algs(
             sig_alg, hash_alg,
@@ -175,14 +181,20 @@ pub enum RawSignatureValidationError {
     InternalError(String),
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 impl From<openssl::error::ErrorStack> for RawSignatureValidationError {
     fn from(err: openssl::error::ErrorStack) -> Self {
         Self::CryptoLibraryError(err.to_string())
     }
 }
 
-#[cfg(feature = "openssl")]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 impl From<crate::crypto::raw_signature::openssl::OpenSslMutexUnavailable>
     for RawSignatureValidationError
 {

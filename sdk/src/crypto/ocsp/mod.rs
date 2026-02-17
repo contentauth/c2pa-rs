@@ -141,6 +141,9 @@ impl OcspResponse {
             // if not valid we will not add the cert to list to be checked for trust later
             if validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der).is_ok() {
                 output.ocsp_certs = Some(cert_der_vec);
+            } else {
+                // signature failed so don't use
+                return Ok(OcspResponse::default());
             }
         } else {
             // we cannot validate the OCSP response signature, so treat as unknown
@@ -388,11 +391,9 @@ pub(crate) enum OcspError {
 
 const DATE_FMT: &str = "%Y-%m-%d %H:%M:%S %Z";
 
-#[cfg(not(target_arch = "wasm32"))]
 mod fetch;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use fetch::fetch_ocsp_response;
+pub(crate) use fetch::{fetch_ocsp_response, fetch_ocsp_response_async};
 
 #[cfg(test)]
 mod tests {

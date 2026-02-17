@@ -56,7 +56,7 @@ impl CredentialHolder for X509CredentialHolder {
         // TO DO: Check signing cert (see signing_cert_valid in c2pa-rs's cose_sign).
 
         let mut sp_cbor: Vec<u8> = vec![];
-        ciborium::into_writer(signer_payload, &mut sp_cbor)
+        c2pa_cbor::to_writer(&mut sp_cbor, signer_payload)
             .map_err(|e| IdentityBuilderError::CborGenerationError(e.to_string()))?;
 
         sign(
@@ -97,11 +97,23 @@ mod tests {
 
     #[c2pa_test_async]
     async fn simple_case() {
+        // Create a context with decode_identity_assertions disabled
+        let settings = crate::settings::Settings::default()
+            .with_value("core.decode_identity_assertions", false)
+            .unwrap();
+        let context = crate::Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .into_shared();
+
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        // Use the context when creating the Builder
+        let mut builder = Builder::from_shared_context(&context)
+            .with_definition(manifest_json())
+            .unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
@@ -131,10 +143,12 @@ mod tests {
             .sign(&c2pa_signer, format, &mut source, &mut dest)
             .unwrap();
 
-        // Read back the Manifest that was generated.
+        // Read back the Manifest that was generated using the same context
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = Reader::from_shared_context(&context)
+            .with_stream(format, &mut dest)
+            .unwrap();
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
@@ -163,6 +177,6 @@ mod tests {
             "C2PA Test Signing Cert"
         );
 
-        // TO DO: Not sure what to check from COSE_Sign1.
+        // No need to restore settings - we never modified global state!
     }
 }

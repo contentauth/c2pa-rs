@@ -15,7 +15,10 @@
 
 mod actions;
 pub(crate) use actions::V2_DEPRECATED_ACTIONS;
-pub use actions::{c2pa_action, Action, ActionTemplate, Actions, DigitalSourceType, SoftwareAgent};
+pub use actions::{
+    c2pa_action, Action, ActionParameters, ActionTemplate, Actions, DigitalSourceType,
+    SoftwareAgent,
+};
 
 mod asset_reference;
 pub use asset_reference::AssetReference;
@@ -67,7 +70,7 @@ mod thumbnail;
 pub(crate) use thumbnail::Thumbnail;
 
 mod timestamp;
-pub(crate) use timestamp::TimeStamp;
+pub use timestamp::TimeStamp;
 
 mod user;
 pub(crate) use user::User;

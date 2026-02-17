@@ -18,7 +18,6 @@ use std::{
     path::Path,
 };
 
-use conv::ValueFrom;
 use quick_xml::{
     events::{BytesText, Event},
     Reader, Writer,
@@ -222,9 +221,21 @@ fn detect_manifest_location(
                 let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                 xml_path.push(name);
 
-                if xml_path.len() == 2 && xml_path[0] == SVG && xml_path[1] == METADATA {
-                    detected_level = DetectedTagsDepth::Metadata;
-                    insertion_point = xml_reader.buffer_position();
+                if xml_path.len() == 2 {
+                    if xml_path[0] == SVG {
+                        if xml_path[1] == METADATA {
+                            detected_level = DetectedTagsDepth::Metadata;
+                            insertion_point = xml_reader.buffer_position();
+                        }
+                    } else {
+                        return Err(SvgError::InvalidFileSignature {
+                            reason: format!(
+                                "invalid tag structure: root element must be \"{}\", found \"{}\"",
+                                SVG, xml_path[0]
+                            ),
+                        }
+                        .into());
+                    }
                 }
 
                 if xml_path.len() == 3
@@ -248,7 +259,7 @@ fn detect_manifest_location(
                     && xml_path[2] == MANIFEST
                 {
                     let encoded_content = e
-                        .unescape()
+                        .decode()
                         .map_err(|_e| {
                             Error::InvalidAsset("XML incorrectly escaped character".to_string())
                         })?
@@ -546,7 +557,7 @@ impl CAIWriter for SvgIO {
 
         // add position from cai to end
         let end = manifest_pos + encoded_manifest_len;
-        let length = usize::value_from(stream_len(input_stream)?)
+        let length = usize::try_from(stream_len(input_stream)?)
             .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
             .saturating_sub(end);
         positions.push(HashObjectPositions {
@@ -735,6 +746,12 @@ impl RemoteRefEmbed for SvgIO {
             _ => Err(Error::UnsupportedType),
         }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum SvgError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]

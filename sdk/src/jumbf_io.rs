@@ -32,6 +32,7 @@ use crate::{
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
+    maybe_send_sync::MaybeSend,
 };
 
 // initialize asset handlers
@@ -136,6 +137,7 @@ pub fn save_jumbf_to_stream(
 /// writes the jumbf data in store_bytes into an asset in data and returns the newly created asset
 pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -> Result<Vec<u8>> {
     let mut input_stream = Cursor::new(data);
+
     let output_vec: Vec<u8> = Vec::with_capacity(data.len() + store_bytes.len() + 1024);
     let mut output_stream = Cursor::new(output_vec);
 
@@ -292,16 +294,6 @@ pub fn load_jumbf_from_file<P: AsRef<Path>>(in_path: P) -> Result<Vec<u8>> {
     }
 }
 
-#[cfg(all(feature = "v1_api", feature = "file_io"))]
-pub(crate) fn object_locations(in_path: &Path) -> Result<Vec<HashObjectPositions>> {
-    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
-
-    match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.get_object_locations(in_path),
-        _ => Err(Error::UnsupportedType),
-    }
-}
-
 struct CAIReadAdapter<R> {
     pub reader: R,
 }
@@ -324,28 +316,12 @@ where
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn object_locations_from_stream<R>(
     format: &str,
     stream: &mut R,
 ) -> Result<Vec<HashObjectPositions>>
 where
-    R: Read + Seek + Send + ?Sized,
-{
-    let mut reader = CAIReadAdapter { reader: stream };
-    match get_caiwriter_handler(format) {
-        Some(handler) => handler.get_object_locations_from_stream(&mut reader),
-        _ => Err(Error::UnsupportedType),
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn object_locations_from_stream<R>(
-    format: &str,
-    stream: &mut R,
-) -> Result<Vec<HashObjectPositions>>
-where
-    R: Read + Seek + ?Sized,
+    R: Read + Seek + MaybeSend + ?Sized,
 {
     let mut reader = CAIReadAdapter { reader: stream };
     match get_caiwriter_handler(format) {
