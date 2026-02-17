@@ -34,6 +34,8 @@ use crate::{
     },
 };
 
+const OCSP_OID_STR: &str = "1.3.6.1.5.5.7.3.9";
+
 /// Given a COSE signature, extract the OCSP data and validate the status of
 /// that report.
 #[async_generic(async_signature(
@@ -362,7 +364,7 @@ fn check_stapled_ocsp_response(
         // make sure this is an OCSP signing EKU
         let mut new_ctp = ctp.clone();
         new_ctp.clear_ekus();
-        new_ctp.add_valid_ekus("1.3.6 .1 .5 .5 .7 .3 .9".as_bytes()); // ocsp signing EKU
+        new_ctp.add_valid_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
         if check_end_entity_certificate_profile(
             &ocsp_certs[0],
             &new_ctp,
@@ -458,7 +460,7 @@ pub(crate) fn fetch_and_check_ocsp_response(
         // make sure this is an OCSP signing EKU
         let mut new_ctp = ctp.clone();
         new_ctp.clear_ekus();
-        new_ctp.add_valid_ekus("1.3.6 .1 .5 .5 .7 .3 .9".as_bytes()); // ocsp signing EKU
+        new_ctp.add_valid_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
 
         if check_end_entity_certificate_profile(&ocsp_certs[0], &new_ctp, validation_log, None)
             .is_err()
