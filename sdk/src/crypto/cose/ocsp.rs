@@ -153,7 +153,7 @@ pub fn check_ocsp_status(
                 }
             }
             // errors mean we don't interpret the value
-            return Ok(OcspResponse::default());
+            Ok(OcspResponse::default())
         }
 
         None => match fetch_policy {
@@ -377,7 +377,7 @@ fn check_stapled_ocsp_response(
         // validate the trust
         if new_ctp
             .check_certificate_trust(
-                &ocsp_certs,
+                ocsp_certs,
                 &ocsp_certs[0],
                 signing_time.map(|t| t.timestamp()),
             )
