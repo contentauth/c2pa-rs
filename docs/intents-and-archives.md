@@ -167,6 +167,17 @@ When you call `add_ingredient_from_stream()` with format `"application/c2pa"`, t
 2. Extracts the first ingredient from the active manifest.
 3. Merges with provided JSON properties, but your overrides take precedence.
 
+This ensures:
+- No long chains of signed manifests.
+- Better user experience.
+- Support for iterative workflows.
+
+### Ingredient libraries
+
+**Scenario:** Content library with pre-validated assets.
+
+**Solution:**
+
 ## Best practices
 
 1. [**Use intents**](intents-and-archives.md): Always set an intent to get automatic validation and action generation.
