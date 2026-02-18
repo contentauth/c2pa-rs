@@ -23,7 +23,7 @@ clippy:
 	cargo clippy --features="file_io" --all-targets -- -D warnings
 
 test-local:
-	cargo test --features="file_io, fetch_remote_manifests, add_thumbnails" --all-targets
+	cargo test --features="file_io, fetch_remote_manifests, add_thumbnails, remote_signing" --all-targets
 
 test-wasm:
 	cd sdk && wasm-pack test --node -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests, http_reqwest"
