@@ -2008,10 +2008,7 @@ impl Builder {
 
         let mut store = self.to_store()?;
         let jumbf = store.get_placeholder(format, self.context())?;
-
-        // Compose for format if handler supports it (e.g., wrap in JPEG APP11 markers)
-        // Fall back to raw JUMBF if composition not supported
-        Builder::composed_manifest(&jumbf, format).or(Ok(jumbf))
+        Ok(jumbf)
     }
 
     /// Update the hash assertion in the Builder by calculating hash from a stream.
@@ -3737,12 +3734,10 @@ mod tests {
 
         // 2. Create placeholder (adds DataHash to builder) and get raw JUMBF from store.
         // builder.placeholder() returns composed for JPEG; sign_placeholder expects raw JUMBF.
-        let _ = builder.placeholder("image/jpeg")?; // ensures DataHash is added
+        let placeholder = builder.placeholder("image/jpeg")?; // ensures DataHash is added
         assert!(builder.find_assertion::<DataHash>(DataHash::LABEL).is_ok());
-        let mut store = builder.to_store()?;
-        let raw_placeholder = store.get_placeholder("image/jpeg", builder.context())?;
-        let formatted_placeholder = Builder::composed_manifest(&raw_placeholder, "image/jpeg")?;
-        assert!(!raw_placeholder.is_empty());
+        let formatted_placeholder = Builder::composed_manifest(&placeholder, "image/jpeg")?;
+        assert!(!formatted_placeholder.is_empty());
 
         // 3. Embed composed placeholder into a real JPEG using write_jpeg_placeholder_stream (same pattern as test_builder_data_hashed_embeddable)
         let mut input_stream = Cursor::new(TEST_IMAGE_CLOUD);
@@ -3767,7 +3762,7 @@ mod tests {
         assert!(!data_hash.hash.is_empty());
 
         // 5. Sign the placeholder with the updated hash (pass raw JUMBF; sign_placeholder parses it)
-        let signed_manifest = builder.sign_placeholder(&raw_placeholder, "image/jpeg")?;
+        let signed_manifest = builder.sign_placeholder(&placeholder, "image/jpeg")?;
 
         assert!(
             signed_manifest.len() <= formatted_placeholder.len(),
