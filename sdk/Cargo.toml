@@ -208,11 +208,11 @@ ureq = { version = "3.1.0", default-features = false, features = [
 
 [target.'cfg(target_os = "wasi")'.dependencies]
 wasi = { version = "0.14.3", optional = true }
-wstd = { version = "0.5.4", optional = true }
+wstd = { version = "0.6.5", optional = true }
 
 # `wstd` is required for testing, but optional as a normal dependency.
 [target.'cfg(target_os = "wasi")'.dev-dependencies]
-wstd = "0.5.4"
+wstd = "0.6.5"
 
 # This list matches the `rust_native_crypto` feature since they are not optional on WASM.
 [target.'cfg(target_arch = "wasm32")'.dependencies]

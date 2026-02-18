@@ -53,7 +53,7 @@ tokio = { version = "1.44.2", features = ["rt", "rt-multi-thread"] }
 
 [target.'cfg(target_os = "wasi")'.dependencies]
 wasi = "0.14"
-wstd = "0.5"
+wstd = "0.6"
 
 [dev-dependencies]
 mockall = "0.14.0"
