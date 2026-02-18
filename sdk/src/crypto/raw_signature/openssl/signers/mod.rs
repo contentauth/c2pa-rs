@@ -20,6 +20,7 @@ mod ecdsa_signer;
 mod ed25519_signer;
 mod rsa_signer;
 
+#[cfg(feature = "remote_signing")]
 mod remote_signer;
 
 /// Return a built-in [`RawSigner`] instance using the provided signing
@@ -65,6 +66,7 @@ pub(crate) fn signer_from_cert_chain_and_private_key(
     }
 }
 
+#[cfg(feature = "remote_signing")]
 pub(crate) fn signer_from_cert_chain_and_url(
     cert_chain: &[u8],
     url: url::Url,

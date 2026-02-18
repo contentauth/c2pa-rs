@@ -14,8 +14,6 @@
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-#[cfg(feature = "remote_signing")]
-use crate::crypto::raw_signature::signer_from_cert_chain_and_url;
 use crate::{
     create_signer,
     crypto::raw_signature::{signer_from_cert_chain_and_private_key, RawSigner},
@@ -42,6 +40,7 @@ enum CawgSigningMode {
         tsa_url: Option<String>,
     },
     /// Remote signing mode: credentials are accessed via a remote signing service.
+    #[allow(unused)]
     Remote {
         /// Remote signing service URL.
         url: Url,
@@ -139,6 +138,7 @@ impl SignerSettings {
             } => {
                 create_signer::from_keys(sign_cert.as_bytes(), private_key.as_bytes(), alg, tsa_url)
             }
+            #[cfg_attr(not(feature = "remote_signing"), allow(unused))]
             SignerSettings::Remote {
                 url,
                 alg,
@@ -146,10 +146,22 @@ impl SignerSettings {
                 tsa_url,
                 referenced_assertions: _,
                 roles: _,
-            } => match Url::parse(&url) {
-                Ok(url) => create_signer::from_remote_url(sign_cert.as_bytes(), url, alg, tsa_url),
-                Err(e) => Err(Error::InvalidRemoteUrl(e)),
-            },
+            } => {
+                #[cfg(feature = "remote_signing")]
+                {
+                    match Url::parse(&url) {
+                        Ok(url) => {
+                            create_signer::from_remote_url(sign_cert.as_bytes(), url, alg, tsa_url)
+                        }
+                        Err(e) => Err(Error::InvalidRemoteUrl(e)),
+                    }
+                }
+
+                #[cfg(not(feature = "remote_signing"))]
+                {
+                    Err(Error::RemoteSigningNotEnabled)
+                }
+            }
         }
     }
 
@@ -184,6 +196,7 @@ impl SignerSettings {
                 Ok(Box::new(cawg_dual_signer))
             }
 
+            #[cfg_attr(not(feature = "remote_signing"), allow(unused))]
             SignerSettings::Remote {
                 url,
                 alg: cawg_alg,
@@ -293,6 +306,7 @@ impl Signer for CawgX509IdentitySigner {
                 self.cawg_alg,
                 tsa_url.clone(),
             ),
+            #[cfg_attr(not(feature = "remote_signing"), allow(unused))]
             CawgSigningMode::Remote {
                 url,
                 sign_cert,
@@ -300,7 +314,7 @@ impl Signer for CawgX509IdentitySigner {
             } => {
                 #[cfg(feature = "remote_signing")]
                 {
-                    signer_from_cert_chain_and_url(
+                    crate::crypto::raw_signature::signer_from_cert_chain_and_url(
                         sign_cert.as_bytes(),
                         url.clone(),
                         self.cawg_alg,
@@ -352,26 +366,7 @@ impl Signer for CawgX509IdentitySigner {
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
-
-    use std::io::{Cursor, Seek};
-
-    use c2pa_macros::c2pa_test_async;
-    use httpmock::MockServer;
-
-    use crate::{
-        create_signer,
-        crypto::cose::Verifier,
-        identity::{
-            tests::fixtures::{manifest_json, parent_json},
-            x509::X509SignatureVerifier,
-            IdentityAssertion,
-        },
-        settings,
-        settings::Settings,
-        status_tracker::StatusTracker,
-        utils::test_signer,
-        Builder, Reader, SigningAlg,
-    };
+    use crate::{settings::Settings, utils::test_signer, SigningAlg};
 
     #[test]
     fn test_make_test_signer() {
@@ -404,15 +399,15 @@ pub mod tests {
         assert!(signer.sign(&[1, 2, 3]).is_ok());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(feature = "remote_signing", not(target_arch = "wasm32")))]
     #[test]
     fn test_make_remote_signer() {
-        use httpmock::MockServer;
-
-        use crate::create_signer;
-
         #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
+
+        use httpmock::MockServer;
+
+        use crate::{create_signer, utils::test_remote_signer};
 
         let alg = SigningAlg::Ps384;
         let (sign_cert, private_key) = test_signer::cert_chain_and_private_key_for_alg(alg);
@@ -421,7 +416,7 @@ pub mod tests {
         let signed_bytes = signer.sign(&[1, 2, 3]).unwrap();
 
         let server = MockServer::start();
-        let mock = test_signer::remote_signer_mock_server(&server, &signed_bytes);
+        let mock = test_remote_signer::remote_signer_mock_server(&server, &signed_bytes);
 
         Settings::from_toml(
             &toml::toml! {
@@ -440,6 +435,30 @@ pub mod tests {
         assert_eq!(signer.sign(&[1, 2, 3]).unwrap(), signed_bytes);
 
         mock.assert();
+    }
+
+    #[cfg(all(not(feature = "remote_signing"), not(target_arch = "wasm32")))]
+    #[test]
+    fn test_make_remote_signer_disabled() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let alg = SigningAlg::Ps384;
+        let (sign_cert, _) = test_signer::cert_chain_and_private_key_for_alg(alg);
+
+        Settings::from_toml(
+            &toml::toml! {
+                [signer.remote]
+                url = "http:://dummy_url:2026/"
+                alg = (alg.to_string())
+                sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
+            }
+            .to_string(),
+        )
+        .unwrap();
+
+        let signer = Settings::signer();
+        assert!(signer.is_err());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -485,9 +504,27 @@ pub mod tests {
         assert!(signer.sign(&[1, 2, 3]).is_ok());
     }
 
-    #[c2pa_test_async]
+    #[cfg(not(target_arch = "wasm32"))]
     #[cfg(feature = "remote_signing")]
+    #[c2pa_macros::c2pa_test_async]
     async fn test_make_cawg_c2pa_remote_signers() {
+        use std::io::{Cursor, Seek};
+
+        use httpmock::MockServer;
+
+        use crate::{
+            create_signer,
+            crypto::cose::Verifier,
+            identity::{
+                tests::fixtures::{manifest_json, parent_json},
+                x509::X509SignatureVerifier,
+                IdentityAssertion,
+            },
+            status_tracker::StatusTracker,
+            utils::test_remote_signer,
+            Builder, Context, Reader,
+        };
+
         // Create mock for C2PA signer
         let c2pa_alg = SigningAlg::Ps384;
         let (c2pa_sign_cert, c2pa_private_key) =
@@ -497,8 +534,10 @@ pub mod tests {
             create_signer::from_keys(c2pa_sign_cert, c2pa_private_key, c2pa_alg, None).unwrap();
 
         let c2pa_server = MockServer::start();
-        let _c2pa_mock =
-            test_signer::remote_signer_respond_with_signature(&c2pa_server, local_c2pa_signer);
+        let _c2pa_mock = test_remote_signer::remote_signer_respond_with_signature(
+            &c2pa_server,
+            local_c2pa_signer,
+        );
 
         // Create mock for CAWG signer
         let cawg_alg = SigningAlg::Ed25519;
@@ -508,8 +547,10 @@ pub mod tests {
             create_signer::from_keys(&cawg_sign_cert, &cawg_private_key, cawg_alg, None).unwrap();
 
         let cawg_server = MockServer::start();
-        let _cawg_mock =
-            test_signer::remote_signer_respond_with_signature(&cawg_server, local_cawg_signer);
+        let _cawg_mock = test_remote_signer::remote_signer_respond_with_signature(
+            &cawg_server,
+            local_cawg_signer,
+        );
 
         let config_settings = toml::toml! {
             [signer.remote]
@@ -524,13 +565,13 @@ pub mod tests {
         }
         .to_string();
 
-        let config_settings = settings::Settings::new()
+        let config_settings = Settings::new()
             .with_toml(config_settings.as_str())
             .expect("Error parsing config settings")
             .with_value("core.decode_identity_assertions", false)
             .expect("Error setting core.decode_identity_assertions to false");
 
-        let context = crate::Context::new()
+        let context = Context::new()
             .with_settings(&config_settings)
             .expect("Error creating context")
             .into_shared();

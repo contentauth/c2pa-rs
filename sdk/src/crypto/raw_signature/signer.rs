@@ -222,6 +222,7 @@ pub fn signer_from_cert_chain_and_url(
 
     #[cfg(all(
         feature = "openssl",
+        feature = "remote_signing",
         not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
     ))]
     {
@@ -234,7 +235,7 @@ pub fn signer_from_cert_chain_and_url(
     }
 
     Err(RawSignerError::InternalError(format!(
-        "unsupported algorithm: {alg}"
+        "unsupported remote signing for algorithm: {alg}"
     )))
 }
 
@@ -271,6 +272,7 @@ pub fn async_signer_from_cert_chain_and_private_key(
 /// unavailable, it will respond with `Err(RawSignerError::InternalError)`.
 ///
 /// May return an `Err` response if the certificate chain or url are invalid.
+#[allow(unused)]
 pub fn async_signer_from_cert_chain_and_url(
     cert_chain: &[u8],
     url: Url,

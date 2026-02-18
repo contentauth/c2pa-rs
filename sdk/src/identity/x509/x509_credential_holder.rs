@@ -37,7 +37,7 @@ impl X509CredentialHolder {
     /// The [`RawSigner`] implementation actually holds (or has access to)
     /// the relevant certificates and private key material.
     ///
-    /// [`RawSigner`]: crate::crypto::raw_signature::RawSigner
+    /// [`RawSigner`]: RawSigner
     pub fn from_raw_signer(signer: Box<dyn RawSigner + Sync + Send + 'static>) -> Self {
         Self(signer)
     }
@@ -77,12 +77,10 @@ mod tests {
     use std::io::{Cursor, Seek};
 
     use c2pa_macros::c2pa_test_async;
-    use httpmock::MockServer;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        create_signer,
         crypto::{cose::Verifier, raw_signature},
         identity::{
             builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
@@ -90,9 +88,7 @@ mod tests {
             x509::{X509CredentialHolder, X509SignatureVerifier},
             IdentityAssertion,
         },
-        settings,
         status_tracker::StatusTracker,
-        utils::test_signer,
         Builder, Reader, SigningAlg,
     };
 
@@ -184,9 +180,13 @@ mod tests {
         // No need to restore settings - we never modified global state!
     }
 
-    #[c2pa_test_async]
     #[cfg(feature = "remote_signing")]
+    #[c2pa_test_async]
     async fn remote_signing_case() {
+        use httpmock::MockServer;
+
+        use crate::{create_signer, settings, utils::test_remote_signer};
+
         // Create a context with decode_identity_assertions disabled
         let settings = settings::Settings::default()
             .with_value("core.decode_identity_assertions", false)
@@ -221,8 +221,10 @@ mod tests {
             create_signer::from_keys(&cawg_cert_chain, &cawg_private_key, cawg_alg, None).unwrap();
 
         let cawg_server = MockServer::start();
-        let _cawg_mock =
-            test_signer::remote_signer_respond_with_signature(&cawg_server, local_cawg_raw_signer);
+        let _cawg_mock = test_remote_signer::remote_signer_respond_with_signature(
+            &cawg_server,
+            local_cawg_raw_signer,
+        );
 
         let cawg_remote_signer = raw_signature::signer_from_cert_chain_and_url(
             &cawg_cert_chain,

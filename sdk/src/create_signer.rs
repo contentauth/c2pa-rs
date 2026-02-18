@@ -21,8 +21,6 @@ use std::path::Path;
 #[cfg(feature = "remote_signing")]
 use url::Url;
 
-#[cfg(feature = "remote_signing")]
-use crate::crypto::raw_signature::signer_from_cert_chain_and_url;
 use crate::{
     crypto::raw_signature::{signer_from_cert_chain_and_private_key, SigningAlg},
     error::Result,
@@ -93,6 +91,8 @@ pub fn from_remote_url(
     alg: SigningAlg,
     tsa_url: Option<String>,
 ) -> Result<BoxedSigner> {
+    use crate::crypto::raw_signature::signer_from_cert_chain_and_url;
+
     Ok(Box::new(RawSignerWrapper(signer_from_cert_chain_and_url(
         signcert, url, alg, tsa_url,
     )?)))

@@ -14,7 +14,6 @@
 #![allow(clippy::unwrap_used)] // This mod is only used in test code.
 
 use async_trait::async_trait;
-use httpmock::{HttpMockRequest, HttpMockResponse};
 
 use crate::{
     crypto::raw_signature::{
@@ -22,7 +21,7 @@ use crate::{
         AsyncRawSigner, SigningAlg,
     },
     signer::{BoxedAsyncSigner, BoxedSigner, RawSignerWrapper},
-    AsyncSigner, Result, Signer,
+    AsyncSigner, Result,
 };
 
 /// Creates a [`Signer`] instance for testing purposes using test credentials.
@@ -43,9 +42,9 @@ pub(crate) fn test_cawg_signer(
     let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
     let c2pa_raw_signer =
-        signer_from_cert_chain_and_private_key(cert_chain, private_key, alg, None).unwrap();
+        signer_from_cert_chain_and_private_key(cert_chain, private_key, alg, None)?;
     let cawg_raw_signer =
-        signer_from_cert_chain_and_private_key(cert_chain, private_key, alg, None).unwrap();
+        signer_from_cert_chain_and_private_key(cert_chain, private_key, alg, None)?;
 
     let mut ia_signer = crate::identity::builder::IdentityAssertionSigner::new(c2pa_raw_signer);
 
@@ -108,34 +107,6 @@ pub(crate) fn cert_chain_and_private_key_for_alg(
         ),
     }
 }
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn remote_signer_mock_server<'a>(
-    server: &'a httpmock::MockServer,
-    signed_bytes: &[u8],
-) -> httpmock::Mock<'a> {
-    server.mock(|when, then| {
-        when.method(httpmock::Method::POST);
-        then.status(200).body(signed_bytes);
-    })
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn remote_signer_respond_with_signature(
-    server: &'_ httpmock::MockServer,
-    signer: BoxedSigner,
-) -> httpmock::Mock<'_> {
-    server.mock(|when, then| {
-        when.path("/").method(httpmock::Method::POST);
-        then.respond_with(move |req: &HttpMockRequest| {
-            let signature = signer.sign(req.body_ref()).unwrap();
-            HttpMockResponse::builder()
-                .status(200)
-                .header("content-type", "application/octet-stream")
-                .body(signature)
-                .build()
-        });
-    })
-}
 
 #[cfg(not(target_arch = "wasm32"))]
 type BoxedAsyncRawSigner = Box<dyn AsyncRawSigner + Sync + Send>;
@@ -166,10 +137,6 @@ impl AsyncSigner for AsyncRawSignerWrapper {
         self.0.reserve_size()
     }
 
-    async fn ocsp_val(&self) -> Option<Vec<u8>> {
-        self.0.ocsp_response().await
-    }
-
     fn time_authority_url(&self) -> Option<String> {
         self.0.time_stamp_service_url()
     }
@@ -189,6 +156,10 @@ impl AsyncSigner for AsyncRawSignerWrapper {
             .send_time_stamp_request(message)
             .await
             .map(|r| r.map_err(|e| e.into()))
+    }
+
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+        self.0.ocsp_response().await
     }
 
     fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {

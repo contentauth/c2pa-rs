@@ -14,14 +14,8 @@
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use crate::{
-    create_signer,
-    crypto::raw_signature::{
-        openssl::signers::signer_from_cert_chain_and_url, signer_from_cert_chain_and_private_key,
-        validator_for_signing_alg, SigningAlg,
-    },
-    utils::test_signer,
-    Signer,
+use crate::crypto::raw_signature::{
+    signer_from_cert_chain_and_private_key, validator_for_signing_alg, SigningAlg,
 };
 
 #[test]
@@ -202,11 +196,16 @@ fn ps512() {
 
 #[test]
 #[cfg(all(
-    feature = "openssl",
+    feature = "remote_signing",
     not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
 ))]
 fn remote_signing() {
     use httpmock::MockServer;
+
+    use crate::{
+        create_signer, crypto::raw_signature::openssl::signers::signer_from_cert_chain_and_url,
+        utils::test_remote_signer, Signer,
+    };
 
     let alg = SigningAlg::Es256;
     let cert_chain = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es256.pub");
@@ -217,7 +216,7 @@ fn remote_signing() {
     let signed_bytes = mock_signer.sign(data).unwrap();
 
     let server = MockServer::start();
-    let mock = test_signer::remote_signer_mock_server(&server, &signed_bytes);
+    let mock = test_remote_signer::remote_signer_mock_server(&server, &signed_bytes);
 
     let url = url::Url::parse(&server.base_url()).unwrap();
 
