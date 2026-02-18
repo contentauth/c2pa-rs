@@ -111,6 +111,7 @@ const-oid = { version = "0.9.6", optional = true }
 coset = "0.4.0"
 der = { version = "0.7.9", features = ["alloc"] }
 extfmt = "0.2.0"
+getrandom = { version = "0.3.4", default-features = false, features = ["std"] }
 ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
 ed25519-dalek = { version = "2.1.1", features = [
     "alloc",
@@ -201,13 +202,11 @@ reqwest = { version = "0.12.23", default-features = false, features = [
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 openssl = { version = "0.10.72", features = ["vendored"], optional = true }
-rcgen = "0.14.7"
 ureq = { version = "3.1.0", default-features = false, features = [
     "rustls"
 ], optional = true }
 
 [target.'cfg(target_os = "wasi")'.dependencies]
-rcgen = "0.14.7"
 wasi = { version = "0.14.3", optional = true }
 wstd = { version = "0.5.4", optional = true }
 
