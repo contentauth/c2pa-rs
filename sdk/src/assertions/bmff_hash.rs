@@ -27,6 +27,10 @@ use serde::{
 use serde_bytes::ByteBuf;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
+/// Maximum number of mdat boxes supported in the Merkle placeholder.
+/// Practical BMFF files rarely have more than 4 mdat boxes.
+const MAX_MDAT_BOXES: usize = 4;
+
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
@@ -41,7 +45,7 @@ use crate::{
             Hasher,
         },
         io_utils::stream_len,
-        merkle::C2PAMerkleTree,
+        merkle::{C2PAMerkleTree, MerkleNode},
     },
     validation_status::ASSERTION_BMFFHASH_MALFORMED,
     Error,
@@ -389,6 +393,133 @@ impl BmffHash {
                 self.merkle_replacement_range = last_mdat_box.end() - last_uuid_box.end();
             }
         }
+        Ok(())
+    }
+
+    /// Pre-sizes the placeholder BmffHash with dummy Merkle maps for up to 4 mdat boxes.
+    ///
+    /// Call this before [`BmffHash::add_place_holder_hash`] (and therefore before
+    /// `Builder::placeholder`) so the placeholder reserves enough JUMBF space for
+    /// the real Merkle maps filled in at signing time by [`BmffHash::add_mdat_leaf_hashes`].
+    ///
+    /// Only the Merkle **root** is stored (one hash per mdat box), so no UUID proof
+    /// boxes are needed and the API stays simple.  A large sentinel value is used for
+    /// `count` so that the placeholder CBOR is always at least as large as the real
+    /// value; any remaining gap is zero-padded at signing time.
+    ///
+    /// The `/mdat` exclusion is also added here.
+    ///
+    /// # Arguments
+    /// * `chunk_size_kb` - Fixed chunk size in KB (from `core.merkle_tree_chunk_size_in_kb`)
+    pub fn add_merkle_placeholder(&mut self, chunk_size_kb: usize) -> crate::Result<()> {
+        if !self.exclusions.iter().any(|e| e.xpath == "/mdat") {
+            let mut mdat = ExclusionsMap::new("/mdat".to_owned());
+            mdat.subset = Some(vec![SubsetMap {
+                offset: 16,
+                length: 0,
+            }]);
+            self.exclusions.push(mdat);
+        }
+
+        let alg = self.alg.clone().unwrap_or_else(|| "sha256".to_string());
+        let hash_len = match alg.as_str() {
+            "sha256" => 32,
+            "sha384" => 48,
+            "sha512" => 64,
+            _ => return Err(Error::UnsupportedType),
+        };
+        let fixed_block_size = if chunk_size_kb > 0 {
+            Some(1024 * chunk_size_kb as u64)
+        } else {
+            None
+        };
+
+        // Pre-allocate up to MAX_MDAT_BOXES slots.  A u32::MAX sentinel is used for
+        // `count` so the placeholder CBOR (5 bytes) is never smaller than the real
+        // value.  Only one root hash (fixed size) is reserved per map.
+        let merkle_maps: Vec<MerkleMap> = (0..MAX_MDAT_BOXES)
+            .map(|index| MerkleMap {
+                unique_id: 0,
+                local_id: index,
+                count: u32::MAX as usize,
+                alg: self.alg.clone(),
+                init_hash: None,
+                hashes: VecByteBuf(vec![ByteBuf::from(vec![0u8; hash_len])]),
+                fixed_block_size,
+                variable_block_sizes: None,
+            })
+            .collect();
+
+        self.merkle = Some(merkle_maps);
+        Ok(())
+    }
+
+    /// Fills in real Merkle maps from client-supplied mdat leaf hashes.
+    ///
+    /// The client hashes each fixed-size chunk of every mdat box while writing the
+    /// asset (so no second read of the data is ever needed) and passes those hashes
+    /// here.  Only the Merkle **root** is stored — one hash per mdat box — so no
+    /// UUID proof boxes are generated.  The BMFF file stays unchanged; there is
+    /// nothing extra for the client to append.
+    ///
+    /// The `/mdat` exclusion is ensured present so mdat content is excluded from
+    /// the flat hash (it is covered by the Merkle trees instead).
+    ///
+    /// # Arguments
+    /// * `leaf_hashes`   - Per-mdat leaf hashes: `leaf_hashes[mdat][chunk] = hash_bytes`
+    /// * `chunk_size_kb` - Fixed chunk size in KB (from `core.merkle_tree_chunk_size_in_kb`)
+    pub fn add_mdat_leaf_hashes(
+        &mut self,
+        leaf_hashes: Vec<Vec<Vec<u8>>>,
+        chunk_size_kb: usize,
+    ) -> crate::Result<()> {
+        if !self.exclusions.iter().any(|e| e.xpath == "/mdat") {
+            let mut mdat = ExclusionsMap::new("/mdat".to_owned());
+            mdat.subset = Some(vec![SubsetMap {
+                offset: 16,
+                length: 0,
+            }]);
+            self.exclusions.push(mdat);
+        }
+
+        let alg = self.alg.clone().unwrap_or_else(|| "sha256".to_string());
+        let fixed_block_size = if chunk_size_kb > 0 {
+            Some(1024 * chunk_size_kb as u64)
+        } else {
+            None
+        };
+
+        let mut merkle_maps = Vec::new();
+
+        for (index, mdat_leaves) in leaf_hashes.into_iter().enumerate() {
+            let leaves: Vec<MerkleNode> = mdat_leaves.into_iter().map(MerkleNode).collect();
+            let m_tree = C2PAMerkleTree::from_leaves(leaves, &alg, false);
+            let num_leaves = m_tree.leaves.len();
+
+            // Always store only the Merkle root (last layer, single hash).
+            // No UUID proof boxes are needed or generated.
+            let root = m_tree
+                .layers
+                .last()
+                .and_then(|l| l.first())
+                .ok_or_else(|| Error::BadParam("empty Merkle tree".to_string()))?;
+
+            merkle_maps.push(MerkleMap {
+                unique_id: 0,
+                local_id: index,
+                count: num_leaves,
+                alg: self.alg.clone(),
+                init_hash: None,
+                hashes: VecByteBuf(vec![ByteBuf::from(root.0.clone())]),
+                fixed_block_size,
+                variable_block_sizes: None,
+            });
+        }
+
+        if !merkle_maps.is_empty() {
+            self.merkle = Some(merkle_maps);
+        }
+
         Ok(())
     }
 
@@ -1878,10 +2009,39 @@ impl BmffHash {
                     ));
                 }
 
-                for (range_index, range) in ranges.iter().enumerate() {
-                    let hash = hash_stream_by_alg(alg, reader, Some(vec![range.clone()]), false)?;
-                    if !mm.check_merkle_tree(alg, &hash, range_index, &None) {
-                        return Err(Error::HashMismatch("chunk hash did not match".to_string()));
+                // Root-only storage: mm.hashes contains exactly the Merkle root.
+                // Re-build the tree from all chunk hashes and compare the root directly.
+                if mm.hashes.len() == 1 && mm.count > 1 {
+                    let leaves: Vec<MerkleNode> = ranges
+                        .iter()
+                        .map(|range| {
+                            hash_stream_by_alg(alg, reader, Some(vec![range.clone()]), false)
+                                .map(MerkleNode)
+                        })
+                        .collect::<crate::Result<Vec<_>>>()?;
+                    let computed_tree = C2PAMerkleTree::from_leaves(leaves, alg, false);
+                    let computed_root = computed_tree
+                        .layers
+                        .last()
+                        .and_then(|l| l.first())
+                        .map(|n| n.0.as_slice())
+                        .ok_or_else(|| {
+                            Error::HashMismatch("empty Merkle tree during verification".to_string())
+                        })?;
+                    if !mm.hash_check(0, computed_root) {
+                        return Err(Error::HashMismatch(
+                            "Merkle root hash did not match".to_string(),
+                        ));
+                    }
+                } else {
+                    for (range_index, range) in ranges.iter().enumerate() {
+                        let hash =
+                            hash_stream_by_alg(alg, reader, Some(vec![range.clone()]), false)?;
+                        if !mm.check_merkle_tree(alg, &hash, range_index, &None) {
+                            return Err(Error::HashMismatch(
+                                "chunk hash did not match".to_string(),
+                            ));
+                        }
                     }
                 }
             }

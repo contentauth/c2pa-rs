@@ -1668,7 +1668,9 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
     })
 }
 
-pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
+pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+) -> Result<C2PABmffBoxes> {
     let size = stream_len(reader)?;
     reader.rewind()?;
 

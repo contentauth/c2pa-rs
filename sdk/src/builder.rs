@@ -1986,10 +1986,17 @@ impl Builder {
         // If no hash exists, add an appropriate placeholder based on format
         if hash_count == 0 {
             if crate::jumbf_io::is_bmff_format(format) {
-                // For BMFF formats, add a placeholder BmffHash with default exclusions
-                // and a correctly-sized placeholder hash so the reserved space is accurate.
+                // For BMFF formats, add a placeholder BmffHash.
+                // When merkle_tree_chunk_size_in_kb is set in settings, pre-allocate
+                // placeholder Merkle maps (root-only, MAX_MDAT_BOXES slots) so the
+                // reserved JUMBF space is large enough for the real Merkle data.
                 let mut placeholder_bmff = BmffHash::new("jumbf manifest", "sha256", None);
                 placeholder_bmff.set_default_exclusions();
+                if let Some(chunk_size_kb) =
+                    self.context.settings().core.merkle_tree_chunk_size_in_kb
+                {
+                    placeholder_bmff.add_merkle_placeholder(chunk_size_kb)?;
+                }
                 placeholder_bmff.add_place_holder_hash()?;
                 let assertion_label = placeholder_bmff.to_assertion()?.label();
                 self.add_assertion(&assertion_label, &placeholder_bmff)?;
@@ -2011,6 +2018,62 @@ impl Builder {
         let mut store = self.to_store()?;
         let jumbf = store.get_placeholder(format, self.context())?;
         Ok(jumbf)
+    }
+
+    /// Provide pre-computed mdat leaf hashes for BMFF Merkle tree hashing.
+    ///
+    /// Call this after writing the asset (with the placeholder embedded) and before
+    /// [`Builder::update_hash_from_stream`].  The client hashes fixed-size mdat chunks
+    /// while writing — typically while data is already flowing through the write path —
+    /// and passes those hashes here so the SDK does not need to re-read the mdat content.
+    ///
+    /// Only the Merkle **root** is stored (one hash per mdat box), so no UUID proof
+    /// boxes are generated and nothing extra needs to be appended to the asset.
+    ///
+    /// The chunk size is read from the Builder's [`Context`]
+    /// (`core.merkle_tree_chunk_size_in_kb` must be set).
+    ///
+    /// # Arguments
+    /// * `leaf_hashes` - Per-mdat leaf hashes: `leaf_hashes[mdat][chunk] = hash_bytes`
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if no BmffHash assertion exists (call [`Builder::placeholder`] first)
+    /// * Returns an [`Error`] if `core.merkle_tree_chunk_size_in_kb` is not set in settings
+    pub fn set_bmff_mdat_hashes(&mut self, leaf_hashes: Vec<Vec<Vec<u8>>>) -> Result<()> {
+        let chunk_size_kb = self
+            .context
+            .settings()
+            .core
+            .merkle_tree_chunk_size_in_kb
+            .ok_or_else(|| {
+                Error::BadParam(
+                    "core.merkle_tree_chunk_size_in_kb must be set to use set_bmff_mdat_hashes"
+                        .to_string(),
+                )
+            })?;
+
+        let stored_label = self
+            .definition
+            .assertions
+            .iter()
+            .find(|a| a.label().contains(BmffHash::LABEL))
+            .map(|a| a.label().to_owned())
+            .ok_or(Error::NotFound)?;
+        let (_, stored_version, _) = parse_label(&stored_label);
+
+        let mut bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL)?;
+        bmff_hash.set_bmff_version(stored_version);
+
+        bmff_hash.add_mdat_leaf_hashes(leaf_hashes, chunk_size_kb)?;
+
+        // Replace the BmffHash in the builder with the updated version
+        self.definition
+            .assertions
+            .retain(|a| !a.label().contains(BmffHash::LABEL));
+        let assertion_label = bmff_hash.to_assertion()?.label();
+        self.add_assertion(&assertion_label, &bmff_hash)?;
+
+        Ok(())
     }
 
     /// Update the hash assertion in the Builder by calculating hash from a stream.
@@ -2116,18 +2179,29 @@ impl Builder {
     /// any hash assertions (DataHash, BmffHash) from the Builder's current state, and signs
     /// the manifest. This supports dynamic assertions if configured in the signer.
     ///
-    /// # Workflow
+    /// # Workflow — non-BMFF (DataHash) assets
     /// 1. Call [`Builder::placeholder`] to create a placeholder manifest
     /// 2. Embed the placeholder into your asset
-    /// 3. Calculate the hash of the asset (excluding the placeholder)
-    /// 4. Update the hash assertion in the Builder: `builder.add_assertion(DataHash::LABEL, &updated_hash)`
-    /// 5. Call this method to sign: `builder.sign_placeholder(&placeholder, signer, format)`
+    /// 3. Compute the asset hash excluding the placeholder region and update the Builder:
+    ///    `builder.add_assertion(DataHash::LABEL, &updated_hash)`
+    /// 4. Call this method: `builder.sign_placeholder(&placeholder, format)`
+    ///
+    /// # Workflow — BMFF (BmffHash) assets
+    /// 1. Call [`Builder::placeholder`] to create a placeholder manifest
+    ///    (set `core.merkle_tree_chunk_size_in_kb` in settings to enable Merkle hashing)
+    /// 2. Embed the placeholder into your asset
+    /// 3. Hash each fixed-size mdat chunk while writing and collect the leaf hashes
+    /// 4. Call [`Builder::set_bmff_mdat_hashes`] with the collected leaf hashes
+    /// 5. Call [`Builder::update_hash_from_stream`] to compute the flat asset hash
+    /// 6. Call this method: `builder.sign_placeholder(&placeholder, format)`
     ///
     /// # Arguments
-    /// * `placeholder_jumbf` - The placeholder JUMBF bytes from [`Builder::placeholder`]
+    /// * `placeholder` - The placeholder JUMBF bytes from [`Builder::placeholder`]
+    /// * `format` - MIME type of the target asset (e.g. `"video/mp4"`, `"image/jpeg"`)
     ///
     /// # Returns
-    /// * The signed manifest bytes ready for embedding
+    /// * The signed manifest bytes ready for embedding (same total size as the composed
+    ///   placeholder; any gap is zero-padded per the C2PA spec)
     ///
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be deserialized or signed
@@ -2164,7 +2238,22 @@ impl Builder {
         }
 
         let signer = self.context().signer()?;
-        let jumbf = store.sign_manifest(signer, self.context().settings())?;
+        let mut jumbf = store.sign_manifest(signer, self.context().settings())?;
+
+        // The placeholder may be slightly larger than the signed manifest when Merkle
+        // maps were pre-allocated with a large sentinel `count` value and the real file
+        // has fewer chunks or fewer mdat boxes.
+        //
+        // Per the C2PA spec, MP4 boxes support unused padding bytes at the end, so we
+        // zero-pad the signed JUMBF to match the placeholder JUMBF size.  The JUMBF
+        // parser reads by its own internal size field and ignores trailing bytes, so
+        // this padding is transparent to readers.  The composed C2PA UUID box ends up
+        // the same total size as the placeholder, keeping BMFF offsets and hash
+        // exclusion ranges identical between signing and validation.
+        let placeholder_jumbf_len = placeholder.len();
+        if jumbf.len() < placeholder_jumbf_len {
+            jumbf.resize(placeholder_jumbf_len, 0u8);
+        }
 
         // Compose for the target format
         Store::get_composed_manifest(&jumbf, format)
@@ -2700,10 +2789,12 @@ mod tests {
     use crate::utils::test::fixture_path;
     use crate::{
         assertions::{c2pa_action, BoxHash, DigitalSourceType},
+        asset_handlers::bmff_io::read_bmff_c2pa_boxes,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         settings::Settings,
         utils::{
+            hash_utils::HashRange,
             test::{test_context, write_bmff_placeholder_stream, write_jpeg_placeholder_stream},
             test_signer::{async_test_signer, test_signer},
         },
@@ -3876,6 +3967,121 @@ mod tests {
         output_stream.write_all(&signed_manifest)?;
 
         // 8. Validate the final asset.
+        output_stream.rewind()?;
+        let reader = Reader::from_stream("video/mp4", &mut output_stream)?;
+        println!("{reader}");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        Ok(())
+    }
+
+    /// Simulates a client that hashes mdat chunks while writing, then hands those
+    /// hashes to the SDK so it can construct the Merkle tree without re-reading the
+    /// (potentially multi-gigabyte) mdat content.
+    ///
+    /// The placeholder pre-allocates [`MAX_MDAT_BOXES`] Merkle map slots (read from
+    /// `core.merkle_tree_chunk_size_in_kb` in settings).  Any size gap between the
+    /// signed manifest and the placeholder is filled with a BMFF `free` box by
+    /// [`Builder::sign_placeholder`], so the total written bytes are always identical
+    /// and the BMFF file structure remains valid.
+    #[test]
+    fn test_bmff_mdat_hashed_placeholder_workflow_complete() -> Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+
+        const CHUNK_SIZE_KB: usize = 1; // 1 KB chunks – small so the test MP4 has ≥1 chunk
+        let alg = "sha256";
+        let chunk_bytes = (CHUNK_SIZE_KB * 1024) as u64;
+
+        // 1. Create a Builder with Merkle settings configured in Context.
+        //    The chunk size is the only required setting; placeholder() will
+        //    pre-allocate MAX_MDAT_BOXES Merkle map slots automatically.
+        let context = Context::new().with_settings(
+            serde_json::json!({"core": {"merkle_tree_chunk_size_in_kb": CHUNK_SIZE_KB}})
+                .to_string(),
+        )?;
+        let mut builder =
+            Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+
+        // 2. Generate the placeholder.  Because merkle_tree_chunk_size_in_kb is set,
+        //    placeholder() adds a BmffHash with pre-allocated Merkle map slots.
+        let placeholder = builder.placeholder("video/mp4")?;
+        assert!(builder.find_assertion::<BmffHash>(BmffHash::LABEL).is_ok());
+
+        // 3. Compose the placeholder into a C2PA UUID box for embedding.
+        let composed_placeholder = Builder::composed_manifest(&placeholder, "video/mp4")?;
+
+        // 4. Inject the composed placeholder after the ftyp box.
+        let mut input_stream = Cursor::new(TEST_VIDEO_MP4);
+        let mut output_stream = Cursor::new(Vec::new());
+        let offset = write_bmff_placeholder_stream(
+            &composed_placeholder,
+            &mut input_stream,
+            &mut output_stream,
+        )?;
+
+        // 5. Compute mdat leaf hashes "externally" — simulating a client that hashes
+        //    each fixed-size chunk as it writes mdat data (no second read needed).
+        output_stream.rewind()?;
+        let boxes = read_bmff_c2pa_boxes(&mut output_stream)?;
+        let mut mdat_boxes = boxes.box_infos;
+        mdat_boxes.retain(|b| b.path == "mdat");
+        assert!(
+            !mdat_boxes.is_empty(),
+            "Test MP4 must contain at least one mdat box"
+        );
+
+        let mut all_leaf_hashes: Vec<Vec<Vec<u8>>> = Vec::new();
+        for mdat_box in &mdat_boxes {
+            let data_start = mdat_box.offset + 16; // skip 16-byte BMFF box header
+            let data_end = mdat_box.end();
+            let mut pos = data_start;
+            let mut mdat_leaves: Vec<Vec<u8>> = Vec::new();
+
+            while pos < data_end {
+                let leaf_end = std::cmp::min(pos + chunk_bytes, data_end);
+                let leaf_hash = hash_stream_by_alg(
+                    alg,
+                    &mut output_stream,
+                    Some(vec![HashRange::new(pos, leaf_end - pos)]),
+                    false, // inclusion mode
+                )?;
+                mdat_leaves.push(leaf_hash);
+                pos = leaf_end;
+            }
+            all_leaf_hashes.push(mdat_leaves);
+        }
+
+        // 6. Hand the pre-computed leaf hashes to the builder.
+        //    chunk_size_kb is read from settings; only the Merkle root is stored,
+        //    so no UUID proof boxes are generated and nothing extra is appended.
+        builder.set_bmff_mdat_hashes(all_leaf_hashes)?;
+
+        // 7. Hash the asset — mdat content is excluded (covered by the Merkle root).
+        output_stream.rewind()?;
+        builder.update_hash_from_stream(&mut output_stream, vec![], alg)?;
+
+        let bmff_hash: BmffHash = builder.find_assertion(BmffHash::LABEL)?;
+        assert!(bmff_hash.hash().is_some(), "BmffHash must have a flat hash");
+        assert!(bmff_hash.merkle.is_some(), "BmffHash must have Merkle maps");
+
+        // 8. Sign the placeholder — returns the final composed C2PA UUID box.
+        //    Any gap vs the placeholder is padded with a BMFF `free` box so the
+        //    total byte count is identical and BMFF box offsets stay intact.
+        let signed_manifest = builder.sign_placeholder(&placeholder, "video/mp4")?;
+
+        assert_eq!(
+            signed_manifest.len(),
+            composed_placeholder.len(),
+            "signed ({} bytes) must equal placeholder ({} bytes) after free-box padding",
+            signed_manifest.len(),
+            composed_placeholder.len()
+        );
+
+        // 9. Patch the output stream: overwrite the placeholder with the signed manifest.
+        output_stream.seek(SeekFrom::Start(offset as u64))?;
+        output_stream.write_all(&signed_manifest)?;
+
+        // 10. Validate the final asset.
         output_stream.rewind()?;
         let reader = Reader::from_stream("video/mp4", &mut output_stream)?;
         println!("{reader}");
