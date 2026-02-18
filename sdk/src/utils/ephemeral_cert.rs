@@ -510,6 +510,9 @@ pub fn der_to_pem(der: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::panic)]
+
     use std::process::Command;
 
     use rasn_pkix::BasicConstraints;
