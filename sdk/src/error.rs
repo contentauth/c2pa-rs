@@ -200,6 +200,9 @@ pub enum Error {
     #[error("remote signers are not supported for WASM")]
     WasmNoRemoteSigner,
 
+    #[error("feature unsupported on Wasm")]
+    WasmFeatureUnsupported,
+
     /// Unable to generate valid JUMBF for a claim.
     #[error("could not create valid JUMBF for claim")]
     JumbfCreationError,

@@ -211,7 +211,6 @@ pub mod crypto;
 #[doc(hidden)]
 pub mod dynamic_assertion;
 
-// TODO: pub it when we expose in high-level API
 /// The `http` module contains generic traits for configuring sync and async HTTP resolvers.
 pub(crate) mod http;
 
@@ -229,10 +228,12 @@ pub mod settings;
 #[doc(hidden)]
 pub mod status_tracker;
 
-/// The `validation_results` module contains the definitions for the validation results that are part of the C2PA specification.
+/// The `validation_results` module contains the definitions for the
+/// validation results that are part of the C2PA specification.
 pub mod validation_results;
 
-/// The `validation_status` module contains the definitions for the validation status that are part of the C2PA specification.
+/// The `validation_status` module contains the definitions for the
+/// validation status that are part of the C2PA specification.
 #[doc(hidden)]
 pub mod validation_status;
 
@@ -264,6 +265,9 @@ pub use resource_store::{ResourceRef, ResourceStore};
 #[doc(inline)]
 pub use settings::Settings;
 pub use signer::{AsyncSigner, BoxedAsyncSigner, BoxedSigner, Signer};
+#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
+#[cfg_attr(docsrs, doc(cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))))]
+pub use utils::ephemeral_signer::EphemeralSigner;
 pub use utils::mime::format_from_path;
 #[doc(inline)]
 pub use validation_results::{ValidationResults, ValidationState};
