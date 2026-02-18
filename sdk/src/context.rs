@@ -200,6 +200,7 @@ impl Default for Context {
             settings: Settings::default(),
             sync_resolver: SyncResolverState::Default(OnceLock::new()),
             async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            // Testing cawg remote signer created from Context requires SignerState::FromSettings
             #[cfg(all(test, not(feature = "remote_signing")))]
             signer: SignerState::Custom(crate::utils::test_signer::test_signer(
                 crate::SigningAlg::Ps256,

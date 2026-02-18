@@ -69,18 +69,19 @@ pub(crate) fn check_chain_order(certs: &[X509]) -> bool {
     all(target_arch = "wasm32", not(target_os = "wasi")),
     wasm_bindgen_test
 )]
-#[cfg(feature = "openssl")]
-fn cert_chain_to_der_macro() {
+fn cert_chain_to_der_macro() -> Result<(), crate::crypto::raw_signature::RawSignerError> {
     use openssl::x509::X509;
 
-    use crate::crypto::raw_signature::openssl::OpenSslMutex;
+    use crate::crypto::raw_signature::{openssl::OpenSslMutex, RawSignerError};
 
-    let _openssl = OpenSslMutex::acquire().unwrap();
+    let _openssl =
+        OpenSslMutex::acquire().map_err(|e| RawSignerError::CryptoLibraryError(e.to_string()))?;
 
     let cert_chain_pem =
         include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es256.pub");
+
     let cert_stack =
-        X509::stack_from_pem(cert_chain_pem).expect("Certificate chain should be parsed to DER");
+        X509::stack_from_pem(cert_chain_pem).map_err(|e| RawSignerError::IoError(e.to_string()))?;
 
     assert!(
         !cert_stack.is_empty(),
@@ -91,4 +92,6 @@ fn cert_chain_to_der_macro() {
         2,
         "Certificate stack should have two certificates"
     );
+
+    Ok(())
 }
