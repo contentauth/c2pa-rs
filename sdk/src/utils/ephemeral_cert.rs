@@ -65,6 +65,11 @@
 //! we don't know which part of our cert triggers it. The cross-check test
 //! treats these as a known platform quirk and skips the verify assertion
 //! instead of failing.
+//!
+//! On some environments (e.g. older or minimal OpenSSL/LibreSSL, or aarch64
+//! Linux with a build that omits Ed25519), `openssl verify` fails with
+//! "unsupported algorithm" or "unable to get certs public key" because our
+//! certs use Ed25519. The test skips the verify assertion in that case.
 
 use chrono::Utc;
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
@@ -576,7 +581,8 @@ mod tests {
     }
 
     /// True when `openssl verify` failed due to a known platform/version quirk so we skip
-    /// instead of failing the test (e.g. strict extension handling, ASN.1 decoding differences).
+    /// instead of failing the test (e.g. strict extension handling, ASN.1 decoding differences,
+    /// or OpenSSL/LibreSSL build without Ed25519 support).
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn is_openssl_verify_skip(stderr: &str) -> bool {
         let s = stderr;
@@ -586,6 +592,8 @@ mod tests {
             || s.contains("nested asn1")
             || s.contains("header too long")
             || s.contains("bad object header")
+            || s.contains("unsupported algorithm")
+            || s.contains("unable to get certs public key")
     }
 
     /// Cross-check generated CA and EE certificates with OpenSSL.
