@@ -552,15 +552,31 @@ mod tests {
         assert!(decoded_minimal.path_len_constraint.is_none());
     }
 
+    /// Returns true if the `openssl` CLI is available (e.g. on standard CI runners).
+    /// Used to skip OpenSSL-dependent tests on non-standard environments (e.g. cross-compiled
+    /// aarch64-unknown-linux-gnu where openssl may not be in PATH).
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn openssl_available() -> bool {
+        Command::new("openssl")
+            .arg("version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    }
+
     /// Cross-check generated CA and EE certificates with OpenSSL.
     /// Only run on platforms where OpenSSL is typically available (e.g. GitHub
-    /// ubuntu-latest and macos-latest).
+    /// ubuntu-latest and macos-latest). Skipped when `openssl` is not in PATH.
     ///
     /// 1. Ensures both certs are valid DER/PEM by having OpenSSL parse them.
     /// 2. Ensures the EE cert chains to the CA via `openssl verify`.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn test_ephemeral_cert_openssl_verify() {
+        if !openssl_available() {
+            eprintln!("openssl not available, skipping test_ephemeral_cert_openssl_verify");
+            return;
+        }
+
         let chain = generate_ephemeral_chain("test-ephemeral.example.com")
             .expect("generate_ephemeral_chain");
 
@@ -611,10 +627,15 @@ mod tests {
 
     /// Diagnostic: if OpenSSL verify fails on the full chain, find which EE
     /// extension is the cause by omitting each in turn; if verify passes
-    /// when X is omitted, X is the culprit.
+    /// when X is omitted, X is the culprit. Skipped when `openssl` is not in PATH.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn test_openssl_which_extension_fails() {
+        if !openssl_available() {
+            eprintln!("openssl not available, skipping test_openssl_which_extension_fails");
+            return;
+        }
+
         use super::{
             generate_ephemeral_chain, generate_ephemeral_chain_with_ee_skip,
             EXT_TAG_AUTHORITY_KEY_ID, EXT_TAG_BASIC_CONSTRAINTS, EXT_TAG_EXT_KEY_USAGE,
