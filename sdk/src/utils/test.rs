@@ -120,6 +120,7 @@ define_fixtures!(
     SAMPLE_HEIF => ("sample1.heif", "image/heif"),
     SAMPLE_MP4 => ("video1.mp4", "video/mp4"),
     LEGACY_MP4 => ("legacy.mp4", "video/mp4"),
+    NO_MANIFEST_MP4 => ("video1_no_manifest.mp4", "video/mp4"),
     LEGACY_INGREDIENT_HASH => ("legacy_ingredient_hash.jpg", "image/jpeg"),
     NO_MANIFEST => ("no_manifest.jpg", "image/jpeg"),
     NO_ALG => ("no_alg.jpg", "image/jpeg"),
@@ -685,6 +686,59 @@ where
     output_file.write_all(&out_stream.into_inner()).unwrap();
 
     Ok(box_len)
+}
+
+/// Utility to create a BMFF (MP4) test asset with a placeholder for a manifest.
+///
+/// Inserts `placeholder` (a composed C2PA UUID box, as returned by
+/// `Builder::composed_manifest` for BMFF formats) immediately after the `ftyp`
+/// box, which is the standard C2PA insertion point in BMFF assets.
+///
+/// Returns the byte offset where the placeholder was inserted (i.e. the end of
+/// the `ftyp` box).
+pub fn write_bmff_placeholder_stream<R>(
+    placeholder: &[u8],
+    input: &mut R,
+    output_file: &mut dyn CAIReadWrite,
+) -> Result<usize>
+where
+    R: Read + std::io::Seek + Send,
+{
+    input.rewind().unwrap();
+
+    // Read the ftyp box header: 4-byte big-endian size + 4-byte box type.
+    let mut size_bytes = [0u8; 4];
+    input.read_exact(&mut size_bytes).unwrap();
+    let mut type_bytes = [0u8; 4];
+    input.read_exact(&mut type_bytes).unwrap();
+    assert_eq!(
+        &type_bytes, b"ftyp",
+        "BMFF stream must start with an ftyp box"
+    );
+
+    let ftyp_size = u32::from_be_bytes(size_bytes) as usize;
+
+    // Build the output stream with a hole for the manifest.
+    let outbuf = Vec::new();
+    let mut out_stream = Cursor::new(outbuf);
+    input.rewind().unwrap();
+
+    // Copy the ftyp box verbatim.
+    let mut before = vec![0u8; ftyp_size];
+    input.read_exact(before.as_mut_slice()).unwrap();
+    out_stream.write_all(&before).unwrap();
+
+    // Insert the composed placeholder (C2PA UUID box).
+    out_stream.write_all(placeholder).unwrap();
+
+    // Copy the remainder of the asset.
+    let mut after_buf = Vec::new();
+    input.read_to_end(&mut after_buf).unwrap();
+    out_stream.write_all(&after_buf).unwrap();
+
+    output_file.write_all(&out_stream.into_inner()).unwrap();
+
+    Ok(ftyp_size)
 }
 
 pub(crate) struct TestGoodSigner {}

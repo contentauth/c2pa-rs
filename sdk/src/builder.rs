@@ -1986,11 +1986,13 @@ impl Builder {
         // If no hash exists, add an appropriate placeholder based on format
         if hash_count == 0 {
             if crate::jumbf_io::is_bmff_format(format) {
-                // For BMFF formats, add a placeholder BmffHash
-                let placeholder_bmff = BmffHash::new("jumbf manifest", "sha256", None);
+                // For BMFF formats, add a placeholder BmffHash with default exclusions
+                // and a correctly-sized placeholder hash so the reserved space is accurate.
+                let mut placeholder_bmff = BmffHash::new("jumbf manifest", "sha256", None);
+                placeholder_bmff.set_default_exclusions();
+                placeholder_bmff.add_place_holder_hash()?;
                 let assertion_label = placeholder_bmff.to_assertion()?.label();
                 self.add_assertion(&assertion_label, &placeholder_bmff)?;
-                //self.add_assertion(BmffHash::LABEL, &placeholder_bmff)?;
             } else {
                 // For non-BMFF formats, add a placeholder DataHash
                 // create placeholder DataHash large enough for 10 Exclusions
@@ -2072,10 +2074,33 @@ impl Builder {
                 .retain(|a| !a.label.starts_with(DataHash::LABEL));
             self.add_assertion(DataHash::LABEL, &dh)?;
         } else if has_bmff_hash {
-            return Err(Error::BadParam(
-                "BmffHash update from stream not yet implemented. Please update manually."
-                    .to_string(),
-            ));
+            // Find the stored assertion label (e.g. "c2pa.hash.bmff.v3") and extract
+            // the version, since bmff_version is #[serde(skip)] and resets to 0 on
+            // CBOR round-trip via find_assertion.
+            let stored_label = self
+                .definition
+                .assertions
+                .iter()
+                .find(|a| a.label().contains(BmffHash::LABEL))
+                .map(|a| a.label().to_owned())
+                .ok_or(Error::NotFound)?;
+            let (_, stored_version, _) = parse_label(&stored_label);
+
+            let mut bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL)?;
+
+            // Restore the version that was lost during CBOR round-trip.
+            bmff_hash.set_bmff_version(stored_version);
+
+            // gen_hash_from_stream uses the BMFF-aware exclusion mapping internally;
+            // the exclusions Vec<HashRange> parameter is not used for BMFF.
+            bmff_hash.gen_hash_from_stream(stream)?;
+
+            // Replace the old BmffHash, preserving the versioned label.
+            self.definition
+                .assertions
+                .retain(|a| !a.label().contains(BmffHash::LABEL));
+            let assertion_label = bmff_hash.to_assertion()?.label();
+            self.add_assertion(&assertion_label, &bmff_hash)?;
         } else {
             return Err(Error::BadParam(
                 "No hash assertion found in Builder. Call placeholder() first.".to_string(),
@@ -2123,7 +2148,18 @@ impl Builder {
             pc.update_data_hash(data_hash)?;
         }
 
-        if let Ok(bmff_hash) = self.find_assertion::<BmffHash>(BmffHash::LABEL) {
+        if let Ok(mut bmff_hash) = self.find_assertion::<BmffHash>(BmffHash::LABEL) {
+            // Restore version lost during CBOR round-trip (bmff_version is #[serde(skip)]).
+            if let Some(stored_label) = self
+                .definition
+                .assertions
+                .iter()
+                .find(|a| a.label().contains(BmffHash::LABEL))
+                .map(|a| a.label().to_owned())
+            {
+                let (_, stored_version, _) = parse_label(&stored_label);
+                bmff_hash.set_bmff_version(stored_version);
+            }
             pc.update_bmff_hash(bmff_hash)?;
         }
 
@@ -2668,7 +2704,7 @@ mod tests {
         hash_stream_by_alg,
         settings::Settings,
         utils::{
-            test::{test_context, write_jpeg_placeholder_stream},
+            test::{test_context, write_bmff_placeholder_stream, write_jpeg_placeholder_stream},
             test_signer::{async_test_signer, test_signer},
         },
         validation_results::ValidationState,
@@ -2769,6 +2805,7 @@ mod tests {
 
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
     const TEST_IMAGE_CLOUD: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
+    const TEST_VIDEO_MP4: &[u8] = include_bytes!("../tests/fixtures/video1_no_manifest.mp4");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const TEST_IMAGE_TIFF: &[u8] = include_bytes!("../tests/fixtures/test.tiff");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
@@ -3726,7 +3763,7 @@ mod tests {
     }
 
     #[test]
-    fn test_placeholder_workflow_complete() -> Result<()> {
+    fn test_data_hashed_placeholder_workflow_complete() -> Result<()> {
         use std::io::{Seek, SeekFrom, Write};
 
         // 1. Setup - Create builder with simple manifest
@@ -3784,6 +3821,65 @@ mod tests {
         // list may not expose DataHash the same way; the full embed-then-read flow is covered
         // by test_builder_data_hashed_embeddable which uses write_jpeg_placeholder_stream the same way.
         assert!(!signed_manifest.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bmff_hashed_placeholder_workflow_complete() -> Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+
+        // 1. Build a simple manifest for an MP4 asset.
+        let mut builder = Builder::from_json(&simple_manifest_json())?;
+
+        // 2. Call placeholder() for a BMFF format.
+        //    This adds a BmffHash (v3) with default exclusions to the builder
+        //    and returns raw JUMBF bytes sized for the signer's reserve.
+        let placeholder = builder.placeholder("video/mp4")?;
+        assert!(builder.find_assertion::<BmffHash>(BmffHash::LABEL).is_ok());
+
+        // 3. Compose the placeholder into a C2PA UUID box for embedding.
+        let composed_placeholder = Builder::composed_manifest(&placeholder, "video/mp4")?;
+        assert!(!composed_placeholder.is_empty());
+
+        // 4. Inject the composed placeholder after the ftyp box.
+        let mut input_stream = Cursor::new(TEST_VIDEO_MP4);
+        let mut output_stream = Cursor::new(Vec::new());
+        let offset = write_bmff_placeholder_stream(
+            &composed_placeholder,
+            &mut input_stream,
+            &mut output_stream,
+        )?;
+
+        // 5. Hash the asset — BmffHash uses its own path-based exclusions internally
+        //    (the C2PA UUID box is automatically excluded), so we pass an empty vec.
+        output_stream.rewind()?;
+        builder.update_hash_from_stream(&mut output_stream, vec![], "sha256")?;
+
+        // Verify hash was set.
+        let bmff_hash: BmffHash = builder.find_assertion(BmffHash::LABEL)?;
+        assert!(bmff_hash.hash().is_some());
+
+        // 6. Sign the placeholder — returns the final composed C2PA UUID box.
+        let signed_manifest = builder.sign_placeholder(&placeholder, "video/mp4")?;
+
+        // The signed manifest must fit within the space reserved for the placeholder.
+        assert!(
+            signed_manifest.len() <= composed_placeholder.len(),
+            "signed ({} bytes) must fit in placeholder ({} bytes)",
+            signed_manifest.len(),
+            composed_placeholder.len()
+        );
+
+        // 7. Patch the output stream: overwrite the placeholder with the signed manifest.
+        output_stream.seek(SeekFrom::Start(offset as u64))?;
+        output_stream.write_all(&signed_manifest)?;
+
+        // 8. Validate the final asset.
+        output_stream.rewind()?;
+        let reader = Reader::from_stream("video/mp4", &mut output_stream)?;
+        println!("{reader}");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         Ok(())
     }
