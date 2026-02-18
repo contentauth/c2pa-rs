@@ -50,10 +50,10 @@ pub trait MaybeSend: Send {}
 pub trait MaybeSend {}
 
 #[cfg(not(target_arch = "wasm32"))]
-impl<T: Send> MaybeSend for T {}
+impl<T: Send + ?Sized> MaybeSend for T {}
 
 #[cfg(target_arch = "wasm32")]
-impl<T> MaybeSend for T {}
+impl<T: ?Sized> MaybeSend for T {}
 
 /// A trait that is `Sync` on non-WASM targets and not `Sync` on WASM targets.
 ///
@@ -83,7 +83,7 @@ pub trait MaybeSync: Sync {}
 pub trait MaybeSync {}
 
 #[cfg(not(target_arch = "wasm32"))]
-impl<T: Sync> MaybeSync for T {}
+impl<T: Sync + ?Sized> MaybeSync for T {}
 
 #[cfg(target_arch = "wasm32")]
-impl<T> MaybeSync for T {}
+impl<T: ?Sized> MaybeSync for T {}
