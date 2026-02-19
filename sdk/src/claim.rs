@@ -317,7 +317,7 @@ pub struct Claim {
 
     redacted_assertions: Option<Vec<String>>, // list of redacted assertions
 
-    alg: Option<String>, // hashing algorithm (default to Sha256)
+    pub(crate) alg: Option<String>, // hashing algorithm (default to Sha256)
 
     alg_soft: Option<String>, // hashing algorithm for soft bindings
 

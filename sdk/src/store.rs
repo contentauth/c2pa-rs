@@ -2721,7 +2721,7 @@ impl Store {
         &mut self,
         dyn_assertions: &[Box<dyn AsyncDynamicAssertion>],
     ))]
-    fn add_dynamic_assertion_placeholders(
+    pub(crate) fn add_dynamic_assertion_placeholders(
         &mut self,
         dyn_assertions: &[Box<dyn DynamicAssertion>],
     ) -> Result<Vec<HashedUri>> {

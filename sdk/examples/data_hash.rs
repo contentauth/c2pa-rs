@@ -70,12 +70,10 @@ fn user_data_hash_with_placeholder_api() -> Result<()> {
         Action::new(c2pa_action::OPENED).set_parameter("ingredientIds", ["parent_label"])?,
     )?;
 
-    // Create the placeholder manifest (automatically adds a DataHash if none exists)
-    // The placeholder supports dynamic assertions if configured in the signer
-    let placeholder = builder.placeholder("image/jpeg")?;
-
-    // Compose the manifest for the target format (JPEG)
-    let jpeg_placeholder = Builder::composed_manifest(&placeholder, "image/jpeg")?;
+    // Create the placeholder manifest (automatically adds a DataHash if none exists).
+    // Returns composed bytes (format-specific wrapper applied) ready to embed.
+    // The placeholder JUMBF length is stored internally for sign_embeddable().
+    let jpeg_placeholder = builder.placeholder("image/jpeg")?;
 
     let bytes = std::fs::read(&source)?;
     let mut output: Vec<u8> = Vec::with_capacity(bytes.len() + jpeg_placeholder.len());
@@ -88,13 +86,17 @@ fn user_data_hash_with_placeholder_api() -> Result<()> {
 
     let mut output_stream = Cursor::new(output);
 
-    // Now create the final DataHash with the actual exclusion range
-    let hr = HashRange::new(manifest_pos as u64, jpeg_placeholder.len() as u64);
-    builder.update_hash_from_stream(&mut output_stream, vec![hr], "sha256")?;
+    // Register where the placeholder was embedded, then hash the asset.
+    // set_data_hash_exclusions replaces the dummy exclusions from placeholder().
+    builder.set_data_hash_exclusions(vec![HashRange::new(
+        manifest_pos as u64,
+        jpeg_placeholder.len() as u64,
+    )])?;
+    builder.update_hash_from_stream(&mut output_stream)?;
 
-    // Sign the placeholder with the updated hash from the Builder
-    // The signer is obtained from the Builder's context
-    let final_manifest = builder.sign_placeholder(&placeholder, "image/jpeg")?;
+    // Sign — the Builder stored the placeholder JUMBF length internally, so the returned
+    // composed bytes are the same size as jpeg_placeholder and can patch it in-place.
+    let final_manifest = builder.sign_embeddable("image/jpeg")?;
 
     // Replace placeholder with final signed manifest
     output_stream.seek(std::io::SeekFrom::Start(manifest_pos as u64))?;
