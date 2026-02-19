@@ -2083,6 +2083,12 @@ impl Builder {
             // else: prefer_box_hash is set and format supports BoxHash — no placeholder
             // hash assertion is needed; the caller will use update_hash_from_stream() which
             // will auto-create the BoxHash, then call sign_embeddable() directly.
+            //
+            // Return empty bytes so the caller knows no placeholder needs to be embedded,
+            // and skip the get_placeholder() call below (which requires a hard binding).
+            if !self.needs_placeholder(format) {
+                return Ok(Vec::new());
+            }
         }
 
         let mut store = self.to_store()?;
@@ -2276,7 +2282,6 @@ impl Builder {
     ///
     /// # Errors
     /// * Returns an [`Error`] if hashing fails
-    ///
     pub fn update_hash_from_stream<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
     where
         R: Read + Seek + MaybeSend,
@@ -2333,7 +2338,14 @@ impl Builder {
             })?;
 
             let mut bh = BoxHash { boxes: Vec::new() };
-            bh.generate_box_hash_from_stream(stream, definition_alg, bhp, true)?;
+            // Use minimal_form=false so that each structural box is hashed
+            // independently.  minimal_form=true accumulates ranges by summing
+            // individual segment range_len values; for JPEGs that contain RST
+            // (restart) markers, those 2-byte markers are enumerated as
+            // separate BoxMap entries by jfifdump while also being counted
+            // inside the preceding SOS entropy range, which causes the sum to
+            // exceed the file length and triggers a range-validation error.
+            bh.generate_box_hash_from_stream(stream, definition_alg, bhp, false)?;
             self.definition
                 .assertions
                 .retain(|a| !a.label.starts_with(BoxHash::LABEL));
@@ -4052,6 +4064,106 @@ mod tests {
 
         // Verify placeholder is valid
         assert!(!placeholder.is_empty());
+
+        Ok(())
+    }
+
+    /// Tests the `prefer_box_hash` setting end-to-end:
+    ///
+    /// - `needs_placeholder` returns `false` for BoxHash-capable formats (JPEG)
+    ///   and `true` for BMFF formats regardless of the setting.
+    /// - `placeholder()` does **not** auto-create a `DataHash` when
+    ///   `prefer_box_hash = true` and the format supports `BoxHash`.
+    /// - `update_hash_from_stream` auto-creates a `BoxHash` assertion with real
+    ///   hashes when no hard binding is present.
+    /// - `sign_embeddable` Mode 2 (no prior placeholder) succeeds and returns
+    ///   non-empty composed bytes.
+    ///
+    /// Note: full round-trip Reader validation is not performed here because
+    /// inserting a new C2PA APP11 segment into a clean JPEG after the hash was
+    /// computed would change the byte offsets and fail BoxHash verification.
+    /// The round-trip path (pre-slotted image + embedded manifest) is covered
+    /// by `test_builder_box_hashed_embeddable`.
+    #[test]
+    fn test_prefer_box_hash_workflow() -> Result<()> {
+        // Helper to build a fresh context with prefer_box_hash enabled.
+        let pbh_context = || {
+            Context::new().with_settings(
+                serde_json::json!({"builder": {"prefer_box_hash": true}}).to_string(),
+            )
+        };
+
+        let mut builder = Builder::from_context(pbh_context()?)
+            .with_definition(simple_manifest_json().as_str())?;
+
+        // needs_placeholder returns false for JPEG (BoxHash-capable) …
+        assert!(
+            !builder.needs_placeholder("image/jpeg"),
+            "JPEG with prefer_box_hash=true should not need a placeholder"
+        );
+        // … and true for BMFF regardless of the setting.
+        assert!(
+            builder.needs_placeholder("video/mp4"),
+            "BMFF always requires a placeholder"
+        );
+
+        // update_hash_from_stream auto-creates BoxHash from the format handler.
+        // (Mode 2: no prior placeholder() call, so placeholder_jumbf_len is None.)
+        let mut stream = Cursor::new(TEST_IMAGE_CLEAN);
+        builder.update_hash_from_stream("image/jpeg", &mut stream)?;
+
+        let box_hash: BoxHash = builder.find_assertion(BoxHash::LABEL)?;
+        assert!(
+            !box_hash.boxes.is_empty(),
+            "BoxHash must have at least one box"
+        );
+        for bm in &box_hash.boxes {
+            if !bm.excluded.unwrap_or(false) {
+                assert!(
+                    !bm.hash.is_empty(),
+                    "Non-excluded box '{}' must have a computed hash",
+                    bm.names.first().unwrap_or(&String::new())
+                );
+            }
+        }
+
+        // sign_embeddable Mode 2 succeeds with the auto-created BoxHash. Use c2pa so we have somethign to put in a box
+        let manifest_bytes = builder.sign_embeddable("application/c2pa")?;
+        assert!(
+            !manifest_bytes.is_empty(),
+            "sign_embeddable must return non-empty bytes"
+        );
+
+        let reader = Reader::from_stream("application/c2pa", Cursor::new(manifest_bytes))?;
+        println!("{}", reader.json());
+
+        // --- placeholder() returns empty bytes (no embedding needed) when prefer_box_hash=true ---
+        // For BoxHash-capable formats with prefer_box_hash enabled, the caller should call
+        // update_hash_from_stream() directly and then sign_embeddable() — no placeholder is embedded.
+        let mut builder2 = Builder::from_context(pbh_context()?)
+            .with_definition(simple_manifest_json().as_str())?;
+        let placeholder_bytes = builder2.placeholder("image/jpeg")?;
+        assert!(
+            placeholder_bytes.is_empty(),
+            "placeholder() must return empty bytes for BoxHash-capable formats when prefer_box_hash=true"
+        );
+        // No hash assertion should have been auto-created
+        assert!(
+            builder2
+                .find_assertion::<DataHash>(DataHash::LABEL)
+                .is_err(),
+            "DataHash must NOT be auto-created when prefer_box_hash=true"
+        );
+        assert!(
+            builder2
+                .find_assertion::<BmffHash>(BmffHash::LABEL)
+                .is_err(),
+            "BmffHash must NOT be created for a non-BMFF format"
+        );
+        assert!(
+            builder2.find_assertion::<BoxHash>(BoxHash::LABEL).is_err(),
+            "BoxHash must NOT be auto-created by placeholder() — caller creates it via update_hash_from_stream()"
+        );
 
         Ok(())
     }
