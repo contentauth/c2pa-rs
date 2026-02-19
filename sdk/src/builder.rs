@@ -166,11 +166,14 @@ pub struct ManifestDefinition {
     ///
     /// Valid values: `"sha256"`, `"sha384"`, `"sha512"`.
     ///
-    /// This sets both the claim-level `alg` field and is the default used by
+    /// This sets the claim-level `alg` field and is the default used by
     /// [`Builder::update_hash_from_stream`].  It can be overridden on individual
     /// hard binding assertions (e.g. a pre-constructed `DataHash`) by setting
     /// the assertion's own `alg` field before adding it to the builder.
-    pub alg: Option<String>,
+    ///
+    /// Named `hash_alg` (rather than `alg`) to avoid collision with the signer's
+    /// signature algorithm, which uses the same key in some combined JSON configurations.
+    pub hash_alg: Option<String>,
 }
 
 fn default_instance_id() -> String {
@@ -831,7 +834,7 @@ impl Builder {
         let alg = existing
             .alg
             .as_deref()
-            .or(self.definition.alg.as_deref())
+            .or(self.definition.hash_alg.as_deref())
             .unwrap_or("sha256");
         let name = existing.name.as_deref().unwrap_or("jumbf manifest");
         let mut dh = DataHash::new(name, alg);
@@ -1394,7 +1397,7 @@ impl Builder {
         }
         claim.format = Some(definition.format.clone());
         definition.instance_id.clone_into(&mut claim.instance_id);
-        if let Some(alg) = definition.alg.as_deref() {
+        if let Some(alg) = definition.hash_alg.as_deref() {
             claim.alg = Some(alg.to_string());
         }
 
@@ -2076,7 +2079,7 @@ impl Builder {
                 // When merkle_tree_chunk_size_in_kb is set in settings, pre-allocate
                 // placeholder Merkle maps (root-only, MAX_MDAT_BOXES slots) so the
                 // reserved JUMBF space is large enough for the real Merkle data.
-                let ph_alg = self.definition.alg.as_deref().unwrap_or("sha256");
+                let ph_alg = self.definition.hash_alg.as_deref().unwrap_or("sha256");
                 let mut placeholder_bmff = BmffHash::new("jumbf manifest", ph_alg, None);
                 placeholder_bmff.set_default_exclusions();
                 if let Some(chunk_size_kb) =
@@ -2090,7 +2093,7 @@ impl Builder {
             } else {
                 // For non-BMFF formats, add a placeholder DataHash
                 // create placeholder DataHash large enough for 10 Exclusions
-                let ph_alg = self.definition.alg.as_deref().unwrap_or("sha256");
+                let ph_alg = self.definition.hash_alg.as_deref().unwrap_or("sha256");
                 let mut ph = DataHash::new("jumbf manifest", ph_alg);
                 for _ in 0..10 {
                     ph.add_exclusion(HashRange::new(0u64, 2u64));
@@ -2185,7 +2188,7 @@ impl Builder {
     /// The hash algorithm is resolved in this order:
     /// 1. The `alg` field of the existing hard binding assertion (if a pre-built
     ///    [`DataHash`] or [`BmffHash`] was added with a specific algorithm)
-    /// 2. [`ManifestDefinition::alg`] — set this to use a non-default algorithm
+    /// 2. [`ManifestDefinition::hash_alg`] — set this to use a non-default algorithm
     ///    for all signing operations
     /// 3. `"sha256"` (the C2PA default)
     ///
@@ -2223,8 +2226,8 @@ impl Builder {
     where
         R: Read + Seek + ?Sized,
     {
-        // Algorithm resolution: assertion alg → definition.alg → "sha256".
-        let definition_alg = self.definition.alg.as_deref().unwrap_or("sha256");
+        // Algorithm resolution: assertion alg → definition.hash_alg → "sha256".
+        let definition_alg = self.definition.hash_alg.as_deref().unwrap_or("sha256");
 
         let has_bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL).is_ok();
 
@@ -2257,7 +2260,7 @@ impl Builder {
             // If none exists, create a fresh one (hashes the entire stream — sidecar case).
             let existing = self.find_assertion::<DataHash>(DataHash::LABEL).ok();
 
-            // Assertion alg takes priority; fall back to definition.alg or "sha256".
+            // Assertion alg takes priority; fall back to definition.hash_alg or "sha256".
             let alg = existing
                 .as_ref()
                 .and_then(|dh| dh.alg.as_deref())
