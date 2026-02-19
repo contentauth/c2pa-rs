@@ -92,7 +92,7 @@ fn user_data_hash_with_placeholder_api() -> Result<()> {
         manifest_pos as u64,
         jpeg_placeholder.len() as u64,
     )])?;
-    builder.update_hash_from_stream(&mut output_stream)?;
+    builder.update_hash_from_stream("image/jpeg", &mut output_stream)?;
 
     // Sign — the Builder stored the placeholder JUMBF length internally, so the returned
     // composed bytes are the same size as jpeg_placeholder and can patch it in-place.

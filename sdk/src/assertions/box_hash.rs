@@ -13,7 +13,7 @@
 
 use std::{
     fs::File,
-    io::{Cursor, SeekFrom},
+    io::{Cursor, Read, Seek, SeekFrom},
     path::*,
 };
 
@@ -27,6 +27,7 @@ use crate::{
     asset_io::{AssetBoxHash, CAIRead},
     error::{Error, Result},
     hash_utils::hash_by_alg,
+    maybe_send_sync::MaybeSend,
     utils::{
         hash_utils::{hash_stream_by_alg, verify_stream_by_alg, HashRange},
         io_utils::ReaderUtils,
@@ -204,14 +205,16 @@ impl BoxHash {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub fn generate_box_hash_from_stream(
+    pub fn generate_box_hash_from_stream<R>(
         &mut self,
-        reader: &mut dyn CAIRead,
+        reader: &mut R,
         alg: &str,
         bhp: &dyn AssetBoxHash,
         minimal_form: bool,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        R: Read + Seek + MaybeSend,
+    {
         // get source box list
         let source_bms = bhp.get_box_map(reader)?;
 

@@ -44,6 +44,7 @@ use crate::{
     error::{Error, Result},
     jumbf::labels::manifest_label_from_uri,
     jumbf_io,
+    maybe_send_sync::MaybeSend,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::builder::TimeStampFetchScope,
     store::Store,
@@ -781,71 +782,6 @@ impl Builder {
             created,
         });
         Ok(self)
-    }
-
-    /// Sets the exclusion ranges on the [`DataHash`] assertion in the Builder.
-    ///
-    /// Call this after [`Builder::placeholder`] to register the byte region where the
-    /// composed placeholder was embedded in the asset.  This information is deferred
-    /// because the exact offset is only known after the caller writes the placeholder
-    /// into the file.
-    ///
-    /// This preserves the existing [`DataHash`]'s name and algorithm; only the
-    /// exclusion list is replaced.  Call [`Builder::update_hash_from_stream`]
-    /// afterwards to compute and store the actual asset hash.
-    ///
-    /// # Arguments
-    /// * `exclusions` - Byte ranges to skip when hashing (typically the embedded manifest region)
-    ///
-    /// # Returns
-    /// * A mutable reference to the [`Builder`] for method chaining
-    ///
-    /// # Errors
-    /// * Returns an [`Error`] if no [`DataHash`] assertion exists on the Builder
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use c2pa::{Builder, HashRange, Result};
-    /// # use std::io::Cursor;
-    /// # fn example() -> Result<()> {
-    /// # let mut builder = Builder::default();
-    /// # let composed_placeholder = builder.placeholder("image/jpeg")?;
-    /// # let offset: usize = 0;
-    /// // After embedding the composed placeholder at `offset` in the asset:
-    /// builder.set_data_hash_exclusions(vec![HashRange::new(
-    ///     offset as u64,
-    ///     composed_placeholder.len() as u64,
-    /// )])?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn set_data_hash_exclusions(&mut self, exclusions: Vec<HashRange>) -> Result<&mut Self> {
-        let existing = self
-            .find_assertion::<DataHash>(DataHash::LABEL)
-            .map_err(|_| {
-                Error::BadParam(
-                    "No DataHash assertion found. Call placeholder() before \
-                     set_data_hash_exclusions()."
-                        .to_string(),
-                )
-            })?;
-
-        // Preserve the existing assertion's name and algorithm.
-        let alg = existing
-            .alg
-            .as_deref()
-            .or(self.definition.hash_alg.as_deref())
-            .unwrap_or("sha256");
-        let name = existing.name.as_deref().unwrap_or("jumbf manifest");
-        let mut dh = DataHash::new(name, alg);
-        for exclusion in exclusions {
-            dh.add_exclusion(exclusion);
-        }
-
-        self.definition
-            .assertions
-            .retain(|a| !a.label.starts_with(DataHash::LABEL));
-        self.add_assertion(DataHash::LABEL, &dh)
     }
 
     /// Adds a JSON assertion to the manifest.
@@ -2028,6 +1964,47 @@ impl Builder {
         Ok(placeholder)
     }
 
+    /// Returns whether a placeholder manifest is required for `format`.
+    ///
+    /// Most formats need a placeholder: the C2PA manifest is embedded inside the
+    /// asset (e.g. as a UUID box in BMFF or an APP11 segment in JPEG), so the exact
+    /// size of the final signed manifest must be reserved in advance.
+    ///
+    /// Formats whose handler implements [`AssetBoxHash`] can insert the manifest as a
+    /// new independent chunk/box without disturbing existing byte offsets.  When the
+    /// [`BuilderSettings::prefer_box_hash`] setting is enabled, those formats skip the
+    /// placeholder step entirely and use the direct-sign workflow
+    /// ([`Builder::sign_embeddable`] Mode 2) instead.
+    ///
+    /// The method also returns `false` when the builder already contains a [`BoxHash`]
+    /// assertion (regardless of `prefer_box_hash`), since the caller has explicitly
+    /// opted into the box-hash path.
+    ///
+    /// # Arguments
+    /// * `format` — MIME type or file extension of the target asset.
+    ///
+    /// [`AssetBoxHash`]: crate::asset_io::AssetBoxHash
+    pub fn needs_placeholder(&self, format: &str) -> bool {
+        // If a BoxHash is already present, no placeholder is needed.
+        if self.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok() {
+            return false;
+        }
+        // BMFF formats always need a placeholder (BmffHash).
+        if jumbf_io::is_bmff_format(format) {
+            return true;
+        }
+        // For non-BMFF: if prefer_box_hash is enabled and the format supports BoxHash,
+        // a placeholder is not needed.
+        if self.context.settings().builder.prefer_box_hash {
+            if let Some(handler) = jumbf_io::get_assetio_handler(format) {
+                if handler.asset_box_hash_ref().is_some() {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     /// Create a placeholder manifest with dynamic assertion support.
     ///
     /// Returns composed manifest bytes (ready to embed as a C2PA UUID/APP11 box)
@@ -2090,9 +2067,10 @@ impl Builder {
                 placeholder_bmff.add_place_holder_hash()?;
                 let assertion_label = placeholder_bmff.to_assertion()?.label();
                 self.add_assertion(&assertion_label, &placeholder_bmff)?;
-            } else {
-                // For non-BMFF formats, add a placeholder DataHash
-                // create placeholder DataHash large enough for 10 Exclusions
+            } else if self.needs_placeholder(format) {
+                // For non-BMFF formats that still require a placeholder (no prefer_box_hash
+                // or format does not support BoxHash), add a placeholder DataHash large
+                // enough for 10 exclusions.
                 let ph_alg = self.definition.hash_alg.as_deref().unwrap_or("sha256");
                 let mut ph = DataHash::new("jumbf manifest", ph_alg);
                 for _ in 0..10 {
@@ -2104,6 +2082,9 @@ impl Builder {
 
                 self.add_assertion(DataHash::LABEL, &ph)?;
             }
+            // else: prefer_box_hash is set and format supports BoxHash — no placeholder
+            // hash assertion is needed; the caller will use update_hash_from_stream() which
+            // will auto-create the BoxHash, then call sign_embeddable() directly.
         }
 
         let mut store = self.to_store()?;
@@ -2171,6 +2152,71 @@ impl Builder {
         Ok(())
     }
 
+    /// Sets the exclusion ranges on the [`DataHash`] assertion in the Builder.
+    ///
+    /// Call this after [`Builder::placeholder`] to register the byte region where the
+    /// composed placeholder was embedded in the asset.  This information is deferred
+    /// because the exact offset is only known after the caller writes the placeholder
+    /// into the file.
+    ///
+    /// This preserves the existing [`DataHash`]'s name and algorithm; only the
+    /// exclusion list is replaced.  Call [`Builder::update_hash_from_stream`]
+    /// afterwards to compute and store the actual asset hash.
+    ///
+    /// # Arguments
+    /// * `exclusions` - Byte ranges to skip when hashing (typically the embedded manifest region)
+    ///
+    /// # Returns
+    /// * A mutable reference to the [`Builder`] for method chaining
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if no [`DataHash`] assertion exists on the Builder
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use c2pa::{Builder, HashRange, Result};
+    /// # use std::io::Cursor;
+    /// # fn example() -> Result<()> {
+    /// # let mut builder = Builder::default();
+    /// # let composed_placeholder = builder.placeholder("image/jpeg")?;
+    /// # let offset: usize = 0;
+    /// // After embedding the composed placeholder at `offset` in the asset:
+    /// builder.set_data_hash_exclusions(vec![HashRange::new(
+    ///     offset as u64,
+    ///     composed_placeholder.len() as u64,
+    /// )])?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn set_data_hash_exclusions(&mut self, exclusions: Vec<HashRange>) -> Result<&mut Self> {
+        let existing = self
+            .find_assertion::<DataHash>(DataHash::LABEL)
+            .map_err(|_| {
+                Error::BadParam(
+                    "No DataHash assertion found. Call placeholder() before \
+                     set_data_hash_exclusions()."
+                        .to_string(),
+                )
+            })?;
+
+        // Preserve the existing assertion's name and algorithm.
+        let alg = existing
+            .alg
+            .as_deref()
+            .or(self.definition.hash_alg.as_deref())
+            .unwrap_or("sha256");
+        let name = existing.name.as_deref().unwrap_or("jumbf manifest");
+        let mut dh = DataHash::new(name, alg);
+        for exclusion in exclusions {
+            dh.add_exclusion(exclusion);
+        }
+
+        self.definition
+            .assertions
+            .retain(|a| !a.label.starts_with(DataHash::LABEL));
+        self.add_assertion(DataHash::LABEL, &dh)
+    }
+
     /// Update the hard binding assertion in the Builder by hashing an asset stream.
     ///
     /// Automatically detects the type of hard binding on the Builder and updates it:
@@ -2178,6 +2224,13 @@ impl Builder {
     /// - **BmffHash** (BMFF/MP4 assets): uses the assertion's own path-based exclusions
     ///   (the C2PA UUID box, and mdat boxes when Merkle hashing is enabled).  The
     ///   algorithm is read from the BmffHash assertion itself.
+    ///
+    /// - **BoxHash** (JPEG, PNG, GIF and other chunk-based formats): uses
+    ///   [`AssetBoxHash::get_box_map`] to enumerate the asset's structural chunks,
+    ///   hashes each chunk individually, and stores the result.  If `prefer_box_hash`
+    ///   is enabled in [`BuilderSettings`] and the format's handler exposes
+    ///   [`AssetBoxHash`], a `BoxHash` assertion is auto-created when none is present.
+    ///   If a `BoxHash` assertion already exists on the builder it is updated in-place.
     ///
     /// - **DataHash** (JPEG, PNG, and other segment-based formats): reads exclusion
     ///   ranges and the hash algorithm from the existing assertion (if any), hashes
@@ -2209,12 +2262,15 @@ impl Builder {
     ///     offset as u64,
     ///     composed_placeholder.len() as u64,
     /// )])?;
-    /// builder.update_hash_from_stream(&mut stream)?;
+    /// builder.update_hash_from_stream("image/jpeg", &mut stream)?;
     /// # Ok(())
     /// # }
     /// ```
     ///
     /// # Arguments
+    /// * `format` - MIME type or file extension of the asset (e.g. `"image/jpeg"`,
+    ///   `"video/mp4"`).  Required when `prefer_box_hash` is enabled so the method can
+    ///   look up the format's [`AssetBoxHash`] handler.
     /// * `stream` - The asset stream to hash
     ///
     /// # Returns
@@ -2222,14 +2278,28 @@ impl Builder {
     ///
     /// # Errors
     /// * Returns an [`Error`] if hashing fails
-    pub fn update_hash_from_stream<R>(&mut self, stream: &mut R) -> Result<&mut Self>
+    ///
+    /// [`AssetBoxHash`]: crate::asset_io::AssetBoxHash
+    /// [`AssetBoxHash::get_box_map`]: crate::asset_io::AssetBoxHash::get_box_map
+    pub fn update_hash_from_stream<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
     where
-        R: Read + Seek + ?Sized,
+        R: Read + Seek + MaybeSend,
     {
         // Algorithm resolution: assertion alg → definition.hash_alg → "sha256".
         let definition_alg = self.definition.hash_alg.as_deref().unwrap_or("sha256");
 
         let has_bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL).is_ok();
+        let has_box_hash = self.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok();
+
+        // Determine whether to use BoxHash path:
+        // - an existing BoxHash assertion, OR
+        // - prefer_box_hash is enabled and the format supports it (auto-create).
+        let use_box_hash = has_box_hash || (!has_bmff_hash && {
+            self.context.settings().builder.prefer_box_hash
+                && jumbf_io::get_assetio_handler(format)
+                    .and_then(|h| h.asset_box_hash_ref().map(|_| ()))
+                    .is_some()
+        });
 
         if has_bmff_hash {
             // Find the stored assertion label (e.g. "c2pa.hash.bmff.v3") and extract
@@ -2255,6 +2325,25 @@ impl Builder {
                 .retain(|a| !a.label().contains(BmffHash::LABEL));
             let assertion_label = bmff_hash.to_assertion()?.label();
             self.add_assertion(&assertion_label, &bmff_hash)?;
+        } else if use_box_hash {
+            // BoxHash path: get the format's AssetBoxHash handler and compute box hashes.
+            // We implement the "minimal form" grouping here using hash_stream_by_alg
+            // (which accepts ?Sized streams) rather than generate_box_hash_from_stream
+            // (which requires dyn CAIRead and thus Sized + Send).
+            let handler = jumbf_io::get_assetio_handler(format)
+                .ok_or(Error::UnsupportedType)?;
+            let bhp = handler
+                .asset_box_hash_ref()
+                .ok_or_else(|| Error::BadParam(
+                    format!("Format '{format}' does not support BoxHash")
+                ))?;
+
+            let mut bh = BoxHash { boxes: Vec::new() };
+            bh.generate_box_hash_from_stream(stream, definition_alg, bhp, true)?;
+            self.definition
+                .assertions
+                .retain(|a| !a.label.starts_with(BoxHash::LABEL));
+            self.add_assertion(BoxHash::LABEL, &bh)?;
         } else {
             // DataHash path: read exclusions and alg from any existing assertion.
             // If none exists, create a fresh one (hashes the entire stream — sidecar case).
@@ -4003,7 +4092,7 @@ mod tests {
             composed_placeholder.len() as u64,
         )])?;
         output_stream.rewind()?;
-        builder.update_hash_from_stream(&mut output_stream)?;
+        builder.update_hash_from_stream("image/jpeg", &mut output_stream)?;
 
         // Verify the DataHash was updated with the actual hash
         let data_hash: DataHash = builder.find_assertion(DataHash::LABEL)?;
@@ -4064,7 +4153,7 @@ mod tests {
         // 4. Hash the asset — BmffHash uses its own path-based exclusions internally
         //    (the C2PA UUID box is automatically excluded).
         output_stream.rewind()?;
-        builder.update_hash_from_stream(&mut output_stream)?;
+        builder.update_hash_from_stream("video/mp4", &mut output_stream)?;
 
         // Verify hash was set.
         let bmff_hash: BmffHash = builder.find_assertion(BmffHash::LABEL)?;
@@ -4175,7 +4264,7 @@ mod tests {
 
         // 7. Hash the asset — mdat content is excluded (covered by the Merkle root).
         output_stream.rewind()?;
-        builder.update_hash_from_stream(&mut output_stream)?;
+        builder.update_hash_from_stream("video/mp4", &mut output_stream)?;
 
         let bmff_hash: BmffHash = builder.find_assertion(BmffHash::LABEL)?;
         assert!(bmff_hash.hash().is_some(), "BmffHash must have a flat hash");

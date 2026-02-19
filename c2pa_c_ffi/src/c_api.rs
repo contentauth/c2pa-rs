@@ -1799,6 +1799,10 @@ pub unsafe extern "C" fn c2pa_builder_set_data_hash_exclusions(
 /// Automatically detects the type of hard binding on the Builder:
 /// - **BmffHash**: uses the assertion's own path-based exclusions (UUID box, mdat when
 ///   Merkle hashing is enabled). The hash algorithm is read from the assertion itself.
+/// - **BoxHash**: uses the format's box-hash handler to enumerate chunks, hashes each
+///   one individually, and stores the result.  Triggered when a BoxHash assertion is
+///   already present or when `builder.prefer_box_hash` is enabled and the format
+///   supports it.
 /// - **DataHash**: reads any exclusion ranges already on the existing DataHash assertion,
 ///   hashes the stream excluding those ranges, and stores the result.  If no DataHash
 ///   exists, creates one with no exclusions (hashes the entire stream — sidecar case).
@@ -1813,6 +1817,7 @@ pub unsafe extern "C" fn c2pa_builder_set_data_hash_exclusions(
 ///
 /// # Parameters
 /// * builder_ptr: pointer to a Builder.
+/// * format: MIME type or file extension of the asset (e.g. `"image/jpeg"`).
 /// * stream: pointer to a C2paStream of the asset to hash.
 ///
 /// # Errors
@@ -1823,11 +1828,13 @@ pub unsafe extern "C" fn c2pa_builder_set_data_hash_exclusions(
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_update_hash_from_stream(
     builder_ptr: *mut C2paBuilder,
+    format: *const c_char,
     stream: *mut C2paStream,
 ) -> c_int {
     let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let format = cstr_or_return_int!(format);
     let stream = deref_mut_or_return_int!(stream, C2paStream);
-    ok_or_return_int!(builder.update_hash_from_stream(&mut *stream));
+    ok_or_return_int!(builder.update_hash_from_stream(&format, &mut *stream));
     0
 }
 

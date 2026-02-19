@@ -1244,9 +1244,11 @@ pub mod tests {
             debug = false
             hash_alg = "sha256"
             salt_jumbf_boxes = true
-            prefer_box_hash = false
             prefer_bmff_merkle_tree = false
             compress_manifests = true
+
+            [Builder]
+            prefer_box_hash = false
 
             [Verify]
             verify_after_reading = true

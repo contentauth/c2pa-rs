@@ -560,6 +560,21 @@ pub struct BuilderSettings {
     /// See more information on the difference between created vs gathered assertions in the spec here:
     /// [fields - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_fields)
     pub created_assertion_labels: Option<Vec<String>>,
+    /// When `true`, use [`BoxHash`] instead of [`DataHash`] for formats that support it
+    /// (JPEG, PNG, GIF, etc.) when no explicit hard binding assertion has been set.
+    ///
+    /// Formats that support `BoxHash` can embed the C2PA manifest as a new chunk/segment
+    /// without shifting existing byte offsets, so a placeholder is never required.
+    /// Setting this to `true` enables the direct workflow ([`Builder::sign_embeddable`]
+    /// Mode 2) for those formats and makes [`Builder::needs_placeholder`] return `false`.
+    ///
+    /// Defaults to `false` to preserve existing behaviour until `BoxHash` support is
+    /// more widely tested.  Set to `true` (or configure it per-[`Context`]) whenever
+    /// you are ready to prefer box-based hashing for supported formats.
+    ///
+    /// [`BoxHash`]: crate::assertions::BoxHash
+    /// [`Context`]: crate::Context
+    pub prefer_box_hash: bool,
     /// Whether to generate a C2PA archive (instead of zip) when writing the manifest builder.
     /// Now always defaults to true - the ability to disable it will be removed in the future.
     pub generate_c2pa_archive: Option<bool>,
@@ -580,6 +595,7 @@ impl Default for BuilderSettings {
             certificate_status_should_override: None,
             intent: None,
             created_assertion_labels: None,
+            prefer_box_hash: false,
             generate_c2pa_archive: Some(true),
             auto_timestamp_assertion: TimeStampSettings::default(),
         }
