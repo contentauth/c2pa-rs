@@ -12,8 +12,9 @@ The following table summarizes the supported media (asset) file formats.  This i
  | `gif`         | `image/gif`                                                                   |
  | `heic`        | `image/heic`                                                                  |
  | `heif`        | `image/heif`                                                                  |
- | `jpg`, `jpeg` | `image/jpeg`                                                                  |
- | `m4a`         | `audio/mp4`                                                                   |
+| `jpg`, `jpeg` | `image/jpeg`                                                                  |
+| `jxl`         | `image/jxl`                                                                   |
+| `m4a`         | `audio/mp4`                                                                   |
  | `mp3`         | `audio/mpeg`                                                                  |
  | `mp4`         | `video/mp4`, `application/mp4` <sup>*</sup>                                   |
  | `mov`         | `video/quicktime`                                                             |
