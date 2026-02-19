@@ -9,6 +9,28 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.76.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.21...c2pa-v0.76.0)
+_19 February 2026_
+
+### Added
+
+* Enable self-signed ephemeral certs on Wasm build ([#1858](https://github.com/contentauth/c2pa-rs/pull/1858))
+
+### Documented
+
+* Doc cleanup and some reorg ([#1822](https://github.com/contentauth/c2pa-rs/pull/1822))
+* SignerSettings doc comments ([#1856](https://github.com/contentauth/c2pa-rs/pull/1856))
+
+### Fixed
+
+* Use cose_sign1 signature field for timestamp assertion verification ([#1867](https://github.com/contentauth/c2pa-rs/pull/1867))
+* [**breaking**] Allow `Builder::sign_async` future to be spawnable on Tokio runtime ([#1846](https://github.com/contentauth/c2pa-rs/pull/1846))
+
+### Updated dependencies
+
+* Bump zip from 7.4.0 to 8.1.0 ([#1864](https://github.com/contentauth/c2pa-rs/pull/1864))
+* Bump zip from 6.0.0 to 7.4.0 ([#1857](https://github.com/contentauth/c2pa-rs/pull/1857))
+
 ## [0.75.21](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.20...c2pa-v0.75.21)
 _12 February 2026_
 
