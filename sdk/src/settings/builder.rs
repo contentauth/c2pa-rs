@@ -560,13 +560,14 @@ pub struct BuilderSettings {
     /// See more information on the difference between created vs gathered assertions in the spec here:
     /// [fields - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_fields)
     pub created_assertion_labels: Option<Vec<String>>,
-    /// When `true`, use [`BoxHash`] instead of [`DataHash`] for formats that support it
-    /// (JPEG, PNG, GIF, etc.) when no explicit hard binding assertion has been set.
+    /// When `true`, use [`BoxHash`] instead of [`crate::assertions::DataHash`] for formats
+    /// that support it (JPEG, PNG, GIF, etc.) when no explicit hard binding assertion has
+    /// been set.
     ///
     /// Formats that support `BoxHash` can embed the C2PA manifest as a new chunk/segment
     /// without shifting existing byte offsets, so a placeholder is never required.
-    /// Setting this to `true` enables the direct workflow ([`Builder::sign_embeddable`]
-    /// Mode 2) for those formats and makes [`Builder::needs_placeholder`] return `false`.
+    /// Setting this to `true` enables the direct workflow (`Builder::sign_embeddable`
+    /// Mode 2) for those formats and makes `Builder::needs_placeholder` return `false`.
     ///
     /// Defaults to `false` to preserve existing behaviour until `BoxHash` support is
     /// more widely tested.  Set to `true` (or configure it per-[`Context`]) whenever

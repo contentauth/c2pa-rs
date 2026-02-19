@@ -1970,9 +1970,9 @@ impl Builder {
     /// asset (e.g. as a UUID box in BMFF or an APP11 segment in JPEG), so the exact
     /// size of the final signed manifest must be reserved in advance.
     ///
-    /// Formats whose handler implements [`AssetBoxHash`] can insert the manifest as a
+    /// Formats whose handler implements `AssetBoxHash` can insert the manifest as a
     /// new independent chunk/box without disturbing existing byte offsets.  When the
-    /// [`BuilderSettings::prefer_box_hash`] setting is enabled, those formats skip the
+    /// `prefer_box_hash` setting in `BuilderSettings` is enabled, those formats skip the
     /// placeholder step entirely and use the direct-sign workflow
     /// ([`Builder::sign_embeddable`] Mode 2) instead.
     ///
@@ -1982,8 +1982,6 @@ impl Builder {
     ///
     /// # Arguments
     /// * `format` — MIME type or file extension of the target asset.
-    ///
-    /// [`AssetBoxHash`]: crate::asset_io::AssetBoxHash
     pub fn needs_placeholder(&self, format: &str) -> bool {
         // If a BoxHash is already present, no placeholder is needed.
         if self.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok() {
@@ -2226,10 +2224,10 @@ impl Builder {
     ///   algorithm is read from the BmffHash assertion itself.
     ///
     /// - **BoxHash** (JPEG, PNG, GIF and other chunk-based formats): uses
-    ///   [`AssetBoxHash::get_box_map`] to enumerate the asset's structural chunks,
+    ///   `AssetBoxHash::get_box_map` to enumerate the asset's structural chunks,
     ///   hashes each chunk individually, and stores the result.  If `prefer_box_hash`
-    ///   is enabled in [`BuilderSettings`] and the format's handler exposes
-    ///   [`AssetBoxHash`], a `BoxHash` assertion is auto-created when none is present.
+    ///   is enabled in `BuilderSettings` and the format's handler exposes
+    ///   `AssetBoxHash`, a `BoxHash` assertion is auto-created when none is present.
     ///   If a `BoxHash` assertion already exists on the builder it is updated in-place.
     ///
     /// - **DataHash** (JPEG, PNG, and other segment-based formats): reads exclusion
@@ -2270,7 +2268,7 @@ impl Builder {
     /// # Arguments
     /// * `format` - MIME type or file extension of the asset (e.g. `"image/jpeg"`,
     ///   `"video/mp4"`).  Required when `prefer_box_hash` is enabled so the method can
-    ///   look up the format's [`AssetBoxHash`] handler.
+    ///   look up the format's `AssetBoxHash` handler.
     /// * `stream` - The asset stream to hash
     ///
     /// # Returns
@@ -2279,8 +2277,6 @@ impl Builder {
     /// # Errors
     /// * Returns an [`Error`] if hashing fails
     ///
-    /// [`AssetBoxHash`]: crate::asset_io::AssetBoxHash
-    /// [`AssetBoxHash::get_box_map`]: crate::asset_io::AssetBoxHash::get_box_map
     pub fn update_hash_from_stream<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
     where
         R: Read + Seek + MaybeSend,
@@ -2294,12 +2290,13 @@ impl Builder {
         // Determine whether to use BoxHash path:
         // - an existing BoxHash assertion, OR
         // - prefer_box_hash is enabled and the format supports it (auto-create).
-        let use_box_hash = has_box_hash || (!has_bmff_hash && {
-            self.context.settings().builder.prefer_box_hash
-                && jumbf_io::get_assetio_handler(format)
-                    .and_then(|h| h.asset_box_hash_ref().map(|_| ()))
-                    .is_some()
-        });
+        let use_box_hash = has_box_hash
+            || (!has_bmff_hash && {
+                self.context.settings().builder.prefer_box_hash
+                    && jumbf_io::get_assetio_handler(format)
+                        .and_then(|h| h.asset_box_hash_ref().map(|_| ()))
+                        .is_some()
+            });
 
         if has_bmff_hash {
             // Find the stored assertion label (e.g. "c2pa.hash.bmff.v3") and extract
@@ -2330,13 +2327,10 @@ impl Builder {
             // We implement the "minimal form" grouping here using hash_stream_by_alg
             // (which accepts ?Sized streams) rather than generate_box_hash_from_stream
             // (which requires dyn CAIRead and thus Sized + Send).
-            let handler = jumbf_io::get_assetio_handler(format)
-                .ok_or(Error::UnsupportedType)?;
-            let bhp = handler
-                .asset_box_hash_ref()
-                .ok_or_else(|| Error::BadParam(
-                    format!("Format '{format}' does not support BoxHash")
-                ))?;
+            let handler = jumbf_io::get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
+            let bhp = handler.asset_box_hash_ref().ok_or_else(|| {
+                Error::BadParam(format!("Format '{format}' does not support BoxHash"))
+            })?;
 
             let mut bh = BoxHash { boxes: Vec::new() };
             bh.generate_box_hash_from_stream(stream, definition_alg, bhp, true)?;
