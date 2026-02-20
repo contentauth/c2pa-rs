@@ -41,6 +41,7 @@ pub(crate) const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
 pub(crate) const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
 
 pub(crate) const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
+pub(crate) const ED25519_PUBLICKEY_OID: Oid<'static> = oid!(1.3.101 .110);
 
 // utility function to make using Oid between crates easier
 pub(crate) fn ans1_oid_bcder_oid(asn1_oid: &asn1_rs::Oid) -> Option<bcder::Oid> {
