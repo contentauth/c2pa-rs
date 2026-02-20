@@ -58,7 +58,7 @@ impl RemoteRawSigner {
             ));
         }
 
-        let cert_chain = cert_chain_to_der!(cert_chain)?;
+        let cert_chain = cert_chain_to_der(&cert_chain)?;
 
         let cert_chain_len = cert_chain.iter().fold(0usize, |sum, c| sum + c.len());
 

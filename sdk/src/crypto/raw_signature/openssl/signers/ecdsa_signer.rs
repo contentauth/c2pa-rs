@@ -80,7 +80,7 @@ impl EcdsaSigner {
         }
 
         // certs in DER format
-        let cert_chain = cert_chain_to_der!(cert_chain)?;
+        let cert_chain = cert_chain_to_der(&cert_chain)?;
 
         // get the actual length of the certificate chain
         let cert_chain_len = cert_chain.iter().fold(0usize, |sum, c| sum + c.len());
@@ -135,14 +135,14 @@ impl RawSigner for EcdsaSigner {
         }
     }
 
-    fn reserve_size(&self) -> usize {
-        1024 + self.cert_chain_len + self.time_stamp_size
-    }
-
     fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
         let _openssl = OpenSslMutex::acquire()?;
 
         Ok(self.cert_chain.clone())
+    }
+
+    fn reserve_size(&self) -> usize {
+        1024 + self.cert_chain_len + self.time_stamp_size
     }
 }
 

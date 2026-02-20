@@ -13,24 +13,27 @@
 
 use openssl::x509::X509;
 
-/// Macro for converting X509 certificate stack to DER format
-macro_rules! cert_chain_to_der {
-    ($cert_chain:expr) => {{
-        $cert_chain
-            .iter()
-            .map(|cert| {
-                cert.to_der().map_err(|_| {
-                    crate::crypto::raw_signature::RawSignerError::CryptoLibraryError(
-                        "could not encode certificate to DER".to_string(),
-                    )
-                })
-            })
-            .collect::<Result<Vec<_>, crate::crypto::raw_signature::RawSignerError>>()
-    }};
-}
+use crate::crypto::raw_signature::RawSignerError;
 
-// Export cert_chain_to_der! macro
-pub(crate) use cert_chain_to_der;
+/// Converts an X509 certificate stack to DER format.
+///
+/// # Arguments
+/// * `cert_chain` - A slice of X509 certificates to convert
+///
+/// # Returns
+/// A Result containing a Vec of DER-encoded certificates or an error
+pub(crate) fn cert_chain_to_der(cert_chain: &[X509]) -> Result<Vec<Vec<u8>>, RawSignerError> {
+    cert_chain
+        .iter()
+        .map(|cert| {
+            cert.to_der().map_err(|_| {
+                RawSignerError::CryptoLibraryError(
+                    "could not encode certificate to DER".to_string(),
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, RawSignerError>>()
+}
 
 // Verify the certificate chain order.
 //
@@ -69,7 +72,7 @@ pub(crate) fn check_chain_order(certs: &[X509]) -> bool {
     all(target_arch = "wasm32", not(target_os = "wasi")),
     wasm_bindgen_test
 )]
-fn cert_chain_to_der_macro() -> Result<(), crate::crypto::raw_signature::RawSignerError> {
+fn test_cert_chain_to_der() -> Result<(), RawSignerError> {
     use openssl::x509::X509;
 
     use crate::crypto::raw_signature::{openssl::OpenSslMutex, RawSignerError};
@@ -92,6 +95,28 @@ fn cert_chain_to_der_macro() -> Result<(), crate::crypto::raw_signature::RawSign
         2,
         "Certificate stack should have two certificates"
     );
+
+    // Test the cert_chain_to_der function
+    let der_certs = cert_chain_to_der(&cert_stack)?;
+
+    assert!(
+        !der_certs.is_empty(),
+        "DER certificate list should not be empty"
+    );
+    assert_eq!(
+        der_certs.len(),
+        2,
+        "DER certificate list should have two certificates"
+    );
+
+    // Verify each DER certificate is not empty
+    for (i, der_cert) in der_certs.iter().enumerate() {
+        assert!(
+            !der_cert.is_empty(),
+            "DER certificate [{}] should not be empty",
+            i
+        );
+    }
 
     Ok(())
 }

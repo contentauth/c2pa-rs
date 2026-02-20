@@ -68,7 +68,7 @@ impl RsaSigner {
         }
 
         // certs in DER format
-        let cert_chain = cert_chain_to_der!(cert_chain)?;
+        let cert_chain = cert_chain_to_der(&cert_chain)?;
 
         // get the actual length of the certificate chain
         let cert_chain_len = cert_chain.iter().fold(0usize, |sum, c| sum + c.len());
@@ -163,8 +163,12 @@ impl RawSigner for RsaSigner {
         Ok(signer.sign_oneshot_to_vec(data)?)
     }
 
-    fn reserve_size(&self) -> usize {
-        1024 + self.cert_chain_len + self.time_stamp_size
+    fn alg(&self) -> SigningAlg {
+        match self.alg {
+            RsaSigningAlg::Ps256 => SigningAlg::Ps256,
+            RsaSigningAlg::Ps384 => SigningAlg::Ps384,
+            RsaSigningAlg::Ps512 => SigningAlg::Ps512,
+        }
     }
 
     fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
@@ -173,12 +177,8 @@ impl RawSigner for RsaSigner {
         Ok(self.cert_chain.clone())
     }
 
-    fn alg(&self) -> SigningAlg {
-        match self.alg {
-            RsaSigningAlg::Ps256 => SigningAlg::Ps256,
-            RsaSigningAlg::Ps384 => SigningAlg::Ps384,
-            RsaSigningAlg::Ps512 => SigningAlg::Ps512,
-        }
+    fn reserve_size(&self) -> usize {
+        1024 + self.cert_chain_len + self.time_stamp_size
     }
 }
 
