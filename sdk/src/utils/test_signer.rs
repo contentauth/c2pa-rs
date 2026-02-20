@@ -42,9 +42,9 @@ pub(crate) fn test_cawg_signer(
     let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
     let c2pa_raw_signer =
-        signer_from_cert_chain_and_private_key(cert_chain, private_key, alg, None).unwrap();
+        signer_from_cert_chain_and_private_key(cert_chain, private_key, alg, None)?;
     let cawg_raw_signer =
-        signer_from_cert_chain_and_private_key(cert_chain, private_key, alg, None).unwrap();
+        signer_from_cert_chain_and_private_key(cert_chain, private_key, alg, None)?;
 
     let mut ia_signer = crate::identity::builder::IdentityAssertionSigner::new(c2pa_raw_signer);
 
@@ -137,10 +137,6 @@ impl AsyncSigner for AsyncRawSignerWrapper {
         self.0.reserve_size()
     }
 
-    async fn ocsp_val(&self) -> Option<Vec<u8>> {
-        self.0.ocsp_response().await
-    }
-
     fn time_authority_url(&self) -> Option<String> {
         self.0.time_stamp_service_url()
     }
@@ -160,6 +156,10 @@ impl AsyncSigner for AsyncRawSignerWrapper {
             .send_time_stamp_request(message)
             .await
             .map(|r| r.map_err(|e| e.into()))
+    }
+
+    async fn ocsp_val(&self) -> Option<Vec<u8>> {
+        self.0.ocsp_response().await
     }
 
     fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {

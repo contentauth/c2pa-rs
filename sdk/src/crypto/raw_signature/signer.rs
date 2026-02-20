@@ -13,6 +13,7 @@
 
 use async_trait::async_trait;
 use thiserror::Error;
+use url::Url;
 
 use crate::{
     crypto::{
@@ -202,6 +203,42 @@ pub fn signer_from_cert_chain_and_private_key(
     )))
 }
 
+/// Return a built-in [`RawSigner`] instance using the provided signing
+/// certificate and url to a remote signing service.
+///
+/// Which signers are available may vary depending on the platform and which
+/// crate features were enabled. If the desired signing algorithm is
+/// unavailable, will respond with `Err(RawSignerError::InternalError)`.
+///
+/// May return an `Err` response if the certificate chain or url are invalid.
+#[allow(unused)]
+pub fn signer_from_cert_chain_and_url(
+    cert_chain: &[u8],
+    url: Url,
+    alg: SigningAlg,
+    time_stamp_service_url: Option<String>,
+) -> Result<Box<dyn RawSigner + Send + Sync>, RawSignerError> {
+    let cert_chain = fix_json_pem(cert_chain);
+
+    #[cfg(all(
+        feature = "openssl",
+        feature = "remote_signing",
+        not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+    ))]
+    {
+        return crate::crypto::raw_signature::openssl::signers::signer_from_cert_chain_and_url(
+            &cert_chain,
+            url,
+            alg,
+            time_stamp_service_url,
+        );
+    }
+
+    Err(RawSignerError::InternalError(format!(
+        "unsupported remote signing for algorithm: {alg}"
+    )))
+}
+
 /// Return a built-in [`AsyncRawSigner`] instance using the provided signing
 /// certificate and private key.
 ///
@@ -223,6 +260,26 @@ pub fn async_signer_from_cert_chain_and_private_key(
         alg,
         time_stamp_service_url,
     )?;
+
+    Ok(Box::new(AsyncRawSignerWrapper(sync_signer)))
+}
+
+/// Return a built-in [`AsyncRawSigner`] instance using the provided signing
+/// certificate and url to a remote signing service.
+///
+/// Which signers are available may vary depending on the platform and which
+/// crate features were enabled. If the desired signing algorithm is
+/// unavailable, it will respond with `Err(RawSignerError::InternalError)`.
+///
+/// May return an `Err` response if the certificate chain or url are invalid.
+#[allow(unused)]
+pub fn async_signer_from_cert_chain_and_url(
+    cert_chain: &[u8],
+    url: Url,
+    alg: SigningAlg,
+    time_stamp_service_url: Option<String>,
+) -> Result<Box<dyn AsyncRawSigner + Send + Sync>, RawSignerError> {
+    let sync_signer = signer_from_cert_chain_and_url(cert_chain, url, alg, time_stamp_service_url)?;
 
     Ok(Box::new(AsyncRawSignerWrapper(sync_signer)))
 }

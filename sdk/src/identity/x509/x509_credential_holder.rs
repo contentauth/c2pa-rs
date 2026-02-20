@@ -37,7 +37,7 @@ impl X509CredentialHolder {
     /// The [`RawSigner`] implementation actually holds (or has access to)
     /// the relevant certificates and private key material.
     ///
-    /// [`RawSigner`]: crate::crypto::raw_signature::RawSigner
+    /// [`RawSigner`]: RawSigner
     pub fn from_raw_signer(signer: Box<dyn RawSigner + Sync + Send + 'static>) -> Self {
         Self(signer)
     }
@@ -178,5 +178,105 @@ mod tests {
         );
 
         // No need to restore settings - we never modified global state!
+    }
+
+    #[cfg(feature = "remote_signing")]
+    #[c2pa_test_async]
+    async fn remote_signing_case() {
+        use httpmock::MockServer;
+
+        use crate::{create_signer, settings, utils::test_remote_signer};
+
+        // Create a context with decode_identity_assertions disabled
+        let settings = settings::Settings::default()
+            .with_value("core.decode_identity_assertions", false)
+            .unwrap();
+        let context = crate::Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .into_shared();
+
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        // Use the context when creating the Builder
+        let mut builder = Builder::from_shared_context(&context)
+            .with_definition(manifest_json())
+            .unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .unwrap();
+
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let mut c2pa_signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+
+        let cawg_alg = SigningAlg::Ed25519;
+        let (cawg_cert_chain, cawg_private_key) = cert_chain_and_private_key_for_alg(cawg_alg);
+
+        let local_cawg_raw_signer =
+            create_signer::from_keys(&cawg_cert_chain, &cawg_private_key, cawg_alg, None).unwrap();
+
+        let cawg_server = MockServer::start();
+        let _cawg_mock = test_remote_signer::remote_signer_respond_with_signature(
+            &cawg_server,
+            local_cawg_raw_signer,
+        );
+
+        let cawg_remote_signer = raw_signature::signer_from_cert_chain_and_url(
+            &cawg_cert_chain,
+            url::Url::parse(cawg_server.base_url().as_str()).expect("Invalid URL"),
+            cawg_alg,
+            None,
+        )
+        .expect("Error creating cawg remote signer");
+
+        let x509_holder = X509CredentialHolder::from_raw_signer(cawg_remote_signer);
+        let iab = IdentityAssertionBuilder::for_credential_holder(x509_holder);
+        c2pa_signer.add_identity_assertion(iab);
+
+        builder
+            .sign(&c2pa_signer, format, &mut source, &mut dest)
+            .unwrap();
+
+        // Assert mocked remote signer was called
+        _cawg_mock.assert();
+
+        // Read back the Manifest that was generated using the same context
+        dest.rewind().unwrap();
+
+        let manifest_store = Reader::from_shared_context(&context)
+            .with_stream(format, &mut dest)
+            .unwrap();
+        assert_eq!(manifest_store.validation_status(), None);
+
+        let manifest = manifest_store.active_manifest().unwrap();
+        let mut st = StatusTracker::default();
+        let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+        // Should find exactly one identity assertion.
+        let ia = ia_iter.next().unwrap().unwrap();
+        assert!(ia_iter.next().is_none());
+        drop(ia_iter);
+
+        // And that identity assertion should be valid for this manifest.
+        let x509_verifier = X509SignatureVerifier {
+            cose_verifier: Verifier::IgnoreProfileAndTrustPolicy,
+        };
+
+        let sig_info = ia
+            .validate(manifest, &mut st, &x509_verifier)
+            .await
+            .unwrap();
+
+        let cert_info = &sig_info.cert_info;
+        assert_eq!(cert_info.alg.unwrap(), cawg_alg);
+        assert_eq!(
+            cert_info.issuer_org.as_ref().unwrap(),
+            "C2PA Test Signing Cert"
+        );
     }
 }
