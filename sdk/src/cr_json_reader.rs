@@ -545,11 +545,10 @@ impl CrJsonReader {
                     *val = Self::fix_hash_encoding(val.clone());
                 }
 
-                // Normalize "icon" fields to crJSON hashedUriMap shape (url, hash, optional alg).
-                // Icon may be HashedUri { url, hash } or ResourceRef { format, identifier }; schema expects hashedUriMap.
+                // Normalize "icon" fields to crJSON hashedUriMap shape (url, hash, optional alg) only.
+                // Schema hashedUriMap has additionalProperties: false; do not emit format/identifier.
                 if let Some(icon_val) = map.get_mut("icon") {
                     if let Some(icon_obj) = icon_val.as_object_mut() {
-                        // If icon has "identifier" but no "url", set url from identifier (ResourceRef -> hashedUriMap)
                         if !icon_obj.contains_key("url") {
                             if let Some(id_val) = icon_obj.get("identifier") {
                                 if let Some(id_str) = id_val.as_str() {
@@ -557,6 +556,7 @@ impl CrJsonReader {
                                 }
                             }
                         }
+                        Self::icon_retain_only_hashed_uri_map_keys(icon_obj);
                     }
                 }
 
@@ -570,21 +570,35 @@ impl CrJsonReader {
         }
     }
 
+    /// Retain only hashedUriMap keys (url, hash, alg) on an icon object; remove format, identifier, data_types, etc.
+    fn icon_retain_only_hashed_uri_map_keys(icon_obj: &mut Map<String, Value>) {
+        const ALLOWED: &[&str] = &["url", "hash", "alg"];
+        icon_obj.retain(|k, _| ALLOWED.contains(&k.as_str()));
+    }
+
     /// Resolve an icon value (ResourceRef with identifier, or already hashedUriMap) to schema
     /// hashedUriMap { url, hash, alg? }. Returns Some(Value) when we can produce a valid hashedUriMap.
     fn resolve_icon_to_hashed_uri_map(claim: &Claim, manifest_label: &str, icon_val: &Value) -> Option<Value> {
         let icon_obj = icon_val.as_object()?;
-        // Already valid hashedUriMap: url and hash both present and hash is string (not byte array)
         let url_str = icon_obj.get("url").and_then(|v| v.as_str());
         let hash_str = icon_obj.get("hash").and_then(|v| v.as_str());
+        let identifier_str = icon_obj.get("identifier").and_then(|v| v.as_str());
+        // Already valid hashedUriMap: url and hash both present and hash is string
         if url_str.is_some() && hash_str.is_some() {
             return None; // keep as-is
         }
-        // Need to resolve: get identifier (ResourceRef) or url, then get hash from claim
-        let uri = icon_obj
-            .get("identifier")
-            .and_then(|v| v.as_str())
-            .or_else(|| icon_obj.get("url").and_then(|v| v.as_str()))?;
+        // ResourceRef with hash preserved (from HashedUri): build hashedUriMap without claim lookup
+        if let (Some(uri), Some(hash)) = (identifier_str.or(url_str), hash_str) {
+            let mut map = Map::new();
+            map.insert("url".to_string(), json!(uri));
+            map.insert("hash".to_string(), json!(hash));
+            if let Some(alg) = icon_obj.get("alg").and_then(|v| v.as_str()) {
+                map.insert("alg".to_string(), json!(alg));
+            }
+            return Some(Value::Object(map));
+        }
+        // Need to resolve from claim: get identifier or url, then get hash from claim
+        let uri = identifier_str.or(url_str)?;
         let (label, instance) = Claim::assertion_label_from_link(uri);
         // Prefer assertion_hashed_uri_from_label for correct relative URL; fallback to get_claim_assertion + identifier as url
         let (url, hash_b64, alg) = if let Some((hashed_uri, _)) =
@@ -679,7 +693,8 @@ impl CrJsonReader {
             }
         }
 
-        // Ensure claim_generator_info.icon is always hashedUriMap (url, hash, alg?) when present.
+        // Ensure claim_generator_info.icon is hashedUriMap (url, hash, alg?) when we can resolve it.
+        // Never remove icon: if present in CBOR it must appear in JSON. Output only hashedUriMap keys (no format/identifier).
         if let Some(claim) = self.inner.store.get_claim(label) {
             if let Some(cgi) = claim_v2.get_mut("claim_generator_info") {
                 if let Some(info_obj) = cgi.as_object_mut() {
@@ -697,10 +712,10 @@ impl CrJsonReader {
                                 Self::resolve_icon_to_hashed_uri_map(claim, label, icon_val)
                             {
                                 *icon_val = resolved;
-                            } else {
-                                // Cannot resolve: remove icon so output doesn't claim hashedUriMap with wrong shape
-                                info_obj.remove("icon");
                             }
+                        }
+                        if let Some(icon_obj) = icon_val.as_object_mut() {
+                            Self::icon_retain_only_hashed_uri_map_keys(icon_obj);
                         }
                     }
                 }
@@ -1412,23 +1427,19 @@ mod tests {
             .as_object()
             .expect("claim_generator_info in claim.v2 should be a single object");
 
-        // Entry may have an icon. Icon may be serialized as:
-        // - ResourceRef { format, identifier } (when resolved from HashedUri in reader), or
-        // - HashedUri { url, alg?, hash } with hash as base64 string (not byte array)
+        // Icon must be hashedUriMap only (url, hash, optional alg) per schema; no format/identifier.
         let has_icon = match info_obj.get("icon") {
-            Some(icon) => {
-                if let Some(hash) = icon.get("hash") {
-                    hash.is_string()
-                } else {
-                    icon.get("format").is_some() && icon.get("identifier").is_some()
-                }
-            }
+            Some(icon) => icon
+                .get("url")
+                .and_then(|v| v.as_str())
+                .is_some()
+                && icon.get("hash").and_then(|v| v.as_str()).is_some(),
             None => false,
         };
 
         assert!(
             has_icon,
-            "claim_generator_info should include icon (ResourceRef or HashedUri with base64 hash)"
+            "claim_generator_info should include icon as hashedUriMap (url, hash)"
         );
 
         Ok(())
