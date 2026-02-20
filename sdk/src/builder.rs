@@ -49,8 +49,8 @@ use crate::{
     settings::builder::TimeStampFetchScope,
     store::Store,
     utils::{hash_utils::hash_to_b64, mime::format_to_mime},
-    AsyncSigner, ClaimGeneratorInfo, HashRange, HashedUri, Ingredient, ManifestAssertionKind,
-    Reader, Relationship, Signer,
+    AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
+    ManifestAssertionKind, Reader, Relationship, Signer,
 };
 
 /// Version of the Builder Archive file
@@ -1139,19 +1139,26 @@ impl Builder {
 
     /// Convert the Builder into a .c2pa asset.
     ///
-    /// This will be stored in the standard application/c2pa .c2pa JUMBF format.
+    /// This will be stored in the standard application/c2pa .c2pa JUMBF format
+    /// unless the settings flag `builder.generate_c2pa_archive` is overridden
+    /// from its default value and set to `false` in which case a legacy format,
+    /// based on ZIP file, will be written instead.
+    ///
+    /// See docs/working-stores.md for more information.
+    ///
     /// # Arguments
-    /// * `stream` - A stream to write the zip into.
+    /// * `stream` - A stream to write the C2PA archive or ZIP file into.
+    ///
     /// # Errors
     /// * Returns an [`Error`] if the archive cannot be written.
     pub fn to_archive(&mut self, mut stream: impl Write + Seek) -> Result<()> {
         if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
             let c2pa_data = self.working_store_sign()?;
             stream.write_all(&c2pa_data)?;
-        } else {
-            return self.old_to_archive(stream);
+            return Ok(());
         }
-        Ok(())
+
+        self.old_to_archive(stream)
     }
 
     /// Add manifest store from an archive stream to the [`Builder`].
@@ -1191,23 +1198,14 @@ impl Builder {
             let mut validation_log = crate::status_tracker::StatusTracker::default();
             stream.rewind()?; // Ensure stream is at the start
 
-            // Create a temporary context with verify_after_reading disabled, since archives
-            // contain placeholder signatures that will fail CBOR parsing during verification.
-            // The user's context settings will be preserved for the Builder.
-            let mut no_verify_settings = self.context.settings().clone();
-            no_verify_settings.verify.verify_after_reading = false;
-
-            let temp_context = Context::new().with_settings(no_verify_settings)?;
-
             // Load the store without verification to avoid CBOR parsing errors on placeholder signatures
             let store = Store::from_stream(
                 "application/c2pa",
                 &mut stream,
                 &mut validation_log,
-                &temp_context,
+                &self.context,
             )?;
 
-            // Now use the user's original context for the Reader and Builder
             let mut reader = Reader::from_shared_context(&self.context);
             reader.with_store(store, &mut validation_log)?;
             reader.into_builder()
@@ -1890,7 +1888,7 @@ impl Builder {
                         tsa_url,
                         &manifest_label,
                         &signature,
-                        self.context().resolver(),
+                        &self.context().resolver(),
                     )?;
                 } else {
                     timestamp_assertion
@@ -1898,7 +1896,7 @@ impl Builder {
                             tsa_url,
                             &manifest_label,
                             &signature,
-                            self.context().resolver_async(),
+                            &self.context().resolver_async(),
                         )
                         .await?;
                 }
@@ -2950,29 +2948,40 @@ impl Builder {
             .ok_or(Error::IngredientNotFound)
     }
 
-    /// This creates a working store from the builder
-    /// The working store is signed with a BoxHash over an empty string
-    /// And is returned as a Vec<u8> of the c2pa_manifest bytes
-    /// This works as an archive of the store that can be read back to restore the Builder state
+    /// Creates a working store from the builder.
+    ///
+    /// The working store is signed with a `BoxHash` over an empty string and is
+    /// returned as a `Vec<u8>` of the `c2pa_manifest` bytes. This works as
+    /// an archive of the store that can be read back to restore the
+    /// `Builder` state.
+    ///
+    /// An ephemeral self-signed certificate is generated and used to sign the
+    /// manifest.
+    ///
+    /// IMPORTANT: This certificate is useful only in a private context and will
+    /// not be considered trusted in the C2PA conformance sense.
     fn working_store_sign(&self) -> Result<Vec<u8>> {
-        // first we need to generate a BoxHash over an empty string
+        // First we need to generate a `BoxHash` over an empty string.
         let mut empty_asset = std::io::Cursor::new("");
+
         let boxes = jumbf_io::get_assetio_handler("application/c2pa")
             .ok_or(Error::UnsupportedType)?
             .asset_box_hash_ref()
             .ok_or(Error::UnsupportedType)?
             .get_box_map(&mut empty_asset)?;
+
         let box_hash = BoxHash { boxes };
 
-        // then convert the builder to a claim and add the box hash assertion
+        // ... then convert the `Builder` to a claim and add the box hash assertion.
         let mut claim = self.to_claim()?;
         claim.add_assertion(&box_hash)?;
 
-        // now commit and sign it. The signing will allow us to detect tampering.
+        // Now commit and sign it. The signing will allow us to detect tampering.
         let mut store = Store::new();
         store.commit_claim(claim)?;
 
-        store.get_data_hashed_manifest_placeholder(100, "application/c2pa")
+        let signer = EphemeralSigner::new("c2pa-archive.local")?;
+        store.get_box_hashed_embeddable_manifest(&signer, &self.context)
     }
 }
 
@@ -2989,7 +2998,10 @@ impl std::fmt::Display for Builder {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
-    use std::{io::Cursor, vec};
+    use std::{
+        io::{self, Cursor},
+        vec,
+    };
 
     use c2pa_macros::c2pa_test_async;
     use serde_json::json;
@@ -3004,6 +3016,7 @@ mod tests {
         asset_handlers::bmff_io::read_bmff_c2pa_boxes,
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
+        maybe_send_sync::MaybeSend,
         settings::Settings,
         utils::{
             hash_utils::HashRange,
@@ -5240,6 +5253,35 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_archive_self_signed_ed25519_signature() -> Result<()> {
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+
+        let context = Context::new().with_settings(settings.clone())?;
+        let mut builder =
+            Builder::from_context(context).with_definition(r#"{"title": "Test Self Signed"}"#)?;
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+        archive.rewind()?;
+
+        let read_context = Context::new().with_settings(settings)?;
+        let reader =
+            Reader::from_context(read_context).with_stream("application/c2pa", &mut archive)?;
+
+        let manifest = reader
+            .active_manifest()
+            .expect("archive should have active manifest");
+
+        let sig_info = manifest
+            .signature_info()
+            .expect("manifest should have signature info");
+
+        assert_eq!(sig_info.alg, Some(SigningAlg::Ed25519));
+
+        Ok(())
+    }
+
     /// Test Builder add_action with a serde_json::Value
     #[test]
     fn test_builder_add_action_with_value() {
@@ -5569,5 +5611,20 @@ mod tests {
         }
 
         assert!(reader.active_manifest().is_some());
+    }
+
+    // Ensures that the future returned by `Builder::sign_async` implements `Send`, thus making it
+    // possible to spawn on a Tokio runtime.
+    #[test]
+    fn test_sign_async_future_is_send() {
+        fn assert_send<T: MaybeSend>(_: T) {}
+
+        let signer = async_test_signer(SigningAlg::Ps256);
+        let mut builder = Builder::new();
+        let mut src = io::empty();
+        let mut dst = io::empty();
+
+        let future = builder.sign_async(&signer, "image/jpeg", &mut src, &mut dst);
+        assert_send(future);
     }
 }

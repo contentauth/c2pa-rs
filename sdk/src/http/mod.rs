@@ -41,33 +41,18 @@
 //! [`CertificateStatus`]: crate::assertions::CertificateStatus
 //! [`SignerSettings::Remote`]: crate::settings::signer::SignerSettings::Remote
 
-use std::io::{self, Read};
+use std::{
+    io::{self, Read},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use http::{Request, Response};
 
-use crate::Result;
-
-// Type aliases for boxed HTTP resolvers with conditional Send + Sync bounds
-// These are the canonical definitions used throughout the codebase
-
-/// Type alias for a boxed [`SyncHttpResolver`] with conditional Send + Sync bounds.
-/// On non-WASM targets, the resolver is Send + Sync for thread-safe usage.
-#[cfg(not(target_arch = "wasm32"))]
-pub type BoxedSyncResolver = Box<dyn SyncHttpResolver + Send + Sync>;
-
-/// Type alias for a boxed [`SyncHttpResolver`] without Send + Sync bounds (WASM only).
-#[cfg(target_arch = "wasm32")]
-pub type BoxedSyncResolver = Box<dyn SyncHttpResolver>;
-
-/// Type alias for a boxed [`AsyncHttpResolver`] with conditional Send + Sync bounds.
-/// On non-WASM targets, the resolver is Send + Sync for thread-safe usage.
-#[cfg(not(target_arch = "wasm32"))]
-pub type BoxedAsyncResolver = Box<dyn AsyncHttpResolver + Send + Sync>;
-
-/// Type alias for a boxed [`AsyncHttpResolver`] without Send + Sync bounds (WASM only).
-#[cfg(target_arch = "wasm32")]
-pub type BoxedAsyncResolver = Box<dyn AsyncHttpResolver>;
+use crate::{
+    maybe_send_sync::{MaybeSend, MaybeSync},
+    Result,
+};
 
 mod reqwest;
 mod ureq;
@@ -79,7 +64,13 @@ pub mod restricted;
 pub use http;
 
 /// A resolver for sync (blocking) HTTP requests.
-pub trait SyncHttpResolver {
+//
+// This trait is a supertrait of [`MaybeSend`] and [`MaybeSync`] for consistency with the
+// [`AsyncHttpResolver`]. For more information on the rationale, see [`AsyncHttpResolver`].
+//
+// [`MaybeSend`]: crate::maybe_send_sync::MaybeSend
+// [`MaybeSync`]: crate::maybe_send_sync::MaybeSync
+pub trait SyncHttpResolver: MaybeSend + MaybeSync {
     /// Resolve a [`Request`] into a [`Response`] with a streaming body.
     ///
     /// [`Request`]: http::Request
@@ -90,10 +81,32 @@ pub trait SyncHttpResolver {
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError>;
 }
 
+/// This implementation is particularly useful for compatibility with the return
+/// type of [`Context::resolver`].
+///
+/// [`Context::resolver`]: crate::Context::resolver
+impl<T: SyncHttpResolver + ?Sized> SyncHttpResolver for Arc<T> {
+    fn http_resolve(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        (**self).http_resolve(request)
+    }
+}
+
 /// A resolver for non-blocking (async) HTTP requests.
+//
+// This trait is a supertrait of [`MaybeSend`] and [`MaybeSync`] because in many cases
+// we use the pattern `&dyn AsyncHttpResolver`. For that to cross an await point, it
+// must implement `Send`, and for that to happen, it must also implement `Sync`. Thus,
+// rather than creating a new trait that combines `AsyncHttpResolver + MaybeSend + MaybeSync`,
+// we require it here to reduce complexity.
+//
+// [`MaybeSend`]: crate::maybe_send_sync::MaybeSend
+// [`MaybeSync`]: crate::maybe_send_sync::MaybeSync
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait AsyncHttpResolver {
+pub trait AsyncHttpResolver: MaybeSend + MaybeSync {
     /// Resolve a [`Request`] into a [`Response`] with a streaming body.
     ///
     /// [`Request`]: http::Request
@@ -102,6 +115,21 @@ pub trait AsyncHttpResolver {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError>;
+}
+
+/// This implementation is particularly useful for compatibility with the return
+/// type of [`Context::resolver_async`].
+///
+/// [`Context::resolver_async`]: crate::Context::resolver_async
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<T: AsyncHttpResolver + ?Sized> AsyncHttpResolver for Arc<T> {
+    async fn http_resolve_async(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        (**self).http_resolve_async(request).await
+    }
 }
 
 /// A generic resolver for [`SyncHttpResolver`].
@@ -125,7 +153,7 @@ pub struct SyncGenericResolver {
 impl SyncGenericResolver {
     /// Create a new [`SyncGenericResolver`] with an auto-specified [`SyncHttpResolver`].
     ///
-    /// This function will create a [`SyncHttpResolver`] that returns [`Error::SyncHttpResolverNotImplemented`]
+    /// This function will create a [`SyncHttpResolver`] that returns [`HttpResolverError::SyncHttpResolverNotImplemented`]
     /// under any of the following conditions:
     /// * If both `http_reqwest_blocking` and `http_ureq` aren't enabled.
     /// * If the platform is WASM.
@@ -170,7 +198,7 @@ pub struct AsyncGenericResolver {
 impl AsyncGenericResolver {
     /// Create a new [`AsyncGenericResolver`] with an auto-specified [`AsyncHttpResolver`].
     ///
-    /// This function will create a [`AsyncHttpResolver`] that returns [`Error::AsyncHttpResolverNotImplemented`]
+    /// This function will create a [`AsyncHttpResolver`] that returns [`HttpResolverError::AsyncHttpResolverNotImplemented`]
     /// under any of the following conditions:
     /// * If `http_reqwest` isn't enabled.
     /// * If the platform is WASI and `http_wstd` isn't enabled.
@@ -224,7 +252,6 @@ pub enum HttpResolverError {
     /// The remote URI is blocked by the allowed list.
     ///
     /// The allowed list can be set via:
-    /// - [`SyncGenericResolver::set_allowed_hosts`] / [`AsyncGenericResolver::set_allowed_hosts`]
     /// - [`RestrictedResolver`] (for wrapping custom resolvers)
     /// - SDK settings via [`Core::allowed_network_hosts`]
     ///
