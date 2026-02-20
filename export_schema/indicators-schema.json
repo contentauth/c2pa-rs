@@ -1,0 +1,1079 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://jpeg.org/jpegtrust/indicators-schema.json",
+  "title": "JPEG Trust Indicators Document Schema",
+  "description": "JSON Schema for indicators documents used in the profile-evaluator project",
+  "type": "object",
+  "required": [
+    "@context"
+  ],
+  "properties": {
+    "@context": {
+      "description": "JSON-LD context defining namespaces and vocabularies",
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          },
+          "minItems": 1
+        },
+        {
+          "type": "object",
+          "properties": {
+            "@vocab": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "asset_info": {
+      "description": "Information about the asset including hash algorithm and hash value",
+      "type": "object",
+      "properties": {
+        "alg": {
+          "type": "string",
+          "description": "Hash algorithm used (e.g., sha256)"
+        },
+        "hash": {
+          "type": "string",
+          "description": "Base64-encoded hash value of the asset"
+        }
+      },
+      "required": [
+        "alg",
+        "hash"
+      ]
+    },
+    "declaration": {
+      "description": "Active manifest declaration",
+      "type": "object",
+      "properties": {
+        "claim.v2": {
+          "$ref": "#/definitions/claim"
+        },
+        "assertions": {
+          "$ref": "#/definitions/assertions"
+        }
+      }
+    },
+    "manifests": {
+      "description": "Array of C2PA manifests embedded in the asset",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/manifest"
+      }
+    },
+    "content": {
+      "description": "Content metadata about the asset",
+      "type": "object",
+      "properties": {
+        "imageWidth": {
+          "type": "integer",
+          "description": "Width of image in pixels"
+        },
+        "imageHeight": {
+          "type": "integer",
+          "description": "Height of image in pixels"
+        },
+        "fileType": {
+          "type": "string",
+          "description": "File type (e.g., jpeg, png, pdf, heic)"
+        },
+        "type": {
+          "type": "string",
+          "description": "Content type (e.g., pdf)"
+        },
+        "version": {
+          "type": "string",
+          "description": "Version number for PDF or other document types"
+        },
+        "pageCount": {
+          "type": "integer",
+          "description": "Number of pages for PDF documents"
+        },
+        "pageSize": {
+          "type": "object",
+          "description": "Page dimensions for PDF documents",
+          "properties": {
+            "width": {
+              "type": "number"
+            },
+            "height": {
+              "type": "number"
+            },
+            "unit": {
+              "type": "string"
+            },
+            "uniformAcrossPages": {
+              "type": "boolean"
+            }
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Document-specific metadata (PDF, etc.)",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "author": {
+              "type": "string"
+            },
+            "subject": {
+              "type": "string"
+            },
+            "keywords": {
+              "type": "string"
+            },
+            "creator": {
+              "type": "string"
+            },
+            "producer": {
+              "type": "string"
+            },
+            "creationDate": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "modificationDate": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "metadata": {
+      "description": "Extended metadata (EXIF, XMP, IPTC, etc.)",
+      "type": "object",
+      "properties": {
+        "@context": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "jfif": {
+          "type": "object",
+          "description": "JFIF metadata",
+          "additionalProperties": true
+        },
+        "ifd0": {
+          "type": "object",
+          "description": "IFD0 EXIF metadata",
+          "additionalProperties": true
+        },
+        "exif": {
+          "type": "object",
+          "description": "EXIF metadata",
+          "additionalProperties": true
+        },
+        "ihdr": {
+          "type": "object",
+          "description": "PNG IHDR chunk metadata",
+          "additionalProperties": true
+        },
+        "camera": {
+          "type": "object",
+          "description": "Camera-specific metadata",
+          "additionalProperties": true
+        },
+        "container": {
+          "type": "object",
+          "description": "Container metadata",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "validation_status": {
+      "description": "Validation status without namespace prefix",
+      "$ref": "#/definitions/validationStatus"
+    },
+    "extras:validation_status": {
+      "description": "Validation status with extras namespace prefix",
+      "$ref": "#/definitions/validationStatus"
+    }
+  },
+  "patternProperties": {
+    "^[a-zA-Z0-9]+:validation_status$": {
+      "description": "Validation status with any namespace prefix",
+      "$ref": "#/definitions/validationStatus"
+    }
+  },
+  "additionalProperties": true,
+  "definitions": {
+    "manifest": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Manifest label or URN identifier"
+        },
+        "claim": {
+          "$ref": "#/definitions/claim"
+        },
+        "claim.v2": {
+          "$ref": "#/definitions/claim"
+        },
+        "assertions": {
+          "$ref": "#/definitions/assertions"
+        },
+        "created_assertions": {
+          "type": "object",
+          "description": "Created assertions at manifest level (alternate location)",
+          "additionalProperties": true
+        },
+        "generated_assertions": {
+          "type": "object",
+          "description": "Generated assertions",
+          "additionalProperties": true
+        },
+        "redacted_assertions": {
+          "type": "object",
+          "description": "Redacted assertions",
+          "additionalProperties": true
+        },
+        "signature": {
+          "$ref": "#/definitions/signature"
+        },
+        "claim_signature": {
+          "$ref": "#/definitions/signature"
+        },
+        "claimSignature": {
+          "$ref": "#/definitions/signature"
+        },
+        "status": {
+          "$ref": "#/definitions/status"
+        }
+      },
+      "additionalProperties": true
+    },
+    "claim": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Claim version number"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the claim"
+        },
+        "instanceID": {
+          "type": "string",
+          "description": "Unique identifier for this claim instance"
+        },
+        "alg": {
+          "type": "string",
+          "description": "Algorithm used for hashing (e.g., sha256, SHA-256)"
+        },
+        "claim_generator": {
+          "type": "string",
+          "description": "String identifier of the claim generator"
+        },
+        "claimGenerator": {
+          "type": "string",
+          "description": "Alternate field name for claim generator"
+        },
+        "claim_generator_info": {
+          "description": "Detailed information about the claim generator",
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/softwareAgent"
+              }
+            },
+            {
+              "$ref": "#/definitions/softwareAgent"
+            }
+          ]
+        },
+        "signature": {
+          "type": "string",
+          "description": "Reference to signature location (e.g., self#jumbf=...)"
+        },
+        "signatureRef": {
+          "type": "string",
+          "description": "Alternate field name for signature reference"
+        },
+        "default_algorithm": {
+          "type": "string",
+          "description": "Default hashing algorithm"
+        },
+        "defaultAlgorithm": {
+          "type": "string",
+          "description": "Alternate field name for default algorithm"
+        },
+        "dc:format": {
+          "type": "string",
+          "description": "MIME type of the content"
+        },
+        "dc:title": {
+          "type": "string",
+          "description": "Title of the claim (Dublin Core)"
+        },
+        "created_assertions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "hash": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url",
+              "hash"
+            ]
+          }
+        },
+        "gathered_assertions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "hash": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "redacted_assertions": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "signature_status": {
+          "type": "string",
+          "description": "Status of the signature validation"
+        },
+        "assertion_status": {
+          "type": "object",
+          "description": "Status of each assertion by assertion label",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "content_status": {
+          "type": "string",
+          "description": "Status of content hash validation"
+        },
+        "trust_status": {
+          "type": "string",
+          "description": "Trust validation status"
+        }
+      },
+      "additionalProperties": true
+    },
+    "assertions": {
+      "type": "object",
+      "properties": {
+        "c2pa.hash.data": {
+          "$ref": "#/definitions/hashDataAssertion"
+        },
+        "c2pa.hash.bmff.v2": {
+          "$ref": "#/definitions/hashBmffAssertion"
+        },
+        "c2pa.actions": {
+          "$ref": "#/definitions/actionsAssertion"
+        },
+        "c2pa.actions.v2": {
+          "$ref": "#/definitions/actionsAssertion"
+        },
+        "c2pa.ingredient": {
+          "$ref": "#/definitions/ingredientAssertion"
+        },
+        "c2pa.ingredient.v3": {
+          "$ref": "#/definitions/ingredientAssertion"
+        },
+        "c2pa.thumbnail.claim.jpeg": {
+          "$ref": "#/definitions/thumbnailAssertion"
+        },
+        "c2pa.thumbnail.ingredient.jpeg": {
+          "$ref": "#/definitions/thumbnailAssertion"
+        },
+        "c2pa.training-mining": {
+          "type": "object",
+          "description": "Training and mining assertion",
+          "properties": {
+            "isCAWG": {
+              "type": "boolean"
+            },
+            "entries": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": true
+        },
+        "c2pa.soft-binding": {
+          "type": "object",
+          "description": "Soft binding assertion",
+          "additionalProperties": true
+        },
+        "cawg.metadata": {
+          "$ref": "#/definitions/cawgMetadataAssertion"
+        },
+        "stds.schema-org.CreativeWork": {
+          "$ref": "#/definitions/creativeWorkAssertion"
+        },
+        "com.adobe.generative-ai": {
+          "type": "object",
+          "description": "Adobe generative AI assertion",
+          "additionalProperties": true
+        },
+        "adobe.crypto.addresses": {
+          "type": "object",
+          "description": "Adobe crypto addresses assertion",
+          "additionalProperties": true
+        },
+        "jpt.mod-extent": {
+          "type": "object",
+          "description": "JPEG Trust modification extent assertion",
+          "additionalProperties": true
+        },
+        "jpt.rights": {
+          "type": "object",
+          "description": "JPEG Trust rights assertion",
+          "additionalProperties": true
+        }
+      },
+      "patternProperties": {
+        "^c2pa\\.thumbnail\\.ingredient": {
+          "$ref": "#/definitions/thumbnailAssertion"
+        },
+        "^c2pa\\.ingredient": {
+          "$ref": "#/definitions/ingredientAssertion"
+        }
+      },
+      "additionalProperties": true
+    },
+    "hashDataAssertion": {
+      "type": "object",
+      "properties": {
+        "alg": {
+          "type": "string",
+          "description": "Hash algorithm"
+        },
+        "algorithm": {
+          "type": "string",
+          "description": "Alternative field name for hash algorithm"
+        },
+        "hash": {
+          "type": "string",
+          "description": "Base64-encoded hash value"
+        },
+        "pad": {
+          "type": "string",
+          "description": "Padding bytes"
+        },
+        "paddingLength": {
+          "type": "integer",
+          "description": "Length of padding"
+        },
+        "padding2Length": {
+          "type": "integer",
+          "description": "Length of secondary padding"
+        },
+        "name": {
+          "type": "string",
+          "description": "Name of the hashed data"
+        },
+        "exclusions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "integer",
+                "description": "Starting byte position of exclusion"
+              },
+              "length": {
+                "type": "integer",
+                "description": "Length of exclusion in bytes"
+              }
+            },
+            "required": [
+              "start",
+              "length"
+            ]
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "actionsAssertion": {
+      "type": "object",
+      "properties": {
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/action"
+          }
+        }
+      },
+      "required": [
+        "actions"
+      ]
+    },
+    "action": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "Action type (e.g., c2pa.created, c2pa.edited, c2pa.converted)"
+        },
+        "when": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when the action occurred"
+        },
+        "softwareAgent": {
+          "description": "Software that performed the action",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/definitions/softwareAgent"
+            }
+          ]
+        },
+        "digitalSourceType": {
+          "type": "string",
+          "format": "uri",
+          "description": "IPTC digital source type URI"
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Additional parameters for the action",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": true
+    },
+    "softwareAgent": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Name of the software"
+        },
+        "version": {
+          "type": "string",
+          "description": "Version of the software"
+        },
+        "schema.org.SoftwareApplication.operatingSystem": {
+          "type": "string",
+          "description": "Operating system the software runs on"
+        }
+      },
+      "additionalProperties": true
+    },
+    "signature": {
+      "type": "object",
+      "properties": {
+        "signature_algorithm": {
+          "type": "string",
+          "description": "Algorithm used for signing (e.g., SHA256withECDSA)"
+        },
+        "algorithm": {
+          "description": "Signature algorithm - can be string or object",
+          "oneOf": [
+            {
+              "type": "string",
+              "description": "Simple algorithm name (e.g., ES256, PS256)"
+            },
+            {
+              "type": "object",
+              "description": "Detailed algorithm specification",
+              "properties": {
+                "alg": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "hash": {
+                      "type": "string"
+                    },
+                    "saltLength": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "coseIdentifier": {
+                  "type": "integer"
+                }
+              }
+            }
+          ]
+        },
+        "serial_number": {
+          "type": "string",
+          "description": "Certificate serial number"
+        },
+        "certificate": {
+          "type": "object",
+          "description": "Certificate details",
+          "properties": {
+            "serial_number": {
+              "type": "string"
+            },
+            "serialNumber": {
+              "type": "string"
+            },
+            "issuer": {
+              "$ref": "#/definitions/distinguishedName"
+            },
+            "subject": {
+              "$ref": "#/definitions/distinguishedName"
+            },
+            "validity": {
+              "type": "object",
+              "properties": {
+                "not_before": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "notBefore": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "not_after": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "notAfter": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
+        },
+        "subject": {
+          "$ref": "#/definitions/distinguishedName"
+        },
+        "issuer": {
+          "$ref": "#/definitions/distinguishedName"
+        },
+        "validity": {
+          "type": "object",
+          "properties": {
+            "not_before": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Certificate validity start date"
+            },
+            "notBefore": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Alternate field name for validity start"
+            },
+            "not_after": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Certificate validity end date"
+            },
+            "notAfter": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Alternate field name for validity end"
+            }
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "distinguishedName": {
+      "type": "object",
+      "description": "X.509 Distinguished Name components",
+      "properties": {
+        "C": {
+          "type": "string",
+          "description": "Country"
+        },
+        "ST": {
+          "type": "string",
+          "description": "State or province"
+        },
+        "L": {
+          "type": "string",
+          "description": "Locality"
+        },
+        "O": {
+          "type": "string",
+          "description": "Organization"
+        },
+        "OU": {
+          "type": "string",
+          "description": "Organizational unit"
+        },
+        "CN": {
+          "type": "string",
+          "description": "Common name"
+        },
+        "E": {
+          "type": "string",
+          "description": "Email address"
+        },
+        "2.5.4.97": {
+          "type": "string",
+          "description": "Organization identifier OID"
+        }
+      },
+      "additionalProperties": true
+    },
+    "status": {
+      "type": "object",
+      "description": "Validation status information",
+      "properties": {
+        "signature": {
+          "type": "string",
+          "description": "Signature validation status"
+        },
+        "assertion": {
+          "type": "object",
+          "description": "Status of each assertion",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "content": {
+          "type": "string",
+          "description": "Content validation status"
+        },
+        "trust": {
+          "type": "string",
+          "description": "Trust validation status"
+        }
+      },
+      "additionalProperties": true
+    },
+    "ingredientAssertion": {
+      "type": "object",
+      "description": "Ingredient assertion for provenance chain",
+      "properties": {
+        "_version": {
+          "type": "integer",
+          "description": "Ingredient assertion version"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title of the ingredient"
+        },
+        "format": {
+          "type": "string",
+          "description": "Format of the ingredient"
+        },
+        "instanceID": {
+          "type": "string",
+          "description": "Instance ID of the ingredient"
+        },
+        "documentID": {
+          "type": "string",
+          "description": "Document ID of the ingredient"
+        },
+        "relationship": {
+          "type": "string",
+          "description": "Relationship type (e.g., parentOf, componentOf)"
+        },
+        "labelSuffix": {
+          "type": "integer",
+          "description": "Label suffix number for multiple ingredients"
+        },
+        "thumbnail": {
+          "type": "object",
+          "properties": {
+            "uri": {
+              "type": "string"
+            },
+            "hash": {
+              "type": "string"
+            },
+            "algorithm": {
+              "type": "string"
+            }
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "c2pa_manifest": {
+          "type": "object",
+          "properties": {
+            "uri": {
+              "type": "string"
+            },
+            "hash": {
+              "type": "string"
+            },
+            "algorithm": {
+              "type": "string"
+            }
+          }
+        },
+        "activeManifest": {
+          "type": "object",
+          "properties": {
+            "uri": {
+              "type": "string"
+            },
+            "hash": {
+              "type": "string"
+            },
+            "algorithm": {
+              "type": "string"
+            }
+          }
+        },
+        "claimSignature": {
+          "type": "object",
+          "properties": {
+            "uri": {
+              "type": "string"
+            },
+            "hash": {
+              "type": "string"
+            },
+            "algorithm": {
+              "type": "string"
+            }
+          }
+        },
+        "validationResults": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "thumbnailAssertion": {
+      "type": "object",
+      "description": "Thumbnail assertion",
+      "properties": {
+        "thumbnailType": {
+          "type": "integer",
+          "description": "Thumbnail type (0=claim, 1=ingredient)"
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "MIME type of thumbnail"
+        }
+      },
+      "additionalProperties": true
+    },
+    "cawgMetadataAssertion": {
+      "type": "object",
+      "description": "Camera-Aware Working Group metadata assertion",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "namespace": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "value": {}
+            }
+          }
+        },
+        "namespacePrefixes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "creativeWorkAssertion": {
+      "type": "object",
+      "description": "Schema.org CreativeWork assertion",
+      "properties": {
+        "item": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "creativeWork": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "hashBmffAssertion": {
+      "type": "object",
+      "description": "BMFF (ISO Base Media File Format) hash assertion",
+      "properties": {
+        "_version": {
+          "type": "integer"
+        },
+        "exclusions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "xpath": {
+                "type": "string"
+              },
+              "length": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "data": {
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "subset": {
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "version": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "flags": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "exact": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            }
+          }
+        },
+        "algorithm": {
+          "type": "string"
+        },
+        "hash": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "validationStatus": {
+      "type": "object",
+      "description": "Validation status information",
+      "properties": {
+        "isValid": {
+          "type": "boolean",
+          "description": "Overall validation result"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Error message if validation failed"
+        },
+        "code": {
+          "type": "string",
+          "description": "Error code"
+        },
+        "explanation": {
+          "type": "string",
+          "description": "Explanation of the error"
+        },
+        "uri": {
+          "type": "string",
+          "description": "URI where error occurred"
+        },
+        "validationErrors": {
+          "type": "array",
+          "description": "List of validation errors",
+          "items": {
+            "type": "object",
+            "description": "Validation error object with code, message, and severity",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Error code"
+              },
+              "message": {
+                "type": "string",
+                "description": "Error message"
+              },
+              "severity": {
+                "type": "string",
+                "description": "Error severity level",
+                "enum": [
+                  "error",
+                  "warning",
+                  "info"
+                ]
+              }
+            }
+          }
+        },
+        "entries": {
+          "type": "array",
+          "description": "List of validation entries",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "severity": {
+                "type": "string"
+              },
+              "explanation": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}
