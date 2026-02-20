@@ -128,7 +128,12 @@ impl ValidationResults {
             .collect();
 
         // Filter out any status that is already captured in an ingredient assertion.
+        // There is always an active manifest in a manifest store; ensure active_manifest is set
+        // so serialization (e.g. crJSON) always includes activeManifest when validationResults exist.
         if let Some(claim) = store.provenance_claim() {
+            let _ = results
+                .active_manifest
+                .get_or_insert_with(StatusCodes::default);
             let active_manifest = Some(claim.label().to_string());
 
             // This closure returns true if the URI references the store's active manifest.

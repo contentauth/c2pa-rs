@@ -1,0 +1,858 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://contentcredentials.org/crjson/crJSON-schema.json",
+	"title": "Content Credential JSON (CrJSON) Document Schema",
+	"description": "JSON Schema for Content Credential JSON (CrJSON) documents. CrJSON does not include asset_info, content, or metadata.",
+	"type": "object",
+	"required": [
+	  "@context"
+	],
+	"properties": {
+	  "@context": {
+		"description": "JSON-LD context defining namespaces and vocabularies",
+		"oneOf": [
+		  {
+			"type": "array",
+			"items": {
+			  "type": "string",
+			  "format": "uri"
+			},
+			"minItems": 1
+		  },
+		  {
+			"type": "object",
+			"properties": {
+			  "@vocab": {
+				"type": "string",
+				"format": "uri"
+			  }
+			},
+			"additionalProperties": {
+			  "type": "string"
+			}
+		  }
+		]
+	  },
+	  "manifests": {
+		"description": "Array of C2PA manifests embedded in the asset",
+		"type": "array",
+		"items": {
+		  "$ref": "#/definitions/manifest"
+		}
+	  },
+	  "validationResults": {
+		"description": "Validation results from validation (active manifest and ingredient deltas)",
+		"$ref": "#/definitions/validationResults"
+	  }
+	},
+	"additionalProperties": true,
+	"definitions": {
+	  "manifest": {
+		"type": "object",
+		"required": [
+		  "label",
+		  "assertions",
+		  "signature",
+		  "status"
+		],
+		"oneOf": [
+		  {
+			"required": [
+			  "claim"
+			]
+		  },
+		  {
+			"required": [
+			  "claim.v2"
+			]
+		  }
+		],
+		"properties": {
+		  "label": {
+			"type": "string",
+			"description": "Manifest label or URN identifier"
+		  },
+		  "assertions": {
+			"type": "object",
+			"description": "Assertions contained within the manifest, keyed by the assertion's label",
+			"additionalProperties": true
+		  },
+		  "claim": {
+			"$ref": "#/definitions/claimV1",
+			"description": "Claim map (v1) per C2PA CDDL claim-map; alternative to claim.v2. A manifest SHALL contain either claim or claim.v2."
+		  },
+		  "claim.v2": {
+			"$ref": "#/definitions/claim",
+			"description": "Normalized claim (v2) per C2PA CDDL claim-map-v2; alternative to claim. A manifest SHALL contain either claim or claim.v2."
+		  },
+		  "signature": {
+			"$ref": "#/definitions/signature"
+		  },
+		  "status": {
+			"$ref": "#/definitions/status"
+		  }
+		},
+		"additionalProperties": false
+	  },
+	  "claimV1": {
+		"type": "object",
+		"description": "Claim map (v1) per C2PA CDDL claim-map. Alternative to claim.v2; each manifest may contain either claim or claim.v2.",
+		"required": [
+		  "claim_generator",
+		  "claim_generator_info",
+		  "signature",
+		  "assertions",
+		  "dc:format",
+		  "instanceID"
+		],
+		"properties": {
+		  "claim_generator": {
+			"type": "string",
+			"description": "User-Agent string for the claim generator that created the claim (RFC 7231 §5.5.3)"
+		  },
+		  "claim_generator_info": {
+			"type": "array",
+			"minItems": 1,
+			"items": {
+			  "$ref": "#/definitions/softwareAgent"
+			},
+			"description": "Detailed information about the claim generator (one or more generator-info maps)"
+		  },
+		  "signature": {
+			"type": "string",
+			"description": "JUMBF URI reference to the signature of this claim"
+		  },
+		  "assertions": {
+			"type": "array",
+			"minItems": 1,
+			"items": {
+			  "$ref": "#/definitions/hashedUriMap"
+			},
+			"description": "Hashed URI references to assertions in this claim"
+		  },
+		  "dc:format": {
+			"type": "string",
+			"description": "Media type of the asset"
+		  },
+		  "instanceID": {
+			"type": "string",
+			"description": "Uniquely identifies a specific version of an asset"
+		  },
+		  "dc:title": {
+			"type": "string",
+			"description": "Name of the asset (Dublin Core)"
+		  },
+		  "redacted_assertions": {
+			"type": "array",
+			"items": {
+			  "type": "string"
+			},
+			"description": "JUMBF URI references to redacted ingredient manifest assertions"
+		  },
+		  "alg": {
+			"type": "string",
+			"description": "Cryptographic hash algorithm for data hash assertions in this claim (C2PA data hash algorithm identifier registry)"
+		  },
+		  "alg_soft": {
+			"type": "string",
+			"description": "Algorithm for soft binding assertions in this claim (C2PA soft binding algorithm identifier registry)"
+		  },
+		  "metadata": {
+			"type": "object",
+			"description": "Additional information about the assertion",
+			"additionalProperties": true
+		  }
+		},
+		"additionalProperties": false
+	  },
+	  "hashedUriMap": {
+		"type": "object",
+		"description": "Hashed URI reference (url and hash) per C2PA CDDL $hashed-uri-map",
+		"required": [
+		  "url",
+		  "hash"
+		],
+		"properties": {
+		  "url": {
+			"type": "string",
+			"description": "JUMBF URI reference"
+		  },
+		  "hash": {
+			"type": "string",
+			"description": "Hash value (e.g. Base64-encoded)"
+		  },
+		  "alg": {
+			"type": "string",
+			"description": "Hash algorithm identifier; if absent, taken from enclosing structure"
+		  }
+		},
+		"additionalProperties": false
+	  },
+	  "claim": {
+		"type": "object",
+		"description": "Claim (v2) per C2PA CDDL claim-map-v2.",
+		"required": [
+		  "instanceID",
+		  "claim_generator_info",
+		  "signature",
+		  "created_assertions"
+		],
+		"properties": {
+		  "instanceID": {
+			"type": "string",
+			"description": "Uniquely identifies a specific version of an asset"
+		  },
+		  "claim_generator_info": {
+			"$ref": "#/definitions/softwareAgent",
+			"description": "The claim generator of this claim (single generator-info map)"
+		  },
+		  "signature": {
+			"type": "string",
+			"description": "JUMBF URI reference to the signature of this claim"
+		  },
+		  "created_assertions": {
+			"type": "array",
+			"minItems": 1,
+			"items": {
+			  "$ref": "#/definitions/hashedUriMap"
+			},
+			"description": "Hashed URI references to created assertions"
+		  },
+		  "gathered_assertions": {
+			"type": "array",
+			"items": {
+			  "$ref": "#/definitions/hashedUriMap"
+			},
+			"description": "Hashed URI references to gathered assertions"
+		  },
+		  "dc:title": {
+			"type": "string",
+			"description": "Name of the asset (Dublin Core)"
+		  },
+		  "redacted_assertions": {
+			"type": "array",
+			"items": {
+			  "type": "string"
+			},
+			"description": "JUMBF URI references to the assertions of ingredient manifests being redacted"
+		  },
+		  "alg": {
+			"type": "string",
+			"description": "Cryptographic hash algorithm for data hash assertions in this claim (C2PA data hash algorithm identifier registry)"
+		  },
+		  "alg_soft": {
+			"type": "string",
+			"description": "Algorithm for soft binding assertions in this claim (C2PA soft binding algorithm identifier registry)"
+		  },
+		  "specVersion": {
+			"type": "string",
+			"description": "The version of the specification used to produce this claim (SemVer)"
+		  },
+		  "metadata": {
+			"type": "object",
+			"description": "Additional information about the assertion (DEPRECATED)",
+			"additionalProperties": true
+		  }
+		},
+		"additionalProperties": false
+	  },
+	  "assertions": {
+		"type": "object",
+		"properties": {
+		  "c2pa.hash.data": {
+			"$ref": "#/definitions/hashDataAssertion"
+		  },
+		  "c2pa.hash.bmff.v2": {
+			"$ref": "#/definitions/hashBmffAssertion"
+		  },
+		  "c2pa.actions": {
+			"$ref": "#/definitions/actionsAssertion"
+		  },
+		  "c2pa.actions.v2": {
+			"$ref": "#/definitions/actionsAssertion"
+		  },
+		  "c2pa.ingredient": {
+			"$ref": "#/definitions/ingredientAssertion"
+		  },
+		  "c2pa.ingredient.v3": {
+			"$ref": "#/definitions/ingredientAssertion"
+		  },
+		  "c2pa.thumbnail.claim.jpeg": {
+			"$ref": "#/definitions/thumbnailAssertion"
+		  },
+		  "c2pa.thumbnail.ingredient.jpeg": {
+			"$ref": "#/definitions/thumbnailAssertion"
+		  },
+		  "c2pa.soft-binding": {
+			"type": "object",
+			"description": "Soft binding assertion",
+			"additionalProperties": true
+		  }
+		},
+		"patternProperties": {
+		  "^c2pa\\.thumbnail\\.ingredient": {
+			"$ref": "#/definitions/thumbnailAssertion"
+		  },
+		  "^c2pa\\.ingredient": {
+			"$ref": "#/definitions/ingredientAssertion"
+		  }
+		},
+		"additionalProperties": true
+	  },
+	  "hashDataAssertion": {
+		"type": "object",
+		"properties": {
+		  "alg": {
+			"type": "string",
+			"description": "Hash algorithm"
+		  },
+		  "algorithm": {
+			"type": "string",
+			"description": "Alternative field name for hash algorithm"
+		  },
+		  "hash": {
+			"type": "string",
+			"description": "Base64-encoded hash value"
+		  },
+		  "pad": {
+			"type": "string",
+			"description": "Padding bytes"
+		  },
+		  "paddingLength": {
+			"type": "integer",
+			"description": "Length of padding"
+		  },
+		  "padding2Length": {
+			"type": "integer",
+			"description": "Length of secondary padding"
+		  },
+		  "name": {
+			"type": "string",
+			"description": "Name of the hashed data"
+		  },
+		  "exclusions": {
+			"type": "array",
+			"items": {
+			  "type": "object",
+			  "properties": {
+				"start": {
+				  "type": "integer",
+				  "description": "Starting byte position of exclusion"
+				},
+				"length": {
+				  "type": "integer",
+				  "description": "Length of exclusion in bytes"
+				}
+			  },
+			  "required": [
+				"start",
+				"length"
+			  ]
+			}
+		  }
+		},
+		"additionalProperties": false
+	  },
+	  "actionsAssertion": {
+		"type": "object",
+		"properties": {
+		  "actions": {
+			"type": "array",
+			"items": {
+			  "$ref": "#/definitions/action"
+			}
+		  }
+		},
+		"required": [
+		  "actions"
+		]
+	  },
+	  "action": {
+		"type": "object",
+		"properties": {
+		  "action": {
+			"type": "string",
+			"description": "Action type (e.g., c2pa.created, c2pa.edited, c2pa.converted)"
+		  },
+		  "when": {
+			"type": "string",
+			"format": "date-time",
+			"description": "Timestamp when the action occurred"
+		  },
+		  "softwareAgent": {
+			"description": "Software that performed the action",
+			"oneOf": [
+			  {
+				"type": "string"
+			  },
+			  {
+				"$ref": "#/definitions/softwareAgent"
+			  }
+			]
+		  },
+		  "digitalSourceType": {
+			"type": "string",
+			"format": "uri",
+			"description": "IPTC digital source type URI"
+		  },
+		  "parameters": {
+			"type": "object",
+			"description": "Additional parameters for the action",
+			"additionalProperties": true
+		  }
+		},
+		"required": [
+		  "action"
+		],
+		"additionalProperties": false
+	  },
+	  "softwareAgent": {
+		"type": "object",
+		"properties": {
+		  "name": {
+			"type": "string",
+			"description": "Name of the software"
+		  },
+		  "version": {
+			"type": "string",
+			"description": "Version of the software"
+		  },
+		  "icon": {
+			"$ref": "#/definitions/hashedUriMap",
+			"description": "Icon representing the software/hardware"
+		  },
+		  "operating_system": {
+			"type": "string",
+			"description": "Operating system the software runs on"
+		  }
+		},
+		"required": ["name"],
+		"additionalProperties": true
+	  },
+	  "signature": {
+		"type": "object",
+		"properties": {
+		  "signature_algorithm": {
+			"type": "string",
+			"description": "Algorithm used for signing (e.g., SHA256withECDSA)"
+		  },
+		  "algorithm": {
+			"description": "Signature algorithm - can be string or object",
+			"oneOf": [
+			  {
+				"type": "string",
+				"description": "Simple algorithm name (e.g., ES256, PS256)"
+			  },
+			  {
+				"type": "object",
+				"description": "Detailed algorithm specification",
+				"properties": {
+				  "alg": {
+					"type": "object",
+					"properties": {
+					  "name": {
+						"type": "string"
+					  },
+					  "hash": {
+						"type": "string"
+					  },
+					  "saltLength": {
+						"type": "integer"
+					  }
+					}
+				  },
+				  "coseIdentifier": {
+					"type": "integer"
+				  }
+				}
+			  }
+			]
+		  },
+		  "serial_number": {
+			"type": "string",
+			"description": "Certificate serial number"
+		  },
+		  "certificate": {
+			"type": "object",
+			"description": "Certificate details",
+			"properties": {
+			  "serial_number": {
+				"type": "string"
+			  },
+			  "serialNumber": {
+				"type": "string"
+			  },
+			  "issuer": {
+				"$ref": "#/definitions/distinguishedName"
+			  },
+			  "subject": {
+				"$ref": "#/definitions/distinguishedName"
+			  },
+			  "validity": {
+				"type": "object",
+				"properties": {
+				  "not_before": {
+					"type": "string",
+					"format": "date-time"
+				  },
+				  "notBefore": {
+					"type": "string",
+					"format": "date-time"
+				  },
+				  "not_after": {
+					"type": "string",
+					"format": "date-time"
+				  },
+				  "notAfter": {
+					"type": "string",
+					"format": "date-time"
+				  }
+				}
+			  }
+			}
+		  },
+		  "subject": {
+			"$ref": "#/definitions/distinguishedName"
+		  },
+		  "issuer": {
+			"$ref": "#/definitions/distinguishedName"
+		  },
+		  "validity": {
+			"type": "object",
+			"properties": {
+			  "not_before": {
+				"type": "string",
+				"format": "date-time",
+				"description": "Certificate validity start date"
+			  },
+			  "notBefore": {
+				"type": "string",
+				"format": "date-time",
+				"description": "Alternate field name for validity start"
+			  },
+			  "not_after": {
+				"type": "string",
+				"format": "date-time",
+				"description": "Certificate validity end date"
+			  },
+			  "notAfter": {
+				"type": "string",
+				"format": "date-time",
+				"description": "Alternate field name for validity end"
+			  }
+			}
+		  }
+		},
+		"additionalProperties": false
+	  },
+	  "distinguishedName": {
+		"type": "object",
+		"description": "X.509 Distinguished Name components",
+		"properties": {
+		  "C": {
+			"type": "string",
+			"description": "Country"
+		  },
+		  "ST": {
+			"type": "string",
+			"description": "State or province"
+		  },
+		  "L": {
+			"type": "string",
+			"description": "Locality"
+		  },
+		  "O": {
+			"type": "string",
+			"description": "Organization"
+		  },
+		  "OU": {
+			"type": "string",
+			"description": "Organizational unit"
+		  },
+		  "CN": {
+			"type": "string",
+			"description": "Common name"
+		  },
+		  "E": {
+			"type": "string",
+			"description": "Email address"
+		  },
+		  "2.5.4.97": {
+			"type": "string",
+			"description": "Organization identifier OID"
+		  }
+		},
+		"additionalProperties": false
+	  },
+	  "status": {
+		"type": "object",
+		"description": "Validation status information",
+		"properties": {
+		  "signature": {
+			"type": "string",
+			"description": "Signature validation status"
+		  },
+		  "assertion": {
+			"type": "object",
+			"description": "Status of each assertion",
+			"additionalProperties": {
+			  "type": "string"
+			}
+		  },
+		  "content": {
+			"type": "string",
+			"description": "Content validation status"
+		  },
+		  "trust": {
+			"type": "string",
+			"description": "Trust validation status"
+		  }
+		},
+		"additionalProperties": false
+	  },
+	  "ingredientAssertion": {
+		"type": "object",
+		"description": "Ingredient assertion for provenance chain",
+		"properties": {
+		  "_version": {
+			"type": "integer",
+			"description": "Ingredient assertion version"
+		  },
+		  "title": {
+			"type": "string",
+			"description": "Title of the ingredient"
+		  },
+		  "format": {
+			"type": "string",
+			"description": "Format of the ingredient"
+		  },
+		  "instanceID": {
+			"type": "string",
+			"description": "Instance ID of the ingredient"
+		  },
+		  "documentID": {
+			"type": "string",
+			"description": "Document ID of the ingredient"
+		  },
+		  "relationship": {
+			"type": "string",
+			"description": "Relationship type (e.g., parentOf, componentOf)"
+		  },
+		  "labelSuffix": {
+			"type": "integer",
+			"description": "Label suffix number for multiple ingredients"
+		  },
+		  "thumbnail": {
+			"type": "object",
+			"properties": {
+			  "uri": {
+				"type": "string"
+			  },
+			  "hash": {
+				"type": "string"
+			  },
+			  "algorithm": {
+				"type": "string"
+			  }
+			}
+		  },
+		  "metadata": {
+			"type": "object",
+			"additionalProperties": true
+		  },
+		  "c2pa_manifest": {
+			"type": "object",
+			"properties": {
+			  "uri": {
+				"type": "string"
+			  },
+			  "hash": {
+				"type": "string"
+			  },
+			  "algorithm": {
+				"type": "string"
+			  }
+			}
+		  },
+		  "activeManifest": {
+			"type": "object",
+			"properties": {
+			  "uri": {
+				"type": "string"
+			  },
+			  "hash": {
+				"type": "string"
+			  },
+			  "algorithm": {
+				"type": "string"
+			  }
+			}
+		  },
+		  "claimSignature": {
+			"type": "object",
+			"properties": {
+			  "uri": {
+				"type": "string"
+			  },
+			  "hash": {
+				"type": "string"
+			  },
+			  "algorithm": {
+				"type": "string"
+			  }
+			}
+		  },
+		  "validationResults": {
+			"type": "object",
+			"additionalProperties": true
+		  }
+		},
+		"additionalProperties": false
+	  },
+	  "thumbnailAssertion": {
+		"type": "object",
+		"description": "Thumbnail assertion",
+		"properties": {
+		  "thumbnailType": {
+			"type": "integer",
+			"description": "Thumbnail type (0=claim, 1=ingredient)"
+		  },
+		  "mimeType": {
+			"type": "string",
+			"description": "MIME type of thumbnail"
+		  }
+		},
+		"additionalProperties": false
+	  },
+	  "hashBmffAssertion": {
+		"type": "object",
+		"description": "BMFF (ISO Base Media File Format) hash assertion",
+		"properties": {
+		  "_version": {
+			"type": "integer"
+		  },
+		  "exclusions": {
+			"type": "array",
+			"items": {
+			  "type": "object",
+			  "properties": {
+				"xpath": {
+				  "type": "string"
+				},
+				"length": {
+				  "type": [
+					"integer",
+					"null"
+				  ]
+				},
+				"data": {
+				  "type": [
+					"array",
+					"null"
+				  ]
+				},
+				"subset": {
+				  "type": [
+					"array",
+					"null"
+				  ]
+				},
+				"version": {
+				  "type": [
+					"object",
+					"null"
+				  ]
+				},
+				"flags": {
+				  "type": [
+					"object",
+					"null"
+				  ]
+				},
+				"exact": {
+				  "type": [
+					"boolean",
+					"null"
+				  ]
+				}
+			  }
+			}
+		  },
+		  "algorithm": {
+			"type": "string"
+		  },
+		  "hash": {
+			"type": "string"
+		  },
+		  "name": {
+			"type": "string"
+		  }
+		},
+		"additionalProperties": false
+	  },
+	  "validationResults": {
+		"type": "object",
+		"description": "Output of validation_results(): status codes for active manifest and ingredient deltas",
+		"properties": {
+		  "activeManifest": {
+			"$ref": "#/definitions/statusCodes",
+			"description": "Validation status codes for the active manifest"
+		  },
+		  "ingredientDeltas": {
+			"type": "array",
+			"description": "Validation deltas per ingredient assertion",
+			"items": {
+			  "$ref": "#/definitions/ingredientDeltaValidationResult"
+			}
+		  }
+		},
+		"required": ["activeManifest"],
+		"additionalProperties": false
+	  },
+	  "statusCodes": {
+		"type": "object",
+		"description": "Success, informational, and failure validation status codes",
+		"properties": {
+		  "success": {
+			"type": "array",
+			"items": { "$ref": "#/definitions/validationStatusEntry" }
+		  },
+		  "informational": {
+			"type": "array",
+			"items": { "$ref": "#/definitions/validationStatusEntry" }
+		  },
+		  "failure": {
+			"type": "array",
+			"items": { "$ref": "#/definitions/validationStatusEntry" }
+		  }
+		},
+		"required": [
+		  "success",
+		  "informational",
+		  "failure"
+		],
+		"additionalProperties": false
+	  },
+	  "validationStatusEntry": {
+		"type": "object",
+		"description": "Single validation status (code, optional url and explanation)",
+		"properties": {
+		  "code": { "type": "string", "description": "Validation status code" },
+		  "url": { "type": "string", "description": "JUMBF URI where status applies" },
+		  "explanation": { "type": "string", "description": "Human-readable explanation" }
+		},
+		"required": [ "code" ],
+		"additionalProperties": false
+	  },
+	  "ingredientDeltaValidationResult": {
+		"type": "object",
+		"description": "Validation deltas for one ingredient's manifest",
+		"properties": {
+		  "ingredientAssertionURI": { "type": "string", "description": "JUMBF URI to the ingredient assertion" },
+		  "validationDeltas": { "$ref": "#/definitions/statusCodes" }
+		},
+		"required": [ "ingredientAssertionURI", "validationDeltas" ],
+		"additionalProperties": false
+	  }
+	}
+  }

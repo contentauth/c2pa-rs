@@ -12,7 +12,7 @@
 // each license.
 
 //! Schema compliance tests for crJSON format.
-//! These tests validate CrJSON output structure and alignment with `export_schema/crJSON-schema.json`.
+//! These tests validate CrJSON output structure and alignment with `cli/schemas/crJSON-schema.json`.
 //!
 //! **Reviewing generated crJSON when tests run:** set the environment variable
 //! `C2PA_WRITE_CRJSON=1` (or any value), then run the crjson tests. Generated crJSON
@@ -31,8 +31,8 @@ use std::io::Cursor;
 
 const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
 
-/// CrJSON schema (export_schema/crJSON-schema.json) - used to verify output structure.
-const CRJSON_SCHEMA: &str = include_str!("../../../export_schema/crJSON-schema.json");
+/// CrJSON schema (cli/schemas/crJSON-schema.json) - used to verify output structure.
+const CRJSON_SCHEMA: &str = include_str!("../../../cli/schemas/crJSON-schema.json");
 
 /// When C2PA_WRITE_CRJSON is set, write generated crJSON to target/crjson_test_output/
 /// so you can review the exact output. Called at the start of tests that build CrJsonReader.
@@ -64,25 +64,27 @@ fn test_validation_results_schema_compliance() -> Result<()> {
 
     let vr = validation_results.as_object().unwrap();
 
-    // Optional: activeManifest with success, informational, failure arrays
-    if let Some(active_manifest) = vr.get("activeManifest") {
-        assert!(active_manifest.is_object(), "activeManifest should be object");
-        let am = active_manifest.as_object().unwrap();
-        for key in &["success", "informational", "failure"] {
-            if let Some(arr) = am.get(*key) {
-                assert!(arr.is_array(), "{} should be array", key);
-                for entry in arr.as_array().unwrap() {
-                    assert!(entry.is_object(), "Each entry should be object");
-                    let obj = entry.as_object().unwrap();
-                    assert!(obj.contains_key("code"), "Entry should have code");
-                    assert!(obj.get("code").unwrap().is_string(), "code should be string");
-                    if let Some(url) = obj.get("url") {
-                        assert!(url.is_string(), "url should be string");
-                    }
-                    if let Some(explanation) = obj.get("explanation") {
-                        assert!(explanation.is_string(), "explanation should be string");
-                    }
-                }
+    // Required per schema: activeManifest (statusCodes with success, informational, failure)
+    let active_manifest = vr
+        .get("activeManifest")
+        .expect("validationResults must have activeManifest per crJSON schema");
+    assert!(active_manifest.is_object(), "activeManifest should be object");
+    let am = active_manifest.as_object().unwrap();
+    for key in &["success", "informational", "failure"] {
+        let arr = am
+            .get(*key)
+            .unwrap_or_else(|| panic!("activeManifest must have {} array per schema", key));
+        assert!(arr.is_array(), "{} should be array", key);
+        for entry in arr.as_array().unwrap() {
+            assert!(entry.is_object(), "Each entry should be object");
+            let obj = entry.as_object().unwrap();
+            assert!(obj.contains_key("code"), "Entry should have code (validationStatusEntry)");
+            assert!(obj.get("code").unwrap().is_string(), "code should be string");
+            if let Some(url) = obj.get("url") {
+                assert!(url.is_string(), "url should be string");
+            }
+            if let Some(explanation) = obj.get("explanation") {
+                assert!(explanation.is_string(), "explanation should be string");
             }
         }
     }
@@ -225,8 +227,28 @@ fn test_manifests_array_schema_compliance() -> Result<()> {
             has_claim || has_claim_v2,
             "manifest should have either claim or claim.v2"
         );
-        if let Some(claim) = manifest_obj.get("claim.v2") {
-            assert!(claim.is_object(), "claim.v2 should be object");
+        if let Some(claim_v2) = manifest_obj.get("claim.v2") {
+            assert!(claim_v2.is_object(), "claim.v2 should be object");
+            // Per crJSON schema, claim.v2.claim_generator_info is a single object, not an array
+            if let Some(cgi) = claim_v2.get("claim_generator_info") {
+                assert!(
+                    cgi.is_object(),
+                    "claim.v2.claim_generator_info must be object per schema, got array or other"
+                );
+                // When present, icon must be hashedUriMap (url, hash, optional alg) per schema
+                if let Some(icon) = cgi.get("icon") {
+                    assert!(icon.is_object(), "claim_generator_info.icon must be object (hashedUriMap)");
+                    let icon_obj = icon.as_object().unwrap();
+                    assert!(
+                        icon_obj.get("url").and_then(|v| v.as_str()).is_some(),
+                        "claim_generator_info.icon must have string 'url' (hashedUriMap)"
+                    );
+                    assert!(
+                        icon_obj.get("hash").and_then(|v| v.as_str()).is_some(),
+                        "claim_generator_info.icon must have string 'hash' (hashedUriMap)"
+                    );
+                }
+            }
         }
     }
 

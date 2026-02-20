@@ -8,10 +8,13 @@
 
 This document describes a JSON serialization for Content Credentials (aka a C2PA manifest store) known as the *Content Credential JSON* format (abbreviated *CrJSON*).  It's purpose is to provide a JSON-based representation of a C2PA manifest store for profile evaluation, interoperability testing, and validation reporting.
 
+// add some more stuff about what this is for & not for!
+// lossy visualization, not for input, etc.
+
 == Normative References
 
 * C2PA Technical Specification v2.3: https://c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html
-* CrJSON JSON Schema: `export_schema/crJSON-schema.json` (in this repository)
+* CrJSON JSON Schema: `cli/schemas/crJSON-schema.json` (in this repository)
 
 == Relationship to C2PA v2.3
 
@@ -37,9 +40,9 @@ C2PA Asset/Manifest Store
        |- manifests[]
        |    |- label
        |    |- assertions{...}
+       |    |- claim or claim.v2 (one required)
        |    |- signature (required)
        |    |- status (required)
-       |    |- claim or claim.v2 (one required)
        |- validationResults (optional)
 ----
 
@@ -47,7 +50,7 @@ C2PA Asset/Manifest Store
 
 === Root Object
 
-A CrJSON document SHALL be a JSON object.
+A CrJSON document shall be a JSON object.
 
 The following top-level properties are used:
 
@@ -57,7 +60,7 @@ The following top-level properties are used:
 
 |`@context`
 |REQUIRED
-|JSON-LD context. Implementation emits an object with `@vocab` and `extras`. Schema allows object or array of URI strings.
+|JSON-LD context. Schema allows object or array of URI strings.
 
 |`manifests`
 |REQUIRED
@@ -70,34 +73,85 @@ The following top-level properties are used:
 
 === `@context`
 
-Implementation output:
+CrJSON uses a standard https://www.w3.org/TR/json-ld11/[JSON-LD serialisation], and therefore shall contain a JSON-LD standard `@context` field whose value shall be either an object or an array listing terms (also known as namespaces) that are used in the CrJSON. In the case of an object, the terms shall be listed as key-value pairs, where the key is the term name and the value is the URI of the term. As described in clause 4.1.2 of JSON-LD, the `@vocab` key can be used for the default vocabulary, as shown in <<json-ld-context-obj-example>>. In the case of an array, only the URI is required since it shall apply to all terms not otherwise identified by a specific term, as shown in <<json-ld-context-array-example>>.
 
+[[json-ld-context-obj-example]]
 [source,json]
+.Example of an object-based JSON-LD `@context` field
 ----
-"@context": {
-  "@vocab": "https://contentcredentials.org/crjson",
-  "extras": "https://contentcredentials.org/crjson/extras"
+{
+  "@context": {
+    "@vocab": "https://contentcredentials.org/crjson/",
+    "extras": "https://contentcredentials.org/crjson/extras/",
+  }
 }
 ----
 
-=== `manifests`
+[[json-ld-context-array-example]]
+[source,json]
+.Example of an array-based JSON-LD `@context` field
+----
+{
+  "@context": [
+    "https://contentcredentials.org/crjson/"
+  ]
+}
+----
 
-`manifests` SHALL be an array with at least one entry. Ordering rules:
+Since CrJSON may contain values that are specific to a given workflow, it is important that each one of these terms shall be defined in the `@context` field. This allows the CrJSON document to be self-describing and non-conflicting ensuring that any consumer of the CrJSON can understand the meaning of each term.
 
-1. Active manifest first.
-2. Remaining manifests in (reverse) store order, most recent first.
+Since a `@context` element can appear inside of any object in JSON-LD, it is possible to have custom values, and their associated `@context` elements in multiple places throughout a single JSON-LD document, where the terms are localized to that specific object.
 
-Each manifest object SHALL include the following properties (per schema: required `label`, `assertions`, `signature`, `status`; exactly one of `claim` or `claim.v2`):
+
+=== Manifests
+
+A C2PA Manifest consists of, at least, a set of Assertions, Claims, and Claim Signatures that are bound together into a single entity. For all C2PA Manifests present in the C2PA Manifest Store, they shall be present in the `manifests` array. The order of the Manifests in the array shall match the reverse order that they are found in the Manifest Store, so that the active manifest is always first (i.e., `manifests[0]`).
+
+Each manifest object shall include the following properties (per schema: required `label`, `assertions`, `signature`, `status`; exactly one of `claim` or `claim.v2`):
 
 * `label` (manifest label/URN)
 * `assertions` (object keyed by assertion label)
+* `claim` (v1, per C2PA `claim-map`) or `claim.v2` (v2, per C2PA `claim-map-v2`)
 * `signature` (signature and credential details object)
 * `status` (per-manifest validation results object)
-* either `claim` (v1, per C2PA `claim-map`) or `claim.v2` (v2, per C2PA `claim-map-v2`)
+
+NOTE: The `label` field's value is a string that identifies the C2PA Manifest using the label of its JUMBF box, such as `urn:c2pa:2702fc84-a1ae-44d1-9825-dd86311e980b`. 
 
 The manifest object does not allow additional properties (schema `additionalProperties: false`).
 
-=== `claim.v2` (v2 claim, claim-map-v2)
+=== Claims
+
+==== General
+A Claim shall be serialised in the same manner as a <<cbor_serialised_assertions,CBOR serialised assertion>>. It shall be named based on the label of the claim box (e.g., `claim` or `claim.v2`).  An example is found in <<json-ld-claim>>.
+
+If there are no assertions listed in the claim's `gathered_assertions` or `redacted_assertions` fields, then the corresponding object shall be present, but its value shall be an empty object.
+
+[[json-ld-claim]]
+[source,json]
+.A JSON-LD serialised claim
+----
+"claim.v2": {
+  "dc:title": "MIPAMS test image",
+  "instanceID": "uuid:7b57930e-2f23-47fc-affe-0400d70b738d",
+  "claim_generator": "MIPAMS GENERATOR 0.1",
+  "alg": "SHA-256",
+  "signature": "self#jumbf=c2pa.signature",
+  "created_assertions": [
+    {
+      "url": "self#jumbf=c2pa.assertions/c2pa.actions.v2",
+      "hash": "APqpWkPm91k98DD03sIQ+uYGspG+bxdy0c7+FMu8puU="
+    },
+    {
+      "url": "self#jumbf=c2pa.assertions/c2pa.hash.data",
+      "hash": "A8wNdhjiIyOOkGg8+GkJRSYJALG6orPQJRQKMFtq/rc="
+    }
+  ],
+  "gathered_assertions": [],
+  "redacted_assertions": []
+},
+----
+
+==== `claim.v2` (v2 claim)
 
 `claim.v2` conforms to the C2PA CDDL claim-map-v2. Required properties:
 
@@ -116,9 +170,9 @@ Optional properties:
 * `specVersion` — specification version (SemVer)
 * `metadata` — (DEPRECATED) additional information
 
-All `hash` values in hashed URI maps SHALL be Base64 strings.
+All `hash` values in hashed URI maps shall be Base64 strings.
 
-=== `claim` (v1 claim, claim-map)
+=== `claim` (v1 claim)
 
 When a manifest uses `claim` instead of `claim.v2`, it conforms to the C2PA CDDL claim-map (claimV1). Required properties:
 
@@ -131,11 +185,119 @@ When a manifest uses `claim` instead of `claim.v2`, it conforms to the C2PA CDDL
 
 Optional: `dc:title`, `redacted_assertions` (JUMBF URI strings), `alg`, `alg_soft`, `metadata`.
 
-All `hash` values in hashed URI maps SHALL be Base64 strings.
+All `hash` values in hashed URI maps shall be Base64 strings.
 
-=== `assertions`
+=== Assertions
 
-`assertions` SHALL be an object keyed by assertion label. The contents of the object are the assertion payloads, as defined by the C2PA specification.
+[[assertions-fields]]
+==== General
+
+Each manifest object shall contain an `assertions` field whose value is an object keyed by assertion label. Each individual assertion shall be represented as an object, where they key is the label of the Assertion and the value is an object containing the JSON-LD serialization derived from that Assertion.  If it is not possible to derive information from an assertion, then the key shall be present in the assertions object, but its value shall be an empty object.
+
+==== JSON-LD serialised assertions
+
+For any Assertion which is serialised in the C2PA Manifest as JSON-LD, that exact same JSON-LD shall be used as the value for the assertion. For example, the `c2pa.metadata` assertion is expressed in XMP, that XMP data is serialised as JSON-LD.
+
+An example `c2pa.metadata` assertion is shown in <<json-ld-assertion>>.
+
+[[json-ld-assertion]]
+[source,json]
+.A JSON-LD serialised assertion
+----
+"c2pa.metadata": {
+  "@context" : {
+    "Iptc4xmpExt": "http://iptc.org/std/Iptc4xmpExt/2008-02-29/",
+    "photoshop" : "http://ns.adobe.com/photoshop/1.0/"
+  },
+  "photoshop:DateCreated": "Aug 31, 2022",
+  "Iptc4xmpExt:LocationCreated": { 
+    "Iptc4xmpExt:City": "Beijing, China"
+  }
+}
+----
+
+NOTE: The various terms and context namespaces in <<json-ld-assertion>> are defined as part of <<IPTC>>.
+
+[[cbor_serialised_assertions]]
+===== CBOR serialised assertions
+For each Assertion, which is serialised in the C2PA Manifest as CBOR, the JSON-LD representation shall be described as the same key name in the CBOR map and its value type shall be determined by <<table_cbor_json_mapping>>:
+
+[[table_cbor_json_mapping]]
+.Mapping from CBOR to JSON-LD
+[cols="2,1", options="header"]
+|====
+|CBOR Type(s)
+|JSON-LD Type
+
+| integer, unsigned integer
+| unsigned number
+
+| negative integer
+| integer
+
+| byte string
+| string (Base64 encoded, <<RFC4648>>)
+
+| UTF-8 string 
+| string
+
+| array
+| array
+
+| map
+| object
+
+| False, True
+| boolean
+
+| Null
+| null
+
+| half-precision float, single-precision float, double-precision float
+| float
+
+| date-time
+| string (<<ISO8601>>)
+
+|====
+
+Since CBOR allows map keys of any type, whereas JSON-LD only allows strings as keys in object values, CBOR maps with keys other than UTF-8 strings shall have those keys converted to UTF-8 strings. An example of a CBOR serialised assertion is shown in <<actions-cbordiag>>, and its equivalent JSON-LD representation is shown in <<actions-json>>.
+
+[[actions-cbordiag]]
+[source]
+.CBOR Diagnostics for an actions.v2 assertion
+----
+"c2pa.actions.v2": {
+  "actions": [
+    {
+      "action": "c2pa.cropped",
+      "when": 0("2020-02-11T09:30:00Z")
+    },
+    {
+      "action": "c2pa.filtered",
+      "when": 0("2020-02-11T09:00:00Z")
+    }
+  ]
+}
+----
+
+[[actions-json]]
+[source,json]
+.JSON-LD representation of <<actions-cbordiag>>
+----
+"c2pa.actions.v2": {
+  "actions": [
+    {
+      "action": "c2pa.cropped",
+      "when": "2020-02-11T09:30:00Z"
+    },
+    {
+      "action": "c2pa.filtered",
+      "when": "2020-02-11T09:00:00Z"
+    }
+  ]
+}
+----
 
 
 ==== Binary normalization and hash encoding
@@ -152,9 +314,9 @@ If fields are serialized as integer arrays, they are converted to Base64 strings
 
 This rule applies recursively to nested objects/arrays.
 
-==== Gathered binary assertion representation
+==== Binary assertion representation
 
-For gathered binary/UUID assertions, CrJSON emits a reference form:
+For binary formatted assertions (e.g., thumbnails), CrJSON emits a reference form:
 
 [source,json]
 ----
@@ -165,9 +327,14 @@ For gathered binary/UUID assertions, CrJSON emits a reference form:
 }
 ----
 
-=== `signature` (per manifest)
+=== Signature
 
-Each manifest SHALL include `signature`. When signature information is available, it includes:
+// https://github.com/jcrowgey/x5092json is useful information for this section
+// also see https://darutk.medium.com/illustrated-x-509-certificate-84aece2c5c2e
+
+The JSON-LD representation of the X.509 certificate (as defined in <<RFC5280>>) from the claim signature is based on a logical mapping of its ASN.1 serialisation as defined in RFC 5280 into a JSON-LD serialized object whose key is `signature`. An example certificate is in <<json-ld-x509>>. Additional mappings, such as the mapping of the distinguished name to JSON-LD should also be done in the most logical fashion possible. 
+
+When signature information is available, it should include:
 
 * `algorithm`
 * `serial_number`
@@ -176,32 +343,133 @@ Each manifest SHALL include `signature`. When signature information is available
 * `validity.not_before`
 * `validity.not_after`
 
-The implementation parses the first certificate in the chain and serializes times as RFC 3339 strings. When signature information is unavailable, `signature` SHALL be present as an empty object `{}`.
+NOTE: An X.509 certificate can contain all sorts of information, and implementations may choose to include additional information in their JSON-LD representation.
 
-=== `status` (per manifest)
+Times shall be represented as RFC 3339 strings. When signature information is unavailable, `signature` shall be present as an empty object `{}`.
 
-Each manifest SHALL include `status`. It is derived from active-manifest validation results and may include:
+The value of the `signature_algorithm` field shall be one of the strings defined in <<C2PA,clause=13.2.1>>, such as "ES256" or "Ed25519", or "Unknown" if it is not one of the defined values.
 
-* `signature`: first code prefixed by `claimSignature`
-* `trust`: preferred signing credential code (`trusted`, else `invalid`, `untrusted`, `expired`, then fallback)
-* `content`: first code prefixed by `assertion.dataHash`
-* `assertion`: map of assertion label -> validation code (when found)
+[[json-ld-x509]]
+[source,json]
+.Representation of an X.509 Certificate
+----
+"signature": {
+  "signature_algorithm": "ES256",
+  "subject": {
+    "ST": "CA",
+    "CN": "C2PA Signer",
+    "C": "US",
+    "L": "Somewhere",
+    "OU": "FOR TESTING_ONLY",
+    "O": "C2PA Test Signing Cert"
+  },
+  "issuer": {
+    "ST": "CA",
+    "CN": "Intermediate CA",
+    "C": "US",
+    "L": "Somewhere",
+    "OU": "FOR TESTING_ONLY",
+    "O": "C2PA Test Intermediate Root CA"
+  },
+  "validity": {
+    "not_after": "2030-08-26T18:46:40Z",
+    "not_before": "2022-06-10T18:46:40Z"
+  }
+}
+----
 
-When validation results are unavailable, `status` SHALL be present as an empty object `{}`.
+=== Status
 
-=== `validationResults` (global)
+The `manifest` object shall contain a `status` field whose value is an object containing the trust and/or validity status of the various parts of the C2PA Manifest. The status object shall contain the following fields:
 
-Optional top-level property containing the output of the Reader's `validation_results()` method. When present, it includes:
+`signature`:: A field whose value is a single <<C2PA, clause=15.2.2.1, status code>> determined from <<C2PA,clause=15.7,validation of the signature>>. 
 
-* `activeManifest` (optional): status codes for the active manifest:
-** `success`: array of validation status entries (code, optional url, optional explanation)
-** `informational`: array of validation status entries
-** `failure`: array of validation status entries
-* `ingredientDeltas` (optional): array of per-ingredient validation deltas:
-** `ingredientAssertionURI`: JUMBF URI of the ingredient assertion
-** `validationDeltas`: object with `success`, `informational`, and `failure` arrays (same entry shape as above)
+`assertions`:: A field whose value is an object, where each field is the label of an assertion and its value is the <<C2PA,clause=15.2.2.1, status code>> determined from validation.  All assertions in the Claim shall be listed in this object, whether they are in the `created_assertions` or `gathered_assertions` fields of the Claim. 
 
-Each validation status entry is an object with `code` (required), and optionally `url` and `explanation`.
+`trust`:: After the signing certificate is checked against one or more Trust Lists, this field shall contain a single <<C2PA,clause=15.2.2.1, status code>> that specifies the status of the signing certificate against the Trust Lists. There may also be `trust_list` field that contains a URI that identifies the Trust List used to validate the signing certificate. 
+
+For the active manifest, the following additional fields shall also be present:
+
+`content`:: A field whose value is a single <<C2PA,clause=15.2.2.1, status code>> determined from validation of the content bindings. 
+
+NOTE: This is present only in the active manifest, since that is the only one that can be used to check the validity of the content bindings. This applies to both standard and update manifests.
+
+An example of a status object is shown in <<status-example>>.
+
+[[status-example]]
+[source,json]
+.Example status object
+----
+"status": {
+  "signature": "claimSignature.validated",
+  "assertion": {
+    "c2pa.actions.v2": "assertion.hashedURI.match",
+    "c2pa.hash.data": "assertion.dataHash.match"
+  },
+  "content": "assertion.dataHash.match",
+  "trust": "signingCredential.trusted",
+  "trust_list": "https://example.com/trustlists/c2pa-trust-list.json"
+}
+----
+
+When validation results are unavailable, `status` shall be present as an empty object `{}`.
+
+=== Validation Results
+
+The `validationResults` object is modelled on the `validation-results-map` data structure used to store the results of ingredient validation in the ingredient assertion. It is not a required property of crJSON (as it may be used outside of a validation workflow), but when present, it will always include the set of validation status codes for the active manifest. If the active manifest refers to one or more ingredients, there shall also be an `ingredientDeltas` field present that contains the list of validation deltas (if any).
+
+Each validation status entry is an object with a `code` (required), and optionally `url` and `explanation` fields.
+
+[[results-example]]
+[source,json]
+----
+"validationResults": {
+     "activeManifest": {
+        "success": [],
+        "informational": [
+          {
+            "code": "claimSignature.insideValidity",
+            "url": "self#jumbf=/c2pa/urn:c2pa:4646c5e4-31e1-4d08-8156-d90a8e323268/c2pa.signature",
+            "explanation": "claim signature valid",
+          },
+          {
+            "code": "claimSignature.validated",
+            "url": "self#jumbf=/c2pa/urn:c2pa:4646c5e4-31e1-4d08-8156-d90a8e323268/c2pa.signature",
+            "explanation": "claim signature valid",
+          },
+          {
+            "code": "assertion.hashedURI.match",
+            "url": "self#jumbf=/c2pa/urn:c2pa:4646c5e4-31e1-4d08-8156-d90a8e323268/c2pa.assertions/c2pa.actions.v2",
+            "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.actions.v2",
+          },
+          {
+            "code": "assertion.hashedURI.match",
+            "url": "self#jumbf=/c2pa/urn:c2pa:4646c5e4-31e1-4d08-8156-d90a8e323268/c2pa.assertions/c2pa.hash.data",
+            "explanation": "hashed uri matched: self#jumbf=c2pa.assertions/c2pa.hash.data",
+          },
+          {
+            "code": "assertion.dataHash.match",
+            "url": "self#jumbf=/c2pa/urn:c2pa:4646c5e4-31e1-4d08-8156-d90a8e323268/c2pa.assertions/c2pa.hash.data",
+            "explanation": "data hash valid",
+          },
+
+        ],
+        "failure": [
+          {
+            "code": "signingCredential.untrusted",
+            "url": "self#jumbf=/c2pa/urn:c2pa:4646c5e4-31e1-4d08-8156-d90a8e323268/c2pa.signature",
+            "explanation": "signing certificate untrusted",
+          },
+          {
+            "code": "assertion.action.malformed",
+            "url": "urn:c2pa:4646c5e4-31e1-4d08-8156-d90a8e323268",
+            "explanation": "first action must be created or opened",
+          }
+        ]
+    } 
+}
+
+----
 
 == Constraints and Current Implementation Limits
 
