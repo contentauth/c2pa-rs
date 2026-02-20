@@ -457,7 +457,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
-    runs-on: warp-warp-ubuntu-latest-x64-2x-x64-2x
+    runs-on: warp-ubuntu-latest-x64-2x
 
     steps:
       - name: Checkout repository
