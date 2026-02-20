@@ -2329,9 +2329,6 @@ impl Builder {
             self.add_assertion(&assertion_label, &bmff_hash)?;
         } else if use_box_hash {
             // BoxHash path: get the format's AssetBoxHash handler and compute box hashes.
-            // We implement the "minimal form" grouping here using hash_stream_by_alg
-            // (which accepts ?Sized streams) rather than generate_box_hash_from_stream
-            // (which requires dyn CAIRead and thus Sized + Send).
             let handler = jumbf_io::get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
             let bhp = handler.asset_box_hash_ref().ok_or_else(|| {
                 Error::BadParam(format!("Format '{format}' does not support BoxHash"))
@@ -4068,7 +4065,8 @@ mod tests {
         Ok(())
     }
 
-    /// Tests the `prefer_box_hash` setting end-to-end:
+    /// Tests the `prefer_box_hash` setting end-to-end including a full
+    /// embed + verify round-trip on a clean JPEG:
     ///
     /// - `needs_placeholder` returns `false` for BoxHash-capable formats (JPEG)
     ///   and `true` for BMFF formats regardless of the setting.
@@ -4077,13 +4075,10 @@ mod tests {
     /// - `update_hash_from_stream` auto-creates a `BoxHash` assertion with real
     ///   hashes when no hard binding is present.
     /// - `sign_embeddable` Mode 2 (no prior placeholder) succeeds and returns
-    ///   non-empty composed bytes.
-    ///
-    /// Note: full round-trip Reader validation is not performed here because
-    /// inserting a new C2PA APP11 segment into a clean JPEG after the hash was
-    /// computed would change the byte offsets and fail BoxHash verification.
-    /// The round-trip path (pre-slotted image + embedded manifest) is covered
-    /// by `test_builder_box_hashed_embeddable`.
+    ///   JPEG-composed manifest bytes.
+    /// - Splicing those bytes into the clean JPEG and validating with `Reader`
+    ///   yields a trusted result (BoxHash verification re-derives positions from
+    ///   the current file, so segment content hashes remain valid after embedding).
     #[test]
     fn test_prefer_box_hash_workflow() -> Result<()> {
         // Helper to build a fresh context with prefer_box_hash enabled.
@@ -4118,7 +4113,8 @@ mod tests {
             "BoxHash must have at least one box"
         );
         for bm in &box_hash.boxes {
-            if !bm.excluded.unwrap_or(false) {
+            let is_c2pa = bm.names.first().is_some_and(|n| n == "C2PA");
+            if !bm.excluded.unwrap_or(false) && !is_c2pa {
                 assert!(
                     !bm.hash.is_empty(),
                     "Non-excluded box '{}' must have a computed hash",
@@ -4127,15 +4123,25 @@ mod tests {
             }
         }
 
-        // sign_embeddable Mode 2 succeeds with the auto-created BoxHash. Use c2pa so we have somethign to put in a box
-        let manifest_bytes = builder.sign_embeddable("application/c2pa")?;
+        // sign_embeddable Mode 2 — returns JPEG-composed manifest (APP11 segments).
+        let manifest_bytes = builder.sign_embeddable("image/jpeg")?;
         assert!(
             !manifest_bytes.is_empty(),
             "sign_embeddable must return non-empty bytes"
         );
 
-        let reader = Reader::from_stream("application/c2pa", Cursor::new(manifest_bytes))?;
-        println!("{}", reader.json());
+        let mut embedded = Vec::with_capacity(TEST_IMAGE_CLEAN.len() + manifest_bytes.len());
+        embedded.extend_from_slice(&TEST_IMAGE_CLEAN[..2]); // SOI (FF D8)
+        embedded.extend_from_slice(&manifest_bytes); // C2PA APP11 segments
+        embedded.extend_from_slice(&TEST_IMAGE_CLEAN[2..]); // rest of JPEG
+
+        let mut embedded_stream = Cursor::new(embedded);
+        let reader = Reader::from_stream("image/jpeg", &mut embedded_stream)?;
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "BoxHash round-trip validation must pass for a clean JPEG"
+        );
 
         // --- placeholder() returns empty bytes (no embedding needed) when prefer_box_hash=true ---
         // For BoxHash-capable formats with prefer_box_hash enabled, the caller should call
