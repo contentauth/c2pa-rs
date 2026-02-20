@@ -524,6 +524,7 @@ version = "0.75.21"
 dependencies = [
  "c2pa",
  "cbindgen",
+ "digest",
  "scopeguard",
  "serde",
  "serde_json",

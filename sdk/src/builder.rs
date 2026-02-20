@@ -32,8 +32,10 @@ use crate::assertions::CreativeWork;
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
-        c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
-        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail,
+        c2pa_action,
+        labels::{self, parse_label},
+        Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, DataHash,
+        DigitalSourceType, EmbeddedData, ExclusionsMap, Exif, Metadata, SoftwareAgent, Thumbnail,
         TimeStamp, User, UserCbor,
     },
     claim::Claim,
@@ -1220,6 +1222,16 @@ impl Builder {
         Builder::new().with_archive(stream)
     }
 
+    pub fn find_assertion_by_label<T: DeserializeOwned>(&self, label: &str) -> Option<(T, String)> {
+        for assertion_def in &self.definition.assertions {
+            if assertion_def.label().contains(label) {
+                let out: T = assertion_def.to_assertion().ok()?;
+                return Some((out, assertion_def.label().to_string()));
+            }
+        }
+        None
+    }
+
     // Convert a Manifest into a Claim
     fn to_claim(&self) -> Result<Claim> {
         // utility function to add created or gathered assertions
@@ -1362,7 +1374,9 @@ impl Builder {
         let mut found_actions = false;
         // add any additional assertions
         for manifest_assertion in &definition.assertions {
-            match manifest_assertion.label() {
+            // match the root labels independently of version/instance
+            let (match_label, version, _instance) = parse_label(manifest_assertion.label());
+            match match_label {
                 l if l.starts_with(Actions::LABEL) => {
                     found_actions = true;
 
@@ -1469,7 +1483,8 @@ impl Builder {
                     claim.add_assertion(&data_hash)
                 }
                 BmffHash::LABEL => {
-                    let bmff_hash: BmffHash = manifest_assertion.to_assertion()?;
+                    let mut bmff_hash: BmffHash = manifest_assertion.to_assertion()?;
+                    bmff_hash.set_bmff_version(version);
                     claim.add_assertion(&bmff_hash)
                 }
                 Metadata::LABEL => {
@@ -1902,6 +1917,82 @@ impl Builder {
         }
     }
 
+    /// Create a placeholder for a bmff hashed manifest.
+    ///
+    /// This is only used for applications doing their own BMFF hash asset management.
+    ///
+    /// # Arguments
+    /// * `reserve_size` - The size to reserve for the signature (taken from the signer).
+    /// * `bmff_exclusions_json` - The format of the t.
+    /// # Returns
+    /// * The bytes of the `c2pa_manifest` placeholder.
+    /// # Errors
+    /// * Returns an [`Error`] if the placeholder cannot be created.
+    pub fn get_bmff_hashed_manifest_placeholder(
+        &mut self,
+        reserve_size: usize,
+        bmff_exclusions_json: Option<&str>,
+    ) -> Result<Vec<u8>> {
+        let mut bmff_exclusions: Vec<ExclusionsMap> =
+            if let Some(bmff_exclusions_json) = bmff_exclusions_json {
+                serde_json::from_str(bmff_exclusions_json)?
+            } else {
+                Vec::new()
+            };
+
+        // create the default BMFF hash
+        let mut bmff_hash = BmffHash::new("jumbf_box", "sha256", None);
+        bmff_hash.set_default_exclusions();
+
+        // add user defined exclusions
+        bmff_hash.add_exclusions(&mut bmff_exclusions);
+
+        // make sure we reserve space for the hash
+        bmff_hash.add_place_holder_hash()?;
+
+        // add BMFF assertion
+        let assertion_label = bmff_hash.to_assertion()?.label();
+        self.add_assertion(&assertion_label, &bmff_hash)?;
+
+        let mut store = self.to_store()?;
+        let placeholder = store.get_bmff_hashed_manifest_placeholder(reserve_size)?;
+        Ok(placeholder)
+    }
+
+    /// Create a signed data hashed embeddable manifest using a supplied signer.
+    ///
+    /// This is used to create a manifest that can be embedded into a stream.
+    /// It allows the caller to do the embedding.
+    /// You must call `get_bmff_hashed_manifest_placeholder` first to create the placeholder.
+    /// The placeholder is then injected into the asset before calculating hashes
+    /// You must generate the hashes.
+    ///
+    /// # Arguments
+    /// * `signer` - The signer to use.
+    /// * `hash` - Hash calculated by the caller.
+    /// # Returns
+    /// * The bytes of the `c2pa_manifest` that was created (prep-formatted).
+    #[async_generic(async_signature(
+        &mut self,
+        signer: &dyn AsyncSigner,
+        hash: &[u8],
+    ))]
+    pub fn sign_bmff_hashed_embeddable(
+        &mut self,
+        signer: &dyn Signer,
+        hash: &[u8],
+    ) -> Result<Vec<u8>> {
+        let mut store = self.to_store()?;
+
+        if _sync {
+            store.get_bmff_hashed_embeddable_manifest(hash, signer, &self.context)
+        } else {
+            store
+                .get_bmff_hashed_embeddable_manifest_async(hash, signer, &self.context)
+                .await
+        }
+    }
+
     /// Create a placeholder for a hashed data manifest.
     ///
     /// This is only used for applications doing their own data_hashed asset management.
@@ -1937,7 +2028,7 @@ impl Builder {
     ///
     /// This is used to create a manifest that can be embedded into a stream.
     /// It allows the caller to do the embedding.
-    /// You must call `data_hashed` placeholder first to create the placeholder.
+    /// You must call `data_hashed_placeholder` first to create the placeholder.
     /// The placeholder is then injected into the asset before calculating hashes
     /// You must either pass a source stream to generate the hashes or provide the hashes.
     ///
