@@ -30,7 +30,6 @@
 //!     - Fetching timestamps
 //!     - Fetching [`TimeStamp`] assertions
 //!     - Fetching OCSP staples
-//!     - Fetching [`CertificateStatus`] assertions
 //!
 //! Network requests may also be issued during the signing process, such as when
 //! [`SignerSettings::Remote`] is specified.
@@ -38,7 +37,6 @@
 //! [`Reader`]: crate::Reader
 //! [`Builder`]: crate::Builder
 //! [`TimeStamp`]: crate::assertions::TimeStamp
-//! [`CertificateStatus`]: crate::assertions::CertificateStatus
 //! [`SignerSettings::Remote`]: crate::settings::signer::SignerSettings::Remote
 
 use std::{
