@@ -316,7 +316,9 @@ pub struct Verify {
     pub verify_after_reading: bool,
     /// Whether to verify the manifest after signing in the [`Builder`].
     ///
-    /// The default value is true.
+    /// The default value is false.
+    /// There is a known bug related to this setting: https://github.com/contentauth/c2pa-rs/issues/1875. 
+    // When the bug is fixed, the default value should be true.
     ///
     /// <div class="warning">
     /// Disabling validation can improve signing performance, BUT it carries the risk of signing an invalid
