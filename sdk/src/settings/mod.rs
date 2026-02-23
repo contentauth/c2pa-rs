@@ -317,7 +317,7 @@ pub struct Verify {
     /// Whether to verify the manifest after signing in the [`Builder`].
     ///
     /// The default value is false.
-    /// There is a known bug related to this setting: [#1875](https://github.com/contentauth/c2pa-rs/issues/1875). 
+    /// There is a known bug related to this setting: [#1875](https://github.com/contentauth/c2pa-rs/issues/1875).
     /// When the bug is fixed, the default value should be true.
     ///
     /// <div class="warning">
