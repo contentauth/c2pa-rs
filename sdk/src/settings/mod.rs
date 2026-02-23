@@ -319,7 +319,6 @@ pub struct Verify {
     /// The default value is false.
     /// There is a known bug related to this setting: [#1875](https://github.com/contentauth/c2pa-rs/issues/1875). 
     /// When the bug is fixed, the default value should be true.
-    // TODO: Update these docs when the bug is fixed.
     ///
     /// <div class="warning">
     /// Disabling validation can improve signing performance, BUT it carries the risk of signing an invalid
@@ -386,7 +385,7 @@ impl Default for Verify {
     fn default() -> Self {
         Self {
             verify_after_reading: true,
-            verify_after_sign: false,
+            verify_after_sign: false, // TODO: Update docs when #1875 is fixed.
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
