@@ -783,6 +783,11 @@ impl CrJsonReader {
             claim_signature.insert("algorithm".to_string(), json!(alg.to_string()));
         }
 
+        // Add signing timestamp (e.g. from TSA) when available
+        if let Some(time) = &sig_info.time {
+            claim_signature.insert("timestamp".to_string(), json!(time));
+        }
+
         // Parse certificate to get detailed DN components and validity
         if let Some(cert_info) = self.parse_certificate(&sig_info.cert_chain)? {
             // Add serial number (hex format)

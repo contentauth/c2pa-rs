@@ -541,6 +541,11 @@
 				"description": "Alternate field name for validity end"
 			  }
 			}
+		  },
+		  "timestamp": {
+			"type": "string",
+			"format": "date-time",
+			"description": "Time when the claim was signed (e.g. from TSA timestamp); RFC 3339 format"
 		  }
 		},
 		"additionalProperties": false
