@@ -1189,8 +1189,9 @@ impl Builder {
             reader.with_store(store, &mut validation_log)?;
             let mut builder = reader.into_builder()?;
 
-            // Ingredients in the archive already had auto-thumbnail applied during creation.
-            // If an ingredient has no thumbnail here, it was intentionally suppressed.
+            // Keep ingredient as configured during initial add:
+            // if an ingredient has no thumbnail here, it was very likely
+            // ntentionally skipped!
             for ingredient in &mut builder.definition.ingredients {
                 if ingredient.thumbnail_ref().is_none() {
                     ingredient
@@ -2453,7 +2454,8 @@ impl Builder {
 
         // Preserve "none" thumbnail intent so it survives the archive round-trip.
         // to_claim() skips adding a thumbnail assertion when format is "none",
-        // so we add a zero-byte marker here that from_store() can detect.
+        // so we add a zero-byte marker here that from_store() can detect,
+        // otherwise we loose the "suppressive" info after serialization roundtrip
         if let Some(thumb_ref) = self.definition.thumbnail.as_ref() {
             if thumb_ref.format == "none" {
                 let marker =
