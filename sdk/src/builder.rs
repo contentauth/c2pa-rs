@@ -4420,9 +4420,6 @@ mod tests {
         assert!(manifest["ingredients"][0]["thumbnail"].is_object());
     }
 
-    // === Archive round-trip variants ===
-    // Each tests that "none" thumbnails survive the to_archive/from_archive cycle.
-
     fn archive_round_trip(builder: &mut Builder) -> Builder {
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive).unwrap();
@@ -4432,6 +4429,7 @@ mod tests {
 
     #[test]
     fn test_ingredient_no_thumbnail_with_none_format_archive() {
+        // Make sure the archives roundtrip preserves no-thumbnails
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         let signer = test_signer(SigningAlg::Ps256);
 
@@ -4462,6 +4460,7 @@ mod tests {
     #[test]
     #[cfg(feature = "add_thumbnails")]
     fn test_ingredient_no_thumbnail_with_none_format_auto_thumbnails_archive() {
+        // Make sure the archives roundtrip preserves no-thumbnails
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         let signer = test_signer(SigningAlg::Ps256);
 
@@ -4491,6 +4490,7 @@ mod tests {
 
     #[test]
     fn test_fine_grained_thumbnail_control_archive() {
+        // Make sure the archives roundtrip preserves no-thumbnails
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         let signer = test_signer(SigningAlg::Ps256);
 
@@ -4532,6 +4532,7 @@ mod tests {
     #[test]
     #[cfg(feature = "add_thumbnails")]
     fn test_fine_grained_thumbnail_control_auto_thumbnails_archive() {
+        // Make sure the archives roundtrip preserves no-thumbnails
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         let signer = test_signer(SigningAlg::Ps256);
 
@@ -4575,6 +4576,7 @@ mod tests {
 
     #[test]
     fn test_manifest_no_thumbnail_ingredients_have_thumbnail_archive() {
+        // Make sure the archives roundtrip preserves no-thumbnails
         let manifest_json = json!({
             "claim_generator_info": [{ "name": "c2pa_thumbnail_test", "version": "0.1.0" }],
             "title": "thumbnail_test_manifest_no_thumbnail_archive",
@@ -4616,6 +4618,7 @@ mod tests {
     #[test]
     #[cfg(feature = "add_thumbnails")]
     fn test_manifest_no_thumbnail_ingredients_have_thumbnail_auto_thumbnails_archive() {
+        // Make sure the archives roundtrip preserves no-thumbnails
         let manifest_json = json!({
             "claim_generator_info": [{ "name": "c2pa_test", "version": "1.0.0" }],
             "title": "Test_Manifest",
@@ -4654,11 +4657,9 @@ mod tests {
         assert!(manifest["ingredients"][0]["thumbnail"].is_object());
     }
 
-    // === Sentinel verification ===
-    // Verify "none" markers never appear in final signed manifests.
-
     #[test]
     fn test_none_sentinel_absent_from_final_signed_manifest() {
+        // Verify "none" markers never appear in final signed manifests.
         // Sign directly (no archive round-trip) with "none" thumbnail on manifest
         // and "none" thumbnail on an ingredient. Verify via Reader that:
         // 1. The manifest thumbnail_ref() is None (not Some("none"))
@@ -4721,9 +4722,11 @@ mod tests {
 
     #[test]
     fn test_none_sentinel_absent_from_final_signed_manifest_via_archive() {
-        // Same as above but with an archive round-trip.
+        // Verify "none" markers never appear in final signed manifests.
+        // Same as test_none_sentinel_absent_from_final_signed_manifest,
+        // but with an archive round-trip.
         // This verifies the marker assertion in the archive working store
-        // does NOT leak into the final signed output.
+        // does not leak into the final signed output.
 
         let manifest_json = json!({
             "claim_generator_info": [{ "name": "c2pa_test", "version": "1.0.0" }],
