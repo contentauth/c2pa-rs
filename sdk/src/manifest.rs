@@ -563,8 +563,7 @@ impl Manifest {
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = EmbeddedData::from_assertion(assertion)?;
                     if thumbnail.content_type == "none" {
-                        manifest.thumbnail =
-                            Some(ResourceRef::new("none".to_string(), "none"));
+                        manifest.thumbnail = Some(ResourceRef::new("none".to_string(), "none"));
                     } else {
                         let id = to_assertion_uri(claim.label(), label);
                         //let id = jumbf::labels::to_relative_uri(&id);

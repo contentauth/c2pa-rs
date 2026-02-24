@@ -1294,11 +1294,7 @@ impl Ingredient {
                     Some(h) => {
                         let hash = base64::decode(h)
                             .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?;
-                        HashedUri::new(
-                            thumb_ref.identifier.clone(),
-                            thumb_ref.alg.clone(),
-                            &hash,
-                        )
+                        HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash)
                     }
                     None => {
                         // get the resource data and add it to the claim
