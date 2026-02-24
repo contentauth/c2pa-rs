@@ -4201,202 +4201,6 @@ mod tests {
         assert!(reader_json.contains("thumbnail.ingredient"));
     }
 
-    // == Thumbnail test helpers ==
-    //
-    // Each test below needs two variants: one without the `add_thumbnails` feature
-    // and one with it. The only behavioral difference between the two is whether
-    // the *manifest* gets an auto-generated thumbnail (when `add_thumbnails` is on
-    // and the manifest does not explicitly suppress it with "none").
-    //
-    // Without helpers, every test would be duplicated in full with only the
-    // manifest thumbnail assertion changing. That duplication is error-prone:
-    // a fix to the setup in one copy can easily be forgotten in the other.
-    //
-    // Instead, each scenario is implemented as a plain helper function that takes
-    // `expect_manifest_thumbnail: bool`. The `#[test]` functions become thin
-    // wrappers that pass the right flag. The ungated wrapper passes `false`; the
-    // `#[cfg(feature = "add_thumbnails")]` wrapper passes `true`.
-    //
-    // Note: ungated tests are compiled and run in BOTH feature configurations.
-    // When `add_thumbnails` is on, an ungated test that uses `simple_manifest_json()`
-    // (no explicit "none") will actually produce a manifest WITH a thumbnail,
-    // but the ungated wrapper intentionally does not assert on it. The `auto_thumbnails`
-    // wrapper adds that assertion explicitly.
-
-    fn assert_manifest_thumbnail(manifest: &serde_json::Value, expect: bool) {
-        if expect {
-            assert!(
-                manifest["thumbnail"].is_object(),
-                "Manifest should have an auto-generated thumbnail"
-            );
-        }
-        // When expect is false we intentionally skip the assertion. The ungated
-        // tests run under both feature sets: without add_thumbnails the manifest
-        // truly has no thumbnail, but with add_thumbnails it may gain one through
-        // auto-generation. Asserting is_null() here would break in the latter case.
-    }
-
-    fn assert_ingredient_no_thumbnail_with_none_format(expect_manifest_thumbnail: bool) {
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
-        let signer = test_signer(SigningAlg::Ps256);
-
-        builder
-            .add_ingredient_from_stream(
-                r#"{"title": "Test", "thumbnail": { "format": "none", "identifier": "none" }}"#,
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE_CLEAN),
-            )
-            .unwrap();
-
-        let mut output = Cursor::new(Vec::new());
-        builder
-            .sign(
-                &signer,
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE_CLEAN),
-                &mut output,
-            )
-            .unwrap();
-
-        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
-        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
-        let active_id = json_value["active_manifest"].as_str().unwrap();
-        let manifest = &json_value["manifests"][active_id];
-
-        assert_manifest_thumbnail(manifest, expect_manifest_thumbnail);
-        assert_eq!(manifest["ingredients"].as_array().unwrap().len(), 1);
-        assert!(manifest["ingredients"][0]["thumbnail"].is_null());
-    }
-
-    #[test]
-    fn test_ingredient_no_thumbnail_with_none_format() {
-        assert_ingredient_no_thumbnail_with_none_format(false);
-    }
-
-    #[test]
-    #[cfg(feature = "add_thumbnails")]
-    fn test_ingredient_no_thumbnail_with_none_format_auto_thumbnails() {
-        assert_ingredient_no_thumbnail_with_none_format(true);
-    }
-
-    fn assert_fine_grained_thumbnail_control(expect_manifest_thumbnail: bool) {
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
-        let signer = test_signer(SigningAlg::Ps256);
-
-        builder
-            .add_ingredient_from_stream(
-                r#"{"title": "asset_with_thumbnailnail"}"#,
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE),
-            )
-            .unwrap();
-
-        builder
-            .add_ingredient_from_stream(
-                r#"{"title": "no_thumbnail_assetnail", "thumbnail": { "format": "none", "identifier": "none" }}"#,
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE_CLEAN),
-            )
-            .unwrap();
-
-        let mut output = Cursor::new(Vec::new());
-        builder
-            .sign(
-                &signer,
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE_CLEAN),
-                &mut output,
-            )
-            .unwrap();
-
-        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
-        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
-        let active_id = json_value["active_manifest"].as_str().unwrap();
-        let manifest = &json_value["manifests"][active_id];
-
-        assert_manifest_thumbnail(manifest, expect_manifest_thumbnail);
-
-        let ingredients = manifest["ingredients"].as_array().unwrap();
-        let with_thumb = ingredients
-            .iter()
-            .find(|i| i["title"] == "asset_with_thumbnailnail")
-            .unwrap();
-        let without_thumb = ingredients
-            .iter()
-            .find(|i| i["title"] == "no_thumbnail_assetnail")
-            .unwrap();
-
-        assert!(with_thumb["thumbnail"].is_object());
-        assert!(without_thumb["thumbnail"].is_null());
-    }
-
-    #[test]
-    fn test_fine_grained_thumbnail_control() {
-        assert_fine_grained_thumbnail_control(false);
-    }
-
-    #[test]
-    #[cfg(feature = "add_thumbnails")]
-    fn test_fine_grained_thumbnail_control_auto_thumbnails() {
-        assert_fine_grained_thumbnail_control(true);
-    }
-
-    fn assert_manifest_no_thumbnail_ingredients_have_thumbnail() {
-        // The manifest explicitly sets "none", which wins over add_thumbnails
-        // auto-generation. Both feature configurations produce the same result,
-        // so there is no expect_manifest_thumbnail parameter here.
-        let manifest_json = json!({
-            "claim_generator_info": [{ "name": "c2pa_test", "version": "1.0.0" }],
-            "title": "Test_Manifest",
-            "thumbnail": { "format": "none", "identifier": "none" },
-            "assertions": [{
-                "label": "c2pa.actions",
-                "data": { "actions": [{ "action": "c2pa.created", "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty" }] }
-            }]
-        })
-        .to_string();
-
-        let mut builder = Builder::from_json(&manifest_json).unwrap();
-        let signer = test_signer(SigningAlg::Ps256);
-
-        builder
-            .add_ingredient_from_stream(
-                r#"{"title": "Test"}"#,
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE),
-            )
-            .unwrap();
-
-        let mut output = Cursor::new(Vec::new());
-        builder
-            .sign(
-                &signer,
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE_CLEAN),
-                &mut output,
-            )
-            .unwrap();
-
-        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
-        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
-        let active_id = json_value["active_manifest"].as_str().unwrap();
-        let manifest = &json_value["manifests"][active_id];
-
-        assert!(manifest["thumbnail"].is_null());
-        assert!(manifest["ingredients"][0]["thumbnail"].is_object());
-    }
-
-    #[test]
-    fn test_manifest_no_thumbnail_ingredients_have_thumbnail() {
-        assert_manifest_no_thumbnail_ingredients_have_thumbnail();
-    }
-
-    #[test]
-    #[cfg(feature = "add_thumbnails")]
-    fn test_manifest_no_thumbnail_ingredients_have_thumbnail_auto_thumbnails_on() {
-        assert_manifest_no_thumbnail_ingredients_have_thumbnail();
-    }
-
     fn archive_round_trip(builder: &mut Builder) -> Builder {
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive).unwrap();
@@ -4404,58 +4208,16 @@ mod tests {
         Builder::from_archive(archive).unwrap()
     }
 
-    fn assert_ingredient_no_thumbnail_with_none_format_archive(expect_manifest_thumbnail: bool) {
+    #[test]
+    fn test_fine_grained_thumbnail_control_archive() {
+        // Two ingredients through archive round-trip: one with a C2PA source
+        // thumbnail, one suppressed with "none".
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         let signer = test_signer(SigningAlg::Ps256);
 
         builder
             .add_ingredient_from_stream(
-                r#"{"title": "Test", "thumbnail": { "format": "none", "identifier": "none" }}"#,
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE_CLEAN),
-            )
-            .unwrap();
-
-        let mut builder = archive_round_trip(&mut builder);
-
-        let mut output = Cursor::new(Vec::new());
-        builder
-            .sign(
-                &signer,
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE_CLEAN),
-                &mut output,
-            )
-            .unwrap();
-
-        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
-        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
-        let active_id = json_value["active_manifest"].as_str().unwrap();
-        let manifest = &json_value["manifests"][active_id];
-
-        assert_manifest_thumbnail(manifest, expect_manifest_thumbnail);
-        assert_eq!(manifest["ingredients"].as_array().unwrap().len(), 1);
-        assert!(manifest["ingredients"][0]["thumbnail"].is_null());
-    }
-
-    #[test]
-    fn test_ingredient_no_thumbnail_with_none_format_archive() {
-        assert_ingredient_no_thumbnail_with_none_format_archive(false);
-    }
-
-    #[test]
-    #[cfg(feature = "add_thumbnails")]
-    fn test_ingredient_no_thumbnail_with_none_format_auto_thumbnails_archive() {
-        assert_ingredient_no_thumbnail_with_none_format_archive(true);
-    }
-
-    fn assert_fine_grained_thumbnail_control_archive(expect_manifest_thumbnail: bool) {
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
-        let signer = test_signer(SigningAlg::Ps256);
-
-        builder
-            .add_ingredient_from_stream(
-                r#"{"title": "asset_with_thumbnailnail"}"#,
+                r#"{"title": "with_thumbnail"}"#,
                 "image/jpeg",
                 &mut Cursor::new(TEST_IMAGE),
             )
@@ -4463,7 +4225,7 @@ mod tests {
 
         builder
             .add_ingredient_from_stream(
-                r#"{"title": "no_thumbnail_assetnail", "thumbnail": { "format": "none", "identifier": "none" }}"#,
+                r#"{"title": "no_thumbnail", "thumbnail": { "format": "none", "identifier": "none" }}"#,
                 "image/jpeg",
                 &mut Cursor::new(TEST_IMAGE_CLEAN),
             )
@@ -4484,18 +4246,17 @@ mod tests {
         let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
         let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
         let active_id = json_value["active_manifest"].as_str().unwrap();
-        let manifest = &json_value["manifests"][active_id];
+        let ingredients = json_value["manifests"][active_id]["ingredients"]
+            .as_array()
+            .unwrap();
 
-        assert_manifest_thumbnail(manifest, expect_manifest_thumbnail);
-
-        let ingredients = manifest["ingredients"].as_array().unwrap();
         let with_thumb = ingredients
             .iter()
-            .find(|i| i["title"] == "asset_with_thumbnailnail")
+            .find(|i| i["title"] == "with_thumbnail")
             .unwrap();
         let without_thumb = ingredients
             .iter()
-            .find(|i| i["title"] == "no_thumbnail_assetnail")
+            .find(|i| i["title"] == "no_thumbnail")
             .unwrap();
 
         assert!(with_thumb["thumbnail"].is_object());
@@ -4503,19 +4264,9 @@ mod tests {
     }
 
     #[test]
-    fn test_fine_grained_thumbnail_control_archive() {
-        assert_fine_grained_thumbnail_control_archive(false);
-    }
-
-    #[test]
-    #[cfg(feature = "add_thumbnails")]
-    fn test_fine_grained_thumbnail_control_auto_thumbnails_archive() {
-        assert_fine_grained_thumbnail_control_archive(true);
-    }
-
-    fn assert_manifest_no_thumbnail_ingredients_have_thumbnail_archive() {
-        // The manifest explicitly sets "none", which wins over add_thumbnails.
-        // Both feature configurations produce the same result.
+    fn test_manifest_no_thumbnail_ingredients_have_thumbnail_archive() {
+        // Manifest explicitly says "none" (wins over add_thumbnails), but
+        // ingredient retains its thumbnail from C2PA source. Archive round-trip.
         let manifest_json = json!({
             "claim_generator_info": [{ "name": "c2pa_test", "version": "1.0.0" }],
             "title": "Test_Manifest",
@@ -4559,21 +4310,10 @@ mod tests {
         assert!(manifest["ingredients"][0]["thumbnail"].is_object());
     }
 
-    #[test]
-    fn test_manifest_no_thumbnail_ingredients_have_thumbnail_archive() {
-        assert_manifest_no_thumbnail_ingredients_have_thumbnail_archive();
-    }
-
-    #[test]
-    #[cfg(feature = "add_thumbnails")]
-    fn test_manifest_no_thumbnail_ingredients_have_thumbnail_auto_thumbnails_archive() {
-        assert_manifest_no_thumbnail_ingredients_have_thumbnail_archive();
-    }
-
-    fn assert_none_sentinel_absent_from_final_signed_manifest(use_archive: bool) {
-        // Verify "none" markers never appear in final signed manifests.
-        // When use_archive is true, also verify the marker assertion in the
-        // archive working store does not leak into the final signed output.
+    fn assert_none_sentinel_absent(use_archive: bool) {
+        // Both manifest and ingredient use "none". After signing (optionally
+        // through archive), verify the sentinel never appears in Reader API
+        // or JSON output.
         let manifest_json = json!({
             "claim_generator_info": [{ "name": "c2pa_test", "version": "1.0.0" }],
             "title": "Sentinel_Test",
@@ -4590,7 +4330,7 @@ mod tests {
 
         builder
             .add_ingredient_from_stream(
-                r#"{"title": "no_thumbnail_asset Ingredient", "thumbnail": { "format": "none", "identifier": "none" }}"#,
+                r#"{"title": "Suppressed", "thumbnail": { "format": "none", "identifier": "none" }}"#,
                 "image/jpeg",
                 &mut Cursor::new(TEST_IMAGE_CLEAN),
             )
@@ -4614,7 +4354,6 @@ mod tests {
 
         let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
 
-        // Check via Reader API: no "none" ResourceRefs
         let manifest = reader.active_manifest().unwrap();
         assert!(
             manifest.thumbnail_ref().is_none(),
@@ -4627,7 +4366,6 @@ mod tests {
             );
         }
 
-        // Check via JSON: no "none" format strings in thumbnail contexts
         let json_str = reader.json();
         assert!(
             !json_str.contains(r#""format":"none"#),
@@ -4641,22 +4379,18 @@ mod tests {
 
     #[test]
     fn test_none_sentinel_absent_from_final_signed_manifest() {
-        assert_none_sentinel_absent_from_final_signed_manifest(false);
+        assert_none_sentinel_absent(false);
     }
 
     #[test]
     fn test_none_sentinel_absent_from_final_signed_manifest_via_archive() {
-        assert_none_sentinel_absent_from_final_signed_manifest(true);
+        assert_none_sentinel_absent(true);
     }
 
-    // === Ingredient archive tests ===
-    // An ingredient archive is a .c2pa working store containing exactly one ingredient.
-    // It can be added to another builder via add_ingredient_from_stream("application/c2pa").
-
-    /// Create an ingredient archive: a builder with one ingredient, serialized to .c2pa bytes.
-    /// `source` is the image stream for the ingredient (use TEST_IMAGE for C2PA-signed source
-    /// that carries a thumbnail, or TEST_IMAGE_CLEAN for a plain source without one).
     fn create_ingredient_archive(ingredient_json: &str, source: &[u8]) -> Vec<u8> {
+        // An ingredient archive is a .c2pa working store containing exactly one
+        // ingredient. It is added back to another builder via
+        // add_ingredient("application/c2pa").
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(ingredient_json, "image/jpeg", &mut Cursor::new(source))
@@ -4666,17 +4400,33 @@ mod tests {
         archive.into_inner()
     }
 
-    fn assert_ingredient_archive_with_thumbnail(expect_manifest_thumbnail: bool) {
-        let archive_bytes = create_ingredient_archive(r#"{"title": "Has Thumb"}"#, TEST_IMAGE);
+    #[test]
+    fn test_ingredient_archive_mixed_thumbnails() {
+        // Two ingredient archives: one with a C2PA-source thumbnail, one with
+        // "none". Covers both single-ingredient with/without cases together.
+        let archive_with =
+            create_ingredient_archive(r#"{"title": "asset_with_thumbnail"}"#, TEST_IMAGE);
+        let archive_without = create_ingredient_archive(
+            r#"{"title": "no_thumbnail_asset", "thumbnail": {"format": "none", "identifier": "none"}}"#,
+            TEST_IMAGE_CLEAN,
+        );
 
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         let signer = test_signer(SigningAlg::Ps256);
 
         builder
             .add_ingredient_from_stream(
-                r#"{"title": "Has Thumb"}"#,
+                r#"{"title": "asset_with_thumbnail"}"#,
                 "application/c2pa",
-                &mut Cursor::new(archive_bytes),
+                &mut Cursor::new(archive_with),
+            )
+            .unwrap();
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "no_thumbnail_asset"}"#,
+                "application/c2pa",
+                &mut Cursor::new(archive_without),
             )
             .unwrap();
 
@@ -4693,95 +4443,28 @@ mod tests {
         let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
         let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
         let active_id = json_value["active_manifest"].as_str().unwrap();
-        let manifest = &json_value["manifests"][active_id];
+        let ingredients = json_value["manifests"][active_id]["ingredients"]
+            .as_array()
+            .unwrap();
+        assert_eq!(ingredients.len(), 2);
 
-        assert_manifest_thumbnail(manifest, expect_manifest_thumbnail);
-        assert_eq!(manifest["ingredients"].as_array().unwrap().len(), 1);
-        assert!(
-            manifest["ingredients"][0]["thumbnail"].is_object(),
-            "Ingredient from archive should have a thumbnail"
-        );
+        let with = ingredients
+            .iter()
+            .find(|i| i["title"] == "asset_with_thumbnail")
+            .unwrap();
+        let without = ingredients
+            .iter()
+            .find(|i| i["title"] == "no_thumbnail_asset")
+            .unwrap();
+
+        assert!(with["thumbnail"].is_object());
+        assert!(without["thumbnail"].is_null());
     }
 
     #[test]
-    fn test_ingredient_archive_with_thumbnail() {
-        assert_ingredient_archive_with_thumbnail(false);
-    }
-
-    #[test]
-    #[cfg(feature = "add_thumbnails")]
-    fn test_ingredient_archive_with_thumbnail_auto_thumbnails() {
-        assert_ingredient_archive_with_thumbnail(true);
-    }
-
-    fn assert_ingredient_archive_with_explicit_thumbnail(expect_manifest_thumbnail: bool) {
-        // Source image has no C2PA data but ingredient gets an explicit thumbnail.
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
-        let ingredient = builder
-            .add_ingredient_from_stream(
-                r#"{"title": "Explicit Thumb"}"#,
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE_CLEAN),
-            )
-            .unwrap();
-        ingredient
-            .set_thumbnail("image/jpeg", TEST_THUMBNAIL.to_vec())
-            .unwrap();
-
-        let mut archive = Cursor::new(Vec::new());
-        builder.to_archive(&mut archive).unwrap();
-        let archive_bytes = archive.into_inner();
-
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
-        let signer = test_signer(SigningAlg::Ps256);
-
-        builder
-            .add_ingredient_from_stream(
-                r#"{"title": "Explicit Thumb"}"#,
-                "application/c2pa",
-                &mut Cursor::new(archive_bytes),
-            )
-            .unwrap();
-
-        let mut output = Cursor::new(Vec::new());
-        builder
-            .sign(
-                &signer,
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE_CLEAN),
-                &mut output,
-            )
-            .unwrap();
-
-        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
-        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
-        let active_id = json_value["active_manifest"].as_str().unwrap();
-        let manifest = &json_value["manifests"][active_id];
-
-        assert_manifest_thumbnail(manifest, expect_manifest_thumbnail);
-        assert_eq!(manifest["ingredients"].as_array().unwrap().len(), 1);
-        assert!(
-            manifest["ingredients"][0]["thumbnail"].is_object(),
-            "Ingredient with explicit thumbnail should survive archive round-trip"
-        );
-    }
-
-    #[test]
-    fn test_ingredient_archive_with_explicit_thumbnail() {
-        assert_ingredient_archive_with_explicit_thumbnail(false);
-    }
-
-    #[test]
-    #[cfg(feature = "add_thumbnails")]
-    fn test_ingredient_archive_with_explicit_thumbnail_auto_thumbnails() {
-        assert_ingredient_archive_with_explicit_thumbnail(true);
-    }
-
-    fn assert_ingredient_archive_with_explicit_thumbnail_manifest_no_thumbnail(
-        expect_manifest_thumbnail: bool,
-    ) {
-        // Ingredient gets an explicit thumbnail, but the archive's manifest says "none".
-        // The ingredient thumbnail should still survive the archive round-trip.
+    fn test_ingredient_archive_explicit_thumbnail_survives_manifest_none() {
+        // Ingredient gets an explicit thumbnail via set_thumbnail(), but the
+        // archive's manifest says "none". The ingredient thumbnail must survive.
         let no_thumb_manifest = json!({
             "claim_generator_info": [{ "name": "c2pa_test", "version": "1.0.0" }],
             "title": "No Manifest Thumb",
@@ -4809,8 +4492,6 @@ mod tests {
         builder.to_archive(&mut archive).unwrap();
         let archive_bytes = archive.into_inner();
 
-        // The consumer builder uses simple_manifest_json() (no explicit "none"),
-        // so with add_thumbnails the consumer manifest may get a thumbnail.
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         let signer = test_signer(SigningAlg::Ps256);
 
@@ -4835,32 +4516,18 @@ mod tests {
         let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
         let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
         let active_id = json_value["active_manifest"].as_str().unwrap();
-        let manifest = &json_value["manifests"][active_id];
+        let ingredients = json_value["manifests"][active_id]["ingredients"]
+            .as_array()
+            .unwrap();
 
-        assert_manifest_thumbnail(manifest, expect_manifest_thumbnail);
-        assert_eq!(manifest["ingredients"].as_array().unwrap().len(), 1);
-        assert!(
-            manifest["ingredients"][0]["thumbnail"].is_object(),
-            "Ingredient with explicit thumbnail should survive even when archive manifest has no thumbnail"
-        );
+        assert_eq!(ingredients.len(), 1);
+        assert!(ingredients[0]["thumbnail"].is_object());
     }
 
     #[test]
-    fn test_ingredient_archive_with_explicit_thumbnail_manifest_no_thumbnail() {
-        assert_ingredient_archive_with_explicit_thumbnail_manifest_no_thumbnail(false);
-    }
-
-    #[test]
-    #[cfg(feature = "add_thumbnails")]
-    fn test_ingredient_archive_with_explicit_thumbnail_manifest_no_thumbnail_auto_thumbnails() {
-        assert_ingredient_archive_with_explicit_thumbnail_manifest_no_thumbnail(true);
-    }
-
-    fn assert_ingredient_archive_with_explicit_thumbnail_suppressed_on_add(
-        expect_manifest_thumbnail: bool,
-    ) {
-        // Ingredient archive has an explicit thumbnail, but when adding it
-        // to the consumer builder the JSON says "none", suppressing it.
+    fn test_ingredient_archive_thumbnail_suppressed_on_add() {
+        // Ingredient archive has an explicit thumbnail, but when adding it to
+        // the consumer builder the JSON says "none", suppressing it via merge().
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         let ingredient = builder
             .add_ingredient_from_stream(
@@ -4901,32 +4568,18 @@ mod tests {
         let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
         let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
         let active_id = json_value["active_manifest"].as_str().unwrap();
-        let manifest = &json_value["manifests"][active_id];
+        let ingredients = json_value["manifests"][active_id]["ingredients"]
+            .as_array()
+            .unwrap();
 
-        assert_manifest_thumbnail(manifest, expect_manifest_thumbnail);
-        assert_eq!(manifest["ingredients"].as_array().unwrap().len(), 1);
-        assert!(
-            manifest["ingredients"][0]["thumbnail"].is_null(),
-            "Ingredient thumbnail should be suppressed when add JSON specifies 'none'"
-        );
+        assert_eq!(ingredients.len(), 1);
+        assert!(ingredients[0]["thumbnail"].is_null());
     }
 
     #[test]
-    fn test_ingredient_archive_with_explicit_thumbnail_suppressed_on_add() {
-        assert_ingredient_archive_with_explicit_thumbnail_suppressed_on_add(false);
-    }
-
-    #[test]
-    #[cfg(feature = "add_thumbnails")]
-    fn test_ingredient_archive_with_explicit_thumbnail_suppressed_on_add_auto_thumbnails() {
-        assert_ingredient_archive_with_explicit_thumbnail_suppressed_on_add(true);
-    }
-
-    fn assert_ingredient_archive_with_thumbnail_manifest_no_thumbnail(
-        expect_manifest_thumbnail: bool,
-    ) {
-        // Ingredient has a thumbnail from C2PA source, but the archive's manifest says "none".
-        // The ingredient thumbnail should still survive the archive round-trip.
+    fn test_ingredient_archive_c2pa_thumbnail_survives_manifest_none() {
+        // Ingredient has a thumbnail from C2PA source, but the archive's manifest
+        // says "none". The ingredient thumbnail must survive.
         let no_thumb_manifest = json!({
             "claim_generator_info": [{ "name": "c2pa_test", "version": "1.0.0" }],
             "title": "No Manifest Thumb",
@@ -4951,8 +4604,6 @@ mod tests {
         builder.to_archive(&mut archive).unwrap();
         let archive_bytes = archive.into_inner();
 
-        // The consumer builder uses simple_manifest_json() (no explicit "none"),
-        // so with add_thumbnails the consumer manifest may get a thumbnail.
         let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
         let signer = test_signer(SigningAlg::Ps256);
 
@@ -4977,156 +4628,12 @@ mod tests {
         let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
         let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
         let active_id = json_value["active_manifest"].as_str().unwrap();
-        let manifest = &json_value["manifests"][active_id];
-
-        assert_manifest_thumbnail(manifest, expect_manifest_thumbnail);
-        assert_eq!(manifest["ingredients"].as_array().unwrap().len(), 1);
-        assert!(
-            manifest["ingredients"][0]["thumbnail"].is_object(),
-            "Ingredient thumbnail from C2PA source should survive even when archive manifest has no thumbnail"
-        );
-    }
-
-    #[test]
-    fn test_ingredient_archive_with_thumbnail_manifest_no_thumbnail() {
-        assert_ingredient_archive_with_thumbnail_manifest_no_thumbnail(false);
-    }
-
-    #[test]
-    #[cfg(feature = "add_thumbnails")]
-    fn test_ingredient_archive_with_thumbnail_manifest_no_thumbnail_auto_thumbnails() {
-        assert_ingredient_archive_with_thumbnail_manifest_no_thumbnail(true);
-    }
-
-    fn assert_ingredient_archive_without_thumbnail(expect_manifest_thumbnail: bool) {
-        // TEST_IMAGE_CLEAN has no C2PA data, so no claim thumbnail is extracted.
-        // The "none" sentinel ensures no thumbnail is auto-generated either.
-        let archive_bytes = create_ingredient_archive(
-            r#"{"title": "no_thumbnail_asset", "thumbnail": {"format": "none", "identifier": "none"}}"#,
-            TEST_IMAGE_CLEAN,
-        );
-
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
-        let signer = test_signer(SigningAlg::Ps256);
-
-        builder
-            .add_ingredient_from_stream(
-                r#"{"title": "no_thumbnail_asset"}"#,
-                "application/c2pa",
-                &mut Cursor::new(archive_bytes),
-            )
+        let ingredients = json_value["manifests"][active_id]["ingredients"]
+            .as_array()
             .unwrap();
 
-        let mut output = Cursor::new(Vec::new());
-        builder
-            .sign(
-                &signer,
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE_CLEAN),
-                &mut output,
-            )
-            .unwrap();
-
-        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
-        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
-        let active_id = json_value["active_manifest"].as_str().unwrap();
-        let manifest = &json_value["manifests"][active_id];
-
-        assert_manifest_thumbnail(manifest, expect_manifest_thumbnail);
-        assert_eq!(manifest["ingredients"].as_array().unwrap().len(), 1);
-        assert!(
-            manifest["ingredients"][0]["thumbnail"].is_null(),
-            "Ingredient from archive with 'none' thumbnail should have no thumbnail"
-        );
-    }
-
-    #[test]
-    fn test_ingredient_archive_without_thumbnail() {
-        assert_ingredient_archive_without_thumbnail(false);
-    }
-
-    #[test]
-    #[cfg(feature = "add_thumbnails")]
-    fn test_ingredient_archive_without_thumbnail_auto_thumbnails() {
-        assert_ingredient_archive_without_thumbnail(true);
-    }
-
-    fn assert_ingredient_archive_mixed_thumbnails(expect_manifest_thumbnail: bool) {
-        // Two ingredient archives: one with thumbnail, one without.
-        let archive_with =
-            create_ingredient_archive(r#"{"title": "asset_with_thumbnail"}"#, TEST_IMAGE);
-        let archive_without = create_ingredient_archive(
-            r#"{"title": "no_thumbnail_asset", "thumbnail": {"format": "none", "identifier": "none"}}"#,
-            TEST_IMAGE_CLEAN,
-        );
-
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
-        let signer = test_signer(SigningAlg::Ps256);
-
-        builder
-            .add_ingredient_from_stream(
-                r#"{"title": "asset_with_thumbnail"}"#,
-                "application/c2pa",
-                &mut Cursor::new(archive_with),
-            )
-            .unwrap();
-
-        builder
-            .add_ingredient_from_stream(
-                r#"{"title": "no_thumbnail_asset"}"#,
-                "application/c2pa",
-                &mut Cursor::new(archive_without),
-            )
-            .unwrap();
-
-        let mut output = Cursor::new(Vec::new());
-        builder
-            .sign(
-                &signer,
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE_CLEAN),
-                &mut output,
-            )
-            .unwrap();
-
-        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
-        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
-        let active_id = json_value["active_manifest"].as_str().unwrap();
-        let manifest = &json_value["manifests"][active_id];
-
-        assert_manifest_thumbnail(manifest, expect_manifest_thumbnail);
-
-        let ingredients = manifest["ingredients"].as_array().unwrap();
-        assert_eq!(ingredients.len(), 2);
-
-        let with = ingredients
-            .iter()
-            .find(|i| i["title"] == "asset_with_thumbnail")
-            .unwrap();
-        let without = ingredients
-            .iter()
-            .find(|i| i["title"] == "no_thumbnail_asset")
-            .unwrap();
-
-        assert!(
-            with["thumbnail"].is_object(),
-            "Ingredient with thumbnail should have a thumbnail"
-        );
-        assert!(
-            without["thumbnail"].is_null(),
-            "Ingredient without thumbnail should have no thumbnail"
-        );
-    }
-
-    #[test]
-    fn test_ingredient_archive_mixed_thumbnails() {
-        assert_ingredient_archive_mixed_thumbnails(false);
-    }
-
-    #[test]
-    #[cfg(feature = "add_thumbnails")]
-    fn test_ingredient_archive_mixed_thumbnails_auto_thumbnails() {
-        assert_ingredient_archive_mixed_thumbnails(true);
+        assert_eq!(ingredients.len(), 1);
+        assert!(ingredients[0]["thumbnail"].is_object());
     }
 
     #[test]
