@@ -87,7 +87,7 @@ pub struct Manifest {
     #[serde(default = "default_instance_id")]
     instance_id: String,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "is_none_or_suppressed")]
     thumbnail: Option<ResourceRef>,
 
     /// A List of ingredients
@@ -138,6 +138,13 @@ pub struct Manifest {
     /// container for binary assets (like thumbnails)
     #[serde(skip)]
     resources: ResourceStore,
+}
+
+fn is_none_or_suppressed(thumbnail: &Option<ResourceRef>) -> bool {
+    match thumbnail {
+        None => true,
+        Some(r) => r.format == "none",
+    }
 }
 
 fn default_instance_id() -> String {
@@ -555,13 +562,18 @@ impl Manifest {
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = EmbeddedData::from_assertion(assertion)?;
-                    let id = to_assertion_uri(claim.label(), label);
-                    //let id = jumbf::labels::to_relative_uri(&id);
-                    manifest.thumbnail = Some(manifest.resources.add_uri(
-                        &id,
-                        &thumbnail.content_type,
-                        thumbnail.data,
-                    )?);
+                    if thumbnail.content_type == "none" {
+                        manifest.thumbnail =
+                            Some(ResourceRef::new("none".to_string(), "none"));
+                    } else {
+                        let id = to_assertion_uri(claim.label(), label);
+                        //let id = jumbf::labels::to_relative_uri(&id);
+                        manifest.thumbnail = Some(manifest.resources.add_uri(
+                            &id,
+                            &thumbnail.content_type,
+                            thumbnail.data,
+                        )?);
+                    }
                 } // handle special case for AssertionMetadata
                 labels::ASSERTION_METADATA => {
                     let assertion_metadata = AssertionMetadata::from_assertion(assertion)?;

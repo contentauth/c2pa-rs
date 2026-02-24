@@ -80,7 +80,7 @@ pub struct Ingredient {
     /// A thumbnail image capturing the visual state at the time of import.
     ///
     /// A tuple of thumbnail MIME format (for example `image/jpeg`) and binary bits of the image.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "is_none_or_suppressed")]
     thumbnail: Option<ResourceRef>,
 
     /// An optional hash of the asset to prevent duplicates.
@@ -149,6 +149,13 @@ pub struct Ingredient {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     ocsp_responses: Option<Vec<ResourceRef>>,
+}
+
+fn is_none_or_suppressed(thumbnail: &Option<ResourceRef>) -> bool {
+    match thumbnail {
+        None => true,
+        Some(r) => r.format == "none",
+    }
 }
 
 fn default_instance_id() -> String {
