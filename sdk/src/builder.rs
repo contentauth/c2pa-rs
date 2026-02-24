@@ -4250,17 +4250,17 @@ mod tests {
             .as_array()
             .unwrap();
 
-        let with_thumb = ingredients
+        let with_thumbnail = ingredients
             .iter()
             .find(|i| i["title"] == "with_thumbnail")
             .unwrap();
-        let without_thumb = ingredients
+        let without_thumbnail = ingredients
             .iter()
             .find(|i| i["title"] == "no_thumbnail")
             .unwrap();
 
-        assert!(with_thumb["thumbnail"].is_object());
-        assert!(without_thumb["thumbnail"].is_null());
+        assert!(with_thumbnail["thumbnail"].is_object());
+        assert!(without_thumbnail["thumbnail"].is_null());
     }
 
     #[test]
