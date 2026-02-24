@@ -1190,8 +1190,8 @@ impl Builder {
             let mut builder = reader.into_builder()?;
 
             // Keep ingredient as configured during initial add:
-            // if an ingredient has no_thumbnail_assetnail here, it was very likely
-            // ntentionally skipped!
+            // if an ingredient has no_thumbnail here, it was very likely
+            // intentionally skipped!
             for ingredient in &mut builder.definition.ingredients {
                 if ingredient.thumbnail_ref().is_none() {
                     ingredient.set_thumbnail_ref(ResourceRef::new("none".to_string(), "none"))?;
@@ -4594,7 +4594,7 @@ mod tests {
         let mut builder = Builder::from_json(&no_thumb_manifest).unwrap();
         builder
             .add_ingredient_from_stream(
-                r#"{"title": "Has Thumb"}"#,
+                r#"{"title": "Has_thumbnail"}"#,
                 "image/jpeg",
                 &mut Cursor::new(TEST_IMAGE),
             )
@@ -4609,7 +4609,7 @@ mod tests {
 
         builder
             .add_ingredient_from_stream(
-                r#"{"title": "Has Thumb"}"#,
+                r#"{"title": "Has_thumbnail"}"#,
                 "application/c2pa",
                 &mut Cursor::new(archive_bytes),
             )
