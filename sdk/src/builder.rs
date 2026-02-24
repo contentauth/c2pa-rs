@@ -4194,7 +4194,12 @@ mod tests {
 
         let mut output = Cursor::new(Vec::new());
         builder
-            .sign(&signer, "image/jpeg", &mut Cursor::new(TEST_IMAGE_CLEAN), &mut output)
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
             .unwrap();
 
         let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
@@ -4230,16 +4235,29 @@ mod tests {
 
         let mut output = Cursor::new(Vec::new());
         builder
-            .sign(&signer, "image/jpeg", &mut Cursor::new(TEST_IMAGE_CLEAN), &mut output)
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
             .unwrap();
 
         let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
         let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
         let active_id = json_value["active_manifest"].as_str().unwrap();
-        let ingredients = json_value["manifests"][active_id]["ingredients"].as_array().unwrap();
+        let ingredients = json_value["manifests"][active_id]["ingredients"]
+            .as_array()
+            .unwrap();
 
-        let with_thumb = ingredients.iter().find(|i| i["title"] == "With Thumbnail").unwrap();
-        let without_thumb = ingredients.iter().find(|i| i["title"] == "Without Thumbnail").unwrap();
+        let with_thumb = ingredients
+            .iter()
+            .find(|i| i["title"] == "With Thumbnail")
+            .unwrap();
+        let without_thumb = ingredients
+            .iter()
+            .find(|i| i["title"] == "Without Thumbnail")
+            .unwrap();
 
         assert!(with_thumb["thumbnail"].is_object());
         assert!(without_thumb["thumbnail"].is_null());
@@ -4272,7 +4290,12 @@ mod tests {
 
         let mut output = Cursor::new(Vec::new());
         builder
-            .sign(&signer, "image/jpeg", &mut Cursor::new(TEST_IMAGE_CLEAN), &mut output)
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
             .unwrap();
 
         let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
