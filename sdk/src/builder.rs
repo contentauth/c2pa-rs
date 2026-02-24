@@ -4268,7 +4268,7 @@ mod tests {
         // Manifest explicitly says "none" (wins over add_thumbnails), but
         // ingredient retains its thumbnail from C2PA source. Archive round-trip.
         let manifest_json = json!({
-            "claim_generator_info": [{ "name": "c2pa_test", "version": "1.0.0" }],
+            "claim_generator_info": [{ "name": "c2pa_test", "version": "0.1.0" }],
             "title": "Test_Manifest",
             "thumbnail": { "format": "none", "identifier": "none" },
             "assertions": [{
@@ -4315,7 +4315,7 @@ mod tests {
         // through archive), verify the sentinel never appears in Reader API
         // or JSON output.
         let manifest_json = json!({
-            "claim_generator_info": [{ "name": "c2pa_test", "version": "1.0.0" }],
+            "claim_generator_info": [{ "name": "c2pa_test", "version": "0.1.0" }],
             "title": "Sentinel_Test",
             "thumbnail": { "format": "none", "identifier": "none" },
             "assertions": [{
@@ -4466,7 +4466,7 @@ mod tests {
         // Ingredient gets an explicit thumbnail via set_thumbnail(), but the
         // archive's manifest says "none". The ingredient thumbnail must survive.
         let no_thumb_manifest = json!({
-            "claim_generator_info": [{ "name": "c2pa_test", "version": "1.0.0" }],
+            "claim_generator_info": [{ "name": "c2pa_test", "version": "0.1.0" }],
             "title": "No Manifest Thumb",
             "thumbnail": { "format": "none", "identifier": "none" },
             "assertions": [{
@@ -4581,7 +4581,7 @@ mod tests {
         // Ingredient has a thumbnail from C2PA source, but the archive's manifest
         // says "none". The ingredient thumbnail must survive.
         let no_thumb_manifest = json!({
-            "claim_generator_info": [{ "name": "c2pa_test", "version": "1.0.0" }],
+            "claim_generator_info": [{ "name": "c2pa_test", "version": "0.1.0" }],
             "title": "No Manifest Thumb",
             "thumbnail": { "format": "none", "identifier": "none" },
             "assertions": [{
