@@ -4179,6 +4179,289 @@ mod tests {
     }
 
     #[test]
+    fn test_ingredient_no_thumbnail_with_none_format() {
+        // Test that setting thumbnail format to "none" on an ingredient suppresses its thumbnail,
+        // matching the behavior already supported on manifests (builder.rs line 1316).
+        // Use a manifest definition with an explicit thumbnail resource
+        let manifest_json = json!({
+            "claim_generator_info": [
+                {
+                    "name": "c2pa_test",
+                    "version": "1.0.0"
+                }
+            ],
+            "title": "Test_Manifest",
+            "thumbnail": {
+                "format": "image/jpeg",
+                "identifier": "manifest_thumb.jpg"
+            },
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                            }
+                        ]
+                    }
+                }
+            ]
+        })
+        .to_string();
+
+        let mut builder = Builder::from_json(&manifest_json).unwrap();
+
+        // Add thumbnail resource for the manifest
+        builder
+            .add_resource("manifest_thumb.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Ingredient with thumbnail explicitly suppressed via "none" format.
+        // Use TEST_IMAGE_CLEAN (no existing manifest) to avoid the parent claim thumbnail path.
+        let ingredient_json = r#"{
+            "title": "No Thumbnail Ingredient",
+            "thumbnail": {
+                "format": "none",
+                "identifier": "none"
+            }
+        }"#;
+        builder
+            .add_ingredient_from_stream(
+                ingredient_json,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(&signer, "image/jpeg", &mut source, &mut output)
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let reader_json = reader.json();
+        println!("{reader_json}");
+
+        let json_value: serde_json::Value = serde_json::from_str(&reader_json).unwrap();
+        let active_id = json_value["active_manifest"].as_str().unwrap();
+        let manifest = &json_value["manifests"][active_id];
+
+        // The manifest should have its explicit thumbnail
+        assert!(
+            manifest["thumbnail"].is_object(),
+            "Manifest should have a thumbnail"
+        );
+
+        // Ingredient should be present but without a thumbnail
+        let ingredients = manifest["ingredients"].as_array().unwrap();
+        assert_eq!(ingredients.len(), 1);
+        assert_eq!(
+            ingredients[0]["title"].as_str().unwrap(),
+            "No Thumbnail Ingredient"
+        );
+        assert!(
+            ingredients[0]["thumbnail"].is_null(),
+            "Ingredient with format 'none' should not have a thumbnail"
+        );
+    }
+
+    #[test]
+    fn test_fine_grained_thumbnail_control() {
+        // Test fine-grained control: manifest has thumbnail, one ingredient has thumbnail,
+        // other ingredient does NOT.
+        let manifest_json = json!({
+            "claim_generator_info": [
+                {
+                    "name": "c2pa_test",
+                    "version": "1.0.0"
+                }
+            ],
+            "title": "Test_Manifest",
+            "thumbnail": {
+                "format": "image/jpeg",
+                "identifier": "manifest_thumb.jpg"
+            },
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                            }
+                        ]
+                    }
+                }
+            ]
+        })
+        .to_string();
+
+        let mut builder = Builder::from_json(&manifest_json).unwrap();
+
+        // Add explicit manifest thumbnail resource
+        builder
+            .add_resource("manifest_thumb.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Ingredient 1: uses TEST_IMAGE (CA.jpg) which has an existing C2PA manifest,
+        // so its thumbnail will be inherited from the parent claim thumbnail.
+        let ingredient1_json = r#"{"title": "With Thumbnail"}"#;
+        builder
+            .add_ingredient_from_stream(
+                ingredient1_json,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+
+        // Ingredient 2: thumbnail suppressed via "none" format
+        let ingredient2_json = r#"{
+            "title": "Without Thumbnail",
+            "thumbnail": {
+                "format": "none",
+                "identifier": "none"
+            }
+        }"#;
+        builder
+            .add_ingredient_from_stream(
+                ingredient2_json,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(&signer, "image/jpeg", &mut source, &mut output)
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let reader_json = reader.json();
+        println!("{reader_json}");
+
+        let json_value: serde_json::Value = serde_json::from_str(&reader_json).unwrap();
+        let active_id = json_value["active_manifest"].as_str().unwrap();
+        let manifest = &json_value["manifests"][active_id];
+
+        // Manifest should have a thumbnail
+        assert!(
+            manifest["thumbnail"].is_object(),
+            "Manifest should have a thumbnail"
+        );
+
+        // Should have exactly 2 ingredients
+        let ingredients = manifest["ingredients"].as_array().unwrap();
+        assert_eq!(ingredients.len(), 2);
+
+        // Find each ingredient by title
+        let with_thumb = ingredients
+            .iter()
+            .find(|i| i["title"].as_str() == Some("With Thumbnail"))
+            .expect("should find ingredient with thumbnail");
+        let without_thumb = ingredients
+            .iter()
+            .find(|i| i["title"].as_str() == Some("Without Thumbnail"))
+            .expect("should find ingredient without thumbnail");
+
+        // Ingredient with thumbnail should have one (from parent claim)
+        assert!(
+            with_thumb["thumbnail"].is_object(),
+            "Ingredient 'With Thumbnail' should have a thumbnail"
+        );
+
+        // Ingredient without thumbnail should NOT have one
+        assert!(
+            without_thumb["thumbnail"].is_null(),
+            "Ingredient 'Without Thumbnail' should not have a thumbnail"
+        );
+    }
+
+    #[test]
+    fn test_manifest_no_thumbnail_ingredient_yes_thumbnail() {
+        // Test: manifest does NOT have thumbnail, ingredient DOES.
+        // Set manifest thumbnail format to "none" to suppress it.
+        let manifest_json = json!({
+            "claim_generator_info": [
+                {
+                    "name": "c2pa_test",
+                    "version": "1.0.0"
+                }
+            ],
+            "title": "Test_Manifest",
+            "thumbnail": {
+                "format": "none",
+                "identifier": "none"
+            },
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                            }
+                        ]
+                    }
+                }
+            ]
+        })
+        .to_string();
+
+        let mut builder = Builder::from_json(&manifest_json).unwrap();
+
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Ingredient uses TEST_IMAGE (CA.jpg) which has existing C2PA data,
+        // so the ingredient will get a thumbnail from its parent claim.
+        let ingredient_json = r#"{"title": "Ingredient With Thumbnail"}"#;
+        builder
+            .add_ingredient_from_stream(
+                ingredient_json,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(&signer, "image/jpeg", &mut source, &mut output)
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let reader_json = reader.json();
+        println!("{reader_json}");
+
+        let json_value: serde_json::Value = serde_json::from_str(&reader_json).unwrap();
+        let active_id = json_value["active_manifest"].as_str().unwrap();
+        let manifest = &json_value["manifests"][active_id];
+
+        // Manifest should NOT have a thumbnail
+        assert!(
+            manifest["thumbnail"].is_null(),
+            "Manifest should not have a thumbnail when format is 'none'"
+        );
+
+        // Ingredient SHOULD have a thumbnail (from its parent claim)
+        let ingredients = manifest["ingredients"].as_array().unwrap();
+        assert_eq!(ingredients.len(), 1);
+        assert!(
+            ingredients[0]["thumbnail"].is_object(),
+            "Ingredient should have a thumbnail from its parent claim"
+        );
+    }
+
+    #[test]
     fn test_with_archive() -> Result<()> {
         let mut builder =
             Builder::from_context(Context::new()).with_definition(r#"{"title": "Test Image"}"#)?;
