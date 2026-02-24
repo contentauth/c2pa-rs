@@ -143,7 +143,6 @@ Later, you can add that archived ingredient to a new manifest as follows:
 ```rust
 let mut builder = Builder::from_shared_context(&context)
     .with_definition(manifest_def("New Work", FORMAT))?;
-builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
 builder.add_ingredient_from_stream(
     json!({
