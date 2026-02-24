@@ -1277,11 +1277,8 @@ impl Ingredient {
             None => (None, None),
         };
 
-        // if the ingredient defines a thumbnail, add it to the claim
-        // otherwise use the parent claim thumbnail if available
         if let Some(thumb_ref) = self.thumbnail_ref() {
-            // Setting the format to "none" will ensure that no ingredient thumbnail is added,
-            // including any thumbnail inherited from the parent claim above.
+            // Setting the format to "none" suppresses the ingredient thumbnail
             if thumb_ref.format == "none" {
                 thumbnail = None;
             } else {
