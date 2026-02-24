@@ -12,6 +12,7 @@
 // each license.
 
 use extfmt::Hexlify;
+use serde_bytes::ByteBuf;
 
 use super::hash_utils::{concat_and_hash, hash_by_alg};
 use crate::{Error, Result};
@@ -88,6 +89,10 @@ impl C2PAMerkleTree {
 
     pub fn get_root(&self) -> Option<&Vec<u8>> {
         Some(&self.layers.last()?.first()?.0)
+    }
+
+    pub fn leaves_bytebufs(&self) -> Vec<ByteBuf> {
+        self.leaves.iter().map(|n| ByteBuf::from(n.0.clone()) ).collect()
     }
 
     fn generate_tree(alg: &str, leaves: &[MerkleNode]) -> Vec<Vec<MerkleNode>> {

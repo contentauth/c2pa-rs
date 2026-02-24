@@ -790,6 +790,32 @@ impl Builder {
         Ok(self)
     }
 
+    /// Replaces a CBOR assertion in the manfiest.
+    /// In most cases, use this function instead of `add_assertion_json`, unless the assertion must be stored in JSON format.
+    ///
+    /// # Arguments
+    /// * `label` - A label for the assertion.
+    /// * `data` - The data for the assertion. The data can be any Serde-serializable type or an AssertionDefinition.
+    /// # Returns
+    /// * A mutable reference to the [`Builder`].
+    /// # Errors
+    /// * Returns an [`Error`] if the assertion is not valid.
+    pub fn replace_assertion<S, T>(&mut self, label: S, data: &T) -> Result<&mut Self>
+    where
+        S: Into<String>,
+        T: Serialize,
+    {
+        let label: String = label.into();
+
+        if let Some(item) = self.definition.assertions.iter_mut().find(|x| x.label.contains(&label)) {
+            item.data = AssertionData::Cbor(c2pa_cbor::value::to_value(data)?);
+            Ok(self)
+        } else {
+            self.add_assertion(&label, data)
+        }
+    }
+
+
     /// Adds a single action to the manifest.
     /// This is a convenience method for adding an action to the `Actions` assertion.
     ///

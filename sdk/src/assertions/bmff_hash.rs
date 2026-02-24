@@ -12,7 +12,7 @@
 // each license.
 
 use std::{
-    collections::{hash_map::Entry::Vacant, HashMap},
+    collections::{hash_map::Entry::Vacant, BTreeMap, HashMap},
     fmt,
     io::{BufReader, Cursor, Read, Seek},
     ops::Deref,
@@ -234,6 +234,47 @@ impl MerkleMap {
 
         self.hash_check(index, &hash)
     }
+
+    pub fn create_mms_from_mdat_leaves(
+        alg: &str,
+        merkle_leaves: &BTreeMap<usize, Vec<(u64, Vec<u8>)>>,
+    ) -> crate::Result<Vec<MerkleMap>> {
+        let mut output = Vec::new();
+
+        for (mdat_indx, leaf_hashes) in merkle_leaves.iter() {
+            let mut leaf_sizes = Vec::new();
+            let mut leaves = Vec::new();
+
+            for (leaf_len, leaf_hash) in leaf_hashes {
+                leaf_sizes.push(*leaf_len);
+                leaves.push(crate::utils::merkle::MerkleNode(leaf_hash.clone()));
+            }
+
+            // build Merkle tree
+            let m_tree = C2PAMerkleTree::from_leaves(leaves, alg, false);
+
+            // get the leaf hashes
+            // for now only support the leaf row and not any arbitrary row
+            // since that will require the caller to handle inserting UUID "merkle" boxes
+            // to carry the proof
+            let hashes = VecByteBuf(m_tree.leaves_bytebufs());
+
+            let mm = MerkleMap {
+                unique_id: *mdat_indx,
+                local_id: *mdat_indx,
+                count: leaf_hashes.len(),
+                alg: Some(alg.to_owned()),
+                init_hash: None,
+                hashes,
+                fixed_block_size: None,
+                variable_block_sizes: Some(leaf_sizes),
+            };
+
+            output.push(mm);
+        }
+
+        Ok(output)
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -437,6 +478,18 @@ impl BmffHash {
         if !exclusions.iter().any(|e| e.xpath == "/mfra") {
             let mfra = ExclusionsMap::new("/mfra".to_owned());
             exclusions.push(mfra);
+        }
+
+        // /free exclusion
+        if !exclusions.iter().any(|e| e.xpath == "/free") {
+            let free = ExclusionsMap::new("/free".to_owned());
+            exclusions.push(free);
+        }
+
+         // /skip exclusion
+        if !exclusions.iter().any(|e| e.xpath == "/skip") {
+            let skip = ExclusionsMap::new("/skip".to_owned());
+            exclusions.push(skip);
         }
 
         /*  no longer mandatory
