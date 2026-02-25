@@ -251,17 +251,16 @@ version = "0.4.39"
 default-features = false
 features = ["now"]
 
-[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies]
+# Browser WASM (wasm32-unknown-unknown): full wasm-bindgen stack.
+# Excludes Emscripten to allow -Z build-std=std,panic_abort (wasm-bindgen-futures is not panic_abort-safe).
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 chrono = { version = "0.4.39", default-features = false, features = [
     "clock",
     "serde",
     "wasmbind",
 ] }
 console_log = { version = "1.0.0", features = ["color"] }
-# Enable getrandom with wasm_js feature for WASM support
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
-# Also enable getrandom 0.2 with js feature for other dependencies (rand, tempfile, config)
-# This is needed until all dependencies migrate to getrandom 0.3
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 js-sys = "0.3.89"
 serde-wasm-bindgen = "0.6.5"
@@ -277,6 +276,13 @@ web-sys = { version = "0.3.58", features = [
     "WorkerGlobalScope",
 ] }
 
+# Emscripten (wasm32-unknown-emscripten): minimal deps, no wasm-bindgen (panic_abort / build-std compatible).
+[target.'cfg(all(target_arch = "wasm32", target_os = "emscripten"))'.dependencies]
+chrono = { version = "0.4.39", default-features = false, features = ["clock", "serde"] }
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+uuid = { version = "1.18.0", features = ["serde", "v4", "js"] }
+
 [dev-dependencies]
 anyhow = "1.0.97"
 glob = "0.3.1"
@@ -285,7 +291,7 @@ jumbf = "0.7.0"
 c2pa_macros = { path = "../macros" }
 mockall = "0.14.0"
 
-[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
 wasm-bindgen-test = "0.3.55"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
