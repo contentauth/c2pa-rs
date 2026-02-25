@@ -25,7 +25,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{cimpl::cimpl_error::CimplError, error::Error};
+use crate::{cimpl::cimpl_error::CimplError, error::Error, maybe_send_sync::MaybeSend};
 
 // ============================================================================
 // Pointer Registry - Tracks pointers with their cleanup functions
@@ -149,7 +149,7 @@ pub(crate) fn get_registry() -> &'static PointerRegistry {
 /// ```ignore
 /// let ptr = track_box(Box::into_raw(Box::new(value)));
 /// ```
-pub fn track_box<T: 'static + Send>(ptr: *mut T) -> *mut T {
+pub fn track_box<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
     let ptr_val = ptr as usize; // Store as usize to make it Send
     let cleanup = move || unsafe {
         drop(Box::from_raw(ptr_val as *mut T));
@@ -170,7 +170,7 @@ pub fn track_box<T: 'static + Send>(ptr: *mut T) -> *mut T {
 /// ```ignore
 /// let ptr = track_arc(Arc::into_raw(Arc::new(value)));
 /// ```
-pub fn track_arc<T: 'static + Send>(ptr: *mut T) -> *mut T {
+pub fn track_arc<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
     let ptr_val = ptr as usize; // Store as usize to make it Send
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const T));
@@ -191,7 +191,7 @@ pub fn track_arc<T: 'static + Send>(ptr: *mut T) -> *mut T {
 /// ```ignore
 /// let ptr = track_arc_mutex(Arc::into_raw(Arc::new(Mutex::new(value))));
 /// ```
-pub fn track_arc_mutex<T: 'static + Send>(ptr: *mut Mutex<T>) -> *mut Mutex<T> {
+pub fn track_arc_mutex<T: 'static + MaybeSend>(ptr: *mut Mutex<T>) -> *mut Mutex<T> {
     let ptr_val = ptr as usize; // Store as usize to make it Send
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const Mutex<T>));
