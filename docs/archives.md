@@ -172,12 +172,6 @@ builder.add_action(json!({
 }))?;
 ```
 
-### Ingredient libraries
-
-**Scenario:** Content library with pre-validated assets.
-
-**Solution:** ??
-
 ## FAQs
 
 **Can I use both old and new archive formats?**  
