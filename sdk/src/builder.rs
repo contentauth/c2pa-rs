@@ -4179,6 +4179,135 @@ mod tests {
     }
 
     #[test]
+    fn test_ingredient_no_thumbnail_with_none_format() {
+        // No thumbnail on ingredient due to its JSON definition
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Test", "thumbnail": { "format": "none", "identifier": "none" }}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let active_id = json_value["active_manifest"].as_str().unwrap();
+        let manifest = &json_value["manifests"][active_id];
+
+        assert_eq!(manifest["ingredients"].as_array().unwrap().len(), 1);
+        assert!(manifest["ingredients"][0]["thumbnail"].is_null());
+    }
+
+    #[test]
+    fn test_fine_grained_thumbnail_control() {
+        // Some ingredients get a thumbnail, some not through control of the JSON ingredient
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "With Thumbnail"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Without Thumbnail", "thumbnail": { "format": "none", "identifier": "none" }}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let active_id = json_value["active_manifest"].as_str().unwrap();
+        let ingredients = json_value["manifests"][active_id]["ingredients"]
+            .as_array()
+            .unwrap();
+
+        let with_thumb = ingredients
+            .iter()
+            .find(|i| i["title"] == "With Thumbnail")
+            .unwrap();
+        let without_thumb = ingredients
+            .iter()
+            .find(|i| i["title"] == "Without Thumbnail")
+            .unwrap();
+
+        assert!(with_thumb["thumbnail"].is_object());
+        assert!(without_thumb["thumbnail"].is_null());
+    }
+
+    #[test]
+    fn test_manifest_no_thumbnail_ingredients_have_thumbnail() {
+        // setting the manifest thumbnail to none means it's not generated at manifest level
+        let manifest_json = json!({
+            "claim_generator_info": [{ "name": "c2pa_thumbnail_test", "version": "0.1.0" }],
+            "title": "thumbnail_test_test_manifest_no_thumbnail_ingredients_have_thumbnail",
+            "thumbnail": { "format": "none", "identifier": "none" },
+            "assertions": [{
+                "label": "c2pa.actions",
+                "data": { "actions": [{ "action": "c2pa.created", "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty" }] }
+            }]
+        })
+        .to_string();
+
+        let mut builder = Builder::from_json(&manifest_json).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Test"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let active_id = json_value["active_manifest"].as_str().unwrap();
+        let manifest = &json_value["manifests"][active_id];
+
+        assert!(manifest["thumbnail"].is_null());
+        assert!(manifest["ingredients"][0]["thumbnail"].is_object());
+    }
+
+    #[test]
     fn test_with_archive() -> Result<()> {
         let mut builder =
             Builder::from_context(Context::new()).with_definition(r#"{"title": "Test Image"}"#)?;
