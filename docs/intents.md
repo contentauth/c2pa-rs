@@ -1,8 +1,6 @@
-# Intents and archives
+# Intents
 
-## Builder intents
-
-Intents tell the C2PA `Builder` what kind of manifest you are creating. They enable validation, add required default actions, and help prevent invalid operations.
+_Intents_ tell the C2PA `Builder` what kind of manifest you are creating. They enable validation, add required default actions, and help prevent invalid operations.
 
 <div style={{display: 'none'}}>
 
@@ -15,7 +13,7 @@ Intents tell the C2PA `Builder` what kind of manifest you are creating. They ena
 
 </div>
 
-### Intent types
+## Intent types
 
 There are three types of intents:
 
@@ -23,7 +21,7 @@ There are three types of intents:
 - [**Edit**](#edit-intent): `BuilderIntent::Edit`
 - [**Update**](#update-intent): `BuilderIntent::Update`
 
-#### Create intent
+### Create intent
 
 Use `BuilderIntent::Create(DigitalSourceType)` for new digital creations without a parent ingredient.  This intent:
 
@@ -49,7 +47,7 @@ The value of `digitalSourceType` is one of the enum values [listed in the API do
 - `TrainedAlgorithmicData` - AI-generated data (non-media formats)
 - `CompositeCapture` - HDR and multi-frame processing
 
-#### Edit intent
+### Edit intent
 
 Us `BuilderIntent::Edit` for editing an existing asset (most common case). This intent:
 
@@ -63,7 +61,7 @@ Example:
 builder.set_intent(BuilderIntent::Edit);
 ```
 
-#### Update intent
+### Update intent
 
 Use `BuilderIntent::Update` for non-editorial (metadata-only) changes. It is a restricted version of the edit intent.  This intent:
 
@@ -77,6 +75,10 @@ Example:
 ```rust
 builder.set_intent(BuilderIntent::Update);
 ```
+
+-------
+
+
 
 ## Archives for ingredients and builders
 
@@ -143,6 +145,7 @@ Later, you can add that archived ingredient to a new manifest as follows:
 ```rust
 let mut builder = Builder::from_shared_context(&context)
     .with_definition(manifest_def("New Work", FORMAT))?;
+builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
 builder.add_ingredient_from_stream(
     json!({
@@ -244,54 +247,9 @@ builder.add_ingredient_from_stream(
 )?;
 ```
 
-### Add archived ingredient
-
-```rs
-builder.add_ingredient_from_stream(
-    json!({
-        "title": "Ingredient",
-        "relationship": "componentOf",
-        "label": "ing_1"
-    })
-    .to_string(),
-    "application/c2pa",
-    &mut archived_ingredient_stream,
-)?;
-```
-
-### Link ingredients to actions
-
-```rs
-builder.add_action(json!({
-    "action": "c2pa.placed",
-    "parameters": {
-        "ingredientIds": ["ing_1"],  // References the label
-    }
-}))?;
-```
-
 ## FAQs
-
-**Can I use both old and new archive formats?**  
-
-Yes. Archive loading auto-detects supported formats.
-
-**Are archives signed?**
-
-Working archives use placeholder signatures (BoxHash). Sign the final asset when ready.
-
-**Can I modify an archived ingredient's properties?**
-
-Yes. JSON properties passed to `add_ingredient_from_stream()` override archived values.
-
-**Where should I store archives?**
-
-Anywhere. Local files, S3, databases, and in-memory all work.
 
 **Do I need different intents for different asset types?**
 
 No. Intents are about the operation (create/edit/update), not the asset type.
 
-**Can I have multiple parent ingredients?**
-
-No. Only one parent is allowed. Other ingredients use different relationships (for example, `componentOf`, `inputTo`).
