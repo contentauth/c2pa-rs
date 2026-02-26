@@ -1,7 +1,5 @@
 # Archives
 
-## Overview
-
 Many workflows need to pause and resume manifest authoring or reuse previously validated ingredients. An archive provides a standard way to save and restore this state and:
 
 - Uses the standard JUMBF store (`application/c2pa`)
@@ -9,6 +7,39 @@ Many workflows need to pause and resume manifest authoring or reuse previously v
 - Can be embedded in files, stored as sidecars (for example, `.c2pa`), or kept in cloud/database
 - Unsigned working stores use placeholder signatures (`BoxHash`)
 - Validate once, then can be reuses without re-validation
+
+## Best practices
+
+1. [**Use intents**](intents.md): Set an intent to get automatic validation and action generation.
+2. **Archive validated ingredients**: Save expensive validation results.
+3. [**Use shared context**](context.md): Create once, share across operations.
+4. **Label ingredients**: Use labels to link ingredients to actions.
+5. **Store archives flexibly**: Files, databases, and cloud storage all work.
+
+## Examples
+
+- [`sdk/examples/builder_sample.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/builder_sample.rs)
+- [`sdk/examples/api.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/api.rs)
+
+Run the builder example:
+
+```bash
+cd sdk
+cargo run --example builder_sample
+```
+
+<div style={{display: 'none'}}>
+
+**References**:
+
+- [C2PA specification](https://spec.c2pa.org/specifications/specifications/2.1/index.html)
+- [Rust library docs](https://opensource.contentauthenticity.org/docs/rust-sdk/)
+- [GitHub repository](https://github.com/contentauth/c2pa-rs)
+- [Content Credentials](https://contentcredentials.org/)
+
+</div>
+
+## Common tasks
 
 ### Save and restore a Builder
 
@@ -93,33 +124,7 @@ This ensures:
 - Better user experience.
 - Support for iterative workflows.
 
-### Ingredient libraries
-
-**Scenario:** Content library with pre-validated assets.
-
-**Solution:**
-
-## Best practices
-
-1. [**Use intents**](intents.md): Set an intent to get automatic validation and action generation.
-2. **Archive validated ingredients**: Save expensive validation results.
-3. [**Use shared context**](context.md): Create once, share across operations.
-4. **Label ingredients**: Use labels to link ingredients to actions.
-5. **Store archives flexibly**: Files, databases, and cloud storage all work.
-
-## Examples
-
-- [`sdk/examples/builder_sample.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/builder_sample.rs)
-- [`sdk/examples/api.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/api.rs)
-
-Run the builder example:
-
-```bash
-cd sdk
-cargo run --example builder_sample
-```
-
-## Adding ingredients from archives
+### Adding ingredients from archives
 
 When you call `add_ingredient_from_stream()` with format `"application/c2pa"`, the API:
 
@@ -140,9 +145,6 @@ builder.add_ingredient_from_stream(
 ```
 
 For creating and sharing a `Context` (including using `Arc`), see: [Configuring the SDK using Context](context.md).
-
-
-## Common patterns
 
 ### Add archived ingredient
 
@@ -169,6 +171,12 @@ builder.add_action(json!({
     }
 }))?;
 ```
+
+### Ingredient libraries
+
+**Scenario:** Content library with pre-validated assets.
+
+**Solution:** ??
 
 ## FAQs
 
