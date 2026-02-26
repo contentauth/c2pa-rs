@@ -7,7 +7,8 @@
 use std::io::{Cursor, Seek};
 
 use c2pa::{
-    assertions::DigitalSourceType, settings::Settings, Builder, BuilderIntent, Reader, Result,
+    assertions::DigitalSourceType, settings::Settings, Builder, BuilderIntent, Ingredient, Reader,
+    Result,
 };
 
 /// Test that nested ingredients are properly reconstructed from a manifest store
@@ -400,6 +401,192 @@ fn test_ingredient_without_nested_ingredients() -> Result<()> {
             assert!(
                 ing_manifest.ingredients().is_empty(),
                 "Simple ingredient should have no nested ingredients"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Helper to create a signed manifest and return the output bytes as a Cursor.
+fn sign_manifest(
+    builder: &mut Builder,
+    format: &str,
+    source: &mut Cursor<&[u8]>,
+) -> Result<Cursor<Vec<u8>>> {
+    let mut output = Cursor::new(Vec::new());
+    source.rewind()?;
+    builder.sign(&Settings::signer()?, format, source, &mut output)?;
+    output.rewind()?;
+    Ok(output)
+}
+
+/// Test diamond topology: two manifests share a common ancestor ingredient.
+///
+/// Topology:
+///   A (base)
+///   ├── B (has A as ingredient)
+///   └── C (has A as ingredient)
+///   D (has B and C as ingredients)
+///
+/// Both B and C reference A. D references both B and C.
+/// Before the fix, reading D would cause exponential cloning of A's claim
+/// because A appeared in both B's and C's ingredient trees.
+#[test]
+fn test_diamond_topology_read() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+    let format = "image/jpeg";
+    let mut source = Cursor::new(include_bytes!("fixtures/no_manifest.jpg").as_slice());
+
+    // A: base manifest
+    let mut builder_a = Builder::new();
+    builder_a.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    let mut output_a = sign_manifest(&mut builder_a, format, &mut source)?;
+
+    // B: has A as ingredient
+    let mut builder_b = Builder::new();
+    builder_b.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    output_a.rewind()?;
+    builder_b.add_ingredient_from_stream(
+        serde_json::json!({"title": "A via B"}).to_string(),
+        format,
+        &mut output_a,
+    )?;
+    let mut output_b = sign_manifest(&mut builder_b, format, &mut source)?;
+
+    // C: also has A as ingredient (independent of B)
+    let mut builder_c = Builder::new();
+    builder_c.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    output_a.rewind()?;
+    builder_c.add_ingredient_from_stream(
+        serde_json::json!({"title": "A via C"}).to_string(),
+        format,
+        &mut output_a,
+    )?;
+    let mut output_c = sign_manifest(&mut builder_c, format, &mut source)?;
+
+    // D: combines B and C (diamond — both share A as ancestor)
+    let mut builder_d = Builder::new();
+    builder_d.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    output_b.rewind()?;
+    builder_d.add_ingredient_from_stream(
+        serde_json::json!({"title": "B"}).to_string(),
+        format,
+        &mut output_b,
+    )?;
+    output_c.rewind()?;
+    let mut ingredient_c = Ingredient::from_stream(format, &mut output_c)?;
+    ingredient_c.set_title("C");
+    builder_d.add_ingredient(ingredient_c);
+    let mut output_d = sign_manifest(&mut builder_d, format, &mut source)?;
+
+    // Read D — this must complete without exponential memory growth
+    let reader = Reader::from_stream(format, &mut output_d)?;
+
+    let active = reader
+        .active_manifest()
+        .expect("should have active manifest");
+    // D has 2 ingredients (B and C)
+    assert_eq!(active.ingredients().len(), 2, "D should have 2 ingredients");
+
+    // Both B and C should reference manifests that each have A as an ingredient
+    for ingredient in active.ingredients() {
+        if let Some(label) = ingredient.active_manifest() {
+            let manifest = reader
+                .get_manifest(label)
+                .unwrap_or_else(|| panic!("should find manifest for {label}"));
+            assert_eq!(
+                manifest.ingredients().len(),
+                1,
+                "B and C should each have 1 ingredient (A)"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Test diamond topology through into_builder round-trip.
+///
+/// Same diamond shape as above, but additionally converts D's Reader
+/// to a Builder and re-signs to verify the round-trip preserves structure.
+#[test]
+fn test_diamond_topology_into_builder_round_trip() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+    let format = "image/jpeg";
+    let mut source = Cursor::new(include_bytes!("fixtures/no_manifest.jpg").as_slice());
+
+    // Build diamond: A -> B, A -> C, B+C -> D
+    let mut builder_a = Builder::new();
+    builder_a.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    let mut output_a = sign_manifest(&mut builder_a, format, &mut source)?;
+
+    let mut builder_b = Builder::new();
+    builder_b.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    output_a.rewind()?;
+    builder_b.add_ingredient_from_stream(
+        serde_json::json!({"title": "A via B"}).to_string(),
+        format,
+        &mut output_a,
+    )?;
+    let mut output_b = sign_manifest(&mut builder_b, format, &mut source)?;
+
+    let mut builder_c = Builder::new();
+    builder_c.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    output_a.rewind()?;
+    builder_c.add_ingredient_from_stream(
+        serde_json::json!({"title": "A via C"}).to_string(),
+        format,
+        &mut output_a,
+    )?;
+    let mut output_c = sign_manifest(&mut builder_c, format, &mut source)?;
+
+    let mut builder_d = Builder::new();
+    builder_d.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    output_b.rewind()?;
+    builder_d.add_ingredient_from_stream(
+        serde_json::json!({"title": "B"}).to_string(),
+        format,
+        &mut output_b,
+    )?;
+    output_c.rewind()?;
+    let mut ingredient_c = Ingredient::from_stream(format, &mut output_c)?;
+    ingredient_c.set_title("C");
+    builder_d.add_ingredient(ingredient_c);
+    let mut output_d = sign_manifest(&mut builder_d, format, &mut source)?;
+
+    // Read D, convert to builder, re-sign as E
+    let reader = Reader::from_stream(format, &mut output_d)?;
+    let mut builder_e = reader.into_builder()?;
+    // Prevent auto-capture of source as additional ingredient (test_settings has intent=edit)
+    builder_e.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    let mut output_e = sign_manifest(&mut builder_e, format, &mut source)?;
+
+    // Read E and verify structure is preserved
+    let reader_e = Reader::from_stream(format, &mut output_e)?;
+    let active_e = reader_e
+        .active_manifest()
+        .expect("E should have active manifest");
+
+    // E should have the same 2 ingredients as D (B and C)
+    assert_eq!(
+        active_e.ingredients().len(),
+        2,
+        "E should have 2 ingredients after round-trip"
+    );
+
+    // Verify each ingredient still has its nested ingredient (A)
+    for ingredient in active_e.ingredients() {
+        if let Some(label) = ingredient.active_manifest() {
+            let manifest = reader_e
+                .get_manifest(label)
+                .unwrap_or_else(|| panic!("should find manifest for {label}"));
+            assert_eq!(
+                manifest.ingredients().len(),
+                1,
+                "Each ingredient should still have 1 nested ingredient (A) after round-trip"
             );
         }
     }
