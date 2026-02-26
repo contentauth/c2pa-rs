@@ -30,7 +30,6 @@
 //!     - Fetching timestamps
 //!     - Fetching [`TimeStamp`] assertions
 //!     - Fetching OCSP staples
-//!     - Fetching [`CertificateStatus`] assertions
 //!
 //! Network requests may also be issued during the signing process, such as when
 //! [`SignerSettings::Remote`] is specified.
@@ -38,7 +37,6 @@
 //! [`Reader`]: crate::Reader
 //! [`Builder`]: crate::Builder
 //! [`TimeStamp`]: crate::assertions::TimeStamp
-//! [`CertificateStatus`]: crate::assertions::CertificateStatus
 //! [`SignerSettings::Remote`]: crate::settings::signer::SignerSettings::Remote
 
 use std::{
@@ -136,9 +134,9 @@ impl<T: AsyncHttpResolver + ?Sized> AsyncHttpResolver for Arc<T> {
 ///
 /// This implementation will automatically choose a [`SyncHttpResolver`] based on the
 /// enabled features:
-/// * `ureq` - use [`ureq::Agent`].
-/// * `reqwest_blocking` - use [`reqwest::blocking::Client`].
-/// * `wasi` (WASI-only) - use [`wasi::http::outgoing_handler::handle`].
+/// * `ureq` - use `ureq::Agent`.
+/// * `reqwest_blocking` - use `reqwest::blocking::Client`.
+/// * `wasi` (WASI-only) - use `wasi::http::outgoing_handler::handle`.
 ///
 /// This resolver is a pure HTTP client wrapper with no domain-specific logic.
 /// For host filtering or other access control, wrap this with [`RestrictedResolver`].
@@ -184,8 +182,8 @@ impl SyncHttpResolver for SyncGenericResolver {
 ///
 /// This implementation will automatically choose a [`AsyncHttpResolver`] based on the
 /// enabled features:
-/// * `reqwest` - use [`reqwest::Client`].
-/// * `wstd` (WASI-only) - use [`wstd::http::Client`].
+/// * `reqwest` - use `reqwest::Client`.
+/// * `wstd` (WASI-only) - use `wstd::http::Client`.
 ///
 /// This resolver is a pure HTTP client wrapper with no domain-specific logic.
 /// For host filtering or other access control, wrap this with [`RestrictedResolver`].
