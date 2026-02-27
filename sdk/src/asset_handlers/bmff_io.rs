@@ -44,7 +44,6 @@ pub struct BmffIO {
     bmff_format: String, // can be used for specialized BMFF cases
 }
 
-
 const MAX_BOX_DEPTH: usize = 32; // reasonable BMFF box depth, to prevent stack overflow
 
 const HEADER_SIZE: u64 = 8; // 4 byte type + 4 byte size
@@ -1272,6 +1271,7 @@ fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
     Ok(())
 }
 
+#[allow(clippy::only_used_in_recursion)]
 pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     reader: &mut R,
     end: u64,
