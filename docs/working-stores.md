@@ -96,9 +96,6 @@ Restoring from an archive does the following:
 2. Creates a `Reader` and populates it from that stream. Note: Trust checks are relaxed so the archive's placeholder signature can be accepted.
 3. Converts the `Reader` back into a `Builder` with `into_builder()`, so you can continue editing and later sign to a real asset.
 
-> [!NOTE]
-> Archives contain placeholder signatures, so validation is skipped when loading them.
-
 The following sequence diagram shows the flow when `Builder::from_archive(stream)` or `with_archive(stream)` is called and the archive is in C2PA (JUMBF) format.
 
 ```mermaid
@@ -180,7 +177,12 @@ Later, you can add that archived ingredient to a new manifest as follows:
 
 ```rust
 let mut builder = Builder::from_shared_context(&context)
-    .with_definition(manifest_def("New Work", FORMAT))?;
+    .with_definition(
+        json!({
+            "title": "New Title", 
+            "relationship": "componentOf" 
+        }) 
+    )?;
 
 builder.add_ingredient_from_stream(
     json!({
@@ -235,7 +237,7 @@ Use labels to reference ingredients in actions:
 builder.add_action(json!({
     "action": "c2pa.placed",
     "parameters": {
-        "ingredientIds": ["ing_1"],  // References the label
+        "ingredientIds": ["ingredient_1"],  // References the label
     }
 }))?;
 ```
@@ -245,10 +247,6 @@ builder.add_action(json!({
 **Can I use both old and new archive formats?**
 
 Yes. Loading an archive automatically detects supported formats.
-
-**Are archives signed?**
-
-Working archives use placeholder signatures (`BoxHash`). Sign the final asset when ready.
 
 **Can I modify an archived ingredient's properties?**
 
