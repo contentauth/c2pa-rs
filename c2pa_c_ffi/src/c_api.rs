@@ -4063,4 +4063,136 @@ verify_after_sign = true
             c2pa_free(reader as *const c_void);
         }
     }
+
+    #[test]
+    fn test_data_hash_embeddable_workflow() {
+        // Build a context with signer configured via test_settings.json.
+        // The settings include a PS256 local signer so sign_embeddable can use it.
+        const SETTINGS: &str = include_str!(fixture_path!("test_settings.json"));
+
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+        let json_str = CString::new(SETTINGS).unwrap();
+        let fmt = CString::new("json").unwrap();
+        let result =
+            unsafe { c2pa_settings_update_from_string(settings, json_str.as_ptr(), fmt.as_ptr()) };
+        assert_eq!(result, 0);
+
+        let ctx_builder = unsafe { c2pa_context_builder_new() };
+        assert!(!ctx_builder.is_null());
+        let result = unsafe { c2pa_context_builder_set_settings(ctx_builder, settings) };
+        assert_eq!(result, 0);
+        let context = unsafe { c2pa_context_builder_build(ctx_builder) };
+        assert!(!context.is_null());
+
+        // Create a manifest builder from the context.
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null());
+
+        // Hash the entire JPEG stream — auto-creates a DataHash (direct mode, no placeholder).
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+        let result = unsafe {
+            c2pa_builder_update_hash_from_stream(builder, format.as_ptr(), source_stream.as_ptr())
+        };
+        assert_eq!(result, 0, "update_hash_from_stream failed");
+
+        // Sign without a placeholder (direct mode) — signer comes from the builder's Context.
+        let mut signed_bytes_ptr: *const c_uchar = std::ptr::null();
+        let len = unsafe {
+            c2pa_builder_sign_embeddable(builder, format.as_ptr(), &mut signed_bytes_ptr)
+        };
+        assert!(len > 0, "sign_embeddable should return positive length");
+        assert!(!signed_bytes_ptr.is_null());
+
+        unsafe {
+            c2pa_free(signed_bytes_ptr as *mut c_void);
+            c2pa_free(settings as *mut c_void);
+            c2pa_free(context as *mut c_void);
+            c2pa_free(builder as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_bmff_embeddable_workflow_with_mdat_hashes() {
+        // Build a context with signer + Merkle chunk size for the external-mdat-hash workflow.
+        const SETTINGS: &str = include_str!(fixture_path!("test_settings.json"));
+
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+        let json_str = CString::new(SETTINGS).unwrap();
+        let fmt = CString::new("json").unwrap();
+        let result =
+            unsafe { c2pa_settings_update_from_string(settings, json_str.as_ptr(), fmt.as_ptr()) };
+        assert_eq!(result, 0);
+
+        // Enable Merkle-tree mdat hashing.
+        let path = CString::new("core.merkle_tree_chunk_size_in_kb").unwrap();
+        let value = CString::new("1").unwrap();
+        let result = unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) };
+        assert_eq!(result, 0);
+
+        let ctx_builder = unsafe { c2pa_context_builder_new() };
+        assert!(!ctx_builder.is_null());
+        let result = unsafe { c2pa_context_builder_set_settings(ctx_builder, settings) };
+        assert_eq!(result, 0);
+        let context = unsafe { c2pa_context_builder_build(ctx_builder) };
+        assert!(!context.is_null());
+
+        // Create builder from context.
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null());
+
+        // Create a BMFF placeholder (adds a BmffHash with pre-allocated Merkle slots).
+        let format = CString::new("video/mp4").unwrap();
+        let mut placeholder_ptr: *const c_uchar = std::ptr::null();
+        let placeholder_len =
+            unsafe { c2pa_builder_placeholder(builder, format.as_ptr(), &mut placeholder_ptr) };
+        assert!(
+            placeholder_len > 0,
+            "placeholder should return non-empty bytes"
+        );
+        assert!(!placeholder_ptr.is_null());
+
+        // Supply a single dummy SHA-256 leaf hash for one mdat box (1 chunk).
+        // The Merkle root is derived from these; the video will not validate but
+        // this exercises the full C API call path.
+        let dummy_hash: [u8; 32] = [0xab; 32];
+        let chunk_counts: [usize; 1] = [1];
+        let result = unsafe {
+            c2pa_builder_set_bmff_mdat_hashes(
+                builder,
+                dummy_hash.as_ptr(),
+                32,
+                chunk_counts.as_ptr(),
+                1,
+            )
+        };
+        assert_eq!(result, 0, "set_bmff_mdat_hashes failed");
+
+        // Hash the video stream (BmffHash uses its own path-based exclusions internally).
+        let video = include_bytes!(fixture_path!("video1.mp4"));
+        let mut video_stream = TestStream::new(video.to_vec());
+        let result = unsafe {
+            c2pa_builder_update_hash_from_stream(builder, format.as_ptr(), video_stream.as_ptr())
+        };
+        assert_eq!(result, 0, "update_hash_from_stream failed");
+
+        // Sign in placeholder mode — signer comes from the builder's Context.
+        let mut signed_bytes_ptr: *const c_uchar = std::ptr::null();
+        let len = unsafe {
+            c2pa_builder_sign_embeddable(builder, format.as_ptr(), &mut signed_bytes_ptr)
+        };
+        assert!(len > 0, "sign_embeddable should return positive length");
+        assert!(!signed_bytes_ptr.is_null());
+
+        unsafe {
+            c2pa_free(placeholder_ptr as *mut c_void);
+            c2pa_free(signed_bytes_ptr as *mut c_void);
+            c2pa_free(settings as *mut c_void);
+            c2pa_free(context as *mut c_void);
+            c2pa_free(builder as *mut c_void);
+        }
+    }
 }
