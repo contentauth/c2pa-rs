@@ -1,21 +1,16 @@
 # Working stores and archives
 
-Many workflows need to pause and resume manifest authoring or reuse previously validated ingredients. Archives provide a standard way to save and restore this state.
-
-This document explains how _C2PA archives_ (or simply _archives_) and _working stores_ work in the SDK, how they relate to each other, and how to use them to save and restore `Builder` state.
+Many workflows need to pause and resume manifest authoring or reuse previously validated ingredients. _Working stores_ and _C2PA archives_ (or simply _archives_) provide a standard way to save and restore this state of a [`Builder`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html).
 
 ## Overview
 
-**Working store** and **archive** refer to the same underlying concept:
-- "Working store" emphasizes the editable state.
-- "C2PA archive" emphasizes the saved, portable representation.
+Working store and archive refer to the same underlying concept:
+- **Working store** emphasizes the editable state, the *content* of the editable C2PA manifest state (claims, ingredients, assertions) that has not yet been bound to a final asset. Typically used when describing "work in progress" manifest data.
+- **C2PA archive** emphasizes the saved, portable representation, the *artifact* of the saved bytes (in a `.c2pa` file or stream) resulting from a working store that you can read back to restore a `Builder`.
 
-| Term | Emphasis |
-|------|----------|
-| **Working store** | The *content*: an editable C2PA manifest state (claims, ingredients, assertions) that has not yet been bound to a final asset. Often used when describing "work in progress" manifest data. |
-| **Archive** | The *artifact*: the saved bytes (in a `.c2pa` file or stream) from saving a working store that you can read back to restore a `Builder`. |
+An archive is simply a working store serialized as a normal manifest store. 
 
-Both use the standard JUMBF format (`application/c2pa`). An archive is simply a working store serialized as a normal manifest store. The specification does not define a separate archive format; the SDK reuses the standard manifest store format so that:
+Both use the standard JUMBF format (`application/c2pa`). The specification does not define a separate archive format; the SDK reuses the standard manifest store format:
 
 - The same format is used for **signed manifests** (bound to an asset), **working stores** (saved for later editing), and **saved ingredients** (e.g. validated once, reused in other manifests).
 - An archive can be embedded in files, stored as sidecars (for example, `.c2pa`), or kept in the cloud or a database.
@@ -25,15 +20,18 @@ Both use the standard JUMBF format (`application/c2pa`). An archive is simply a 
 Practical distinction:
 
 - Saving a `Builder` with [`to_archive()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.to_archive) produces a working store serialized as JUMBF `application/c2pa` (an archive).
-- Restoring it with [`from_archive()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.from_archive) or [`with_archive()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.with_archive) reads the archive back into a `Builder` to continue editing. **NOTE(()): you can't merge working stores by calling `with_archive()` repeatedly.
+- Restoring it with [`from_archive()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.from_archive) or [`with_archive()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.with_archive) reads the archive back into a `Builder` to continue editing. 
+
+> [!NOTE]
+> You can't merge working stores by calling `with_archive()` repeatedly.
 
 ### API summary
 
 | Operation | API | Description |
 |-----------|-----|-------------|
-| Save | `builder.to_archive(&mut stream)` | Writes the working store to `stream`. By default, generates the current archive format. Use the setting `builder.generate_c2pa_archive = false` if you need the legacy ZIP format. |
-| Restore to a new `Builder` | `Builder::from_archive(stream)` | Creates a default-context `Builder` and loads the archive into it. |
-| Restore (existing context) | `builder.with_archive(stream)` | Loads the archive into an existing `Builder` (preserving its context). |
+| Save | [`builder.to_archive(&mut stream)`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.to_archive) | Writes the working store to `stream`. By default, generates the current archive format. Use the [setting](settings.md) `builder.generate_c2pa_archive = false` to specify legacy ZIP format. |
+| Restore to a new `Builder` | [`Builder::from_archive(stream)`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.from_archive) | Creates a default-context `Builder` and loads the archive into it. |
+| Restore (existing context) | [`builder.with_archive(stream)`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.with_archive) | Loads the archive into an existing `Builder` (preserving its context). |
 
 ### Legacy ZIP archive format
 
@@ -42,7 +40,7 @@ The SDK also supports an older format: a ZIP file containing `manifest.json`, `r
 ## Best practices
 
 1. [**Use intents**](intents.md): Set an intent to get automatic validation and action generation.
-2. **Archive validated ingredients**: Save expensive validation results.
+2. [**Archive validated ingredients**](#capture-an-ingredient-as-an-archive-and-reuse-it): Save expensive validation results.
 3. [**Use shared context**](context.md): Create once, share across operations.
 4. [**Label ingredients**](#link-ingredients-to-actions): Use labels to link ingredients to actions.
 5. **Store archives flexibly**: Files, databases, and cloud storage all work.
@@ -95,10 +93,11 @@ sequenceDiagram
 Restoring from an archive does the following:
 
 1. Reads and parses the archive as JUMBF `application/c2pa`.
-2. Creates a `Reader` and populates it from that stream. Note: trust checks are relaxed so the archive's placeholder signature can be accepted.
+2. Creates a `Reader` and populates it from that stream. Note: Trust checks are relaxed so the archive's placeholder signature can be accepted.
 3. Converts the `Reader` back into a `Builder` with `into_builder()`, so you can continue editing and later sign to a real asset.
 
-Note: Archives contain placeholder signatures, so validation is skipped when loading them.
+> [!NOTE]
+> Archives contain placeholder signatures, so validation is skipped when loading them.
 
 The following sequence diagram shows the flow when `Builder::from_archive(stream)` or `with_archive(stream)` is called and the archive is in C2PA (JUMBF) format.
 
@@ -199,7 +198,7 @@ builder.add_action(json!({
 }))?;
 ```
 
-When you call `add_ingredient_from_stream()` with format `"application/c2pa"`, the API:
+Calling [`add_ingredient_from_stream()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.add_ingredient_from_stream) with format `"application/c2pa"`:
 
 1. Reads the archive.
 2. Extracts the first ingredient from the active manifest.
@@ -245,11 +244,11 @@ builder.add_action(json!({
 
 **Can I use both old and new archive formats?**
 
-Yes. Archive loading auto-detects supported formats.
+Yes. Loading an archive automatically detects supported formats.
 
 **Are archives signed?**
 
-Working archives use placeholder signatures (BoxHash). Sign the final asset when ready.
+Working archives use placeholder signatures (`BoxHash`). Sign the final asset when ready.
 
 **Can I modify an archived ingredient's properties?**
 
@@ -257,7 +256,7 @@ Yes. JSON properties passed to `add_ingredient_from_stream()` override archived 
 
 **Where should I store archives?**
 
-Anywhere. Local files, S3, databases, and in-memory all work.
+Anywhere&mdash;Local files, S3, databases, and in-memory all work.
 
 **Can I have multiple parent ingredients?**
 
