@@ -238,9 +238,19 @@ impl CrJsonReader {
             let assertions_obj = self.convert_assertions(manifest, label)?;
             manifest_obj.insert("assertions".to_string(), json!(assertions_obj));
 
-            // Build claim.v2 object
-            let claim_v2 = self.build_claim_v2(manifest, label)?;
-            manifest_obj.insert("claim.v2".to_string(), claim_v2);
+            // Emit claim (v1) or claim.v2 per crJSON schema oneOf, based on source claim version
+            let claim = self
+                .inner
+                .store
+                .get_claim(label)
+                .ok_or_else(|| Error::ClaimMissing { label: label.to_owned() })?;
+            if claim.version() == 1 {
+                let claim_v1 = self.build_claim_v1(manifest, label, claim)?;
+                manifest_obj.insert("claim".to_string(), claim_v1);
+            } else {
+                let claim_v2 = self.build_claim_v2(manifest, label)?;
+                manifest_obj.insert("claim.v2".to_string(), claim_v2);
+            }
 
             // Build signature object (required per manifest schema; use empty object when no signature info)
             let signature = self
@@ -622,6 +632,120 @@ impl CrJsonReader {
             map.insert("alg".to_string(), json!(alg));
         }
         Some(Value::Object(map))
+    }
+
+    /// Build the claim (v1) object per crJSON claimV1 / C2PA CDDL claim-map.
+    /// Used when the source claim is version 1 (has "assertions", not "created_assertions").
+    fn build_claim_v1(
+        &self,
+        manifest: &Manifest,
+        label: &str,
+        claim: &Claim,
+    ) -> Result<Value> {
+        let mut claim_v1 = Map::new();
+
+        // Required: claim_generator (v1 only)
+        claim_v1.insert(
+            "claim_generator".to_string(),
+            json!(claim
+                .claim_generator()
+                .or_else(|| manifest.claim_generator())
+                .unwrap_or("")),
+        );
+
+        // Required: claim_generator_info as array (v1 schema)
+        if let Some(ref info_vec) = manifest.claim_generator_info {
+            let mut info_array = Vec::new();
+            for info in info_vec {
+                if let Ok(info_value) = serde_json::to_value(info) {
+                    let fixed_info = Self::fix_hash_encoding(info_value);
+                    let mut info_obj = match fixed_info {
+                        Value::Object(m) => m,
+                        _ => continue,
+                    };
+                    if let Some(icon_val) = info_obj.get_mut("icon") {
+                        if let Some(resolved) =
+                            Self::resolve_icon_to_hashed_uri_map(claim, label, icon_val)
+                        {
+                            *icon_val = resolved;
+                        }
+                        if let Some(icon_obj) = icon_val.as_object_mut() {
+                            Self::icon_retain_only_hashed_uri_map_keys(icon_obj);
+                        }
+                    }
+                    info_array.push(Value::Object(info_obj));
+                }
+            }
+            if !info_array.is_empty() {
+                claim_v1.insert("claim_generator_info".to_string(), Value::Array(info_array));
+            }
+        }
+        if !claim_v1.contains_key("claim_generator_info") {
+            // Schema requires at least one; use minimal placeholder if missing
+            claim_v1.insert(
+                "claim_generator_info".to_string(),
+                json!([{"name": claim.claim_generator().unwrap_or("")}]),
+            );
+        }
+
+        // Required: signature (JUMBF URI reference)
+        let signature_ref = format!("self#jumbf=/c2pa/{}/c2pa.signature", label);
+        claim_v1.insert("signature".to_string(), json!(signature_ref));
+
+        // Required: assertions (array of hashedUriMap); v1 uses single list
+        let mut assertions_arr = Vec::new();
+        for assertion_ref in claim.assertions() {
+            let mut ref_obj = Map::new();
+            ref_obj.insert(
+                "url".to_string(),
+                json!(to_absolute_uri(label, &assertion_ref.url())),
+            );
+            ref_obj.insert(
+                "hash".to_string(),
+                json!(base64::encode(&assertion_ref.hash())),
+            );
+            if let Some(alg) = assertion_ref.alg() {
+                ref_obj.insert("alg".to_string(), json!(alg));
+            }
+            assertions_arr.push(Value::Object(ref_obj));
+        }
+        claim_v1.insert("assertions".to_string(), Value::Array(assertions_arr));
+
+        // Required: dc:format, instanceID
+        claim_v1.insert(
+            "dc:format".to_string(),
+            json!(manifest
+                .format()
+                .or_else(|| claim.format())
+                .unwrap_or("")),
+        );
+        claim_v1.insert("instanceID".to_string(), json!(manifest.instance_id()));
+
+        // Optional v1 fields
+        let title_str = manifest
+            .title()
+            .or_else(|| claim.title().map(|s| s.as_str()));
+        if let Some(title) = title_str {
+            claim_v1.insert("dc:title".to_string(), json!(title));
+        }
+        if let Some(redacted) = claim.redactions() {
+            if !redacted.is_empty() {
+                claim_v1.insert("redacted_assertions".to_string(), json!(redacted));
+            }
+        }
+        claim_v1.insert("alg".to_string(), json!(claim.alg()));
+        if let Some(alg_soft) = claim.alg_soft() {
+            claim_v1.insert("alg_soft".to_string(), json!(alg_soft));
+        }
+        if let Some(metadata) = claim.metadata() {
+            if !metadata.is_empty() {
+                if let Ok(v) = serde_json::to_value(metadata) {
+                    claim_v1.insert("metadata".to_string(), v);
+                }
+            }
+        }
+
+        Ok(Value::Object(claim_v1))
     }
 
     /// Build the claim.v2 object from scattered manifest properties
@@ -1196,16 +1320,25 @@ mod tests {
             assert!(manifest.get("assertions").is_some());
             assert!(manifest.get("signature").is_some());
             assert!(manifest.get("status").is_some());
-            assert!(manifest.get("claim.v2").is_some());
+            let has_claim = manifest.get("claim").is_some();
+            let has_claim_v2 = manifest.get("claim.v2").is_some();
+            assert!(has_claim != has_claim_v2, "manifest must have exactly one of claim (v1) or claim.v2");
 
             // Verify assertions is an object (not array)
             assert!(manifest["assertions"].is_object());
 
-            // Verify claim.v2 has expected fields
-            let claim_v2 = &manifest["claim.v2"];
-            assert!(claim_v2.get("instanceID").is_some());
-            assert!(claim_v2.get("signature").is_some());
-            assert!(claim_v2.get("created_assertions").is_some());
+            if let Some(claim_v2) = manifest.get("claim.v2") {
+                assert!(claim_v2.get("instanceID").is_some());
+                assert!(claim_v2.get("signature").is_some());
+                assert!(claim_v2.get("created_assertions").is_some());
+            } else if let Some(claim_v1) = manifest.get("claim") {
+                assert!(claim_v1.get("claim_generator").is_some());
+                assert!(claim_v1.get("claim_generator_info").is_some());
+                assert!(claim_v1.get("signature").is_some());
+                assert!(claim_v1.get("assertions").is_some());
+                assert!(claim_v1.get("dc:format").is_some());
+                assert!(claim_v1.get("instanceID").is_some());
+            }
         }
 
         Ok(())
@@ -1419,18 +1552,20 @@ mod tests {
             .first()
             .expect("should have at least one manifest");
 
-        let claim_v2 = manifest
+        let claim_block = manifest
             .get("claim.v2")
-            .expect("claim.v2 should be present");
+            .or_else(|| manifest.get("claim"))
+            .expect("manifest should have claim or claim.v2");
 
-        let claim_generator_info = claim_v2
+        let claim_generator_info = claim_block
             .get("claim_generator_info")
-            .expect("claim.v2 should include claim_generator_info when manifest has an icon");
+            .expect("claim should include claim_generator_info when manifest has an icon");
 
-        // claim.v2: claim_generator_info is a single object, not an array
+        // claim.v2: single object; claim (v1): array — get first object for assertion
         let info_obj = claim_generator_info
             .as_object()
-            .expect("claim_generator_info in claim.v2 should be a single object");
+            .or_else(|| claim_generator_info.as_array().and_then(|a| a.first()).and_then(|v| v.as_object()))
+            .expect("claim_generator_info should be an object or array of objects");
 
         // Icon must be hashedUriMap only (url, hash, optional alg) per schema; no format/identifier.
         let has_icon = match info_obj.get("icon") {
