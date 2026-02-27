@@ -13,7 +13,7 @@
 
 /// Converts a file extension to a MIME type
 pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
-    Some(match extension {
+    Some(match extension.to_lowercase().as_str() {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
         "gif" => "image/gif",
@@ -60,7 +60,7 @@ pub fn format_to_mime(format: &str) -> String {
 /// Converts a format to a file extension
 #[cfg(feature = "file_io")]
 pub fn format_to_extension(format: &str) -> Option<&'static str> {
-    Some(match format {
+    Some(match format.to_lowercase().as_str() {
         "jpg" | "jpeg" | "image/jpeg" => "jpg",
         "png" | "image/png" => "png",
         "gif" | "image/gif" => "gif",

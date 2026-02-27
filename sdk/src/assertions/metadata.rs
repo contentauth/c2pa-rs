@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionJson},
+    assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson},
     assertions::labels,
     Error,
 };
@@ -31,7 +31,7 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 ///of metadata fields. For `c2pa.metadata` assertions, only specific schemas and fields
 /// are allowed as defined in the C2PA specification.
 ///
-/// <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata_assertions>
+/// See [metadata_assertions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_metadata_assertions)
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Metadata {
     /// JSON-LD context mapping prefixes to namespace URIs.
@@ -69,7 +69,7 @@ impl Metadata {
     /// Validates that each field in the assertion has a namespace within the '@context'.
     /// For 'c2pa.metadata' assertions, ensures only allowed fields are present.
     ///
-    /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_metadata_validation>.
+    /// See [_c2pa_metadata_validation - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_c2pa_metadata_validation)
     /// # Returns
     /// * Returns `true` if the metadata assertion passes validation.
     pub fn is_valid(&self) -> bool {
@@ -114,6 +114,7 @@ impl Metadata {
 }
 
 impl AssertionJson for Metadata {}
+impl AssertionCbor for Metadata {}
 
 impl AssertionBase for Metadata {
     const LABEL: &'static str = labels::METADATA;
@@ -131,7 +132,10 @@ impl AssertionBase for Metadata {
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self, Error> {
-        let mut metadata = Self::from_json_assertion(assertion)?;
+        let mut metadata = Self::from_json_assertion(assertion).or_else(|_e| {
+            // some older files may have stored this in error as cbor
+            Self::from_cbor_assertion(assertion)
+        })?;
 
         metadata.custom_metadata_label =
             (assertion.label() != labels::METADATA).then(|| assertion.label().to_owned());
@@ -143,7 +147,7 @@ impl AssertionBase for Metadata {
 lazy_static! {
     /// The c2pa.metadata assertion shall only contain certain schemas.
     ///
-    /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#metadata_annex>.
+    /// See [metadata_annex - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#metadata_annex)
     static ref ALLOWED_SCHEMAS: HashMap<&'static str, &'static str> = vec![
         ("xmp", "http://ns.adobe.com/xap/1.0/"),
         ("xmpMM", "http://ns.adobe.com/xap/1.0/mm/"),
@@ -172,7 +176,7 @@ lazy_static! {
 
 /// The c2pa.metadata assertion shall only contain certain fields.
 ///
-/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#metadata_annex>.
+/// See [metadata_annex - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#metadata_annex)
 static ALLOWED_FIELDS: [&str; 292] = [
     // xmp:
     "xmp:CreateDate",

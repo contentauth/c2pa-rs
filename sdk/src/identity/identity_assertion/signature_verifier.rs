@@ -27,43 +27,9 @@ use crate::{
 ///
 /// The associated type `Output` describes the information which can be derived
 /// from the credential and signature.
-#[cfg(not(target_arch = "wasm32"))]
-#[async_trait]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait SignatureVerifier: Sync {
-    /// The `Output` type provides credential-type specific information that is
-    /// derived from the signature. Typically, this describes the named actor,
-    /// but may also contain information about the time of signing or the
-    /// credential's source.
-    type Output: ToCredentialSummary + 'static;
-
-    /// The `Error` type provides a credential-specific explanation for why an
-    /// identity assertion signature could not be accepted. This value may be
-    /// included in the `SignatureError` variant of [`ValidationError`].
-    ///
-    /// [`ValidationError`]: crate::identity::ValidationError
-    type Error: Debug;
-
-    /// Verify the signature, returning an instance of [`Output`] if the
-    /// signature is valid.
-    ///
-    /// [`Output`]: Self::Output
-    async fn check_signature(
-        &self,
-        signer_payload: &SignerPayload,
-        signature: &[u8],
-        status_tracker: &mut StatusTracker,
-    ) -> Result<Self::Output, ValidationError<Self::Error>>;
-}
-
-/// A `Verifier` can read one or more kinds of signature from an identity
-/// assertion, assess the validity of the signature, and return information
-/// about the corresponding credential subject.
-///
-/// The associated type `Output` describes the information which can be derived
-/// from the credential and signature.
-#[cfg(target_arch = "wasm32")]
-#[async_trait(?Send)]
-pub trait SignatureVerifier {
     /// The `Output` type provides credential-type specific information that is
     /// derived from the signature. Typically, this describes the named actor,
     /// but may also contain information about the time of signing or the

@@ -89,6 +89,12 @@ struct CliArgs {
     #[clap(short, long)]
     remote: Option<String>,
 
+    /// Path to a binary .c2pa manifest to use for validation against the input asset.
+    ///
+    /// This field will override the input asset's embedded or remote manifest.
+    #[clap(long)]
+    external_manifest: Option<PathBuf>,
+
     /// Generate a sidecar (.c2pa) manifest
     #[clap(short, long)]
     sidecar: bool,
@@ -143,9 +149,9 @@ struct CliArgs {
     reserve_size: usize,
 
     // TODO: ideally this would be called config, not to be confused with the other config arg
-    /// Path to the config file.
+    /// Path to the settings file in JSON or TOML.
     ///
-    /// By default config files are read from `$XDG_CONFIG_HOME/c2pa/c2pa.toml`.
+    /// By default the settings file is read from `$XDG_CONFIG_HOME/c2pa/c2pa.toml`.
     #[clap(
         long,
         env = "C2PATOOL_SETTINGS",
@@ -227,7 +233,7 @@ struct ManifestDef {
 fn special_errs(e: c2pa::Error) -> anyhow::Error {
     match e {
         Error::JumbfNotFound => anyhow!("No claim found"),
-        Error::FileNotFound(name) => anyhow!("File not found: {}", name),
+        Error::FileNotFound(name) => anyhow!("File not found: {name}"),
         Error::UnsupportedType => anyhow!("Unsupported file type"),
         Error::PrereleaseError => anyhow!("Prerelease claim found"),
         _ => e.into(),
@@ -384,8 +390,7 @@ fn blocking_get(url: &str) -> Result<String> {
 
 fn configure_sdk(args: &CliArgs) -> Result<()> {
     if args.settings.exists() {
-        let settings = fs::read_to_string(&args.settings)?;
-        Settings::from_toml(&settings)?
+        Settings::from_file(&args.settings)?;
     }
 
     let mut enable_trust_checks = false;
@@ -443,19 +448,12 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
     }
 
     // if any trust setting is provided enable the trust checks
+    // there is no disabling of default setting only the ability to enable if they were internally disabled
     if enable_trust_checks {
         Settings::from_toml(
             &toml::toml! {
                 [verify]
                 verify_trust = true
-            }
-            .to_string(),
-        )?;
-    } else {
-        Settings::from_toml(
-            &toml::toml! {
-                [verify]
-                verify_trust = false
             }
             .to_string(),
         )?;
@@ -586,6 +584,42 @@ fn validate_cawg(reader: &mut Reader) -> Result<()> {
     }
 }
 
+fn reader_from_args(args: &CliArgs) -> Result<Reader> {
+    if let Some(external_manifest) = &args.external_manifest {
+        let c2pa_data = fs::read(external_manifest)?;
+        let format = match c2pa::format_from_path(&args.path) {
+            Some(format) => format,
+            None => {
+                bail!("Format for {:?} is unrecognized", args.path);
+            }
+        };
+        Ok(
+            Reader::from_manifest_data_and_stream(&c2pa_data, &format, File::open(&args.path)?)
+                .map_err(special_errs)?,
+        )
+    } else {
+        Ok(Reader::from_file(&args.path).map_err(special_errs)?)
+    }
+}
+
+// Utility to catch reader formatting errors and print the reader json or detailed json
+// formatting can fail if Reader CBOR is deeply nested or malformed
+fn print_reader(reader: &Reader, detailed: bool) -> Result<()> {
+    let result = if detailed {
+        reader.detailed_json_checked()
+    } else {
+        reader.json_checked()
+    }
+    .map_err(|e| anyhow!("Error formatting output: {}", e));
+    match result {
+        Ok(json) => {
+            println!("{json}");
+            Ok(())
+        }
+        Err(e) => bail!("Error formatting output: {}", e),
+    }
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -683,7 +717,7 @@ fn main() -> Result<()> {
 
         // set manifest base path before ingredients so ingredients can override it
         if let Some(base) = base_path.as_ref() {
-            builder.base_path = Some(base.clone());
+            builder.set_base_path(base);
             sign_config.set_base_path(base);
         }
 
@@ -740,7 +774,11 @@ fn main() -> Result<()> {
 
             Box::new(signer)
         } else {
-            sign_config.signer()?
+            match Settings::signer() {
+                Ok(signer) => signer,
+                Err(Error::MissingSignerSettings) => sign_config.signer()?,
+                Err(err) => Err(err)?,
+            }
         };
 
         if let Some(output) = args.output {
@@ -816,11 +854,7 @@ fn main() -> Result<()> {
                 // generate a report on the output file
                 let mut reader = Reader::from_file(&output).map_err(special_errs)?;
                 validate_cawg(&mut reader)?;
-                if args.detailed {
-                    println!("{reader:#?}");
-                } else {
-                    println!("{reader}")
-                }
+                print_reader(&reader, args.detailed)?;
             }
         } else {
             bail!("Output path required with manifest definition")
@@ -864,10 +898,6 @@ fn main() -> Result<()> {
             "{}",
             Ingredient::from_file(&args.path).map_err(special_errs)?
         )
-    } else if args.detailed {
-        let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
-        validate_cawg(&mut reader)?;
-        println!("{reader:#?}");
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
@@ -883,9 +913,9 @@ fn main() -> Result<()> {
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
+        let mut reader = reader_from_args(&args)?;
         validate_cawg(&mut reader)?;
-        println!("{reader}");
+        print_reader(&reader, args.detailed)?;
     }
 
     Ok(())
@@ -895,6 +925,7 @@ fn main() -> Result<()> {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use c2pa::{BuilderIntent, DigitalSourceType};
     use tempfile::TempDir;
 
     use super::*;
@@ -926,6 +957,7 @@ pub mod tests {
         let tempdir = tempdirectory().unwrap();
         let output_path = tempdir.path().join("unit_out.jpg");
         let mut builder = Builder::from_json(CONFIG).expect("from_json");
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
         let signer = SignConfig::from_json(CONFIG)
             .unwrap()

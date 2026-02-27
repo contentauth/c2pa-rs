@@ -26,25 +26,25 @@ include_guard = "c2pa_bindings_h"
 
 after_includes = """
 
-#if C2PA_DYNAMIC_LOADING
+#if defined(C2PA_DYNAMIC_LOADING) && C2PA_DYNAMIC_LOADING
     #define C2PA_API
 #else
     #if defined(_WIN32) || defined(_WIN64)
-        #if C2PA_DLL
-            #if __GNUC__
+        #if defined(C2PA_DLL) && C2PA_DLL
+            #if defined(__GNUC__) && __GNUC__
                 #define C2PA_API __attribute__((dllexport))
             #else
                 #define C2PA_API __declspec(dllexport)
             #endif
         #else
-            #if __GNUC__
+            #if defined(__GNUC__) && __GNUC__
                 #define C2PA_API __attribute__((dllimport))
             #else
                 #define C2PA_API __declspec(dllimport)
             #endif
         #endif
     #else
-        #if __GNUC__
+        #if defined(__GNUC__) && __GNUC__
             #define C2PA_API __attribute__((visibility("default")))
         #else
             #define C2PA_API
@@ -57,3 +57,7 @@ after_includes = """
 
 [fn]
 prefix = "C2PA_API extern"
+
+[export]
+# Exclude internal functions from C API
+exclude = ["cimpl_free"]

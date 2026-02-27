@@ -24,15 +24,12 @@ An `AssetType` assertion is now supported.
 
 ### C2PA v2 claims
 
-**NOTE**: The library now supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) by default.
+**NOTE**: The library now supports [C2PA v2 claims](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_claims) by default. V2 claims have many new checks and status codes.  Additionally:
 
-To generate v1 claims, set the `Builder` manifest definition `claim_version` field to `1`.
+- The `title()` and `format()` methods of both `Manifest` and `Ingredient` objects now return an `Option<String>` because in v2 claims, `title` is optional and `format` does not exist.
+- The first `action` must be `c2pa.created` or `c2pa.opened` (which requires an ingredient). 
 
-The `title()` and `format()` methods of both `Manifest` and `Ingredient` objects now return an `Option<String>` because in v2 claims, `title` is optional and `format` does not exist.
-
-In v2 claims, the first `action` must be `c2pa.created` or `c2pa.opened`. 
-
-V2 claims have many new checks and status codes.
+WARNING: Implementations should not generate deprecated v1 claims.  If needed, though, you can generate v1 claims by setting the `Builder` manifest definition `claim_version` field to `1`.
 
 ### Using the old API
 
@@ -42,7 +39,7 @@ To use the old deprecated API, enable the `v1_api` feature; for example:
 c2pa = {version="0.45.2", features=["v1_api"]}
 ```
 
-This will be the last release with the v1_api feature available.
+This will be the last release with the `v1_api` feature available.
 
 ## Language binding support
 

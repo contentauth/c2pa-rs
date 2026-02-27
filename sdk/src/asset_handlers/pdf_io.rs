@@ -16,8 +16,7 @@ use std::{fs::File, path::Path};
 use crate::{
     asset_handlers::pdf::{C2paPdf, Pdf},
     asset_io::{AssetIO, CAIRead, CAIReader, CAIWriter, ComposedManifestRef, HashObjectPositions},
-    Error,
-    Error::{JumbfNotFound, NotImplemented, PdfReadError},
+    Error::{self, JumbfNotFound, NotImplemented, PdfReadError},
 };
 
 static SUPPORTED_TYPES: [&str; 2] = ["pdf", "application/pdf"];
@@ -28,6 +27,7 @@ pub struct PdfIO {}
 impl CAIReader for PdfIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> crate::Result<Vec<u8>> {
         asset_reader.rewind()?;
+
         let pdf = Pdf::from_reader(asset_reader).map_err(|e| Error::InvalidAsset(e.to_string()))?;
         self.read_manifest_bytes(pdf)
     }
@@ -119,6 +119,12 @@ impl ComposedManifestRef for PdfIO {
     fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>, Error> {
         Ok(manifest_data.to_vec())
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PdfError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]

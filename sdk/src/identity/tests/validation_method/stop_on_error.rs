@@ -61,7 +61,7 @@ async fn malformed_cbor() {
     assert!(log.label.ends_with("/c2pa.assertions/cawg.identity"));
     assert_eq!(log.description, "invalid CBOR");
     assert_eq!(
-        log.validation_status.as_ref().unwrap().as_ref(),
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
         "cawg.identity.cbor.invalid"
     );
 }
@@ -185,7 +185,7 @@ async fn assertion_not_in_claim_v1() {
     assert_eq!(log.description, "referenced assertion not in claim");
 
     assert_eq!(
-        log.validation_status.as_ref().unwrap().as_ref(),
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
         "cawg.identity.assertion.mismatch"
     );
 
@@ -271,7 +271,7 @@ async fn duplicate_assertion_reference() {
     assert_eq!(log.description, "multiple references to same assertion");
 
     assert_eq!(
-        log.validation_status.as_ref().unwrap().as_ref(),
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
         "cawg.identity.assertion.duplicate"
     );
 
@@ -338,7 +338,7 @@ async fn no_hard_binding() {
 
     assert_eq!(log.description, "no hard binding assertion");
     assert_eq!(
-        log.validation_status.as_ref().unwrap().as_ref(),
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
         "cawg.identity.hard_binding_missing"
     );
 
@@ -441,7 +441,7 @@ mod invalid_sig_type {
         assert_eq!(log.description, "unsupported signature type");
 
         assert_eq!(
-            log.validation_status.as_ref().unwrap().as_ref(),
+            log.validation_status.as_ref().unwrap().as_ref() as &str,
             "cawg.identity.sig_type.unknown"
         );
     }
@@ -516,7 +516,7 @@ mod invalid_sig_type {
         assert_eq!(log.description, "unsupported signature type");
 
         assert_eq!(
-            log.validation_status.as_ref().unwrap().as_ref(),
+            log.validation_status.as_ref().unwrap().as_ref() as &str,
             "cawg.identity.sig_type.unknown"
         );
     }
@@ -582,7 +582,7 @@ async fn pad1_invalid() {
 
     assert_eq!(log.description, "invalid value in pad fields");
     assert_eq!(
-        log.validation_status.as_ref().unwrap().as_ref(),
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
         "cawg.identity.pad.invalid"
     );
 
@@ -650,7 +650,7 @@ async fn pad2_invalid() {
     assert_eq!(log.description, "invalid value in pad fields");
 
     assert_eq!(
-        log.validation_status.as_ref().unwrap().as_ref(),
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
         "cawg.identity.pad.invalid"
     );
 

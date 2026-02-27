@@ -63,17 +63,19 @@ fn read_svg(c: &mut Criterion) {
     });
 }
 
-fn read_pdf(c: &mut Criterion) {
-    let data = include_bytes!("fixtures/100kb-signed.pdf");
-    let format = "application/pdf";
+// TODO: Add back when we support pdf signing.
+// https://github.com/contentauth/c2pa-rs/issues/527
+// fn read_pdf(c: &mut Criterion) {
+//     let data = include_bytes!("fixtures/100kb-signed.pdf");
+//     let format = "application/pdf";
 
-    c.bench_function("read 100kb-signed.pdf (with manifest)", |b| {
-        b.iter(|| {
-            let mut stream = Cursor::new(data);
-            Reader::from_stream(format, &mut stream)
-        })
-    });
-}
+//     c.bench_function("read 100kb-signed.pdf (with manifest)", |b| {
+//         b.iter(|| {
+//             let mut stream = Cursor::new(data);
+//             Reader::from_stream(format, &mut stream)
+//         })
+//     });
+// }
 
 fn read_mp3(c: &mut Criterion) {
     let data = include_bytes!("fixtures/100kb-signed.mp3");
@@ -112,7 +114,6 @@ fn read_wav(c: &mut Criterion) {
 }
 
 criterion_group!(
-    benches, read_jpeg, read_png, read_gif, read_tiff, read_svg, read_pdf, read_mp3, read_mp4,
-    read_wav
+    benches, read_jpeg, read_png, read_gif, read_tiff, read_svg, read_mp3, read_mp4, read_wav
 );
 criterion_main!(benches);

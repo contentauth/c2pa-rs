@@ -1,3 +1,5 @@
+# This ensures that when a ticket is not labeled as Done in Jira, it will re-open the ticket on GitHub.
+
 name: Labeling ticket "To Do"
 on:
   issues:

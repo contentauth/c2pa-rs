@@ -46,6 +46,9 @@ as part of the project. [Sign our CLA](https://opensource.adobe.com/cla.html). Y
 only need to submit an Adobe CLA one time, so if you have submitted one previously,
 you are good to go!
 
+Please note that the Adobe CLA is tied to each _individual_ contributor. We do not currently
+have a mechanism to allow the CLA to be signed on behalf of an entire organization.
+
 ### Code reviews
 
 All submissions should come in the form of pull requests and need to be reviewed

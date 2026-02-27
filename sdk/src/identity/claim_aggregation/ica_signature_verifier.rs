@@ -103,6 +103,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
             payload_bytes,
             &local_ctp,
             &mut timestamp_tracker,
+            false,
         )
         .await
         .inspect(|tst_info| self.save_time_stamp(tst_info, &mut ica_credential, status_tracker))

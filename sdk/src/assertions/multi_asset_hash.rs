@@ -237,7 +237,7 @@ pub mod tests {
 
     use crate::{
         assertion::AssertionBase, assertions::MultiAssetHash, status_tracker::StatusTracker,
-        store::Store,
+        store::Store, Context,
     };
 
     const MOTION_PHOTO: &[u8] = include_bytes!("../../tests/fixtures/motion_photo.jpg");
@@ -250,7 +250,9 @@ pub mod tests {
     fn test_validation() {
         let mut validation_log = StatusTracker::default();
         let source = Cursor::new(MOTION_PHOTO);
-        let store = Store::from_stream("image/jpeg", source, true, &mut validation_log).unwrap();
+        let context = Context::new();
+        let store =
+            Store::from_stream("image/jpeg", source, &mut validation_log, &context).unwrap();
         let claim = store.provenance_claim().unwrap();
         let assertion =
             MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap())
@@ -265,7 +267,9 @@ pub mod tests {
     fn test_multiple_parts_validation() {
         let mut validation_log = StatusTracker::default();
         let source = Cursor::new(MOTION_PHOTO_2);
-        let store = Store::from_stream("image/jpeg", source, true, &mut validation_log).unwrap();
+        let context = Context::new();
+        let store =
+            Store::from_stream("image/jpeg", source, &mut validation_log, &context).unwrap();
         let claim = store.provenance_claim().unwrap();
         let assertion =
             MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap())
@@ -280,7 +284,9 @@ pub mod tests {
     fn test_stripped_validation() {
         let mut validation_log = StatusTracker::default();
         let source = Cursor::new(STRIPPED_PHOTO);
-        let store = Store::from_stream("image/jpeg", source, true, &mut validation_log).unwrap();
+        let context = Context::new();
+        let store =
+            Store::from_stream("image/jpeg", source, &mut validation_log, &context).unwrap();
         let claim = store.provenance_claim().unwrap();
         let assertion =
             MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap())
@@ -295,7 +301,9 @@ pub mod tests {
     fn test_validation_with_exclusion_of_optional_data_hash() {
         let mut validation_log = StatusTracker::default();
         let source = Cursor::new(NO_MOVIE_MOTION_PHOTO);
-        let store = Store::from_stream("image/jpeg", source, true, &mut validation_log).unwrap();
+        let context = Context::new();
+        let store =
+            Store::from_stream("image/jpeg", source, &mut validation_log, &context).unwrap();
         let claim = store.provenance_claim().unwrap();
         let assertion =
             MultiAssetHash::from_assertion(claim.get_assertion(MultiAssetHash::LABEL, 0).unwrap())

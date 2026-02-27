@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::{Read, Seek};
+
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
@@ -20,8 +22,13 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
     assertions::{labels, AssertionMetadata, ReviewRating},
     cbor_types::map_cbor_to_type,
+    context::Context,
     error::Result,
     hashed_uri::HashedUri,
+    jumbf::labels::{to_manifest_uri, to_signature_uri},
+    status_tracker::StatusTracker,
+    store::Store,
+    utils::xmp_inmemory_utils::XmpInfo,
     validation_results::ValidationResults,
     validation_status::ValidationStatus,
     Error,
@@ -90,7 +97,7 @@ impl Serialize for Ingredient {
 impl Ingredient {
     /// Label prefix for an ingredient assertion.
     ///
-    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#ingredient_assertion>.
+    /// See [ingredient_assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#ingredient_assertion)
     pub const LABEL: &'static str = labels::INGREDIENT;
 
     pub fn new(title: &str, format: &str, instance_id: &str, document_id: Option<&str>) -> Self {
@@ -421,7 +428,7 @@ impl Ingredient {
             || self.active_manifest.is_some() && self.validation_results.is_none()
         {
             return Err(serde::ser::Error::custom(
-                "Ingredient has incompatible fields",
+                "Ingredient v3 activeManifest and validationResults must both be present or absent",
             ));
         }
 
@@ -520,6 +527,103 @@ impl Ingredient {
 
         ingredient_map.end()
     }
+
+    /// Create a new Ingredient assertion from a stream
+    /// You must specify the relationship and format.
+    /// This will return the new Ingredient and associated manifest_bytes if they exist.
+    pub(crate) fn from_stream(
+        relationship: Relationship,
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        context: &Context,
+    ) -> Result<(Self, Option<Vec<u8>>)> {
+        let mut validation_log = StatusTracker::default();
+        let mut ingredient = Self::new_v3(relationship);
+        ingredient.format = Some(format.to_owned());
+
+        // Try to get xmp info, if this fails all XmpInfo fields will be None.
+        stream.rewind()?;
+        let xmp_info = XmpInfo::from_source(&mut stream, format);
+        stream.rewind()?;
+        // use xmp info if available
+        ingredient.instance_id = xmp_info.instance_id;
+        ingredient.document_id = xmp_info.document_id;
+        // note, provenance is handled in Store::from_stream
+        // should we add something to ingredient to indicate it was remotely fetched?
+
+        match Store::from_stream(format, &mut stream, &mut validation_log, context) {
+            Ok(store) => {
+                ingredient.with_store(&store, &validation_log)?;
+                let manifest_bytes = store.to_jumbf_internal(0)?;
+                Ok((ingredient, Some(manifest_bytes)))
+            }
+            Err(Error::JumbfNotFound)
+            | Err(Error::ProvenanceMissing)
+            | Err(Error::UnsupportedType) => {
+                // no claims but valid file
+                Ok((ingredient, None))
+            }
+            Err(Error::BadParam(desc)) if desc == *"unrecognized file type" => {
+                Ok((ingredient, None))
+            } // no claims but valid file
+            Err(Error::RemoteManifestUrl(url)) | Err(Error::RemoteManifestFetch(url)) => {
+                let status =
+                    ValidationStatus::new_failure(crate::validation_status::MANIFEST_INACCESSIBLE)
+                        .set_url(url)
+                        .set_explanation("Remote manifest not fetched".to_string());
+                let mut validation_results = ValidationResults::default();
+                validation_results.add_status(status.clone());
+                ingredient.validation_results = Some(validation_results);
+                Ok((ingredient, None))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Add store information to the ingredient assertion
+    pub(crate) fn with_store(
+        &mut self,
+        store: &Store,
+        validation_log: &StatusTracker,
+    ) -> Result<&Self> {
+        self.validation_results = Some(ValidationResults::from_store(store, validation_log));
+
+        if let Some(claim) = store.provenance_claim() {
+            if self.title.is_none() {
+                self.title = claim.title().cloned();
+            }
+            if self.instance_id.is_none() {
+                self.instance_id = Some(claim.instance_id().to_string());
+            }
+
+            let hashes = store.get_manifest_box_hashes(claim);
+
+            self.active_manifest = Some(HashedUri::new(
+                to_manifest_uri(claim.label()),
+                Some(claim.alg().to_owned()),
+                hashes.manifest_box_hash.as_ref(),
+            ));
+            self.claim_signature = Some(HashedUri::new(
+                to_signature_uri(claim.label()),
+                Some(claim.alg().to_owned()),
+                hashes.signature_box_hash.as_ref(),
+            ));
+
+            let thumbnail = claim.thumbnail();
+            if thumbnail.is_some()
+                && self
+                    .validation_results
+                    .as_ref()
+                    .map(|r| r.validation_state())
+                    != Some(crate::ValidationState::Invalid)
+            {
+                self.thumbnail = thumbnail;
+            } else {
+                // todo:: add thumbnail here
+            }
+        }
+        Ok(self)
+    }
 }
 
 fn to_decoding_err(label: &str, version: usize, field: &str) -> Error {
@@ -548,14 +652,14 @@ impl AssertionBase for Ingredient {
 
     fn to_assertion(&self) -> Result<Assertion> {
         let data = crate::assertion::AssertionData::Cbor(
-            serde_cbor::to_vec(self).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
+            c2pa_cbor::to_vec(self).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
         );
         Ok(Assertion::new(self.label(), self.version(), data))
     }
 
     fn from_assertion(assertion: &Assertion) -> Result<Self> {
-        let ingredient_value: serde_cbor::Value = serde_cbor::from_slice(assertion.data())
-            .map_err(|e| {
+        let ingredient_value: c2pa_cbor::Value =
+            c2pa_cbor::from_slice(assertion.data()).map_err(|e| {
                 Error::AssertionDecoding(AssertionDecodeError::from_err(
                     assertion.label(),
                     Some(assertion.get_ver()),
@@ -616,9 +720,9 @@ impl AssertionBase for Ingredient {
         let decoded = match version {
             1 => {
                 // make sure only V1 fields are present
-                if let serde_cbor::Value::Map(m) = &ingredient_value {
+                if let c2pa_cbor::Value::Map(m) = &ingredient_value {
                     if !m.keys().all(|v| match v {
-                        serde_cbor::Value::Text(t) => V1_FIELDS.contains(&t.as_str()),
+                        c2pa_cbor::Value::Text(t) => V1_FIELDS.contains(&t.as_str()),
                         _ => false,
                     }) {
                         return Err(to_decoding_err(
@@ -678,9 +782,9 @@ impl AssertionBase for Ingredient {
             }
             2 => {
                 // make sure only V2 fields are present
-                if let serde_cbor::Value::Map(m) = &ingredient_value {
+                if let c2pa_cbor::Value::Map(m) = &ingredient_value {
                     if !m.keys().all(|v| match v {
-                        serde_cbor::Value::Text(t) => V2_FIELDS.contains(&t.as_str()),
+                        c2pa_cbor::Value::Text(t) => V2_FIELDS.contains(&t.as_str()),
                         _ => false,
                     }) {
                         return Err(to_decoding_err(
@@ -749,9 +853,9 @@ impl AssertionBase for Ingredient {
             }
             3 => {
                 // make sure only V3 fields are present
-                if let serde_cbor::Value::Map(m) = &ingredient_value {
+                if let c2pa_cbor::Value::Map(m) = &ingredient_value {
                     if !m.keys().all(|v| match v {
-                        serde_cbor::Value::Text(t) => V3_FIELDS.contains(&t.as_str()),
+                        c2pa_cbor::Value::Text(t) => V3_FIELDS.contains(&t.as_str()),
                         _ => false,
                     }) {
                         return Err(to_decoding_err(
@@ -1110,5 +1214,73 @@ pub mod tests {
         assert!(!v3_decoded.is_v1_compatible());
         assert!(!v3_decoded.is_v2_compatible());
         assert!(v3_decoded.is_v3_compatible());
+    }
+
+    #[test]
+    fn test_from_stream() {
+        use std::io::Cursor;
+
+        // Create a simple test stream with minimal valid data
+        let test_data = vec![0u8; 1024]; // Empty/minimal data
+        let stream = Cursor::new(test_data);
+
+        let context = Context::default();
+        let relationship = Relationship::ComponentOf;
+        let format = "image/jpeg";
+
+        let result = Ingredient::from_stream(relationship.clone(), format, stream, &context);
+
+        // Should succeed even with no C2PA data
+        assert!(result.is_ok());
+
+        let (ingredient, manifest_bytes) = result.unwrap();
+
+        // Verify basic properties
+        assert_eq!(ingredient.version, 3);
+        assert_eq!(ingredient.relationship, relationship);
+        assert_eq!(ingredient.format, Some(format.to_owned()));
+
+        // With no actual C2PA data, manifest_bytes should be None
+        assert!(manifest_bytes.is_none());
+    }
+
+    #[test]
+    fn test_from_stream_with_c2pa_data() {
+        use std::io::Cursor;
+
+        // Use a test image that contains C2PA data
+        const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/CA.jpg");
+        let stream = Cursor::new(TEST_IMAGE);
+
+        let context = Context::default();
+        let relationship = Relationship::ParentOf;
+        let format = "image/jpeg";
+
+        let result = Ingredient::from_stream(relationship.clone(), format, stream, &context);
+
+        // Should succeed with C2PA data present
+        assert!(result.is_ok());
+
+        let (ingredient, manifest_bytes) = result.unwrap();
+
+        // Verify basic properties
+        assert_eq!(ingredient.version, 3);
+        assert_eq!(ingredient.relationship, relationship);
+        assert_eq!(ingredient.format, Some(format.to_owned()));
+
+        // With C2PA data, manifest_bytes should be present
+        assert!(manifest_bytes.is_some());
+        let manifest_data = manifest_bytes.unwrap();
+        assert!(!manifest_data.is_empty());
+
+        // Verify that validation results were populated
+        assert!(ingredient.validation_results.is_some());
+
+        // Verify that active_manifest and claim_signature are populated
+        assert!(ingredient.active_manifest.is_some());
+        assert!(ingredient.claim_signature.is_some());
+
+        // Verify instance_id is populated from the store
+        assert!(ingredient.instance_id.is_some());
     }
 }

@@ -229,7 +229,7 @@ pub mod tests {
     const IDENTITY_URI: &str = "https://some_identity/service/";
 
     // Example review rating from
-    // https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review
+    // https://spec.c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review
     const RATING: &str = r#"{
         "@context": "http://schema.org",
         "@type": "ClaimReview",

@@ -3,15 +3,15 @@
 C2PA Tool's command-line syntax is:
 
 ```
-c2patool [OPTIONS] <PATH> [COMMAND]
+c2patool <ASSET_PATH> [OPTIONS] [SUBCOMMAND]
 ```
 
 Where:
-- `OPTIONS` is one or more of the command-line options described in following table.
-- `<PATH>` is the (relative or absolute) file path to the asset to read or embed a manifest into.
-- `[COMMAND]` is one of the optional subcommands: `trust`, `fragment`, or `help`.
+- `<ASSET_PATH>` is the (relative or absolute) file path to the asset to read or embed a manifest into.
+- `[OPTIONS]` is one or more of the [command-line options](#options) described in following table.
+- `[SUBCOMMAND]` is one of the optional [subcommands](#subcommands): `trust`, `fragment`, or `help`.
 
-By default, c2patool writes a JSON representation of C2PA manifests found in the asset to the standard output. 
+By default, C2PA Tool writes the JSON manifest data found in the asset to the standard output. You can override the default by using the `--output, -o` option.
 
 ## Subcommands
 
@@ -29,16 +29,18 @@ The following options are available with any (or no) subcommand.  Additional opt
 | `--certs` | | N/A | Extract a certificate chain to standard output (stdout). |
 | `--config` | `-c` | `<config>` | Specify a manifest definition as a JSON string. See [Providing a manifest definition on the command line](#providing-a-manifest-definition-on-the-command-line). |
 | `--detailed` | `-d` | N/A | Display detailed C2PA-formatted manifest data. See [Displaying a detailed manifest report](#detailed-manifest-report). |
+| `--external-manifest` | N/A | `<c2pa_file>` | Path to the binary .c2pa manifest to use for validation against the input asset. |
 | `--force` | `-f` | N/A | Force overwriting output file. See [Forced overwrite](#forced-overwrite). |
 | `--help` | `-h` | N/A | Display CLI help information. |
 | `--info` |  | N/A | Display brief information about the file. |
 | `--ingredient` | `-i` | N/A | Create an Ingredient definition in --output folder. |
-| `--output` | `-o` | `<output_file>` | Path to output folder or file. See [Adding a manifest to an asset file](#adding-a-manifest-to-an-asset-file). |
 | `--manifest` | `-m` | `<manifest_file>` | Specify a manifest file to add to an asset file. See [Adding a manifest to an asset file](#adding-a-manifest-to-an-asset-file).
 | `--no_signing_verify` | None | N/A |  Do not validate the signature after signing an asset, which speeds up signing. See [Speeding up signing](#speeding-up-signing) |
+| `--output` | `-o` | `<output_file>` | Path to output folder or file. This option can be used in two ways:<br/>&bull;With the `-m` option to [add a manifest to the specified asset file](#adding-a-manifest-to-an-asset-file). The argument then specifies the name of the resulting asset file with Content Credentials added.<br/>&bull;Without the `-m` option to [write the manifest data to a directory](#saving-manifest-data-to-a-directory) (including assertion and ingredient thumbnails). The argument then specifies the output directory to use. |
 | `--parent` | `-p` | `<parent_file>` | Path to parent file. See [Specifying a parent file](#specifying-a-parent-file). |
 | `--remote` | `-r` | `<manifest_url>` | URL for remote manifest available over HTTP. See [Generating a remote manifest](#generating-a-remote-manifest)| N/A? |
 | `--reserve-size` | N/A | Only valid with `--signer-path` argument. The amount of memory to reserve for signing. Default: 20000. For more information, see CLI help. |
+| `--settings`  | N/A | Path to the settings file file.<br/>Default is value of environment variable C2PATOOL_SETTINGS. If the environment variable is not set, then default is` ~/.config/c2pa/c2pa.toml`. |  Path to the config file.  See [Configuring SDK settings](../../docs/settings.md) | 
 | `--sidecar` | `-s` | N/A | Put manifest in external "sidecar" file with `.c2pa` extension. See [Generating an external manifest](#generating-an-external-manifest). |
 | `--signer-path` | N/A | Specify path to command-line executable for signing.  See [Signing claim bytes with your own signer](#signing-claim-bytes-with-your-own-signer). |
 | `--tree` | | N/A | Create a tree diagram of the manifest store. |
@@ -53,6 +55,8 @@ c2patool sample/C.jpg
 ```
 
 The tool displays the manifest JSON to standard output (stdout).
+
+### Saving manifest data to a directory
 
 Use the `--output` argument to write the contents of the manifest, (including the manifest's assertion and ingredient thumbnails) to the specified directory.
 
@@ -83,6 +87,14 @@ c2patool sample/C.jpg --info
 ```
 
 The tool displays the report to standard output (stdout).
+
+### Forced overwrite
+
+The tool will return an error if the output file already exists. Use the `--force` / `-f` option to force overwriting the output file. For example:
+
+```shell
+c2patool sample/image.jpg -m sample/test.json -f -o signed_image.jpg
+```
 
 ## Creating an ingredient from a file
 
@@ -128,22 +140,14 @@ c2patool sample/C.jpg --ingredient --output ./ingredient
 c2patool sample/image.jpg -m sample/test.json -p ./ingredient -o signed_image.jpg
 ```
 
-### Forced overwrite
-
-The tool will return an error if the output file already exists. Use the `--force` / `-f` option to force overwriting the output file. For example:
-
-```shell
-c2patool sample/image.jpg -m sample/test.json -f -o signed_image.jpg
-```
-
-## Generating an external manifest
+### Generating an external manifest
 
 Use the `--sidecar` / `-s` option to put the manifest in an external sidecar file in the same location as the output file. The manifest will have the same output filename but with a `.c2pa` extension. The tool will copy the output file but the original will be untouched.
 
 ```shell
 c2patool sample/image.jpg -s -m sample/test.json -o signed_image.jpg
 ```
-## Generating a remote manifest
+### Generating a remote manifest
 
 Use the `--remote` / `-r` option to place an HTTP reference to the manifest in the output file. The manifest is returned as an external sidecar file in the same location as the output file with the same filename but with a `.c2pa` extension. Place the manifest at the location specified by the `-r` option. When using remote manifests the remote URL should be publicly accessible to be most useful to users. When verifying an asset, remote manifests are automatically fetched.
 
@@ -155,7 +159,7 @@ In the example above, the tool will embed the URL `http://my_server/myasset.c2pa
 
 If you use both the `-s` and `-r` options, the tool embeds a manifest in the output file and also adds the remote reference.
 
-## Signing claim bytes with your own signer
+### Signing claim bytes with your own signer
 
 When generating a manifest, if the private key is not accessible on the system on which you are running the tool, use the `--signer-path` argument to specify the path to an executable that performs signing. 
 This executable receives the claim bytes (the bytes to be signed) from standard input (`stdin`) and outputs the signature bytes to standard output (`stdout`). 
@@ -173,9 +177,9 @@ c2patool sample/image.jpg            \
 
 For information on calculating the value of the `--reserve-size` argument, see `c2patool --help`.
 
-## Providing a manifest definition on the command line
+### Providing a manifest definition on the command line
 
-To provide the manifest definition in a command line argument instead of a file, use the `--config` / `-c` option.
+To provide the manifest definition as a command line argument instead of in a file, use the `--config` / `-c` option.
 
 For example, the following command adds a custom assertion called "org.contentauth.test".
 
@@ -186,23 +190,32 @@ c2patool sample/image.jpg \
       "data": {"my_key": "whatever I want"}}]}'
 ```
 
-## Speeding up signing
+### Speeding up signing
 
 By default, `c2patool` validates the signature immediately after signing a manifest. To disable this and speed up the validation process, use the `--no_signing_verify` option.
 
 ## Configuring trust support
 
+Use the `trust` subcommand to specify _trust lists_ that the tool consults to determine if an asset was signed by a "trusted" certificate, which can be either a certificate on the specified _allowed list_ or a certificate that chains back to a root certificate on the specified _trust anchors_ list. 
+
+There are two significant trust lists for signing Content Credentials:
+
+- The [official C2PA trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists#c2pa-trust-list) that products in the [C2PA conformance program](https://opensource.contentauthenticity.org/docs/conformance/) use. The [Adobe Content Authenticity Inspect tool](https://inspect.cr/) uses the official C2PA trust list. 
+- The legacy [interim trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists#interim-trust-list), which is now frozen; no new certificates can be added to this list. Currently, the [C2PA Verify tool](https://verify.contentauthenticity.org/) uses this trust list.
+
+**Note:** With the `trust` subcommand, C2PA Tool will make several HTTP requests each time it runs. Since these lists may change without notice (and the allowed list may change quite often), check these lists frequently to stay in sync with the Verify site. However, when performing bulk operations, you may want to cache these files locally to avoid a large number of network calls that might affect performance.
+
+### Trust subcommand options
+
 Enable trust support by using the `trust` subcommand, as follows:
 
 ```
-c2patool [path] trust [OPTIONS]
+c2patool <ASSET_PATH> trust [OPTIONS]
 ```
 
-When the `trust` subcommand is supplied, should c2patool encounter a problem with validating any of the claims in the asset, its JSON output will contain a `validation_status` field whose value is an array of objects, each describing a validation problem.
+If C2PA Tool can't validate any of the claims in the asset against the specified trust lists, the JSON output will contain a `validation_status` field whose value is an array of objects, each describing a validation problem.
 
-### Additional options
-
-Several additional CLI options are available with the `trust` sub-command to specify the location of files containing the trust anchors list or known certificate list, as described in the following table. You can also use environment variables to specify these values.
+Several additional CLI options are available with the `trust` sub-command, as described in the following table. You can also use environment variables to specify these values.
 
 <div class="trust-table" markdown="1">
 
@@ -230,27 +243,26 @@ c2patool sample/C.jpg trust \
   --trust_config https://server.com/store.cfg
 ```
 
-### Using the Verify known certificate list
+### Using the official C2PA trust list
 
-**IMPORTANT:** The C2PA intends to publish an official trust list. Until that time, the [C2PA Verify tool uses a temporary known certificate list](https://opensource.contentauthenticity.org/docs/verify-known-cert-list). These lists are subject to change, and will be deprecated when C2PA publishes its trust list.
-
-To configure C2PA tool to use the Verify temporary known certificate list, set the following environment variables on your system:
+To specify the [official C2PA trust list](https://github.com/c2pa-org/conformance-public/blob/main/trust-list/C2PA-TRUST-LIST.pem) use the `--trust_anchors` option as follows:
 
 ```shell
-export C2PATOOL_TRUST_ANCHORS='https://contentcredentials.org/trust/anchors.pem'
-export C2PATOOL_ALLOWED_LIST='https://contentcredentials.org/trust/allowed.sha256.txt'
-export C2PATOOL_TRUST_CONFIG='https://contentcredentials.org/trust/store.cfg'
+c2patool sample/C.jpg trust \
+  --trust_anchors='https://raw.githubusercontent.com/c2pa-org/conformance-public/refs/heads/main/trust-list/C2PA-TRUST-LIST.pem' \
 ```
 
-**Note:** When these environment variables are set, C2PA Tool will make several HTTP requests each time it  runs. Since these lists may change without notice (and the allowed list may change quite often), check these lists frequently to stay in sync with the Verify site. However, when performing bulk operations, you may want to cache these files locally to avoid a large number of network calls that might affect performance.
+The C2PA trust list does not provide "allowed list" of end-entity certificates, nor do you need to specify the `--trust_config` option.
 
-You can then run:
+Alternatively, set the following environment variable on your system:
 
 ```shell
-c2patool sample/C.jpg trust
+export C2PATOOL_TRUST_ANCHORS='https://raw.githubusercontent.com/c2pa-org/conformance-public/refs/heads/main/trust-list/C2PA-TRUST-LIST.pem'
 ```
 
-You can also specify these values as CLI arguments instead:
+### Using the interim trust list
+
+To use the legacy interim trust list, specify the CLI options as follows:
 
 ```shell
 c2patool sample/C.jpg trust \
@@ -259,7 +271,21 @@ c2patool sample/C.jpg trust \
   --trust_config='https://contentcredentials.org/trust/store.cfg'
 ```
 
-**Note:** This sample image should show a `signingCredential.untrusted` validation status since the test signing certificate used to sign them is not contained on the trust lists above.
+Alternatively, set the following environment variables on your system:
+
+```shell
+export C2PATOOL_TRUST_ANCHORS='https://contentcredentials.org/trust/anchors.pem'
+export C2PATOOL_ALLOWED_LIST='https://contentcredentials.org/trust/allowed.sha256.txt'
+export C2PATOOL_TRUST_CONFIG='https://contentcredentials.org/trust/store.cfg'
+```
+
+You can then run, for example:
+
+```shell
+c2patool sample/C.jpg trust
+```
+
+**Note:** This sample image shows a `signingCredential.untrusted` validation status since the test signing certificate used is not contained on the trust lists above.
 
 ## Adding a manifest to fragmented BMFF content
 
@@ -287,14 +313,15 @@ c2patool  /Downloads/1080p_out/avc1/init.mp4 \
   fragment --fragments_glob "seg-*[0-9].m4s"
 ```
 
-### Additional option
+### Additional option for BMFF files
 
 The `--fragments_glob` option is only available with the `fragment` subcommand and specifies the glob pattern to find the fragments of the asset. The path is automatically set to be the same as the "init" segment, so the pattern must match only segment file names, not full paths.
 
 ## WASI
 
-The wasm created for wasm32-wasip2 can be run directly with [wasmtime](https://docs.wasmtime.dev/). It also can be transpiled to a JS + core Wasm for JavaScript execution using [jco](https://bytecodealliance.github.io/jco/transpiling.html).
+You can run the Wasm binary created for `wasm32-wasip2` directly with [wasmtime](https://docs.wasmtime.dev/). You can also transpile it into an ECMAScript module for JavaScript execution by using [jco](https://bytecodealliance.github.io/jco/transpiling.html) as follows:
+
 ```
-wasmtime -S cli -S http --dir . c2patool.wasm [OPTIONS] <PATH> [COMMAND]
+wasmtime -S cli -S http --dir . c2patool.wasm [OPTIONS] <ASSET_PATH> [COMMAND]
 ```
 

@@ -1,10 +1,10 @@
 use std::{fs, path::Path};
 
 use anyhow::Result;
-use c2pa::{Builder, ManifestDefinition, Reader};
-use schemars::{schema::RootSchema, schema_for};
+use c2pa::{Builder, ManifestDefinition, Reader, Settings};
+use schemars::{schema_for, Schema};
 
-fn write_schema(schema: &RootSchema, name: &str) {
+fn write_schema(schema: &Schema, name: &str) {
     println!("Exporting JSON schema for {name}");
     let output = serde_json::to_string_pretty(schema).expect("Failed to serialize schema");
     let output_dir = Path::new("./target/schema");
@@ -24,9 +24,8 @@ fn main() -> Result<()> {
     let reader = schema_for!(Reader);
     write_schema(&reader, "Reader");
 
-    // TODO: no longer json, generate toml schema?
-    // let settings = schema_for!(Settings);
-    // write_schema(&settings, "Settings");
+    let settings = schema_for!(Settings);
+    write_schema(&settings, "Settings");
 
     Ok(())
 }

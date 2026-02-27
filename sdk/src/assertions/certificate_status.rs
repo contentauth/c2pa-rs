@@ -17,20 +17,25 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
+    crypto::base64,
     error::Result,
 };
 
 /// Helper class to create Certificate Status assertions
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq)]
 pub struct CertificateStatus {
-    #[serde(rename = "ocspVals")]
+    #[serde(
+        rename = "ocspVals",
+        serialize_with = "serialize_bytes_vec",
+        deserialize_with = "deserialize_bytes_vec"
+    )]
     pub ocsp_vals: Vec<ByteBuf>,
 }
 
 impl CertificateStatus {
     /// Label prefix for a [`CertificateStatus`] assertion.
     ///
-    /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#certificate_status_assertion>.
+    /// See [certificate status assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#certificate_status_assertion)
     pub const LABEL: &'static str = labels::CERTIFICATE_STATUS;
 
     pub fn new(ocsp_vals: Vec<Vec<u8>>) -> Self {
@@ -71,6 +76,45 @@ impl AssertionBase for CertificateStatus {
     }
 }
 
+// Custom serialization functions
+fn serialize_bytes_vec<S>(
+    bytes_vec: &Vec<ByteBuf>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    if serializer.is_human_readable() {
+        // For JSON (human readable), convert to base64 strings
+        let base64_vec: Vec<String> = bytes_vec.iter().map(|buf| base64::encode(buf)).collect();
+        base64_vec.serialize(serializer)
+    } else {
+        // For CBOR (non-human readable), use default serialization
+        bytes_vec.serialize(serializer)
+    }
+}
+
+fn deserialize_bytes_vec<'de, D>(deserializer: D) -> std::result::Result<Vec<ByteBuf>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    if deserializer.is_human_readable() {
+        // For JSON (human readable), convert from base64 strings
+        let base64_vec: Vec<String> = Vec::deserialize(deserializer)?;
+        base64_vec
+            .into_iter()
+            .map(|s| {
+                base64::decode(&s)
+                    .map(ByteBuf::from)
+                    .map_err(serde::de::Error::custom)
+            })
+            .collect()
+    } else {
+        // For CBOR (non-human readable), use default deserialization
+        Vec::<ByteBuf>::deserialize(deserializer)
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -96,8 +140,8 @@ pub mod tests {
     fn test_json_round_trip() {
         let json = serde_json::json!({
           "ocspVals" : [
-            "...",
-            "..."
+            "b2NzcF92YWw=",
+            ""
           ]
         });
 

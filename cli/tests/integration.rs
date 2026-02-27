@@ -20,7 +20,7 @@ use std::{
 };
 
 // Add methods on commands
-use assert_cmd::prelude::*;
+use assert_cmd::{cargo, prelude::*};
 use httpmock::{prelude::*, Mock};
 use predicate::str;
 use predicates::prelude::*;
@@ -45,14 +45,14 @@ fn temp_path(name: &str) -> PathBuf {
 }
 #[test]
 fn tool_not_found() -> Result<(), Box<dyn Error>> {
-    let mut cmd = Command::cargo_bin("c2patool")?;
+    let mut cmd = Command::new(cargo::cargo_bin!("c2patool"));
     cmd.arg("test/file/notfound.jpg");
     cmd.assert().failure().stderr(str::contains("os error"));
     Ok(())
 }
 #[test]
 fn tool_not_found_info() -> Result<(), Box<dyn Error>> {
-    let mut cmd = Command::cargo_bin("c2patool")?;
+    let mut cmd = Command::new(cargo::cargo_bin!("c2patool"));
     cmd.arg("test/file/notfound.jpg").arg("--info");
     cmd.assert()
         .failure()
@@ -61,7 +61,7 @@ fn tool_not_found_info() -> Result<(), Box<dyn Error>> {
 }
 #[test]
 fn tool_jpeg_no_report() -> Result<(), Box<dyn Error>> {
-    let mut cmd = Command::cargo_bin("c2patool")?;
+    let mut cmd = Command::new(cargo::cargo_bin!("c2patool"));
     cmd.arg(fixture_path(TEST_IMAGE));
     cmd.assert()
         .failure()
@@ -72,7 +72,7 @@ fn tool_jpeg_no_report() -> Result<(), Box<dyn Error>> {
 #[test]
 // c2patool tests/fixtures/C.jpg --info
 fn tool_info() -> Result<(), Box<dyn Error>> {
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
         .arg("--info")
         .assert()
@@ -86,7 +86,7 @@ fn tool_info() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn tool_embed_jpeg_report() -> Result<(), Box<dyn Error>> {
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE))
         .arg("-m")
         .arg("sample/test.json")
@@ -103,7 +103,7 @@ fn tool_embed_jpeg_report() -> Result<(), Box<dyn Error>> {
 #[test]
 fn tool_fs_output_report() -> Result<(), Box<dyn Error>> {
     let path = temp_path("output_dir");
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path("verify.jpeg"))
         .arg("-o")
         .arg(&path)
@@ -130,7 +130,7 @@ fn tool_fs_output_report() -> Result<(), Box<dyn Error>> {
 #[test]
 fn tool_fs_output_report_supports_detailed_flag() -> Result<(), Box<dyn Error>> {
     let path = temp_path("./output_detailed");
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path("verify.jpeg"))
         .arg("-o")
         .arg(&path)
@@ -156,7 +156,7 @@ fn tool_fs_output_fails_when_output_exists() -> Result<(), Box<dyn Error>> {
     let path = temp_path("./output_conflict");
     // Create conflict directory.
     create_dir_all(&path)?;
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path("C.jpg"))
         .arg("-o")
         .arg(&path)
@@ -172,7 +172,7 @@ fn tool_fs_output_fails_when_output_exists() -> Result<(), Box<dyn Error>> {
 fn tool_test_manifest_folder() -> Result<(), Box<dyn std::error::Error>> {
     let out_path = temp_path("manifest_test");
     // first export a c2pa file
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
         .arg("-o")
         .arg(&out_path)
@@ -192,7 +192,7 @@ fn tool_test_manifest_folder() -> Result<(), Box<dyn std::error::Error>> {
 fn tool_test_ingredient_folder() -> Result<(), Box<dyn std::error::Error>> {
     let out_path = temp_path("ingredient_test");
     // first export a c2pa file
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
         .arg("-o")
         .arg(&out_path)
@@ -212,7 +212,7 @@ fn tool_test_ingredient_folder() -> Result<(), Box<dyn std::error::Error>> {
 fn tool_test_manifest_ingredient_json() -> Result<(), Box<dyn std::error::Error>> {
     let out_path = temp_path("ingredient_json");
     // first export a c2pa file
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
         .arg("-o")
         .arg(&out_path)
@@ -223,7 +223,7 @@ fn tool_test_manifest_ingredient_json() -> Result<(), Box<dyn std::error::Error>
         .stdout(str::contains("Ingredient report written"));
     let json_path = out_path.join("ingredient.json");
     let parent = json_path.to_string_lossy().to_string();
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE))
         .arg("-p")
         .arg(parent)
@@ -240,7 +240,7 @@ fn tool_test_manifest_ingredient_json() -> Result<(), Box<dyn std::error::Error>
 #[test]
 // c2patool tests/fixtures/earth_apollo17.jpg -m tests/fixtures/ingredient_test.json -o target/tmp/ingredients.jpg -f
 fn tool_embed_jpeg_with_ingredients_report() -> Result<(), Box<dyn Error>> {
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE))
         .arg("-m")
         .arg(fixture_path("ingredient_test.json"))
@@ -258,7 +258,7 @@ fn tool_embed_jpeg_with_ingredients_report() -> Result<(), Box<dyn Error>> {
 #[test]
 fn tool_extensions_do_not_match() -> Result<(), Box<dyn Error>> {
     let path = temp_path("./foo.png");
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path("C.jpg"))
         .arg("-m")
         .arg(fixture_path("ingredient_test.json"))
@@ -272,7 +272,7 @@ fn tool_extensions_do_not_match() -> Result<(), Box<dyn Error>> {
 #[test]
 fn tool_similar_extensions_match() -> Result<(), Box<dyn Error>> {
     let path = temp_path("./similar.JpEg");
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path("C.jpg"))
         .arg("-m")
         .arg(fixture_path("ingredient_test.json"))
@@ -286,7 +286,7 @@ fn tool_similar_extensions_match() -> Result<(), Box<dyn Error>> {
 }
 #[test]
 fn tool_fail_if_thumbnail_missing() -> Result<(), Box<dyn Error>> {
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE))
         .arg("-c")
         .arg("{\"thumbnail\": {\"identifier\": \"thumb.jpg\",\"format\": \"image/jpeg\"}}")
@@ -305,7 +305,7 @@ fn tool_sign_to_same_file_with_force() -> Result<(), Box<dyn Error>> {
     let file_path = tmp_dir.path().join("same_image.jpg");
     fs::copy(fixture_path(TEST_IMAGE), &file_path)?;
 
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(&file_path)
         .arg("-m")
         .arg(fixture_path("ingredient_test.json"))
@@ -327,7 +327,7 @@ fn tool_sign_to_same_file_no_force() -> Result<(), Box<dyn Error>> {
     let file_path = tmp_dir.path().join("same_image.jpg");
     fs::copy(fixture_path(TEST_IMAGE), &file_path)?;
 
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(&file_path)
         .arg("-m")
         .arg(fixture_path("ingredient_test.json"))
@@ -431,7 +431,7 @@ fn tool_sign_to_same_file_no_force() -> Result<(), Box<dyn Error>> {
 #[test]
 // c2patool tests/fixtures/C.jpg trust --trust_anchors=tests/fixtures/trust/anchors.pem --trust_config=tests/fixtures/trust/store.cfg
 fn tool_load_trust_settings_from_file_trusted() -> Result<(), Box<dyn Error>> {
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
         .arg("trust")
         .arg("--trust_anchors")
@@ -448,7 +448,7 @@ fn tool_load_trust_settings_from_file_trusted() -> Result<(), Box<dyn Error>> {
 #[test]
 // c2patool tests/fixtures/C.jpg trust --trust_anchors=tests/fixtures/trust/no-match.pem --trust_config=tests/fixtures/trust/store.cfg
 fn tool_load_trust_settings_from_file_untrusted() -> Result<(), Box<dyn Error>> {
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
         .arg("trust")
         .arg("--trust_anchors")
@@ -491,7 +491,7 @@ fn tool_load_trust_settings_from_url_arg_trusted() -> Result<(), Box<dyn Error>>
     let mocks = create_mock_server(&server, "trust/anchors.pem", "trust/store.cfg");
 
     // Test flags
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
         .arg("trust")
         .arg("--trust_anchors")
@@ -513,7 +513,7 @@ fn tool_load_trust_settings_from_url_arg_untrusted() -> Result<(), Box<dyn Error
     let server = MockServer::start();
     let mocks = create_mock_server(&server, "trust/no-match.pem", "trust/store.cfg");
 
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
         .arg("trust")
         .arg("--trust_anchors")
@@ -536,7 +536,7 @@ fn tool_load_trust_settings_from_url_env_trusted() -> Result<(), Box<dyn Error>>
     let mocks = create_mock_server(&server, "trust/anchors.pem", "trust/store.cfg");
 
     // Test flags
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
         .arg("trust")
         .env("C2PATOOL_TRUST_ANCHORS", server.url("/trust/anchors.pem"))
@@ -557,7 +557,7 @@ fn tool_load_trust_settings_from_url_env_untrusted() -> Result<(), Box<dyn Error
     let mocks = create_mock_server(&server, "trust/no-match.pem", "trust/store.cfg");
 
     // Test flags
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
         .arg("trust")
         .env("C2PATOOL_TRUST_ANCHORS", server.url("/trust/anchors.pem"))
@@ -575,7 +575,7 @@ fn tool_load_trust_settings_from_url_env_untrusted() -> Result<(), Box<dyn Error
 #[test]
 // c2patool tests/fixtures/C.jpg --tree
 fn tool_tree() -> Result<(), Box<dyn Error>> {
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
         .arg("--tree")
         .assert()
@@ -588,7 +588,7 @@ fn tool_tree() -> Result<(), Box<dyn Error>> {
 #[test]
 // c2patool --settings .../trust/cawg_test_settings.toml C_with_CAWG_data.jpg
 fn tool_read_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg("--settings")
         .arg(fixture_path("trust/cawg_test_settings.toml"))
         .arg(fixture_path("C_with_CAWG_data.jpg"))
@@ -603,7 +603,7 @@ fn tool_read_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
 #[test]
 // c2patool --settings .../trust/cawg_test_settings.toml --detailed C_with_CAWG_data.jpg
 fn tool_read_image_with_details_with_cawg_data() -> Result<(), Box<dyn Error>> {
-    Command::cargo_bin("c2patool")?
+    Command::new(cargo::cargo_bin!("c2patool"))
         .arg("--settings")
         .arg(fixture_path("trust/cawg_test_settings.toml"))
         .arg(fixture_path("C_with_CAWG_data.jpg"))
@@ -614,5 +614,39 @@ fn tool_read_image_with_details_with_cawg_data() -> Result<(), Box<dyn Error>> {
         .stdout(str::contains("cawg.identity"))
         .stdout(str::contains("c2pa.assertions/cawg.training-mining"))
         .stdout(str::contains("cawg.identity.well-formed"));
+    Ok(())
+}
+
+#[test]
+// c2patool --settings .../trust/cawg_test_settings.toml C_with_CAWG_data.jpg
+fn tool_sign_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
+    let tmp_dir = tempdir()?;
+    let file_path = tmp_dir.path().join("same_image.jpg");
+    fs::copy(fixture_path(TEST_IMAGE), &file_path)?;
+
+    let output_path = tmp_dir.path().join("same_image_cawg_signed.jpg");
+
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg("--settings")
+        .arg(fixture_path("trust/cawg_sign_settings.toml"))
+        .arg(&file_path)
+        .arg("-m")
+        .arg(fixture_path("ingredient_test.json"))
+        .arg("-o")
+        .arg(&output_path)
+        .arg("-f")
+        .assert()
+        .success();
+
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg("--settings")
+        .arg(fixture_path("trust/cawg_sign_settings.toml"))
+        .arg(&output_path)
+        .assert()
+        .success()
+        .stdout(str::contains("cawg.identity"))
+        .stdout(str::contains("c2pa.assertions/cawg.training-mining"));
+    // .stdout(str::contains("cawg.identity.well-formed"));
+    // ^^ Enable this when #1356 lands.
     Ok(())
 }

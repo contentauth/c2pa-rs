@@ -68,7 +68,7 @@ pub(crate) fn check_certificate_trust(
     let mut store_ctx = X509StoreContext::new()?;
     if store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| f.verify_cert())? {
         Ok(TrustAnchorType::System)
-    } else {
+    } else if !ctp.trust_anchors_only() {
         // try the user trust anchors
         let mut builder = openssl::x509::store::X509StoreBuilder::new()?;
         builder.set_flags(X509VerifyFlags::X509_STRICT)?;
@@ -89,5 +89,7 @@ pub(crate) fn check_certificate_trust(
         } else {
             Err(CertificateTrustError::CertificateNotTrusted)
         }
+    } else {
+        Err(CertificateTrustError::CertificateNotTrusted)
     }
 }

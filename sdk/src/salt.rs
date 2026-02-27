@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use rand_chacha::rand_core::{RngCore, SeedableRng};
+
 /// The SaltGenerator trait always the caller to supply
 /// a function to generate a salt value used when hashing
 /// data.  Providing a unique salt ensures a unique hash for
@@ -19,18 +21,6 @@ pub trait SaltGenerator {
     /// generate a salt vector
     fn generate_salt(&self) -> Option<Vec<u8>>;
 }
-
-/// NoSalt return a no salt option to a function
-pub struct NoSalt {}
-
-impl SaltGenerator for NoSalt {
-    fn generate_salt(&self) -> Option<Vec<u8>> {
-        None
-    }
-}
-
-/// const NoSalt instance that can be used when no salting is required
-pub const NO_SALT: &NoSalt = &NoSalt {};
 
 /// Default salt generator
 /// This generator uses OpenSSL to generate a
@@ -55,10 +45,8 @@ impl Default for DefaultSalt {
 
 impl SaltGenerator for DefaultSalt {
     fn generate_salt(&self) -> Option<Vec<u8>> {
-        use rand::prelude::*;
-
         let mut salt = vec![0u8; self.salt_len];
-        let mut rng = rand_chacha::ChaCha20Rng::from_entropy();
+        let mut rng = rand_chacha::ChaCha20Rng::from_os_rng();
         rng.fill_bytes(&mut salt);
 
         Some(salt)

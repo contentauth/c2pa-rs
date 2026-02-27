@@ -69,7 +69,7 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
         }
 
         let mut signer_payload_cbor: Vec<u8> = vec![];
-        ciborium::into_writer(signer_payload, &mut signer_payload_cbor)
+        c2pa_cbor::to_writer(&mut signer_payload_cbor, signer_payload)
             .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
 
         let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, status_tracker)?;
@@ -162,14 +162,14 @@ mod tests {
 
     use crate::{
         crypto::{
-            cose::{CertificateTrustPolicy, CoseError, Verifier},
+            cose::{CertificateTrustPolicy, Verifier},
             raw_signature,
         },
         identity::{
             builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
             tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
             x509::{X509CredentialHolder, X509SignatureVerifier},
-            IdentityAssertion, ValidationError,
+            IdentityAssertion,
         },
         status_tracker::{LogKind, StatusTracker},
         Builder, Reader, SigningAlg,
@@ -244,17 +244,9 @@ mod tests {
 
         let x509_verifier = X509SignatureVerifier { cose_verifier };
 
-        let err = ia
-            .validate(manifest, &mut st, &x509_verifier)
-            .await
-            .unwrap_err();
-
-        match err {
-            ValidationError::SignatureError(CoseError::CertificateTrustError(_)) => {}
-            _ => {
-                panic!("Unexpected error: {err:#?}");
-            }
-        }
+        let result = ia.validate(manifest, &mut st, &x509_verifier).await;
+        // this should log an error but return Ok
+        assert!(result.is_ok());
 
         assert_eq!(st.logged_items().len(), 1);
 
@@ -265,7 +257,7 @@ mod tests {
         assert_eq!(log.description, "signing certificate untrusted");
 
         assert_eq!(
-            log.validation_status.as_ref().unwrap().as_ref(),
+            log.validation_status.as_ref().unwrap().as_ref() as &str,
             "signingCredential.untrusted"
         );
     }

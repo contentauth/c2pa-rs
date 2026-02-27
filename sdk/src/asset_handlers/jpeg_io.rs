@@ -234,15 +234,22 @@ fn get_cai_segments(jpeg: &img_parts::jpeg::Jpeg) -> Result<Vec<usize>> {
 }
 
 // delete cai segments
-fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<()> {
+fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<Option<usize>> {
     let cai_segs = get_cai_segments(jpeg)?;
     let jpeg_segs = jpeg.segments_mut();
+
+    let insertion_point = if !cai_segs.is_empty() {
+        Some(cai_segs[0])
+    } else {
+        None
+    };
 
     // remove cai segments
     for seg in cai_segs.iter().rev() {
         jpeg_segs.remove(*seg);
     }
-    Ok(())
+
+    Ok(insertion_point)
 }
 
 pub struct JpegIO {}
@@ -259,8 +266,17 @@ impl CAIReader for JpegIO {
         asset_reader.rewind()?;
         asset_reader.read_to_end(&mut buf).map_err(Error::IoError)?;
 
-        let dimg_opt = DynImage::from_bytes(buf.into())
-            .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
+        let dimg_opt = DynImage::from_bytes(buf.into()).map_err(|err| match err {
+            img_parts::Error::WrongSignature => JpegError::InvalidFileSignature {
+                reason: format!(
+                    "it may be because the stream does not start with \"{} {}\"",
+                    markers::P,
+                    markers::SOI
+                ),
+            }
+            .into(),
+            _ => Error::InvalidAsset("Could not parse input JPEG".to_owned()),
+        })?;
 
         if let Some(dimg) = dimg_opt {
             match dimg {
@@ -351,7 +367,10 @@ impl CAIWriter for JpegIO {
         let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
         // remove existing CAI segments
-        delete_cai_segments(&mut jpeg)?;
+        let insertion_point = match delete_cai_segments(&mut jpeg)? {
+            Some(i) if i > 0 => i - 1,
+            _ => 0,
+        };
 
         let jumbf_len = store_bytes.len();
         let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
@@ -398,8 +417,9 @@ impl CAIWriter for JpegIO {
 
             let seg_bytes = Bytes::from(seg_data);
             let app11_segment = JpegSegment::new_with_contents(markers::APP11, seg_bytes);
-            if seg <= jpeg.segments().len() {
-                jpeg.segments_mut().insert(seg, app11_segment); // we put this in the beginning...
+            if seg + insertion_point <= jpeg.segments().len() {
+                jpeg.segments_mut()
+                    .insert(seg + insertion_point, app11_segment); // we put this in the beginning...
             } else {
                 return Err(Error::InvalidAsset("JPEG JUMBF segment error".to_owned()));
             }
@@ -434,6 +454,12 @@ impl CAIWriter for JpegIO {
             .map_err(|e| Error::OtherError(Box::new(e)))?
             .ok_or(Error::UnsupportedType)?;
 
+        let mut cai_loc = HashObjectPositions {
+            offset: 0,
+            length: 0,
+            htype: HashBlockObjectType::Cai,
+        };
+
         match dimg {
             DynImage::Jpeg(jpeg) => {
                 for seg in jpeg.segments() {
@@ -452,13 +478,7 @@ impl CAIWriter for JpegIO {
 
                                 if cai_seg_cnt > 0 && is_cai_continuation {
                                     cai_seg_cnt += 1;
-
-                                    let v = HashObjectPositions {
-                                        offset: curr_offset,
-                                        length: seg.len_with_entropy(),
-                                        htype: HashBlockObjectType::Cai,
-                                    };
-                                    positions.push(v);
+                                    cai_loc.length += seg.len_with_entropy();
                                 } else {
                                     // check if this is a CAI JUMBF block
                                     let jumb_type = raw_vec
@@ -472,13 +492,8 @@ impl CAIWriter for JpegIO {
                                         cai_seg_cnt = 1;
                                         cai_en.clone_from(&en); // store the identifier
 
-                                        let v = HashObjectPositions {
-                                            offset: curr_offset,
-                                            length: seg.len_with_entropy(),
-                                            htype: HashBlockObjectType::Cai,
-                                        };
-
-                                        positions.push(v);
+                                        cai_loc.offset = curr_offset;
+                                        cai_loc.length += seg.len_with_entropy();
                                     } else {
                                         // save other for completeness sake
                                         let v = HashObjectPositions {
@@ -516,6 +531,10 @@ impl CAIWriter for JpegIO {
                 }
             }
             _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
+        }
+
+        if cai_loc.length > 0 {
+            positions.push(cai_loc);
         }
 
         Ok(positions)
@@ -1201,6 +1220,12 @@ impl ComposedManifestRef for JpegIO {
 
         Ok(out_stream.into_inner())
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum JpegError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]

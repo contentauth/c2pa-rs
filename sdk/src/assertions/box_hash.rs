@@ -11,8 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs::File, io::Cursor, path::*};
+use std::{
+    fs::File,
+    io::{Cursor, SeekFrom},
+    path::*,
+};
 
+use extfmt::Hexlify;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -21,7 +26,11 @@ use crate::{
     assertions::labels,
     asset_io::{AssetBoxHash, CAIRead},
     error::{Error, Result},
-    utils::hash_utils::{hash_stream_by_alg, verify_stream_by_alg, HashRange},
+    hash_utils::hash_by_alg,
+    utils::{
+        hash_utils::{hash_stream_by_alg, verify_stream_by_alg, HashRange},
+        io_utils::ReaderUtils,
+    },
     validation_results::validation_codes::ASSERTION_BOXHASH_UNKNOWN_BOX,
 };
 
@@ -29,7 +38,7 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 
 pub const C2PA_BOXHASH: &str = "C2PA";
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 pub struct BoxMap {
     pub names: Vec<String>,
 
@@ -50,10 +59,28 @@ pub struct BoxMap {
     pub range_len: u64,
 }
 
+impl BoxMap {
+    // diagnostic tool to show hashes for boxes
+    pub fn dump_box(&self, mut reader: &mut dyn CAIRead, alg: &str) -> Result<()> {
+        print!("box names: ");
+        for name in &self.names {
+            print!("{name}, ");
+        }
+
+        // get the hash
+        reader.seek(SeekFrom::Start(self.range_start))?;
+        let to_be_hashed = reader.read_to_vec(self.range_len)?;
+        let (hash, len) = (hash_by_alg(alg, &to_be_hashed, None), to_be_hashed.len());
+
+        println!("data len: {}, hash: {}", len, Hexlify(&hash));
+        Ok(())
+    }
+}
+
 /// Helper class to create BoxHash assertion
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
 pub struct BoxHash {
-    boxes: Vec<BoxMap>,
+    pub boxes: Vec<BoxMap>,
 }
 
 impl BoxHash {
@@ -104,7 +131,7 @@ impl BoxHash {
             }
         } else {
             return Err(Error::HashMismatch("No data boxes found".to_string()));
-        }
+        };
 
         for bm in &self.boxes {
             let mut inclusions = Vec::new();

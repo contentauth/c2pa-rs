@@ -1,3 +1,4 @@
+use c2pa_cbor::Value as CborValue;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize}; //,  Deserializer, Serializer};
@@ -5,6 +6,7 @@ use serde_json::Value;
 
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
+    assertions::labels,
     error::{Error, Result},
 };
 
@@ -21,8 +23,10 @@ pub enum ManifestAssertionKind {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[serde(untagged)]
-enum ManifestData {
-    Json(Value),     // { label: String, instance: usize, data: Value },
+pub(crate) enum ManifestData {
+    Json(Value), // { label: String, instance: usize, data: Value },
+    #[cfg_attr(feature = "json_schema", schemars(skip))]
+    Cbor(CborValue),
     Binary(Vec<u8>), // ) { label: String, instance: usize, data: Value },
 }
 
@@ -33,13 +37,17 @@ pub struct ManifestAssertion {
     /// An assertion label in reverse domain format
     label: String,
     /// The data of the assertion as Value
-    data: ManifestData,
+    pub(crate) data: ManifestData,
     /// There can be more than one assertion for any label
     #[serde(skip_serializing_if = "Option::is_none")]
     instance: Option<usize>,
     /// The [ManifestAssertionKind] for this assertion (as stored in c2pa content)
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<ManifestAssertionKind>,
+    /// True if this assertion is attributed to the signer
+    /// This maps to a created vs a gathered assertion. (defaults to false)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    created: bool,
 }
 
 impl ManifestAssertion {
@@ -50,6 +58,7 @@ impl ManifestAssertion {
             data: ManifestData::Json(data),
             instance: None,
             kind: None,
+            created: false,
         }
     }
 
@@ -68,12 +77,17 @@ impl ManifestAssertion {
         }
     }
 
+    /// Returns true if this assertion is created (as opposed to gathered)
+    pub fn created(&self) -> bool {
+        self.created
+    }
+
     /// The data of the assertion as a serde_Json::Value
     /// This will return UnsupportedType if the assertion data is binary
     pub fn value(&self) -> Result<&Value> {
         match &self.data {
             ManifestData::Json(d) => Ok(d),
-            ManifestData::Binary(_) => Err(Error::UnsupportedType),
+            _ => Err(Error::UnsupportedType),
         }
     }
 
@@ -81,8 +95,8 @@ impl ManifestAssertion {
     /// This will return UnsupportedType if the assertion data is Json/String
     pub fn binary(&self) -> Result<&[u8]> {
         match &self.data {
-            ManifestData::Json(_) => Err(Error::UnsupportedType),
             ManifestData::Binary(b) => Ok(b),
+            _ => Err(Error::UnsupportedType),
         }
     }
 
@@ -90,7 +104,7 @@ impl ManifestAssertion {
     /// If the same label is used for multiple assertions, incremental instances are added
     /// The first instance is always 1 and increased by 1 per duplicated label
     pub fn instance(&self) -> usize {
-        self.instance.unwrap_or(1)
+        self.instance.unwrap_or(labels::instance(&self.label))
     }
 
     /// The ManifestAssertionKind for this assertion
@@ -112,46 +126,15 @@ impl ManifestAssertion {
 
     /// Allows overriding the default [ManifestAssertionKind] to Json
     /// For assertions like Schema.org that require being stored in Json format
-    pub fn set_kind(mut self, kind: ManifestAssertionKind) -> Self {
+    pub(crate) fn set_kind(mut self, kind: ManifestAssertionKind) -> Self {
         self.kind = Some(kind);
         self
     }
 
-    /// Creates a ManifestAssertion with the given label and any serde serializable object
-    ///
-    /// # Example: Creating a custom assertion from a serde_json object.
-    ///
-    /// ```
-    /// # use c2pa::Result;    
-    /// use c2pa::ManifestAssertion;
-    /// use serde_json::json;
-    /// # fn main() -> Result<()> {
-    /// let value = json!({"my_tag": "Anything I want"});
-    /// let _ma = ManifestAssertion::from_labeled_assertion("org.contentauth.foo", &value)?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn from_labeled_assertion<S: Into<String>, T: Serialize>(
-        label: S,
-        data: &T,
-    ) -> Result<Self> {
-        Ok(Self::new(
-            label.into(),
-            serde_json::to_value(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
-        ))
-    }
-
-    /// TO DO: Docs ...
-    pub fn from_cbor_assertion<S: Into<String>, T: Serialize>(label: S, data: &T) -> Result<Self> {
-        Ok(Self {
-            label: label.into(),
-            data: ManifestData::Binary(
-                serde_cbor::to_vec(data)
-                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?,
-            ),
-            instance: None,
-            kind: Some(ManifestAssertionKind::Cbor),
-        })
+    /// Allows setting whether this assertion is created (as opposed to gathered)
+    pub(crate) fn set_created(mut self, created: bool) -> Self {
+        self.created = created;
+        self
     }
 
     /// Creates a ManifestAssertion from an AssertionBase object
@@ -166,7 +149,7 @@ impl ManifestAssertion {
     /// };
     /// # fn main() -> Result<()> {
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
-    /// let _ma = ManifestAssertion::from_labeled_assertion(Actions::LABEL, &actions)?;
+    /// let _ma = ManifestAssertion::from_assertion(&actions)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -188,7 +171,7 @@ impl ManifestAssertion {
     /// };
     /// # fn main() -> Result<()> {
     /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
-    /// let manifest_assertion = ManifestAssertion::from_labeled_assertion(Actions::LABEL, &actions)?;
+    /// let manifest_assertion = ManifestAssertion::from_assertion(&actions)?;
     ///
     /// let actions: Actions = manifest_assertion.to_assertion()?;
     /// for action in actions.actions {
@@ -218,15 +201,6 @@ pub(crate) mod tests {
     use crate::assertions::{c2pa_action, Action, Actions};
 
     #[test]
-    fn test_from_labeled() {
-        let data = serde_json::json!({"mytag": "mydata"});
-        let ma = ManifestAssertion::from_labeled_assertion("org.contentauth.foo", &data)
-            .expect("from_labeled_assertion");
-        assert_eq!(ma.label(), "org.contentauth.foo");
-        assert!(ma.value().is_ok());
-    }
-
-    #[test]
     fn test_manifest_assertion() {
         let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
         let value = serde_json::to_value(actions).unwrap();
@@ -245,9 +219,6 @@ pub(crate) mod tests {
 
         let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
         let ma2 = ManifestAssertion::from_assertion(&actions).expect("from_assertion");
-        let actions2: Actions = ma2.to_assertion().expect("to_assertion");
-        let actions3 = ManifestAssertion::from_labeled_assertion("foo".to_owned(), &actions2)
-            .expect("from_labeled_assertion");
-        assert_eq!(actions3.label(), "foo");
+        let _actions2: Actions = ma2.to_assertion().expect("to_assertion");
     }
 }

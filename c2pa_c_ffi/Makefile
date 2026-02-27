@@ -26,6 +26,9 @@ IPHONEOS_DEPLOYMENT_TARGET ?= 15.0
 # This clears RUSTFLAGS to prevent -D warnings from failing the cross installation
 CROSS_INSTALL_RUSTFLAGS = RUSTFLAGS=""
 
+# Android 16KB page size alignment requirement
+ANDROID_LINKER_FLAGS = -C link-arg=-Wl,-z,max-page-size=16384
+
 # Helper function to create a zip file
 define make_zip
 	set -e; \
@@ -37,7 +40,7 @@ define make_zip
 	fi; \
 	mkdir -p $(TARGET_DIR)/artifacts $(1)/include $(1)/lib; \
 	cp $(1)/c2pa.h $(1)/include/; \
-	if [[ "$(2)" == *"ios"* ]]; then \
+	if echo "$(2)" | grep -q "ios"; then \
 		cp $(1)/libc2pa_c.a $(1)/lib/; \
 	else \
 		find $(1) -name "libc2pa_c.*" ! -name "*.a" ! -path "*/deps/*" -exec cp {} $(1)/lib/ \;; \
@@ -67,7 +70,6 @@ release-win-x86_64:
 	rustup update stable-msvc
 	rustup target add x86_64-pc-windows-msvc
 	cargo build --target=x86_64-pc-windows-msvc $(CARGO_BUILD_FLAGS)
-
 
 release-win-aarch64:
 	rustup update stable-msvc
@@ -143,25 +145,25 @@ release-ios-arm64-sim:
 # 64-bit Android devices
 release-android-arm64:
 	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
-	cross build --target=aarch64-linux-android $(CARGO_BUILD_FLAGS)
+	RUSTFLAGS="$${RUSTFLAGS} $(ANDROID_LINKER_FLAGS)" cross build --target=aarch64-linux-android $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/aarch64-linux-android/release,aarch64-linux-android)
 
 # 32-bit Android devices
 release-android-armv7:
 	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
-	cross build --target=armv7-linux-androideabi $(CARGO_BUILD_FLAGS)
+	RUSTFLAGS="$${RUSTFLAGS} $(ANDROID_LINKER_FLAGS)" cross build --target=armv7-linux-androideabi $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/armv7-linux-androideabi/release,armv7-linux-androideabi)
 
 # 32-bit x86 Android emulators
 release-android-x86:
 	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
-	cross build --target=i686-linux-android $(CARGO_BUILD_FLAGS)
+	RUSTFLAGS="$${RUSTFLAGS} $(ANDROID_LINKER_FLAGS)" cross build --target=i686-linux-android $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/i686-linux-android/release,i686-linux-android)
 
 # 64-bit x86 Android emulators
 release-android-x86_64:
 	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
-	cross build --target=x86_64-linux-android $(CARGO_BUILD_FLAGS)
+	RUSTFLAGS="$${RUSTFLAGS} $(ANDROID_LINKER_FLAGS)" cross build --target=x86_64-linux-android $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/x86_64-linux-android/release,x86_64-linux-android)
 
 
@@ -174,7 +176,7 @@ ifdef TARGET
 ifeq ($(TARGET),x86_64-pc-windows-msvc)
 release: release-win-x86_64
 else ifeq ($(TARGET),aarch64-pc-windows-msvc)
-release: echo "No release build for aarch64 on Windows"
+release: release-win-aarch64
 else ifeq ($(TARGET),aarch64-apple-darwin)
 release: release-mac-arm
 else ifeq ($(TARGET),x86_64-apple-darwin)
