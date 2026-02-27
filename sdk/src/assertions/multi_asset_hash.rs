@@ -39,6 +39,7 @@ use crate::{
 /// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_multi_asset_hash>
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 pub struct MultiAssetHash {
+    // An array of one or more hashes for individual parts of the multi-part file
     pub parts: Vec<PartHashMap>,
 }
 
@@ -193,10 +194,10 @@ impl MultiAssetHash {
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PartHashMap {
-    pub location: LocatorMap,
-    pub hash_assertion: HashedUri,
+    pub location: LocatorMap,      // The location of the part within the file
+    pub hash_assertion: HashedUri, // hashed_uri to the hash assertion of the part
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub optional: Option<bool>,
+    pub optional: Option<bool>, // If the part is optional and can be discarded
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -210,8 +211,8 @@ pub enum LocatorMap {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ByteRangeLocator {
-    pub byte_offset: u64,
-    pub length: u64,
+    pub byte_offset: u64, // The byte offset of the part within the file
+    pub length: u64,      // The length of the part
 }
 
 impl AssertionCbor for MultiAssetHash {}
