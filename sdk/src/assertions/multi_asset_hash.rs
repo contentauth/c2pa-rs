@@ -87,7 +87,7 @@ impl MultiAssetHash {
         let min_size = expected_offset - optional_sizes;
 
         // Expected offset represents the "max" size, where a user has not stripped any optional assets
-        if min_size > total_size || total_size > expected_offset {
+        if min_size > total_size || expected_offset < total_size {
             return Err(Error::C2PAValidation(
                 ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
             ));
