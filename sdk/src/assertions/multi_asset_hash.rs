@@ -55,13 +55,15 @@ impl MultiAssetHash {
             ));
         }
 
-        let mut expected_offset: u64 = 0;
-        let mut optional_sizes: u64 = 0;
+        let mut expected_offset = 0;
+        let mut optional_sizes = 0;
+        let mut previous_end = 0;
 
         for part in &self.parts {
             match &part.location {
                 LocatorMap::ByteRangeLocator(locator) => {
-                    if locator.byte_offset != expected_offset {
+                    if locator.byte_offset != expected_offset || locator.byte_offset < previous_end
+                    {
                         return Err(Error::C2PAValidation(
                             ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
                         ));
@@ -71,6 +73,7 @@ impl MultiAssetHash {
                         optional_sizes += locator.length;
                     }
                     expected_offset += locator.length;
+                    previous_end = expected_offset;
                 }
                 LocatorMap::BmffBox { .. } => {
                     return Err(Error::NotImplemented(
@@ -80,8 +83,11 @@ impl MultiAssetHash {
             }
         }
 
-        // Deduct optional sizes and ensure that the offsets are less than the total size.
-        if expected_offset - optional_sizes > total_size {
+        // This represents the size if the user decided to strip ALL optional parts from the asset
+        let min_size = expected_offset - optional_sizes;
+
+        // Expected offset represents the "max" size, where a user has not stripped any optional assets
+        if min_size > total_size || total_size > expected_offset {
             return Err(Error::C2PAValidation(
                 ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
             ));
@@ -350,7 +356,7 @@ pub mod tests {
                   "url": "self#jumbf=c2pa.assertions/c2pa.hash.data.part__2",
                   "hash": "GykUNh5wHwRVpfsduK2ylqY5IfuHZLyuwIkUTuD7O0E="
                 },
-                "optional": true
+                "optional": false
               }
             ]
         });
@@ -360,5 +366,137 @@ pub mod tests {
         let result = MultiAssetHash::from_assertion(&assertion).unwrap();
 
         assert_eq!(result, original);
+    }
+
+    #[test]
+    fn test_parts_must_not_overlap() {
+        let json = serde_json::json!({
+            "parts": [
+              {
+                "location": {
+                  "byteOffset": 0,
+                  "length": 3
+                },
+                "hashAssertion": {
+                  "url": "",
+                  "hash": ""
+                },
+                "optional": false
+              },
+              {
+                "location": {
+                  "byteOffset": 2,
+                  "length": 3
+                },
+                "hashAssertion": {
+                  "url": "",
+                  "hash": ""
+                },
+                "optional": false
+              },
+              {
+                "location": {
+                  "byteOffset": 5,
+                  "length": 3
+                },
+                "hashAssertion": {
+                  "url": "",
+                  "hash": ""
+                },
+                "optional": false
+              }
+            ]
+        });
+
+        let assertion: MultiAssetHash = serde_json::from_value(json).unwrap();
+        assert!(assertion.verify_self(9).is_err())
+    }
+
+    #[test]
+    fn test_parts_must_be_contiguous() {
+        let json = serde_json::json!({
+            "parts": [
+              {
+                "location": {
+                  "byteOffset": 0,
+                  "length": 3
+                },
+                "hashAssertion": {
+                  "url": "",
+                  "hash": ""
+                },
+                "optional": false
+              },
+              {
+                "location": {
+                  "byteOffset": 6,
+                  "length": 3
+                },
+                "hashAssertion": {
+                  "url": "",
+                  "hash": ""
+                },
+                "optional": false
+              },
+              {
+                "location": {
+                  "byteOffset": 3,
+                  "length": 3
+                },
+                "hashAssertion": {
+                  "url": "",
+                  "hash": ""
+                },
+                "optional": false
+              }
+            ]
+        });
+
+        let assertion: MultiAssetHash = serde_json::from_value(json).unwrap();
+        assert!(assertion.verify_self(9).is_err())
+    }
+
+    #[test]
+    fn test_parts_must_cover_every_byte() {
+        let json = serde_json::json!({
+            "parts": [
+              {
+                "location": {
+                  "byteOffset": 0,
+                  "length": 3
+                },
+                "hashAssertion": {
+                  "url": "",
+                  "hash": ""
+                },
+                "optional": false
+              },
+              {
+                "location": {
+                  "byteOffset": 3,
+                  "length": 3
+                },
+                "hashAssertion": {
+                  "url": "",
+                  "hash": ""
+                },
+                "optional": false
+              },
+              {
+                "location": {
+                  "byteOffset": 6,
+                  "length": 3
+                },
+                "hashAssertion": {
+                  "url": "",
+                  "hash": ""
+                },
+                "optional": false
+              }
+            ]
+        });
+
+        let assertion: MultiAssetHash = serde_json::from_value(json).unwrap();
+        assert!(assertion.verify_self(10).is_err())
     }
 }
