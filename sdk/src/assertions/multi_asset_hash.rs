@@ -12,8 +12,7 @@
 // each license.
 
 #[cfg(feature = "file_io")]
-use std::fs::File;
-use std::io::Cursor;
+use std::{fs::File, io::Cursor, io::Read};
 
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +23,7 @@ use crate::{
     claim::{Claim, ClaimAssetData},
     error::{Error, Result},
     jumbf_io::get_assetio_handler,
-    utils::io_utils::{stream_len, ReaderUtils},
+    utils::io_utils::stream_len,
     validation_status::{
         ASSERTION_MULTI_ASSET_HASH_MALFORMED, ASSERTION_MULTI_ASSET_HASH_MISSING_PART,
     },
@@ -122,7 +121,7 @@ impl MultiAssetHash {
     /// Validates part locations, reads the specified byte ranges, and verifies against referenced hash assertions.
     fn verify_stream_hash(
         &self,
-        mut reader: &mut dyn CAIRead,
+        reader: &mut dyn CAIRead,
         claim: &Claim,
         asset_handler: Option<&dyn AssetIO>,
     ) -> Result<()> {
@@ -150,10 +149,7 @@ impl MultiAssetHash {
 
                     // Read only the specified parts within the larger stream.
                     reader.seek(std::io::SeekFrom::Start(offset))?;
-                    let buf = reader.read_to_vec(length).map_err(|_| {
-                        Error::C2PAValidation(ASSERTION_MULTI_ASSET_HASH_MISSING_PART.to_string())
-                    })?;
-                    let mut part_reader = Cursor::new(buf);
+                    let mut part_reader = reader.take(length);
 
                     // Perform validation on each part depending on type of hash.
                     match label.as_str() {
