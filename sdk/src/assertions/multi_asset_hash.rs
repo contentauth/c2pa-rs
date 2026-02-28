@@ -12,7 +12,8 @@
 // each license.
 
 #[cfg(feature = "file_io")]
-use std::{fs::File, io::Cursor, io::Read};
+use std::fs::File;
+use std::io::{Cursor, Read};
 
 use serde::{Deserialize, Serialize};
 
