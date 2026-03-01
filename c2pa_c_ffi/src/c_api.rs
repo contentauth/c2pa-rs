@@ -462,11 +462,11 @@ pub unsafe extern "C" fn c2pa_context_builder_set_settings(
     0
 }
 
-/// Transfers ownership of a signer into the Builder's context.
-/// (Configures a Signer on a context).
+/// Set a Signer into the Builder's context.
+/// (The context will own the Signer from that point on).
 /// The signer will be available via `context.signer()` after
 /// building the context. If a signer is also configured in settings,
-// the programmatic signer takes priority regardless of call order.
+/// the programmatic signer takes priority regardless of call order.
 ///
 /// Works with any C2paSigner pointer, whether created by
 /// `c2pa_signer_from_info` or `c2pa_signer_create`.
@@ -486,7 +486,7 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
     signer_ptr: *mut C2paSigner,
 ) -> c_int {
     let builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
-    let c2pa_signer = Box::from_raw(signer_ptr); // takes ownership
+    let c2pa_signer = Box::from_raw(signer_ptr);
     let result = builder.set_signer(c2pa_signer.signer);
     ok_or_return_int!(result);
     0
@@ -1585,14 +1585,13 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     len
 }
 
-/// Sign  using the Signer stored in the Context.
+/// Sign using the Signer from the Context.
 ///
 /// Equivalent to `c2pa_builder_sign` but the signer comes from the Builder's
-/// context instead of being passed explicitly. Error behavior is identical:
-/// returns -1 on error with the error string retrievable via `c2pa_error()`.
+/// context instead of being passed explicitly.
 ///
 /// If the context has no signer (neither programmatic via
-/// `c2pa_context_builder_set_signer` nor from settings JSON), an error
+/// `c2pa_context_builder_set_signer` nor from settings), an error
 /// will be returned.
 ///
 /// # Parameters
