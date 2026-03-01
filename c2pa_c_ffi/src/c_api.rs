@@ -1585,14 +1585,13 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     len
 }
 
-/// Sign  using the Signer stored in the Context.
+/// Sign using the Signer from the Context.
 ///
 /// Equivalent to `c2pa_builder_sign` but the signer comes from the Builder's
-/// context instead of being passed explicitly. Error behavior is identical:
-/// returns -1 on error with the error string retrievable via `c2pa_error()`.
+/// context instead of being passed explicitly.
 ///
 /// If the context has no signer (neither programmatic via
-/// `c2pa_context_builder_set_signer` nor from settings JSON), an error
+/// `c2pa_context_builder_set_signer` nor from settings), an error
 /// will be returned.
 ///
 /// # Parameters
