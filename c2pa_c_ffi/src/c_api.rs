@@ -462,10 +462,11 @@ pub unsafe extern "C" fn c2pa_context_builder_set_settings(
     0
 }
 
-/// Transfers ownership of a signer into the Builder's context.
+/// Set a Signer into the Builder's context.
+/// (The cotnext will own the Signer from that point on).
 /// The signer will be available via `context.signer()` after
 /// building the context. If a signer is also configured in settings,
-// the programmatic signer takes priority regardless of call order.
+/// the programmatic signer takes priority regardless of call order.
 ///
 /// Works with any C2paSigner pointer, whether created by
 /// `c2pa_signer_from_info` or `c2pa_signer_create`.
@@ -485,7 +486,7 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
     signer_ptr: *mut C2paSigner,
 ) -> c_int {
     let builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
-    let c2pa_signer = Box::from_raw(signer_ptr); // takes ownership
+    let c2pa_signer = Box::from_raw(signer_ptr);
     let result = builder.set_signer(c2pa_signer.signer);
     ok_or_return_int!(result);
     0
