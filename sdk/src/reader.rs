@@ -33,6 +33,7 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
+    assertion::AssertionBase,
     claim::Claim,
     context::Context,
     dynamic_assertion::PartialClaim,
@@ -1119,7 +1120,6 @@ impl Reader {
             visited: &mut HashSet<String>,
             path: &mut Vec<String>,
         ) -> Result<()> {
-            use crate::assertion::AssertionBase;
             use crate::assertions::Ingredient as IngredientAssertion;
 
             let claim_label = claim.label().to_string();
@@ -1136,15 +1136,28 @@ impl Reader {
             path.push(claim_label.clone());
 
             for ing_assertion in claim.ingredient_assertions() {
-                if let Ok(ingredient) =
-                    IngredientAssertion::from_assertion(ing_assertion.assertion())
-                {
-                    if let Some(c2pa_manifest) = ingredient.c2pa_manifest() {
-                        let ingredient_label =
-                            Store::manifest_label_from_path(&c2pa_manifest.url());
-                        if let Some(ingredient_claim) = store.get_claim(&ingredient_label) {
-                            collect_flat(store, ingredient_claim, ingredient_store, visited, path)?;
+                match IngredientAssertion::from_assertion(ing_assertion.assertion()) {
+                    Ok(ingredient) => {
+                        let manifest_uri = ingredient
+                            .active_manifest
+                            .as_ref()
+                            .or(ingredient.c2pa_manifest.as_ref());
+                        if let Some(manifest_uri) = manifest_uri {
+                            let ingredient_label =
+                                Store::manifest_label_from_path(&manifest_uri.url());
+                            if let Some(ingredient_claim) = store.get_claim(&ingredient_label) {
+                                collect_flat(
+                                    store,
+                                    ingredient_claim,
+                                    ingredient_store,
+                                    visited,
+                                    path,
+                                )?;
+                            }
                         }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to deserialize ingredient assertion: {e}");
                     }
                 }
             }

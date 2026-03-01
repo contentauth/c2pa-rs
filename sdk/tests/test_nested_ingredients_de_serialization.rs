@@ -507,6 +507,96 @@ fn test_diamond_topology_read() -> Result<()> {
     Ok(())
 }
 
+/// Test mixed v2/v3 ingredient versions in a provenance chain.
+///
+/// claim_version=1 creates ingredient assertions with the `c2pa_manifest` field (v2 format).
+/// Default claim_version (2) creates ingredient assertions with `active_manifest` (v3 format).
+/// This verifies `build_ingredient_store` resolves both via the fallback chain.
+#[test]
+fn test_mixed_v2_v3_ingredient_versions() -> Result<()> {
+    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+
+    let format = "image/jpeg";
+    let mut source = Cursor::new(include_bytes!("fixtures/no_manifest.jpg").as_slice());
+
+    // A: base manifest (v1 claim so it can be an ingredient of both v1 and v2 claims)
+    let mut builder_a = Builder::new();
+    builder_a.definition.claim_version = Some(1);
+    builder_a.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    let mut output_a = sign_manifest(&mut builder_a, format, &mut source)?;
+
+    // B: claim_version=1 → v2 ingredient assertions (c2pa_manifest field)
+    let mut builder_b = Builder::new();
+    builder_b.definition.claim_version = Some(1);
+    builder_b.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    output_a.rewind()?;
+    builder_b.add_ingredient_from_stream(
+        serde_json::json!({"title": "A via B"}).to_string(),
+        format,
+        &mut output_a,
+    )?;
+    let mut output_b = sign_manifest(&mut builder_b, format, &mut source)?;
+
+    // C: default claim_version (2) → v3 ingredient assertions (active_manifest field)
+    let mut builder_c = Builder::new();
+    builder_c.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    output_a.rewind()?;
+    builder_c.add_ingredient_from_stream(
+        serde_json::json!({"title": "A via C"}).to_string(),
+        format,
+        &mut output_a,
+    )?;
+    let mut output_c = sign_manifest(&mut builder_c, format, &mut source)?;
+
+    // D: combines B (v2 ingredients) and C (v3 ingredients)
+    let mut builder_d = Builder::new();
+    builder_d.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    output_b.rewind()?;
+    builder_d.add_ingredient_from_stream(
+        serde_json::json!({"title": "B"}).to_string(),
+        format,
+        &mut output_b,
+    )?;
+    output_c.rewind()?;
+    let mut ingredient_c = Ingredient::from_stream(format, &mut output_c)?;
+    ingredient_c.set_title("C");
+    builder_d.add_ingredient(ingredient_c);
+    let mut output_d = sign_manifest(&mut builder_d, format, &mut source)?;
+
+    // Read D, convert to builder (exercises build_ingredient_store), re-sign as E
+    let reader = Reader::from_stream(format, &mut output_d)?;
+    let mut builder_e = reader.into_builder()?;
+    builder_e.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+    let mut output_e = sign_manifest(&mut builder_e, format, &mut source)?;
+
+    // Read E and verify structure is preserved despite mixed ingredient versions
+    let reader_e = Reader::from_stream(format, &mut output_e)?;
+    let active_e = reader_e
+        .active_manifest()
+        .expect("E should have active manifest");
+
+    assert_eq!(
+        active_e.ingredients().len(),
+        2,
+        "E should have 2 ingredients after round-trip with mixed versions"
+    );
+
+    for ingredient in active_e.ingredients() {
+        if let Some(label) = ingredient.active_manifest() {
+            let manifest = reader_e
+                .get_manifest(label)
+                .unwrap_or_else(|| panic!("should find manifest for {label}"));
+            assert_eq!(
+                manifest.ingredients().len(),
+                1,
+                "Each ingredient should have 1 nested ingredient (A) despite mixed versions"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// Test diamond topology through into_builder round-trip.
 ///
 /// Same diamond shape as above, but additionally converts D's Reader
