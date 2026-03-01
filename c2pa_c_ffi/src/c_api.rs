@@ -462,6 +462,35 @@ pub unsafe extern "C" fn c2pa_context_builder_set_settings(
     0
 }
 
+/// Transfers ownership of a signer into the Builder's context.
+/// The signer will be available via `context.signer()` after
+/// building the context. If a signer is also configured in settings,
+// the programmatic signer takes priority regardless of call order.
+///
+/// Works with any C2paSigner pointer, whether created by
+/// `c2pa_signer_from_info` or `c2pa_signer_create`.
+///
+/// # Safety
+///
+/// * `builder` must be a valid C2paContextBuilder pointer (not yet built).
+/// * `signer_ptr` must be a valid C2paSigner pointer. It is consumed by this
+///   call and must not be used or freed afterward.
+///
+/// # Returns
+///
+/// 0 on success, negative value on error.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_builder_set_signer(
+    builder: *mut C2paContextBuilder,
+    signer_ptr: *mut C2paSigner,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
+    let c2pa_signer = Box::from_raw(signer_ptr); // takes ownership
+    let result = builder.set_signer(c2pa_signer.signer);
+    ok_or_return_int!(result);
+    0
+}
+
 /// Builds an immutable, shareable context from the builder.
 ///
 /// The builder is consumed by this operation and becomes invalid.
@@ -1547,6 +1576,55 @@ pub unsafe extern "C" fn c2pa_builder_sign(
         &mut *source,
         &mut *dest,
     );
+    let manifest_bytes = ok_or_return_int!(result);
+    let len = manifest_bytes.len() as i64;
+    if !manifest_bytes_ptr.is_null() {
+        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
+    }
+    len
+}
+
+/// Sign  using the Signer stored in the Context.
+///
+/// Equivalent to `c2pa_builder_sign` but the signer comes from the Builder's
+/// context instead of being passed explicitly. Error behavior is identical:
+/// returns -1 on error with the error string retrievable via `c2pa_error()`.
+///
+/// If the context has no signer (neither programmatic via
+/// `c2pa_context_builder_set_signer` nor from settings JSON), an error
+/// will be returned.
+///
+/// # Parameters
+///
+/// * `builder_ptr` - pointer to a Builder whose context has a signer set.
+/// * `format` - MIME type or file extension (null-terminated C string).
+/// * `source` - pointer to a readable C2paStream.
+/// * `dest` - pointer to a read+write+seek C2paStream.
+/// * `manifest_bytes_ptr` - out-pointer for the manifest bytes.
+///
+/// # Safety
+///
+/// Reads from NULL-terminated C strings.
+/// The returned bytes MUST be released by calling `c2pa_free`.
+///
+/// # Returns
+///
+/// The length of the manifest bytes on success, or -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_sign_context(
+    builder_ptr: *mut C2paBuilder,
+    format: *const c_char,
+    source: *mut C2paStream,
+    dest: *mut C2paStream,
+    manifest_bytes_ptr: *mut *const c_uchar,
+) -> i64 {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let format = cstr_or_return_int!(format);
+    let source = deref_mut_or_return_int!(source, C2paStream);
+    let dest = deref_mut_or_return_int!(dest, C2paStream);
+    ptr_or_return_int!(manifest_bytes_ptr);
+
+    let result = builder.save_to_stream(&format, &mut *source, &mut *dest);
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
@@ -3814,6 +3892,258 @@ verify_after_sign = true
         // Clean up
         unsafe {
             c2pa_free(reader as *const c_void);
+        }
+    }
+
+    #[test]
+    fn test_context_builder_set_signer() {
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+        let alg = CString::new("Ed25519").unwrap();
+        let sign_cert = CString::new(certs).unwrap();
+        let private_key = CString::new(private_key.as_slice()).unwrap();
+        let signer_info = C2paSignerInfo {
+            alg: alg.as_ptr(),
+            sign_cert: sign_cert.as_ptr(),
+            private_key: private_key.as_ptr(),
+            ta_url: std::ptr::null(),
+        };
+        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
+        assert!(!signer.is_null());
+
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let result = unsafe { c2pa_context_builder_set_signer(builder, signer) };
+        assert_eq!(result, 0);
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null());
+
+        unsafe {
+            c2pa_free(builder as *mut c_void);
+            c2pa_free(context as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_builder_sign_context_e2e() {
+        // Create signer from credentials
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+        let alg = CString::new("Ed25519").unwrap();
+        let sign_cert = CString::new(certs).unwrap();
+        let private_key = CString::new(private_key.as_slice()).unwrap();
+        let signer_info = C2paSignerInfo {
+            alg: alg.as_ptr(),
+            sign_cert: sign_cert.as_ptr(),
+            private_key: private_key.as_ptr(),
+            ta_url: std::ptr::null(),
+        };
+        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
+        assert!(!signer.is_null());
+
+        // Build context with signer
+        let ctx_builder = unsafe { c2pa_context_builder_new() };
+        let result = unsafe { c2pa_context_builder_set_signer(ctx_builder, signer) };
+        assert_eq!(result, 0);
+        let context = unsafe { c2pa_context_builder_build(ctx_builder) };
+        assert!(!context.is_null());
+
+        // Create builder from context and set definition
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null());
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_with_definition(builder, manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        // Sign using context signer
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let mut dest_stream = TestStream::new(Vec::new());
+        let format = CString::new("image/jpeg").unwrap();
+
+        let mut manifest_bytes_ptr: *const c_uchar = std::ptr::null();
+        let len = unsafe {
+            c2pa_builder_sign_context(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert!(len > 0, "sign_context should return positive length");
+        assert!(!manifest_bytes_ptr.is_null());
+
+        // Verify by reading back
+        dest_stream.stream_mut().rewind().unwrap();
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
+        assert!(!reader.is_null());
+
+        unsafe {
+            c2pa_free(manifest_bytes_ptr as *mut c_void);
+            c2pa_reader_free(reader);
+            c2pa_free(builder as *mut c_void);
+            c2pa_free(context as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_builder_sign_context_with_settings_signer() {
+        // Load settings that contain a signer configuration
+        const SETTINGS: &str = include_str!(fixture_path!("test_settings.json"));
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+        let settings_json = CString::new(SETTINGS).unwrap();
+        let settings_format = CString::new("json").unwrap();
+        let result = unsafe {
+            c2pa_settings_update_from_string(
+                settings,
+                settings_json.as_ptr(),
+                settings_format.as_ptr(),
+            )
+        };
+        assert_eq!(result, 0);
+
+        // Build context with settings (signer comes from settings)
+        let ctx_builder = unsafe { c2pa_context_builder_new() };
+        let result = unsafe { c2pa_context_builder_set_settings(ctx_builder, settings) };
+        assert_eq!(result, 0);
+        let context = unsafe { c2pa_context_builder_build(ctx_builder) };
+        assert!(!context.is_null());
+
+        // Create builder and sign
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null());
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_with_definition(builder, manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let mut dest_stream = TestStream::new(Vec::new());
+        let format = CString::new("image/jpeg").unwrap();
+
+        let mut manifest_bytes_ptr: *const c_uchar = std::ptr::null();
+        let len = unsafe {
+            c2pa_builder_sign_context(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert!(len > 0, "settings signer should produce signed output");
+        assert!(!manifest_bytes_ptr.is_null());
+
+        // Verify by reading back
+        dest_stream.stream_mut().rewind().unwrap();
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
+        assert!(!reader.is_null());
+
+        unsafe {
+            c2pa_free(manifest_bytes_ptr as *mut c_void);
+            c2pa_reader_free(reader);
+            c2pa_free(builder as *mut c_void);
+            c2pa_free(context as *mut c_void);
+            c2pa_free(settings as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_programmatic_signer_overrides_settings_signer() {
+        // Load settings with ps256 signer
+        const SETTINGS: &str = include_str!(fixture_path!("test_settings.json"));
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+        let settings_json = CString::new(SETTINGS).unwrap();
+        let settings_format = CString::new("json").unwrap();
+        let result = unsafe {
+            c2pa_settings_update_from_string(
+                settings,
+                settings_json.as_ptr(),
+                settings_format.as_ptr(),
+            )
+        };
+        assert_eq!(result, 0);
+
+        // Create Ed25519 signer programmatically
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+        let alg = CString::new("Ed25519").unwrap();
+        let sign_cert = CString::new(certs).unwrap();
+        let private_key = CString::new(private_key.as_slice()).unwrap();
+        let signer_info = C2paSignerInfo {
+            alg: alg.as_ptr(),
+            sign_cert: sign_cert.as_ptr(),
+            private_key: private_key.as_ptr(),
+            ta_url: std::ptr::null(),
+        };
+        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
+        assert!(!signer.is_null());
+
+        // Build context: settings first, then programmatic signer
+        let ctx_builder = unsafe { c2pa_context_builder_new() };
+        let result = unsafe { c2pa_context_builder_set_settings(ctx_builder, settings) };
+        assert_eq!(result, 0);
+        let result = unsafe { c2pa_context_builder_set_signer(ctx_builder, signer) };
+        assert_eq!(result, 0);
+        let context = unsafe { c2pa_context_builder_build(ctx_builder) };
+        assert!(!context.is_null());
+
+        // Create builder and sign
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null());
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_with_definition(builder, manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let mut dest_stream = TestStream::new(Vec::new());
+        let format = CString::new("image/jpeg").unwrap();
+
+        let mut manifest_bytes_ptr: *const c_uchar = std::ptr::null();
+        let len = unsafe {
+            c2pa_builder_sign_context(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert!(
+            len > 0,
+            "programmatic signer should override settings signer"
+        );
+
+        // Verify by reading back
+        dest_stream.stream_mut().rewind().unwrap();
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
+        assert!(!reader.is_null());
+
+        // Read the JSON manifest and confirm Ed25519 was used
+        let json_ptr = unsafe { c2pa_reader_json(reader) };
+        assert!(!json_ptr.is_null());
+        let json_str = unsafe { std::ffi::CStr::from_ptr(json_ptr) }.to_string_lossy();
+        assert!(
+            json_str.contains("Ed25519") || json_str.contains("ed25519"),
+            "Manifest should reflect Ed25519 signer, not ps256 from settings"
+        );
+
+        unsafe {
+            c2pa_free(json_ptr as *mut c_void);
+            c2pa_free(manifest_bytes_ptr as *mut c_void);
+            c2pa_reader_free(reader);
+            c2pa_free(builder as *mut c_void);
+            c2pa_free(context as *mut c_void);
+            c2pa_free(settings as *mut c_void);
         }
     }
 }
