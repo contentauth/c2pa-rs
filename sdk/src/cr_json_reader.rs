@@ -916,7 +916,7 @@ impl CrJsonReader {
         if let Some(cert_info) = self.parse_certificate(&sig_info.cert_chain)? {
             // Add serial number (hex format)
             if let Some(serial) = cert_info.serial_number {
-                claim_signature.insert("serial_number".to_string(), json!(serial));
+                claim_signature.insert("serialNumber".to_string(), json!(serial));
             }
 
             // Add issuer DN components
@@ -973,8 +973,8 @@ impl CrJsonReader {
             DateTime::from_timestamp(not_after.unix_timestamp(), 0)
                 .ok_or(Error::CoseInvalidCert)?;
         details.validity = Some(json!({
-            "not_before": not_before_chrono.to_rfc3339(),
-            "not_after": not_after_chrono.to_rfc3339()
+            "notBefore": not_before_chrono.to_rfc3339(),
+            "notAfter": not_after_chrono.to_rfc3339()
         }));
 
         Ok(Some(details))
