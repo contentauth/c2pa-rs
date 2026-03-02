@@ -9,6 +9,18 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.76.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.76.0...c2pa-v0.76.1)
+_02 March 2026_
+
+### Fixed
+
+* Handle meta box without FullBox header from Apple devices ([#1889](https://github.com/contentauth/c2pa-rs/pull/1889))
+
+### Updated dependencies
+
+* Bump png_pong from 0.9.3 to 0.10.0 ([#1850](https://github.com/contentauth/c2pa-rs/pull/1850))
+* Bump toml from 0.9.12+spec-1.1.0 to 1.0.2+spec-1.1.0 ([#1883](https://github.com/contentauth/c2pa-rs/pull/1883))
+
 ## [0.76.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.21...c2pa-v0.76.0)
 _23 February 2026_
 
