@@ -212,7 +212,7 @@ pub mod crypto;
 pub mod dynamic_assertion;
 
 /// The `http` module contains generic traits for configuring sync and async HTTP resolvers.
-pub(crate) mod http;
+pub mod http;
 
 /// The `identity` module provides support for the [CAWG identity assertion](https://cawg.io/identity).
 #[doc(hidden)]
@@ -265,10 +265,7 @@ pub use resource_store::{ResourceRef, ResourceStore};
 #[doc(inline)]
 pub use settings::Settings;
 pub use signer::{AsyncSigner, BoxedAsyncSigner, BoxedSigner, Signer};
-#[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
-#[cfg_attr(docsrs, doc(cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))))]
-pub use utils::ephemeral_signer::EphemeralSigner;
-pub use utils::mime::format_from_path;
+pub use utils::{ephemeral_signer::EphemeralSigner, mime::format_from_path};
 #[doc(inline)]
 pub use validation_results::{ValidationResults, ValidationState};
 
