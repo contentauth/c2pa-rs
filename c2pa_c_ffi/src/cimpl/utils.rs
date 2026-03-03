@@ -246,9 +246,24 @@ pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
 
 /// Remove a pointer from tracking without running its cleanup function.
 ///
-/// Use when Rust code reclaims ownership of a pointer that was previously
-/// given to C via `box_tracked!()` or `track_box()`. After this call,
-/// the caller is responsible for properly dropping the allocation.
+/// Use this in FFI functions that consume a tracked pointer (take ownership
+/// back from C into Rust). Untracking must happen *before* `Box::from_raw()`
+/// so the registry doesn't hold a stale entry that would cause a double-free
+/// on `cimpl_free()` or a false leak warning at shutdown.
+///
+/// After this call, the pointer is no longer managed by the registry. The
+/// caller owns the underlying allocation and must drop it — typically by
+/// calling `Box::from_raw()` immediately after untracking.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // FFI function that consumes a signer to configure a builder:
+/// untrack_or_return_int!(signer_ptr, C2paSigner);
+/// let signer = Box::from_raw(signer_ptr);   // sole owner now
+/// builder.set_signer(signer.signer);         // inner value moved into builder
+/// // C2paSigner wrapper dropped here — no double-free risk
+/// ```
 pub fn untrack_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
     get_registry().untrack(ptr as usize, TypeId::of::<T>())
 }
