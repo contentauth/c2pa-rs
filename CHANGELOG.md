@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.76.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.76.1...c2pa-v0.76.2)
+_03 March 2026_
+
+### Fixed
+
+* Panic when validating boxes hash with no names ([#1897](https://github.com/contentauth/c2pa-rs/pull/1897))
+
 ## [0.76.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.76.0...c2pa-v0.76.1)
 _02 March 2026_
 

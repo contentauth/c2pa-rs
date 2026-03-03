@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.76.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.76.1...c2pa-c-ffi-v0.76.2)
+_03 March 2026_
+
+### Added
+
+* Signer programatically configured on Context (C FFI APIs) ([#1893](https://github.com/contentauth/c2pa-rs/pull/1893))
+
 ## [0.76.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.76.0...c2pa-c-ffi-v0.76.1)
 _02 March 2026_
 
