@@ -694,3 +694,29 @@ jobs:
         timeout-minutes: 15
         with:
           limit-access-to-actor: true
+
+  warpbuild-debugger-fail-test:
+    name: Fail test for debugging purposes
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]'
+
+    runs-on: warp-ubuntu-latest-x64-4x
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Fail the job
+        run: |
+          echo "This job is expected to fail."
+          exit 1
+
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
