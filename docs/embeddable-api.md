@@ -33,7 +33,7 @@ The embeddable API supports three hard-binding strategies, selected automaticall
 | Mode | Assertion | Formats | Requires placeholder |
 |------|-----------|---------|----------------------|
 | DataHash | `DataHash` | JPEG, PNG, GIF, WebP, and others | Yes |
-| BmffHash | `BmffHash` | MP4, video (BMFF containers) | Yes |
+| BmffHash | `BmffHash` | MP4, video (BMFF containers), AVIF, HEIF/HEIC | Yes |
 | BoxHash | `BoxHash` | JPEG, PNG, GIF, WebP, and others | No (Mode 2) |
 
 `BoxHash` mode is selected when `prefer_box_hash` is enabled in `BuilderSettings` and the format supports chunk-based hashing. It inserts the manifest as an independent chunk so byte offsets of existing data are never disturbed, which removes the need for a pre-sized placeholder.
