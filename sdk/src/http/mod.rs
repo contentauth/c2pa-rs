@@ -271,14 +271,21 @@ pub enum HttpResolverError {
 mod sync_resolver {
     pub type Impl = reqwest::blocking::Client;
     pub fn new() -> Impl {
-        reqwest::blocking::Client::new()
+        // By default `reqwest::blocking::Client::new()` unwraps if the TLS backend cannot be initialized.
+        // The behavior here is equivalent, except with a custom configuration.
+        #[allow(clippy::unwrap_used)]
+        reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap()
     }
 }
 #[cfg(all(not(target_arch = "wasm32"), feature = "http_ureq"))]
 mod sync_resolver {
     pub type Impl = ureq::Agent;
     pub fn new() -> Impl {
-        ureq::agent()
+        let config = ureq::Agent::config_builder().max_redirects(0).build();
+        ureq::Agent::new_with_config(config)
     }
 }
 #[cfg(all(target_os = "wasi", feature = "http_wasi"))]
@@ -319,7 +326,13 @@ mod sync_resolver {
 mod async_resolver {
     pub type Impl = reqwest::Client;
     pub fn new() -> Impl {
-        reqwest::Client::new()
+        // By default `reqwest::Client::new()` unwraps if the TLS backend cannot be initialized.
+        // The behavior here is equivalent, except with a custom configuration.
+        #[allow(clippy::unwrap_used)]
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap()
     }
 }
 #[cfg(all(target_os = "wasi", feature = "http_wstd"))]
