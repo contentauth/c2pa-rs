@@ -3920,9 +3920,9 @@ verify_after_sign = true
         let result = unsafe { c2pa_context_builder_set_signer(builder, signer) };
         assert_eq!(result, 0);
 
-        // Verify the signer is consumed: freeing it should fail cleanly (not double-free)
+        // Verify the signer is consumed: freeing it should fail cleanly (-1)
         let free_result = unsafe { c2pa_free(signer as *const c_void) };
-        assert_eq!(free_result, -1, "Consumed signer should no longer be tracked");
+        assert_eq!(free_result, -1);
 
         let context = unsafe { c2pa_context_builder_build(builder) };
         assert!(!context.is_null());
