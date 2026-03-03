@@ -40,6 +40,8 @@ jobs:
             target: i686-linux-android
           - os: ubuntu-latest
             target: x86_64-linux-android
+          - os: ubuntu-latest
+            target: wasm32-unknown-emscripten
 
     steps:
       - name: Checkout repository
@@ -48,9 +50,27 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up Emscripten
+        if: matrix.target == 'wasm32-unknown-emscripten'
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git $GITHUB_WORKSPACE/emsdk
+          cd $GITHUB_WORKSPACE/emsdk
+          ./emsdk install latest
+          ./emsdk activate latest
+          source ./emsdk_env.sh
+          echo "PATH=$PATH" >> $GITHUB_ENV
+          emcc --version
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Build C library for mobile target
+      - name: Cache emsdk
+        if: matrix.target == 'wasm32-unknown-emscripten'
+        uses: actions/cache@v4
+        with:
+          path: ~/emsdk
+          key: emsdk-${{ runner.os }}-latest
+
+      - name: Build C library for mobile target and emscripten
         run: make release TARGET=${{ matrix.target }}
         working-directory: ./c2pa_c_ffi

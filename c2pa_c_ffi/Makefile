@@ -18,6 +18,7 @@ endif
 TARGET_DIR := ../target
 
 CARGO_BUILD_FLAGS = --release -p c2pa-c-ffi --no-default-features --features "rust_native_crypto, file_io"
+CARGO_BUILD_FLAGS_EMSCRIPTEN = --release -p c2pa-c-ffi --no-default-features --features "rust_native_crypto,file_io,fetch_remote_manifests"
 
 IPHONEOS_DEPLOYMENT_TARGET ?= 15.0
 
@@ -45,6 +46,23 @@ define make_zip
 	else \
 		find $(1) -name "libc2pa_c.*" ! -name "*.a" ! -path "*/deps/*" -exec cp {} $(1)/lib/ \;; \
 	fi; \
+	(cd $(1) && zip -9 -r ../../artifacts/c2pa-v$${VERSION}-$(2).zip include lib); \
+	echo "Zip file created: $(TARGET_DIR)/artifacts/c2pa-v$${VERSION}-$(2).zip"
+endef
+
+# Helper for Emscripten: package .a and .wasm (no shared lib)
+define make_zip_emscripten
+	set -e; \
+	echo "Reading version from $(1)/c2pa.h"; \
+	if [ "$(PLATFORM)" = "win" ]; then \
+		VERSION=$$(findstr "^// Version:" $(1)/c2pa.h | awk -F": " "{print \$$2}"); \
+	else \
+		VERSION=$$(grep '^// Version:' $(1)/c2pa.h | sed 's/^\/\/ Version: //'); \
+	fi; \
+	mkdir -p $(TARGET_DIR)/artifacts $(1)/include $(1)/lib; \
+	cp $(1)/c2pa.h $(1)/include/; \
+	cp $(1)/libc2pa_c.a $(1)/lib/; \
+	cp $(1)/c2pa_c.wasm $(1)/lib/ 2>/dev/null || true; \
 	(cd $(1) && zip -9 -r ../../artifacts/c2pa-v$${VERSION}-$(2).zip include lib); \
 	echo "Zip file created: $(TARGET_DIR)/artifacts/c2pa-v$${VERSION}-$(2).zip"
 endef
@@ -166,6 +184,11 @@ release-android-x86_64:
 	RUSTFLAGS="$${RUSTFLAGS} $(ANDROID_LINKER_FLAGS)" cross build --target=x86_64-linux-android $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/x86_64-linux-android/release,x86_64-linux-android)
 
+# Emscripten (wasm32-unknown-emscripten). Requires emcc in PATH (e.g. via emsdk).
+release-emscripten:
+	rustup target add wasm32-unknown-emscripten
+	cargo build --target=wasm32-unknown-emscripten $(CARGO_BUILD_FLAGS_EMSCRIPTEN)
+	@$(call make_zip_emscripten,$(TARGET_DIR)/wasm32-unknown-emscripten/release,wasm32-unknown-emscripten)
 
 # make release
 # Builds and packages a zip for c2pa_c_ffi folder (c2pa-c-ffi) for each platform
@@ -202,6 +225,8 @@ else ifeq ($(TARGET),i686-linux-android)
 release: release-android-x86
 else ifeq ($(TARGET),x86_64-linux-android)
 release: release-android-x86_64
+else ifeq ($(TARGET),wasm32-unknown-emscripten)
+release: release-emscripten
 endif
 endif
 

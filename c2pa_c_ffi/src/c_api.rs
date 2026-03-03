@@ -23,6 +23,9 @@ use c2pa::{
     assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
     CallbackSigner, Context, Reader as C2paReader, Settings as C2paSettings, SigningAlg,
 };
+#[cfg(target_arch = "wasm32")]
+use tokio::runtime::Builder;
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime; // cawg validator requires async
 
 #[cfg(feature = "file_io")]
@@ -202,7 +205,7 @@ pub enum C2paBuilderIntent {
 
 #[repr(C)]
 pub struct C2paSigner {
-    pub signer: Box<dyn c2pa::Signer + Send + Sync>,
+    pub signer: Box<dyn crate::maybe_send_sync::C2paSignerObject>,
 }
 
 /// Defines a callback to read from a stream.
@@ -757,13 +760,28 @@ pub unsafe extern "C" fn c2pa_free_string_array(ptr: *const *const c_char, count
 fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, c2pa::Error> {
     match result {
         Ok(mut reader) => {
-            let runtime = match Runtime::new() {
-                Ok(runtime) => runtime,
-                Err(err) => return Err(c2pa::Error::OtherError(Box::new(err))),
-            };
-            match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
-                Ok(_) => Ok(reader),
-                Err(err) => Err(err),
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let runtime = match Runtime::new() {
+                    Ok(runtime) => runtime,
+                    Err(err) => return Err(c2pa::Error::OtherError(Box::new(err))),
+                };
+                match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
+                    Ok(_) => Ok(reader),
+                    Err(err) => Err(err),
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                // WASM requires single-threaded runtime
+                let runtime = match Builder::new_current_thread().enable_all().build() {
+                    Ok(runtime) => runtime,
+                    Err(err) => return Err(c2pa::Error::OtherError(Box::new(err))),
+                };
+                match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
+                    Ok(_) => Ok(reader),
+                    Err(err) => Err(err),
+                }
             }
         }
         Err(err) => Err(err),
