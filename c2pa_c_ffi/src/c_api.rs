@@ -1659,6 +1659,32 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     len
 }
 
+/// Returns whether a placeholder manifest is required for the given format.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * format: pointer to a C string with the mime type or extension.
+///
+/// # Returns
+/// Returns 1 if a placeholder is required, 0 if not, or -1 on error.
+/// Use [`c2pa_error`] to retrieve the error message when -1 is returned.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_needs_placeholder(
+    builder_ptr: *mut C2paBuilder,
+    format: *const c_char,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let format = cstr_or_return_int!(format);
+    if builder.needs_placeholder(&format) {
+        1
+    } else {
+        0
+    }
+}
+
 /// Creates a composed placeholder manifest from a Builder.
 ///
 /// The placeholder is a format-specific (e.g. C2PA UUID box for MP4, APP11 for JPEG)
@@ -1674,6 +1700,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
 /// * builder_ptr: pointer to a Builder.
 /// * format: pointer to a C string with the mime type or extension.
 /// * manifest_bytes_ptr: pointer to a pointer to a c_uchar to return the composed placeholder bytes.
+/// * (the pointer may be NULL if the caller does not want to receive the bytes)
 ///
 /// # Errors
 /// Returns -1 on error (call c2pa_error() for the message).
@@ -1688,7 +1715,6 @@ pub unsafe extern "C" fn c2pa_builder_placeholder(
     format: *const c_char,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    ptr_or_return_int!(manifest_bytes_ptr);
     let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     let result = builder.placeholder(&format);
@@ -1873,23 +1899,23 @@ pub unsafe extern "C" fn c2pa_builder_set_bmff_mdat_hashes(
     mdat_count: usize,
 ) -> c_int {
     let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
-
-    if hashes_ptr.is_null() || chunk_counts.is_null() || mdat_count == 0 {
-        use crate::CimplError;
-        CimplError::null_parameter("hashes_ptr or chunk_counts").set_last();
-        return -1;
-    }
+    ptr_or_return_int!(hashes_ptr);
+    ptr_or_return_int!(chunk_counts);
 
     let chunk_counts_slice = std::slice::from_raw_parts(chunk_counts, mdat_count);
     let total_chunks: usize = chunk_counts_slice.iter().sum();
 
     if hash_size == 0 || total_chunks == 0 {
-        use crate::CimplError;
         CimplError::null_parameter("hash_size or total chunk count is zero").set_last();
         return -1;
     }
 
-    let all_hashes = std::slice::from_raw_parts(hashes_ptr, total_chunks * hash_size);
+    let total_hash_bytes = some_or_return_int!(
+        total_chunks.checked_mul(hash_size),
+        CimplError::other("total_chunks * hash_size overflow".to_string())
+    );
+
+    let all_hashes = std::slice::from_raw_parts(hashes_ptr, total_hash_bytes);
 
     let mut leaf_hashes: Vec<Vec<Vec<u8>>> = Vec::with_capacity(mdat_count);
     let mut offset = 0usize;
@@ -4089,10 +4115,15 @@ verify_after_sign = true
         let builder = unsafe { c2pa_builder_from_context(context) };
         assert!(!builder.is_null());
 
+        let format = CString::new("image/jpeg").unwrap();
+        // needs_placeholder returns 0 or 1 (never -1) for valid builder+format.
+        let needs = unsafe { c2pa_builder_needs_placeholder(builder, format.as_ptr()) };
+        assert!(needs >= 0, "needs_placeholder should not error");
+        assert!(needs <= 1, "needs_placeholder returns 0 or 1");
+
         // Hash the entire JPEG stream — auto-creates a DataHash (direct mode, no placeholder).
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
         let mut source_stream = TestStream::new(source_image.to_vec());
-        let format = CString::new("image/jpeg").unwrap();
         let result = unsafe {
             c2pa_builder_update_hash_from_stream(builder, format.as_ptr(), source_stream.as_ptr())
         };
@@ -4144,8 +4175,27 @@ verify_after_sign = true
         let builder = unsafe { c2pa_builder_from_context(context) };
         assert!(!builder.is_null());
 
-        // Create a BMFF placeholder (adds a BmffHash with pre-allocated Merkle slots).
         let format = CString::new("video/mp4").unwrap();
+        // BMFF formats always need a placeholder.
+        let needs = unsafe { c2pa_builder_needs_placeholder(builder, format.as_ptr()) };
+        assert_eq!(
+            needs, 1,
+            "needs_placeholder should be 1 for video/mp4 before placeholder"
+        );
+
+        // Passing null for manifest_bytes_ptr returns size without error (caller may only need the length).
+        let size_only =
+            unsafe { c2pa_builder_placeholder(builder, format.as_ptr(), std::ptr::null_mut()) };
+        assert!(
+            size_only > 0,
+            "placeholder with null output should return positive size"
+        );
+        assert_ne!(
+            size_only, -1,
+            "placeholder with null output should not error"
+        );
+
+        // Create a BMFF placeholder (adds a BmffHash with pre-allocated Merkle slots).
         let mut placeholder_ptr: *const c_uchar = std::ptr::null();
         let placeholder_len =
             unsafe { c2pa_builder_placeholder(builder, format.as_ptr(), &mut placeholder_ptr) };
