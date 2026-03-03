@@ -3400,7 +3400,7 @@ verify_after_sign = true
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
-        // Test with null JSON: returns null, but the builder is NOT consumed
+        // Test with null JSON: returns null, but the builder is not consumed!
         let new_builder = unsafe { c2pa_builder_with_definition(builder, std::ptr::null()) };
         assert!(
             new_builder.is_null(),
