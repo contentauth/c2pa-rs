@@ -254,7 +254,7 @@ features = ["now"]
 [target.'cfg(all(target_arch = "wasm32", target_os = "emscripten"))'.dependencies.chrono]
 version = "0.4.39"
 default-features = false
-features = ["clock, serde"]
+features = ["clock", "serde"]
 
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies]
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
