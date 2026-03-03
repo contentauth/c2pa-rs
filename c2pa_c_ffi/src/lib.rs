@@ -16,9 +16,9 @@ mod c2pa_stream;
 mod cimpl;
 mod c_api;
 mod error;
-mod maybe_send_sync;
 #[cfg(feature = "file_io")]
 mod json_api;
+mod maybe_send_sync;
 mod signer_info;
 
 pub use c2pa::{
