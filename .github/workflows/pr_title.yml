@@ -7,7 +7,7 @@ on:
 jobs:
   title_cc_validation:
     name: Conventional commits validation
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
       - name: Checkout repository

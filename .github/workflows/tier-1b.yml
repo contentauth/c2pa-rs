@@ -52,7 +52,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest, macos-latest, warp-ubuntu-latest-x64-4x]
         rust_version: [stable, 1.88.0]
 
     steps:
@@ -74,6 +74,13 @@ jobs:
         run: |
           cargo test --features "$FEATURES"
 
+      - name: Setup interactive ssh session
+        if: ${{ failure() }} && ${{ matrix.os == 'warp-ubuntu-latest-x64-4x' }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
+
   tests-rust-native-crypto:
     name: Unit tests (with Rust native crypto installed)
     needs: get-features
@@ -83,7 +90,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest, macos-latest, warp-ubuntu-latest-x64-4x]
         rust_version: [stable, 1.88.0]
 
     steps:
@@ -105,11 +112,18 @@ jobs:
         run: |
           cargo test --features "$FEATURES"
 
+      - name: Setup interactive ssh session
+        if: ${{ failure() }} && ${{ matrix.os == 'warp-ubuntu-latest-x64-4x' }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
+
   tests-cross:
     name: Unit tests
     needs: get-features
     if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     strategy:
       fail-fast: false
@@ -142,6 +156,13 @@ jobs:
         run: |
           cross test --lib --bins --features "$FEATURES" --target ${{ matrix.target }}
 
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
+
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
     needs: get-features
@@ -151,7 +172,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest, macos-latest, warp-ubuntu-latest-x64-4x]
 
     steps:
       - name: Checkout repository
@@ -170,6 +191,13 @@ jobs:
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
           cargo +nightly-2025-12-06 test -Z direct-minimal-versions --all-targets --features "$FEATURES"
+
+      - name: Setup interactive ssh session
+        if: ${{ failure() }} && ${{ matrix.os == 'warp-ubuntu-latest-x64-4x' }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
 
   unused_deps:
     name: Check for unused dependencies

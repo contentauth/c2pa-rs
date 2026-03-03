@@ -60,7 +60,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
       - name: Checkout repository
@@ -105,6 +105,13 @@ jobs:
           verbose: true
           files: ./lcov-openssl.filtered.info,./lcov-rust_native_crypto.filtered.info
 
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
+
   tests-rust-native-crypto:
     name: Unit tests (Rust native crypto installed)
     needs: get-features
@@ -116,7 +123,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
       - name: Checkout repository
@@ -161,6 +168,13 @@ jobs:
           verbose: true
           files: ./lcov-openssl.filtered.info,./lcov-rust_native_crypto.filtered.info
 
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
+
   tests-cli:
     name: Unit tests (c2patool)
     needs: get-features
@@ -172,7 +186,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
       - name: Checkout repository
@@ -210,6 +224,13 @@ jobs:
           fail_ci_if_error: true
           verbose: true
           files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
+
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
 
   tests-windows-arm-openssl:
     name: Unit tests (Windows ARM, OpenSSL)
@@ -273,7 +294,7 @@ jobs:
 
   docs_rs:
     name: Preflight docs.rs build
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     if: |
       github.event_name != 'pull_request' ||
@@ -311,6 +332,13 @@ jobs:
           RUSTDOCFLAGS: -Dwarnings
         run: cargo doc -p c2patool --no-deps --all-features
 
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
+
   doc-tests:
     name: Doc tests (requires nightly Rust)
     needs: get-features
@@ -327,7 +355,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
       - name: Checkout repository
@@ -352,6 +380,13 @@ jobs:
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
           cargo test --workspace --features "$FEATURES" --doc
+
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
 
       # - name: Generate code coverage
       #   env:
@@ -384,7 +419,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
       - name: Checkout repository
@@ -399,6 +434,13 @@ jobs:
       - name: "`cargo check` with default features"
         run: cargo check
 
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
+
   tests-wasm:
     name: Unit tests (Wasm)
     needs: get-features
@@ -410,7 +452,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
       - name: Checkout repository
@@ -447,6 +489,13 @@ jobs:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
           WASM_BINDGEN_TEST_TIMEOUT: 60
 
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
+
   benchmarks:
     name: Run benchmarks on signing and reading
     if: |
@@ -457,7 +506,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
       - name: Checkout repository
@@ -481,9 +530,16 @@ jobs:
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4
         with:
-          mode: instrumentation
+          mode: simulation
           run: cargo codspeed run
           token: ${{ secrets.CODSPEED_TOKEN }}
+
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
 
   tests-wasi:
     name: Unit tests (WASI)
@@ -496,7 +552,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
       - name: Checkout repository
@@ -534,6 +590,13 @@ jobs:
         run: |
           cargo +nightly-2026-01-16 test --target wasm32-wasip2 -p c2pa --features "$FEATURES" --no-default-features -- --no-capture
 
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
+
   clippy_check:
     name: Clippy
     needs: get-features
@@ -545,7 +608,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
       - name: Checkout repository
@@ -565,6 +628,13 @@ jobs:
         run: |
           cargo clippy --features "$FEATURES" --all-targets -- -Dwarnings
 
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
+
   cargo_fmt:
     name: Enforce Rust code format
     if: |
@@ -575,7 +645,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
       - name: Checkout repository
@@ -590,6 +660,13 @@ jobs:
       - name: Check format
         run: cargo +nightly-2026-01-16 fmt --all -- --check
 
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
+
   cargo-deny:
     name: License / vulnerability audit
     if: |
@@ -600,7 +677,7 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
       - name: Checkout repository
@@ -610,3 +687,30 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories bans licenses sources
+
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
+
+  warpbuild-debugger-fail-test:
+    name: Fail test for debugging purposes
+    runs-on: warp-ubuntu-latest-x64-4x
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Fail the job
+        run: |
+          echo "This job is expected to fail."
+          exit 1
+
+      - name: Setup interactive ssh session
+        if: ${{ failure() }}
+        uses: Warpbuilds/action-debugger@v1.3
+        timeout-minutes: 15
+        with:
+          limit-access-to-actor: true
