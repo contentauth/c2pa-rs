@@ -700,8 +700,7 @@ jobs:
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]'
+      github.event.pull_request.author_association == 'MEMBER'
 
     runs-on: warp-ubuntu-latest-x64-4x
 
