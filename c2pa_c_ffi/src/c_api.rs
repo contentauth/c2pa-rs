@@ -514,6 +514,7 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
 pub unsafe extern "C" fn c2pa_context_builder_build(
     builder: *mut C2paContextBuilder,
 ) -> *mut C2paContext {
+    untrack_or_return_null!(builder, C2paContextBuilder);
     let context = Box::from_raw(builder);
     box_tracked!((*context).into_shared())
 }
@@ -853,6 +854,7 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     let stream = deref_mut_or_return_null!(stream, C2paStream);
 
     // Now safe to take ownership - all validations passed
+    untrack_or_return_null!(reader, C2paReader);
     let reader = Box::from_raw(reader);
     let result = (*reader).with_stream(&format, stream);
     let result = ok_or_return_null!(post_validate(result));
@@ -897,6 +899,7 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
     let fragment = deref_mut_or_return_null!(fragment, C2paStream);
 
     // Now safe to take ownership - all validations passed
+    untrack_or_return_null!(reader, C2paReader);
     let reader = Box::from_raw(reader);
     let result = (*reader).with_fragment(&format, stream, fragment);
     let result = ok_or_return_null!(post_validate(result));
@@ -1237,6 +1240,7 @@ pub unsafe extern "C" fn c2pa_builder_with_definition(
     let manifest_json = cstr_or_return_null!(manifest_json);
 
     // Now safe to take ownership - all validations passed
+    untrack_or_return_null!(builder, C2paBuilder);
     let builder = Box::from_raw(builder);
     let result = (*builder).with_definition(manifest_json);
     box_tracked!(ok_or_return_null!(result))
@@ -1273,6 +1277,7 @@ pub unsafe extern "C" fn c2pa_builder_with_archive(
     let stream = deref_mut_or_return_null!(stream, C2paStream);
 
     // Now safe to take ownership - stream is valid
+    untrack_or_return_null!(builder, C2paBuilder);
     let builder = Box::from_raw(builder);
     let result = (*builder).with_archive(stream);
     box_tracked!(ok_or_return_null!(result))
@@ -2633,6 +2638,10 @@ mod tests {
             unsafe { c2pa_reader_with_stream(reader, format.as_ptr(), stream.as_ptr()) };
         assert!(!configured_reader.is_null());
 
+        // Verify consumed reader is no longer tracked
+        let free_result = unsafe { c2pa_free(reader as *const c_void) };
+        assert_eq!(free_result, -1);
+
         // Verify we can read the manifest
         let json = unsafe { c2pa_reader_json(configured_reader) };
         assert!(!json.is_null());
@@ -2648,7 +2657,6 @@ mod tests {
             c2pa_free(settings as *mut c_void);
             c2pa_free(context as *mut c_void);
             c2pa_free(configured_reader as *mut c_void);
-            // Original reader was consumed by with_stream, don't free it
         };
     }
 
@@ -3122,10 +3130,13 @@ verify_after_sign = true
         let context = unsafe { c2pa_context_builder_build(builder) };
         assert!(!context.is_null());
 
+        // Verify consumed builder is no longer tracked
+        let free_result = unsafe { c2pa_free(builder as *const c_void) };
+        assert_eq!(free_result, -1);
+
         unsafe {
             c2pa_free(settings as *mut c_void);
             c2pa_free(context as *mut c_void);
-            // builder is now invalid - don't free it
         };
     }
 
@@ -3373,7 +3384,10 @@ verify_after_sign = true
         let new_builder = unsafe { c2pa_builder_with_definition(builder, new_manifest.as_ptr()) };
         assert!(!new_builder.is_null(), "Should return new builder");
 
-        // Original builder pointer is now invalid, use new_builder
+        // Verify consumed builder is no longer tracked
+        let free_result = unsafe { c2pa_free(builder as *const c_void) };
+        assert_eq!(free_result, -1);
+
         unsafe {
             c2pa_free(new_builder as *mut c_void);
         }
@@ -3386,14 +3400,16 @@ verify_after_sign = true
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
-        // Test with null JSON - should return null and not leak builder
+        // Test with null JSON: returns null, but the builder is NOT consumed
         let new_builder = unsafe { c2pa_builder_with_definition(builder, std::ptr::null()) };
         assert!(
             new_builder.is_null(),
             "Should return null for invalid input"
         );
 
-        // The builder should have been freed automatically (no leak)
+        // Builder is still tracked because validation failed before consumption
+        let free_result = unsafe { c2pa_free(builder as *mut c_void) };
+        assert_eq!(free_result, 0);
     }
 
     #[test]
@@ -3410,13 +3426,15 @@ verify_after_sign = true
         // Add archive to builder (this consumes the builder and returns a new one)
         let new_builder = unsafe { c2pa_builder_with_archive(builder, archive_stream.as_ptr()) };
 
-        // May fail if archive is invalid, but should not crash or leak
+        // Verify consumed builder is no longer tracked
+        let free_result = unsafe { c2pa_free(builder as *const c_void) };
+        assert_eq!(free_result, -1);
+
         if !new_builder.is_null() {
             unsafe {
                 c2pa_free(new_builder as *mut c_void);
             }
         }
-        // If null, builder was already freed by the function
     }
 
     #[test]
@@ -3426,14 +3444,16 @@ verify_after_sign = true
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
-        // Test with null stream - should return null and not leak builder
+        // Test with null stream: returns null, but the builder is NOT consumed
         let new_builder = unsafe { c2pa_builder_with_archive(builder, std::ptr::null_mut()) };
         assert!(
             new_builder.is_null(),
             "Should return null for invalid stream"
         );
 
-        // The builder should have been freed automatically (no leak)
+        // Builder is still tracked because validation failed before consumption
+        let free_result = unsafe { c2pa_free(builder as *mut c_void) };
+        assert_eq!(free_result, 0);
     }
 
     #[test]
@@ -3461,13 +3481,15 @@ verify_after_sign = true
             )
         };
 
-        // May fail if fragment is invalid, but should not crash or leak
+        // Verify consumed reader is no longer tracked
+        let free_result = unsafe { c2pa_free(reader as *const c_void) };
+        assert_eq!(free_result, -1);
+
         if !new_reader.is_null() {
             unsafe {
                 c2pa_free(new_reader as *mut c_void);
             }
         }
-        // If null, reader was already freed by the function
     }
 
     #[test]
@@ -3483,7 +3505,7 @@ verify_after_sign = true
         let mut fragment_stream = TestStream::new(source_image.to_vec());
         let mut main_stream = TestStream::new(source_image.to_vec());
 
-        // Test with null format - should return null and not leak reader
+        // Test with null format: returns null, but the reader is NOT consumed
         let new_reader = unsafe {
             c2pa_reader_with_fragment(
                 reader,
@@ -3497,7 +3519,9 @@ verify_after_sign = true
             "Should return null for invalid format"
         );
 
-        // The reader should have been freed automatically (no leak)
+        // Reader is still tracked because validation failed before consumption
+        let free_result = unsafe { c2pa_free(reader as *const c_void) };
+        assert_eq!(free_result, 0);
     }
 
     // ========== High-Value Coverage Tests ==========

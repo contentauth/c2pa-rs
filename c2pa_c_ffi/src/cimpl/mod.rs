@@ -30,8 +30,8 @@
 //! When the program shuts down, any pointers that weren't freed are reported:
 //!
 //! ```text
-//! ⚠️  WARNING: 3 pointer(s) were not freed at shutdown!
-//! This indicates C code did not properly free all allocated pointers.
+//! ⚠️  WARNING: n pointer(s) were not freed at shutdown!
+//! This indicates C code did not properly free all allocated pointers (n left).
 //! Each pointer should be freed exactly once with cimpl_free().
 //! ```
 //!
