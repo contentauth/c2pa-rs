@@ -349,6 +349,41 @@ macro_rules! arc_tracked {
     }};
 }
 
+/// Untrack a pointer from the registry (ownership transfer from C to Rust).
+///
+/// Validates the pointer is tracked with the correct type, then removes it
+/// from the registry without running cleanup. After this, the caller owns
+/// the memory and must handle cleanup (e.g., via `Box::from_raw()`).
+#[macro_export]
+macro_rules! untrack_or_return {
+    ($ptr:expr, $type:ty, $err_val:expr) => {{
+        $crate::ptr_or_return!($ptr, $err_val);
+        match $crate::untrack_pointer::<$type>($ptr) {
+            Ok(()) => {}
+            Err(e) => {
+                $crate::CimplError::from(e).set_last();
+                return $err_val;
+            }
+        }
+    }};
+}
+
+/// Untrack a pointer from the registry, returning -1 on error.
+#[macro_export]
+macro_rules! untrack_or_return_int {
+    ($ptr:expr, $type:ty) => {{
+        $crate::untrack_or_return!($ptr, $type, -1)
+    }};
+}
+
+/// Untrack a pointer from the registry, returning NULL on error.
+#[macro_export]
+macro_rules! untrack_or_return_null {
+    ($ptr:expr, $type:ty) => {{
+        $crate::untrack_or_return!($ptr, $type, std::ptr::null_mut())
+    }};
+}
+
 /// Maximum length for C strings when using bounded conversion (64KB)
 pub const MAX_CSTRING_LEN: usize = 1048576;
 

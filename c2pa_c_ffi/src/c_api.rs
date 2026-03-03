@@ -486,6 +486,9 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
     signer_ptr: *mut C2paSigner,
 ) -> c_int {
     let builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
+    // Untrack the signer before taking ownership via Box::from_raw.
+    // This prevents double-free if C code later calls c2pa_signer_free().
+    untrack_or_return_int!(signer_ptr, C2paSigner);
     let c2pa_signer = Box::from_raw(signer_ptr);
     let result = builder.set_signer(c2pa_signer.signer);
     ok_or_return_int!(result);
@@ -3917,6 +3920,10 @@ verify_after_sign = true
         let result = unsafe { c2pa_context_builder_set_signer(builder, signer) };
         assert_eq!(result, 0);
 
+        // Verify the signer is consumed: freeing it should fail cleanly (not double-free)
+        let free_result = unsafe { c2pa_free(signer as *const c_void) };
+        assert_eq!(free_result, -1, "Consumed signer should no longer be tracked");
+
         let context = unsafe { c2pa_context_builder_build(builder) };
         assert!(!context.is_null());
 
@@ -3927,5 +3934,16 @@ verify_after_sign = true
             c2pa_free(builder as *mut c_void);
             c2pa_free(context as *mut c_void);
         }
+    }
+
+    #[test]
+    fn test_context_builder_set_signer_null() {
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let result = unsafe { c2pa_context_builder_set_signer(builder, std::ptr::null_mut()) };
+        assert_eq!(result, -1, "Null signer should be rejected");
+
+        unsafe { c2pa_free(builder as *mut c_void) };
     }
 }
