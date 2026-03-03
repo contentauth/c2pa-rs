@@ -19,6 +19,18 @@ pub mod sync_impl {
 
     use crate::http::{HttpResolverError, SyncHttpResolver};
 
+    pub type Impl = reqwest::blocking::Client;
+
+    pub fn new() -> Impl {
+        // By default `reqwest::blocking::Client::new()` unwraps if the TLS backend cannot be initialized.
+        // The behavior here is equivalent, except with a custom configuration.
+        #[allow(clippy::unwrap_used)]
+        reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap()
+    }
+
     impl SyncHttpResolver for reqwest::blocking::Client {
         fn http_resolve(
             &self,
@@ -42,11 +54,16 @@ pub mod sync_impl {
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg(test)]
     pub mod tests {
-        use crate::http::tests::assert_http_resolver;
+        use crate::http::tests::{assert_http_resolver, assert_http_resolver_no_redirects};
 
         #[test]
         fn test_http_reqwest() {
-            assert_http_resolver(reqwest::blocking::Client::new());
+            assert_http_resolver(super::new());
+        }
+
+        #[test]
+        fn test_http_reqwest_no_redirects() {
+            assert_http_resolver_no_redirects(super::new());
         }
     }
 }
@@ -59,6 +76,18 @@ pub mod async_impl {
     use http::{Request, Response};
 
     use crate::http::{AsyncHttpResolver, HttpResolverError};
+
+    pub type Impl = reqwest::Client;
+
+    pub fn new() -> Impl {
+        // By default `reqwest::Client::new()` unwraps if the TLS backend cannot be initialized.
+        // The behavior here is equivalent, except with a custom configuration.
+        #[allow(clippy::unwrap_used)]
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap()
+    }
 
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -87,11 +116,18 @@ pub mod async_impl {
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg(test)]
     pub mod tests {
-        use crate::http::tests::assert_http_resolver_async;
+        use crate::http::tests::{
+            assert_http_resolver_async, assert_http_resolver_no_redirects_async,
+        };
 
         #[tokio::test]
         async fn test_http_reqwest() {
-            assert_http_resolver_async(reqwest::Client::new()).await;
+            assert_http_resolver_async(super::new()).await;
+        }
+
+        #[tokio::test]
+        async fn test_http_reqwest_no_redirects() {
+            assert_http_resolver_no_redirects_async(super::new()).await;
         }
     }
 }
