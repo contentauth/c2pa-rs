@@ -251,8 +251,18 @@ version = "0.4.39"
 default-features = false
 features = ["now"]
 
-# Browser WASM (wasm32-unknown-unknown): full wasm-bindgen stack.
-# Excludes Emscripten to allow -Z build-std=std,panic_abort (wasm-bindgen-futures is not panic_abort-safe).
+[target.'cfg(all(target_arch = "wasm32", target_os = "emscripten"))'.dependencies.chrono]
+version = "0.4.39"
+default-features = false
+features = ["clock, serde"]
+
+[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies]
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+# Also enable getrandom 0.2 with js feature for other dependencies (rand, tempfile, config)
+# This is needed until all dependencies migrate to getrandom 0.3
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+uuid = { version = "1.18.0", features = ["serde", "v4", "js"] }
+
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 chrono = { version = "0.4.39", default-features = false, features = [
     "clock",
@@ -260,11 +270,9 @@ chrono = { version = "0.4.39", default-features = false, features = [
     "wasmbind",
 ] }
 console_log = { version = "1.0.0", features = ["color"] }
-getrandom = { version = "0.3.4", features = ["wasm_js"] }
-getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+# Enable getrandom with wasm_js feature for WASM support
 js-sys = "0.3.89"
 serde-wasm-bindgen = "0.6.5"
-uuid = { version = "1.18.0", features = ["serde", "v4", "js"] }
 wasm-bindgen = "0.2.112"
 wasm-bindgen-futures = "0.4.31"
 web-sys = { version = "0.3.58", features = [
@@ -275,13 +283,6 @@ web-sys = { version = "0.3.58", features = [
     "Window",
     "WorkerGlobalScope",
 ] }
-
-# Emscripten (wasm32-unknown-emscripten): minimal deps, no wasm-bindgen (panic_abort / build-std compatible).
-[target.'cfg(all(target_arch = "wasm32", target_os = "emscripten"))'.dependencies]
-chrono = { version = "0.4.39", default-features = false, features = ["clock", "serde"] }
-getrandom = { version = "0.3.4", features = ["wasm_js"] }
-getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
-uuid = { version = "1.18.0", features = ["serde", "v4", "js"] }
 
 [dev-dependencies]
 anyhow = "1.0.97"
