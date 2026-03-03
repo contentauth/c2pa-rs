@@ -697,11 +697,6 @@ jobs:
 
   warpbuild-debugger-fail-test:
     name: Fail test for debugging purposes
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER'
-
     runs-on: warp-ubuntu-latest-x64-4x
 
     steps:
