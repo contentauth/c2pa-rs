@@ -1206,12 +1206,7 @@ impl Reader {
                             let ingredient_store =
                                 Self::build_ingredient_store(&self.store, claim)?;
                             let jumbf = ingredient_store.to_jumbf_internal(0)?;
-                            let manifest_data_ref = ingredient.resources_mut().add_with(
-                                "manifest_data",
-                                "application/c2pa",
-                                jumbf,
-                            )?;
-                            ingredient.set_manifest_data_ref(manifest_data_ref)?;
+                            ingredient.set_manifest_data(jumbf)?;
                         }
                     }
                     builder.add_ingredient(ingredient);
@@ -1243,12 +1238,7 @@ impl Reader {
                 if let Some(claim) = self.store.get_claim(active_manifest) {
                     let ingredient_store = Self::build_ingredient_store(&self.store, claim)?;
                     let jumbf = ingredient_store.to_jumbf_internal(0)?;
-                    let manifest_data_ref = ingredient.resources_mut().add_with(
-                        "manifest_data",
-                        "application/c2pa",
-                        jumbf,
-                    )?;
-                    ingredient.set_manifest_data_ref(manifest_data_ref)?;
+                    ingredient.set_manifest_data(jumbf)?;
                 }
             }
         }
@@ -1454,24 +1444,6 @@ pub mod tests {
             std::io::Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST),
         )?;
         assert_eq!(reader.validation_status(), None);
-
-        // Test that ingredients have manifest_data populated
-        if let Some(manifest) = reader.active_manifest() {
-            for ingredient in manifest.ingredients() {
-                // Verify that each ingredient has manifest_data
-                assert!(
-                    ingredient.manifest_data().is_some(),
-                    "Ingredient should have manifest_data populated"
-                );
-
-                // Verify the manifest_data is not empty
-                let manifest_data = ingredient.manifest_data().unwrap();
-                assert!(
-                    !manifest_data.is_empty(),
-                    "Ingredient manifest_data should not be empty"
-                );
-            }
-        }
 
         let temp_dir = tempdirectory().unwrap();
         reader.to_folder(temp_dir.path())?;
