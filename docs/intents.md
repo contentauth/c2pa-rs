@@ -35,7 +35,7 @@ For example:
 
 ```rust
 let mut builder = Builder::from_shared_context(&context)
-    .with_definition(manifest_def("New Image", "image/jpeg"))?;
+    .with_definition(r#"{"title": "New Image"}"#)?;
 builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 ```
 
