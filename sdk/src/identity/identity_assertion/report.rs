@@ -70,19 +70,39 @@ pub struct IdentityAssertionReport<T: Serialize> {
 pub(crate) struct SignerPayloadReport {
     sig_type: String,
     referenced_assertions: Vec<String>,
-    // TO DO: Add role and expected_* fields.
-    // (https://github.com/contentauth/c2pa-rs/issues/816)
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "role")]
+    pub roles: Vec<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_partial_claim: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_claim_generator: Option<String>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub expected_countersigners: Vec<String>,
 }
 
 impl SignerPayloadReport {
     pub(crate) fn from_signer_payload(sp: &SignerPayload) -> Self {
+        let simplify_url = |url: &str| url.replace("self#jumbf=c2pa.assertions/", "");
         Self {
             referenced_assertions: sp
                 .referenced_assertions
                 .iter()
-                .map(|a| a.url().replace("self#jumbf=c2pa.assertions/", ""))
+                .map(|a| simplify_url(&a.url()))
                 .collect(),
             sig_type: sp.sig_type.clone(),
+            roles: sp.roles.clone(),
+            expected_partial_claim: sp.expected_partial_claim.as_ref().map(|a| simplify_url(&a.url())),
+            expected_claim_generator: sp.expected_claim_generator.as_ref().map(|a| simplify_url(&a.url())),
+            expected_countersigners: sp
+                .expected_countersigners
+                .iter()
+                .map(|a| simplify_url(&a.url()))
+                .collect(),
         }
     }
 }

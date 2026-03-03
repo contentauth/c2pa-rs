@@ -35,6 +35,7 @@ pub(crate) fn ica_example() -> IdentityClaimsAggregationVc {
             referenced_assertions: vec![],
             sig_type: "unknown".to_string(),
             roles: vec![],
+            ..Default::default()
         },
         verified_identities: ica_example_identities(),
         time_stamp: None,
