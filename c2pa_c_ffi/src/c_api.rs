@@ -1745,6 +1745,279 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     len
 }
 
+/// Returns whether a placeholder manifest is required for the given format.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * format: pointer to a C string with the mime type or extension.
+///
+/// # Returns
+/// Returns 1 if a placeholder is required, 0 if not, or -1 on error.
+/// Use [`c2pa_error`] to retrieve the error message when -1 is returned.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_needs_placeholder(
+    builder_ptr: *mut C2paBuilder,
+    format: *const c_char,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let format = cstr_or_return_int!(format);
+    if builder.needs_placeholder(&format) {
+        1
+    } else {
+        0
+    }
+}
+
+/// Creates a composed placeholder manifest from a Builder.
+///
+/// The placeholder is a format-specific (e.g. C2PA UUID box for MP4, APP11 for JPEG)
+/// byte sequence that can be embedded directly into an asset to reserve space for the
+/// final signed manifest.  The placeholder JUMBF length is stored internally in the
+/// Builder so that [`c2pa_builder_sign_embeddable`] returns bytes of the identical size.
+///
+/// The signer (including its reserve size) is obtained from the Builder's Context.
+/// For BMFF assets, if `core.merkle_tree_chunk_size_in_kb` is set in the Context settings,
+/// the placeholder will include pre-allocated Merkle map slots for up to 4 mdat boxes.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * format: pointer to a C string with the mime type or extension.
+/// * manifest_bytes_ptr: pointer to a pointer to a c_uchar to return the composed placeholder bytes.
+/// * (the pointer may be NULL if the caller does not want to receive the bytes)
+///
+/// # Errors
+/// Returns -1 on error (call c2pa_error() for the message).
+/// On success, returns the byte length of the composed placeholder.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+/// The returned bytes MUST be released by calling c2pa_free.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_placeholder(
+    builder_ptr: *mut C2paBuilder,
+    format: *const c_char,
+    manifest_bytes_ptr: *mut *const c_uchar,
+) -> i64 {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let format = cstr_or_return_int!(format);
+    let result = builder.placeholder(&format);
+    let manifest_bytes = ok_or_return_int!(result);
+    let len = manifest_bytes.len() as i64;
+    if !manifest_bytes_ptr.is_null() {
+        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
+    }
+    len
+}
+
+/// Signs the manifest and returns composed bytes ready for embedding.
+///
+/// Operates in two modes:
+///
+/// **Placeholder mode** (after calling [`c2pa_builder_placeholder`]): The Builder knows
+/// the pre-committed size of the composed placeholder.  The returned bytes are
+/// zero-padded to be exactly the same size, enabling in-place patching of the asset.
+///
+/// **Direct mode** (no placeholder): The Builder must already contain a valid hard
+/// binding assertion (DataHash, BmffHash, or BoxHash with a real hash value), set
+/// either by [`c2pa_builder_update_hash_from_stream`] or directly via the assertion
+/// API.  The returned bytes reflect the actual manifest size.
+///
+/// The signer is obtained from the Builder's Context.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * format: pointer to a C string with the mime type or extension.
+/// * manifest_bytes_ptr: pointer to a pointer to a c_uchar to return the signed manifest bytes.
+///
+/// # Errors
+/// Returns -1 on error (call c2pa_error() for the message).
+/// In direct mode, also returns -1 if no valid hard binding assertion exists.
+/// On success, returns the byte length of the signed manifest.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+/// The returned bytes MUST be released by calling c2pa_free.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_sign_embeddable(
+    builder_ptr: *mut C2paBuilder,
+    format: *const c_char,
+    manifest_bytes_ptr: *mut *const c_uchar,
+) -> i64 {
+    ptr_or_return_int!(manifest_bytes_ptr);
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let format = cstr_or_return_int!(format);
+    let result = builder.sign_embeddable(&format);
+    let manifest_bytes = ok_or_return_int!(result);
+    let len = manifest_bytes.len() as i64;
+    if !manifest_bytes_ptr.is_null() {
+        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
+    }
+    len
+}
+
+/// Sets the byte exclusion ranges on the DataHash assertion in a Builder.
+///
+/// Call this after [`c2pa_builder_placeholder`] to register the exact byte region
+/// where the composed placeholder was embedded in the asset.  This step is required
+/// before [`c2pa_builder_update_hash_from_stream`] so the hash covers all asset bytes
+/// except the manifest slot.
+///
+/// Exclusions are provided as a flat array of `(start, length)` pairs, each a `uint64_t`.
+/// The layout is: `[start0, length0, start1, length1, …]`, so `exclusions_ptr` must
+/// point to `exclusion_count * 2` consecutive `uint64_t` values.
+///
+/// The existing DataHash's name and algorithm are preserved; only its exclusion list
+/// is replaced.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder (must have called [`c2pa_builder_placeholder`] first).
+/// * exclusions_ptr: pointer to a flat array of `(start, length)` uint64_t pairs.
+/// * exclusion_count: number of exclusion ranges (not the number of uint64_t values).
+///
+/// # Errors
+/// Returns 0 on success, -1 on error (call c2pa_error() for the message).
+/// Fails if no DataHash assertion exists on the Builder.
+///
+/// # Safety
+/// `exclusions_ptr` must point to at least `exclusion_count * 2` valid `uint64_t` values.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_set_data_hash_exclusions(
+    builder_ptr: *mut C2paBuilder,
+    exclusions_ptr: *const u64,
+    exclusion_count: usize,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+
+    if exclusion_count == 0 || exclusions_ptr.is_null() {
+        ok_or_return_int!(builder.set_data_hash_exclusions(vec![]));
+        return 0;
+    }
+
+    let flat = std::slice::from_raw_parts(exclusions_ptr, exclusion_count * 2);
+    let exclusions: Vec<c2pa::HashRange> = flat
+        .chunks_exact(2)
+        .map(|pair| c2pa::HashRange::new(pair[0], pair[1]))
+        .collect();
+
+    ok_or_return_int!(builder.set_data_hash_exclusions(exclusions));
+    0
+}
+
+/// Updates the hard binding assertion in a Builder by hashing an asset stream.
+///
+/// Automatically detects the type of hard binding on the Builder:
+/// - **BmffHash**: uses the assertion's own path-based exclusions (UUID box, mdat when
+///   Merkle hashing is enabled). The hash algorithm is read from the assertion itself.
+/// - **BoxHash**: uses the format's box-hash handler to enumerate chunks, hashes each
+///   one individually, and stores the result.  Triggered when a BoxHash assertion is
+///   already present or when `builder.prefer_box_hash` is enabled and the format
+///   supports it.
+/// - **DataHash**: reads any exclusion ranges already on the existing DataHash assertion,
+///   hashes the stream excluding those ranges, and stores the result.  If no DataHash
+///   exists, creates one with no exclusions (hashes the entire stream — sidecar case).
+///
+/// The hash algorithm is resolved in this order:
+/// 1. The `alg` field of the existing hard binding assertion
+/// 2. The `alg` field on the ManifestDefinition (set via JSON or builder settings)
+/// 3. `"sha256"` (the C2PA default)
+///
+/// For DataHash workflows, call [`c2pa_builder_set_data_hash_exclusions`] before this
+/// function to register where the composed placeholder was embedded.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * format: MIME type or file extension of the asset (e.g. `"image/jpeg"`).
+/// * stream: pointer to a C2paStream of the asset to hash.
+///
+/// # Errors
+/// Returns 0 on success, -1 on error (call c2pa_error() for the message).
+///
+/// # Safety
+/// The stream must remain valid for the duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_update_hash_from_stream(
+    builder_ptr: *mut C2paBuilder,
+    format: *const c_char,
+    stream: *mut C2paStream,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let format = cstr_or_return_int!(format);
+    let stream = deref_mut_or_return_int!(stream, C2paStream);
+    ok_or_return_int!(builder.update_hash_from_stream(&format, &mut *stream));
+    0
+}
+
+/// Provides pre-computed mdat chunk hashes to the Builder for Merkle tree construction.
+///
+/// This is part of the large-file external hashing workflow: the caller reads and hashes
+/// mdat content in fixed-size chunks (without the SDK loading it into memory) and passes
+/// those hashes here.  Only the Merkle root is stored in the manifest; no UUID proof
+/// boxes are generated.
+///
+/// The chunk size is read from `core.merkle_tree_chunk_size_in_kb` in the Builder's
+/// Context settings, which must be set before calling [`c2pa_builder_placeholder`].
+///
+/// The hashes are laid out as a flat array: all chunks of mdat\[0\] followed by all chunks
+/// of mdat\[1\], and so on.  `chunk_counts[i]` specifies how many chunks belong to mdat box i.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * hashes_ptr: flat array of hash bytes (mdat0_chunk0 | mdat0_chunk1 | … | mdatN_chunkM).
+/// * hash_size: byte length of each individual hash (e.g. 32 for sha256).
+/// * chunk_counts: array of chunk counts, one per mdat box.
+/// * mdat_count: number of mdat boxes (length of chunk_counts).
+///
+/// # Errors
+/// Returns 0 on success, -1 on error (call c2pa_error() for the message).
+/// Fails if `core.merkle_tree_chunk_size_in_kb` is not set or if no BmffHash assertion exists.
+///
+/// # Safety
+/// All pointers must remain valid for the duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_set_bmff_mdat_hashes(
+    builder_ptr: *mut C2paBuilder,
+    hashes_ptr: *const c_uchar,
+    hash_size: usize,
+    chunk_counts: *const usize,
+    mdat_count: usize,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    ptr_or_return_int!(hashes_ptr);
+    ptr_or_return_int!(chunk_counts);
+
+    let chunk_counts_slice = std::slice::from_raw_parts(chunk_counts, mdat_count);
+    let total_chunks: usize = chunk_counts_slice.iter().sum();
+
+    if hash_size == 0 || total_chunks == 0 {
+        CimplError::null_parameter("hash_size or total chunk count is zero").set_last();
+        return -1;
+    }
+
+    let total_hash_bytes = some_or_return_int!(
+        total_chunks.checked_mul(hash_size),
+        CimplError::other("total_chunks * hash_size overflow".to_string())
+    );
+
+    let all_hashes = std::slice::from_raw_parts(hashes_ptr, total_hash_bytes);
+
+    let mut leaf_hashes: Vec<Vec<Vec<u8>>> = Vec::with_capacity(mdat_count);
+    let mut offset = 0usize;
+    for &count in chunk_counts_slice {
+        let mut mdat_hashes: Vec<Vec<u8>> = Vec::with_capacity(count);
+        for _ in 0..count {
+            mdat_hashes.push(all_hashes[offset..offset + hash_size].to_vec());
+            offset += hash_size;
+        }
+        leaf_hashes.push(mdat_hashes);
+    }
+
+    ok_or_return_int!(builder.set_bmff_mdat_hashes(leaf_hashes));
+    0
+}
+
 /// Convert a binary c2pa manifest into an embeddable version for the given format.
 /// A raw manifest (in application/c2pa format) can be uploaded to the cloud but
 /// it cannot be embedded directly into an asset without extra processing.
@@ -3919,6 +4192,164 @@ verify_after_sign = true
         // Clean up
         unsafe {
             c2pa_free(reader as *const c_void);
+        }
+    }
+
+    #[test]
+
+    fn test_data_hash_embeddable_workflow() {
+        // Build a context with signer configured via test_settings.json.
+        // The settings include a PS256 local signer so sign_embeddable can use it.
+        const SETTINGS: &str = include_str!(fixture_path!("test_settings.json"));
+
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+        let json_str = CString::new(SETTINGS).unwrap();
+        let fmt = CString::new("json").unwrap();
+        let result =
+            unsafe { c2pa_settings_update_from_string(settings, json_str.as_ptr(), fmt.as_ptr()) };
+        assert_eq!(result, 0);
+
+        let ctx_builder = unsafe { c2pa_context_builder_new() };
+        assert!(!ctx_builder.is_null());
+        let result = unsafe { c2pa_context_builder_set_settings(ctx_builder, settings) };
+        assert_eq!(result, 0);
+        let context = unsafe { c2pa_context_builder_build(ctx_builder) };
+        assert!(!context.is_null());
+
+        // Create a manifest builder from the context.
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null());
+
+        let format = CString::new("image/jpeg").unwrap();
+        // needs_placeholder returns 0 or 1 (never -1) for valid builder+format.
+        let needs = unsafe { c2pa_builder_needs_placeholder(builder, format.as_ptr()) };
+        assert!(needs >= 0, "needs_placeholder should not error");
+        assert!(needs <= 1, "needs_placeholder returns 0 or 1");
+
+        // Hash the entire JPEG stream — auto-creates a DataHash (direct mode, no placeholder).
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let result = unsafe {
+            c2pa_builder_update_hash_from_stream(builder, format.as_ptr(), source_stream.as_ptr())
+        };
+        assert_eq!(result, 0, "update_hash_from_stream failed");
+
+        // Sign without a placeholder (direct mode) — signer comes from the builder's Context.
+        let mut signed_bytes_ptr: *const c_uchar = std::ptr::null();
+        let len = unsafe {
+            c2pa_builder_sign_embeddable(builder, format.as_ptr(), &mut signed_bytes_ptr)
+        };
+        assert!(len > 0, "sign_embeddable should return positive length");
+        assert!(!signed_bytes_ptr.is_null());
+
+        unsafe {
+            c2pa_free(signed_bytes_ptr as *mut c_void);
+            c2pa_free(settings as *mut c_void);
+            c2pa_free(context as *mut c_void);
+            c2pa_free(builder as *mut c_void);
+        }
+    }
+
+    #[test]
+
+    fn test_bmff_embeddable_workflow_with_mdat_hashes() {
+        // Build a context with signer + Merkle chunk size for the external-mdat-hash workflow.
+        const SETTINGS: &str = include_str!(fixture_path!("test_settings.json"));
+
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+        let json_str = CString::new(SETTINGS).unwrap();
+        let fmt = CString::new("json").unwrap();
+        let result =
+            unsafe { c2pa_settings_update_from_string(settings, json_str.as_ptr(), fmt.as_ptr()) };
+        assert_eq!(result, 0);
+
+        // Enable Merkle-tree mdat hashing.
+        let path = CString::new("core.merkle_tree_chunk_size_in_kb").unwrap();
+        let value = CString::new("1").unwrap();
+        let result = unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) };
+        assert_eq!(result, 0);
+
+        let ctx_builder = unsafe { c2pa_context_builder_new() };
+        assert!(!ctx_builder.is_null());
+        let result = unsafe { c2pa_context_builder_set_settings(ctx_builder, settings) };
+        assert_eq!(result, 0);
+        let context = unsafe { c2pa_context_builder_build(ctx_builder) };
+        assert!(!context.is_null());
+
+        // Create builder from context.
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null());
+
+        let format = CString::new("video/mp4").unwrap();
+        // BMFF formats always need a placeholder.
+        let needs = unsafe { c2pa_builder_needs_placeholder(builder, format.as_ptr()) };
+        assert_eq!(
+            needs, 1,
+            "needs_placeholder should be 1 for video/mp4 before placeholder"
+        );
+
+        // Passing null for manifest_bytes_ptr returns size without error (caller may only need the length).
+        let size_only =
+            unsafe { c2pa_builder_placeholder(builder, format.as_ptr(), std::ptr::null_mut()) };
+        assert!(
+            size_only > 0,
+            "placeholder with null output should return positive size"
+        );
+        assert_ne!(
+            size_only, -1,
+            "placeholder with null output should not error"
+        );
+
+        // Create a BMFF placeholder (adds a BmffHash with pre-allocated Merkle slots).
+        let mut placeholder_ptr: *const c_uchar = std::ptr::null();
+        let placeholder_len =
+            unsafe { c2pa_builder_placeholder(builder, format.as_ptr(), &mut placeholder_ptr) };
+        assert!(
+            placeholder_len > 0,
+            "placeholder should return non-empty bytes"
+        );
+        assert!(!placeholder_ptr.is_null());
+
+        // Supply a single dummy SHA-256 leaf hash for one mdat box (1 chunk).
+        // The Merkle root is derived from these; the video will not validate but
+        // this exercises the full C API call path.
+        let dummy_hash: [u8; 32] = [0xab; 32];
+        let chunk_counts: [usize; 1] = [1];
+        let result = unsafe {
+            c2pa_builder_set_bmff_mdat_hashes(
+                builder,
+                dummy_hash.as_ptr(),
+                32,
+                chunk_counts.as_ptr(),
+                1,
+            )
+        };
+        assert_eq!(result, 0, "set_bmff_mdat_hashes failed");
+
+        // Hash the video stream (BmffHash uses its own path-based exclusions internally).
+        let video = include_bytes!(fixture_path!("video1.mp4"));
+        let mut video_stream = TestStream::new(video.to_vec());
+        let result = unsafe {
+            c2pa_builder_update_hash_from_stream(builder, format.as_ptr(), video_stream.as_ptr())
+        };
+        assert_eq!(result, 0, "update_hash_from_stream failed");
+
+        // Sign in placeholder mode — signer comes from the builder's Context.
+        let mut signed_bytes_ptr: *const c_uchar = std::ptr::null();
+        let len = unsafe {
+            c2pa_builder_sign_embeddable(builder, format.as_ptr(), &mut signed_bytes_ptr)
+        };
+        assert!(len > 0, "sign_embeddable should return positive length");
+        assert!(!signed_bytes_ptr.is_null());
+
+        unsafe {
+            c2pa_free(placeholder_ptr as *mut c_void);
+            c2pa_free(signed_bytes_ptr as *mut c_void);
+            c2pa_free(settings as *mut c_void);
+            c2pa_free(context as *mut c_void);
+            c2pa_free(builder as *mut c_void);
         }
     }
 
