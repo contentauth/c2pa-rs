@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.77.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.76.2...c2pa-c-ffi-v0.77.0)
+_04 March 2026_
+
+### Added
+
+* Embeddable manifest API with Context/Settings, CAWG and BMFF.v3 support. ([#1847](https://github.com/contentauth/c2pa-rs/pull/1847))
+
 ## [0.76.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.76.1...c2pa-c-ffi-v0.76.2)
 _03 March 2026_
 
