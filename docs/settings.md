@@ -1,41 +1,150 @@
 # Configuring SDK settings
 
-You can configure how the SDK works in any programming language using declarative settings in JSON or TOML format.  This documentation describes the JSON format, since it's a more common format, but TOML works equally well.
+This guide shows you how to configure the C2PA Rust SDK using the `Context` API with declarative settings in JSON or TOML format.
 
-## Loading settings
+## Overview
 
-Load settings either inline or from a file using the [`Context::new().with_settings()`](https://docs.rs/c2pa/latest/c2pa/struct.Context.html#method.with_settings) method. This method automatically detects the format (JSON or TOML). Using `Context` is thread-safe and can be shared with `Arc<Context>` and allows multiple configurations in one application.
+The SDK uses the `Context` structure to encapsulate all configuration needed for C2PA operations:
 
+- **Settings**: Configuration options for verification, signing, network policies, builder behavior, etc.
+- **HTTP Resolvers**: Customizable sync and async HTTP clients for fetching remote manifests
+- **Signers**: Cryptographic signers used to sign manifests (created automatically from settings)
+
+`Context` is thread-safe and can be shared with `Arc<Context>`, allowing multiple configurations in one application. It replaces the older thread-local `Settings` pattern with explicit dependencies and better testability.
+
+## Quick start
+
+### Creating a Context
+
+The simplest way to create a `Context` is with default settings:
+
+```rust
+use c2pa::Context;
+
+let context = Context::new();
+```
+
+### Loading settings from a file
+
+Load settings from a file using the `with_settings()` method, which automatically detects the format (JSON or TOML):
 
 ```rust
 use c2pa::{Context, Builder, Result};
 
 fn main() -> Result<()> {
+    // From a file
+    let context = Context::new()
+        .with_settings(include_str!("settings.json"))?;
 
-  // From a file
-  let context = Context::new()
-      .with_settings(include_str!("settings.json"))?;
-
-  // Inline JSON format
-  let context = Context::new()
-      .with_settings(r#"
-        {"verify": 
-        {"verify_after_sign": true}}"#)?;
-
-  // Inline TOML format
-  let context = Context::new()
-      .with_settings(r#"
-        [verify]
-        verify_after_sign = true
-      "#)?;
-
-  // Create builder using context settings
-  let builder = Builder::from_context(context);
-  Ok(())
+    // Create builder using context settings
+    let builder = Builder::from_context(context);
+    Ok(())
 }
 ```
 
-For backwards compatibility, you can still use the old thread-local `Settings::from_toml()`, but this approach is **not recommended**. See [Configuring the SDK using Context](context.md) for details.
+### Loading settings inline
+
+You can also provide settings inline in either JSON or TOML format:
+
+```rust
+use c2pa::{Context, Result};
+
+fn main() -> Result<()> {
+    // Inline JSON format
+    let context = Context::new()
+        .with_settings(r#"
+          {"verify":
+          {"verify_after_sign": true}}"#)?;
+
+    // Inline TOML format
+    let context = Context::new()
+        .with_settings(r#"
+          [verify]
+          verify_after_sign = true
+        "#)?;
+
+    Ok(())
+}
+```
+
+### Loading settings from a struct
+
+```rust
+use c2pa::{Context, Settings, Result};
+
+fn main() -> Result<()> {
+    let mut settings = Settings::default();
+    settings.verify.verify_after_sign = true;
+
+    let context = Context::new().with_settings(settings)?;
+    Ok(())
+}
+```
+
+## Using Context
+
+### With Reader
+
+`Reader` uses `Context` to control manifest validation and remote resource fetching:
+
+```rust
+use c2pa::{Context, Reader, Result};
+use std::fs::File;
+
+fn main() -> Result<()> {
+    // Configure context
+    let context = Context::new()
+        .with_settings(r#"{"verify": {"remote_manifest_fetch": false}}"#)?;
+
+    // Create reader with context
+    let stream = File::open("path/to/image.jpg")?;
+    let reader = Reader::from_context(context)
+        .with_stream("image/jpeg", stream)?;
+
+    println!("{}", reader.json());
+    Ok(())
+}
+```
+
+### With Builder
+
+`Builder` uses `Context` to configure signing operations. The `Context` automatically creates a signer from settings when needed:
+
+```rust
+use c2pa::{Context, Builder, Result};
+use std::io::Cursor;
+use serde_json::json;
+
+fn main() -> Result<()> {
+    // Configure context with signer and builder settings
+    let context = Context::new()
+        .with_settings(json!({
+            "signer": {
+                "local": {
+                    "alg": "ps256",
+                    "sign_cert": "path/to/cert.pem",
+                    "private_key": "path/to/key.pem",
+                    "tsa_url": "http://timestamp.digicert.com"
+                }
+            },
+            "builder": {
+                "claim_generator_info": {"name": "My App"},
+                "intent": {"Create": "digitalCapture"}
+            }
+        }))?;
+
+    // Create builder with context and inline JSON definition
+    let mut builder = Builder::from_context(context)
+        .with_definition(json!({"title": "My Image"}))?;
+
+    // Save with automatic signer from context
+    let mut source = std::fs::File::open("source.jpg")?;
+    let mut dest = Cursor::new(Vec::new());
+    builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+
+    Ok(())
+}
+```
 
 ## Settings definition
 
@@ -56,11 +165,11 @@ The Settings definition has the following top-level structure:
 
 NOTES:
 
-- All properties are optional.  If you do not specify a value, the SDK will use the default value, if any.
+- All properties are optional. If you do not specify a value, the SDK will use the default value, if any.
 - If you specify a value of `null`, then the property will be set to `null`, not the default.
 - Do not quote Boolean property values (for example, use `true` not `"true"`).
 
-For a complete reference to all the Settings properties, see the [SDK object reference - Settings](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema).  
+For a complete reference to all the Settings properties, see the [SDK object reference - Settings](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema).
 
 | Property | Description |
 |----------|-------------|
@@ -82,7 +191,7 @@ Here's the Settings JSON with all default values:
   "version": 1,
   "builder": {
     "claim_generator_info": null,
-    "created_assertion_labels": null,    
+    "created_assertion_labels": null,
     "certificate_status_fetch": null,
     "certificate_status_should_override": null,
     "generate_c2pa_archive": true,
@@ -111,7 +220,7 @@ Here's the Settings JSON with all default values:
       "format": null,
       "prefer_smallest_format": true,
       "quality": "medium"
-    },    
+    },
   },
   "cawg_trust": {
     "verify_trust_list": true,
@@ -148,7 +257,7 @@ Here's the Settings JSON with all default values:
 }
 ```
 
-## Examples
+## Configuration examples
 
 ### Minimal configuration
 
@@ -261,4 +370,212 @@ Here's the Settings JSON with all default values:
 }
 ```
 
+## Configuring signers
 
+**In most cases, you don't need to explicitly set a signer on the `Context`.** Instead, configure signer settings in your configuration, and the `Context` will create the signer automatically when you call `save_to_stream()` or `save_to_file()`.
+
+### From settings (recommended)
+
+Configure signer settings in your JSON or TOML file:
+
+```json
+{
+  "signer": {
+    "local": {
+      "alg": "ps256",
+      "sign_cert": "path/to/cert.pem",
+      "private_key": "path/to/key.pem",
+      "tsa_url": "http://timestamp.example.com"
+    }
+  }
+}
+```
+
+Then use it with Builder:
+
+```rust
+use c2pa::{Context, Builder, Result};
+use serde_json::json;
+
+fn main() -> Result<()> {
+    // Configure context with signer settings
+    let context = Context::new()
+        .with_settings(include_str!("config.json"))?;
+
+    let mut builder = Builder::from_context(context)
+        .with_definition(json!({"title": "My Image"}))?;
+
+    // Signer is created automatically from context's settings
+    let mut source = std::fs::File::open("source.jpg")?;
+    let mut dest = std::fs::File::create("signed.jpg")?;
+    builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+
+    Ok(())
+}
+```
+
+### Custom signer (advanced)
+
+For advanced use cases like HSMs or custom signing logic, you can create and set a custom signer:
+
+```rust
+use c2pa::{Context, create_signer, SigningAlg, Result};
+
+fn main() -> Result<()> {
+    // Explicitly create a signer
+    let signer = create_signer::from_files(
+        "path/to/cert.pem",
+        "path/to/key.pem",
+        SigningAlg::Ps256,
+        None
+    )?;
+
+    // Set it on the context
+    let context = Context::new().with_signer(signer);
+
+    // Later retrieve it
+    let signer_ref = context.signer()?;
+
+    Ok(())
+}
+```
+
+### Signer configuration options
+
+The `signer` field in `Settings` supports two types:
+
+**Local Signer** - for local certificate and private key:
+
+```toml
+[signer.local]
+alg = "ps256"              # Signing algorithm (ps256, ps384, ps512, es256, es384, es512, ed25519)
+sign_cert = "cert.pem"     # Path to certificate file or PEM string
+private_key = "key.pem"    # Path to private key file or PEM string
+tsa_url = "http://..."     # Optional: timestamp authority URL
+```
+
+**Remote Signer** - for remote signing services:
+
+```toml
+[signer.remote]
+url = "https://signing.example.com/sign"  # Signing service URL
+alg = "ps256"
+sign_cert = "cert.pem"     # Certificate for verification
+tsa_url = "http://..."     # Optional: timestamp authority URL
+```
+
+## Advanced topics
+
+### Custom HTTP resolvers
+
+For advanced use cases, you can provide custom HTTP resolvers to control how remote manifests are fetched. Custom resolvers are useful for adding authentication, caching, logging, or mocking network calls in tests.
+
+### Thread safety
+
+`Context` is designed to be used safely across threads. While `Context` itself doesn't implement `Clone`, you can:
+
+1. Create separate contexts for different threads
+2. Use `Arc<Context>` to share a context across threads (for read-only access)
+3. Pass contexts by reference where appropriate
+
+### When to use Context sharing
+
+Understanding when to use a shared `Context` helps optimize your application:
+
+**Use single-use Context (no Arc needed):**
+
+- Single signing operation
+- Single reading operation
+- Each operation has different configuration needs
+
+```rust
+use c2pa::{Context, Builder, Reader};
+
+// For simple, single-use cases create a fresh Context per operation
+let builder = Builder::from_context(Context::new().with_settings(config)?);
+// or, for reading:
+let reader = Reader::from_context(Context::new().with_settings(config)?);
+```
+
+**Use shared Context (with Arc):**
+- Multi-threaded operations
+- Multiple builders or readers using the same configuration
+- Signing and reading with the same settings
+- Web servers handling multiple requests with shared configuration
+
+```rust
+use std::sync::Arc;
+
+// Shared configuration
+let ctx = Arc::new(Context::new().with_settings(config)?);
+let builder1 = Builder::from_shared_context(&ctx);
+let builder2 = Builder::from_shared_context(&ctx);
+```
+
+## Migration from thread-local Settings
+
+The Context API replaces the older thread-local `Settings` pattern. If you're migrating existing code, this section explains how the two approaches differ.
+
+### Backwards compatibility
+
+**Settings still works:** The `Settings` type and its configuration format remain unchanged. All your existing settings files (JSON or TOML) work with Context without modification.
+
+**Key differences:**
+
+| Aspect | Old Thread-Local Settings | New Context API |
+|--------|---------------------|-----------------|
+| Scope | Global, affects all operations | Per-operation, explicitly passed |
+| Thread Safety | Not thread-safe | Thread-safe, shareable with Arc |
+| Configuration | Set once per thread | Can have multiple configurations |
+| Testability | Difficult (thread-local state) | Easy (isolated contexts) |
+
+### Migration examples
+
+**Old approach (deprecated):**
+```rust
+use c2pa::Settings;
+
+// Global settings affect all operations
+Settings::from_toml(include_str!("settings.toml"))?;
+let reader = Reader::from_stream("image/jpeg", stream)?;
+```
+
+**New approach with Context:**
+```rust
+use c2pa::{Context, Reader};
+
+// Explicit context per operation
+let context = Context::new()
+    .with_settings(include_str!("settings.toml"))?;
+let reader = Reader::from_context(context)
+    .with_stream("image/jpeg", stream)?;
+```
+
+**Multiple configurations (impossible with thread-local settings):**
+```rust
+use c2pa::{Context, Builder};
+
+// Development signer for testing
+let dev_ctx = Context::new()
+    .with_settings(include_str!("dev_settings.toml"))?;
+let dev_builder = Builder::from_context(dev_ctx);
+
+// Production signer for real signing
+let prod_ctx = Context::new()
+    .with_settings(include_str!("prod_settings.toml"))?;
+let prod_builder = Builder::from_context(prod_ctx);
+```
+
+### How Context uses Settings internally
+
+Context wraps a `Settings` instance and uses it to:
+
+1. **Create signers automatically** - When you call `context.signer()` or `builder.save_to_stream()`, the Context creates a signer from the `signer` field in `Settings` (if present).
+
+2. **Configure HTTP resolvers** - The Context creates default HTTP resolvers (for fetching remote manifests) and applies the `core.allowed_network_hosts` setting from `Settings`.
+
+3. **Control verification** - The `verify` settings control how manifests are validated.
+
+4. **Configure builder behavior** - The `builder` settings control thumbnail generation, actions, and other manifest creation options.
+
+The `Settings` format hasn't changed—only how you provide those settings.

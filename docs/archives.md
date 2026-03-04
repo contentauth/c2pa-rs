@@ -12,7 +12,7 @@ Many workflows need to pause and resume manifest authoring or reuse previously v
 
 1. [**Use intents**](intents.md): Set an intent to get automatic validation and action generation.
 2. **Archive validated ingredients**: Save expensive validation results.
-3. [**Use shared context**](context.md): Create once, share across operations.
+3. [**Use shared context**](settings.md#when-to-use-context-sharing): Create once, share across operations.
 4. **Label ingredients**: Use labels to link ingredients to actions.
 5. **Store archives flexibly**: Files, databases, and cloud storage all work.
 
@@ -69,7 +69,7 @@ pub fn with_archive(self, stream: impl Read + Seek + Send) -> Result<Self>
 // Restore (default context)
 let builder = Builder::from_archive(Cursor::new(std::fs::read("work.c2pa")?))?;
 
-// Or restore with a custom, shared context (see: docs/context.md)
+// Or restore with a custom, shared context (see: docs/settings.md)
 let builder = Builder::from_shared_context(&context)
     .with_archive(Cursor::new(std::fs::read("work.c2pa")?))?;
 ```
@@ -144,7 +144,7 @@ builder.add_ingredient_from_stream(
 )?;
 ```
 
-For creating and sharing a `Context` (including using `Arc`), see: [Configuring the SDK using Context](context.md).
+For creating and sharing a `Context` (including using `Arc`), see: [Configuring SDK settings](settings.md).
 
 ### Add archived ingredient
 

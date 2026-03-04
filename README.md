@@ -19,7 +19,7 @@ You can also read the documentation directly in GitHub:
 - [Usage](https://github.com/contentauth/c2pa-rs/blob/main/docs/usage.md)
 - [Supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md)
 - [Using the CAWG identity assertion](https://github.com/contentauth/c2pa-rs/blob/main/docs/cawg-id.md)
-- [Configuring SDK operations using Context](https://github.com/contentauth/c2pa-rs/blob/main/docs/context.md)
+- [Configuring SDK settings](https://github.com/contentauth/c2pa-rs/blob/main/docs/settings.md)
 - [Intents and archives](https://github.com/contentauth/c2pa-rs/blob/main/docs/intents-and-archives.md)
 - [Working stores and C2PA archives](https://github.com/contentauth/c2pa-rs/blob/main/docs/working-stores.md)
 - [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
@@ -67,7 +67,7 @@ The library uses a `Context` structure to configure C2PA operations, replacing t
 - **Backwards compatible**: All existing Settings (JSON/TOML) files work unchanged with Context
 - **Automatic signer creation**: Signers are created automatically from settings when needed
 
-See [Configuring SDK operations using Context](docs/context.md) for details. 
+See [Configuring SDK settings](docs/settings.md) for details. 
 
 ## Installation
 
