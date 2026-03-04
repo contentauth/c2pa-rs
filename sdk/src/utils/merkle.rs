@@ -92,7 +92,10 @@ impl C2PAMerkleTree {
     }
 
     pub fn leaves_bytebufs(&self) -> Vec<ByteBuf> {
-        self.leaves.iter().map(|n| ByteBuf::from(n.0.clone()) ).collect()
+        self.leaves
+            .iter()
+            .map(|n| ByteBuf::from(n.0.clone()))
+            .collect()
     }
 
     fn generate_tree(alg: &str, leaves: &[MerkleNode]) -> Vec<Vec<MerkleNode>> {

@@ -12,7 +12,8 @@
 // each license.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
+    io::Read,
     os::raw::{c_char, c_int, c_uchar, c_void},
     sync::Arc,
 };
@@ -102,6 +103,8 @@ pub struct C2paHasher {
     pub alg: String,
     pub hasher: Hasher,
     pub merkle_leaves: BTreeMap<usize, Vec<(u64, Vec<u8>)>>,
+    pub fixed_size: Option<usize>, // Optional fixed size Merkle leave for the hash output, if needed
+    fixed_size_remainder: HashMap<usize, Vec<u8>>, // Buffer to hold the fixed size hash remainder if needed for the specified mdat
 }
 
 impl C2paHasher {
@@ -110,6 +113,8 @@ impl C2paHasher {
             alg: alg.to_string(),
             hasher: Hasher::new(alg)?,
             merkle_leaves: BTreeMap::new(),
+            fixed_size: None,
+            fixed_size_remainder: HashMap::new(),
         })
     }
 
@@ -130,28 +135,114 @@ impl C2paHasher {
     pub fn add_merkle_leaf(
         &mut self,
         mdat_id: usize,
-        fragment_length: u64,
-        fragment_hash: Vec<u8>,
+        large_size: bool,
+        data: &[u8],
+        data_len: u64,
     ) -> c2pa::Result<()> {
-        let len: usize = match self.alg.as_str() {
-            "sha256" => 32,
-            "sha384" => 48,
-            "sha512" => 64,
-            _ => return Err(c2pa::Error::BadParam("bad hash algorithm".to_string())),
-        };
+        // if this is not large size and we are hashing the first chunk we have to skip the first 8 bytes
+        let mut hash_start = 0;
+        if !large_size
+            && !self.merkle_leaves.contains_key(&mdat_id)
+            && !self.fixed_size_remainder.contains_key(&mdat_id)
+        {
+            // nothing to hash based on Merkle "/mdat" exclusion
+            if data_len <= 8 {
+                return Ok(());
+            }
 
-        if len != fragment_hash.len() {
-            return Err(c2pa::Error::BadParam(
-                "hash len does not match algorithm".to_string(),
-            ));
+            hash_start = 8;
         }
 
-        self.merkle_leaves
-            .entry(mdat_id)
-            .and_modify(|leaves| leaves.push((fragment_length, fragment_hash.clone())))
-            .or_insert(vec![(fragment_length, fragment_hash)]);
+        // are we using fixed size Merkle leaves? If so we have to handle the case where the data is larger than
+        // the fixed size and we need to hash in chunks until we fill the fixed size buffer and then compute the
+        //leaf hash and add to the tree, repeating this process until we have processed all the data. If we are
+        // not using fixed size Merkle leaves then we can just hash the whole chunk and add to the tree as a single leaf.
+        if let Some(fixed_size) = &self.fixed_size {
+            let mut data_reader = std::io::Cursor::new(&data[hash_start..]);
+            let mut data_left = data_len - hash_start as u64;
+
+            // loop processing data as fixed size chunks until we have processed all the data or filled the fixed size buffer
+            loop {
+                if let Some(fixed_size_buffer) = &mut self.fixed_size_remainder.get_mut(&mdat_id) {
+                    // if we have a fixed sized buffer that means we have to use this data first
+                    // appending the rest from data until we complete the leaf of size self.fixed_size
+                    let to_copy =
+                        std::cmp::min(fixed_size - fixed_size_buffer.len(), data_len as usize);
+
+                    let mut remainder = vec![0u8; to_copy];
+                    data_reader.read_exact(remainder.as_mut_slice())?;
+                    fixed_size_buffer.extend_from_slice(&remainder);
+                    data_left -= to_copy as u64;
+
+                    if fixed_size_buffer.len() == *fixed_size {
+                        let fragment_hash =
+                            hash_by_alg(self.alg.as_str(), fixed_size_buffer, None);
+                        self.merkle_leaves
+                            .entry(mdat_id)
+                            .and_modify(|leaves| {
+                                leaves.push((*fixed_size as u64, fragment_hash.clone()))
+                            })
+                            .or_insert(vec![(*fixed_size as u64, fragment_hash)]);
+
+                        self.fixed_size_remainder.remove(&mdat_id);
+                    } else {
+                        // we have filled the remainder of the fixed size buffer but we haven't filled a whole leaf yet
+                        // so we need to wait for the next chunk to fill the rest of the leaf
+                        return Ok(());
+                    }
+                } else {
+                    let to_copy = std::cmp::min(*fixed_size, data_left as usize);
+                    if to_copy == 0 {
+                        // we have processed all the data
+                        return Ok(());
+                    }
+
+                    if to_copy < *fixed_size {
+                        // there is a remainder so store in the fixed size buffer for the next chunk and break the loop
+                        let mut remainder = vec![0u8; to_copy];
+                        data_reader.read_exact(remainder.as_mut_slice())?;
+                        self.fixed_size_remainder.insert(mdat_id, remainder);
+                        return Ok(());
+                    } else {
+                        let mut to_hash = vec![0u8; to_copy];
+                        data_reader.read_exact(to_hash.as_mut_slice())?;
+
+                        if to_hash.len() == *fixed_size {
+                            self.fixed_size_remainder.remove(&mdat_id);
+                            let fragment_hash = hash_by_alg(self.alg.as_str(), &to_hash, None);
+                            self.merkle_leaves
+                                .entry(mdat_id)
+                                .and_modify(|leaves| {
+                                    leaves.push((*fixed_size as u64, fragment_hash.clone()))
+                                })
+                                .or_insert(vec![(*fixed_size as u64, fragment_hash)]);
+
+                            data_left -= to_copy as u64;
+                        } else {
+                            return Err(c2pa::Error::OtherError(format!(
+                                "Unexpected error processing Merkle leaves: expected to read {} bytes but only read {} bytes",
+                                fixed_size, to_hash.len()
+                            ).into()));
+                        }
+                    }
+                }
+            }
+        } else {
+            // compute the leaf hash
+            let fragment_hash = hash_by_alg(self.alg.as_str(), &data[hash_start..], None);
+            let fragment_length = data_len - hash_start as u64;
+
+            self.merkle_leaves
+                .entry(mdat_id)
+                .and_modify(|leaves| leaves.push((fragment_length, fragment_hash.clone())))
+                .or_insert(vec![(fragment_length, fragment_hash)]);
+        }
 
         Ok(())
+    }
+
+    pub fn set_fixed_size(&mut self, size: usize) {
+        self.fixed_size = Some(size * 1024); // convert from KB to bytes
     }
 }
 
@@ -1694,6 +1785,46 @@ pub unsafe extern "C" fn c2pa_hasher_update(
 
     0
 }
+
+/// If set the hasher will hash fixed size blocks of data, padding the final block as needed.
+///
+/// #Parameters
+/// * hasher_ptr: point to C2paHasher from c2pa_hasher_from_alg.
+/// * fixed_size_kb: length of fixed size blocks. The units are KB.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// hasher_ptr must not be NULL..
+///
+/// # Example
+/// ```c
+/// auto hasher = c2pa_hasher_from_alg("sha256");
+/// if (hasher == NULL) {
+///     let error = c2pa_error();
+///     printf("Error: %s\n", error);
+///
+///     auto data = std::vector<std::uint8_t> buffer(1024);
+///
+///     c2pa_hasher_set_fixed_size_merkle(hasher, 1024); // set fixed size to 1024KB
+///
+///     c2pa_string_free(error);
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_hasher_set_fixed_size_merkle(
+    hasher_ptr: *mut C2paHasher,
+    fixed_size_kb: usize,
+) -> i64 {
+    let hasher = deref_mut_or_return_int!(hasher_ptr, C2paHasher);
+
+    hasher.set_fixed_size(fixed_size_kb);
+
+    0
+}
+
 /// Finalize the hasher and return the hash bytes
 ///
 /// #Parameters
@@ -1836,8 +1967,6 @@ pub unsafe extern "C" fn c2pa_hashed_bytes_free(hashed_bytes_ptr: *mut *const c_
 ///  auto hasher = c2pa_hasher_from_alg("sha256");
 ///
 ///  c2pa_hash_mdat_bytes(hasher, 1, (const uint8_t*)data.data(), 1024);
-///
-///
 /// ```
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_hash_mdat_bytes(
@@ -1851,24 +1980,11 @@ pub unsafe extern "C" fn c2pa_hash_mdat_bytes(
     ptr_or_return_int!(hasher_ptr);
 
     let data = bytes_or_return_int!(data_ptr, data_len, "hash_data");
+
     let hasher = deref_mut_or_return_int!(hasher_ptr, C2paHasher);
 
-    // if this is not large size and we are hashing the first chunk we have to skip the first 8 bytes
-    let mut hash_start = 0;
-    if !large_size && !hasher.merkle_leaves.contains_key(&mdat_id) {
-        // nothing to hash based on Merkle "/mdat" exclusion
-        if data_len <= 8 {
-            return 1;
-        }
-        
-        hash_start = 8;
-    }
-
-    // compute the leaf hash
-    let hash_bytes = hash_by_alg(&hasher.alg, &data[hash_start..], None);
-    
     // save to hasher to build Merkle trees during final save
-    match hasher.add_merkle_leaf(mdat_id, (data_len - hash_start) as u64, hash_bytes) {
+    match hasher.add_merkle_leaf(mdat_id, large_size, data, data_len as u64) {
         Ok(_) => 0,
         Err(_) => -1,
     }
@@ -1959,12 +2075,26 @@ pub unsafe extern "C" fn c2pa_builder_sign_bmff_hashed_embeddable(
             if !hasher_ptr.is_null() {
                 let hasher = deref_mut_or_return_int!(hasher_ptr, C2paHasher);
 
+                // add and remainders as the last leaf of the Merkle leaves for that mdat_id
+                for (mdat_id, remainder) in &hasher.fixed_size_remainder {
+                    let fragment_hash = hash_by_alg(hasher.alg.as_str(), remainder, None);
+
+                    hasher
+                        .merkle_leaves
+                        .entry(*mdat_id)
+                        .and_modify(|leaves| {
+                            leaves.push((remainder.len() as u64, fragment_hash.clone()))
+                        })
+                        .or_insert(vec![(remainder.len() as u64, fragment_hash)]);
+                }
+
                 // if there are Merkle hashes we need to create a MerkleMap and add it to the BmffHash
                 if !hasher.merkle_leaves.is_empty() {
                     // generate MerkleMaps for the mdat leaves stored in C2paHasher
                     let merkle_maps = ok_or_return_int!(MerkleMap::create_mms_from_mdat_leaves(
                         &hasher.alg,
-                        &hasher.merkle_leaves
+                        &hasher.merkle_leaves,
+                        hasher.fixed_size
                     ));
 
                     // add required mdat exclusion
@@ -3396,7 +3526,7 @@ mod tests {
         let signer_def = CString::new(signer_def.as_bytes()).unwrap();
         let format = CString::new("json").unwrap();
 
-        let data = "Some data to hash";
+        let data = "Some data to hash with Merkle tree".as_bytes();
         let alg = CString::new("sha256").unwrap();
 
         let source_image = include_bytes!(fixture_path!("sample1.heic"));
@@ -3426,6 +3556,9 @@ mod tests {
             // gen some hash values
             let c = c2pa_hasher_update(hasher, data.as_ptr(), data.len());
             assert!(c == 0);
+
+            // set the to fixed chunk mode
+            c2pa_hasher_set_fixed_size_merkle(hasher, 7);
 
             // throw some Merkle tree values in there
             let m = c2pa_hash_mdat_bytes(hasher, 1, data.as_ptr(), data.len(), false);

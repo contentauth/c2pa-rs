@@ -238,6 +238,7 @@ impl MerkleMap {
     pub fn create_mms_from_mdat_leaves(
         alg: &str,
         merkle_leaves: &BTreeMap<usize, Vec<(u64, Vec<u8>)>>,
+        fixed_block_size: Option<usize>,
     ) -> crate::Result<Vec<MerkleMap>> {
         let mut output = Vec::new();
 
@@ -259,15 +260,34 @@ impl MerkleMap {
             // to carry the proof
             let hashes = VecByteBuf(m_tree.leaves_bytebufs());
 
-            let mm = MerkleMap {
-                unique_id: *mdat_indx,
-                local_id: *mdat_indx,
-                count: leaf_hashes.len(),
-                alg: Some(alg.to_owned()),
-                init_hash: None,
-                hashes,
-                fixed_block_size: None,
-                variable_block_sizes: Some(leaf_sizes),
+            let mm = if let Some(fixed_block_size) = fixed_block_size {
+                if fixed_block_size == 0 {
+                    return Err(Error::BadParam("Fixed block size cannot be 0".to_string()));
+                }
+
+                let leaf_len: u64 = leaf_sizes.iter().sum();
+
+                MerkleMap {
+                    unique_id: *mdat_indx,
+                    local_id: *mdat_indx,
+                    count: leaf_hashes.len(),
+                    alg: Some(alg.to_owned()),
+                    init_hash: None,
+                    hashes,
+                    fixed_block_size: Some(std::cmp::min(leaf_len, fixed_block_size as u64)),
+                    variable_block_sizes: None,
+                }
+            } else {
+                MerkleMap {
+                    unique_id: *mdat_indx,
+                    local_id: *mdat_indx,
+                    count: leaf_hashes.len(),
+                    alg: Some(alg.to_owned()),
+                    init_hash: None,
+                    hashes,
+                    fixed_block_size: None,
+                    variable_block_sizes: Some(leaf_sizes),
+                }
             };
 
             output.push(mm);
@@ -383,7 +403,10 @@ impl BmffHash {
 
         for (index, mdat_box) in mdat_boxes.iter().enumerate() {
             let fixed_block_size = if merkle_chunk_size > 0 {
-                Some(1024 * merkle_chunk_size as u64)
+                Some(std::cmp::min(
+                    1024 * merkle_chunk_size as u64,
+                    mdat_box.size - 16,
+                ))
             } else {
                 None
             };
@@ -486,7 +509,7 @@ impl BmffHash {
             exclusions.push(free);
         }
 
-         // /skip exclusion
+        // /skip exclusion
         if !exclusions.iter().any(|e| e.xpath == "/skip") {
             let skip = ExclusionsMap::new("/skip".to_owned());
             exclusions.push(skip);

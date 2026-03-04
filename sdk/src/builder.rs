@@ -807,14 +807,18 @@ impl Builder {
     {
         let label: String = label.into();
 
-        if let Some(item) = self.definition.assertions.iter_mut().find(|x| x.label.contains(&label)) {
+        if let Some(item) = self
+            .definition
+            .assertions
+            .iter_mut()
+            .find(|x| x.label.contains(&label))
+        {
             item.data = AssertionData::Cbor(c2pa_cbor::value::to_value(data)?);
             Ok(self)
         } else {
             self.add_assertion(&label, data)
         }
     }
-
 
     /// Adds a single action to the manifest.
     /// This is a convenience method for adding an action to the `Actions` assertion.
