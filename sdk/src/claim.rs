@@ -3320,6 +3320,13 @@ impl Claim {
         self.assertions_by_type(&dummy_bmff_hash, None)
     }
 
+    pub fn data_hash_assertions(&self) -> Vec<&ClaimAssertion> {
+        // add in an BMFF hashes
+        let dummy_hash_data = AssertionData::Cbor(Vec::new());
+        let dummy_data_hash = Assertion::new(assertions::labels::DATA_HASH, None, dummy_hash_data);
+        self.assertions_by_type(&dummy_data_hash, None)
+    }
+
     pub fn box_hash_assertions(&self) -> Vec<&ClaimAssertion> {
         // add in an BMFF hashes
         let dummy_box_data = AssertionData::Cbor(Vec::new());
