@@ -229,6 +229,11 @@ pub static METADATA_LABEL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     }
 });
 
+/// Label prefix for multi-asset hash assertion.
+///
+/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_multi_asset_hash>
+pub const MULTI_ASSET_HASH: &str = "c2pa.hash.multi-asset";
+
 /// Parse a label into its components
 ///
 /// This function takes a label string and parses it into its base label,
