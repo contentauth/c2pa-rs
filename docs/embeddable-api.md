@@ -1,6 +1,6 @@
 # Embeddable signing API
 
-The embeddable signing API provides explicit control over how to embed a C2PA manifest into an asset. Instead of letting the SDK manage everything by providing both the source and destination streams to `Builder::sign()`, you perform each step explicitly:
+The embeddable signing API provides direct control over how a C2PA manifest is embedded into an asset. Instead of letting the SDK manage everything by providing both the source and destination streams to `Builder::sign()`, you perform each step explicitly:
 
 1. Create a placeholder.
 2. Embed the placeholder yourself.
