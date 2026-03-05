@@ -248,11 +248,10 @@ impl TimeStampProvider for SignerWrapper<'_> {
 
     fn send_time_stamp_request(
         &self,
-        http_resolver: &dyn SyncHttpResolver,
         message: &[u8],
     ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
         self.0
-            .send_timestamp_request(http_resolver, message)
+            .send_timestamp_request(message)
             .map(|r| r.map_err(|e| e.into()))
     }
 }
@@ -303,11 +302,10 @@ impl AsyncTimeStampProvider for AsyncSignerWrapper<'_> {
 
     async fn send_time_stamp_request(
         &self,
-        http_resolver: &dyn AsyncHttpResolver,
         message: &[u8],
     ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
         self.0
-            .send_timestamp_request(http_resolver, message)
+            .send_timestamp_request(message)
             .await
             .map(|r| r.map_err(|e| e.into()))
     }
@@ -325,7 +323,7 @@ mod tests {
     use crate::{
         claim::Claim,
         crypto::raw_signature::SigningAlg,
-        http::{AsyncGenericResolver, SyncGenericResolver, SyncHttpResolver},
+        http::{AsyncGenericResolver, SyncGenericResolver},
         settings::Settings,
         utils::test_signer::{async_test_signer, test_signer},
         Result, Signer,
@@ -422,11 +420,7 @@ mod tests {
             1024
         }
 
-        fn send_timestamp_request(
-            &self,
-            _http_resolver: &dyn SyncHttpResolver,
-            _message: &[u8],
-        ) -> Option<crate::error::Result<Vec<u8>>> {
+        fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
             Some(Ok(Vec::new()))
         }
     }

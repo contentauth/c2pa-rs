@@ -35,7 +35,6 @@ use crate::{
     context::Context,
     crypto::{cose::CertificateTrustPolicy, raw_signature::SigningAlg},
     hash_utils::Hasher,
-    http::{AsyncHttpResolver, SyncHttpResolver},
     jumbf_io::get_assetio_handler,
     resource_store::UriOrResource,
     store::Store,
@@ -707,11 +706,7 @@ impl crate::Signer for TestGoodSigner {
         1024
     }
 
-    fn send_timestamp_request(
-        &self,
-        _http_resolver: &dyn SyncHttpResolver,
-        _message: &[u8],
-    ) -> Option<crate::error::Result<Vec<u8>>> {
+    fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
         Some(Ok(Vec::new()))
     }
 }
@@ -739,7 +734,6 @@ impl AsyncSigner for AsyncTestGoodSigner {
 
     async fn send_timestamp_request(
         &self,
-        _http_resolver: &dyn AsyncHttpResolver,
         _message: &[u8],
     ) -> Option<crate::error::Result<Vec<u8>>> {
         Some(Ok(Vec::new()))

@@ -212,13 +212,8 @@ impl Signer for CawgX509IdentitySigner {
         self.c2pa_signer.timestamp_request_body(message)
     }
 
-    fn send_timestamp_request(
-        &self,
-        http_resolver: &dyn SyncHttpResolver,
-        message: &[u8],
-    ) -> Option<Result<Vec<u8>>> {
-        self.c2pa_signer
-            .send_timestamp_request(http_resolver, message)
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        self.c2pa_signer.send_timestamp_request(message)
     }
 
     fn ocsp_val(&self) -> Option<Vec<u8>> {

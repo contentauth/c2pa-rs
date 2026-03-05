@@ -27,7 +27,6 @@ use x509_parser::prelude::X509Certificate;
 
 use crate::{
     crypto::raw_signature::{signer_from_cert_chain_and_private_key, RawSigner, SigningAlg},
-    http::SyncHttpResolver,
     utils::ephemeral_cert,
     Error, Result, Signer,
 };
@@ -179,13 +178,9 @@ impl Signer for EphemeralSigner {
             .map_err(|e| e.into())
     }
 
-    fn send_timestamp_request(
-        &self,
-        http_resolver: &dyn SyncHttpResolver,
-        message: &[u8],
-    ) -> Option<Result<Vec<u8>>> {
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         self.raw_signer
-            .send_time_stamp_request(http_resolver, message)
+            .send_time_stamp_request(message)
             .map(|r| r.map_err(|e| e.into()))
     }
 }
