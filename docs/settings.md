@@ -54,7 +54,8 @@ fn main() -> Result<()> {
     let context = Context::new()
         .with_settings(r#"
           {"verify":
-          {"verify_after_sign": true}}"#)?;
+          {"verify_after_sign": true}}"
+        #)?;
 
     // Inline TOML format
     let context = Context::new()
@@ -442,31 +443,34 @@ fn main() -> Result<()> {
 
 ### Signer configuration options
 
-The `signer` field in `Settings` supports two types:
+The `signer` field in `Settings` supports two types: `local` and `remote`.
 
-**Local Signer** - for local certificate and private key:
+**Local Signer** - for local certificate and private key.
+
+> [!NOTE]
+> Using a local signer is suitable primarily for development and testing, not production because values for `sign_cert` and `private_key` must be inline PEM strings.
 
 ```json
 ...
   "signer": {
     "local": {
       "alg": "ps256", // Signing algorithm 
-      "sign_cert": "cert.pem", // Path to certificate file or PEM string
-      "private_key": "key.pem", // Path to private key file or PEM string
+      "sign_cert": "cert.pem", // PEM string
+      "private_key": "key.pem", // PEM string
       "tsa_url": "http://timestamp.digicert.com" // Optional timestamp authority URL
     }
   },
 ...
 ```
 
-**Remote Signer** - for remote signing services:
+**Remote Signer** - for remote signing services.
 
 ```json
   "signer": {
     "remote": {
       "alg": "ps256", // Signing algorithm       
       "url": "https://my-signing-service.com/sign", // Signing service URL
-      "sign_cert": "cert.pem", // Certificate for verification
+      "sign_cert": "cert.pem", // Path to cert file for verification
       "tsa_url": "http://timestamp.digicert.com" // Optional timestamp authority URL
     }
   }

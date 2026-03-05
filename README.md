@@ -53,11 +53,12 @@ For details on what you can do with the library, see [Using the Rust library](ht
 
 This is a beta release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.
 
-**NOTE**: The library supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) by default, and implementations should not generate deprecated v1 claims.  For details, see [C2PA v2 claims](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes#c2pa-v2-claims).
+> [!NOTE]
+> The library supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) by default, and implementations should not generate deprecated v1 claims.  For details, see [C2PA v2 claims](docs/release-notes.md#c2pa-v2-claims).
 
 ### New API
 
-NOTE: The current release API replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes) for more information.
+The current release API replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](docs/release-notes.md) for more information.
 
 ### Context API for configuration
 
