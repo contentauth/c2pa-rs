@@ -234,67 +234,63 @@ impl AssetBoxHash for GifIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
         let c2pa_block_exists = self.find_c2pa_block(input_stream)?.is_some();
 
-        Blocks::new(input_stream)?
-            .try_fold(
-                (Vec::new(), None, 0),
-                |(mut box_maps, last_marker, mut offset),
-                 marker|
-                 -> Result<(Vec<_>, Option<BlockMarker<Block>>, usize)> {
-                    let marker = marker?;
+        let mut box_maps = Vec::new();
+        let mut last_marker: Option<BlockMarker<Block>> = None;
 
-                    // If the C2PA block doesn't exist, we need to insert a placeholder after the global color table
-                    // if it exists, or otherwise after the logical screen descriptor.
-                    if !c2pa_block_exists {
-                        if let Some(last_marker) = last_marker.as_ref() {
-                            let should_insert_placeholder = match last_marker.block {
-                                Block::GlobalColorTable(_) => true,
-                                // If the current block is a global color table, then wait til the next iteration to insert.
-                                Block::LogicalScreenDescriptor(_)
-                                    if !matches!(marker.block, Block::GlobalColorTable(_)) =>
-                                {
-                                    true
-                                }
-                                _ => false,
-                            };
-                            if should_insert_placeholder {
-                                offset += 1;
-                                box_maps.push(
-                                    BlockMarker {
-                                        block: Block::ApplicationExtension(
-                                            ApplicationExtension::new_c2pa(&[])?,
-                                        ),
-                                        start: marker.start,
-                                        len: 1,
-                                    }
-                                    .to_box_map()?,
-                                );
-                            }
-                        }
-                    }
+        for marker in Blocks::new(input_stream)? {
+            let marker = marker?;
 
-                    // According to C2PA spec, these blocks must be grouped into the same box map.
-                    match marker.block {
-                        // If it's a local color table, then an image descriptor MUST have come before it.
-                        // If it's a global color table, then a logical screen descriptor MUST have come before it.
-                        Block::LocalColorTable(_) | Block::GlobalColorTable(_) => {
-                            match box_maps.last_mut() {
-                                Some(last_box_map) => {
-                                    last_box_map.range_len += marker.len();
-                                }
-                                // Realistically, this case is unreachable, but to play it safe, we error.
-                                None => return Err(Error::NotFound),
+            // If the C2PA block doesn't exist, we need to insert a placeholder after the global color table
+            // if it exists, or otherwise after the logical screen descriptor.
+            if !c2pa_block_exists {
+                if let Some(last_marker) = last_marker.as_ref() {
+                    let should_insert_placeholder = match last_marker.block {
+                        Block::GlobalColorTable(_) => true,
+                        // If the current block is a global color table, then wait til the next iteration to insert.
+                        Block::LogicalScreenDescriptor(_)
+                            if !matches!(marker.block, Block::GlobalColorTable(_)) =>
+                        {
+                            true
+                        }
+                        _ => false,
+                    };
+                    if should_insert_placeholder {
+                        box_maps.push(
+                            BlockMarker {
+                                block: Block::ApplicationExtension(ApplicationExtension::new_c2pa(
+                                    &[],
+                                )?),
+                                start: marker.start,
+                                len: 0,
                             }
-                        }
-                        _ => {
-                            let mut box_map = marker.to_box_map()?;
-                            box_map.range_start += offset as u64;
-                            box_maps.push(box_map);
-                        }
+                            .to_box_map()?,
+                        );
                     }
-                    Ok((box_maps, Some(marker), offset))
-                },
-            )
-            .map(|(box_maps, _, _)| box_maps)
+                }
+            }
+
+            // According to C2PA spec, these blocks must be grouped into the same box map.
+            match marker.block {
+                // If it's a local color table, then an image descriptor MUST have come before it.
+                // If it's a global color table, then a logical screen descriptor MUST have come before it.
+                Block::LocalColorTable(_) | Block::GlobalColorTable(_) => {
+                    match box_maps.last_mut() {
+                        Some(last_box_map) => {
+                            last_box_map.range_len += marker.len();
+                        }
+                        // Realistically, this case is unreachable, but to play it safe, we error.
+                        None => return Err(Error::NotFound),
+                    }
+                }
+                _ => {
+                    box_maps.push(marker.to_box_map()?);
+                }
+            }
+
+            last_marker = Some(marker);
+        }
+
+        Ok(box_maps)
     }
 }
 
