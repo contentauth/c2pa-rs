@@ -186,12 +186,11 @@ impl C2PAMerkleTree {
 }
 
 // Implements a Merkle accumulator to support the C2PA spec variant.  This is used to compute the Merkle
-// root hash for the asset content and supports adding leaves in any order and handling large data that
+// hashes for the asset content and supports adding mdat boxes in any order and handling large data that
 // may need to be processed in chunks.  The accumulator maintains a map of mdat_id to the list of leaf
 // hashes and lengths for that mdat, as well as an optional fixed size for the Merkle leaves if needed
-// (e.g. for BMFF hashing).  The add_merkle_leaf method handles adding new leaves to the tree, including
-// hashing in chunks if using fixed size leaves, and the finalize method computes the final Merkle root
-// hash from the accumulated leaves.
+// specified.  The add_merkle_leaf method handles adding new leaves to the tree, including
+// hashing in chunks if using fixed size leaves.
 #[derive(Clone, Debug)]
 pub struct MerkleAccumulator {
     pub alg: String,
@@ -243,12 +242,9 @@ impl MerkleAccumulator {
         let mut hash_start = 0;
         let data_len = data.len() as u64;
 
-        // if this is not large size and we are hashing the first chunk we have to skip the first 8 bytes
+        // If this is not large size and we are hashing the first chunk we have to skip the first 8 bytes
         // which are the size field of the mdat box and not included in the Merkle tree according to the
-        // spec.  If we are using fixed size Merkle leaves then we will handle this in the chunking logic
-        // below and we don't need to skip here since the chunking logic will handle skipping the first
-        // 8 bytes for the first chunk and then hashing in fixed size chunks after that until we have processed
-        // all the data.
+        // spec.
         if !large_size
             && !self.merkle_leaves.contains_key(&mdat_id)
             && !self.fixed_size_remainder.contains_key(&mdat_id)
@@ -261,7 +257,7 @@ impl MerkleAccumulator {
             hash_start = 8;
         }
 
-        // are we using fixed size Merkle leaves? If so we have to handle the case where the data is larger than
+        // Are we using fixed size Merkle leaves? If so we have to handle the case where the data is larger than
         // the fixed size and we need to hash in chunks until we fill the fixed size buffer and then compute the
         //leaf hash and add to the tree, repeating this process until we have processed all the data. If we are
         // not using fixed size Merkle leaves then we can just hash the whole chunk and add to the tree as a single leaf.
