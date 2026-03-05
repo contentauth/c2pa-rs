@@ -1,10 +1,10 @@
 # Configuring SDK settings
 
-This guide shows you how to configure the C2PA Rust SDK using the `Context` API with declarative settings in JSON or TOML format.
+This guide shows you how to configure the C2PA Rust library using the `Context` API with declarative settings in JSON or TOML format.
 
 ## Overview
 
-The SDK uses the `Context` structure to encapsulate all configuration needed for C2PA operations:
+The `Context` structure encapsulates configuration for:
 
 - **Settings**: Configuration options for verification, signing, network policies, builder behavior, etc.
 - **HTTP Resolvers**: Customizable sync and async HTTP clients for fetching remote manifests
@@ -372,11 +372,11 @@ Here's the Settings JSON with all default values:
 
 ## Configuring signers
 
-**In most cases, you don't need to explicitly set a signer on the `Context`.** Instead, configure signer settings in your configuration, and the `Context` will create the signer automatically when you call `save_to_stream()` or `save_to_file()`.
+**In most cases, you don't need to explicitly set a signer on the `Context`**. Instead, configure signer settings in your configuration, and `Context` will create the signer automatically when you call `save_to_stream()` or `save_to_file()`.
 
 ### From settings (recommended)
 
-Configure signer settings in your JSON or TOML file:
+Configure signer settings in the settings file, for example in JSON:
 
 ```json
 {
@@ -446,22 +446,30 @@ The `signer` field in `Settings` supports two types:
 
 **Local Signer** - for local certificate and private key:
 
-```toml
-[signer.local]
-alg = "ps256"              # Signing algorithm (ps256, ps384, ps512, es256, es384, es512, ed25519)
-sign_cert = "cert.pem"     # Path to certificate file or PEM string
-private_key = "key.pem"    # Path to private key file or PEM string
-tsa_url = "http://..."     # Optional: timestamp authority URL
+```json
+...
+  "signer": {
+    "local": {
+      "alg": "ps256", // Signing algorithm 
+      "sign_cert": "cert.pem", // Path to certificate file or PEM string
+      "private_key": "key.pem", // Path to private key file or PEM string
+      "tsa_url": "http://timestamp.digicert.com" // Optional timestamp authority URL
+    }
+  },
+...
 ```
 
 **Remote Signer** - for remote signing services:
 
-```toml
-[signer.remote]
-url = "https://signing.example.com/sign"  # Signing service URL
-alg = "ps256"
-sign_cert = "cert.pem"     # Certificate for verification
-tsa_url = "http://..."     # Optional: timestamp authority URL
+```json
+  "signer": {
+    "remote": {
+      "alg": "ps256", // Signing algorithm       
+      "url": "https://my-signing-service.com/sign", // Signing service URL
+      "sign_cert": "cert.pem", // Certificate for verification
+      "tsa_url": "http://timestamp.digicert.com" // Optional timestamp authority URL
+    }
+  }
 ```
 
 ## Advanced topics
