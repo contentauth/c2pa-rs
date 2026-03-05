@@ -137,8 +137,8 @@ pub trait AsyncTimeStampProvider: MaybeSync {
 /// Request a timestamp from the provider, falling back to a built-in networking
 /// implementation if the provider does not implement [`TimeStampProvider::send_time_stamp_request`].
 ///
-/// This function will return [`TimeStampError::TimeStampRequestNotConfigured`] if there is no custom implementation via
-/// [`TimeStampProvider::send_time_stamp_request`] or there is no
+/// This function will return [`TimeStampError::TimeStampRequestNotConfigured`] if there is no
+/// custom implementation via [`TimeStampProvider::send_time_stamp_request`] and there is no
 /// [`TimeStampProvider::time_stamp_service_url`] for the built-in implementation.
 #[async_generic(async_signature(
     ts_provider: &(impl AsyncTimeStampProvider + ?Sized),
