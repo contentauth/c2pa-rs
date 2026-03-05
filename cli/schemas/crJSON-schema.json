@@ -5,7 +5,9 @@
     "description": "JSON Schema for Content Credential JSON (CrJSON) documents. CrJSON does not include asset_info, content, or metadata.",
     "type": "object",
     "required": [
-        "@context"
+        "@context",
+        "manifests",
+        "jsonGenerator"
     ],
     "properties": {
         "@context": {
@@ -43,10 +45,40 @@
         "validationResults": {
             "description": "Validation results from validation (active manifest and ingredient deltas)",
             "$ref": "#/definitions/validationResults"
+        },
+        "jsonGenerator": {
+            "description": "Information about the claim generator, including date stamp",
+            "$ref": "#/definitions/jsonGenerator"
         }
     },
     "additionalProperties": true,
     "definitions": {
+        "jsonGenerator": {
+            "type": "object",
+            "description": "Information about the claim generator (generator-info fields) plus date stamp",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the software"
+                },
+                "version": {
+                    "type": "string",
+                    "description": "Version of the software (SemVer 2.0: major.minor.patch with optional pre-release and build)",
+                    "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+                },
+                "date": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Date and time when the CrJSON was generated (ISO 8601)"
+                }
+            },
+            "required": [
+                "name",
+                "version",
+                "date"
+            ],
+            "additionalProperties": true
+        },
         "manifest": {
             "type": "object",
             "required": [
@@ -1057,49 +1089,18 @@
             ],
             "additionalProperties": true
         },
-        "signature": {
+        "certificateInfo": {
             "type": "object",
+            "description": "Certificate details (serial number, issuer, subject, validity)",
             "properties": {
-                "algorithm": {
-                    "type": "string",
-                    "description": "Algorithm used for signing (e.g., SHA256withECDSA)"
-                },
                 "serialNumber": {
                     "type": "string",
                     "description": "Certificate serial number"
                 },
-                "certificate": {
-                    "type": "object",
-                    "description": "Certificate details",
-                    "properties": {
-                        "serialNumber": {
-                            "type": "string"
-                        },
-                        "issuer": {
-                            "$ref": "#/definitions/distinguishedName"
-                        },
-                        "subject": {
-                            "$ref": "#/definitions/distinguishedName"
-                        },
-                        "validity": {
-                            "type": "object",
-                            "properties": {
-                                "notBefore": {
-                                    "type": "string",
-                                    "format": "date-time"
-                                },
-                                "notAfter": {
-                                    "type": "string",
-                                    "format": "date-time"
-                                }
-                            }
-                        }
-                    }
-                },
-                "subject": {
+                "issuer": {
                     "$ref": "#/definitions/distinguishedName"
                 },
-                "issuer": {
+                "subject": {
                     "$ref": "#/definitions/distinguishedName"
                 },
                 "validity": {
@@ -1107,22 +1108,57 @@
                     "properties": {
                         "notBefore": {
                             "type": "string",
-                            "format": "date-time",
-                            "description": "Alternate field name for validity start"
+                            "format": "date-time"
                         },
                         "notAfter": {
                             "type": "string",
-                            "format": "date-time",
-                            "description": "Alternate field name for validity end"
+                            "format": "date-time"
                         }
                     }
-                },
-                "timestamp": {
-                    "type": "string",
-                    "format": "date-time",
-                    "description": "Time when the claim was signed (e.g. from TSA timestamp); RFC 3339 format"
                 }
             },
+            "required": [
+                "serialNumber",
+                "issuer",
+                "subject",
+                "validity"
+            ],
+            "additionalProperties": false
+        },
+        "signature": {
+            "type": "object",
+            "properties": {
+                "algorithm": {
+                    "type": "string",
+                    "description": "Algorithm used for signing (e.g., SHA256withECDSA)"
+                },
+                "certificateInfo": {
+                    "$ref": "#/definitions/certificateInfo"
+                },
+                "timeStampInfo": {
+                    "type": "object",
+                    "description": "Timestamp information (e.g. from TSA), when present",
+                    "properties": {
+                        "timestamp": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "Time when the claim was signed (e.g. from TSA timestamp); RFC 3339 format"
+                        },
+                        "certificateInfo": {
+                            "$ref": "#/definitions/certificateInfo"
+                        }
+                    },
+                    "required": [
+                        "timestamp",
+                        "certificateInfo"
+                    ]
+                },
+                "additionalProperties": false
+            },
+            "required": [
+                "algorithm",
+                "certificateInfo"
+            ],
             "additionalProperties": false
         },
         "distinguishedName": {

@@ -32,10 +32,15 @@ use crate::{
     assertion::AssertionData,
     claim::Claim,
     context::Context,
-    crypto::base64,
+    crypto::{
+        base64,
+        cose::{parse_cose_sign1, timestamp_token_bytes_from_sign1},
+        time_stamp::tsa_signer_cert_der_from_token,
+    },
     error::{Error, Result},
     jumbf::labels::to_absolute_uri,
     reader::{AsyncPostValidator, MaybeSend, PostValidator, Reader},
+    status_tracker::StatusTracker,
     validation_results::{
         validation_codes::{
             SIGNING_CREDENTIAL_EXPIRED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
@@ -213,7 +218,19 @@ impl CrJsonReader {
             result["validationResults"] = serde_json::to_value(validation_results)?;
         }
 
+        // jsonGenerator: claim_generator_info fields from the (active) manifest + date (ISO 8601).
+        result["jsonGenerator"] = self.build_json_generator()?;
+
         Ok(result)
+    }
+
+    /// Build the root-level jsonGenerator object: the CrJSON is produced by c2pa-rs (this library).
+    fn build_json_generator(&self) -> Result<Value> {
+        Ok(json!({
+            "name": "c2pa-rs",
+            "version": env!("CARGO_PKG_VERSION"),
+            "date": Utc::now().to_rfc3339()
+        }))
     }
 
     /// Get the CrJsonReader as a JSON string
@@ -253,8 +270,9 @@ impl CrJsonReader {
             }
 
             // Build signature object (required per manifest schema; use empty object when no signature info)
+            let claim_ref = self.inner.store.get_claim(label);
             let signature = self
-                .build_claim_signature(manifest)?
+                .build_claim_signature(manifest, claim_ref)?
                 .unwrap_or_else(|| Value::Object(Map::new()));
             manifest_obj.insert("signature".to_string(), signature);
 
@@ -894,7 +912,11 @@ impl CrJsonReader {
     }
 
     /// Build claim_signature object with detailed certificate information
-    fn build_claim_signature(&self, manifest: &Manifest) -> Result<Option<Value>> {
+    fn build_claim_signature(
+        &self,
+        manifest: &Manifest,
+        claim: Option<&Claim>,
+    ) -> Result<Option<Value>> {
         let sig_info = match manifest.signature_info() {
             Some(info) => info,
             None => return Ok(None),
@@ -907,32 +929,64 @@ impl CrJsonReader {
             claim_signature.insert("algorithm".to_string(), json!(alg.to_string()));
         }
 
-        // Add signing timestamp (e.g. from TSA) when available
-        if let Some(time) = &sig_info.time {
-            claim_signature.insert("timestamp".to_string(), json!(time));
+        // Parse certificate to get detailed DN components and validity (nested in certificateInfo)
+        if let Some(cert_info) = self.parse_certificate(&sig_info.cert_chain)? {
+            let mut cert_info_obj = Map::new();
+            if let Some(serial) = cert_info.serial_number {
+                cert_info_obj.insert("serialNumber".to_string(), json!(serial));
+            }
+            if let Some(issuer) = cert_info.issuer {
+                cert_info_obj.insert("issuer".to_string(), json!(issuer));
+            }
+            if let Some(subject) = cert_info.subject {
+                cert_info_obj.insert("subject".to_string(), json!(subject));
+            }
+            if let Some(validity) = cert_info.validity {
+                cert_info_obj.insert("validity".to_string(), validity);
+            }
+            if !cert_info_obj.is_empty() {
+                claim_signature.insert("certificateInfo".to_string(), Value::Object(cert_info_obj));
+            }
         }
 
-        // Parse certificate to get detailed DN components and validity
-        if let Some(cert_info) = self.parse_certificate(&sig_info.cert_chain)? {
-            // Add serial number (hex format)
-            if let Some(serial) = cert_info.serial_number {
-                claim_signature.insert("serialNumber".to_string(), json!(serial));
+        // Build timeStampInfo when we have a signing time and/or TSA certificate
+        let has_ts_time = sig_info.time.is_some();
+        let mut tsa_cert_info_obj = Map::new();
+        if let Some(claim) = claim {
+            if let Ok(data) = claim.data() {
+                let sig_bytes = claim.signature_val();
+                let mut log = StatusTracker::default();
+                if let Ok(sign1) = parse_cose_sign1(sig_bytes, data.as_ref(), &mut log) {
+                    if let Some(token_bytes) = timestamp_token_bytes_from_sign1(&sign1) {
+                        if let Ok(Some(tsa_der)) = tsa_signer_cert_der_from_token(&token_bytes) {
+                            if let Ok(Some(tsa_info)) = self.parse_certificate_from_der(&tsa_der) {
+                                if let Some(serial) = tsa_info.serial_number {
+                                    tsa_cert_info_obj.insert("serialNumber".to_string(), json!(serial));
+                                }
+                                if let Some(issuer) = tsa_info.issuer {
+                                    tsa_cert_info_obj.insert("issuer".to_string(), json!(issuer));
+                                }
+                                if let Some(subject) = tsa_info.subject {
+                                    tsa_cert_info_obj.insert("subject".to_string(), json!(subject));
+                                }
+                                if let Some(validity) = tsa_info.validity {
+                                    tsa_cert_info_obj.insert("validity".to_string(), validity);
+                                }
+                            }
+                        }
+                    }
+                }
             }
-
-            // Add issuer DN components
-            if let Some(issuer) = cert_info.issuer {
-                claim_signature.insert("issuer".to_string(), json!(issuer));
+        }
+        if has_ts_time || !tsa_cert_info_obj.is_empty() {
+            let mut time_stamp_info = Map::new();
+            if let Some(time) = &sig_info.time {
+                time_stamp_info.insert("timestamp".to_string(), json!(time));
             }
-
-            // Add subject DN components
-            if let Some(subject) = cert_info.subject {
-                claim_signature.insert("subject".to_string(), json!(subject));
+            if !tsa_cert_info_obj.is_empty() {
+                time_stamp_info.insert("certificateInfo".to_string(), Value::Object(tsa_cert_info_obj));
             }
-
-            // Add validity period
-            if let Some(validity) = cert_info.validity {
-                claim_signature.insert("validity".to_string(), json!(validity));
-            }
+            claim_signature.insert("timeStampInfo".to_string(), Value::Object(time_stamp_info));
         }
 
         Ok(Some(Value::Object(claim_signature)))
@@ -977,6 +1031,28 @@ impl CrJsonReader {
             "notAfter": not_after_chrono.to_rfc3339()
         }));
 
+        Ok(Some(details))
+    }
+
+    /// Parse a single certificate (DER) to extract DN components and validity.
+    fn parse_certificate_from_der(&self, der: &[u8]) -> Result<Option<CertificateDetails>> {
+        let (_, cert) = X509Certificate::from_der(der).map_err(|_e| Error::CoseInvalidCert)?;
+        let mut details = CertificateDetails::default();
+        details.serial_number = Some(format!("{:x}", cert.serial));
+        details.issuer = Some(self.extract_dn_components(cert.issuer())?);
+        details.subject = Some(self.extract_dn_components(cert.subject())?);
+        let not_before = cert.validity().not_before.to_datetime();
+        let not_after = cert.validity().not_after.to_datetime();
+        let not_before_chrono: DateTime<Utc> =
+            DateTime::from_timestamp(not_before.unix_timestamp(), 0)
+                .ok_or(Error::CoseInvalidCert)?;
+        let not_after_chrono: DateTime<Utc> =
+            DateTime::from_timestamp(not_after.unix_timestamp(), 0)
+                .ok_or(Error::CoseInvalidCert)?;
+        details.validity = Some(json!({
+            "notBefore": not_before_chrono.to_rfc3339(),
+            "notAfter": not_after_chrono.to_rfc3339()
+        }));
         Ok(Some(details))
     }
 
@@ -1053,38 +1129,32 @@ impl CrJsonReader {
             if !cert_chain.is_empty() {
                 // Parse the first certificate (end entity)
                 if let Ok((_rem, cert)) = X509Certificate::from_der(&cert_chain[0]) {
-                    // Extract serial number in hex format
-                    signature_obj.insert("serial_number".to_string(), json!(format!("{:x}", cert.serial)));
-
-                    // Extract issuer DN components
+                    let mut cert_info = Map::new();
+                    cert_info.insert("serialNumber".to_string(), json!(format!("{:x}", cert.serial)));
                     if let Ok(issuer) = Self::extract_dn_components_static(cert.issuer()) {
-                        signature_obj.insert("issuer".to_string(), json!(issuer));
+                        cert_info.insert("issuer".to_string(), json!(issuer));
                     }
-
-                    // Extract subject DN components
                     if let Ok(subject) = Self::extract_dn_components_static(cert.subject()) {
-                        signature_obj.insert("subject".to_string(), json!(subject));
+                        cert_info.insert("subject".to_string(), json!(subject));
                     }
-
-                    // Extract validity period
                     let not_before = cert.validity().not_before.to_datetime();
                     let not_after = cert.validity().not_after.to_datetime();
-                    
                     if let Some(not_before_chrono) = DateTime::<Utc>::from_timestamp(not_before.unix_timestamp(), 0) {
                         if let Some(not_after_chrono) = DateTime::<Utc>::from_timestamp(not_after.unix_timestamp(), 0) {
-                            signature_obj.insert("validity".to_string(), json!({
-                                "not_before": not_before_chrono.to_rfc3339(),
-                                "not_after": not_after_chrono.to_rfc3339()
+                            cert_info.insert("validity".to_string(), json!({
+                                "notBefore": not_before_chrono.to_rfc3339(),
+                                "notAfter": not_after_chrono.to_rfc3339()
                             }));
                         }
                     }
+                    signature_obj.insert("certificateInfo".to_string(), Value::Object(cert_info));
                 }
             }
         }
         
         // If no certificate chain was found, try to extract Verifiable Credential
         // (for cawg.identity_claims_aggregation signatures)
-        if !signature_obj.contains_key("serial_number") {
+        if !signature_obj.contains_key("certificateInfo") {
             if let Some(payload) = sign1.payload.as_ref() {
                 // Try to parse payload as JSON (W3C Verifiable Credential)
                 if let Ok(vc_value) = serde_json::from_slice::<Value>(payload) {
@@ -1310,6 +1380,13 @@ mod tests {
         // Verify required fields
         assert!(json_value.get("@context").is_some());
         assert!(json_value.get("manifests").is_some());
+        assert!(json_value.get("jsonGenerator").is_some(), "jsonGenerator must be present");
+
+        // jsonGenerator is c2pa-rs (this library) with name, version, date
+        let jg = &json_value["jsonGenerator"];
+        assert_eq!(jg.get("name").and_then(|v| v.as_str()), Some("c2pa-rs"));
+        assert!(jg.get("version").and_then(|v| v.as_str()).is_some(), "jsonGenerator.version required");
+        assert!(jg.get("date").is_some(), "jsonGenerator.date required");
 
         // Verify manifests is an array
         assert!(json_value["manifests"].is_array());
@@ -1379,23 +1456,28 @@ mod tests {
         // Verify algorithm is present
         assert!(sig.get("algorithm").is_some(), "signature should have algorithm");
 
-        // Verify certificate details are decoded (not just algorithm)
-        // Should have serial_number, issuer, subject, and validity for X.509 certificates
+        // Verify certificate details are decoded in certificateInfo (not just algorithm)
+        let cert_info = sig.get("certificateInfo").and_then(|c| c.as_object());
         assert!(
-            sig.get("serial_number").is_some(),
-            "signature should have serial_number from decoded certificate"
+            cert_info.is_some(),
+            "signature should have certificateInfo from decoded certificate"
+        );
+        let cert_info = cert_info.unwrap();
+        assert!(
+            cert_info.get("serialNumber").is_some(),
+            "certificateInfo should have serialNumber"
         );
         assert!(
-            sig.get("issuer").is_some(),
-            "signature should have issuer from decoded certificate"
+            cert_info.get("issuer").is_some(),
+            "certificateInfo should have issuer"
         );
         assert!(
-            sig.get("subject").is_some(),
-            "signature should have subject from decoded certificate"
+            cert_info.get("subject").is_some(),
+            "certificateInfo should have subject"
         );
         assert!(
-            sig.get("validity").is_some(),
-            "signature should have validity from decoded certificate"
+            cert_info.get("validity").is_some(),
+            "certificateInfo should have validity"
         );
 
         Ok(())
@@ -1435,28 +1517,34 @@ mod tests {
         let signature = &cawg_identity["signature"];
         assert!(signature.is_object(), "signature should be an object, not an array");
         
-        // For X.509 signatures (sig_type: cawg.x509.cose), verify certificate details
+        // For X.509 signatures (sig_type: cawg.x509.cose), verify certificate details in certificateInfo
         let sig_type = cawg_identity["signer_payload"]["sig_type"].as_str().unwrap();
         if sig_type == "cawg.x509.cose" {
             assert!(
                 signature.get("algorithm").is_some(),
                 "signature should have algorithm"
             );
+            let cert_info = signature.get("certificateInfo").and_then(|c| c.as_object());
             assert!(
-                signature.get("serial_number").is_some(),
-                "X.509 signature should have serial_number"
+                cert_info.is_some(),
+                "X.509 signature should have certificateInfo"
+            );
+            let cert_info = cert_info.unwrap();
+            assert!(
+                cert_info.get("serialNumber").is_some(),
+                "certificateInfo should have serialNumber"
             );
             assert!(
-                signature.get("issuer").is_some(),
-                "X.509 signature should have issuer DN components"
+                cert_info.get("issuer").is_some(),
+                "certificateInfo should have issuer DN components"
             );
             assert!(
-                signature.get("subject").is_some(),
-                "X.509 signature should have subject DN components"
+                cert_info.get("subject").is_some(),
+                "certificateInfo should have subject DN components"
             );
             assert!(
-                signature.get("validity").is_some(),
-                "X.509 signature should have validity period"
+                cert_info.get("validity").is_some(),
+                "certificateInfo should have validity period"
             );
         }
 

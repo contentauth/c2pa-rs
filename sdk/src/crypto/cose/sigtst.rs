@@ -54,6 +54,16 @@ pub(crate) fn get_cose_tst_info(sign1: &coset::CoseSign1) -> Option<(&Value, Tim
         })
 }
 
+/// Extract the raw RFC 3161 timestamp token bytes from a COSE Sign1 (sigTst/sigTst2 header).
+/// Returns the first token's bytes if present, for use when parsing TSA certificate info.
+pub(crate) fn timestamp_token_bytes_from_sign1(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
+    let (sigtst, _) = get_cose_tst_info(sign1)?;
+    let mut time_cbor = Vec::new();
+    coset::cbor::into_writer(sigtst, &mut time_cbor).ok()?;
+    let tst_container: TstContainer = coset::cbor::from_reader(time_cbor.as_slice()).ok()?;
+    tst_container.tst_tokens.first().map(|t| t.val.clone())
+}
+
 /// Given a COSE signature, retrieve the `sigTst` header from it and validate
 /// the information within it.
 ///
