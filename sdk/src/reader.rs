@@ -935,7 +935,17 @@ impl Reader {
             };
 
             match result {
-                Ok(manifest) => {
+                Ok(mut manifest) => {
+                    // Populate manifest_data for ingredients using efficient flat store builder
+                    for ingredient in manifest.ingredients_mut() {
+                        if let Some(active_label) = ingredient.active_manifest() {
+                            if let Some(claim) = store.get_claim(active_label) {
+                                let ingredient_store = Self::build_ingredient_store(&store, claim)?;
+                                let jumbf = ingredient_store.to_jumbf_internal(0)?;
+                                ingredient.set_manifest_data(jumbf)?;
+                            }
+                        }
+                    }
                     manifests.insert(manifest_label.to_owned(), manifest);
                 }
                 Err(e) => {
@@ -1202,11 +1212,13 @@ impl Reader {
                 let ingredients = std::mem::take(&mut manifest.ingredients);
                 for mut ingredient in ingredients {
                     if let Some(active_manifest) = ingredient.active_manifest() {
-                        if let Some(claim) = self.store.get_claim(active_manifest) {
-                            let ingredient_store =
-                                Self::build_ingredient_store(&self.store, claim)?;
-                            let jumbf = ingredient_store.to_jumbf_internal(0)?;
-                            ingredient.set_manifest_data(jumbf)?;
+                        if ingredient.manifest_data_ref().is_none() {
+                            if let Some(claim) = self.store.get_claim(active_manifest) {
+                                let ingredient_store =
+                                    Self::build_ingredient_store(&self.store, claim)?;
+                                let jumbf = ingredient_store.to_jumbf_internal(0)?;
+                                ingredient.set_manifest_data(jumbf)?;
+                            }
                         }
                     }
                     builder.add_ingredient(ingredient);
@@ -1444,6 +1456,16 @@ pub mod tests {
             std::io::Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST),
         )?;
         assert_eq!(reader.validation_status(), None);
+
+        // Verify that ingredients have manifest_data populated
+        if let Some(manifest) = reader.active_manifest() {
+            for ingredient in manifest.ingredients() {
+                assert!(
+                    ingredient.manifest_data().is_some(),
+                    "Ingredient should have manifest_data populated"
+                );
+            }
+        }
 
         let temp_dir = tempdirectory().unwrap();
         reader.to_folder(temp_dir.path())?;

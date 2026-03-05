@@ -492,6 +492,11 @@ fn test_diamond_topology_read() -> Result<()> {
 
     // Both B and C should reference manifests that each have A as an ingredient
     for ingredient in active.ingredients() {
+        assert!(
+            ingredient.manifest_data().is_some(),
+            "Ingredient {:?} should have manifest_data populated",
+            ingredient.title()
+        );
         if let Some(label) = ingredient.active_manifest() {
             let manifest = reader
                 .get_manifest(label)
