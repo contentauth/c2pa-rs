@@ -317,7 +317,7 @@ pub struct Claim {
 
     redacted_assertions: Option<Vec<String>>, // list of redacted assertions
 
-    alg: Option<String>, // hashing algorithm (default to Sha256)
+    pub(crate) alg: Option<String>, // hashing algorithm (default to Sha256)
 
     alg_soft: Option<String>, // hashing algorithm for soft bindings
 
@@ -3318,6 +3318,13 @@ impl Claim {
         let dummy_bmff_data = AssertionData::Cbor(Vec::new());
         let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
         self.assertions_by_type(&dummy_bmff_hash, None)
+    }
+
+    pub fn data_hash_assertions(&self) -> Vec<&ClaimAssertion> {
+        // add in an BMFF hashes
+        let dummy_hash_data = AssertionData::Cbor(Vec::new());
+        let dummy_data_hash = Assertion::new(assertions::labels::DATA_HASH, None, dummy_hash_data);
+        self.assertions_by_type(&dummy_data_hash, None)
     }
 
     pub fn box_hash_assertions(&self) -> Vec<&ClaimAssertion> {

@@ -30,7 +30,6 @@
 //!     - Fetching timestamps
 //!     - Fetching [`TimeStamp`] assertions
 //!     - Fetching OCSP staples
-//!     - Fetching [`CertificateStatus`] assertions
 //!
 //! Network requests may also be issued during the signing process, such as when
 //! [`SignerSettings::Remote`] is specified.
@@ -38,7 +37,6 @@
 //! [`Reader`]: crate::Reader
 //! [`Builder`]: crate::Builder
 //! [`TimeStamp`]: crate::assertions::TimeStamp
-//! [`CertificateStatus`]: crate::assertions::CertificateStatus
 //! [`SignerSettings::Remote`]: crate::settings::signer::SignerSettings::Remote
 
 use std::{
@@ -64,12 +62,12 @@ pub mod restricted;
 pub use http;
 
 /// A resolver for sync (blocking) HTTP requests.
-///
-/// This trait is a supertrait of [`MaybeSend`] and [`MaybeSync`] for consistency with the
-/// [`AsyncHttpResolver`]. For more information on the rationale, see [`AsyncHttpResolver`].
-///
-/// [`MaybeSend`]: crate::maybe_send_sync::MaybeSend
-/// [`MaybeSync`]: crate::maybe_send_sync::MaybeSync
+//
+// This trait is a supertrait of [`MaybeSend`] and [`MaybeSync`] for consistency with the
+// [`AsyncHttpResolver`]. For more information on the rationale, see [`AsyncHttpResolver`].
+//
+// [`MaybeSend`]: crate::maybe_send_sync::MaybeSend
+// [`MaybeSync`]: crate::maybe_send_sync::MaybeSync
 pub trait SyncHttpResolver: MaybeSend + MaybeSync {
     /// Resolve a [`Request`] into a [`Response`] with a streaming body.
     ///
@@ -95,15 +93,15 @@ impl<T: SyncHttpResolver + ?Sized> SyncHttpResolver for Arc<T> {
 }
 
 /// A resolver for non-blocking (async) HTTP requests.
-///
-/// This trait is a supertrait of [`MaybeSend`] and [`MaybeSync`] because in many cases
-/// we use the pattern `&dyn AsyncHttpResolver`. For that to cross an await point, it
-/// must implement `Send`, and for that to happen, it must also implement `Sync`. Thus,
-/// rather than creating a new trait that combines `AsyncHttpResolver + MaybeSend + MaybeSync`,
-/// we require it here to reduce complexity.
-///
-/// [`MaybeSend`]: crate::maybe_send_sync::MaybeSend
-/// [`MaybeSync`]: crate::maybe_send_sync::MaybeSync
+//
+// This trait is a supertrait of [`MaybeSend`] and [`MaybeSync`] because in many cases
+// we use the pattern `&dyn AsyncHttpResolver`. For that to cross an await point, it
+// must implement `Send`, and for that to happen, it must also implement `Sync`. Thus,
+// rather than creating a new trait that combines `AsyncHttpResolver + MaybeSend + MaybeSync`,
+// we require it here to reduce complexity.
+//
+// [`MaybeSend`]: crate::maybe_send_sync::MaybeSend
+// [`MaybeSync`]: crate::maybe_send_sync::MaybeSync
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait AsyncHttpResolver: MaybeSend + MaybeSync {
@@ -136,9 +134,9 @@ impl<T: AsyncHttpResolver + ?Sized> AsyncHttpResolver for Arc<T> {
 ///
 /// This implementation will automatically choose a [`SyncHttpResolver`] based on the
 /// enabled features:
-/// * `ureq` - use [`ureq::Agent`].
-/// * `reqwest_blocking` - use [`reqwest::blocking::Client`].
-/// * `wasi` (WASI-only) - use [`wasi::http::outgoing_handler::handle`].
+/// * `ureq` - use `ureq::Agent`.
+/// * `reqwest_blocking` - use `reqwest::blocking::Client`.
+/// * `wasi` (WASI-only) - use `wasi::http::outgoing_handler::handle`.
 ///
 /// This resolver is a pure HTTP client wrapper with no domain-specific logic.
 /// For host filtering or other access control, wrap this with [`RestrictedResolver`].
@@ -184,8 +182,8 @@ impl SyncHttpResolver for SyncGenericResolver {
 ///
 /// This implementation will automatically choose a [`AsyncHttpResolver`] based on the
 /// enabled features:
-/// * `reqwest` - use [`reqwest::Client`].
-/// * `wstd` (WASI-only) - use [`wstd::http::Client`].
+/// * `reqwest` - use `reqwest::Client`.
+/// * `wstd` (WASI-only) - use `wstd::http::Client`.
 ///
 /// This resolver is a pure HTTP client wrapper with no domain-specific logic.
 /// For host filtering or other access control, wrap this with [`RestrictedResolver`].

@@ -22,7 +22,6 @@ use crate::{
         raw_signature::oids::{ans1_oid_bcder_oid, SHA256_OID},
         time_stamp::TimeStampError,
     },
-    http::{AsyncHttpResolver, SyncHttpResolver},
     maybe_send_sync::MaybeSync,
 };
 
@@ -32,12 +31,18 @@ use crate::{
 ///
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 pub trait TimeStampProvider {
-    /// Return the URL for time stamp service.
+    /// URL for the timestamp authority used to timestamp the signature.
+    ///
+    /// If this is set and [`TimeStampProvider::send_time_stamp_request`] returns
+    /// `None` (the default behavior), the SDK uses its built-in networking
+    /// implementation to submit the request.
     fn time_stamp_service_url(&self) -> Option<String> {
         None
     }
 
     /// Additional request headers to pass to the time stamp service.
+    ///
+    /// The default implementation returns `None`.
     ///
     /// IMPORTANT: You should not include the "Content-type" header here.
     /// That is provided by default.
@@ -47,36 +52,25 @@ pub trait TimeStampProvider {
 
     /// Generate the request body for the HTTPS request to the time stamp
     /// service.
+    ///
+    /// The default implementation builds a RFC 3161 timestmap request body from `message`.
+    /// service.
     fn time_stamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>, TimeStampError> {
         default_rfc3161_message(message)
     }
 
     /// Request a [RFC 3161] time stamp over an arbitrary data packet.
     ///
-    /// The default implementation will send the request to the URL
-    /// provided by [`Self::time_stamp_service_url()`], if any.
+    /// Implement this function to provide custom networking for timestamp
+    /// requests. The default implementation returns `None`.
+    ///
+    /// If this method returns `None` and [`TimeStampProvider::time_stamp_service_url`] is
+    /// set, the SDK falls back to its built-in networking implementation.
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     ///
     /// todo: THIS CODE IS NOT COMPATIBLE WITH C2PA 2.x sigTst2
-    fn send_time_stamp_request(
-        &self,
-        http_resolver: &dyn SyncHttpResolver,
-        message: &[u8],
-    ) -> Option<Result<Vec<u8>, TimeStampError>> {
-        if let Some(url) = self.time_stamp_service_url() {
-            if let Ok(body) = self.time_stamp_request_body(message) {
-                let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
-                return Some(super::http_request::default_rfc3161_request(
-                    &url,
-                    headers,
-                    &body,
-                    message,
-                    http_resolver,
-                ));
-            }
-        }
-
+    fn send_time_stamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>, TimeStampError>> {
         None
     }
 }
@@ -92,12 +86,18 @@ pub trait TimeStampProvider {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait AsyncTimeStampProvider: MaybeSync {
-    /// Return the URL for time stamp service.
+    /// URL for the timestamp authority used to timestamp the signature.
+    ///
+    /// If this is set and [`AsyncTimeStampProvider::send_time_stamp_request`] returns
+    /// `None` (the default behavior), the SDK uses its built-in networking
+    /// implementation to submit the request.
     fn time_stamp_service_url(&self) -> Option<String> {
         None
     }
 
     /// Additional request headers to pass to the time stamp service.
+    ///
+    /// The default implementation returns `None`.
     ///
     /// IMPORTANT: You should not include the "Content-type" header here.
     /// That is provided by default.
@@ -107,37 +107,27 @@ pub trait AsyncTimeStampProvider: MaybeSync {
 
     /// Generate the request body for the HTTPS request to the time stamp
     /// service.
+    ///
+    /// The default implementation builds a RFC 3161 timestmap request body from `message`.
     fn time_stamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>, TimeStampError> {
         default_rfc3161_message(message)
     }
 
     /// Request a [RFC 3161] time stamp over an arbitrary data packet.
     ///
-    /// The default implementation will send the request to the URL
-    /// provided by [`Self::time_stamp_service_url()`], if any.
+    /// `message` is a preliminary hash of the claim.
+    ///
+    /// Implement this function to provide custom networking for timestamp
+    /// requests. The default implementation returns `None`.
+    ///
+    /// If this method returns `None` and [`AsyncTimeStampProvider::time_stamp_service_url`] is
+    /// set, the SDK falls back to its built-in networking implementation.
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     async fn send_time_stamp_request(
         &self,
-        http_resolver: &dyn AsyncHttpResolver,
-        message: &[u8],
+        _message: &[u8],
     ) -> Option<Result<Vec<u8>, TimeStampError>> {
-        if let Some(url) = self.time_stamp_service_url() {
-            if let Ok(body) = self.time_stamp_request_body(message) {
-                let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
-                return Some(
-                    super::http_request::default_rfc3161_request_async(
-                        &url,
-                        headers,
-                        &body,
-                        message,
-                        http_resolver,
-                    )
-                    .await,
-                );
-            }
-        }
-
         None
     }
 }
