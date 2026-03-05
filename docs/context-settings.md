@@ -1,6 +1,6 @@
 # Configuring SDK settings
 
-This guide shows you how to configure the C2PA Rust library using the `Context` API with declarative settings in JSON or TOML format.
+This guide shows you how to configure the C2PA Rust library using the `Context` API with declarative settings in JSON format.
 
 ## Overview
 
@@ -44,7 +44,7 @@ fn main() -> Result<()> {
 
 ### Loading settings inline
 
-You can also provide settings inline in either JSON or TOML format:
+You can also provide settings inline in either JSON or TOML format. For example, using JSON:
 
 ```rust
 use c2pa::{Context, Result};
@@ -54,14 +54,7 @@ fn main() -> Result<()> {
     let context = Context::new()
         .with_settings(r#"
           {"verify":
-          {"verify_after_sign": true}}"
-        #)?;
-
-    // Inline TOML format
-    let context = Context::new()
-        .with_settings(r#"
-          [verify]
-          verify_after_sign = true
+          {"verify_after_sign": true}}
         "#)?;
 
     Ok(())
@@ -590,4 +583,4 @@ Context wraps a `Settings` instance and uses it to:
 
 4. **Configure builder behavior** - The `builder` settings control thumbnail generation, actions, and other manifest creation options.
 
-The `Settings` format hasn't changed—only how you provide those settings.
+The `Settings` format hasn't changed&mdash;only how you provide those settings.
