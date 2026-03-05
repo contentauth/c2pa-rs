@@ -18,6 +18,7 @@ use std::{
 
 use extfmt::Hexlify;
 use serde_bytes::ByteBuf;
+use sha2::{Digest, Sha256};
 
 use super::hash_utils::{concat_and_hash, hash_by_alg};
 use crate::{hash_utils::Hasher, Error, Result};
@@ -204,7 +205,7 @@ impl Default for MerkleAccumulator {
     fn default() -> Self {
         MerkleAccumulator {
             alg: "sha256".to_string(),
-            hasher: Hasher::new("sha256").unwrap(),
+            hasher: Hasher::SHA256(Sha256::new()),
             merkle_leaves: BTreeMap::new(),
             fixed_size: None,
             fixed_size_remainder: HashMap::new(),
