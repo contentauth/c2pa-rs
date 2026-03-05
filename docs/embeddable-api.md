@@ -51,52 +51,6 @@ let settings = Settings::new().with_toml(r#"
 
 When a placeholder is required the SDK pre-sizes the JUMBF manifest based on its current state and records the target length internally. After signing, `sign_embeddable()` pads the compressed manifest to exactly that length so you can overwrite the placeholder bytes without shifting any other data in the file.
 
-## API reference
-
-### `needs_placeholder(format: &str) -> bool`
-
-Returns `true` when the format requires a pre-embedded placeholder before hashing. Always `true` for BMFF formats. Returns `false` when `prefer_box_hash` is enabled and the format supports `BoxHash`, or when a `BoxHash` assertion has already been added.
-
-Call this to decide whether to run the placeholder step or go straight to `update_hash_from_stream()`.
-
-### `placeholder(format: &str) -> Result<Vec<u8>>`
-
-Composes a placeholder manifest and returns it as format-specific bytes ready to embed (for example, JPEG APP11 segments for `image/jpeg`). Automatically adds the appropriate hash assertion:
-
-- BMFF formats: `BmffHash` with Merkle slots pre-allocated.
-- Other formats with `prefer_box_hash = false`: `DataHash` with dummy exclusion ranges.
-- Other formats with `prefer_box_hash = true`: returns empty bytes; no assertion is added.
-- You can use `application/c2pa` if you want the raw c2pa data not preformatted for anything else.
-
-Stores the JUMBF length internally so `sign_embeddable()` can pad to the same size.
-
-### `set_data_hash_exclusions(exclusions: Vec<HashRange>) -> Result<&mut Self>`
-
-Replaces the dummy exclusion ranges in the `DataHash` assertion with the actual byte offset and length of the embedded placeholder. Call this after embedding the bytes returned by `placeholder()` and before calling `update_hash_from_stream()`.
-
-```rust
-builder.set_data_hash_exclusions(vec![HashRange::new(offset, length)])?;
-```
-
-### `update_hash_from_stream<R>(format: &str, stream: &mut R) -> Result<&mut Self>`
-
-Reads the asset (placeholder may be already embedded) and computes the hard-binding hash. Selects the path automatically:
-
-- `BmffHash` is present → hashes BMFF boxes, skipping the manifest box.
-- `BoxHash` is present, or `prefer_box_hash = true` and format supports it → enumerates chunks and hashes each one; auto-creates a `BoxHash` assertion if one does not exist.
-- Otherwise → reads the stream while skipping the exclusion ranges recorded in `DataHash`.
-
-### `set_bmff_mdat_hashes(leaf_hashes: Vec<Vec<Vec<u8>>>) -> Result<()>`
-
-Provides pre-computed Merkle leaf hashes for `mdat` segments in BMFF assets. Use this when your code already hashes `mdat` chunks as part of writing or transcoding, avoiding a second read of a potentially large file. Call before `sign_embeddable()`.
-
-### `sign_embeddable(format: &str) -> Result<Vec<u8>>`
-
-Signs the manifest and returns composed bytes ready to embed:
-
-- **Mode 1 (placeholder workflow):** pads the signed JUMBF to exactly the length recorded by `placeholder()`. The returned bytes are the same size as the original placeholder and can overwrite it in place.
-- **Mode 2 (BoxHash / direct):** returns composed bytes at their natural size. Embed them as a new independent chunk; no in-place patching is required.
-
 ## Workflow walkthroughs
 
 ### DataHash placeholder workflow (JPEG, PNG, and others)
@@ -192,4 +146,13 @@ let manifest_bytes = builder.sign_embeddable("image/jpeg")?;
 // The exact mechanism depends on the format handler used by your embedding code.
 ```
 
+## API reference
 
+| Method | Description |
+|--------|-------------|
+| [`needs_placeholder`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.needs_placeholder) | Returns `true` when the format requires a pre-embedded placeholder before hashing. Always `true` for BMFF formats. Returns `false` when `prefer_box_hash` is enabled and the format supports `BoxHash`, or when a `BoxHash` assertion has already been added. |
+| [`placeholder`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.placeholder) | Composes a placeholder manifest and returns it as format-specific bytes ready to embed (e.g., JPEG APP11 segments). Automatically adds the appropriate hash assertion (`BmffHash` for BMFF formats, `DataHash` for others). Stores the JUMBF length internally so `sign_embeddable()` can pad to the same size. |
+| [`set_data_hash_exclusions`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.set_data_hash_exclusions) | Replaces the dummy exclusion ranges in the `DataHash` assertion with the actual byte offset and length of the embedded placeholder. Call after embedding placeholder bytes and before `update_hash_from_stream()`. |
+| [`update_hash_from_stream`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.update_hash_from_stream) | Reads the asset and computes the hard-binding hash. Automatically selects the appropriate path based on format: `BmffHash` for BMFF (skips manifest box), `BoxHash` for chunk-based formats (creates assertion if needed), or `DataHash` (skips exclusion ranges). |
+| [`set_bmff_mdat_hashes`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.set_bmff_mdat_hashes) | Provides pre-computed Merkle leaf hashes for `mdat` segments in BMFF assets. Use when your code already hashes `mdat` chunks during writing/transcoding to avoid re-reading large files. Call before `sign_embeddable()`. |
+| [`sign_embeddable`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_embeddable) | Signs the manifest and returns bytes ready to embed. For placeholder workflows, pads to match placeholder size for in-place patching. For BoxHash/direct workflows, returns bytes at natural size for appending as a new chunk. |
