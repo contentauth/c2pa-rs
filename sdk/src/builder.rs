@@ -35,20 +35,21 @@ use crate::{
         c2pa_action,
         labels::{self, parse_label},
         Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, DataHash,
-        DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail, TimeStamp, User,
-        UserCbor,
+        DigitalSourceType, EmbeddedData, ExclusionsMap, Exif, MerkleMap, Metadata, SoftwareAgent,
+        SubsetMap, Thumbnail, TimeStamp, User, UserCbor,
     },
     claim::Claim,
     context::Context,
     crypto::cose,
     error::{Error, Result},
+    hash_utils::hash_by_alg,
     jumbf::labels::manifest_label_from_uri,
     jumbf_io,
     maybe_send_sync::MaybeSend,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::builder::TimeStampFetchScope,
     store::Store,
-    utils::{hash_utils::hash_to_b64, mime::format_to_mime},
+    utils::{hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
 };
@@ -438,6 +439,10 @@ pub struct Builder {
     // Raw JUMBF byte length stored by placeholder() for padding in sign_embeddable().
     #[serde(skip)]
     placeholder_jumbf_len: Option<usize>,
+
+    // Accumulator to assist with hashing mdat bytes for BmffHash assertions.
+    #[serde(skip)]
+    bmff_hasher: MerkleAccumulator,
 }
 
 impl AsRef<Builder> for Builder {
@@ -2022,6 +2027,20 @@ impl Builder {
     /// 5. Update the hash assertion in the Builder
     /// 6. Call [`Builder::sign_embeddable`] to sign the manifest
     ///
+    /// # Note on using Merkle trees represenation for mdat hashing
+    /// THe placeholder manifest does not account for the size of the Merkles leaves.  This is completely
+    /// defined by the encoding or the fixed size specified by the user and cannot be known at compile time. The means that the caller must
+    /// estimate the addition size to reserve in addition to the placeholder manifest size.  The size of the
+    /// manifest will be the size of the placeholder + at least (number of leaves * size of hash).  
+    /// For example, if the caller is using a fixed leaf size and sha256 hashes, then the caller
+    /// must reserve at least 32 bytes for each fixed leaf chunk of the asset's mdat in addition to the placeholder manifest size.
+    /// For sha384 hashes, the caller must reserve at least 48 bytes for each fixed leaf chunk, and for
+    /// sha512 hashes, the caller must reserve at least 64 bytes for each fixed leaf chunk.  For variable leaf sizes,
+    /// the caller must reserve at least (number of chunks * size of hash).  It is OK to over-reserve, but under-reserving
+    /// will lead to signing failures.  Any extra reserved space should be converted to a "free" box since they
+    /// will be automatically included in the hash calculation. Mekle tree use is optional and only applies to BMFF formats
+    /// and the caller chooses to use `hash_bmff_mdat_bytes`.
+    ///
     /// # Returns
     /// * The composed placeholder bytes ready for embedding (format-specific wrapping applied).
     ///
@@ -2049,17 +2068,13 @@ impl Builder {
         if hash_count == 0 {
             if crate::jumbf_io::is_bmff_format(format) {
                 // For BMFF formats, add a placeholder BmffHash.
-                // When merkle_tree_chunk_size_in_kb is set in settings, pre-allocate
-                // placeholder Merkle maps (root-only, MAX_MDAT_BOXES slots) so the
-                // reserved JUMBF space is large enough for the real Merkle data.
                 let ph_alg = self.definition.hash_alg.as_deref().unwrap_or("sha256");
+
+                // update the mdat hasher with the desired alg
+                self.bmff_hasher.alg = ph_alg.to_string();
+
                 let mut placeholder_bmff = BmffHash::new("jumbf manifest", ph_alg, None);
                 placeholder_bmff.set_default_exclusions();
-                if let Some(chunk_size_kb) =
-                    self.context.settings().core.merkle_tree_chunk_size_in_kb
-                {
-                    placeholder_bmff.add_merkle_placeholder(chunk_size_kb)?;
-                }
                 placeholder_bmff.add_place_holder_hash()?;
                 let assertion_label = placeholder_bmff.to_assertion()?.label();
                 self.add_assertion(&assertion_label, &placeholder_bmff)?;
@@ -2098,37 +2113,81 @@ impl Builder {
         Store::get_composed_manifest(&jumbf, format)
     }
 
-    /// Provide pre-computed mdat leaf hashes for BMFF Merkle tree hashing.
+    /// Sets the exclusion ojbect for the [`BmffHash`] assertion in the Builder.
     ///
-    /// Call this after writing the asset (with the placeholder embedded) and before
-    /// [`Builder::update_hash_from_stream`].  The client hashes fixed-size mdat chunks
-    /// while writing — typically while data is already flowing through the write path —
-    /// and passes those hashes here so the SDK does not need to re-read the mdat content.
+    /// Call this before [`Builder::placeholder`] to register the list of boxes to exclude from the BMFF hash calculation.  
+    /// This is necessary when acomposed placeholder was embedded in the asset.  This information is needed
+    /// upfron tbecause BMFF exclusion, e.g.
+    /// [
+    ///     {
+    ///         "data": [
+    ///         {
+    ///             "value": b64'2P7D1hsOSDySl1goh37EgQ==',
+    ///             "offset": 8
+    ///         }
+    ///         ],
+    ///         "xpath": "/uuid"
+    ///     }
+    /// ] as specified in:
+    /// https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_hash_assertion)
+    /// and must be included in the placeholder manifest.
     ///
-    /// Only the Merkle **root** is stored (one hash per mdat box), so no UUID proof
-    /// boxes are generated and nothing extra needs to be appended to the asset.
-    ///
-    /// The chunk size is read from the Builder's [`Context`]
-    /// (`core.merkle_tree_chunk_size_in_kb` must be set).
+    /// This preserves the existing [`BmffHash`]'s name and algorithm; only the
+    /// exclusions list is updated.  Call [`Builder::update_hash_from_stream`]
+    /// afterwards to compute and store the actual asset hash just before signing.
     ///
     /// # Arguments
-    /// * `leaf_hashes` - Per-mdat leaf hashes: `leaf_hashes[mdat][chunk] = hash_bytes`
+    /// * `exclusions` - JSON string representing the list of boxes to exclude from the BMFF hash calculation.
+    ///
+    /// # Returns
+    /// * A mutable reference to the [`Builder`] for method chaining
     ///
     /// # Errors
-    /// * Returns an [`Error`] if no BmffHash assertion exists (call [`Builder::placeholder`] first)
-    /// * Returns an [`Error`] if `core.merkle_tree_chunk_size_in_kb` is not set in settings
-    pub fn set_bmff_mdat_hashes(&mut self, leaf_hashes: Vec<Vec<Vec<u8>>>) -> Result<()> {
-        let chunk_size_kb = self
-            .context
-            .settings()
-            .core
-            .merkle_tree_chunk_size_in_kb
-            .ok_or_else(|| {
+    /// * Returns an [`Error`] if no [`BmffHash`] assertion exists on the Builder
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use c2pa::{Builder, HashRange, Result};
+    /// # use std::io::Cursor;
+    /// # fn example() -> Result<()> {
+    /// # let mut builder = Builder::default();
+    /// # let composed_placeholder = builder.placeholder("image/avif")?;
+    ///
+    /// // set a BMFF hash excluion show how to exclude a UUID box where the value at offset 8 is '2P7D1hsOSDySl1goh37EgQ=='
+    /// builder.add_bmff_hash_exclusions(r#"[
+    ///     {
+    ///         "data": [
+    ///             {
+    ///                 "value": "2P7D1hsOSDySl1goh37EgQ==",
+    ///                 "offset": 8
+    ///             }
+    ///         ],
+    ///         "xpath": "/uuid"
+    ///     }
+    /// ]"#)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn add_bmff_hash_exclusions(&mut self, exclusions: Option<&str>) -> Result<&mut Self> {
+        let mut existing = self
+            .find_assertion::<BmffHash>(BmffHash::LABEL)
+            .map_err(|_| {
                 Error::BadParam(
-                    "core.merkle_tree_chunk_size_in_kb must be set to use set_bmff_mdat_hashes"
+                    "No BmffHash assertion found. Call placeholder() before \
+                     add_bmff_hash_exclusions()."
                         .to_string(),
                 )
             })?;
+
+        let mut bmff_exclusions: Vec<ExclusionsMap> = if let Some(bmff_exclusions_json) = exclusions
+        {
+            serde_json::from_str(bmff_exclusions_json)?
+        } else {
+            Vec::new()
+        };
+
+        // add user defined exclusions
+        existing.add_exclusions(&mut bmff_exclusions);
 
         let stored_label = self
             .definition
@@ -2139,19 +2198,71 @@ impl Builder {
             .ok_or(Error::NotFound)?;
         let (_, stored_version, _) = parse_label(&stored_label);
 
-        let mut bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL)?;
-        bmff_hash.set_bmff_version(stored_version);
+        // save the version
+        existing.set_bmff_version(stored_version);
 
-        bmff_hash.add_mdat_leaf_hashes(leaf_hashes, chunk_size_kb)?;
-
-        // Replace the BmffHash in the builder with the updated version
         self.definition
             .assertions
-            .retain(|a| !a.label().contains(BmffHash::LABEL));
-        let assertion_label = bmff_hash.to_assertion()?.label();
-        self.add_assertion(&assertion_label, &bmff_hash)?;
+            .retain(|a| !a.label.starts_with(BmffHash::LABEL));
+        self.add_assertion(stored_label, &existing)
+    }
 
-        Ok(())
+    /// Sets a fixed Merkle leaf size for the BMFF hash calculation in the Builder.
+    /// This is an optional setting that affects how the BMFF hash is calculated when
+    /// hashing mdat bytes as they are written (see `hash_bmff_mdat_bytes`).  By default,
+    /// the Merkle tree is generated with variable length leaves based on the chunk sizes
+    /// passed in by the client.  When a fixed leaf size is set, the SDK will generate Merkle
+    /// leaves of the specified size (in KB) regardless of the chunk sizes passed in. This
+    /// can be useful for clients that want to have more control over the Merkle tree structure
+    /// or want to optimize for certain chunk sizes.  This setting should be configured before
+    /// calling `hash_bmff_mdat_bytes` and will affect all subsequent BMFF hash calculations
+    /// for mdat bytes.
+    ///
+    /// # Arguments
+    /// * `leaf_size_in_kb` - The fixed leaf size in KB.  If not set, the leaf size will be variable based on chunk sizes.
+    ///
+    /// # Returns
+    /// * A mutable reference to the [`Builder`] for method chaining
+    pub fn set_bmff_hash_fixed_leaf_size(&mut self, leaf_size_in_kb: usize) -> &mut Self {
+        self.bmff_hasher.set_fixed_size(leaf_size_in_kb);
+        self
+    }
+
+    /// Support hashing mdat bytes as the client writes the mdat box.  This is an alternative to
+    /// letting the SDK read and hash the mdat content after the fact, which can be costly for large assets.  
+    /// With this method, the client can pass chunks of data for each mdat, and the SDK will compute the Merkle
+    /// leaves and store it in the BmffHash assertion.  This requires that the placeholder manifest was created with
+    /// a BmffHash assertion that has a reserved placeholder hash (call [`Builder::placeholder`] first to set this up).
+    ///
+    /// This is typically called as data is presented from the rendering engine and writting to output. The
+    /// Merkle leaf will be the size of the chunk by default generating a Merkle tree with varible length
+    /// leaves, but the leaf size can be configured by `set_bmff_hash_fixed_leaf_size` if the client prefers a fixed
+    /// leaf size.  The leaf chunking is handled by the SDK.  
+    ///
+    /// The Merkle tree must be over a single mdat box.  The mdat_id specifies which mdat box the chunk belongs to,
+    /// and the SDK will maintain a separate Merkle tree for each mdat. The mdat_id should start from 0 and increment
+    /// for each mdat box in the asset.  The final Merkle tree for each mdat will be stored in the BmffHash assertion,
+    /// and the client can call `hash_bmff_mdat_bytes` multiple times as each mdat box is written.
+    ///
+    /// Only the Merkle **leaves** are stored (one leaf per chunk (fixed or variable)), no UUID proof
+    /// boxes are generated and nothing extra needs to be appended to the asset.
+    ///
+    /// # Arguments
+    /// * `mdat_id` - The index of the mdat box (starting from 0) that the chunk belongs to.
+    /// * `data` - Slice of the chunk of mdat bytes to hash.
+    /// * `large_size` - Whether the mdat box is a large size box (greater than 4GB), which affects the generation rules.
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if no BmffHash assertion exists (call [`Builder::placeholder`] first)
+    pub fn hash_bmff_mdat_bytes(
+        &mut self,
+        mdat_id: usize,
+        data: &[u8],
+        large_size: bool,
+    ) -> Result<&mut Self> {
+        self.bmff_hasher
+            .add_merkle_leaf(mdat_id, large_size, data)?;
+        Ok(self)
     }
 
     /// Sets the exclusion ranges on the [`DataHash`] assertion in the Builder.
@@ -2316,6 +2427,45 @@ impl Builder {
 
             let mut bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL)?;
             bmff_hash.set_bmff_version(stored_version);
+
+            // add in the Merkle leaf hashes that were collected via hash_bmff_mdat_bytes().
+            // we add any remainders (partially filled fixed-size leaves that are unhashed) as the last leaf of the Merkle leaves for that mdat_id
+            for (mdat_id, remainder) in &self.bmff_hasher.fixed_size_remainder {
+                let fragment_hash = hash_by_alg(self.bmff_hasher.alg.as_str(), remainder, None);
+
+                self.bmff_hasher
+                    .merkle_leaves
+                    .entry(*mdat_id)
+                    .and_modify(|leaves| {
+                        leaves.push((remainder.len() as u64, fragment_hash.clone()))
+                    })
+                    .or_insert(vec![(remainder.len() as u64, fragment_hash)]);
+            }
+
+            // if there are Merkle hashes we need to create a MerkleMap and add it to the BmffHash
+            if !self.bmff_hasher.merkle_leaves.is_empty() {
+                // generate MerkleMaps for the mdat leaves stored in C2paHasher
+                let merkle_maps = MerkleMap::create_mms_from_mdat_leaves(
+                    &self.bmff_hasher.alg,
+                    &self.bmff_hasher.merkle_leaves,
+                    self.bmff_hasher.fixed_size,
+                )?;
+
+                // add required mdat exclusion
+                let mut mdat = ExclusionsMap::new("/mdat".to_owned());
+                let subset_mdat = SubsetMap {
+                    offset: 16,
+                    length: 0,
+                };
+                let subset_mdat_vec = vec![subset_mdat];
+                mdat.subset = Some(subset_mdat_vec);
+
+                bmff_hash.add_exclusions(&mut vec![mdat]);
+
+                // add the MerkleMaps
+                bmff_hash.set_merkle(merkle_maps);
+            }
+
             // gen_hash_from_stream uses the BmffHash's own path-based exclusion list
             // and its own alg field (set when the assertion was created).
             bmff_hash.gen_hash_from_stream(stream)?;
@@ -2473,7 +2623,7 @@ impl Builder {
     ///
     /// This is used to create a manifest that can be embedded into a stream.
     /// It allows the caller to do the embedding.
-    /// You must call `data_hashed` placeholder first to create the placeholder.
+    /// You must call `data_hashed_placeholder` first to create the placeholder.
     /// The placeholder is then injected into the asset before calculating hashes
     /// You must either pass a source stream to generate the hashes or provide the hashes.
     ///

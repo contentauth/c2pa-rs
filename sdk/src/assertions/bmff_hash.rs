@@ -12,7 +12,7 @@
 // each license.
 
 use std::{
-    collections::{hash_map::Entry::Vacant, HashMap},
+    collections::{hash_map::Entry::Vacant, BTreeMap, HashMap},
     fmt,
     io::{BufReader, Cursor, Read, Seek},
     ops::Deref,
@@ -237,6 +237,72 @@ impl MerkleMap {
         }
 
         self.hash_check(index, &hash)
+    }
+
+    // Creates the MerklMap array from as set of mdats and their corresponding leaf hashes.
+    // The leaf hashes are expected to be in order and the caller is responsible for hashing
+    // the mdat boxes into the leaf hashes based on the desired chunk size.  The fixed_block_size field
+    // is set if a fixed chunk size was used for hashing, otherwise the variable_block_sizes
+    //field is set with the size of each leaf hash.
+    pub fn create_mms_from_mdat_leaves(
+        alg: &str,
+        merkle_leaves: &BTreeMap<usize, Vec<(u64, Vec<u8>)>>,
+        fixed_block_size: Option<usize>,
+    ) -> crate::Result<Vec<MerkleMap>> {
+        let mut output = Vec::new();
+
+        for (mdat_indx, leaf_hashes) in merkle_leaves.iter() {
+            let mut leaf_sizes = Vec::new();
+            let mut leaves = Vec::new();
+
+            for (leaf_len, leaf_hash) in leaf_hashes {
+                leaf_sizes.push(*leaf_len);
+                leaves.push(MerkleNode(leaf_hash.clone()));
+            }
+
+            // build Merkle tree
+            let m_tree = C2PAMerkleTree::from_leaves(leaves, alg, false);
+
+            // get the leaf hashes
+            // for now only support the leaf row and not any arbitrary row
+            // since that will require the caller to handle inserting UUID "merkle" boxes
+            // to carry the proof
+            let hashes = VecByteBuf(m_tree.leaves_bytebufs());
+
+            let mm = if let Some(fixed_block_size) = fixed_block_size {
+                if fixed_block_size == 0 {
+                    return Err(Error::BadParam("Fixed block size cannot be 0".to_string()));
+                }
+
+                let leaf_len: u64 = leaf_sizes.iter().sum();
+
+                MerkleMap {
+                    unique_id: *mdat_indx,
+                    local_id: *mdat_indx,
+                    count: leaf_hashes.len(),
+                    alg: Some(alg.to_owned()),
+                    init_hash: None,
+                    hashes,
+                    fixed_block_size: Some(std::cmp::min(leaf_len, fixed_block_size as u64)),
+                    variable_block_sizes: None,
+                }
+            } else {
+                MerkleMap {
+                    unique_id: *mdat_indx,
+                    local_id: *mdat_indx,
+                    count: leaf_hashes.len(),
+                    alg: Some(alg.to_owned()),
+                    init_hash: None,
+                    hashes,
+                    fixed_block_size: None,
+                    variable_block_sizes: Some(leaf_sizes),
+                }
+            };
+
+            output.push(mm);
+        }
+
+        Ok(output)
     }
 }
 
@@ -539,19 +605,19 @@ impl BmffHash {
     pub fn set_default_exclusions(&mut self) -> &[ExclusionsMap] {
         let exclusions = &mut self.exclusions;
 
-        let cp2_id: [u8; 16] = [
+        let cp2a_id: [u8; 16] = [
             216, 254, 195, 214, 27, 14, 72, 60, 146, 151, 88, 40, 135, 126, 196, 129,
         ];
 
         // jumbf exclusion
         if !exclusions.iter().any(|e| match &e.data {
-            Some(d) => d.iter().any(|data_map| data_map.value == cp2_id.to_vec()),
+            Some(d) => d.iter().any(|data_map| data_map.value == cp2a_id.to_vec()),
             None => false,
         }) {
             let mut uuid = ExclusionsMap::new("/uuid".to_owned());
             let data = DataMap {
                 offset: 8,
-                value: cp2_id.to_vec(), // C2PA identifier
+                value: cp2a_id.to_vec(), // C2PA identifier
             };
             let data_vec = vec![data];
             uuid.data = Some(data_vec);
@@ -568,6 +634,18 @@ impl BmffHash {
         if !exclusions.iter().any(|e| e.xpath == "/mfra") {
             let mfra = ExclusionsMap::new("/mfra".to_owned());
             exclusions.push(mfra);
+        }
+
+        // /free exclusion
+        if !exclusions.iter().any(|e| e.xpath == "/free") {
+            let free = ExclusionsMap::new("/free".to_owned());
+            exclusions.push(free);
+        }
+
+        // /skip exclusion
+        if !exclusions.iter().any(|e| e.xpath == "/skip") {
+            let skip = ExclusionsMap::new("/skip".to_owned());
+            exclusions.push(skip);
         }
 
         /*  no longer mandatory

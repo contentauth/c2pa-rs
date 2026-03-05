@@ -2288,6 +2288,10 @@ impl Store {
         Ok(dh)
     }
 
+    // This function generates the BMFF hash for the 'mdat' boxes. This is used
+    // in the case where the SDK is automatically generating the Merkle tree leaves.
+    // If the user is supplying their own BmffHash they can specify the Merkle
+    // tree leaves themselves and this function will not be called.
     fn generate_bmff_mdat_hashes(
         asset_stream: &mut dyn CAIRead,
         bmff_hash: &mut BmffHash,
