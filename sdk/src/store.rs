@@ -58,7 +58,7 @@ use crate::{
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
-    http::{AsyncHttpResolver, SyncHttpResolver},
+    http::{AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
     jumbf::{
         self,
         boxes::*,
@@ -2425,7 +2425,13 @@ impl Store {
 
                 // Get pc again
                 let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+                let sig = self.sign_claim(
+                    pc,
+                    signer,
+                    signer.reserve_size(),
+                    settings,
+                    &SyncGenericResolver::new(),
+                )?;
                 let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
                 if sig_placeholder.len() != sig.len() {
@@ -2444,7 +2450,13 @@ impl Store {
         // Drop pc and get an immutable reference for signing
         let _ = pc;
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+        let sig = self.sign_claim(
+            pc,
+            signer,
+            signer.reserve_size(),
+            settings,
+            &SyncGenericResolver::new(),
+        )?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
