@@ -1,5 +1,8 @@
 # Embeddable signing API
 
+> [!WARNING]
+> The embeddable signing API is for advanced use cases that require very low-level control.  Most users won't need to use it.
+
 The embeddable signing API provides direct control over how a C2PA manifest is embedded into an asset. Instead of letting the SDK manage everything by providing both the source and destination streams to `Builder::sign()`, you perform each step explicitly:
 
 1. Create a placeholder.
@@ -55,7 +58,7 @@ let settings = Settings::new().with_toml(r#"
 
 ### Placeholder sizing
 
-When a placeholder is required, the SDK pre-sizes the JUMBF manifest based on its current state and records the target length internally. After signing, [`sign_embeddable`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_embeddable) pads the compressed manifest to exactly that length so you can overwrite the placeholder bytes without shifting any other data in the file.
+When a placeholder is required, the SDK pre-sizes the JUMBF manifest based on its current state and records the target length internally. After signing, [`sign_embeddable()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_embeddable) pads the compressed manifest to exactly that length so you can overwrite the placeholder bytes without shifting any other data in the file.
 
 ## API summary
 
