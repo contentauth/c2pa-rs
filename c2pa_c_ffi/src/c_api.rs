@@ -980,10 +980,9 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
     box_tracked!(ok_or_return_null!(post_validate(result)))
 }
 
-/// Creates a new C2paReader from manifest data, a stream, and a shared Context.
-///
+/// Creates a new C2paReader from manifest data, a stream, and a Context.
 /// Like [`c2pa_reader_from_manifest_data_and_stream`] but uses a user-provided
-/// context (for trust settings, etc.) instead of creating a default one.
+/// context (with potentially trust settings, etc.) instead of using a default one.
 ///
 /// # Safety
 ///
