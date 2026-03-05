@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use async_generic::async_generic;
 use async_trait::async_trait;
 use bcder::{encode::Values, OctetString};
 use rand::{thread_rng, Rng};
@@ -22,6 +23,7 @@ use crate::{
         raw_signature::oids::{ans1_oid_bcder_oid, SHA256_OID},
         time_stamp::TimeStampError,
     },
+    http::{AsyncHttpResolver, SyncHttpResolver},
     maybe_send_sync::MaybeSync,
 };
 
@@ -129,6 +131,56 @@ pub trait AsyncTimeStampProvider: MaybeSync {
         _message: &[u8],
     ) -> Option<Result<Vec<u8>, TimeStampError>> {
         None
+    }
+}
+
+/// Request a timestamp from the provider, falling back to a built-in networking
+/// implementation if the provider does not implement [`TimeStampProvider::send_time_stamp_request`].
+///
+/// This function will return [`TimeStampError::TimeStampRequestNotConfigured`] if there is no custom implementation via
+/// [`TimeStampProvider::send_time_stamp_request`] or there is no
+/// [`TimeStampProvider::time_stamp_service_url`] for the built-in implementation.
+#[async_generic(async_signature(
+    ts_provider: &(impl AsyncTimeStampProvider + ?Sized),
+    message: &[u8],
+    http_resolver: &(impl AsyncHttpResolver + ?Sized),
+))]
+pub(crate) fn send_time_stamp_request_with_fallback(
+    ts_provider: &(impl TimeStampProvider + ?Sized),
+    message: &[u8],
+    http_resolver: &(impl SyncHttpResolver + ?Sized),
+) -> Result<Vec<u8>, TimeStampError> {
+    if _sync {
+        if let Some(cts) = ts_provider.send_time_stamp_request(message) {
+            cts
+        } else {
+            let Some(url) = ts_provider.time_stamp_service_url() else {
+                return Err(TimeStampError::TimeStampRequestNotConfigured);
+            };
+            super::default_rfc3161_request(
+                &url,
+                ts_provider.time_stamp_request_headers(),
+                &ts_provider.time_stamp_request_body(message)?,
+                message,
+                http_resolver,
+            )
+        }
+    } else {
+        if let Some(cts) = ts_provider.send_time_stamp_request(message).await {
+            cts
+        } else {
+            let Some(url) = ts_provider.time_stamp_service_url() else {
+                return Err(TimeStampError::TimeStampRequestNotConfigured);
+            };
+            super::default_rfc3161_request_async(
+                &url,
+                ts_provider.time_stamp_request_headers(),
+                &ts_provider.time_stamp_request_body(message)?,
+                message,
+                http_resolver,
+            )
+            .await
+        }
     }
 }
 

@@ -26,8 +26,9 @@ use crate::{
         cose::{CertificateTrustPolicy, CoseError, TimeStampStorage},
         raw_signature::{AsyncRawSigner, RawSigner},
         time_stamp::{
-            default_rfc3161_request, default_rfc3161_request_async, verify_time_stamp,
-            verify_time_stamp_async, ContentInfo, TimeStampError, TimeStampResponse,
+            send_time_stamp_request_with_fallback, send_time_stamp_request_with_fallback_async,
+            verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampError,
+            TimeStampResponse,
         },
     },
     http::{AsyncHttpResolver, SyncHttpResolver},
@@ -233,33 +234,15 @@ pub(crate) fn add_sigtst_header(
 ) -> Result<HeaderBuilder, CoseError> {
     let sd = cose_countersign_data(data, p_header);
 
-    let timestamp_request_input = || {
-        let url = ts_provider.time_stamp_service_url()?;
-        let headers = ts_provider.time_stamp_request_headers();
-        let body = ts_provider.time_stamp_request_body(&sd);
-        Some((url, headers, body))
-    };
-
-    // First try the user-defined implementation, if it's not implemented
-    // (returns `None`), then use the built-in implementation.
-    let mut cts = if _sync {
-        if let Some(cts) = ts_provider.send_time_stamp_request(&sd) {
-            cts?
-        } else {
-            let Some((url, headers, body)) = timestamp_request_input() else {
-                return Ok(header_builder);
-            };
-            default_rfc3161_request(&url, headers, &body?, &sd, http_resolver)?
-        }
+    let cts = if _sync {
+        send_time_stamp_request_with_fallback(ts_provider, &sd, http_resolver)
     } else {
-        if let Some(cts) = ts_provider.send_time_stamp_request(&sd).await {
-            cts?
-        } else {
-            let Some((url, headers, body)) = timestamp_request_input() else {
-                return Ok(header_builder);
-            };
-            default_rfc3161_request_async(&url, headers, &body?, &sd, http_resolver).await?
-        }
+        send_time_stamp_request_with_fallback_async(ts_provider, &sd, http_resolver).await
+    };
+    let mut cts = match cts {
+        Ok(cts) => cts,
+        Err(TimeStampError::TimeStampRequestNotConfigured) => return Ok(header_builder),
+        Err(err) => return Err(err.into()),
     };
 
     if tss == TimeStampStorage::V2_sigTst2_CTT {

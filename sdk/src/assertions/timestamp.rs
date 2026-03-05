@@ -20,7 +20,12 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
-    crypto::cose::CertificateTrustPolicy,
+    crypto::{
+        cose::CertificateTrustPolicy,
+        time_stamp::{
+            send_time_stamp_request_with_fallback, send_time_stamp_request_with_fallback_async,
+        },
+    },
     error::Result,
     http::{AsyncHttpResolver, SyncHttpResolver},
     status_tracker::StatusTracker,
@@ -191,13 +196,10 @@ impl TimeStamp {
         signer: &(impl Signer + ?Sized),
     ) -> Result<Vec<u8>> {
         let bytes = if _sync {
-            signer.send_timestamp_request(http_resolver, message)
+            send_time_stamp_request_with_fallback(signer, message, http_resolver)
         } else {
-            signer.send_timestamp_request(http_resolver, message).await
-        }
-        // TODO: more explicit error
-        .ok_or_else(|| Error::UnsupportedType)?
-        .map_err(|err| Error::OtherError(format!("timestamp token not found: {err:?}").into()))?;
+            send_time_stamp_request_with_fallback_async(signer, message, http_resolver).await
+        }?;
 
         if _sync {
             Self::verify_timestamp_response(&bytes, message)?;

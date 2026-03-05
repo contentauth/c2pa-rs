@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use crate::{
     crypto::{
         raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
-        time_stamp::{TimeStampError, TimeStampProvider},
+        time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     },
     dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
     maybe_send_sync::{MaybeSend, MaybeSync},
@@ -339,29 +339,27 @@ impl RawSigner for Box<dyn Signer> {
     }
 }
 
-impl TimeStampProvider for Box<dyn Signer> {
+impl<T: Signer + ?Sized> TimeStampProvider for T {
     fn time_stamp_service_url(&self) -> Option<String> {
-        self.as_ref().time_authority_url()
+        self.time_authority_url()
     }
 
     fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
-        self.as_ref().timestamp_request_headers()
+        self.timestamp_request_headers()
     }
 
     fn time_stamp_request_body(
         &self,
         message: &[u8],
     ) -> std::result::Result<Vec<u8>, TimeStampError> {
-        Ok(self.as_ref().sign(message)?)
+        Ok(self.timestamp_request_body(message)?)
     }
 
     fn send_time_stamp_request(
         &self,
         message: &[u8],
     ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
-        self.as_ref()
-            .send_timestamp_request(message)
-            .map(|r| Ok(r?))
+        self.send_timestamp_request(message).map(|r| Ok(r?))
     }
 }
 
@@ -416,6 +414,32 @@ impl<T: ?Sized + AsyncSigner> AsyncSigner for Box<T> {
 
     fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
         (**self).async_raw_signer()
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<T: AsyncSigner + ?Sized> AsyncTimeStampProvider for T {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.time_authority_url()
+    }
+
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.timestamp_request_headers()
+    }
+
+    fn time_stamp_request_body(
+        &self,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, TimeStampError> {
+        Ok(self.timestamp_request_body(message)?)
+    }
+
+    async fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>, TimeStampError>> {
+        self.send_timestamp_request(message).await.map(|r| Ok(r?))
     }
 }
 
