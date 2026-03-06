@@ -84,13 +84,14 @@ pub mod async_impl {
     pub type Impl = reqwest::Client;
 
     pub fn new() -> Impl {
+        let builder = reqwest::Client::builder();
+        // `reqwest::redirect` isn't compiled on WASM.
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = builder.redirect(reqwest::redirect::Policy::none());
         // By default `reqwest::Client::new()` unwraps if the TLS backend cannot be initialized.
         // The behavior here is equivalent, except with a custom configuration.
         #[allow(clippy::unwrap_used)]
-        reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap()
+        builder.build().unwrap()
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
