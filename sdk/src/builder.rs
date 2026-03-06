@@ -2129,7 +2129,7 @@ impl Builder {
     ///         "xpath": "/uuid"
     ///     }
     /// ] as specified in:
-    /// https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_hash_assertion
+    /// <https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_hash_assertion>
     /// and must be included in the placeholder manifest.
     ///
     /// This preserves the existing [`BmffHash`]'s name and algorithm; only the
@@ -4526,7 +4526,9 @@ mod tests {
             let mut rng = rand::thread_rng();
 
             // for a non largesize box the actual mdat data starts after the 8 byte header, for a largesize box it starts
-            //after 16 bytes.  So we need to account for that when seeking to the start of the mdat content.
+            // after 16 bytes.  So we need to account for that when seeking to the start of the mdat content.
+            // For this test file we only have non-largesize boxes but in a real implementation you would be starting with
+            // actual mdat content.
             output_stream.seek(SeekFrom::Start(offset + 8))?;
 
             while remaining > 0 {
