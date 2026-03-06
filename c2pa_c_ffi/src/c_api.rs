@@ -1924,7 +1924,7 @@ pub unsafe extern "C" fn c2pa_builder_set_data_hash_exclusions(
 pub unsafe extern "C" fn c2pa_builder_set_fixed_size_merkle(
     builder_ptr: *mut C2paBuilder,
     fixed_size_kb: usize,
-) -> i64 {
+) -> c_int {
     let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
 
     builder.set_bmff_hash_fixed_leaf_size(fixed_size_kb);
