@@ -4570,12 +4570,6 @@ mod tests {
 
         // 10. Validate the final asset.
         output_stream.rewind()?;
-        std::fs::write(
-            "/Users/mfisher/Downloads/final_asset.mp4",
-            output_stream.get_ref(),
-        )
-        .unwrap();
-        output_stream.rewind()?;
         let reader = Reader::from_stream("video/mp4", &mut output_stream)?;
         println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
