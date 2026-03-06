@@ -366,16 +366,7 @@ pub mod tests {
     fn redirect_mock_server<'a>(server: &'a httpmock::MockServer) -> httpmock::Mock<'a> {
         server.mock(|when, then| {
             when.method(httpmock::Method::GET).path("/redirect");
-            then.status(302)
-                .header("Location", "/target")
-                .body([3, 2, 1]);
-        })
-    }
-
-    fn target_mock_server<'a>(server: &'a httpmock::MockServer) -> httpmock::Mock<'a> {
-        server.mock(|when, then| {
-            when.method(httpmock::Method::GET).path("/target");
-            then.status(200).body([4, 5, 6]);
+            then.status(302).header("Location", "/").body([3, 2, 1]);
         })
     }
 
@@ -410,7 +401,7 @@ pub mod tests {
 
         let server = MockServer::start();
         let redirect = redirect_mock_server(&server);
-        let target = target_mock_server(&server);
+        let target = mock_server(&server);
 
         let request = Request::get(format!("{}/redirect", server.base_url()))
             .body(vec![3, 2, 1])
