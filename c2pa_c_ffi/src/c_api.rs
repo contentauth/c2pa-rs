@@ -1919,8 +1919,7 @@ pub unsafe extern "C" fn c2pa_builder_set_data_hash_exclusions(
 /// The error string can be retrieved by calling c2pa_error.
 ///
 /// # Safety
-/// builder_ptr must not be NULL..
-/// ```
+/// builder_ptr must not be NULL.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_set_fixed_size_merkle(
     builder_ptr: *mut C2paBuilder,
