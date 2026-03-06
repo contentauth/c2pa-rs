@@ -980,6 +980,43 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
     box_tracked!(ok_or_return_null!(post_validate(result)))
 }
 
+/// Creates a new C2paReader from manifest data, a stream, and a Context.
+/// Like [`c2pa_reader_from_manifest_data_and_stream`] but uses a user-provided
+/// context (with potentially trust settings, etc.) instead of using a default one.
+///
+/// # Safety
+///
+/// * `context` must be a valid pointer to a C2paContext object.
+/// * `format` must be a valid null-terminated string with the MIME type or extension.
+/// * `stream` must be a valid pointer to a C2paStream.
+/// * `manifest_data` must be a valid pointer to manifest bytes.
+/// * `manifest_size` must be the length of the manifest_data buffer.
+/// * The context pointer remains valid after this call and can be reused.
+///
+/// # Returns
+///
+/// A pointer to a newly allocated C2paReader, or NULL on error.
+/// The error string can be retrieved by calling c2pa_error.
+/// The returned value MUST be released by calling c2pa_free
+/// and it is no longer valid after that call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_with_context_from_manifest_data_and_stream(
+    context: *mut C2paContext,
+    format: *const c_char,
+    stream: *mut C2paStream,
+    manifest_data: *const c_uchar,
+    manifest_size: usize,
+) -> *mut C2paReader {
+    let context = deref_or_return_null!(context, C2paContext);
+    let format = cstr_or_return_null!(format);
+    let stream = deref_mut_or_return_null!(stream, C2paStream);
+    let manifest_bytes = bytes_or_return_null!(manifest_data, manifest_size, "manifest_data");
+
+    let reader = C2paReader::from_shared_context(context);
+    let result = reader.with_manifest_data_and_stream(manifest_bytes, &format, stream);
+    box_tracked!(ok_or_return_null!(post_validate(result)))
+}
+
 /// Frees a C2paReader allocated by Rust.
 ///
 /// **Note**: This function is maintained for backward compatibility. New code should
