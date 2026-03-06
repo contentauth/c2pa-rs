@@ -49,6 +49,7 @@ use crate::{
 };
 
 mod info;
+mod live_video;
 mod tree;
 
 mod callback_signer;
@@ -217,6 +218,27 @@ enum Commands {
         /// to match [myfile_abc1.m4s, myfile_abc2180.m4s, ...] )
         #[arg(long = "fragments_glob", verbatim_doc_comment)]
         fragments_glob: Option<PathBuf>,
+    },
+
+    /// Validate a live video stream using the per-segment C2PA Manifest Box method (C2PA section 19.3 https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#using_c2pa_manifest_box).
+    ///
+    /// The path argument is the initialization segment; each media segment must embed a C2PA
+    /// Manifest containing a `c2pa.livevideo.segment` assertion. Segments are discovered via the
+    /// `--segments_glob` pattern (relative to the init segment's directory) and validated in
+    /// lexicographic order.
+    ///
+    /// Example:
+    ///
+    ///   c2patool init.mp4 live-video --segments_glob "segment_*.m4s"
+    ///
+    /// NOTE: Quote glob patterns to prevent shell expansion.
+    LiveVideo {
+        /// Glob pattern to find the media segments. The search path is automatically set to be the
+        /// same directory as the init segment.
+        ///
+        /// The pattern should match only file names, not full paths (e.g. "segment_*[0-9].m4s").
+        #[arg(long = "segments_glob", verbatim_doc_comment)]
+        segments_glob: Option<PathBuf>,
     },
 }
 
@@ -660,6 +682,15 @@ fn main() -> Result<()> {
 
     // configure the SDK
     configure_sdk(&args).context("Could not configure c2pa-rs")?;
+
+    if let Some(Commands::LiveVideo {
+        segments_glob: Some(sg),
+    }) = &args.command
+    {
+        return live_video::validate_live_video(&args.path, sg);
+    } else if matches!(&args.command, Some(Commands::LiveVideo { segments_glob: None })) {
+        bail!("segments_glob must be set for the live-video subcommand");
+    }
 
     // Remove manifest needs to also remove XMP provenance
     // if args.remove_manifest {
