@@ -269,7 +269,7 @@ fn test_hash_assertion_pad_encoding() -> Result<()> {
             "pad should be a string (base64), not an array"
         );
 
-        let pad = pad_value.as_str().expect("pad should be a string");
+        let _pad = pad_value.as_str().expect("pad should be a string");
         
         // Verify it's not empty (unless the pad is actually empty)
         // An empty pad would encode to an empty string

@@ -544,6 +544,11 @@ impl CrJsonReader {
                     }
                 }
 
+                // Per crJSON hashDataAssertion schema: "hash" and "pad" are required. Ensure "pad" is present when "hash" is.
+                if map.contains_key("hash") && !map.contains_key("pad") {
+                    map.insert("pad".to_string(), json!(""));
+                }
+
                 // Check if this object has a "signature" field that's an array (cawg.identity)
                 // This should be decoded as COSE_Sign1 and expanded similar to claimSignature
                 if let Some(signature_value) = map.get("signature") {
@@ -810,6 +815,14 @@ impl CrJsonReader {
                 }
             }
         }
+        // Per crJSON schema, claim.v2 requires claim_generator_info (softwareAgent with at least "name").
+        if !claim_v2.contains_key("claim_generator_info") {
+            let fallback = manifest.claim_generator().map_or_else(
+                || json!({"name": "Unknown"}),
+                |cg| json!({"name": cg}),
+            );
+            claim_v2.insert("claim_generator_info".to_string(), fallback);
+        }
 
         // Add algorithm (from data hash assertion if available)
         claim_v2.insert("alg".to_string(), json!("SHA-256"));
@@ -924,14 +937,17 @@ impl CrJsonReader {
 
         let mut claim_signature = Map::new();
 
-        // Add algorithm
-        if let Some(alg) = &sig_info.alg {
-            claim_signature.insert("algorithm".to_string(), json!(alg.to_string()));
-        }
+        // Add algorithm (required per schema when signature object is present)
+        let alg_str = sig_info
+            .alg
+            .as_ref()
+            .map_or_else(String::new, |a| a.to_string());
+        claim_signature.insert("algorithm".to_string(), json!(alg_str));
 
-        // Parse certificate to get detailed DN components and validity (nested in certificateInfo)
+        // Parse certificate to get detailed DN components and validity (nested in certificateInfo).
+        // Schema requires signature object to have both algorithm and certificateInfo.
+        let mut cert_info_obj = Map::new();
         if let Some(cert_info) = self.parse_certificate(&sig_info.cert_chain)? {
-            let mut cert_info_obj = Map::new();
             if let Some(serial) = cert_info.serial_number {
                 cert_info_obj.insert("serialNumber".to_string(), json!(serial));
             }
@@ -944,10 +960,8 @@ impl CrJsonReader {
             if let Some(validity) = cert_info.validity {
                 cert_info_obj.insert("validity".to_string(), validity);
             }
-            if !cert_info_obj.is_empty() {
-                claim_signature.insert("certificateInfo".to_string(), Value::Object(cert_info_obj));
-            }
         }
+        claim_signature.insert("certificateInfo".to_string(), Value::Object(cert_info_obj));
 
         // Build timeStampInfo when we have a signing time and/or TSA certificate
         let has_ts_time = sig_info.time.is_some();

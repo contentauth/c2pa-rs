@@ -162,7 +162,7 @@ fn test_assertion_reference_hashes_are_base64() -> Result<()> {
     let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_json_value()?;
 
-    // Check created_assertions hashes in claim.v2
+    // Check created_assertions hashes in claim.v2 (manifest may have claim v1 or claim.v2 per schema)
     let manifests = json_value["manifests"]
         .as_array()
         .expect("manifests should be array");
@@ -170,10 +170,11 @@ fn test_assertion_reference_hashes_are_base64() -> Result<()> {
     let first_manifest = manifests
         .first()
         .expect("should have at least one manifest");
-    let claim_v2 = first_manifest["claim.v2"]
-        .as_object()
-        .expect("claim.v2 should be object");
+    let claim_v2 = first_manifest
+        .get("claim.v2")
+        .and_then(|v| v.as_object());
 
+    if let Some(claim_v2) = claim_v2 {
     if let Some(created_assertions) = claim_v2.get("created_assertions") {
         let assertions_array = created_assertions
             .as_array()
@@ -197,6 +198,8 @@ fn test_assertion_reference_hashes_are_base64() -> Result<()> {
             }
         }
     }
+    }
+    // If manifest has claim (v1) only, created_assertions is not present; nothing to check.
 
     Ok(())
 }

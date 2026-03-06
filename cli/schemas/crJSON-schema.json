@@ -55,7 +55,7 @@
     "definitions": {
         "jsonGenerator": {
             "type": "object",
-            "description": "Information about the claim generator (generator-info fields) plus date stamp",
+            "description": "Information about the claim generator (generator-info fields) plus date stamp. CrJSON document-level; name/version align with claim.cddl generator-info-map; date is CrJSON-specific.",
             "properties": {
                 "name": {
                     "type": "string",
@@ -81,6 +81,7 @@
         },
         "manifest": {
             "type": "object",
+            "description": "CrJSON manifest wrapper containing label, assertions, claim or claim.v2, signature, and status. Claim content: claim.cddl claim-map or claim-map-v2.",
             "required": [
                 "label",
                 "assertions",
@@ -128,7 +129,7 @@
         },
         "claimV1": {
             "type": "object",
-            "description": "Claim map (v1) per C2PA CDDL claim-map. Alternative to claim.v2; each manifest may contain either claim or claim.v2.",
+            "description": "Claim map (v1). CDDL: claim.cddl claim-map. Alternative to claim.v2; each manifest may contain either claim or claim.v2.",
             "required": [
                 "claim_generator",
                 "claim_generator_info",
@@ -197,7 +198,7 @@
         },
         "hashedUriMap": {
             "type": "object",
-            "description": "Hashed URI reference (url and hash) per C2PA CDDL $hashed-uri-map",
+            "description": "Hashed URI reference (url and hash). CDDL: hashed-uri.cddl $hashed-uri-map.",
             "required": [
                 "url",
                 "hash"
@@ -220,7 +221,7 @@
         },
         "assertionMetadataMap": {
             "type": "object",
-            "description": "Additional information about an assertion per C2PA CDDL $assertion-metadata-map.",
+            "description": "Additional information about an assertion. CDDL: assertion-metadata-common.cddl $assertion-metadata-map.",
             "properties": {
                 "dateTime": {
                     "type": "string",
@@ -260,7 +261,7 @@
         },
         "sourceMap": {
             "type": "object",
-            "description": "Source of assertion data per C2PA CDDL source-map.",
+            "description": "Source of assertion data. CDDL: assertion-metadata-common.cddl source-map.",
             "required": [
                 "type"
             ],
@@ -290,7 +291,7 @@
         },
         "ratingMap": {
             "type": "object",
-            "description": "Rating of an assertion item per C2PA CDDL rating-map.",
+            "description": "Rating of an assertion item. CDDL: assertion-metadata-common.cddl rating-map.",
             "required": [
                 "value"
             ],
@@ -326,14 +327,14 @@
         },
         "localizationDataEntry": {
             "type": "object",
-            "description": "Localization dictionary per C2PA CDDL localization-data-entry (language keys to string).",
+            "description": "Localization dictionary (language keys to string). CDDL: assertion-metadata-common.cddl $localization-data-entry.",
             "additionalProperties": {
                 "type": "string"
             }
         },
         "claim": {
             "type": "object",
-            "description": "Claim (v2) per C2PA CDDL claim-map-v2.",
+            "description": "Claim (v2). CDDL: claim.cddl claim-map-v2.",
             "required": [
                 "instanceID",
                 "claim_generator_info",
@@ -400,6 +401,7 @@
         },
         "assertions": {
             "type": "object",
+            "description": "Container of assertion objects keyed by assertion label. Each key (e.g. c2pa.hash.data, c2pa.actions) corresponds to a C2PA assertion type; see definitions and INTERNAL/cddl for data-hash, boxes-hash, actions, ingredient, etc.",
             "properties": {
                 "c2pa.hash.data": {
                     "$ref": "#/definitions/hashDataAssertion"
@@ -461,14 +463,11 @@
         },
         "hashDataAssertion": {
             "type": "object",
+            "description": "Data hash assertion (c2pa.hash.data). CDDL: data-hash.cddl data-hash-map, EXCLUSION_RANGE-map.",
             "properties": {
                 "alg": {
                     "type": "string",
                     "description": "Hash algorithm"
-                },
-                "algorithm": {
-                    "type": "string",
-                    "description": "Alternative field name for hash algorithm"
                 },
                 "hash": {
                     "type": "string",
@@ -478,13 +477,9 @@
                     "type": "string",
                     "description": "Padding bytes"
                 },
-                "paddingLength": {
-                    "type": "integer",
-                    "description": "Length of padding"
-                },
-                "padding2Length": {
-                    "type": "integer",
-                    "description": "Length of secondary padding"
+                "pad2": {
+                    "type": "string",
+                    "description": "Secondary padding bytes"
                 },
                 "name": {
                     "type": "string",
@@ -511,11 +506,15 @@
                     }
                 }
             },
+            "required": [
+                "hash",
+                "pad"
+            ],
             "additionalProperties": false
         },
         "hashBoxesAssertion": {
             "type": "object",
-            "description": "Boxes hash assertion per C2PA CDDL box-map (c2pa.hash.boxes).",
+            "description": "Boxes hash assertion (c2pa.hash.boxes). CDDL: boxes-hash.cddl box-map.",
             "required": [
                 "boxes"
             ],
@@ -537,7 +536,7 @@
         },
         "boxHashMap": {
             "type": "object",
-            "description": "Single box hash entry per C2PA CDDL box-hash-map.",
+            "description": "Single box hash entry. CDDL: boxes-hash.cddl box-hash-map.",
             "required": [
                 "names",
                 "hash"
@@ -587,7 +586,7 @@
         },
         "boxExclusionsMap": {
             "type": "object",
-            "description": "Exclusion range per C2PA CDDL box-exclusions-map.",
+            "description": "Exclusion range for a box. CDDL: boxes-hash.cddl box-exclusions-map.",
             "required": [
                 "start",
                 "length"
@@ -612,7 +611,7 @@
         },
         "hashMultiAssetAssertion": {
             "type": "object",
-            "description": "Multi-asset hash assertion per C2PA CDDL multi-asset-hash-map (c2pa.hash.multi-asset).",
+            "description": "Multi-asset hash assertion (c2pa.hash.multi-asset). CDDL: multi-asset-hash.cddl multi-asset-hash-map.",
             "required": [
                 "parts"
             ],
@@ -630,7 +629,7 @@
         },
         "partHashMap": {
             "type": "object",
-            "description": "Part hash entry per C2PA CDDL part-hash-map.",
+            "description": "Part hash entry. CDDL: multi-asset-hash.cddl part-hash-map.",
             "required": [
                 "location",
                 "hashAssertion"
@@ -653,7 +652,7 @@
         },
         "locatorMap": {
             "type": "object",
-            "description": "Location of a part per C2PA CDDL locator-map (byte range or BMFF box path).",
+            "description": "Location of a part (byte range or BMFF box path). CDDL: multi-asset-hash.cddl locator-map.",
             "oneOf": [
                 {
                     "required": [
@@ -690,7 +689,7 @@
         },
         "softBindingAssertion": {
             "type": "object",
-            "description": "Soft binding assertion per C2PA CDDL soft-binding-map (c2pa.soft-binding).",
+            "description": "Soft binding assertion (c2pa.soft-binding). CDDL: soft-binding.cddl soft-binding-map.",
             "required": [
                 "alg",
                 "blocks"
@@ -738,7 +737,7 @@
         },
         "softBindingBlockMap": {
             "type": "object",
-            "description": "Single soft binding block per C2PA CDDL soft-binding-block-map.",
+            "description": "Single soft binding block. CDDL: soft-binding.cddl soft-binding-block-map.",
             "required": [
                 "scope",
                 "value"
@@ -757,7 +756,7 @@
         },
         "softBindingScopeMap": {
             "type": "object",
-            "description": "Scope of content for a soft binding block per C2PA CDDL soft-binding-scope-map.",
+            "description": "Scope of content for a soft binding block. CDDL: soft-binding.cddl soft-binding-scope-map.",
             "properties": {
                 "extent": {
                     "type": "string",
@@ -776,7 +775,7 @@
         },
         "softBindingTimespanMap": {
             "type": "object",
-            "description": "Time range per C2PA CDDL soft-binding-timespan-map.",
+            "description": "Time range for soft binding. CDDL: soft-binding.cddl soft-binding-timespan-map.",
             "required": [
                 "start",
                 "end"
@@ -797,7 +796,7 @@
         },
         "softBindingMetadataMap": {
             "type": "object",
-            "description": "Additional metadata per C2PA CDDL soft-binding-metadata-map.",
+            "description": "Additional metadata for soft binding. CDDL: soft-binding.cddl soft-binding-metadata-map.",
             "properties": {
                 "description": {
                     "type": "string",
@@ -816,7 +815,7 @@
         },
         "actionsAssertionV1": {
             "type": "object",
-            "description": "Actions assertion (v1) per C2PA CDDL actions-map; list of action-items-map.",
+            "description": "Actions assertion (v1) (c2pa.actions). CDDL: actions.cddl actions-map.",
             "properties": {
                 "actions": {
                     "type": "array",
@@ -837,7 +836,7 @@
         },
         "actionItemV1": {
             "type": "object",
-            "description": "Single action (v1) per C2PA CDDL action-items-map.",
+            "description": "Single action (v1). CDDL: actions.cddl action-items-map.",
             "properties": {
                 "action": {
                     "type": "string",
@@ -876,7 +875,7 @@
         },
         "parametersMapV1": {
             "type": "object",
-            "description": "Action parameters (v1) per C2PA CDDL parameters-map.",
+            "description": "Action parameters (v1). CDDL: actions.cddl parameters-map.",
             "properties": {
                 "ingredient": {
                     "$ref": "#/definitions/hashedUriMap",
@@ -891,7 +890,7 @@
         },
         "actionsAssertionV2": {
             "type": "object",
-            "description": "Actions assertion (v2) per C2PA CDDL actions-map-v2.",
+            "description": "Actions assertion (v2) (c2pa.actions.v2). CDDL: actions.cddl actions-map-v2.",
             "properties": {
                 "actions": {
                     "type": "array",
@@ -932,7 +931,7 @@
         },
         "actionItemV2": {
             "type": "object",
-            "description": "Single action (v2) per C2PA CDDL action-item-map-v2.",
+            "description": "Single action (v2). CDDL: actions.cddl action-item-map-v2.",
             "properties": {
                 "action": {
                     "type": "string",
@@ -991,7 +990,7 @@
         },
         "actionTemplateV2": {
             "type": "object",
-            "description": "Action template (v2) per C2PA CDDL action-template-map-v2.",
+            "description": "Action template (v2). CDDL: actions.cddl action-template-map-v2.",
             "properties": {
                 "action": {
                     "type": "string",
@@ -1030,12 +1029,12 @@
         },
         "regionMap": {
             "type": "object",
-            "description": "Region of interest per C2PA CDDL region-map (referenced by action-item-map-v2 changes).",
+            "description": "Region of interest. CDDL: regions-of-interest.cddl region-map.",
             "additionalProperties": true
         },
         "parametersMapV2": {
             "type": "object",
-            "description": "Action parameters (v2) per C2PA CDDL parameters-map-v2.",
+            "description": "Action parameters (v2). CDDL: actions.cddl parameters-map-v2.",
             "properties": {
                 "redacted": {
                     "type": "string",
@@ -1066,6 +1065,7 @@
         },
         "softwareAgent": {
             "type": "object",
+            "description": "Generator/software agent info. CDDL: claim.cddl generator-info-map.",
             "properties": {
                 "name": {
                     "type": "string",
@@ -1091,7 +1091,7 @@
         },
         "certificateInfo": {
             "type": "object",
-            "description": "Certificate details (serial number, issuer, subject, validity)",
+            "description": "Certificate details (serial number, issuer, subject, validity). CrJSON decoding of signing certificate; no CDDL rule in INTERNAL/cddl.",
             "properties": {
                 "serialNumber": {
                     "type": "string",
@@ -1127,6 +1127,7 @@
         },
         "signature": {
             "type": "object",
+            "description": "Decoded claim signature (algorithm, certificate, optional timestamp). CrJSON decoding of Claim Signature box; no CDDL rule in INTERNAL/cddl.",
             "properties": {
                 "algorithm": {
                     "type": "string",
@@ -1152,8 +1153,7 @@
                         "timestamp",
                         "certificateInfo"
                     ]
-                },
-                "additionalProperties": false
+                }
             },
             "required": [
                 "algorithm",
@@ -1163,7 +1163,7 @@
         },
         "distinguishedName": {
             "type": "object",
-            "description": "X.509 Distinguished Name components",
+            "description": "X.509 Distinguished Name components. Used in signature/certificate decoding; no CDDL rule in INTERNAL/cddl.",
             "properties": {
                 "C": {
                     "type": "string",
@@ -1202,7 +1202,7 @@
         },
         "status": {
             "type": "object",
-            "description": "Validation status information",
+            "description": "Validation status information (signature, assertion, content, trust). CrJSON manifest-level status; validation codes use validation-results.cddl status-map / status-codes-map.",
             "properties": {
                 "signature": {
                     "type": "string",
@@ -1228,7 +1228,7 @@
         },
         "ingredientAssertionV1": {
             "type": "object",
-            "description": "Ingredient assertion (v1) per C2PA CDDL ingredient-map.",
+            "description": "Ingredient assertion (v1) (c2pa.ingredient). CDDL: ingredient.cddl ingredient-map.",
             "required": [
                 "dc:title",
                 "dc:format",
@@ -1282,7 +1282,7 @@
         },
         "ingredientAssertionV2": {
             "type": "object",
-            "description": "Ingredient assertion (v2) per C2PA CDDL ingredient-map-v2.",
+            "description": "Ingredient assertion (v2) (c2pa.ingredient.v2). CDDL: ingredient.cddl ingredient-map-v2.",
             "required": [
                 "dc:title",
                 "dc:format",
@@ -1364,7 +1364,7 @@
         },
         "ingredientAssertionV3": {
             "type": "object",
-            "description": "Ingredient assertion (v3) per C2PA CDDL ingredient-map-v3.",
+            "description": "Ingredient assertion (v3) (c2pa.ingredient.v3). CDDL: ingredient.cddl ingredient-map-v3.",
             "required": [
                 "relationship"
             ],
@@ -1450,7 +1450,7 @@
         },
         "hashedExtUriMap": {
             "type": "object",
-            "description": "A data structure to store a reference to an external URL and its hash per C2PA CDDL $hashed-ext-uri-map. Contains the URL, the cryptographic hash algorithm identifier, hash, and optional MIME type, size, and data types. Used in ingredient v2/v3 data field.",
+            "description": "Reference to an external URL and its hash. CDDL: hashed-ext-uri.cddl $hashed-ext-uri-map. Used in ingredient v2/v3 data field.",
             "properties": {
                 "url": {
                     "type": "string",
@@ -1491,7 +1491,7 @@
         },
         "thumbnailAssertion": {
             "type": "object",
-            "description": "Thumbnail assertion",
+            "description": "Thumbnail assertion (e.g. c2pa.thumbnail.claim.jpeg, c2pa.thumbnail.ingredient.jpeg). No CDDL in INTERNAL/cddl; structure is CrJSON/schema-defined.",
             "properties": {
                 "thumbnailType": {
                     "type": "integer",
@@ -1504,83 +1504,221 @@
             },
             "additionalProperties": false
         },
+        "bmffExclusionsMap": {
+            "type": "object",
+            "description": "Exclusion entry for BMFF hash. CDDL: bmff-hash.cddl exclusions-map.",
+            "required": [
+                "xpath"
+            ],
+            "properties": {
+                "xpath": {
+                    "type": "string",
+                    "description": "Location of box(es) to exclude (XPath from root node)"
+                },
+                "length": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Length that a leafmost box must have to be excluded"
+                },
+                "data": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/bmffDataMap"
+                    },
+                    "description": "Data at relative byte offset that must match for box to be excluded"
+                },
+                "subset": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/bmffSubsetMap"
+                    },
+                    "description": "Portion of the excluded box that is excluded from the hash"
+                },
+                "version": {
+                    "type": "integer",
+                    "description": "Version that must be set in a leafmost FullBox for the box to be excluded"
+                },
+                "flags": {
+                    "type": "string",
+                    "description": "24-bit flags (3-byte byte string, e.g. Base64-encoded in JSON). Only for FullBox when version is specified."
+                },
+                "exact": {
+                    "type": "boolean",
+                    "description": "If true, flags must be an exact match (default true). Only for FullBox when flags is specified."
+                }
+            },
+            "additionalProperties": false
+        },
+        "bmffDataMap": {
+            "type": "object",
+            "description": "CDDL: bmff-hash.cddl data-map.",
+            "required": [
+                "offset",
+                "value"
+            ],
+            "properties": {
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Relative byte offset in the leafmost box"
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Byte string (e.g. Base64 in JSON) that must match at the offset"
+                }
+            },
+            "additionalProperties": false
+        },
+        "bmffSubsetMap": {
+            "type": "object",
+            "description": "CDDL: bmff-hash.cddl subset-map.",
+            "required": [
+                "offset",
+                "length"
+            ],
+            "properties": {
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Relative byte offset within the excluded box"
+                },
+                "length": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Number of bytes in this subset"
+                }
+            },
+            "additionalProperties": false
+        },
+        "bmffMerkleMap": {
+            "type": "object",
+            "description": "Merkle tree row for mdat verification. CDDL: bmff-hash.cddl merkle-map.",
+            "required": [
+                "uniqueId",
+                "localId",
+                "count",
+                "hashes"
+            ],
+            "properties": {
+                "uniqueId": {
+                    "type": "integer",
+                    "description": "1-based unique id to determine which Merkle tree validates a given mdat box"
+                },
+                "localId": {
+                    "type": "integer",
+                    "description": "Local id indicating Merkle tree"
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "Number of leaf nodes in the Merkle tree (null nodes not included)"
+                },
+                "alg": {
+                    "type": "string",
+                    "description": "Hash algorithm for this Merkle tree; if absent, from enclosing structure"
+                },
+                "initHash": {
+                    "type": "string",
+                    "description": "Hash of init segment or bytes before first moof (fragmented MP4); absent for non-fragmented"
+                },
+                "hashes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Ordered array representing a single row of the Merkle tree (e.g. Base64 in JSON)"
+                },
+                "fixedBlockSize": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Size in bytes of a leaf node (non-fragmented MP4, piecewise mdat validation)"
+                },
+                "variableBlockSizes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "description": "Size in bytes of each leaf node (non-fragmented MP4); length equals count"
+                }
+            },
+            "additionalProperties": false
+        },
         "hashBmffAssertion": {
             "type": "object",
-            "description": "BMFF (ISO Base Media File Format) hash assertion",
+            "description": "BMFF hash assertion (c2pa.hash.bmff.v2). CDDL: bmff-hash.cddl bmff-hash-map, exclusions-map, merkle-map.",
+            "required": [
+                "exclusions"
+            ],
             "properties": {
                 "exclusions": {
                     "type": "array",
+                    "minItems": 1,
                     "items": {
-                        "type": "object",
-                        "properties": {
-                            "xpath": {
-                                "type": "string"
-                            },
-                            "length": {
-                                "type": [
-                                    "integer",
-                                    "null"
-                                ]
-                            },
-                            "data": {
-                                "type": [
-                                    "array",
-                                    "null"
-                                ]
-                            },
-                            "subset": {
-                                "type": [
-                                    "array",
-                                    "null"
-                                ]
-                            },
-                            "version": {
-                                "type": [
-                                    "object",
-                                    "null"
-                                ]
-                            },
-                            "flags": {
-                                "type": [
-                                    "object",
-                                    "null"
-                                ]
-                            },
-                            "exact": {
-                                "type": [
-                                    "boolean",
-                                    "null"
-                                ]
-                            }
-                        }
-                    }
+                        "$ref": "#/definitions/bmffExclusionsMap"
+                    },
+                    "description": "Box(es) to exclude from the hash"
                 },
-                "algorithm": {
-                    "type": "string"
+                "alg": {
+                    "type": "string",
+                    "description": "Hash algorithm; if absent, from enclosing structure (C2PA hash algorithm identifier list)"
                 },
                 "hash": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Hash of BMFF/segment excluding exclusions (e.g. Base64 in JSON)"
+                },
+                "merkle": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/bmffMerkleMap"
+                    },
+                    "description": "Merkle tree rows for verification of mdat box(es) or fragment files"
                 },
                 "name": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "Human-readable description of what this hash covers"
+                },
+                "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Unused and deprecated"
+                },
+                "sequenceNumber": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "In a live video workflow, the monotonically increasing sequence number for each segment"
                 }
             },
             "additionalProperties": false
         },
         "validationResults": {
             "type": "object",
-            "description": "Output of validation_results(): status codes for active manifest and ingredient deltas",
+            "description": "Validation results (active manifest and ingredient deltas). CDDL: validation-results.cddl validation-results-map.",
             "properties": {
                 "activeManifest": {
                     "$ref": "#/definitions/statusCodes",
-                    "description": "Validation status codes for the active manifest"
+                    "description": "Validation status codes for the active manifest. Present if ingredient is a C2PA asset."
                 },
                 "ingredientDeltas": {
                     "type": "array",
-                    "description": "Validation deltas per ingredient assertion",
+                    "description": "Validation deltas per ingredient assertion. Present if the ingredient is a C2PA asset.",
                     "items": {
                         "$ref": "#/definitions/ingredientDeltaValidationResult"
                     }
+                },
+                "specVersion": {
+                    "type": "string",
+                    "description": "The version of the specification against which the validation was performed (SemVer formatted string)",
+                    "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+                },
+                "trustListUri": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "URI to the trust list that was used to validate certificates"
                 }
             },
             "required": [
@@ -1590,7 +1728,7 @@
         },
         "statusCodes": {
             "type": "object",
-            "description": "Success, informational, and failure validation status codes",
+            "description": "Success, informational, and failure validation status codes. CDDL: validation-results.cddl status-codes-map.",
             "properties": {
                 "success": {
                     "type": "array",
@@ -1620,7 +1758,7 @@
         },
         "validationStatusEntry": {
             "type": "object",
-            "description": "Single validation status (code, optional url and explanation)",
+            "description": "Single validation status (code, optional url and explanation). CDDL: validation-results.cddl status-map.",
             "properties": {
                 "code": {
                     "type": "string",
@@ -1642,7 +1780,7 @@
         },
         "ingredientDeltaValidationResult": {
             "type": "object",
-            "description": "Validation deltas for one ingredient's manifest",
+            "description": "Validation deltas for one ingredient's manifest. CDDL: validation-results.cddl ingredient-delta-validation-result-map.",
             "properties": {
                 "ingredientAssertionURI": {
                     "type": "string",

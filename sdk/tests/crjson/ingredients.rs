@@ -127,11 +127,10 @@ fn test_ingredient_referenced_in_claim() -> Result<()> {
         }
     }
 
-    // Find the manifest with the ingredient (active manifest with claim v2)
+    // Find a manifest with assertions: either claim.v2 (created/gathered) or claim v1 (assertions array)
     let active_manifest = manifests
         .iter()
-        .filter(|m| {
-            // Look for a manifest with non-empty created or gathered assertions
+        .find(|m| {
             if let Some(claim_v2) = m.get("claim.v2") {
                 let has_created = claim_v2.get("created_assertions")
                     .and_then(|a| a.as_array())
@@ -142,25 +141,28 @@ fn test_ingredient_referenced_in_claim() -> Result<()> {
                     .map(|a| !a.is_empty())
                     .unwrap_or(false);
                 has_created || has_gathered
+            } else if let Some(claim_v1) = m.get("claim") {
+                claim_v1.get("assertions")
+                    .and_then(|a| a.as_array())
+                    .map(|a| !a.is_empty())
+                    .unwrap_or(false)
             } else {
                 false
             }
         })
-        .next()
         .expect("should have at least one manifest with assertions");
 
-    // Check if ingredient is referenced in created_assertions
-    let claim_v2 = active_manifest["claim.v2"]
-        .as_object()
-        .expect("claim.v2 should exist");
-
-    let created_assertions = claim_v2["created_assertions"]
-        .as_array()
-        .expect("created_assertions should be array");
-
-    let gathered_assertions = claim_v2["gathered_assertions"]
-        .as_array()
-        .expect("gathered_assertions should be array");
+    // Check if ingredient is referenced in created_assertions (v2) or assertions (v1)
+    let (created_assertions, gathered_assertions) = if let Some(claim_v2) = active_manifest.get("claim.v2").and_then(|v| v.as_object()) {
+        (
+            claim_v2["created_assertions"].as_array().expect("created_assertions should be array"),
+            claim_v2["gathered_assertions"].as_array().expect("gathered_assertions should be array"),
+        )
+    } else {
+        // V1: single "assertions" array; treat as both created and gathered for this check
+        let assertions = active_manifest.get("claim").and_then(|c| c.get("assertions")).and_then(|a| a.as_array()).expect("claim.assertions should be array");
+        (assertions, assertions)
+    };
 
     // Debug: Print what we found
     println!("Created assertions count: {}", created_assertions.len());
