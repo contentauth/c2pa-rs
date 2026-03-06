@@ -11,7 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(all(feature = "http_reqwest_blocking", not(target_os = "wasi")))]
+#[cfg(all(
+    not(target_arch = "wasm32"),
+    feature = "http_reqwest_blocking",
+    not(feature = "http_ureq")
+))]
 pub mod sync_impl {
     use std::io::{Cursor, Read};
 
