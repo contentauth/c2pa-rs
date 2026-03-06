@@ -3155,6 +3155,7 @@ mod tests {
     };
 
     use c2pa_macros::c2pa_test_async;
+    use rand::Rng;
     use serde_json::json;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
@@ -3164,6 +3165,9 @@ mod tests {
     use crate::utils::test::fixture_path;
     use crate::{
         assertions::{c2pa_action, BoxHash, DigitalSourceType},
+        asset_handlers::bmff_io::{
+            inject_manifest_into_free_box, inject_placeholder, read_bmff_c2pa_boxes,
+        },
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         maybe_send_sync::MaybeSend,
@@ -4458,33 +4462,23 @@ mod tests {
         Ok(())
     }
 
-    /* TODO: This test does not match how Merkle tree are constructed so disabling until I
-    can fix the implementation
-
     /// Simulates a client that hashes mdat chunks while writing, then hands those
     /// hashes to the SDK so it can construct the Merkle tree without re-reading the
     /// (potentially multi-gigabyte) mdat content.
     ///
-    /// The placeholder pre-allocates [`MAX_MDAT_BOXES`] Merkle map slots (read from
-    /// `core.merkle_tree_chunk_size_in_kb` in settings).  Any size gap between the
-    /// signed manifest and the placeholder is filled with a BMFF `free` box by
-    /// [`Builder::sign_embeddable`], so the total written bytes are always identical
-    /// and the BMFF file structure remains valid.
+    /// The placeholder pre-allocates Merkle BMFF Hash. The demo first inserts a free
+    /// box to simulte an app holding space for the manifest place holder.  This then writes
+    /// out the file as an app would.  To simulate the rendering the mdat will be writting in
+    /// random chunks.  Then each of those chunks will be sent hashed using 'hash_bmff_mdat_bytes'.
+    /// One the file is written, the file is hashed using 'update_hash_from_stream' which will use the
+    /// pre-computed mdat hashes to calculate the Merkle root and hash the remaining content. We then sign
+    /// the manifest and patch the file with the signed manifest by overridding the placeholder free box.  
     #[test]
     fn test_bmff_mdat_hashed_placeholder_workflow_complete() -> Result<()> {
-        use std::io::{Seek, SeekFrom, Write};
+        use std::io::{Seek, SeekFrom};
 
-        const CHUNK_SIZE_KB: usize = 1; // 1 KB chunks – small so the test MP4 has ≥1 chunk
-        let alg = "sha256";
-        let chunk_bytes = (CHUNK_SIZE_KB * 1024) as u64;
-
-        // 1. Create a Builder with Merkle settings configured in Context.
-        //    The chunk size is the only required setting; placeholder() will
-        //    pre-allocate MAX_MDAT_BOXES Merkle map slots automatically.
-        let context = Context::new().with_settings(
-            serde_json::json!({"core": {"merkle_tree_chunk_size_in_kb": CHUNK_SIZE_KB}})
-                .to_string(),
-        )?;
+        // 1. Create a Builder w
+        let context = Context::new();
         let mut builder =
             Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
 
@@ -4494,17 +4488,22 @@ mod tests {
         let composed_placeholder = builder.placeholder("video/mp4")?;
         assert!(builder.find_assertion::<BmffHash>(BmffHash::LABEL).is_ok());
 
-        // 3. Inject the composed placeholder after the ftyp box.
+        // 3. The placholder does not include the size of the Merkle leaf hashes.  So pad the size
+        // of the placeholder with estimate. We will guess 20 chunks for this demo so we need to
+        // account for possibly 20 leafs.  Since this is "sha256" the size of each leaf hash is 32 bytes.
+        // In a real implementation you have to account for every mdat in the file.
+        let placeholder_size = composed_placeholder.len() + (20 * 32) + 1024; // add some extra padding just in case
+
+        // 4. Inject free box based on the placeholder size. This would typially be
+        // written as the app writing the file, leaving space for the manifest to be written later.
+        // The offset of the free box is recorded so we know where to patch in the signed manifest later.
         let mut input_stream = Cursor::new(TEST_VIDEO_MP4);
         let mut output_stream = Cursor::new(Vec::new());
-        let offset = write_bmff_placeholder_stream(
-            &composed_placeholder,
-            &mut input_stream,
-            &mut output_stream,
-        )?;
+
+        let offset = inject_placeholder(&mut input_stream, &mut output_stream, placeholder_size)?;
 
         // 5. Compute mdat leaf hashes "externally" — simulating a client that hashes
-        //    each fixed-size chunk as it writes mdat data (no second read needed).
+        //    each variable-size chunk as it writes mdat data (no second read needed).
         output_stream.rewind()?;
         let boxes = read_bmff_c2pa_boxes(&mut output_stream)?;
         let mut mdat_boxes = boxes.box_infos;
@@ -4514,33 +4513,44 @@ mod tests {
             "Test MP4 must contain at least one mdat box"
         );
 
-        let mut all_leaf_hashes: Vec<Vec<Vec<u8>>> = Vec::new();
-        for mdat_box in &mdat_boxes {
-            let data_start = mdat_box.offset + 16; // skip 16-byte BMFF box header
-            let data_end = mdat_box.end();
-            let mut pos = data_start;
-            let mut mdat_leaves: Vec<Vec<u8>> = Vec::new();
+        // This part simulates when the client is writing the mdat boxes. Playback the existing mdata to
+        // simulate the writing new mdat content.  As clinets are writting
+        // each chunk for each mdat they are sending those bytes to the SDK to be hashed using 'hash_bmff_mdat_bytes'.
+        // The SDK is storing those hashes internally so when we call 'update_hash_from_stream'
+        // it can use those pre-computed hashes to calculate the Merkle leaves without needing
+        // to re-read and re-hash the mdat content.
+        for (mdat_id, mdat_box) in mdat_boxes.iter().enumerate() {
+            // break the mdat into 7 random chunks and hash each chunks
+            let mut remaining = mdat_box.size - 8; // subtract 8 bytes to get to actual content size for non-largesize box.  For largesize we will account for the larger header below.
+            let offset = mdat_box.offset;
+            let mut rng = rand::thread_rng();
 
-            while pos < data_end {
-                let leaf_end = std::cmp::min(pos + chunk_bytes, data_end);
-                let leaf_hash = hash_stream_by_alg(
-                    alg,
-                    &mut output_stream,
-                    Some(vec![HashRange::new(pos, leaf_end - pos)]),
-                    false, // inclusion mode
-                )?;
-                mdat_leaves.push(leaf_hash);
-                pos = leaf_end;
+            // for a non largesize box the actual mdat data starts after the 8 byte header, for a largesize box it starts
+            //after 16 bytes.  So we need to account for that when seeking to the start of the mdat content.
+            output_stream.seek(SeekFrom::Start(offset + 8))?;
+
+            while remaining > 0 {
+                // Generate a random size between 10% and the remaining length
+                let mut chunk_size = rng.gen_range((remaining / 10)..=remaining);
+
+                // eat up rest of mdat if 0 is generated for some reason so we don't have random 0 leaves
+                if chunk_size == 0 {
+                    chunk_size = remaining;
+                }
+
+                let mut chunk = vec![0u8; chunk_size as usize];
+                output_stream.read_exact(&mut chunk)?;
+
+                // hash the random leaf chunk — this updates the internal state of the builder's
+                // BmffHash assertion so it can calculate the Merkle root later without re-reading
+                //the mdat content.
+                builder.hash_bmff_mdat_bytes(mdat_id, &chunk, false)?;
+
+                remaining -= chunk_size;
             }
-            all_leaf_hashes.push(mdat_leaves);
         }
 
-        // 6. Hand the pre-computed leaf hashes to the builder.
-        //    chunk_size_kb is read from settings; only the Merkle root is stored,
-        //    so no UUID proof boxes are generated and nothing extra is appended.
-        builder.set_bmff_mdat_hashes(all_leaf_hashes)?;
-
-        // 7. Hash the asset — mdat content is excluded (covered by the Merkle root).
+        // 6. Hash the asset — mdat content is excluded automatically when hash_bmff_mdat_bytes is called.  (mdat hashes are covered by the Merkle tree).
         output_stream.rewind()?;
         builder.update_hash_from_stream("video/mp4", &mut output_stream)?;
 
@@ -4552,19 +4562,19 @@ mod tests {
         //    Any gap is zero-padded so BMFF box offsets stay intact.
         let signed_manifest = builder.sign_embeddable("video/mp4")?;
 
-        assert_eq!(
-            signed_manifest.len(),
-            composed_placeholder.len(),
-            "signed ({} bytes) must equal placeholder ({} bytes) after free-box padding",
-            signed_manifest.len(),
-            composed_placeholder.len()
-        );
-
         // 9. Patch the output stream: overwrite the placeholder with the signed manifest.
-        output_stream.seek(SeekFrom::Start(offset as u64))?;
-        output_stream.write_all(&signed_manifest)?;
+        // Over write the free box we originally inserted to reserve space for the manifest.
+        // This simulates how an app would patch in the manifest after writing the file.
+        output_stream.rewind()?;
+        inject_manifest_into_free_box(&mut output_stream, &signed_manifest, offset)?;
 
         // 10. Validate the final asset.
+        output_stream.rewind()?;
+        std::fs::write(
+            "/Users/mfisher/Downloads/final_asset.mp4",
+            output_stream.get_ref(),
+        )
+        .unwrap();
         output_stream.rewind()?;
         let reader = Reader::from_stream("video/mp4", &mut output_stream)?;
         println!("{reader}");
@@ -4572,7 +4582,6 @@ mod tests {
 
         Ok(())
     }
-    */
 
     #[test]
     fn test_builder_box_hashed_embeddable_min() {
