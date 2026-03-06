@@ -288,7 +288,7 @@ pub unsafe extern "C" fn c2pa_load_settings(
     let format = cstr_or_return_int!(format);
     // we use the legacy from_string function to set thread-local settings for backward compatibility
     let result = C2paSettings::from_string(&settings, &format);
-    ok_or_return_zero!(result);
+    ok_or_return_int!(result);
     0 // returns 0 on success
 }
 
