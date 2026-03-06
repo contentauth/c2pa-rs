@@ -2129,7 +2129,7 @@ impl Builder {
     ///         "xpath": "/uuid"
     ///     }
     /// ] as specified in:
-    /// https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_hash_assertion)
+    /// https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_hash_assertion
     /// and must be included in the placeholder manifest.
     ///
     /// This preserves the existing [`BmffHash`]'s name and algorithm; only the
@@ -2556,7 +2556,7 @@ impl Builder {
     ///
     /// Typical steps before calling this method:
     /// 1. [`Builder::placeholder`] → embed composed bytes into asset at offset O
-    /// 2. (BMFF + Merkle) [`Builder::set_bmff_mdat_hashes`] with leaf hashes
+    /// 2. (BMFF + Merkle) [`Builder::hash_bmff_mdat_bytes`] with leaf hashes
     /// 3. [`Builder::update_hash_from_stream`] to compute the asset hash
     /// 4. This method → returns composed bytes of identical size; patch asset at offset O
     ///
