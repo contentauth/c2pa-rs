@@ -279,7 +279,7 @@ mod sync_resolver {
 
 #[cfg(all(target_os = "wasi", feature = "http_wasi"))]
 mod sync_resolver {
-    pub use crate::http::reqwest::sync_impl::{new, Impl};
+    pub use crate::http::wasi::sync_impl::{new, Impl};
 }
 
 #[cfg(not(any(
