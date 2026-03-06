@@ -2027,8 +2027,8 @@ impl Builder {
     /// 5. Update the hash assertion in the Builder
     /// 6. Call [`Builder::sign_embeddable`] to sign the manifest
     ///
-    /// # Note on using Merkle trees represenation for mdat hashing
-    /// THe placeholder manifest does not account for the size of the Merkles leaves.  This is completely
+    /// # Note on using Merkle trees representation for mdat hashing
+    /// The placeholder manifest does not account for the size of the Merkles leaves.  This is completely
     /// defined by the encoding or the fixed size specified by the user and cannot be known at compile time. The means that the caller must
     /// estimate the addition size to reserve in addition to the placeholder manifest size.  The size of the
     /// manifest will be the size of the placeholder + at least (number of leaves * size of hash).  
@@ -2168,7 +2168,7 @@ impl Builder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn add_bmff_hash_exclusions(&mut self, exclusions: Option<&str>) -> Result<&mut Self> {
+    pub fn add_bmff_hash_exclusions(&mut self, exclusions: &str) -> Result<&mut Self> {
         let mut existing = self
             .find_assertion::<BmffHash>(BmffHash::LABEL)
             .map_err(|_| {
@@ -2179,12 +2179,13 @@ impl Builder {
                 )
             })?;
 
-        let mut bmff_exclusions: Vec<ExclusionsMap> = if let Some(bmff_exclusions_json) = exclusions
-        {
-            serde_json::from_str(bmff_exclusions_json)?
-        } else {
-            Vec::new()
-        };
+        let mut bmff_exclusions: Vec<ExclusionsMap> =
+            serde_json::from_str(exclusions).map_err(|_| {
+                Error::BadParam(
+                "Invalid exclusions format. Must be a JSON string representing an ExclusionsMap."
+                    .to_string(),
+            )
+            })?;
 
         // add user defined exclusions
         existing.add_exclusions(&mut bmff_exclusions);
@@ -2228,18 +2229,18 @@ impl Builder {
         self
     }
 
-    /// Support hashing mdat bytes as the client writes the mdat box.  This is an alternative to
+    /// Support hashing mdat bytes as the client writes the mdat box. This is an alternative to
     /// letting the SDK read and hash the mdat content after the fact, which can be costly for large assets.  
     /// With this method, the client can pass chunks of data for each mdat, and the SDK will compute the Merkle
     /// leaves and store it in the BmffHash assertion.  This requires that the placeholder manifest was created with
     /// a BmffHash assertion that has a reserved placeholder hash (call [`Builder::placeholder`] first to set this up).
     ///
-    /// This is typically called as data is presented from the rendering engine and writting to output. The
+    /// This is typically called as chunk data is presented from the rendering engine and writing the output. The
     /// Merkle leaf will be the size of the chunk by default generating a Merkle tree with varible length
     /// leaves, but the leaf size can be configured by `set_bmff_hash_fixed_leaf_size` if the client prefers a fixed
     /// leaf size.  The leaf chunking is handled by the SDK.  
     ///
-    /// The Merkle tree must be over a single mdat box.  The mdat_id specifies which mdat box the chunk belongs to,
+    /// The Merkle tree spans a single mdat box. There is one tree per mdat. The mdat_id specifies which mdat box the chunk belongs to,
     /// and the SDK will maintain a separate Merkle tree for each mdat. The mdat_id should start from 0 and increment
     /// for each mdat box in the asset.  The final Merkle tree for each mdat will be stored in the BmffHash assertion,
     /// and the client can call `hash_bmff_mdat_bytes` multiple times as each mdat box is written.
@@ -4457,7 +4458,7 @@ mod tests {
         Ok(())
     }
 
-    /* This test does not match how Merkle tree are constructed so disabling until I
+    /* TODO: This test does not match how Merkle tree are constructed so disabling until I
     can fix the implementation
 
     /// Simulates a client that hashes mdat chunks while writing, then hands those
