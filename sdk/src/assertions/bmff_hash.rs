@@ -244,7 +244,7 @@ impl MerkleMap {
     // the mdat boxes into the leaf hashes based on the desired chunk size.  The fixed_block_size field
     // is set if a fixed chunk size was used for hashing, otherwise the variable_block_sizes
     //field is set with the size of each leaf hash.
-    pub fn create_mms_from_mdat_leaves(
+    pub(crate) fn create_mms_from_mdat_leaves(
         alg: &str,
         merkle_leaves: &BTreeMap<usize, Vec<(u64, Vec<u8>)>>,
         fixed_block_size: Option<usize>,

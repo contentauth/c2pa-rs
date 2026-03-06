@@ -2608,7 +2608,7 @@ pub(crate) fn inject_placeholder(
     let ftyp_size = ftyp_info.size;
 
     // create free box bytes
-    let mut free_box_bytes = Vec::with_capacity(free_size as usize + 8);
+    let mut free_box_bytes = Vec::with_capacity(free_size + 8);
     write_free_box(&mut free_box_bytes, free_size)?;
 
     // insertion point
@@ -2616,7 +2616,7 @@ pub(crate) fn inject_placeholder(
 
     // write content before free box
     input_stream.rewind()?;
-    let mut before_free = input_stream.take(start as u64);
+    let mut before_free = input_stream.take(start);
     std::io::copy(&mut before_free, output_stream)?;
 
     // write free box

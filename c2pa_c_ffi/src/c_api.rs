@@ -1966,7 +1966,7 @@ pub unsafe extern "C" fn c2pa_builder_hash_mdat_bytes(
     data_ptr: *const c_uchar,
     data_len: usize,
     large_size: bool,
-) -> i64 {
+) -> c_int {
     ptr_or_return_int!(data_ptr);
     ptr_or_return_int!(builder_ptr);
 
@@ -1975,10 +1975,8 @@ pub unsafe extern "C" fn c2pa_builder_hash_mdat_bytes(
     let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
 
     // save to hasher to build Merkle trees during final save
-    match builder.hash_bmff_mdat_bytes(mdat_id, data, large_size) {
-        Ok(_) => 0,
-        Err(_) => -1,
-    }
+    ok_or_return_int!(builder.hash_bmff_mdat_bytes(mdat_id, data, large_size));
+    0
 }
 
 /// Updates the hard binding assertion in a Builder by hashing an asset stream.
