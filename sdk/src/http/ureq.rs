@@ -19,6 +19,13 @@ pub mod sync_impl {
 
     use crate::http::{HttpResolverError, SyncHttpResolver};
 
+    pub type Impl = ureq::Agent;
+
+    pub fn new() -> Impl {
+        let config = ureq::Agent::config_builder().max_redirects(0).build();
+        ureq::Agent::new_with_config(config)
+    }
+
     impl SyncHttpResolver for ureq::Agent {
         fn http_resolve(
             &self,
@@ -47,11 +54,16 @@ pub mod sync_impl {
 
     #[cfg(test)]
     pub mod tests {
-        use crate::http::tests::assert_http_resolver;
+        use crate::http::tests::{assert_http_resolver, assert_http_resolver_no_redirects};
 
         #[test]
         fn test_http_ureq() {
-            assert_http_resolver(ureq::agent());
+            assert_http_resolver(super::new());
+        }
+
+        #[test]
+        fn test_http_ureq_no_redirects() {
+            assert_http_resolver_no_redirects(super::new());
         }
     }
 }
