@@ -221,6 +221,9 @@ pub mod identity;
 /// The `jumbf_io` module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
 
+/// The jpeg_trust_reader module provides a Reader-like API that exports C2PA manifests in the JPEG Trust format.
+pub mod jpeg_trust_reader;
+
 /// The settings module provides a way to configure the C2PA SDK.
 pub mod settings;
 
@@ -303,3 +306,6 @@ pub(crate) use utils::{cbor_types, hash_utils};
 
 #[cfg(not(any(feature = "openssl", feature = "rust_native_crypto")))]
 compile_error!("Either 'openssl' or 'rust_native_crypto' feature must be enabled.");
+
+// Re-export JPEG Trust Reader
+pub use jpeg_trust_reader::JpegTrustReader;
