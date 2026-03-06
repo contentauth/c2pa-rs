@@ -86,11 +86,17 @@ pub fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
        .all(|(a,b)| a == b)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Hasher {
     SHA256(Sha256),
     SHA384(Sha384),
     SHA512(Sha512),
+}
+
+impl Default for Hasher {
+    fn default() -> Self {
+        Hasher::SHA256(Sha256::new())
+    }
 }
 
 impl Hasher {
