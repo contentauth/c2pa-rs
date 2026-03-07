@@ -41,7 +41,7 @@ use crate::{
     },
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
-    context::Context,
+    context::{Context, ProgressPhase},
     cose_validator::{
         get_signing_cert_serial_num, get_signing_info, get_signing_info_async, verify_cose,
         verify_cose_async,
@@ -1993,6 +1993,7 @@ impl Claim {
             }
         };
 
+        context.check_progress(ProgressPhase::Verification, 0.2)?;
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
 
         let certificate_serial_num = get_signing_cert_serial_num(&sign1)?.to_string();
@@ -2007,6 +2008,7 @@ impl Claim {
             context,
         )?;
 
+        context.check_progress(ProgressPhase::Verification, 0.5)?;
         let verified = verify_cose(
             sig,
             data,

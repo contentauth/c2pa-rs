@@ -39,7 +39,7 @@ use crate::{
         check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssertion, ClaimAssetData,
         RemoteManifest,
     },
-    context::Context,
+    context::{Context, ProgressPhase},
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
     crypto::{
@@ -2131,6 +2131,7 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<()> {
+        context.check_progress(ProgressPhase::Verification, 0.0)?;
         let claim = match store.provenance_claim() {
             Some(c) => c,
             None => {
@@ -3015,6 +3016,8 @@ impl Store {
             settings,
         )?;
 
+        context.check_progress(ProgressPhase::Hashing, 0.6)?;
+
         let mut preliminary_claim = PartialClaim::default();
         {
             let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
@@ -3060,6 +3063,8 @@ impl Store {
             output_stream.rewind()?;
         }
 
+        context.check_progress(ProgressPhase::Signing, 0.75)?;
+
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
             self.sign_claim(pc, signer, signer.reserve_size(), settings)
@@ -3086,6 +3091,8 @@ impl Store {
 
                 output_stream.flush()?;
                 output_stream.rewind()?;
+
+                context.check_progress(ProgressPhase::Embedding, 0.9)?;
 
                 let verify_after_sign = settings.verify.verify_after_sign;
                 // Also catch the case where we may have written to io::empty() or similar

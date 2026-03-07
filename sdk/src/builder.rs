@@ -39,7 +39,7 @@ use crate::{
         UserCbor,
     },
     claim::Claim,
-    context::Context,
+    context::{Context, ProgressPhase},
     crypto::cose,
     error::{Error, Result},
     jumbf::labels::manifest_label_from_uri,
@@ -2594,9 +2594,15 @@ impl Builder {
 
         self.maybe_add_parent(&format, source)?;
 
+        self.context
+            .check_progress(ProgressPhase::Ingredients, 0.15)?;
+
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
+
+        self.context
+            .check_progress(ProgressPhase::Thumbnail, 0.25)?;
 
         let mut claim = self.to_claim()?;
 
@@ -2694,9 +2700,15 @@ impl Builder {
 
         self.maybe_add_parent(&format, source)?;
 
+        self.context
+            .check_progress(ProgressPhase::Ingredients, 0.15)?;
+
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
+
+        self.context
+            .check_progress(ProgressPhase::Thumbnail, 0.25)?;
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
@@ -5422,6 +5434,103 @@ mod tests {
 
         assert!(builder.context().settings().verify.verify_after_sign);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_progress_callback_invoked_during_sign() -> Result<()> {
+        use std::sync::Mutex;
+
+        let received: std::sync::Arc<Mutex<Vec<(ProgressPhase, f32)>>> =
+            std::sync::Arc::new(Mutex::new(Vec::new()));
+        let received_clone = received.clone();
+        let ctx = test_context()
+            .with_progress_callback(move |phase, pct| {
+                received_clone.lock().unwrap().push((phase, pct));
+                true
+            })
+            .into_shared();
+
+        let mut builder = Builder::from_shared_context(&ctx);
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+
+        let r = received.lock().unwrap();
+        assert!(!r.is_empty(), "progress callback should be invoked");
+        let phases: Vec<ProgressPhase> = r.iter().map(|(p, _)| p.clone()).collect();
+        assert!(
+            phases.contains(&ProgressPhase::Ingredients),
+            "expected Ingredients phase, got {:?}",
+            phases
+        );
+        assert!(
+            phases.contains(&ProgressPhase::Hashing),
+            "expected Hashing phase, got {:?}",
+            phases
+        );
+        assert!(
+            phases.contains(&ProgressPhase::Verification),
+            "expected Verification phase (verify_after_sign), got {:?}",
+            phases
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_progress_callback_cancel_during_sign() -> Result<()> {
+        let ctx = test_context()
+            .with_progress_callback(|_, _| false)
+            .into_shared();
+
+        let mut builder =
+            Builder::from_shared_context(&ctx).with_definition(simple_manifest_json())?;
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        let result = builder.save_to_stream("image/jpeg", &mut source, &mut dest);
+        assert!(
+            matches!(result, Err(crate::Error::OperationCancelled)),
+            "expected OperationCancelled, got {:?}",
+            result
+        );
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))] // WASM doesn't support threads
+    #[test]
+    fn test_context_cancel_during_sign() -> Result<()> {
+        use std::{sync::mpsc, thread};
+
+        let (tx, rx) = mpsc::channel();
+        let ctx = test_context()
+            .with_progress_callback(move |_, _| {
+                let _ = tx.send(());
+                true
+            })
+            .into_shared();
+
+        let ctx_clone = ctx.clone();
+        let handle = thread::spawn(move || {
+            let mut src = Cursor::new(TEST_IMAGE);
+            let mut dst = Cursor::new(Vec::new());
+            let mut b = Builder::from_shared_context(&ctx_clone)
+                .with_definition(r#"{"title": "Thread Cancel Test"}"#)
+                .unwrap();
+            b.set_intent(BuilderIntent::Edit);
+            b.save_to_stream("image/jpeg", &mut src, &mut dst)
+        });
+
+        rx.recv().expect("callback should fire");
+        ctx.cancel();
+
+        let result = handle.join().expect("thread should join");
+        assert!(
+            matches!(result, Err(crate::Error::OperationCancelled)),
+            "expected OperationCancelled, got {:?}",
+            result
+        );
         Ok(())
     }
 
