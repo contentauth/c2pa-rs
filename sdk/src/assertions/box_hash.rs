@@ -13,7 +13,7 @@
 
 use std::{
     fs::File,
-    io::{Cursor, SeekFrom},
+    io::{Cursor, Read, Seek, SeekFrom},
     path::*,
 };
 
@@ -27,6 +27,7 @@ use crate::{
     asset_io::{AssetBoxHash, CAIRead},
     error::{Error, Result},
     hash_utils::hash_by_alg,
+    maybe_send_sync::MaybeSend,
     utils::{
         hash_utils::{hash_stream_by_alg, verify_stream_by_alg, HashRange},
         io_utils::ReaderUtils,
@@ -126,7 +127,15 @@ impl BoxHash {
 
         // check to see we source index starts at PNGh and skip if not included in the hash list
         if let Some(first_expected_bms) = source_bms.get(source_index) {
-            if first_expected_bms.names[0] == "PNGh" && self.boxes[0].names[0] != "PNGh" {
+            if first_expected_bms
+                .names
+                .first()
+                .is_some_and(|name| name == "PNGh")
+                && self.boxes[0]
+                    .names
+                    .first()
+                    .is_some_and(|name| name != "PNGh")
+            {
                 source_index += 1;
             }
         } else {
@@ -204,14 +213,16 @@ impl BoxHash {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub fn generate_box_hash_from_stream(
+    pub fn generate_box_hash_from_stream<R>(
         &mut self,
-        reader: &mut dyn CAIRead,
+        reader: &mut R,
         alg: &str,
         bhp: &dyn AssetBoxHash,
         minimal_form: bool,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        R: Read + Seek + MaybeSend,
+    {
         // get source box list
         let source_bms = bhp.get_box_map(reader)?;
 
@@ -673,5 +684,30 @@ mod tests {
         assert_eq!(bh.boxes[0].names[0], "test");
         assert_eq!(bh.boxes[1].names[0], "C2PA");
         assert_eq!(bh.boxes[2].names[0], "test1");
+    }
+
+    #[test]
+    fn test_verify_stream_hash_with_empty_names() {
+        let ap = fixture_path("libpng-test.png");
+        let bhp = get_assetio_handler_from_path(&ap)
+            .unwrap()
+            .asset_box_hash_ref()
+            .unwrap();
+        let mut input = File::open(&ap).unwrap();
+
+        let malicious_bh = BoxHash {
+            boxes: vec![BoxMap {
+                names: vec![],
+                alg: Some("sha256".to_string()),
+                hash: ByteBuf::from(vec![0]),
+                excluded: None,
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 0,
+            }],
+        };
+
+        // This shouldn't crash.
+        let _ = malicious_bh.verify_stream_hash(&mut input, Some("sha256"), bhp);
     }
 }

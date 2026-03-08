@@ -115,6 +115,26 @@ impl Hasher {
             SHA512(d) => d.finalize().to_vec(),
         }
     }
+
+    pub fn finalize_reset(&mut self) -> Vec<u8> {
+        use Hasher::*;
+
+        // return the hash and leave the Hasher open and reset
+        match self {
+            SHA256(ref mut d) => d.finalize_reset().to_vec(),
+            SHA384(ref mut d) => d.finalize_reset().to_vec(),
+            SHA512(ref mut d) => d.finalize_reset().to_vec(),
+        }
+    }
+
+    pub fn new(alg: &str) -> Result<Hasher> {
+        match alg {
+            "sha256" => Ok(Hasher::SHA256(Sha256::new())),
+            "sha384" => Ok(Hasher::SHA384(Sha384::new())),
+            "sha512" => Ok(Hasher::SHA512(Sha512::new())),
+            _ => Err(Error::UnsupportedType),
+        }
+    }
 }
 
 // Return hash bytes for desired hashing algorithm.
