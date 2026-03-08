@@ -310,7 +310,5 @@ fn test_all_hashes_match_schema_format() -> Result<()> {
         "Should have at least one hash field in the output"
     );
 
-    println!("Verified {} hash fields are all base64 strings", hash_count);
-
     Ok(())
 }

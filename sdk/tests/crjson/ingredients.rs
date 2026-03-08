@@ -114,19 +114,6 @@ fn test_ingredient_referenced_in_claim() -> Result<()> {
         .as_array()
         .expect("manifests should be array");
 
-    println!("Total manifests: {}", manifests.len());
-    for (i, m) in manifests.iter().enumerate() {
-        println!("Manifest {}: label={:?}", i, m.get("label"));
-        if let Some(claim_v2) = m.get("claim.v2") {
-            if let Some(created) = claim_v2.get("created_assertions") {
-                println!("  Created assertions count: {}", created.as_array().map(|a| a.len()).unwrap_or(0));
-            }
-            if let Some(gathered) = claim_v2.get("gathered_assertions") {
-                println!("  Gathered assertions count: {}", gathered.as_array().map(|a| a.len()).unwrap_or(0));
-            }
-        }
-    }
-
     // Find a manifest with assertions: either claim.v2 (created/gathered) or claim v1 (assertions array)
     let active_manifest = manifests
         .iter()
@@ -163,16 +150,6 @@ fn test_ingredient_referenced_in_claim() -> Result<()> {
         let assertions = active_manifest.get("claim").and_then(|c| c.get("assertions")).and_then(|a| a.as_array()).expect("claim.assertions should be array");
         (assertions, assertions)
     };
-
-    // Debug: Print what we found
-    println!("Created assertions count: {}", created_assertions.len());
-    println!("Gathered assertions count: {}", gathered_assertions.len());
-    for (i, a) in created_assertions.iter().enumerate() {
-        println!("Created[{}]: {}", i, a.get("url").unwrap_or(&serde_json::Value::Null));
-    }
-    for (i, a) in gathered_assertions.iter().enumerate() {
-        println!("Gathered[{}]: {}", i, a.get("url").unwrap_or(&serde_json::Value::Null));
-    }
 
     // Find ingredient reference in EITHER created or gathered
     let has_ingredient_in_created = created_assertions.iter().any(|assertion_ref| {

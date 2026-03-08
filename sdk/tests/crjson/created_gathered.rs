@@ -85,11 +85,6 @@ fn test_created_and_gathered_assertions_separated() -> Result<()> {
         })
         .expect("should have a manifest with our test assertions (org.test.created, org.test.gathered, org.test.regular)");
 
-    // Print the label for debugging
-    println!("Manifest label: {:?}", active_manifest.get("label"));
-    println!("Claim version: {:?}", active_manifest.get("claim.v2"));
-    println!("Total manifests: {}", manifests.len());
-
     // Check claim.v2 for created_assertions and gathered_assertions
     let claim_v2 = active_manifest["claim.v2"]
         .as_object()
@@ -102,18 +97,6 @@ fn test_created_and_gathered_assertions_separated() -> Result<()> {
     let gathered_assertions = claim_v2["gathered_assertions"]
         .as_array()
         .expect("gathered_assertions should be array");
-
-    // Print for debugging
-    println!("Created assertions count: {}", created_assertions.len());
-    println!("Gathered assertions count: {}", gathered_assertions.len());
-    
-    for (i, assertion) in created_assertions.iter().enumerate() {
-        println!("Created[{}]: {}", i, assertion.get("url").unwrap());
-    }
-    
-    for (i, assertion) in gathered_assertions.iter().enumerate() {
-        println!("Gathered[{}]: {}", i, assertion.get("url").unwrap());
-    }
 
     // Verify that gathered_assertions is not empty
     assert!(

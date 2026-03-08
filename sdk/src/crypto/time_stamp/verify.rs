@@ -253,7 +253,7 @@ pub fn verify_time_stamp(
                                 .informational(&mut current_validation_log);
 
                                 last_err = TimeStampError::DecodeError(
-                                    "unable to decode igned message data".to_string(),
+                                    "unable to decode signed message data".to_string(),
                                 );
                                 continue;
                             }

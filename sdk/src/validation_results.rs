@@ -26,7 +26,7 @@ use crate::{
     validation_status::{self, log_kind, ValidationStatus},
 };
 
-/// Represents the levels of assurance a manifest store achives when evaluated against the C2PA
+/// Represents the levels of assurance a manifest store achieves when evaluated against the C2PA
 /// specifications structural, cryptographic, and trust requirements.
 ///
 /// See [Validation states - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_validation_states).
@@ -57,7 +57,7 @@ pub struct StatusCodes {
     pub success: Vec<ValidationStatus>,
     /// An array of validation informational codes. May be empty.
     pub informational: Vec<ValidationStatus>,
-    // An array of validation failure codes. May be empty.
+    /// An array of validation failure codes. May be empty.
     pub failure: Vec<ValidationStatus>,
 }
 
