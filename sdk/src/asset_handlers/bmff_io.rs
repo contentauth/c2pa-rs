@@ -26,7 +26,7 @@ use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
     asset_io::{
         rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        ComposedManifestRef, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     status_tracker::{ErrorBehavior, StatusTracker},
@@ -43,8 +43,6 @@ pub struct BmffIO {
     #[allow(dead_code)]
     bmff_format: String, // can be used for specialized BMFF cases
 }
-
-const QT_FOURCC: u32 = 0x71742020; // 'qt  ' - used to identify QuickTime format which has some differences from standard BMFF/MP4
 
 const MAX_BOX_DEPTH: usize = 32; // reasonable BMFF box depth, to prevent stack overflow
 
@@ -365,6 +363,29 @@ fn read_box_header_ext<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<(u8, u
     let flags = reader.read_u24::<BigEndian>()?;
     Ok((version, flags))
 }
+
+/// Detect whether a `meta` box omits the FullBox version/flags header.
+///
+/// Per ISO 14496-12 §8.11.1, `meta` is a FullBox whose first child must
+/// be `hdlr`. However, Apple QuickTime (and iOS AVAssetWriter even with
+/// `isom` brand) writes `meta` as a plain Box without the 4-byte
+/// version+flags field. We detect this by peeking at the next 8 bytes:
+/// if bytes 4..8 are `hdlr`, the data is already a child box header so
+/// no FullBox header is present. This matches the approach used by FFmpeg
+/// and Bento4.
+fn meta_box_lacks_fullbox_header<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<bool> {
+    let pos = reader.stream_position()?;
+    let mut buf = [0u8; 8];
+    let ok = reader.read_exact(&mut buf).is_ok();
+    reader.seek(SeekFrom::Start(pos))?;
+
+    if !ok {
+        return Ok(false);
+    }
+
+    Ok(&buf[4..8] == b"hdlr")
+}
+
 fn write_box_header_ext<W: Write>(w: &mut W, v: u8, f: u32) -> Result<u64> {
     w.write_u8(v)?;
     w.write_u24::<BigEndian>(f)?;
@@ -1250,6 +1271,7 @@ fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
     Ok(())
 }
 
+#[allow(clippy::only_used_in_recursion)]
 pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     reader: &mut R,
     end: u64,
@@ -1343,9 +1365,9 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                     // FullBox has version and flags after the header, but for some boxes like QT "meta"
                     // the version and flags are not present even though it is technically a full box,
                     // so we need to conditionally read the extended header based on the box type and in
-                    // the case of "meta" the ftyp major brand of "qt  " indicates the QuickTime exception.
+                    // the case of "meta" we peek at the data to detect the QuickTime exception.
                     let (version, flags) = if BoxType::MetaBox == header.name
-                        && ftyp.major_brand == QT_FOURCC.into()
+                        && meta_box_lacks_fullbox_header(reader)?
                     {
                         (None, None)
                     } else {
@@ -1668,7 +1690,9 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
     })
 }
 
-pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
+pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+) -> Result<C2PABmffBoxes> {
     let size = stream_len(reader)?;
     reader.rewind()?;
 
@@ -1818,6 +1842,10 @@ impl AssetIO for BmffIO {
     }
 
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+        Some(self)
+    }
+
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }
 
@@ -2315,6 +2343,14 @@ impl AssetPatch for BmffIO {
                 "patch_cai_store store size mismatch.".to_string(),
             ))
         }
+    }
+}
+
+impl ComposedManifestRef for BmffIO {
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+        let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(manifest_data.len() * 2);
+        write_c2pa_box(&mut new_c2pa_box, manifest_data, MANIFEST, &[], 0)?;
+        Ok(new_c2pa_box)
     }
 }
 
