@@ -1719,6 +1719,11 @@
                     "type": "string",
                     "format": "uri",
                     "description": "URI to the trust list that was used to validate certificates"
+                },
+                "validationTime": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Time when the validation was performed; RFC 3339 format"
                 }
             },
             "required": [

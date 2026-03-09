@@ -13,6 +13,7 @@
 
 use std::collections::HashSet;
 
+use chrono::Utc;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -115,6 +116,10 @@ pub struct ValidationResults {
     /// manifest. Present if the the ingredient is a C2PA asset.
     #[serde(rename = "ingredientDeltas", skip_serializing_if = "Option::is_none")]
     ingredient_deltas: Option<Vec<IngredientDeltaValidationResult>>,
+
+    /// Time when the validation was performed (RFC 3339 date-time). Exported in crJSON as validationTime.
+    #[serde(rename = "validationTime", skip_serializing_if = "Option::is_none")]
+    validation_time: Option<String>,
 }
 
 impl ValidationResults {
@@ -199,6 +204,7 @@ impl ValidationResults {
                 results.add_status(status);
             }
         }
+        results.validation_time = Some(Utc::now().to_rfc3339());
         results
     }
 
