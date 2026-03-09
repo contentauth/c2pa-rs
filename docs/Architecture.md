@@ -462,8 +462,8 @@ The project uses multiple testing approaches:
 
 ## Related Documentation
 
-- [Usage Guide](docs/usage.md)
-- [Supported Formats](docs/supported-formats.md)
-- [CAWG Identity](docs/cawg-identity.md)
-- [Contributing](CONTRIBUTING.md)
-- [Release Notes](docs/release-notes.md)
+- [Usage Guide](usage.md)
+- [Supported Formats](supported-formats.md)
+- [CAWG Identity](cawg-identity.md)
+- [Contributing](../CONTRIBUTING.md)
+- [Release Notes](release-notes.md)
