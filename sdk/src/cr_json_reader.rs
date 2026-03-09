@@ -260,7 +260,9 @@ impl CrJsonReader {
                 .inner
                 .store
                 .get_claim(label)
-                .ok_or_else(|| Error::ClaimMissing { label: label.to_owned() })?;
+                .ok_or_else(|| Error::ClaimMissing {
+                    label: label.to_owned(),
+                })?;
             if claim.version() == 1 {
                 let claim_v1 = self.build_claim_v1(manifest, label, claim)?;
                 manifest_obj.insert("claim".to_string(), claim_v1);
@@ -295,8 +297,8 @@ impl CrJsonReader {
             .map(|(i, claim)| (claim.label().to_string(), i))
             .collect();
         labeled.sort_by(|a, b| {
-            let a_active = active_label.map_or(false, |l| l == a.0);
-            let b_active = active_label.map_or(false, |l| l == b.0);
+            let a_active = active_label.is_some_and(|l| l == a.0);
+            let b_active = active_label.is_some_and(|l| l == b.0);
             match (a_active, b_active) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
@@ -313,13 +315,17 @@ impl CrJsonReader {
     }
 
     /// Convert assertions from array format to object format (keyed by label)
-    fn convert_assertions(&self, manifest: &Manifest, manifest_label: &str) -> Result<Map<String, Value>> {
+    fn convert_assertions(
+        &self,
+        manifest: &Manifest,
+        manifest_label: &str,
+    ) -> Result<Map<String, Value>> {
         let mut assertions_obj = Map::new();
 
         // Process regular assertions
         for assertion in manifest.assertions() {
             let label = assertion.label().to_string();
-            
+
             // Try to get the value - if it fails (e.g., binary or CBOR), try to decode it
             let value_result = if let Ok(value) = assertion.value() {
                 Ok(value.clone())
@@ -327,39 +333,39 @@ impl CrJsonReader {
                 // For CBOR assertions (like ingredients), try to decode them
                 self.decode_assertion_data(assertion)
             };
-            
+
             if let Ok(value) = value_result {
                 // Fix any byte array hashes to base64 strings
                 let fixed_value = Self::fix_hash_encoding(value);
                 assertions_obj.insert(label, fixed_value);
             }
         }
-        
+
         // Add hash assertions (c2pa.hash.data, c2pa.hash.bmff, c2pa.hash.boxes)
         // These are filtered out by Manifest::from_store but we need them for crJSON format
         if let Some(claim) = self.inner.store.get_claim(manifest_label) {
             for hash_assertion in claim.hash_assertions() {
                 let label = hash_assertion.label_raw();
                 let instance = hash_assertion.instance();
-                
+
                 // Get the assertion and convert to JSON
                 if let Some(assertion) = claim.get_claim_assertion(&label, instance) {
                     if let Ok(assertion_obj) = assertion.assertion().as_json_object() {
                         let fixed_value = Self::fix_hash_encoding(assertion_obj);
-                        
+
                         // Handle instance numbers for multiple assertions with same label
                         let final_label = if instance > 0 {
                             format!("{}_{}", label, instance + 1)
                         } else {
                             label
                         };
-                        
+
                         assertions_obj.insert(final_label, fixed_value);
                     }
                 }
             }
         }
-        
+
         // Add ingredient assertions from the ingredients array
         // Each ingredient is itself an assertion that should be in the assertions object
         for (index, ingredient) in manifest.ingredients().iter().enumerate() {
@@ -367,7 +373,7 @@ impl CrJsonReader {
             if let Ok(ingredient_json) = serde_json::to_value(ingredient) {
                 // Fix any byte array hashes to base64 strings
                 let mut fixed_ingredient = Self::fix_hash_encoding(ingredient_json);
-                
+
                 // Get the label from the ingredient (includes version if v2+)
                 // The label field contains the correct versioned label like "c2pa.ingredient.v2"
                 let base_label = if let Some(label_value) = fixed_ingredient.get("label") {
@@ -378,19 +384,19 @@ impl CrJsonReader {
                 } else {
                     "c2pa.ingredient".to_string()
                 };
-                
+
                 // Remove the label field since it's redundant (the label is the key in assertions object)
                 if let Some(obj) = fixed_ingredient.as_object_mut() {
                     obj.remove("label");
                 }
-                
+
                 // Add instance number if there are multiple ingredients
                 let label = if manifest.ingredients().len() > 1 {
-                    format!("{}__{}",  base_label, index + 1)
+                    format!("{}__{}", base_label, index + 1)
                 } else {
                     base_label
                 };
-                
+
                 assertions_obj.insert(label, fixed_ingredient);
             }
         }
@@ -422,10 +428,7 @@ impl CrJsonReader {
                             let absolute_uri =
                                 to_absolute_uri(manifest_label, &assertion_ref.url());
                             let mut ref_obj = Map::new();
-                            ref_obj.insert(
-                                "format".to_string(),
-                                json!(assertion.content_type()),
-                            );
+                            ref_obj.insert("format".to_string(), json!(assertion.content_type()));
                             ref_obj.insert("identifier".to_string(), json!(absolute_uri));
                             ref_obj.insert(
                                 "hash".to_string(),
@@ -443,7 +446,7 @@ impl CrJsonReader {
 
         Ok(assertions_obj)
     }
-    
+
     /// Decode assertion data that's not in JSON format (e.g., CBOR)
     fn decode_assertion_data(&self, assertion: &crate::ManifestAssertion) -> Result<Value> {
         // Try to get binary data and decode as CBOR
@@ -611,7 +614,11 @@ impl CrJsonReader {
 
     /// Resolve an icon value (ResourceRef with identifier, or already hashedUriMap) to schema
     /// hashedUriMap { url, hash, alg? }. Returns Some(Value) when we can produce a valid hashedUriMap.
-    fn resolve_icon_to_hashed_uri_map(claim: &Claim, manifest_label: &str, icon_val: &Value) -> Option<Value> {
+    fn resolve_icon_to_hashed_uri_map(
+        claim: &Claim,
+        manifest_label: &str,
+        icon_val: &Value,
+    ) -> Option<Value> {
         let icon_obj = icon_val.as_object()?;
         let url_str = icon_obj.get("url").and_then(|v| v.as_str());
         let hash_str = icon_obj.get("hash").and_then(|v| v.as_str());
@@ -659,12 +666,7 @@ impl CrJsonReader {
 
     /// Build the claim (v1) object per crJSON claimV1 / C2PA CDDL claim-map.
     /// Used when the source claim is version 1 (has "assertions", not "created_assertions").
-    fn build_claim_v1(
-        &self,
-        manifest: &Manifest,
-        label: &str,
-        claim: &Claim,
-    ) -> Result<Value> {
+    fn build_claim_v1(&self, manifest: &Manifest, label: &str, claim: &Claim) -> Result<Value> {
         let mut claim_v1 = Map::new();
 
         // Required: claim_generator (v1 only)
@@ -737,10 +739,7 @@ impl CrJsonReader {
         // Required: dc:format, instanceID
         claim_v1.insert(
             "dc:format".to_string(),
-            json!(manifest
-                .format()
-                .or_else(|| claim.format())
-                .unwrap_or("")),
+            json!(manifest.format().or_else(|| claim.format()).unwrap_or("")),
         );
         claim_v1.insert("instanceID".to_string(), json!(manifest.instance_id()));
 
@@ -817,10 +816,9 @@ impl CrJsonReader {
         }
         // Per crJSON schema, claim.v2 requires claim_generator_info (softwareAgent with at least "name").
         if !claim_v2.contains_key("claim_generator_info") {
-            let fallback = manifest.claim_generator().map_or_else(
-                || json!({"name": "Unknown"}),
-                |cg| json!({"name": cg}),
-            );
+            let fallback = manifest
+                .claim_generator()
+                .map_or_else(|| json!({"name": "Unknown"}), |cg| json!({"name": cg}));
             claim_v2.insert("claim_generator_info".to_string(), fallback);
         }
 
@@ -832,7 +830,8 @@ impl CrJsonReader {
         claim_v2.insert("signature".to_string(), json!(signature_ref));
 
         // Build created_assertions and gathered_assertions arrays with hashes from the underlying claim
-        let (created_assertions, gathered_assertions) = self.build_assertion_references(manifest, label)?;
+        let (created_assertions, gathered_assertions) =
+            self.build_assertion_references(manifest, label)?;
         claim_v2.insert("created_assertions".to_string(), created_assertions);
         claim_v2.insert("gathered_assertions".to_string(), gathered_assertions);
 
@@ -882,10 +881,19 @@ impl CrJsonReader {
 
     /// Build assertion references with hashes from manifest
     /// Returns a tuple of (created_assertions, gathered_assertions) arrays
-    fn build_assertion_references(&self, _manifest: &Manifest, label: &str) -> Result<(Value, Value)> {
+    fn build_assertion_references(
+        &self,
+        _manifest: &Manifest,
+        label: &str,
+    ) -> Result<(Value, Value)> {
         // Get the underlying claim to access created_assertions and gathered_assertions separately
-        let claim = self.inner.store.get_claim(label)
-            .ok_or_else(|| Error::ClaimMissing { label: label.to_owned() })?;
+        let claim = self
+            .inner
+            .store
+            .get_claim(label)
+            .ok_or_else(|| Error::ClaimMissing {
+                label: label.to_owned(),
+            })?;
 
         // Build created_assertions array
         let mut created_refs = Vec::new();
@@ -975,7 +983,8 @@ impl CrJsonReader {
                         if let Ok(Some(tsa_der)) = tsa_signer_cert_der_from_token(&token_bytes) {
                             if let Ok(Some(tsa_info)) = self.parse_certificate_from_der(&tsa_der) {
                                 if let Some(serial) = tsa_info.serial_number {
-                                    tsa_cert_info_obj.insert("serialNumber".to_string(), json!(serial));
+                                    tsa_cert_info_obj
+                                        .insert("serialNumber".to_string(), json!(serial));
                                 }
                                 if let Some(issuer) = tsa_info.issuer {
                                     tsa_cert_info_obj.insert("issuer".to_string(), json!(issuer));
@@ -998,7 +1007,10 @@ impl CrJsonReader {
                 time_stamp_info.insert("timestamp".to_string(), json!(time));
             }
             if !tsa_cert_info_obj.is_empty() {
-                time_stamp_info.insert("certificateInfo".to_string(), Value::Object(tsa_cert_info_obj));
+                time_stamp_info.insert(
+                    "certificateInfo".to_string(),
+                    Value::Object(tsa_cert_info_obj),
+                );
             }
             claim_signature.insert("timeStampInfo".to_string(), Value::Object(time_stamp_info));
         }
@@ -1019,42 +1031,29 @@ impl CrJsonReader {
             Error::CoseInvalidCert // Use appropriate error type
         })?;
 
-        let mut details = CertificateDetails::default();
-
-        // Extract serial number in hex format
-        details.serial_number = Some(format!("{:x}", cert.serial));
-
-        // Extract issuer DN components
-        details.issuer = Some(self.extract_dn_components(cert.issuer())?);
-
-        // Extract subject DN components
-        details.subject = Some(self.extract_dn_components(cert.subject())?);
-
-        // Extract validity period
         let not_before = cert.validity().not_before.to_datetime();
         let not_after = cert.validity().not_after.to_datetime();
-        // Convert OffsetDateTime to RFC3339 format using chrono
         let not_before_chrono: DateTime<Utc> =
             DateTime::from_timestamp(not_before.unix_timestamp(), 0)
                 .ok_or(Error::CoseInvalidCert)?;
         let not_after_chrono: DateTime<Utc> =
             DateTime::from_timestamp(not_after.unix_timestamp(), 0)
                 .ok_or(Error::CoseInvalidCert)?;
-        details.validity = Some(json!({
-            "notBefore": not_before_chrono.to_rfc3339(),
-            "notAfter": not_after_chrono.to_rfc3339()
-        }));
-
+        let details = CertificateDetails {
+            serial_number: Some(format!("{:x}", cert.serial)),
+            issuer: Some(self.extract_dn_components(cert.issuer())?),
+            subject: Some(self.extract_dn_components(cert.subject())?),
+            validity: Some(json!({
+                "notBefore": not_before_chrono.to_rfc3339(),
+                "notAfter": not_after_chrono.to_rfc3339()
+            })),
+        };
         Ok(Some(details))
     }
 
     /// Parse a single certificate (DER) to extract DN components and validity.
     fn parse_certificate_from_der(&self, der: &[u8]) -> Result<Option<CertificateDetails>> {
         let (_, cert) = X509Certificate::from_der(der).map_err(|_e| Error::CoseInvalidCert)?;
-        let mut details = CertificateDetails::default();
-        details.serial_number = Some(format!("{:x}", cert.serial));
-        details.issuer = Some(self.extract_dn_components(cert.issuer())?);
-        details.subject = Some(self.extract_dn_components(cert.subject())?);
         let not_before = cert.validity().not_before.to_datetime();
         let not_after = cert.validity().not_after.to_datetime();
         let not_before_chrono: DateTime<Utc> =
@@ -1063,10 +1062,15 @@ impl CrJsonReader {
         let not_after_chrono: DateTime<Utc> =
             DateTime::from_timestamp(not_after.unix_timestamp(), 0)
                 .ok_or(Error::CoseInvalidCert)?;
-        details.validity = Some(json!({
-            "notBefore": not_before_chrono.to_rfc3339(),
-            "notAfter": not_after_chrono.to_rfc3339()
-        }));
+        let details = CertificateDetails {
+            serial_number: Some(format!("{:x}", cert.serial)),
+            issuer: Some(self.extract_dn_components(cert.issuer())?),
+            subject: Some(self.extract_dn_components(cert.subject())?),
+            validity: Some(json!({
+                "notBefore": not_before_chrono.to_rfc3339(),
+                "notAfter": not_after_chrono.to_rfc3339()
+            })),
+        };
         Ok(Some(details))
     }
 
@@ -1111,7 +1115,7 @@ impl CrJsonReader {
                     .chars()
                     .filter(|c| !c.is_whitespace())
                     .collect();
-                
+
                 if let Ok(der) = base64::decode(&pem_data) {
                     certs.push(der);
                 }
@@ -1125,6 +1129,7 @@ impl CrJsonReader {
     /// Similar to build_claim_signature but for the signature field in cawg.identity assertions
     fn decode_cawg_signature(signature_bytes: &[u8]) -> Result<Value> {
         use coset::{CoseSign1, TaggedCborSerializable};
+
         use crate::crypto::cose::{cert_chain_from_sign1, signing_alg_from_sign1};
 
         // Parse COSE_Sign1
@@ -1144,7 +1149,10 @@ impl CrJsonReader {
                 // Parse the first certificate (end entity)
                 if let Ok((_rem, cert)) = X509Certificate::from_der(&cert_chain[0]) {
                     let mut cert_info = Map::new();
-                    cert_info.insert("serialNumber".to_string(), json!(format!("{:x}", cert.serial)));
+                    cert_info.insert(
+                        "serialNumber".to_string(),
+                        json!(format!("{:x}", cert.serial)),
+                    );
                     if let Ok(issuer) = Self::extract_dn_components_static(cert.issuer()) {
                         cert_info.insert("issuer".to_string(), json!(issuer));
                     }
@@ -1153,19 +1161,26 @@ impl CrJsonReader {
                     }
                     let not_before = cert.validity().not_before.to_datetime();
                     let not_after = cert.validity().not_after.to_datetime();
-                    if let Some(not_before_chrono) = DateTime::<Utc>::from_timestamp(not_before.unix_timestamp(), 0) {
-                        if let Some(not_after_chrono) = DateTime::<Utc>::from_timestamp(not_after.unix_timestamp(), 0) {
-                            cert_info.insert("validity".to_string(), json!({
-                                "notBefore": not_before_chrono.to_rfc3339(),
-                                "notAfter": not_after_chrono.to_rfc3339()
-                            }));
+                    if let Some(not_before_chrono) =
+                        DateTime::<Utc>::from_timestamp(not_before.unix_timestamp(), 0)
+                    {
+                        if let Some(not_after_chrono) =
+                            DateTime::<Utc>::from_timestamp(not_after.unix_timestamp(), 0)
+                        {
+                            cert_info.insert(
+                                "validity".to_string(),
+                                json!({
+                                    "notBefore": not_before_chrono.to_rfc3339(),
+                                    "notAfter": not_after_chrono.to_rfc3339()
+                                }),
+                            );
                         }
                     }
                     signature_obj.insert("certificateInfo".to_string(), Value::Object(cert_info));
                 }
             }
         }
-        
+
         // If no certificate chain was found, try to extract Verifiable Credential
         // (for cawg.identity_claims_aggregation signatures)
         if !signature_obj.contains_key("certificateInfo") {
@@ -1176,7 +1191,7 @@ impl CrJsonReader {
                     if let Some(issuer) = vc_value.get("issuer") {
                         signature_obj.insert("issuer".to_string(), issuer.clone());
                     }
-                    
+
                     // Extract validity period
                     if let Some(valid_from) = vc_value.get("validFrom") {
                         signature_obj.insert("validFrom".to_string(), valid_from.clone());
@@ -1184,16 +1199,20 @@ impl CrJsonReader {
                     if let Some(valid_until) = vc_value.get("validUntil") {
                         signature_obj.insert("validUntil".to_string(), valid_until.clone());
                     }
-                    
+
                     // Extract verified identities from credential subject
                     if let Some(cred_subject) = vc_value.get("credentialSubject") {
                         if let Some(verified_ids) = cred_subject.get("verifiedIdentities") {
-                            signature_obj.insert("verifiedIdentities".to_string(), verified_ids.clone());
+                            signature_obj
+                                .insert("verifiedIdentities".to_string(), verified_ids.clone());
                         }
                     }
-                    
+
                     // Mark this as an ICA credential
-                    signature_obj.insert("credentialType".to_string(), json!("IdentityClaimsAggregation"));
+                    signature_obj.insert(
+                        "credentialType".to_string(),
+                        json!("IdentityClaimsAggregation"),
+                    );
                 }
             }
         }
@@ -1202,7 +1221,9 @@ impl CrJsonReader {
     }
 
     /// Static version of extract_dn_components for use in decode_cawg_signature
-    fn extract_dn_components_static(name: &x509_parser::x509::X509Name) -> Result<Map<String, Value>> {
+    fn extract_dn_components_static(
+        name: &x509_parser::x509::X509Name,
+    ) -> Result<Map<String, Value>> {
         let mut components = Map::new();
 
         for rdn in name.iter() {
@@ -1251,9 +1272,7 @@ impl CrJsonReader {
         }
 
         // Trust status: prefer trusted, invalid, untrusted, expired; else first signingCredential code
-        if let Some(trust_code) =
-            Self::find_preferred_trust_code(&active_manifest)
-        {
+        if let Some(trust_code) = Self::find_preferred_trust_code(active_manifest) {
             status.insert("trust".to_string(), json!(trust_code));
         } else if let Some(trust_code) =
             Self::find_validation_code(&active_manifest.success, "signingCredential")
@@ -1292,9 +1311,15 @@ impl CrJsonReader {
     /// Find a preferred trust status (trusted, invalid, untrusted, expired) in the active manifest.
     /// Returns the first match in that order; if none found, returns None (caller should fall back
     /// to first signingCredential code).
-    fn find_preferred_trust_code(active_manifest: &crate::validation_results::StatusCodes) -> Option<String> {
+    fn find_preferred_trust_code(
+        active_manifest: &crate::validation_results::StatusCodes,
+    ) -> Option<String> {
         // Trusted is in success
-        if active_manifest.success.iter().any(|s| s.code() == SIGNING_CREDENTIAL_TRUSTED) {
+        if active_manifest
+            .success
+            .iter()
+            .any(|s| s.code() == SIGNING_CREDENTIAL_TRUSTED)
+        {
             return Some(SIGNING_CREDENTIAL_TRUSTED.to_string());
         }
         // Invalid, untrusted, expired are in failure (check in that order)
@@ -1370,6 +1395,7 @@ impl std::fmt::Debug for CrJsonReader {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -1394,12 +1420,18 @@ mod tests {
         // Verify required fields
         assert!(json_value.get("@context").is_some());
         assert!(json_value.get("manifests").is_some());
-        assert!(json_value.get("jsonGenerator").is_some(), "jsonGenerator must be present");
+        assert!(
+            json_value.get("jsonGenerator").is_some(),
+            "jsonGenerator must be present"
+        );
 
         // jsonGenerator is c2pa-rs (this library) with name, version, date
         let jg = &json_value["jsonGenerator"];
         assert_eq!(jg.get("name").and_then(|v| v.as_str()), Some("c2pa-rs"));
-        assert!(jg.get("version").and_then(|v| v.as_str()).is_some(), "jsonGenerator.version required");
+        assert!(
+            jg.get("version").and_then(|v| v.as_str()).is_some(),
+            "jsonGenerator.version required"
+        );
         assert!(jg.get("date").is_some(), "jsonGenerator.date required");
 
         // Verify manifests is an array
@@ -1413,7 +1445,10 @@ mod tests {
             assert!(manifest.get("status").is_some());
             let has_claim = manifest.get("claim").is_some();
             let has_claim_v2 = manifest.get("claim.v2").is_some();
-            assert!(has_claim != has_claim_v2, "manifest must have exactly one of claim (v1) or claim.v2");
+            assert!(
+                has_claim != has_claim_v2,
+                "manifest must have exactly one of claim (v1) or claim.v2"
+            );
 
             // Verify assertions is an object (not array)
             assert!(manifest["assertions"].is_object());
@@ -1457,9 +1492,11 @@ mod tests {
         let json_value = reader.to_json_value()?;
         let manifests = json_value["manifests"].as_array().unwrap();
         // Every manifest has required "signature"; find one with decoded certificate details
-        let manifest = manifests
-            .iter()
-            .find(|m| m.get("signature").and_then(|s| s.get("algorithm")).is_some());
+        let manifest = manifests.iter().find(|m| {
+            m.get("signature")
+                .and_then(|s| s.get("algorithm"))
+                .is_some()
+        });
         assert!(
             manifest.is_some(),
             "Should have a manifest with signature containing algorithm"
@@ -1468,7 +1505,10 @@ mod tests {
         let sig = &manifest.unwrap()["signature"];
 
         // Verify algorithm is present
-        assert!(sig.get("algorithm").is_some(), "signature should have algorithm");
+        assert!(
+            sig.get("algorithm").is_some(),
+            "signature should have algorithm"
+        );
 
         // Verify certificate details are decoded in certificateInfo (not just algorithm)
         let cert_info = sig.get("certificateInfo").and_then(|c| c.as_object());
@@ -1505,16 +1545,19 @@ mod tests {
 
         let json_value = reader.to_json_value()?;
         let manifests = json_value["manifests"].as_array().unwrap();
-        
+
         // Find the manifest and its cawg.identity assertion
         let manifest = &manifests[0];
         let assertions = manifest["assertions"].as_object().unwrap();
-        
+
         let cawg_identity = assertions.get("cawg.identity");
-        assert!(cawg_identity.is_some(), "Should have cawg.identity assertion");
-        
+        assert!(
+            cawg_identity.is_some(),
+            "Should have cawg.identity assertion"
+        );
+
         let cawg_identity = cawg_identity.unwrap();
-        
+
         // Verify pad1 and pad2 are base64 strings, not arrays
         assert!(
             cawg_identity["pad1"].is_string(),
@@ -1526,13 +1569,18 @@ mod tests {
                 "pad2 should be a base64 string, not an array"
             );
         }
-        
+
         // Verify signature is decoded
         let signature = &cawg_identity["signature"];
-        assert!(signature.is_object(), "signature should be an object, not an array");
-        
+        assert!(
+            signature.is_object(),
+            "signature should be an object, not an array"
+        );
+
         // For X.509 signatures (sig_type: cawg.x509.cose), verify certificate details in certificateInfo
-        let sig_type = cawg_identity["signer_payload"]["sig_type"].as_str().unwrap();
+        let sig_type = cawg_identity["signer_payload"]["sig_type"]
+            .as_str()
+            .unwrap();
         if sig_type == "cawg.x509.cose" {
             assert!(
                 signature.get("algorithm").is_some(),
@@ -1570,13 +1618,16 @@ mod tests {
     fn test_cawg_identity_ica_signature_decoding() -> Result<()> {
         // Test that cawg.identity with ICA signature extracts VC information
         // Note: This test uses a fixture from the identity tests
-        let test_image = include_bytes!("identity/tests/fixtures/claim_aggregation/adobe_connected_identities.jpg");
+        let test_image = include_bytes!(
+            "identity/tests/fixtures/claim_aggregation/adobe_connected_identities.jpg"
+        );
 
-        let reader = CrJsonReader::from_stream("image/jpeg", std::io::Cursor::new(&test_image[..]))?;
+        let reader =
+            CrJsonReader::from_stream("image/jpeg", std::io::Cursor::new(&test_image[..]))?;
 
         let json_value = reader.to_json_value()?;
         let manifests = json_value["manifests"].as_array().unwrap();
-        
+
         // Find a manifest with cawg.identity assertion
         let manifest = manifests.iter().find(|m| {
             if let Some(assertions) = m.get("assertions").and_then(|a| a.as_object()) {
@@ -1585,25 +1636,30 @@ mod tests {
                 false
             }
         });
-        
+
         if let Some(manifest) = manifest {
             let assertions = manifest["assertions"].as_object().unwrap();
-            let cawg_identity_key = assertions.keys().find(|k| k.starts_with("cawg.identity")).unwrap();
+            let cawg_identity_key = assertions
+                .keys()
+                .find(|k| k.starts_with("cawg.identity"))
+                .unwrap();
             let cawg_identity = &assertions[cawg_identity_key];
-            
+
             // Verify pad fields are base64 strings
             assert!(
                 cawg_identity["pad1"].is_string(),
                 "pad1 should be a base64 string"
             );
-            
+
             // Verify signature is decoded
             let signature = &cawg_identity["signature"];
             assert!(signature.is_object(), "signature should be an object");
-            
+
             // For ICA signatures (sig_type: cawg.identity_claims_aggregation),
             // verify VC information is extracted
-            let sig_type = cawg_identity["signer_payload"]["sig_type"].as_str().unwrap();
+            let sig_type = cawg_identity["signer_payload"]["sig_type"]
+                .as_str()
+                .unwrap();
             if sig_type == "cawg.identity_claims_aggregation" {
                 assert!(
                     signature.get("algorithm").is_some(),
@@ -1613,14 +1669,14 @@ mod tests {
                     signature.get("issuer").is_some(),
                     "ICA signature should have issuer (DID)"
                 );
-                
+
                 // ICA signatures should have VC-specific fields
                 // Note: Some of these may be optional depending on the VC
                 let has_vc_info = signature.get("validFrom").is_some()
                     || signature.get("validUntil").is_some()
                     || signature.get("verifiedIdentities").is_some()
                     || signature.get("credentialType").is_some();
-                
+
                 assert!(
                     has_vc_info,
                     "ICA signature should have at least some VC information (validFrom, validUntil, verifiedIdentities, or credentialType)"
@@ -1640,7 +1696,10 @@ mod tests {
 
         let path = Path::new("/Users/lrosenth/Development/crTool/target/test_output/testset/p-actions-created-with-icon.jpg");
         if !path.exists() {
-            eprintln!("Skipping test_claim_generator_info_with_icon_exported: fixture not found at {:?}", path);
+            eprintln!(
+                "Skipping test_claim_generator_info_with_icon_exported: fixture not found at {:?}",
+                path
+            );
             return Ok(());
         }
 
@@ -1666,16 +1725,20 @@ mod tests {
         // claim.v2: single object; claim (v1): array — get first object for assertion
         let info_obj = claim_generator_info
             .as_object()
-            .or_else(|| claim_generator_info.as_array().and_then(|a| a.first()).and_then(|v| v.as_object()))
+            .or_else(|| {
+                claim_generator_info
+                    .as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_object())
+            })
             .expect("claim_generator_info should be an object or array of objects");
 
         // Icon must be hashedUriMap only (url, hash, optional alg) per schema; no format/identifier.
         let has_icon = match info_obj.get("icon") {
-            Some(icon) => icon
-                .get("url")
-                .and_then(|v| v.as_str())
-                .is_some()
-                && icon.get("hash").and_then(|v| v.as_str()).is_some(),
+            Some(icon) => {
+                icon.get("url").and_then(|v| v.as_str()).is_some()
+                    && icon.get("hash").and_then(|v| v.as_str()).is_some()
+            }
             None => false,
         };
 

@@ -250,6 +250,7 @@ pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 #[doc(inline)]
 pub use context::Context;
+pub use cr_json_reader::CrJsonReader;
 pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
 #[doc(hidden)]
@@ -263,7 +264,6 @@ pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use manifest::{Manifest, SignatureInfo};
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 pub use reader::Reader;
-pub use cr_json_reader::CrJsonReader;
 #[doc(inline)]
 pub use resource_store::{ResourceRef, ResourceStore};
 #[doc(inline)]

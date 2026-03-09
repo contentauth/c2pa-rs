@@ -11,9 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-mod schema_compliance;
 mod asset_hash;
 mod created_gathered;
 mod hash_assertions;
 mod hash_encoding;
 mod ingredients;
+mod schema_compliance;

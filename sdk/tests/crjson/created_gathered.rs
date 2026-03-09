@@ -164,7 +164,7 @@ fn test_created_and_gathered_assertions_separated() -> Result<()> {
             assertion_ref.get("hash").is_some(),
             "All assertion refs should have hash"
         );
-        
+
         let hash = assertion_ref.get("hash").unwrap();
         assert!(
             hash.is_string(),
@@ -228,7 +228,7 @@ fn test_hash_assertions_in_created() -> Result<()> {
             }
             false
         })
-        .last()
+        .next_back()
         .expect("should have at least one claim v2 manifest");
 
     // Check claim.v2

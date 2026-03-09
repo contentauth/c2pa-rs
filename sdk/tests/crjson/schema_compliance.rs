@@ -26,8 +26,9 @@
 //! # then open target/crjson_test_output/CA.jpg.json
 //! ```
 
-use c2pa::{CrJsonReader, Result};
 use std::io::Cursor;
+
+use c2pa::{CrJsonReader, Result};
 
 const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
 
@@ -68,7 +69,10 @@ fn test_validation_results_schema_compliance() -> Result<()> {
     let active_manifest = vr
         .get("activeManifest")
         .expect("validationResults must have activeManifest per crJSON schema");
-    assert!(active_manifest.is_object(), "activeManifest should be object");
+    assert!(
+        active_manifest.is_object(),
+        "activeManifest should be object"
+    );
     let am = active_manifest.as_object().unwrap();
     for key in &["success", "informational", "failure"] {
         let arr = am
@@ -78,8 +82,14 @@ fn test_validation_results_schema_compliance() -> Result<()> {
         for entry in arr.as_array().unwrap() {
             assert!(entry.is_object(), "Each entry should be object");
             let obj = entry.as_object().unwrap();
-            assert!(obj.contains_key("code"), "Entry should have code (validationStatusEntry)");
-            assert!(obj.get("code").unwrap().is_string(), "code should be string");
+            assert!(
+                obj.contains_key("code"),
+                "Entry should have code (validationStatusEntry)"
+            );
+            assert!(
+                obj.get("code").unwrap().is_string(),
+                "code should be string"
+            );
             if let Some(url) = obj.get("url") {
                 assert!(url.is_string(), "url should be string");
             }
@@ -198,7 +208,9 @@ fn test_manifests_array_schema_compliance() -> Result<()> {
         let manifest_obj = manifest.as_object().unwrap();
 
         // Required: label
-        let label = manifest_obj.get("label").expect("manifest should have label");
+        let label = manifest_obj
+            .get("label")
+            .expect("manifest should have label");
         assert!(label.is_string(), "label should be string");
 
         // Required: assertions (object, not array)
@@ -217,7 +229,9 @@ fn test_manifests_array_schema_compliance() -> Result<()> {
         assert!(signature.is_object(), "signature should be object");
 
         // Required: status (object)
-        let status = manifest_obj.get("status").expect("manifest should have status");
+        let status = manifest_obj
+            .get("status")
+            .expect("manifest should have status");
         assert!(status.is_object(), "status should be object");
 
         // oneOf: either claim or claim.v2 (implementation emits claim.v2)
@@ -237,7 +251,10 @@ fn test_manifests_array_schema_compliance() -> Result<()> {
                 );
                 // When present, icon must be hashedUriMap (url, hash, optional alg) per schema
                 if let Some(icon) = cgi.get("icon") {
-                    assert!(icon.is_object(), "claim_generator_info.icon must be object (hashedUriMap)");
+                    assert!(
+                        icon.is_object(),
+                        "claim_generator_info.icon must be object (hashedUriMap)"
+                    );
                     let icon_obj = icon.as_object().unwrap();
                     assert!(
                         icon_obj.get("url").and_then(|v| v.as_str()).is_some(),
@@ -295,21 +312,42 @@ fn test_cr_json_schema_file_valid_and_matches_format() -> Result<()> {
         .expect("schema must have properties");
 
     // CrJSON schema must define these root properties
-    assert!(props.contains_key("@context"), "schema must define @context");
-    assert!(props.contains_key("manifests"), "schema must define manifests");
+    assert!(
+        props.contains_key("@context"),
+        "schema must define @context"
+    );
+    assert!(
+        props.contains_key("manifests"),
+        "schema must define manifests"
+    );
     assert!(
         props.contains_key("validationResults"),
         "schema must define validationResults"
     );
 
     // CrJSON schema must NOT include removed sections
-    assert!(!props.contains_key("declaration"), "schema must not include declaration");
-    assert!(!props.contains_key("asset_info"), "schema must not include asset_info");
-    assert!(!props.contains_key("content"), "schema must not include content");
-    assert!(!props.contains_key("metadata"), "schema must not include metadata");
+    assert!(
+        !props.contains_key("declaration"),
+        "schema must not include declaration"
+    );
+    assert!(
+        !props.contains_key("asset_info"),
+        "schema must not include asset_info"
+    );
+    assert!(
+        !props.contains_key("content"),
+        "schema must not include content"
+    );
+    assert!(
+        !props.contains_key("metadata"),
+        "schema must not include metadata"
+    );
 
     // Schema $id should reference crJSON-schema
-    let id = schema_value.get("$id").and_then(|i| i.as_str()).unwrap_or("");
+    let id = schema_value
+        .get("$id")
+        .and_then(|i| i.as_str())
+        .unwrap_or("");
     assert!(
         id.contains("crJSON-schema"),
         "schema $id should reference crJSON-schema.json, got: {}",

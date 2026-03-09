@@ -36,7 +36,10 @@ pub struct ClaimGeneratorInfo {
     pub icon: Option<UriOrResource>,
     /// A human readable string of the OS the claim generator is running on.
     /// CrJSON schema uses `operating_system`; C2PA CBOR may use `schema.org.SoftwareApplication.operatingSystem`.
-    #[serde(alias = "schema.org.SoftwareApplication.operatingSystem", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        alias = "schema.org.SoftwareApplication.operatingSystem",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub operating_system: Option<String>,
     // Any other values that are not part of the standard
     #[serde(flatten)]

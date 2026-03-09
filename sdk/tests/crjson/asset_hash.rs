@@ -14,8 +14,9 @@
 //! Integration tests for CrJsonReader output structure.
 //! CrJSON format does not include asset_info, content, or metadata.
 
-use c2pa::{CrJsonReader, Result};
 use std::io::Cursor;
+
+use c2pa::{CrJsonReader, Result};
 
 const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
 

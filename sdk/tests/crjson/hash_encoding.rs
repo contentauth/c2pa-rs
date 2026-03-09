@@ -16,9 +16,10 @@
 //! Verifies that all hash fields are properly encoded as base64 strings
 //! rather than byte arrays.
 
+use std::io::Cursor;
+
 use c2pa::{CrJsonReader, Result};
 use serde_json::Value;
-use std::io::Cursor;
 
 const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
 
@@ -170,34 +171,32 @@ fn test_assertion_reference_hashes_are_base64() -> Result<()> {
     let first_manifest = manifests
         .first()
         .expect("should have at least one manifest");
-    let claim_v2 = first_manifest
-        .get("claim.v2")
-        .and_then(|v| v.as_object());
+    let claim_v2 = first_manifest.get("claim.v2").and_then(|v| v.as_object());
 
     if let Some(claim_v2) = claim_v2 {
-    if let Some(created_assertions) = claim_v2.get("created_assertions") {
-        let assertions_array = created_assertions
-            .as_array()
-            .expect("created_assertions should be array");
+        if let Some(created_assertions) = claim_v2.get("created_assertions") {
+            let assertions_array = created_assertions
+                .as_array()
+                .expect("created_assertions should be array");
 
-        for (i, assertion_ref) in assertions_array.iter().enumerate() {
-            if let Some(hash) = assertion_ref.get("hash") {
-                assert!(
-                    hash.is_string(),
-                    "Assertion reference {} hash should be string, not array",
-                    i
-                );
+            for (i, assertion_ref) in assertions_array.iter().enumerate() {
+                if let Some(hash) = assertion_ref.get("hash") {
+                    assert!(
+                        hash.is_string(),
+                        "Assertion reference {} hash should be string, not array",
+                        i
+                    );
 
-                let hash_str = hash.as_str().unwrap();
-                assert!(
-                    is_valid_base64(hash_str),
-                    "Assertion reference {} hash should be valid base64: {}",
-                    i,
-                    hash_str
-                );
+                    let hash_str = hash.as_str().unwrap();
+                    assert!(
+                        is_valid_base64(hash_str),
+                        "Assertion reference {} hash should be valid base64: {}",
+                        i,
+                        hash_str
+                    );
+                }
             }
         }
-    }
     }
     // If manifest has claim (v1) only, created_assertions is not present; nothing to check.
 

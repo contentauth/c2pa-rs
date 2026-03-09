@@ -13,8 +13,9 @@
 
 //! Tests for ingredient assertions in crJSON format
 
-use c2pa::{CrJsonReader, Result};
 use std::io::Cursor;
+
+use c2pa::{CrJsonReader, Result};
 
 const IMAGE_WITH_INGREDIENT: &[u8] = include_bytes!("../fixtures/CA.jpg");
 
@@ -29,7 +30,9 @@ fn test_ingredient_assertions_included() -> Result<()> {
         .expect("manifests should be array");
 
     // Check first manifest for ingredient assertion
-    let first_manifest = manifests.first().expect("should have at least one manifest");
+    let first_manifest = manifests
+        .first()
+        .expect("should have at least one manifest");
     let assertions = first_manifest["assertions"]
         .as_object()
         .expect("assertions should be object");
@@ -67,7 +70,10 @@ fn test_ingredient_assertions_included() -> Result<()> {
 
     if let Some(thumbnail) = ingredient_obj.get("thumbnail") {
         if let Some(hash) = thumbnail.get("hash") {
-            assert!(hash.is_string(), "ingredient thumbnail hash should be string");
+            assert!(
+                hash.is_string(),
+                "ingredient thumbnail hash should be string"
+            );
         }
     }
 
@@ -84,7 +90,9 @@ fn test_ingredient_count_matches() -> Result<()> {
         .as_array()
         .expect("manifests should be array");
 
-    let first_manifest = manifests.first().expect("should have at least one manifest");
+    let first_manifest = manifests
+        .first()
+        .expect("should have at least one manifest");
     let assertions = first_manifest["assertions"]
         .as_object()
         .expect("assertions should be object");
@@ -119,17 +127,20 @@ fn test_ingredient_referenced_in_claim() -> Result<()> {
         .iter()
         .find(|m| {
             if let Some(claim_v2) = m.get("claim.v2") {
-                let has_created = claim_v2.get("created_assertions")
+                let has_created = claim_v2
+                    .get("created_assertions")
                     .and_then(|a| a.as_array())
                     .map(|a| !a.is_empty())
                     .unwrap_or(false);
-                let has_gathered = claim_v2.get("gathered_assertions")
+                let has_gathered = claim_v2
+                    .get("gathered_assertions")
                     .and_then(|a| a.as_array())
                     .map(|a| !a.is_empty())
                     .unwrap_or(false);
                 has_created || has_gathered
             } else if let Some(claim_v1) = m.get("claim") {
-                claim_v1.get("assertions")
+                claim_v1
+                    .get("assertions")
                     .and_then(|a| a.as_array())
                     .map(|a| !a.is_empty())
                     .unwrap_or(false)
@@ -140,16 +151,25 @@ fn test_ingredient_referenced_in_claim() -> Result<()> {
         .expect("should have at least one manifest with assertions");
 
     // Check if ingredient is referenced in created_assertions (v2) or assertions (v1)
-    let (created_assertions, gathered_assertions) = if let Some(claim_v2) = active_manifest.get("claim.v2").and_then(|v| v.as_object()) {
-        (
-            claim_v2["created_assertions"].as_array().expect("created_assertions should be array"),
-            claim_v2["gathered_assertions"].as_array().expect("gathered_assertions should be array"),
-        )
-    } else {
-        // V1: single "assertions" array; treat as both created and gathered for this check
-        let assertions = active_manifest.get("claim").and_then(|c| c.get("assertions")).and_then(|a| a.as_array()).expect("claim.assertions should be array");
-        (assertions, assertions)
-    };
+    let (created_assertions, gathered_assertions) =
+        if let Some(claim_v2) = active_manifest.get("claim.v2").and_then(|v| v.as_object()) {
+            (
+                claim_v2["created_assertions"]
+                    .as_array()
+                    .expect("created_assertions should be array"),
+                claim_v2["gathered_assertions"]
+                    .as_array()
+                    .expect("gathered_assertions should be array"),
+            )
+        } else {
+            // V1: single "assertions" array; treat as both created and gathered for this check
+            let assertions = active_manifest
+                .get("claim")
+                .and_then(|c| c.get("assertions"))
+                .and_then(|a| a.as_array())
+                .expect("claim.assertions should be array");
+            (assertions, assertions)
+        };
 
     // Find ingredient reference in EITHER created or gathered
     let has_ingredient_in_created = created_assertions.iter().any(|assertion_ref| {
@@ -191,7 +211,9 @@ fn test_ingredient_in_actions_parameter() -> Result<()> {
         .as_array()
         .expect("manifests should be array");
 
-    let first_manifest = manifests.first().expect("should have at least one manifest");
+    let first_manifest = manifests
+        .first()
+        .expect("should have at least one manifest");
     let assertions = first_manifest["assertions"]
         .as_object()
         .expect("assertions should be object");
@@ -232,7 +254,9 @@ fn test_multiple_ingredients_have_instances() -> Result<()> {
         .as_array()
         .expect("manifests should be array");
 
-    let first_manifest = manifests.first().expect("should have at least one manifest");
+    let first_manifest = manifests
+        .first()
+        .expect("should have at least one manifest");
     let assertions = first_manifest["assertions"]
         .as_object()
         .expect("assertions should be object");
@@ -244,10 +268,10 @@ fn test_multiple_ingredients_have_instances() -> Result<()> {
     );
 
     // Should NOT have instance suffix for single ingredient
-        assert!(
-            !assertions.contains_key("c2pa.ingredient__1"),
-            "Single ingredient should not have instance number"
-        );
+    assert!(
+        !assertions.contains_key("c2pa.ingredient__1"),
+        "Single ingredient should not have instance number"
+    );
 
     Ok(())
 }
@@ -261,7 +285,9 @@ fn test_ingredient_label_matches_version() -> Result<()> {
         .as_array()
         .expect("manifests should be array");
 
-    let first_manifest = manifests.first().expect("should have at least one manifest");
+    let first_manifest = manifests
+        .first()
+        .expect("should have at least one manifest");
     let assertions = first_manifest["assertions"]
         .as_object()
         .expect("assertions should be object");
@@ -281,14 +307,12 @@ fn test_ingredient_label_matches_version() -> Result<()> {
         !ingredient_obj.contains_key("label"),
         "Ingredient should not have redundant label field"
     );
-    
+
     // Verify the key follows correct versioning pattern
     assert!(
-        ingredient_key == "c2pa.ingredient" 
-            || ingredient_key.starts_with("c2pa.ingredient.v"),
+        ingredient_key == "c2pa.ingredient" || ingredient_key.starts_with("c2pa.ingredient.v"),
         "Ingredient key should be c2pa.ingredient or c2pa.ingredient.v{{N}}"
     );
 
     Ok(())
 }
-
