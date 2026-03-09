@@ -1671,7 +1671,7 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
 
     // get position ordered list of boxes
     let mut box_infos: Vec<BoxInfoLite> = get_top_level_boxes(bmff_tree, bmff_map);
-    box_infos.sort_by(|a, b| a.offset.cmp(&b.offset));
+    box_infos.sort_by_key(|a| a.offset);
 
     Ok(C2PABmffBoxes {
         manifest_bytes,

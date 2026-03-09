@@ -2198,7 +2198,7 @@ impl Store {
         let mut dh = DataHash::new("jumbf manifest", alg);
 
         // sort blocks by offset
-        block_locations.sort_by(|a, b| a.offset.cmp(&b.offset));
+        block_locations.sort_by_key(|a| a.offset);
 
         // generate default data hash that excludes jumbf block
         // find the first jumbf block (ours are always in order)
@@ -3918,7 +3918,7 @@ impl Store {
                 // build mapping of ingredients and those claims that reference it
                 svi.ingredient_references
                     .entry(ingredient_label.clone())
-                    .or_insert(HashSet::from_iter(vec![claim_label.to_owned()].into_iter()))
+                    .or_insert(HashSet::from_iter(vec![claim_label.to_owned()]))
                     .insert(claim_label.to_owned());
 
                 // recurse nested ingredients
@@ -4078,12 +4078,10 @@ impl Store {
                         } else {
                             let new_version = match claim
                                 .claim_ingredient_store()
-                                .iter()
-                                .filter_map(|(label, _conflict)| {
-                                    match manifest_label_to_parts(label) {
-                                        Some(mp) => mp.version,
-                                        None => None,
-                                    }
+                                .keys()
+                                .filter_map(|label| match manifest_label_to_parts(label) {
+                                    Some(mp) => mp.version,
+                                    None => None,
                                 })
                                 .max()
                             {
