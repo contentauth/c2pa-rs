@@ -71,6 +71,7 @@ jobs:
           echo "PATH=$PATH" >> $GITHUB_ENV
           emcc --version
           rustup install nightly
+          rustup component add rust-src --toolchain nightly
           rustup target add --toolchain nightly wasm32-unknown-emscripten
 
       - name: Cache emsdk
