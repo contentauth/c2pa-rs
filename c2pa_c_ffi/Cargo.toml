@@ -21,7 +21,6 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 default = ["c2pa/openssl", "http", "add_thumbnails"]
 file_io = ["c2pa/file_io"]
 rust_native_crypto = ["c2pa/rust_native_crypto"]
-default_http = ["c2pa/default_http"]
 # HTTP and thumbnails: not enabled by default because reqwest pulls in wasm-bindgen-futures
 # (incompatible with -Z build-std=panic_abort on wasm32-unknown-emscripten).
 # Enable for native builds when you need HTTP or thumbnails.
