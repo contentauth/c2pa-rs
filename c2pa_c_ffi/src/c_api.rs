@@ -880,7 +880,6 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
 /// # Returns
 ///
 /// A pointer to a newly configured C2paReader, or NULL on error.
-/// ```
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
     reader: *mut C2paReader,
