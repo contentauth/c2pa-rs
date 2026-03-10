@@ -27,7 +27,7 @@ use crate::{
     status_tracker::StatusTracker,
     validation_results::validation_codes::{
         LIVEVIDEO_ASSERTION_INVALID, LIVEVIDEO_CONTINUITY_METHOD_INVALID,
-        LIVEVIDEO_INIT_INVALID, LIVEVIDEO_SEGMENT_INVALID,
+        LIVEVIDEO_INIT_INVALID, LIVEVIDEO_MANIFEST_INVALID, LIVEVIDEO_SEGMENT_INVALID,
     },
 };
 
@@ -47,6 +47,18 @@ const C2PA_UUID: [u8; 16] = [
     0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c,
     0x92, 0x97, 0x58, 0x28, 0x87, 0x7e, 0xc4, 0x81,
 ];
+
+fn fail_validation(
+    description: impl Into<String>,
+    status_code: &'static str,
+    tracker: &mut StatusTracker,
+) -> Result<()> {
+    let description: String = description.into();
+    log_item!("live_video", description, "LiveVideoValidator")
+        .validation_status(status_code)
+        .failure(tracker, Error::BadParam(status_code.into()))?;
+    Ok(())
+}
 
 /// Snapshot of the validated state from the most recently accepted segment.
 ///
@@ -76,31 +88,40 @@ impl LiveVideoValidator {
         }
     }
 
-    /// Validates an initialization segment.
+    /// Validates an initialization segment ([§19.7.1]).
     ///
-    /// Per [section 19.7.1](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_live_video_validation_process), an init segment must not contain an `mdat` box.
+    /// [§19.7.1]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_live_video_validation_process
     pub fn validate_init_segment(
         &self,
         segment_data: &[u8],
         tracker: &mut StatusTracker,
     ) -> Result<()> {
         if segment_contains_box_type(segment_data, MDAT_BOX_TYPE) {
-            log_item!(
-                "live_video_init",
+            fail_validation(
                 "initialization segment must not contain an mdat box",
-                "LiveVideoValidator::validate_init_segment"
-            )
-            .validation_status(LIVEVIDEO_INIT_INVALID)
-            .failure(tracker, Error::BadParam("livevideo.init.invalid".into()))?;
+                LIVEVIDEO_INIT_INVALID,
+                tracker,
+            )?;
         }
         Ok(())
     }
 
-    /// Validates a media segment using the per-segment C2PA Manifest Box method (19.3 https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#using_c2pa_manifest_box).
+    /// Records a manifest-level validation failure for a segment ([§19.3]).
     ///
-    /// Enforces continuity rules from [section 19.7.2](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_live_video_validation_process): sequence number strictly increases,
-    /// `streamId` is consistent, and `previousManifestId` matches the prior segment's manifest.
-    /// On success, advances internal state so the next segment can be validated against this one.
+    /// Use this when the segment's C2PA manifest cannot be read or has no active manifest.
+    ///
+    /// [§19.3]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#using_c2pa_manifest_box
+    pub fn fail_segment_manifest(
+        &self,
+        description: impl Into<String>,
+        tracker: &mut StatusTracker,
+    ) -> Result<()> {
+        fail_validation(description, LIVEVIDEO_MANIFEST_INVALID, tracker)
+    }
+
+    /// Validates a media segment using the per-segment C2PA Manifest Box method ([§19.3]).
+    ///
+    /// [§19.3]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#using_c2pa_manifest_box
     pub fn validate_media_segment(
         &mut self,
         segment_data: &[u8],
@@ -134,15 +155,10 @@ impl LiveVideoValidator {
         let has_emsg_box = segment_contains_box_type(segment_data, EMSG_BOX_TYPE);
 
         if !has_c2pa_manifest_box && !has_emsg_box {
-            log_item!(
-                "live_video_segment",
+            fail_validation(
                 "segment must contain a C2PA Manifest Box (uuid) or an emsg box",
-                "LiveVideoValidator::validate_media_segment"
-            )
-            .validation_status(LIVEVIDEO_SEGMENT_INVALID)
-            .failure(
+                LIVEVIDEO_SEGMENT_INVALID,
                 tracker,
-                Error::BadParam("livevideo.segment.invalid".into()),
             )?;
         }
         Ok(())
@@ -155,15 +171,10 @@ impl LiveVideoValidator {
         tracker: &mut StatusTracker,
     ) -> Result<()> {
         if assertion.sequence_number <= previous.sequence_number {
-            log_item!(
-                "live_video_segment",
+            fail_validation(
                 "sequenceNumber must be strictly greater than the previous segment's",
-                "LiveVideoValidator::validate_media_segment"
-            )
-            .validation_status(LIVEVIDEO_ASSERTION_INVALID)
-            .failure(
+                LIVEVIDEO_ASSERTION_INVALID,
                 tracker,
-                Error::BadParam("livevideo.assertion.invalid".into()),
             )?;
         }
         Ok(())
@@ -176,15 +187,10 @@ impl LiveVideoValidator {
         tracker: &mut StatusTracker,
     ) -> Result<()> {
         if assertion.stream_id != previous.stream_id {
-            log_item!(
-                "live_video_segment",
+            fail_validation(
                 "streamId must match the previous segment's streamId",
-                "LiveVideoValidator::validate_media_segment"
-            )
-            .validation_status(LIVEVIDEO_ASSERTION_INVALID)
-            .failure(
+                LIVEVIDEO_ASSERTION_INVALID,
                 tracker,
-                Error::BadParam("livevideo.assertion.invalid".into()),
             )?;
         }
         Ok(())
@@ -201,17 +207,11 @@ impl LiveVideoValidator {
                 self.validate_manifest_id_continuity(assertion, manifest_id, tracker)
             }
             ContinuityMethod::Unknown(method) => {
-                log_item!(
-                    "live_video_segment",
+                fail_validation(
                     format!("unsupported continuity method: {method}"),
-                    "LiveVideoValidator::validate_continuity_rules"
-                )
-                .validation_status(LIVEVIDEO_CONTINUITY_METHOD_INVALID)
-                .failure(
+                    LIVEVIDEO_CONTINUITY_METHOD_INVALID,
                     tracker,
-                    Error::BadParam("livevideo.continuityMethod.invalid".into()),
-                )?;
-                Ok(())
+                )
             }
         }
     }
@@ -223,39 +223,25 @@ impl LiveVideoValidator {
         tracker: &mut StatusTracker,
     ) -> Result<()> {
         let Some(previous) = &self.previous_segment else {
-            // No previously validated segment: this is the first segment the validator
-            // has seen. previousManifestId cannot be checked against a prior segment,
-            // so we skip the continuity check.
             return Ok(());
         };
 
         let previous_manifest_id = match &assertion.previous_manifest_id {
             Some(id) => id,
             None => {
-                log_item!(
-                    "live_video_segment",
+                return fail_validation(
                     "previousManifestId is required when continuityMethod is c2pa.manifestId",
-                    "LiveVideoValidator::validate_manifest_id_continuity"
-                )
-                .validation_status(LIVEVIDEO_CONTINUITY_METHOD_INVALID)
-                .failure(
+                    LIVEVIDEO_CONTINUITY_METHOD_INVALID,
                     tracker,
-                    Error::BadParam("livevideo.continuityMethod.invalid".into()),
-                )?;
-                return Ok(());
+                );
             }
         };
 
         if previous_manifest_id != &previous.manifest_id {
-            log_item!(
-                "live_video_segment",
+            fail_validation(
                 "previousManifestId does not match the previous segment's manifest identifier",
-                "LiveVideoValidator::validate_manifest_id_continuity"
-            )
-            .validation_status(LIVEVIDEO_SEGMENT_INVALID)
-            .failure(
+                LIVEVIDEO_SEGMENT_INVALID,
                 tracker,
-                Error::BadParam("livevideo.segment.invalid".into()),
             )?;
         }
         Ok(())
@@ -433,6 +419,19 @@ mod tests {
             i.validation_status.as_deref() == Some(LIVEVIDEO_INIT_INVALID)
         });
         assert!(has_init_invalid);
+    }
+
+    #[test]
+    fn fail_segment_manifest_records_manifest_invalid() {
+        let validator = LiveVideoValidator::new();
+        let mut tracker = aggregate_tracker();
+
+        let _ = validator.fail_segment_manifest("no active manifest in segment", &mut tracker);
+
+        let has_manifest_invalid = tracker.logged_items().iter().any(|i| {
+            i.validation_status.as_deref() == Some(LIVEVIDEO_MANIFEST_INVALID)
+        });
+        assert!(has_manifest_invalid);
     }
 
     #[test]

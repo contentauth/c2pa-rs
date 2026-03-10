@@ -119,6 +119,10 @@ fn validate_segment(
     let reader = match Reader::from_stream(&format, Cursor::new(&segment_data)) {
         Ok(r) => r,
         Err(e) => {
+            let _ = live_validator.fail_segment_manifest(
+                format!("C2PA manifest validation failed: {e}"),
+                tracker,
+            );
             eprintln!("Segment FAIL [{segment_path:?}]: cannot read C2PA manifest: {e}");
             return false;
         }
@@ -127,6 +131,10 @@ fn validate_segment(
     let manifest = match reader.active_manifest() {
         Some(m) => m,
         None => {
+            let _ = live_validator.fail_segment_manifest(
+                "no active manifest in segment",
+                tracker,
+            );
             eprintln!("Segment FAIL [{segment_path:?}]: no active manifest");
             return false;
         }
