@@ -81,12 +81,11 @@
         },
         "manifest": {
             "type": "object",
-            "description": "CrJSON manifest wrapper containing label, assertions, claim or claim.v2, signature, and validationResults. Claim content: claim.cddl claim-map or claim-map-v2.",
+            "description": "CrJSON manifest wrapper containing label, assertions, claim or claim.v2, signature. Claim content: claim.cddl claim-map or claim-map-v2.",
             "required": [
                 "label",
                 "assertions",
-                "signature",
-                "validationResults"
+                "signature"
             ],
             "oneOf": [
                 {
