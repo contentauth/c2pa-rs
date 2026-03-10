@@ -861,6 +861,47 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     box_tracked!(result)
 }
 
+/// Configures an existing passed in Reader with manifest data and a stream.
+/// This covers the case when a Reader needs to be able to re-read signed
+/// manifest bytes. This method consumes the original Reader and returns a
+/// new configured Reader. The original Reader pointer becomes invalid after
+/// this call and should not be reused.
+///
+/// # Safety
+///
+/// * `reader` must be a valid pointer to a configured C2paReader
+///   (usually with a Context).
+/// * `format` must be a valid null-terminated string with the MIME type.
+/// * `stream` must be a valid pointer to a C2paStream.
+/// * `manifest_data` must be a valid pointer to manifest bytes.
+/// * `manifest_size` must be the length of the manifest_data buffer.
+/// * After calling this function, the `reader` pointer becomes invalid.
+///
+/// # Returns
+///
+/// A pointer to a newly configured C2paReader, or NULL on error.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
+    reader: *mut C2paReader,
+    format: *const c_char,
+    stream: *mut C2paStream,
+    manifest_data: *const c_uchar,
+    manifest_size: usize,
+) -> *mut C2paReader {
+    let format = cstr_or_return_null!(format);
+    let stream = deref_mut_or_return_null!(stream, C2paStream);
+    let manifest_bytes = bytes_or_return_null!(manifest_data, manifest_size, "manifest_data");
+
+    // Take ownership of the Reader (needs to remove it from tracking to take it)
+    untrack_or_return_null!(reader, C2paReader);
+    let reader = Box::from_raw(reader);
+    let result = (*reader).with_manifest_data_and_stream(manifest_bytes, &format, stream);
+    let result = ok_or_return_null!(post_validate(result));
+
+    // New reader, will be tracked now too
+    box_tracked!(result)
+}
+
 /// Configures an existing reader with a fragment stream.
 ///
 /// This is used for fragmented BMFF media formats where manifests are stored
@@ -2931,6 +2972,76 @@ mod tests {
             c2pa_free(context as *mut c_void);
             c2pa_free(configured_reader as *mut c_void);
         };
+    }
+
+    #[test]
+    fn test_c2pa_reader_with_manifest_data_and_stream() {
+        // Sign an image to get manifest bytes
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let mut dest_stream = TestStream::new(Vec::new());
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert!(result > 0, "Signing should succeed");
+        assert!(
+            !manifest_bytes_ptr.is_null(),
+            "Manifest bytes should be returned"
+        );
+        let manifest_size = result as usize;
+
+        // Create a context and reader from it
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        let reader = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader.is_null());
+
+        // Consume the reader with manifest data and stream
+        let mut validation_stream = TestStream::new(source_image.to_vec());
+        let configured_reader = unsafe {
+            c2pa_reader_with_manifest_data_and_stream(
+                reader,
+                format.as_ptr(),
+                validation_stream.as_ptr(),
+                manifest_bytes_ptr,
+                manifest_size,
+            )
+        };
+        assert!(
+            !configured_reader.is_null(),
+            "Reader should be configured with manifest data and stream"
+        );
+
+        // Verify the original reader was consumed
+        let free_result = unsafe { c2pa_free(reader as *const c_void) };
+        assert_eq!(free_result, -1);
+
+        // Verify we can read the manifest
+        let json = unsafe { c2pa_reader_json(configured_reader) };
+        assert!(!json.is_null(), "Should be able to get JSON from reader");
+
+        unsafe {
+            c2pa_free(json as *const c_void);
+            c2pa_free(configured_reader as *const c_void);
+            c2pa_free(manifest_bytes_ptr as *const c_void);
+            c2pa_free(builder as *const c_void);
+            c2pa_free(signer as *const c_void);
+            c2pa_free(context as *const c_void);
+        }
     }
 
     #[test]
