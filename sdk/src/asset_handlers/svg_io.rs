@@ -252,23 +252,24 @@ fn detect_manifest_location(
                     insertion_point = xml_reader.buffer_position();
                 }
             }
-            Ok(Event::Text(e)) => {
+            Ok(Event::Text(e))
                 if xml_path.len() == 3
                     && xml_path[0] == SVG
                     && xml_path[1] == METADATA
-                    && xml_path[2] == MANIFEST
-                {
-                    let encoded_content = e
-                        .decode()
-                        .map_err(|_e| {
-                            Error::InvalidAsset("XML incorrectly escaped character".to_string())
-                        })?
-                        .into_owned();
-                    output = Some(base64::decode(&encoded_content).map_err(|_e| {
+                    && xml_path[2] == MANIFEST =>
+            {
+                let encoded_content = e
+                    .decode()
+                    .map_err(|_e| {
+                        Error::InvalidAsset("XML incorrectly escaped character".to_string())
+                    })?
+                    .into_owned();
+                output =
+                    Some(base64::decode(&encoded_content).map_err(|_e| {
                         Error::InvalidAsset("XML bad base64 encoding".to_string())
                     })?);
-                }
             }
+            Ok(Event::Text(_)) => {}
             Ok(Event::End(_)) => {
                 let _p = xml_path.pop();
             }
