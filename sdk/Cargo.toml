@@ -147,7 +147,7 @@ p521 = { version = "0.13.3", features = [
 pem = "3.0.6"
 pkcs1 = { version = "0.7.5", optional = true }
 pkcs8 = "0.10.2"
-png_pong = "0.9.1"
+png_pong = "0.10.0"
 quick-xml = "0.39.0"
 rand = "0.8.5"
 rand_chacha = { version = "0.9.0", features = ["os_rng"] }
@@ -171,7 +171,7 @@ spki = { version = "0.7.3", optional = true }
 static-iref = "3.0"
 tempfile = "3.23.0"
 thiserror = "2.0.17"
-toml = "0.9.10"
+toml = "1.0.2"
 url = "2.5.3"
 uuid = { version = "1.18.0", features = ["serde", "v4"] }
 web-time = "1.1"
@@ -263,10 +263,10 @@ getrandom = { version = "0.3.4", features = ["wasm_js"] }
 # Also enable getrandom 0.2 with js feature for other dependencies (rand, tempfile, config)
 # This is needed until all dependencies migrate to getrandom 0.3
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
-js-sys = "0.3.58"
+js-sys = "0.3.89"
 serde-wasm-bindgen = "0.6.5"
 uuid = { version = "1.18.0", features = ["serde", "v4", "js"] }
-wasm-bindgen = "0.2.106"
+wasm-bindgen = "0.2.112"
 wasm-bindgen-futures = "0.4.31"
 web-sys = { version = "0.3.58", features = [
     "console",
