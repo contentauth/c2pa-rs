@@ -16,15 +16,15 @@
 
 use std::io::Cursor;
 
-use c2pa::{CrJsonReader, Result};
+use c2pa::{Reader, Result};
 
 const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
 
 #[test]
 fn test_cr_json_omits_asset_info_content_metadata() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
 
-    let json_value = reader.to_json_value()?;
+    let json_value = reader.to_crjson_value()?;
 
     // CrJSON does not include these top-level properties
     assert!(
@@ -50,9 +50,9 @@ fn test_cr_json_omits_asset_info_content_metadata() -> Result<()> {
 #[test]
 #[cfg(feature = "file_io")]
 fn test_cr_json_from_file_omits_asset_info_content_metadata() -> Result<()> {
-    let reader = CrJsonReader::from_file("tests/fixtures/CA.jpg")?;
+    let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
 
-    let json_value = reader.to_json_value()?;
+    let json_value = reader.to_crjson_value()?;
 
     assert!(json_value.get("asset_info").is_none());
     assert!(json_value.get("content").is_none());

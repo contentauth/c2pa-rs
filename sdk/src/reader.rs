@@ -654,6 +654,24 @@ impl Reader {
         self.json_checked().unwrap_or_else(|_| "{}".to_string())
     }
 
+    /// Get the manifest store as a crJSON [`Value`](serde_json::Value).
+    ///
+    /// crJSON is a standardized JSON format for C2PA manifest data.
+    /// Returns an error if conversion fails.
+    pub fn to_crjson_value(&self) -> Result<Value> {
+        crate::crjson::from_reader(self)
+    }
+
+    /// Get the manifest store as a pretty-printed crJSON string.
+    ///
+    /// crJSON is a standardized JSON format for C2PA manifest data.
+    /// Returns `"{}"` if conversion or formatting fails.
+    pub fn crjson(&self) -> String {
+        self.to_crjson_value()
+            .and_then(|v| serde_json::to_string_pretty(&v).map_err(Error::JsonError))
+            .unwrap_or_else(|_| "{}".to_string())
+    }
+
     /// Get the Reader as a JSON string, returning an error if formatting fails
     ///
     /// This is useful when you need to handle errors from deeply nested or malformed structures.
@@ -807,7 +825,7 @@ impl Reader {
     /// use c2pa::Reader;
     /// // Create a Reader from an in-memory stream (placeholder bytes shown here).
     /// let input = Cursor::new(Vec::new());
-    /// let reader = Reader::from_stream("image/jpeg", input).unwrap();
+    /// let reader = Reader::new().with_stream("image/jpeg", input).unwrap();
     ///
     /// // Get a resource identifier from the active manifest (e.g., a thumbnail).
     /// let manifest = reader.active_manifest().unwrap();

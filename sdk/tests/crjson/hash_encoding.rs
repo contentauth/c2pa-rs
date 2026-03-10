@@ -18,7 +18,7 @@
 
 use std::io::Cursor;
 
-use c2pa::{CrJsonReader, Result};
+use c2pa::{Reader, Result};
 use serde_json::Value;
 
 const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
@@ -84,8 +84,8 @@ fn is_valid_base64(s: &str) -> bool {
 
 #[test]
 fn test_no_byte_array_hashes() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     // Verify no byte array hashes exist anywhere in the output
     let errors = verify_no_byte_array_hashes(&json_value, "");
@@ -103,8 +103,8 @@ fn test_no_byte_array_hashes() -> Result<()> {
 
 #[test]
 fn test_action_ingredient_hash_is_base64() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     // Navigate to the actions assertion
     let manifests = json_value["manifests"]
@@ -160,8 +160,8 @@ fn test_action_ingredient_hash_is_base64() -> Result<()> {
 
 #[test]
 fn test_assertion_reference_hashes_are_base64() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     // Check created_assertions hashes in claim.v2 (manifest may have claim v1 or claim.v2 per schema)
     let manifests = json_value["manifests"]
@@ -205,8 +205,8 @@ fn test_assertion_reference_hashes_are_base64() -> Result<()> {
 
 #[test]
 fn test_ingredient_assertion_hashes_are_base64() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     // Check ingredient assertions
     let manifests = json_value["manifests"]
@@ -274,8 +274,8 @@ fn test_ingredient_assertion_hashes_are_base64() -> Result<()> {
 
 #[test]
 fn test_all_hashes_match_schema_format() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     // Collect all hash values
     let mut hash_count = 0;

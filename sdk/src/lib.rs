@@ -221,8 +221,8 @@ pub mod identity;
 /// The `jumbf_io` module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
 
-/// The cr_json_reader module provides a Reader-like API that exports C2PA manifests in crJSON format.
-pub mod cr_json_reader;
+/// The crjson module provides crJSON format export for C2PA manifests.
+pub mod crjson;
 
 /// The settings module provides a way to configure the C2PA SDK.
 pub mod settings;
@@ -250,7 +250,6 @@ pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 #[doc(inline)]
 pub use context::Context;
-pub use cr_json_reader::CrJsonReader;
 pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
 #[doc(hidden)]

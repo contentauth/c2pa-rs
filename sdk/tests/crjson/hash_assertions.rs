@@ -6,15 +6,15 @@
 
 use std::io::Cursor;
 
-use c2pa::{CrJsonReader, Result};
+use c2pa::{Reader, Result};
 
 // Test image with manifest
 const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/C.jpg");
 
 #[test]
 fn test_hash_data_assertion_included() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     let manifests = json_value["manifests"]
         .as_array()
@@ -38,8 +38,8 @@ fn test_hash_data_assertion_included() -> Result<()> {
 
 #[test]
 fn test_hash_data_structure() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     let manifests = json_value["manifests"]
         .as_array()
@@ -80,8 +80,8 @@ fn test_hash_data_structure() -> Result<()> {
 
 #[test]
 fn test_hash_data_algorithm() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     let manifests = json_value["manifests"]
         .as_array()
@@ -112,8 +112,8 @@ fn test_hash_data_algorithm() -> Result<()> {
 
 #[test]
 fn test_multiple_hash_assertions() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     let manifests = json_value["manifests"]
         .as_array()
@@ -146,8 +146,8 @@ fn test_multiple_hash_assertions() -> Result<()> {
 fn test_hash_data_not_filtered() -> Result<()> {
     // This test ensures that c2pa.hash.data is included in crJSON format
     // even though it's filtered out in the standard Manifest format
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     let manifests = json_value["manifests"]
         .as_array()
@@ -201,8 +201,8 @@ fn test_hash_data_not_filtered() -> Result<()> {
 fn test_hash_assertion_versioning() -> Result<()> {
     // This test verifies that hash assertions with versions (e.g., c2pa.hash.bmff.v2, v3)
     // are correctly labeled with their version suffix
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     let manifests = json_value["manifests"]
         .as_array()
@@ -257,8 +257,8 @@ fn test_hash_assertion_versioning() -> Result<()> {
 fn test_hash_assertion_pad_encoding() -> Result<()> {
     // This test verifies that the 'pad' field in hash assertions is base64 encoded,
     // not an array of integers
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     let manifests = json_value["manifests"]
         .as_array()

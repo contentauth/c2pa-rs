@@ -28,7 +28,7 @@
 
 use std::io::Cursor;
 
-use c2pa::{CrJsonReader, Result};
+use c2pa::{Reader, Result};
 
 const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
 
@@ -49,10 +49,10 @@ fn maybe_write_crjson_output(name: &str, json: &str) {
 
 #[test]
 fn test_validation_results_schema_compliance() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    maybe_write_crjson_output("CA.jpg.json", &reader.json());
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    maybe_write_crjson_output("CA.jpg.json", &reader.crjson());
 
-    let json_value = reader.to_json_value()?;
+    let json_value = reader.to_crjson_value()?;
 
     // Verify validationResults exists
     let validation_results = json_value
@@ -121,8 +121,8 @@ fn test_validation_results_schema_compliance() -> Result<()> {
 
 #[test]
 fn test_manifest_status_schema_compliance() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     // Get manifests array
     let manifests = json_value
@@ -170,8 +170,8 @@ fn test_manifest_status_schema_compliance() -> Result<()> {
 
 #[test]
 fn test_context_schema_compliance() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     // Verify @context exists
     let context = json_value.get("@context").expect("@context should exist");
@@ -194,8 +194,8 @@ fn test_context_schema_compliance() -> Result<()> {
 
 #[test]
 fn test_manifests_array_schema_compliance() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     // Verify manifests is an array
     let manifests = json_value.get("manifests").expect("manifests should exist");
@@ -274,9 +274,9 @@ fn test_manifests_array_schema_compliance() -> Result<()> {
 
 #[test]
 fn test_complete_schema_structure() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
 
-    let json_value = reader.to_json_value()?;
+    let json_value = reader.to_crjson_value()?;
 
     // Verify all top-level required fields (no asset_info, content, or metadata)
     assert!(json_value.get("@context").is_some(), "@context missing");
@@ -361,8 +361,8 @@ fn test_cr_json_schema_file_valid_and_matches_format() -> Result<()> {
 /// (no declaration, asset_info, content, metadata).
 #[test]
 fn test_cr_json_output_matches_schema_root() -> Result<()> {
-    let reader = CrJsonReader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
 
     let schema_value: serde_json::Value =
         serde_json::from_str(CRJSON_SCHEMA).expect("crJSON-schema.json must be valid JSON");

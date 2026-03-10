@@ -15,7 +15,7 @@
 
 use std::io::Cursor;
 
-use c2pa::{Builder, Context, CrJsonReader, Result, Settings};
+use c2pa::{Builder, Context, Reader, Result, Settings};
 
 const TEST_IMAGE: &[u8] = include_bytes!("../fixtures/CA.jpg");
 const TEST_SETTINGS: &str = include_str!("../fixtures/test_settings.toml");
@@ -60,10 +60,10 @@ fn test_created_and_gathered_assertions_separated() -> Result<()> {
     let mut dest = Cursor::new(Vec::new());
     builder.sign(context.signer()?, format, &mut source, &mut dest)?;
 
-    // Now read it with CrJsonReader
+    // Now read it with Reader
     dest.set_position(0);
-    let reader = CrJsonReader::from_stream(format, dest)?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream(format, dest)?;
+    let json_value = reader.to_crjson_value()?;
 
     // Get manifests array
     let manifests = json_value["manifests"]
@@ -204,10 +204,10 @@ fn test_hash_assertions_in_created() -> Result<()> {
     let mut dest = Cursor::new(Vec::new());
     builder.sign(context.signer()?, format, &mut source, &mut dest)?;
 
-    // Now read it with CrJsonReader
+    // Now read it with Reader
     dest.set_position(0);
-    let reader = CrJsonReader::from_stream(format, dest)?;
-    let json_value = reader.to_json_value()?;
+    let reader = Reader::from_stream(format, dest)?;
+    let json_value = reader.to_crjson_value()?;
 
     // Get manifests array
     let manifests = json_value["manifests"]
