@@ -822,10 +822,12 @@ impl Reader {
     /// ```no_run
     /// use std::io::Cursor;
     ///
-    /// use c2pa::Reader;
+    /// use c2pa::{Context, Reader};
     /// // Create a Reader from an in-memory stream (placeholder bytes shown here).
     /// let input = Cursor::new(Vec::new());
-    /// let reader = Reader::new().with_stream("image/jpeg", input).unwrap();
+    /// let reader = Reader::from_context(Context::new())
+    ///     .with_stream("image/jpeg", input)
+    ///     .unwrap();
     ///
     /// // Get a resource identifier from the active manifest (e.g., a thumbnail).
     /// let manifest = reader.active_manifest().unwrap();

@@ -103,19 +103,28 @@ fn test_validation_results_schema_compliance() -> Result<()> {
                     obj.contains_key("code"),
                     "Entry should have code (validationStatusEntry)"
                 );
-                assert!(obj.get("code").unwrap().is_string(), "code should be string");
+                assert!(
+                    obj.get("code").unwrap().is_string(),
+                    "code should be string"
+                );
             }
         }
         // Optional: per-manifest ingredientDeltas
         if let Some(deltas) = first.get("ingredientDeltas") {
-            assert!(deltas.is_array(), "manifest ingredientDeltas should be array");
+            assert!(
+                deltas.is_array(),
+                "manifest ingredientDeltas should be array"
+            );
             for item in deltas.as_array().unwrap() {
                 let obj = item.as_object().expect("Each delta should be object");
                 assert!(
                     obj.contains_key("ingredientAssertionURI"),
                     "Delta should have ingredientAssertionURI"
                 );
-                assert!(obj.contains_key("validationDeltas"), "Delta should have validationDeltas");
+                assert!(
+                    obj.contains_key("validationDeltas"),
+                    "Delta should have validationDeltas"
+                );
             }
         }
     }
@@ -130,7 +139,10 @@ fn test_manifest_validation_and_status_schema_compliance() -> Result<()> {
 
     // Document-level validationInfo (signature array, trust, content, validationTime)
     if let Some(validation_info) = json_value.get("validationInfo") {
-        assert!(validation_info.is_object(), "validationInfo should be an object");
+        assert!(
+            validation_info.is_object(),
+            "validationInfo should be an object"
+        );
         let info_obj = validation_info.as_object().unwrap();
 
         if let Some(signature) = info_obj.get("signature") {
@@ -149,7 +161,10 @@ fn test_manifest_validation_and_status_schema_compliance() -> Result<()> {
             assert!(content.is_string(), "content status should be string");
         }
         if let Some(validation_time) = info_obj.get("validationTime") {
-            assert!(validation_time.is_string(), "validationTime should be string");
+            assert!(
+                validation_time.is_string(),
+                "validationTime should be string"
+            );
         }
     }
 
@@ -237,7 +252,10 @@ fn test_manifests_array_schema_compliance() -> Result<()> {
         let validation_results = manifest_obj
             .get("validationResults")
             .expect("manifest should have validationResults");
-        assert!(validation_results.is_object(), "validationResults should be object");
+        assert!(
+            validation_results.is_object(),
+            "validationResults should be object"
+        );
 
         // oneOf: either claim or claim.v2 (implementation emits claim.v2)
         let has_claim = manifest_obj.get("claim").is_some();
@@ -287,7 +305,10 @@ fn test_complete_schema_structure() -> Result<()> {
     assert!(json_value.get("@context").is_some(), "@context missing");
     assert!(json_value.get("manifests").is_some(), "manifests missing");
     // validationInfo present when validation was run; manifests have validationResults
-    assert!(json_value.get("validationInfo").is_some(), "validationInfo missing");
+    assert!(
+        json_value.get("validationInfo").is_some(),
+        "validationInfo missing"
+    );
 
     // CrJSON does not include asset_info, content, or metadata
     assert!(json_value.get("asset_info").is_none());
@@ -473,8 +494,7 @@ fn test_validation_results_definition_and_ingredient_usage() -> Result<()> {
         .and_then(|r| r.as_str())
         .expect("ingredientAssertionV3.validationResults must have $ref to validationResults");
     assert_eq!(
-        vr_ref,
-        "#/definitions/validationResults",
+        vr_ref, "#/definitions/validationResults",
         "ingredientAssertionV3.validationResults must $ref #/definitions/validationResults"
     );
 

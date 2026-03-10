@@ -614,15 +614,13 @@ impl<'a> CrJsonExporter<'a> {
 
     /// Build validationResults (statusCodes) for a single manifest. Active manifest gets its codes; others get empty.
     fn build_manifest_validation_results(&self, label: &str) -> Value {
-        let codes: StatusCodes = match (
-            self.reader.active_label(),
-            self.reader.validation_results(),
-        ) {
-            (Some(active), Some(vr)) if active == label => {
-                vr.active_manifest().cloned().unwrap_or_default()
-            }
-            _ => StatusCodes::default(),
-        };
+        let codes: StatusCodes =
+            match (self.reader.active_label(), self.reader.validation_results()) {
+                (Some(active), Some(vr)) if active == label => {
+                    vr.active_manifest().cloned().unwrap_or_default()
+                }
+                _ => StatusCodes::default(),
+            };
         serde_json::to_value(&codes).unwrap_or_else(|_| {
             json!({
                 "success": [],
