@@ -2113,11 +2113,11 @@ impl Builder {
         Store::get_composed_manifest(&jumbf, format)
     }
 
-    /// Sets the exclusion ojbect for the [`BmffHash`] assertion in the Builder.
+    /// Sets the exclusion object for the [`BmffHash`] assertion in the Builder.
     ///
     /// Call this before [`Builder::placeholder`] to register the list of boxes to exclude from the BMFF hash calculation.  
-    /// This is necessary when acomposed placeholder was embedded in the asset.  This information is needed
-    /// upfron tbecause BMFF exclusion, e.g.
+    /// This is necessary when a composed placeholder was embedded in the asset.  This information is needed
+    /// upfront because BMFF exclusion, e.g.
     /// [
     ///     {
     ///         "data": [

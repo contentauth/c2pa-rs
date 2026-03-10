@@ -2072,13 +2072,14 @@ impl Store {
                 // save the valid timestamps stored in the StoreValidationInfo
                 // we only use valid timestamps, otherwise just ignore
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
+                    let mut tmp_log = StatusTracker::default();
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
                         if let Ok(sign1) = rc.cose_sign1() {
                             if let Ok(tst_info) = verify_time_stamp(
                                 time_stamp_token,
                                 &sign1.signature,
                                 &self.ctp,
-                                validation_log,
+                                &mut tmp_log,
                                 // no trust checks for leagacy timestamps
                                 rc.version() != 1,
                             ) {
