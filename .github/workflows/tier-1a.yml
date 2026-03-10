@@ -456,7 +456,7 @@ jobs:
       - name: Extract wasm-bindgen version from Cargo.lock
         id: wasm-bindgen-version
         run: |
-          VERSION=$(cargo metadata --format-version 1 --locked | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
+          VERSION=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Using wasm-bindgen version: $VERSION"
 
