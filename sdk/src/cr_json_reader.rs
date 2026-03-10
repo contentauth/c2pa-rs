@@ -38,7 +38,7 @@ use crate::{
         time_stamp::tsa_signer_cert_der_from_token,
     },
     error::{Error, Result},
-    jumbf::labels::to_absolute_uri,
+    jumbf::labels::{manifest_label_from_uri, to_absolute_uri},
     reader::{AsyncPostValidator, MaybeSend, PostValidator, Reader},
     status_tracker::StatusTracker,
     validation_results::{
@@ -46,6 +46,7 @@ use crate::{
             SIGNING_CREDENTIAL_EXPIRED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
             SIGNING_CREDENTIAL_UNTRUSTED,
         },
+        StatusCodes,
         ValidationState,
     },
     validation_status::ValidationStatus,
@@ -212,10 +213,11 @@ impl CrJsonReader {
         let manifests_array = self.convert_manifests_to_array()?;
         result["manifests"] = manifests_array;
 
-        // Add validationResults (output of validation_results() method).
-        // When present, validationResults always includes activeManifest (see ValidationResults::from_store).
+        // Add document-level validationInfo (summary + validationTime). ingredientDeltas are per-manifest.
         if let Some(validation_results) = self.inner.validation_results() {
-            result["validationResults"] = serde_json::to_value(validation_results)?;
+            if let Some(vs) = self.build_validation_info(validation_results)? {
+                result["validationInfo"] = vs;
+            }
         }
 
         // jsonGenerator: claim_generator_info fields from the (active) manifest + date (ISO 8601).
@@ -276,11 +278,14 @@ impl CrJsonReader {
                 .unwrap_or_else(|| Value::Object(Map::new()));
             manifest_obj.insert("signature".to_string(), signature);
 
-            // Build status object (required; use empty object when no validation results)
-            let status = self
-                .build_manifest_status(manifest, label)?
-                .unwrap_or_else(|| Value::Object(Map::new()));
-            manifest_obj.insert("status".to_string(), status);
+            // Build validationResults (statusCodes) for this manifest (required; use empty success/informational/failure when none)
+            let validation_results = self.build_manifest_validation_results(label);
+            manifest_obj.insert("validationResults".to_string(), validation_results);
+
+            // Per-manifest ingredientDeltas: deltas whose ingredientAssertionURI belongs to this manifest
+            if let Some(deltas) = self.build_manifest_ingredient_deltas(label) {
+                manifest_obj.insert("ingredientDeltas".to_string(), deltas);
+            }
 
             labeled.push((label.clone(), Value::Object(manifest_obj)));
         }
@@ -1228,65 +1233,80 @@ impl CrJsonReader {
         Ok(components)
     }
 
-    /// Build status object for a manifest
-    fn build_manifest_status(&self, manifest: &Manifest, _label: &str) -> Result<Option<Value>> {
-        let validation_results = match self.inner.validation_results() {
-            Some(results) => results,
-            None => return Ok(None),
-        };
-
-        let mut status = Map::new();
-
-        // Extract key validation codes from results
-        let active_manifest = match validation_results.active_manifest() {
+    /// Build document-level validationInfo object (signature codes array, trust, content, validationTime).
+    fn build_validation_info(
+        &self,
+        validation_results: &crate::validation_results::ValidationResults,
+    ) -> Result<Option<Value>> {
+        let active_codes = match validation_results.active_manifest() {
             Some(am) => am,
             None => return Ok(None),
         };
 
-        // Signature validation status
-        if let Some(sig_code) =
-            Self::find_validation_code(&active_manifest.success, "claimSignature")
-        {
-            status.insert("signature".to_string(), json!(sig_code));
-        }
+        let mut info = Map::new();
 
-        // Trust status: prefer trusted, invalid, untrusted, expired; else first signingCredential code
-        if let Some(trust_code) =
-            Self::find_preferred_trust_code(&active_manifest)
-        {
-            status.insert("trust".to_string(), json!(trust_code));
-        } else if let Some(trust_code) =
-            Self::find_validation_code(&active_manifest.success, "signingCredential")
-        {
-            status.insert("trust".to_string(), json!(trust_code));
-        } else if let Some(trust_code) =
-            Self::find_validation_code(&active_manifest.failure, "signingCredential")
-        {
-            status.insert("trust".to_string(), json!(trust_code));
+        let sig_codes = Self::find_all_validation_codes(active_codes, "claimSignature");
+        if !sig_codes.is_empty() {
+            info.insert("signature".to_string(), json!(sig_codes));
         }
-
-        // Content validation status
+        if let Some(trust_code) = Self::find_preferred_trust_code(active_codes) {
+            info.insert("trust".to_string(), json!(trust_code));
+        } else if let Some(trust_code) =
+            Self::find_validation_code(&active_codes.success, "signingCredential")
+        {
+            info.insert("trust".to_string(), json!(trust_code));
+        } else if let Some(trust_code) =
+            Self::find_validation_code(&active_codes.failure, "signingCredential")
+        {
+            info.insert("trust".to_string(), json!(trust_code));
+        }
         if let Some(content_code) =
-            Self::find_validation_code(&active_manifest.success, "assertion.dataHash")
+            Self::find_validation_code(&active_codes.success, "assertion.dataHash")
         {
-            status.insert("content".to_string(), json!(content_code));
+            info.insert("content".to_string(), json!(content_code));
         }
 
-        // Assertion-specific validation codes
-        let mut assertion_status = Map::new();
-        for assertion in manifest.assertions() {
-            let assertion_label = assertion.label();
-            if let Some(code) =
-                Self::find_validation_code_for_assertion(&active_manifest.success, assertion_label)
-            {
-                assertion_status.insert(assertion_label.to_string(), json!(code));
+        if let Some(t) = validation_results.validation_time() {
+            info.insert("validationTime".to_string(), json!(t));
+        }
+
+        Ok(Some(Value::Object(info)))
+    }
+
+    /// Build validationResults (statusCodes) for a single manifest. Active manifest gets its codes; others get empty.
+    fn build_manifest_validation_results(&self, label: &str) -> Value {
+        let codes: StatusCodes = match (
+            self.inner.active_label(),
+            self.inner.validation_results(),
+        ) {
+            (Some(active), Some(vr)) if active == label => {
+                vr.active_manifest().cloned().unwrap_or_default()
             }
-        }
-        if !assertion_status.is_empty() {
-            status.insert("assertion".to_string(), Value::Object(assertion_status));
-        }
+            _ => StatusCodes::default(),
+        };
+        serde_json::to_value(&codes).unwrap_or_else(|_| {
+            json!({
+                "success": [],
+                "informational": [],
+                "failure": []
+            })
+        })
+    }
 
-        Ok(Some(Value::Object(status)))
+    /// Build ingredientDeltas for a single manifest: deltas whose ingredientAssertionURI belongs to this manifest.
+    fn build_manifest_ingredient_deltas(&self, label: &str) -> Option<Value> {
+        let validation_results = self.inner.validation_results()?;
+        let deltas = validation_results.ingredient_deltas()?;
+        let for_manifest: Vec<_> = deltas
+            .iter()
+            .filter(|idv| {
+                manifest_label_from_uri(idv.ingredient_assertion_uri()).as_deref() == Some(label)
+            })
+            .collect();
+        if for_manifest.is_empty() {
+            return None;
+        }
+        serde_json::to_value(&for_manifest).ok()
     }
 
     /// Find a preferred trust status (trusted, invalid, untrusted, expired) in the active manifest.
@@ -1318,19 +1338,21 @@ impl CrJsonReader {
             .map(|s| s.code().to_string())
     }
 
-    /// Find validation code for a specific assertion
-    fn find_validation_code_for_assertion(
-        statuses: &[ValidationStatus],
-        assertion_label: &str,
-    ) -> Option<String> {
-        statuses
+    /// Collect all validation codes (from success, informational, failure) that start with the given prefix.
+    fn find_all_validation_codes(
+        active_codes: &crate::validation_results::StatusCodes,
+        prefix: &str,
+    ) -> Vec<String> {
+        let mut codes: Vec<String> = active_codes
+            .success()
             .iter()
-            .find(|s| {
-                s.url()
-                    .map(|u| u.contains(assertion_label))
-                    .unwrap_or(false)
-            })
+            .chain(active_codes.informational().iter())
+            .chain(active_codes.failure().iter())
+            .filter(|s| s.code().starts_with(prefix))
             .map(|s| s.code().to_string())
+            .collect();
+        codes.dedup();
+        codes
     }
 
     /// Get a reference to the underlying Reader
@@ -1410,7 +1432,7 @@ mod tests {
             assert!(manifest.get("label").is_some());
             assert!(manifest.get("assertions").is_some());
             assert!(manifest.get("signature").is_some());
-            assert!(manifest.get("status").is_some());
+            assert!(manifest.get("validationResults").is_some());
             let has_claim = manifest.get("claim").is_some();
             let has_claim_v2 = manifest.get("claim.v2").is_some();
             assert!(has_claim != has_claim_v2, "manifest must have exactly one of claim (v1) or claim.v2");

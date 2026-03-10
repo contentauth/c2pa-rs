@@ -42,12 +42,12 @@
                 "$ref": "#/definitions/manifest"
             }
         },
-        "validationResults": {
-            "description": "Validation results from validation (active manifest and ingredient deltas)",
-            "$ref": "#/definitions/validationResults"
+        "validationInfo": {
+            "description": "Validation information summary and validation time (signature codes, trust, content). Document-level.",
+            "$ref": "#/definitions/validationInfo"
         },
         "jsonGenerator": {
-            "description": "Information about the claim generator, including date stamp",
+            "description": "Information about the tool used to generate this JSON, and when it was generated",
             "$ref": "#/definitions/jsonGenerator"
         }
     },
@@ -81,12 +81,12 @@
         },
         "manifest": {
             "type": "object",
-            "description": "CrJSON manifest wrapper containing label, assertions, claim or claim.v2, signature, and status. Claim content: claim.cddl claim-map or claim-map-v2.",
+            "description": "CrJSON manifest wrapper containing label, assertions, claim or claim.v2, signature, and validationResults. Claim content: claim.cddl claim-map or claim-map-v2.",
             "required": [
                 "label",
                 "assertions",
                 "signature",
-                "status"
+                "validationResults"
             ],
             "oneOf": [
                 {
@@ -121,8 +121,16 @@
                 "signature": {
                     "$ref": "#/definitions/signature"
                 },
-                "status": {
-                    "$ref": "#/definitions/status"
+                "validationResults": {
+                    "$ref": "#/definitions/statusCodes",
+                    "description": "Validation status codes for this manifest (success, informational, failure)"
+                },
+                "ingredientDeltas": {
+                    "type": "array",
+                    "description": "Validation deltas for this manifest's ingredient assertions. Present when ingredients are C2PA assets.",
+                    "items": {
+                        "$ref": "#/definitions/ingredientDeltaValidationResult"
+                    }
                 }
             },
             "additionalProperties": false
@@ -1695,17 +1703,44 @@
             },
             "additionalProperties": false
         },
+        "validationInfo": {
+            "type": "object",
+            "description": "Validation information summary (signature codes, trust, content) and validation time. Document-level.",
+            "properties": {
+                "signature": {
+                    "type": "array",
+                    "description": "All status codes related to claim signature (claimSignature*)",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Content validation status"
+                },
+                "trust": {
+                    "type": "string",
+                    "description": "Trust validation status"
+                },
+                "validationTime": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Time when the validation was performed; RFC 3339 format"
+                }
+            },
+            "additionalProperties": false
+        },
         "validationResults": {
             "type": "object",
-            "description": "Validation results (active manifest and ingredient deltas). CDDL: validation-results.cddl validation-results-map.",
+            "description": "Validation results (active manifest and optional ingredient deltas). CDDL: validation-results.cddl validation-results-map. Used in ingredient assertions (e.g. c2pa.ingredient.v3).",
             "properties": {
                 "activeManifest": {
                     "$ref": "#/definitions/statusCodes",
-                    "description": "Validation status codes for the active manifest. Present if ingredient is a C2PA asset."
+                    "description": "Validation status codes for the active manifest. Present when ingredient is a C2PA asset."
                 },
                 "ingredientDeltas": {
                     "type": "array",
-                    "description": "Validation deltas per ingredient assertion. Present if the ingredient is a C2PA asset.",
+                    "description": "Validation deltas per ingredient assertion. Present when the ingredient is a C2PA asset.",
                     "items": {
                         "$ref": "#/definitions/ingredientDeltaValidationResult"
                     }
@@ -1719,11 +1754,6 @@
                     "type": "string",
                     "format": "uri",
                     "description": "URI to the trust list that was used to validate certificates"
-                },
-                "validationTime": {
-                    "type": "string",
-                    "format": "date-time",
-                    "description": "Time when the validation was performed; RFC 3339 format"
                 }
             },
             "required": [
