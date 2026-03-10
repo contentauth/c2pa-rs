@@ -13,6 +13,7 @@
 
 use std::collections::HashSet;
 
+use chrono::Utc;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -115,6 +116,10 @@ pub struct ValidationResults {
     /// manifest. Present if the the ingredient is a C2PA asset.
     #[serde(rename = "ingredientDeltas", skip_serializing_if = "Option::is_none")]
     ingredient_deltas: Option<Vec<IngredientDeltaValidationResult>>,
+
+    /// Time when the validation was performed (RFC 3339 date-time). Used only for document-level validationInfo; not serialized in validationResults (e.g. ingredient assertions).
+    #[serde(rename = "validationTime", skip_serializing)]
+    validation_time: Option<String>,
 }
 
 impl ValidationResults {
@@ -199,6 +204,7 @@ impl ValidationResults {
                 results.add_status(status);
             }
         }
+        results.validation_time = Some(Utc::now().to_rfc3339());
         results
     }
 
@@ -319,6 +325,11 @@ impl ValidationResults {
     /// Returns the ingredient deltas, if present.
     pub fn ingredient_deltas(&self) -> Option<&Vec<IngredientDeltaValidationResult>> {
         self.ingredient_deltas.as_ref()
+    }
+
+    /// Returns the time when validation was performed (RFC 3339), if set.
+    pub fn validation_time(&self) -> Option<&str> {
+        self.validation_time.as_deref()
     }
 
     pub fn add_active_manifest(mut self, scm: StatusCodes) -> Self {

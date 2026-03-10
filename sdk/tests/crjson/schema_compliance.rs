@@ -36,7 +36,7 @@ const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
 const CRJSON_SCHEMA: &str = include_str!("../../../cli/schemas/crJSON-schema.json");
 
 /// When C2PA_WRITE_CRJSON is set, write generated crJSON to target/crjson_test_output/
-/// so you can review the exact output. Called at the start of tests that build CrJsonReader.
+/// so you can review the exact output. Called at the start of tests that build Reader crJSON.
 fn maybe_write_crjson_output(name: &str, json: &str) {
     if std::env::var("C2PA_WRITE_CRJSON").is_ok() {
         let out_dir = std::path::PathBuf::from("target/crjson_test_output");
@@ -54,65 +54,69 @@ fn test_validation_results_schema_compliance() -> Result<()> {
 
     let json_value = reader.to_crjson_value()?;
 
-    // Verify validationResults exists
-    let validation_results = json_value
-        .get("validationResults")
-        .expect("validationResults should exist");
-    assert!(
-        validation_results.is_object(),
-        "validationResults should be an object"
-    );
-
-    let vr = validation_results.as_object().unwrap();
-
-    // Required per schema: activeManifest (statusCodes with success, informational, failure)
-    let active_manifest = vr
-        .get("activeManifest")
-        .expect("validationResults must have activeManifest per crJSON schema");
-    assert!(
-        active_manifest.is_object(),
-        "activeManifest should be object"
-    );
-    let am = active_manifest.as_object().unwrap();
-    for key in &["success", "informational", "failure"] {
-        let arr = am
-            .get(*key)
-            .unwrap_or_else(|| panic!("activeManifest must have {} array per schema", key));
-        assert!(arr.is_array(), "{} should be array", key);
-        for entry in arr.as_array().unwrap() {
-            assert!(entry.is_object(), "Each entry should be object");
-            let obj = entry.as_object().unwrap();
+    // Document-level validationInfo (summary + validationTime)
+    if let Some(validation_info) = json_value.get("validationInfo") {
+        assert!(
+            validation_info.is_object(),
+            "validationInfo should be an object"
+        );
+        let vi = validation_info.as_object().unwrap();
+        if let Some(signature) = vi.get("signature") {
             assert!(
-                obj.contains_key("code"),
-                "Entry should have code (validationStatusEntry)"
+                signature.is_array(),
+                "validationInfo.signature should be array of status codes"
             );
-            assert!(
-                obj.get("code").unwrap().is_string(),
-                "code should be string"
-            );
-            if let Some(url) = obj.get("url") {
-                assert!(url.is_string(), "url should be string");
+            for item in signature.as_array().unwrap() {
+                assert!(
+                    item.is_string(),
+                    "validationInfo.signature items should be strings"
+                );
             }
-            if let Some(explanation) = obj.get("explanation") {
-                assert!(explanation.is_string(), "explanation should be string");
+        }
+        for key in &["trust", "content", "validationTime"] {
+            if let Some(v) = vi.get(*key) {
+                assert!(v.is_string(), "validationInfo.{} should be string", key);
             }
         }
     }
 
-    // Optional: ingredientDeltas array
-    if let Some(deltas) = vr.get("ingredientDeltas") {
-        assert!(deltas.is_array(), "ingredientDeltas should be array");
-        for item in deltas.as_array().unwrap() {
-            assert!(item.is_object(), "Each delta should be object");
-            let obj = item.as_object().unwrap();
-            assert!(
-                obj.contains_key("ingredientAssertionURI"),
-                "Delta should have ingredientAssertionURI"
-            );
-            assert!(
-                obj.contains_key("validationDeltas"),
-                "Delta should have validationDeltas"
-            );
+    // Per-manifest validationResults (statusCodes: success, informational, failure) and optional ingredientDeltas
+    let manifests = json_value
+        .get("manifests")
+        .and_then(|m| m.as_array())
+        .expect("manifests should exist");
+    if let Some(first) = manifests.first() {
+        let vr = first
+            .get("validationResults")
+            .expect("manifest must have validationResults per crJSON schema");
+        assert!(vr.is_object(), "validationResults should be object");
+        let vr_obj = vr.as_object().unwrap();
+        for key in &["success", "informational", "failure"] {
+            let arr = vr_obj
+                .get(*key)
+                .unwrap_or_else(|| panic!("validationResults must have {} array per schema", key));
+            assert!(arr.is_array(), "{} should be array", key);
+            for entry in arr.as_array().unwrap() {
+                assert!(entry.is_object(), "Each entry should be object");
+                let obj = entry.as_object().unwrap();
+                assert!(
+                    obj.contains_key("code"),
+                    "Entry should have code (validationStatusEntry)"
+                );
+                assert!(obj.get("code").unwrap().is_string(), "code should be string");
+            }
+        }
+        // Optional: per-manifest ingredientDeltas
+        if let Some(deltas) = first.get("ingredientDeltas") {
+            assert!(deltas.is_array(), "manifest ingredientDeltas should be array");
+            for item in deltas.as_array().unwrap() {
+                let obj = item.as_object().expect("Each delta should be object");
+                assert!(
+                    obj.contains_key("ingredientAssertionURI"),
+                    "Delta should have ingredientAssertionURI"
+                );
+                assert!(obj.contains_key("validationDeltas"), "Delta should have validationDeltas");
+            }
         }
     }
 
@@ -120,49 +124,50 @@ fn test_validation_results_schema_compliance() -> Result<()> {
 }
 
 #[test]
-fn test_manifest_status_schema_compliance() -> Result<()> {
+fn test_manifest_validation_and_status_schema_compliance() -> Result<()> {
     let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
-    // Get manifests array
+    // Document-level validationInfo (signature array, trust, content, validationTime)
+    if let Some(validation_info) = json_value.get("validationInfo") {
+        assert!(validation_info.is_object(), "validationInfo should be an object");
+        let info_obj = validation_info.as_object().unwrap();
+
+        if let Some(signature) = info_obj.get("signature") {
+            assert!(
+                signature.is_array(),
+                "signature should be array of status codes"
+            );
+            for item in signature.as_array().unwrap() {
+                assert!(item.is_string(), "signature items should be strings");
+            }
+        }
+        if let Some(trust) = info_obj.get("trust") {
+            assert!(trust.is_string(), "trust status should be string");
+        }
+        if let Some(content) = info_obj.get("content") {
+            assert!(content.is_string(), "content status should be string");
+        }
+        if let Some(validation_time) = info_obj.get("validationTime") {
+            assert!(validation_time.is_string(), "validationTime should be string");
+        }
+    }
+
+    // Each manifest has validationResults (statusCodes)
     let manifests = json_value
         .get("manifests")
         .expect("manifests should exist")
         .as_array()
         .expect("manifests should be an array");
-
-    // Check first manifest for status
-    if let Some(manifest) = manifests.first() {
-        if let Some(status) = manifest.get("status") {
-            assert!(status.is_object(), "status should be an object");
-            let status_obj = status.as_object().unwrap();
-
-            // Per-manifest status can have: signature, trust, content, assertion
-            // All should be strings or objects
-
-            if let Some(signature) = status_obj.get("signature") {
-                assert!(signature.is_string(), "signature status should be string");
-            }
-
-            if let Some(trust) = status_obj.get("trust") {
-                assert!(trust.is_string(), "trust status should be string");
-            }
-
-            if let Some(content) = status_obj.get("content") {
-                assert!(content.is_string(), "content status should be string");
-            }
-
-            if let Some(assertion) = status_obj.get("assertion") {
-                assert!(assertion.is_object(), "assertion status should be object");
-                // Each assertion status value should be a string
-                for (_key, value) in assertion.as_object().unwrap() {
-                    assert!(
-                        value.is_string(),
-                        "assertion status values should be strings"
-                    );
-                }
-            }
-        }
+    for manifest in manifests {
+        let vr = manifest
+            .get("validationResults")
+            .expect("manifest should have validationResults");
+        assert!(vr.is_object(), "validationResults should be object");
+        let vr_obj = vr.as_object().unwrap();
+        assert!(vr_obj.contains_key("success"));
+        assert!(vr_obj.contains_key("informational"));
+        assert!(vr_obj.contains_key("failure"));
     }
 
     Ok(())
@@ -202,7 +207,7 @@ fn test_manifests_array_schema_compliance() -> Result<()> {
 
     assert!(manifests.is_array(), "manifests should be an array");
 
-    // Check each manifest (schema required: label, assertions, signature, status; oneOf: claim or claim.v2)
+    // Check each manifest (schema required: label, assertions, signature, validationResults; oneOf: claim or claim.v2)
     for manifest in manifests.as_array().unwrap() {
         assert!(manifest.is_object(), "Each manifest should be an object");
         let manifest_obj = manifest.as_object().unwrap();
@@ -228,11 +233,11 @@ fn test_manifests_array_schema_compliance() -> Result<()> {
             .expect("manifest should have signature");
         assert!(signature.is_object(), "signature should be object");
 
-        // Required: status (object)
-        let status = manifest_obj
-            .get("status")
-            .expect("manifest should have status");
-        assert!(status.is_object(), "status should be object");
+        // Required: validationResults (statusCodes object)
+        let validation_results = manifest_obj
+            .get("validationResults")
+            .expect("manifest should have validationResults");
+        assert!(validation_results.is_object(), "validationResults should be object");
 
         // oneOf: either claim or claim.v2 (implementation emits claim.v2)
         let has_claim = manifest_obj.get("claim").is_some();
@@ -281,10 +286,8 @@ fn test_complete_schema_structure() -> Result<()> {
     // Verify all top-level required fields (no asset_info, content, or metadata)
     assert!(json_value.get("@context").is_some(), "@context missing");
     assert!(json_value.get("manifests").is_some(), "manifests missing");
-    assert!(
-        json_value.get("validationResults").is_some(),
-        "validationResults missing"
-    );
+    // validationInfo present when validation was run; manifests have validationResults
+    assert!(json_value.get("validationInfo").is_some(), "validationInfo missing");
 
     // CrJSON does not include asset_info, content, or metadata
     assert!(json_value.get("asset_info").is_none());
@@ -294,7 +297,7 @@ fn test_complete_schema_structure() -> Result<()> {
     // Verify types
     assert!(json_value["@context"].is_object());
     assert!(json_value["manifests"].is_array());
-    assert!(json_value["validationResults"].is_object());
+    assert!(json_value["validationInfo"].is_object());
 
     Ok(())
 }
@@ -321,8 +324,26 @@ fn test_cr_json_schema_file_valid_and_matches_format() -> Result<()> {
         "schema must define manifests"
     );
     assert!(
-        props.contains_key("validationResults"),
-        "schema must define validationResults"
+        props.contains_key("validationInfo"),
+        "schema must define validationInfo"
+    );
+
+    // Manifest definition must allow ingredientDeltas (per-manifest)
+    let definitions = schema_value
+        .get("definitions")
+        .and_then(|d| d.as_object())
+        .expect("schema must have definitions");
+    let manifest_def = definitions
+        .get("manifest")
+        .and_then(|m| m.as_object())
+        .expect("schema must define manifest");
+    let manifest_props = manifest_def
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .expect("manifest must have properties");
+    assert!(
+        manifest_props.contains_key("ingredientDeltas"),
+        "manifest must define ingredientDeltas (per-manifest)"
     );
 
     // CrJSON schema must NOT include removed sections
@@ -385,6 +406,127 @@ fn test_cr_json_output_matches_schema_root() -> Result<()> {
     assert!(json_value.get("asset_info").is_none());
     assert!(json_value.get("content").is_none());
     assert!(json_value.get("metadata").is_none());
+
+    Ok(())
+}
+
+/// Schema must define validationResults (used by ingredient assertions, e.g. c2pa.ingredient.v3).
+/// When crJSON output contains an ingredient assertion with validationResults, it must match that definition.
+#[test]
+fn test_validation_results_definition_and_ingredient_usage() -> Result<()> {
+    let schema_value: serde_json::Value =
+        serde_json::from_str(CRJSON_SCHEMA).expect("crJSON-schema.json must be valid JSON");
+    let definitions = schema_value
+        .get("definitions")
+        .and_then(|d| d.as_object())
+        .expect("schema must have definitions");
+
+    // validationResults definition must exist (used by manifest-level statusCodes and by ingredientAssertionV3)
+    let validation_results_def = definitions
+        .get("validationResults")
+        .and_then(|v| v.as_object())
+        .expect("schema must define validationResults for use by ingredient assertions");
+    assert_eq!(
+        validation_results_def
+            .get("type")
+            .and_then(|t| t.as_str())
+            .unwrap_or(""),
+        "object",
+        "validationResults must be type object"
+    );
+    let vr_props = validation_results_def
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .expect("validationResults must have properties");
+    assert!(
+        vr_props.contains_key("activeManifest"),
+        "validationResults must have activeManifest (statusCodes)"
+    );
+    assert!(
+        vr_props.contains_key("ingredientDeltas"),
+        "validationResults must have ingredientDeltas"
+    );
+    let vr_required = validation_results_def
+        .get("required")
+        .and_then(|r| r.as_array())
+        .expect("validationResults must have required array");
+    assert!(
+        vr_required
+            .iter()
+            .any(|v| v.as_str() == Some("activeManifest")),
+        "validationResults.required must include activeManifest"
+    );
+
+    // ingredientAssertionV3 must reference validationResults
+    let ingredient_v3 = definitions
+        .get("ingredientAssertionV3")
+        .and_then(|v| v.as_object())
+        .expect("schema must define ingredientAssertionV3");
+    let v3_props = ingredient_v3
+        .get("properties")
+        .and_then(|p| p.as_object())
+        .expect("ingredientAssertionV3 must have properties");
+    let vr_ref = v3_props
+        .get("validationResults")
+        .and_then(|v| v.as_object())
+        .and_then(|o| o.get("$ref"))
+        .and_then(|r| r.as_str())
+        .expect("ingredientAssertionV3.validationResults must have $ref to validationResults");
+    assert_eq!(
+        vr_ref,
+        "#/definitions/validationResults",
+        "ingredientAssertionV3.validationResults must $ref #/definitions/validationResults"
+    );
+
+    // When crJSON output contains an ingredient assertion with validationResults, validate its shape
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
+    let manifests = json_value
+        .get("manifests")
+        .and_then(|m| m.as_array())
+        .expect("manifests should exist");
+    for manifest in manifests {
+        let assertions = match manifest.get("assertions").and_then(|a| a.as_object()) {
+            Some(a) => a,
+            None => continue,
+        };
+        for (_key, assertion_value) in assertions {
+            let assertion_obj = match assertion_value.as_object() {
+                Some(o) => o,
+                None => continue,
+            };
+            if let Some(ingredient_vr) = assertion_obj.get("validationResults") {
+                // This assertion has validationResults (e.g. v3 ingredient) - must match validationResults definition
+                let vr = ingredient_vr
+                    .as_object()
+                    .expect("ingredient validationResults must be object");
+                let active_manifest = vr
+                    .get("activeManifest")
+                    .expect("ingredient validationResults must have activeManifest per schema");
+                let am = active_manifest
+                    .as_object()
+                    .expect("activeManifest must be object (statusCodes)");
+                for key in &["success", "informational", "failure"] {
+                    assert!(
+                        am.contains_key(*key),
+                        "ingredient validationResults.activeManifest must have {} array",
+                        key
+                    );
+                    assert!(
+                        am.get(*key).unwrap().as_array().is_some(),
+                        "ingredient validationResults.activeManifest.{} must be array",
+                        key
+                    );
+                }
+                if let Some(deltas) = vr.get("ingredientDeltas") {
+                    assert!(
+                        deltas.is_array(),
+                        "ingredient validationResults.ingredientDeltas must be array"
+                    );
+                }
+            }
+        }
+    }
 
     Ok(())
 }

@@ -19,6 +19,8 @@ NOTE: Only Wasm targets `wasm32-wasip2` and later can use the `file_io` feature.
 
 As of March 2025, `wasm32-wasip2` still requires the nightly toolchain as tracked by this issue: [wasip2 target should not conditionally feature gate stdlib APIs](https://github.com/rust-lang/rust/issues/130323)
 
+`cargo build -p c2pa --release --target wasm32-unknown-unknown --no-default-features --features "rust_native_crypto"`
+
 ### Testing Wasm
 
 Prerequisites:
