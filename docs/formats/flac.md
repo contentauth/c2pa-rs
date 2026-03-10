@@ -48,11 +48,52 @@ So the file layout is: `[optional ID3v2][fLaC stream]`.
 
 ## Testing
 
-- **Fixture**: `sdk/tests/fixtures/sample1.flac` is a minimal valid FLAC (fLaC magic, STREAMINFO block, padding block; no ID3).
-- **Tests** (in `flac_io.rs`):
-  - `test_read_cai_store_no_id3`: Pure FLAC with no ID3 returns `JumbfNotFound`.
-  - `test_write_flac`: Write manifest to FLAC, read back and compare.
-  - `test_patch_write_flac`: Patch manifest with same-size data and verify.
-  - `test_remove_c2pa_flac`: Remove manifest and assert `JumbfNotFound` on read.
-  - `test_get_object_locations_flac`: Write manifest and check `get_object_locations`.
-  - `test_remote_ref_flac`: Embed XMP reference in ID3 PRIV and read back.
+- **Fixture**: `sdk/tests/fixtures/sample1.flac` is a minimal valid FLAC (fLaC magic, STREAMINFO block, padding block; no ID3). Tests also use in-memory streams built with helpers `id3_header()` and `id3_tag_plus_flac()` (ID3 tag bytes + FLAC tail).
+
+All tests live in `sdk/src/asset_handlers/flac_io.rs` under `#[cfg(test)] mod tests`. Run with: `cargo test --package c2pa flac_io::tests::`.
+
+### read_cai / header / validation
+
+| Test | Description |
+|------|-------------|
+| `test_read_cai_store_no_id3` | Pure FLAC (no ID3) returns `JumbfNotFound`. |
+| `test_read_cai_unsupported_type` | First 10 bytes neither ID3 nor fLaC → `UnsupportedType`. |
+| `test_read_cai_invalid_id3_version` | ID3 version 1 (invalid for FLAC) → `FlacError::InvalidId3Version`. |
+| `test_read_cai_io_error_too_short` | Stream shorter than 10 bytes → `IoError`. |
+| `test_read_cai_invalid_flac_after_id3` | Valid ID3 header then non-FLAC bytes → error (e.g. invalid stream). |
+| `test_read_cai_too_many_manifest_stores` | Two C2PA GEOB frames in ID3 → `TooManyManifestStores` or single manifest (id3 may merge duplicate frame IDs). |
+| `test_read_cai_success_with_manifest` | Save manifest to file, then `read_cai` and assert payload matches. |
+| `test_read_cai_store_file_not_found` | `read_cai_store` on nonexistent path → `IoError`. |
+
+### Write / patch / remove
+
+| Test | Description |
+|------|-------------|
+| `test_write_flac` | Write manifest via `save_cai_store`, read back with `read_cai_store`, compare. |
+| `test_patch_write_flac` | Save manifest, patch with same-size data via `patch_cai_store`, read back and compare. |
+| `test_patch_cai_store_size_mismatch` | `patch_cai_store` with wrong-length data → `InvalidAsset("patch_cai_store store size mismatch")`. |
+| `test_remove_c2pa_flac` | Save manifest, then `remove_cai_store`; read → `JumbfNotFound`. |
+| `test_write_cai_empty_store_removes_manifest` | `write_cai` with empty `store_bytes`; read → `JumbfNotFound`. |
+| `test_remove_cai_store_from_stream` | `remove_cai_store_from_stream` then `read_cai` on output → `JumbfNotFound`. |
+
+### Object locations
+
+| Test | Description |
+|------|-------------|
+| `test_get_object_locations_flac` | Save manifest, call `get_object_locations`, assert non-empty. |
+| `test_get_object_locations_flac_structure` | After save: 3 entries, lengths sum to file size, one block `Cai`, one `Other` at offset 0. |
+
+### Remote reference (XMP)
+
+| Test | Description |
+|------|-------------|
+| `test_remote_ref_flac` | No XMP → embed XMP via `embed_reference_to_stream`, read XMP and check provenance. |
+| `test_embed_reference_to_stream_unsupported_type` | `embed_reference_to_stream` with `StegoS` → `UnsupportedType`. |
+| `test_embed_reference_file_path` | `embed_reference(path, Xmp(url))` then read XMP and assert provenance URL. |
+
+### AssetIO / API
+
+| Test | Description |
+|------|-------------|
+| `test_supported_types` | `supported_types()` is `["flac", "audio/flac"]` (length 2). |
+| `test_get_handler_and_reader` | `get_handler("audio/flac")` and `get_reader()`; read pure FLAC → `JumbfNotFound`. |

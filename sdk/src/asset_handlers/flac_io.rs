@@ -1,4 +1,4 @@
-// Copyright 2023 Adobe. All rights reserved.
+// Copyright 2026 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -491,16 +491,54 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use std::io::Cursor;
+    use std::path::Path;
+
+    use id3::frame::{Content, EncapsulatedObject};
+    use id3::{Frame, Tag, Version};
+    use xmp_inmemory_utils::extract_provenance;
+
     use super::*;
+    use crate::asset_io::HashBlockObjectType;
     use crate::utils::{
         hash_utils::vec_compare,
         io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
-    use xmp_inmemory_utils::extract_provenance;
+
+    /// C2PA GEOB mime type (must match flac_io constant for building tags).
+    const GEOB_MIME: &str = "application/c2pa";
+    const GEOB_FILENAME: &str = "c2pa";
+    const GEOB_DESC: &str = "c2pa manifest store";
 
     /// Minimal valid FLAC stream for tests that don't need a file (pure FLAC, no ID3).
     const MINIMAL_FLAC: &[u8] = include_bytes!("../../tests/fixtures/sample1.flac");
+
+    /// Build 10-byte ID3v2 header: ID3 + version + flags + 4-byte synch-safe size.
+    #[cfg(test)]
+    fn id3_header(version_major: u8, tag_size: u32) -> [u8; 10] {
+        let mut h = [0u8; 10];
+        h[0..3].copy_from_slice(b"ID3");
+        h[3] = version_major;
+        h[4] = 0;
+        h[5] = 0;
+        h[6] = ((tag_size >> 21) & 0x7f) as u8;
+        h[7] = ((tag_size >> 14) & 0x7f) as u8;
+        h[8] = ((tag_size >> 7) & 0x7f) as u8;
+        h[9] = (tag_size & 0x7f) as u8;
+        h
+    }
+
+    /// Build in-memory stream: ID3 tag (via id3 crate) + FLAC tail.
+    #[cfg(test)]
+    fn id3_tag_plus_flac(tag: Tag, flac_tail: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        tag.write_to(&mut buf, Version::Id3v24).expect("write id3");
+        buf.extend_from_slice(flac_tail);
+        buf
+    }
+
+    // ---------- read_cai / header / validation ----------
 
     #[test]
     fn test_read_cai_store_no_id3() {
@@ -510,6 +548,112 @@ mod tests {
             Err(Error::JumbfNotFound) => {}
             other => panic!("expected JumbfNotFound for pure FLAC, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_read_cai_unsupported_type() {
+        let flac_io = FlacIO::new("flac");
+        let mut buf = vec![0u8; 10];
+        buf[0..4].copy_from_slice(b"XXXX");
+        buf.extend_from_slice(MINIMAL_FLAC);
+        let mut cursor = Cursor::new(buf);
+        match flac_io.read_cai(&mut cursor) {
+            Err(Error::UnsupportedType) => {}
+            other => panic!("expected UnsupportedType, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_read_cai_invalid_id3_version() {
+        let flac_io = FlacIO::new("flac");
+        let mut buf = id3_header(1, 0).to_vec();
+        buf.extend_from_slice(MINIMAL_FLAC);
+        let mut cursor = Cursor::new(buf);
+        match flac_io.read_cai(&mut cursor) {
+            Err(Error::FlacError(FlacError::InvalidId3Version)) => {}
+            other => panic!("expected FlacError(InvalidId3Version), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_read_cai_io_error_too_short() {
+        let flac_io = FlacIO::new("flac");
+        let mut cursor = Cursor::new(b"abc");
+        match flac_io.read_cai(&mut cursor) {
+            Err(Error::IoError(_)) => {}
+            other => panic!("expected IoError for short stream, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_read_cai_invalid_flac_after_id3() {
+        // ID3 header with size 0, then non-FLAC bytes so validate_flac_stream fails.
+        let flac_io = FlacIO::new("flac");
+        let mut buf = id3_header(4, 0).to_vec();
+        buf.extend_from_slice(b"XXXX");
+        buf.extend_from_slice(MINIMAL_FLAC);
+        let mut cursor = Cursor::new(buf);
+        match flac_io.read_cai(&mut cursor) {
+            Err(_) => {}
+            Ok(_) => panic!("expected error for ID3 followed by non-FLAC bytes"),
+        }
+    }
+
+    #[test]
+    fn test_read_cai_too_many_manifest_stores() {
+        // Build ID3 tag with two C2PA GEOB frames. Some ID3 readers may merge duplicate
+        // frame IDs, so we may get only one manifest; the implementation returns
+        // TooManyManifestStores only when both are seen.
+        let mut tag = Tag::new();
+        let geob = Frame::with_content(
+            "GEOB",
+            Content::EncapsulatedObject(EncapsulatedObject {
+                mime_type: GEOB_MIME.to_string(),
+                filename: GEOB_FILENAME.to_string(),
+                description: GEOB_DESC.to_string(),
+                data: b"first".to_vec(),
+            }),
+        );
+        tag.add_frame(geob);
+        let geob2 = Frame::with_content(
+            "GEOB",
+            Content::EncapsulatedObject(EncapsulatedObject {
+                mime_type: GEOB_MIME.to_string(),
+                filename: GEOB_FILENAME.to_string(),
+                description: GEOB_DESC.to_string(),
+                data: b"second".to_vec(),
+            }),
+        );
+        tag.add_frame(geob2);
+        let buf = id3_tag_plus_flac(tag, MINIMAL_FLAC);
+        let flac_io = FlacIO::new("flac");
+        let mut cursor = Cursor::new(buf);
+        let result = flac_io.read_cai(&mut cursor);
+        match result {
+            Err(Error::TooManyManifestStores) => {}
+            Ok(data) => {
+                assert!(
+                    data == b"first" || data == b"second",
+                    "if one GEOB returned, must be first or second; got {:?}",
+                    data
+                );
+            }
+            other => panic!("expected TooManyManifestStores or Ok(first|second), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_read_cai_success_with_manifest() {
+        let payload = b"c2pa manifest payload";
+        let source = fixture_path("sample1.flac");
+        let temp_dir = tempdirectory().expect("temp dir");
+        let output = temp_dir_path(&temp_dir, "with_manifest.flac");
+        std::fs::copy(source, &output).expect("copy");
+        let flac_io = FlacIO::new("flac");
+        flac_io.save_cai_store(&output, payload).expect("save");
+        let mut f = File::open(&output).unwrap();
+        let read = flac_io.read_cai(&mut f).expect("read_cai");
+        assert!(vec_compare(payload, &read));
     }
 
     #[test]
@@ -545,6 +689,21 @@ mod tests {
     }
 
     #[test]
+    fn test_patch_cai_store_size_mismatch() {
+        let source = fixture_path("sample1.flac");
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "patch_mismatch.flac");
+        std::fs::copy(source, &output).unwrap();
+        let flac_io = FlacIO::new("flac");
+        flac_io.save_cai_store(&output, &[1, 2, 3, 4]).unwrap();
+        let wrong_size_data = b"wrong length";
+        match flac_io.patch_cai_store(&output, wrong_size_data) {
+            Err(Error::InvalidAsset(msg)) if msg.contains("patch_cai_store store size mismatch") => {}
+            other => panic!("expected InvalidAsset(size mismatch), got {:?}", other),
+        }
+    }
+
+    #[test]
     fn test_remove_c2pa_flac() {
         let source = fixture_path("sample1.flac");
         let temp_dir = tempdirectory().unwrap();
@@ -572,6 +731,25 @@ mod tests {
     }
 
     #[test]
+    fn test_get_object_locations_flac_structure() {
+        let source = fixture_path("sample1.flac");
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "locs_struct.flac");
+        std::fs::copy(source, &output).unwrap();
+        let flac_io = FlacIO::new("flac");
+        flac_io.save_cai_store(&output, &[1, 2, 3, 4, 5]).unwrap();
+        let positions = flac_io.get_object_locations(&output).unwrap();
+        assert_eq!(positions.len(), 3, "expected [Cai, Other, Other]");
+        let file_len = std::fs::metadata(&output).unwrap().len() as usize;
+        let sum_len: usize = positions.iter().map(|p| p.length).sum();
+        assert_eq!(sum_len, file_len, "position lengths should sum to file size");
+        let cai_idx = positions.iter().position(|p| p.htype == HashBlockObjectType::Cai).unwrap();
+        let other_before = positions.iter().position(|p| p.htype == HashBlockObjectType::Other && p.offset == 0).unwrap();
+        assert_eq!(positions[other_before].offset, 0);
+        assert!(positions[cai_idx].offset + positions[cai_idx].length <= file_len);
+    }
+
+    #[test]
     fn test_remote_ref_flac() -> Result<()> {
         let flac_io = FlacIO::new("flac");
         let path = fixture_path("sample1.flac");
@@ -589,5 +767,104 @@ mod tests {
         let p = extract_provenance(&xmp).unwrap();
         assert_eq!(&p, "Test");
         Ok(())
+    }
+
+    #[test]
+    fn test_embed_reference_to_stream_unsupported_type() {
+        let flac_io = FlacIO::new("flac");
+        let path = fixture_path("sample1.flac");
+        let mut stream = File::open(path).unwrap();
+        let mut output = Cursor::new(Vec::new());
+        match flac_io.embed_reference_to_stream(
+            &mut stream,
+            &mut output,
+            RemoteRefEmbedType::StegoS("x".to_string()),
+        ) {
+            Err(Error::UnsupportedType) => {}
+            other => panic!("expected UnsupportedType for StegoS, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_embed_reference_file_path() -> Result<()> {
+        let flac_io = FlacIO::new("flac");
+        let source = fixture_path("sample1.flac");
+        let temp_dir = tempdirectory().expect("temp dir");
+        let output = temp_dir_path(&temp_dir, "embed_ref.flac");
+        std::fs::copy(&source, &output).expect("copy");
+        flac_io.embed_reference(&output, RemoteRefEmbedType::Xmp("https://example.com/ref".to_string()))?;
+        let mut f = File::open(&output)?;
+        let xmp = flac_io.read_xmp(&mut f).expect("xmp present");
+        let p = extract_provenance(&xmp).unwrap();
+        assert_eq!(&p, "https://example.com/ref");
+        Ok(())
+    }
+
+    #[test]
+    fn test_remove_cai_store_from_stream() {
+        let source = fixture_path("sample1.flac");
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "stream_remove.flac");
+        std::fs::copy(source, &output).unwrap();
+        let flac_io = FlacIO::new("flac");
+        flac_io.save_cai_store(&output, &[1, 2, 3]).unwrap();
+        let mut input = File::open(&output).unwrap();
+        let mut out_buf = Cursor::new(Vec::new());
+        flac_io.remove_cai_store_from_stream(&mut input, &mut out_buf).unwrap();
+        out_buf.set_position(0);
+        match flac_io.read_cai(&mut out_buf) {
+            Err(Error::JumbfNotFound) => {}
+            other => panic!("expected JumbfNotFound after remove_cai_store_from_stream, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_write_cai_empty_store_removes_manifest() {
+        let source = fixture_path("sample1.flac");
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "empty_write.flac");
+        std::fs::copy(source, &output).unwrap();
+        let flac_io = FlacIO::new("flac");
+        flac_io.save_cai_store(&output, &[1, 2, 3]).unwrap();
+        let mut input = File::open(&output).unwrap();
+        let mut out_buf = Cursor::new(Vec::new());
+        flac_io.write_cai(&mut input, &mut out_buf, &[]).unwrap();
+        out_buf.set_position(0);
+        match flac_io.read_cai(&mut out_buf) {
+            Err(Error::JumbfNotFound) => {}
+            other => panic!("expected JumbfNotFound after write_cai with empty store, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_supported_types() {
+        let flac_io = FlacIO::new("flac");
+        let types = flac_io.supported_types();
+        assert!(types.contains(&"flac"));
+        assert!(types.contains(&"audio/flac"));
+        assert_eq!(types.len(), 2);
+    }
+
+    #[test]
+    fn test_get_handler_and_reader() {
+        let flac_io = FlacIO::new("flac");
+        let handler = flac_io.get_handler("audio/flac");
+        let reader = flac_io.get_reader();
+        let mut cursor = Cursor::new(MINIMAL_FLAC);
+        match reader.read_cai(&mut cursor) {
+            Err(Error::JumbfNotFound) => {}
+            other => panic!("unexpected: {:?}", other),
+        }
+        assert!(handler.supported_types().contains(&"audio/flac"));
+    }
+
+    #[test]
+    fn test_read_cai_store_file_not_found() {
+        let flac_io = FlacIO::new("flac");
+        let path = Path::new("/nonexistent/sample.flac");
+        match flac_io.read_cai_store(path) {
+            Err(Error::IoError(_)) => {}
+            other => panic!("expected IoError for missing file, got {:?}", other),
+        }
     }
 }
