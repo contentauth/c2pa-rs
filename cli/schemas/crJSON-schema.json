@@ -465,6 +465,10 @@
                             "$ref": "#/definitions/hashBoxesAssertion"
                         }
                     ]
+                },
+                "^c2pa\\.actions\\.v2(__[0-9]+)?$": {
+                    "description": "Actions assertion (v2) with optional multiple instance identifier (e.g. c2pa.actions.v2, c2pa.actions.v2__1).",
+                    "$ref": "#/definitions/actionsAssertionV2"
                 }
             },
             "additionalProperties": true
