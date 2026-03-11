@@ -11,12 +11,24 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Support for C2PA Live Video validation (section 19 of the C2PA Technical Specification).
+//! Support for C2PA Live Video signing and validation (section 19 of the C2PA Technical Specification).
 //!
 //! Implements the per-segment C2PA Manifest Box method (section 19.3), where each segment
 //! carries its own C2PA Manifest with a [`LiveVideoSegment`] assertion for continuity tracking.
 //!
+//! # Signing
+//!
+//! Use [`LiveVideoSigner`] to sign an init segment and a sequence of media segments.
+//!
+//! # Validation
+//!
+//! Use [`LiveVideoValidator`] to validate a signed live video stream.
+//!
 //! See [C2PA Technical Specification — Live Video](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_live_video).
+
+mod signing;
+
+pub use signing::LiveVideoSigner;
 
 use std::io::{Cursor, Read, Seek, SeekFrom};
 

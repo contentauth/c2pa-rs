@@ -50,6 +50,7 @@ use crate::{
 
 mod info;
 mod live_video;
+mod live_video_sign;
 mod tree;
 
 mod callback_signer;
@@ -239,6 +240,51 @@ enum Commands {
         /// The pattern should match only file names, not full paths (e.g. "segment_*[0-9].m4s").
         #[arg(long = "segments_glob", verbatim_doc_comment)]
         segments_glob: Option<PathBuf>,
+    },
+
+    /// Sign a live video stream using the per-segment C2PA Manifest Box method (C2PA section 19.3).
+    ///
+    /// The path argument is the directory containing the media segments. Each segment is signed
+    /// independently with its own C2PA Manifest containing a `c2pa.livevideo.segment` assertion.
+    /// Segments are discovered via `--segments_glob` and processed in lexicographic order.
+    /// Signed files are written to `--output`.
+    ///
+    /// Signing the init segment is optional (per §19.2.3). Pass `--init` to sign it too.
+    ///
+    /// Example (segments only):
+    ///
+    ///   c2patool /streams/live -m manifest.json -o output/ --segments_glob "segment_*.m4s"
+    ///
+    /// Example (with init segment):
+    ///
+    ///   c2patool /streams/live -m manifest.json -o output/ --segments_glob "segment_*.m4s" --init init.mp4
+    ///
+    /// NOTE: Quote glob patterns to prevent shell expansion.
+    /// NOTE: The manifest JSON must include a 'c2pa.livevideo.segment' assertion with 'streamId'.
+    LiveVideoSign {
+        /// Glob pattern to find the media segments to sign.
+        ///
+        /// The pattern should match only file names, not full paths (e.g. "segment_*[0-9].m4s").
+        #[arg(long = "segments_glob", verbatim_doc_comment)]
+        segments_glob: PathBuf,
+
+        /// Path to the output directory where signed segments will be written.
+        #[arg(long = "output", short = 'o')]
+        output: PathBuf,
+
+        /// Path to the manifest definition JSON file.
+        #[arg(long = "manifest", short = 'm')]
+        manifest: PathBuf,
+
+        /// Optional path to an init segment to sign (§19.2.3). Resolved relative to the path
+        /// argument if not absolute.
+        #[arg(long = "init")]
+        init: Option<PathBuf>,
+
+        /// Optional path to the last signed media segment from a previous invocation.
+        /// Used to resume the continuity chain across separate process runs.
+        #[arg(long = "previous-segment")]
+        previous_segment: Option<PathBuf>,
     },
 }
 
@@ -690,6 +736,40 @@ fn main() -> Result<()> {
         return live_video::validate_live_video(&args.path, sg);
     } else if matches!(&args.command, Some(Commands::LiveVideo { segments_glob: None })) {
         bail!("segments_glob must be set for the live-video subcommand");
+    }
+
+    if let Some(Commands::LiveVideoSign {
+        segments_glob,
+        output,
+        manifest,
+        init,
+        previous_segment,
+    }) = &args.command
+    {
+        let manifest_json = std::fs::read_to_string(manifest)
+            .with_context(|| format!("Failed to read manifest file: {manifest:?}"))?;
+        let sign_config = signer::SignConfig::from_json(&manifest_json)?;
+        let signer = match Settings::signer() {
+            Ok(s) => s,
+            Err(Error::MissingSignerSettings) => sign_config.signer()?,
+            Err(err) => return Err(err.into()),
+        };
+        let init_path = init.as_deref().map(|p| {
+            if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                args.path.join(p)
+            }
+        });
+        return live_video_sign::sign_live_video(
+            &args.path,
+            segments_glob,
+            init_path.as_deref(),
+            previous_segment.as_deref(),
+            &manifest_json,
+            output,
+            signer.as_ref(),
+        );
     }
 
     // Remove manifest needs to also remove XMP provenance

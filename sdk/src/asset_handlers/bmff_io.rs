@@ -71,12 +71,13 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
-static SUPPORTED_TYPES: [&str; 15] = [
+static SUPPORTED_TYPES: [&str; 16] = [
     "avif",
     "heif",
     "heic",
     "mp4",
     "m4a",
+    "m4s",
     "mov",
     "m4v",
     "application/mp4",
@@ -174,7 +175,8 @@ boxtype! {
     IlocBox => 0x696C6F63,
     MfroBox => 0x6d66726f,
     TfraBox => 0x74667261,
-    SaioBox => 0x7361696f
+    SaioBox => 0x7361696f,
+    StypBox => 0x73747970
 }
 
 struct BoxHeaderLite {
@@ -1735,10 +1737,10 @@ impl CAIReader for BmffIO {
         let mut header = [0u8; 4];
         reader.read_exact(&mut header)?;
 
-        if header[..4] != *b"ftyp" {
+        if header[..4] != *b"ftyp" && header[..4] != *b"styp" {
             return Err(BmffError::InvalidFileSignature {
                 reason: format!(
-                    "invalid BMFF structure: expected box type \"ftyp\" at offset 4, found {}",
+                    "invalid BMFF structure: expected box type \"ftyp\" or \"styp\" at offset 4, found {}",
                     String::from_utf8_lossy(&header[..4])
                 ),
             }
@@ -2007,12 +2009,14 @@ impl CAIWriter for BmffIO {
 
         // since we reached this point we must have an ordinary manifest store so we may need to truncate off
         // the update manifest
-        // get ftyp location
-        // start after ftyp
-        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-        let ftyp_info = &bmff_tree[ftyp_token[0]].data;
-        let ftyp_offset = ftyp_info.offset;
-        let ftyp_size = ftyp_info.size;
+        // get leading type box location (ftyp for complete files, styp for media segments)
+        let type_box_token = bmff_map
+            .get("/ftyp")
+            .or_else(|| bmff_map.get("/styp"))
+            .ok_or(Error::UnsupportedType)?;
+        let type_box_info = &bmff_tree[type_box_token[0]].data;
+        let type_box_offset = type_box_info.offset;
+        let type_box_size = type_box_info.size;
 
         // get position to insert c2pa primary manifest store
         let (c2pa_start, c2pa_length) = match get_uuid_token(
@@ -2027,7 +2031,7 @@ impl CAIWriter for BmffIO {
 
                 (uuid_info.offset, Some(uuid_info.size))
             }
-            Err(Error::NotFound) => ((ftyp_offset + ftyp_size), None),
+            Err(Error::NotFound) => ((type_box_offset + type_box_size), None),
             Err(e) => return Err(e),
         };
 
@@ -2441,14 +2445,16 @@ impl RemoteRefEmbed for BmffIO {
                 let (xmp_start, xmp_length) = match &c2pa_boxes.xmp {
                     Some(_xmp) => (c2pa_boxes.xmp_box_offset, Some(c2pa_boxes.xmp_box_size)),
                     None => {
-                        // get ftyp location
-                        // start after ftyp
-                        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-                        let ftyp_info = &bmff_tree[ftyp_token[0]].data;
-                        let ftyp_offset = ftyp_info.offset;
-                        let ftyp_size = ftyp_info.size;
+                        // get leading type box location (ftyp for complete files, styp for media segments)
+                        let type_box_token = bmff_map
+                            .get("/ftyp")
+                            .or_else(|| bmff_map.get("/styp"))
+                            .ok_or(Error::UnsupportedType)?;
+                        let type_box_info = &bmff_tree[type_box_token[0]].data;
+                        let type_box_offset = type_box_info.offset;
+                        let type_box_size = type_box_info.size;
 
-                        ((ftyp_offset + ftyp_size), None)
+                        ((type_box_offset + type_box_size), None)
                     }
                 };
 
