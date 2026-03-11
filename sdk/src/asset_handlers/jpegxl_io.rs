@@ -449,10 +449,16 @@ impl CAIWriter for JpegXlIO {
             buf.drain(*start..*end);
         }
 
-        // Re-parse to find insertion point
-        let mut cursor = Cursor::new(&buf);
-        let boxes = parse_all_boxes(&mut cursor)?;
-        let insert_offset = find_jumb_insertion_offset(&boxes) as usize;
+        // Only re-parse when existing jumb boxes were removed, because draining
+        // bytes invalidates the offsets captured in the first parse. When nothing
+        // was removed the original parse results are still accurate.
+        let insert_offset = if remove_ranges.is_empty() {
+            find_jumb_insertion_offset(&boxes) as usize
+        } else {
+            let mut cursor = Cursor::new(&buf);
+            let boxes = parse_all_boxes(&mut cursor)?;
+            find_jumb_insertion_offset(&boxes) as usize
+        };
 
         // Build the jumb box
         let jumb_box = build_box(&BOX_JUMB, store_bytes);
@@ -480,44 +486,26 @@ impl CAIWriter for JpegXlIO {
         let mut cursor = Cursor::new(&buf);
         let boxes = parse_all_boxes(&mut cursor)?;
 
-        let mut positions: Vec<HashObjectPositions> = Vec::new();
-
-        for b in &boxes {
-            if b.box_type == BOX_JUMB {
-                let total = if b.total_size == 0 {
-                    file_len - b.offset
+        let positions: Vec<HashObjectPositions> = boxes
+            .iter()
+            .map(|b| {
+                let length = if b.total_size == 0 {
+                    (file_len - b.offset) as usize
                 } else {
-                    b.total_size
+                    b.total_size as usize
                 };
-                positions.push(HashObjectPositions {
-                    offset: b.offset as usize,
-                    length: total as usize,
-                    htype: HashBlockObjectType::Cai,
-                });
-            } else if b.box_type == BOX_XML {
-                let total = if b.total_size == 0 {
-                    file_len - b.offset
-                } else {
-                    b.total_size
+                let htype = match b.box_type {
+                    BOX_JUMB => HashBlockObjectType::Cai,
+                    BOX_XML => HashBlockObjectType::Xmp,
+                    _ => HashBlockObjectType::Other,
                 };
-                positions.push(HashObjectPositions {
+                HashObjectPositions {
                     offset: b.offset as usize,
-                    length: total as usize,
-                    htype: HashBlockObjectType::Xmp,
-                });
-            } else {
-                let total = if b.total_size == 0 {
-                    file_len - b.offset
-                } else {
-                    b.total_size
-                };
-                positions.push(HashObjectPositions {
-                    offset: b.offset as usize,
-                    length: total as usize,
-                    htype: HashBlockObjectType::Other,
-                });
-            }
-        }
+                    length,
+                    htype,
+                }
+            })
+            .collect();
 
         Ok(positions)
     }
