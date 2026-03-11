@@ -1208,18 +1208,7 @@ impl Builder {
 
             let mut reader = Reader::from_shared_context(&self.context);
             reader.with_store(store, &mut validation_log)?;
-            let mut builder = reader.into_builder()?;
-
-            // Keep ingredient as configured during initial add:
-            // if an ingredient has no_thumbnail here, it was very likely
-            // intentionally skipped!
-            for ingredient in &mut builder.definition.ingredients {
-                if ingredient.thumbnail_ref().is_none() {
-                    ingredient.set_thumbnail_ref(ResourceRef::new("none".to_string(), "none"))?;
-                }
-            }
-
-            Ok(builder)
+            reader.into_builder()
         })
     }
 
