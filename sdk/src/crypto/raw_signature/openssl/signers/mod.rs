@@ -66,6 +66,14 @@ pub(crate) fn signer_from_cert_chain_and_private_key(
     }
 }
 
+/// Return a built-in [`RawSigner`] instance using the provided signing
+/// certificate and url to the remote signing service.
+///
+/// Which signers are available depends on the remote signing service.
+/// It is assumed that the signature returned by the remote signing service
+/// conforms to the public key in the certificate chain
+///
+/// May return an `Err` response if the certificate chain is invalid.
 #[cfg(feature = "remote_signing")]
 pub(crate) fn signer_from_cert_chain_and_url(
     cert_chain: &[u8],

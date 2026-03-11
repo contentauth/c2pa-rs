@@ -206,11 +206,14 @@ pub fn signer_from_cert_chain_and_private_key(
 /// Return a built-in [`RawSigner`] instance using the provided signing
 /// certificate and url to a remote signing service.
 ///
-/// Which signers are available may vary depending on the platform and which
-/// crate features were enabled. If the desired signing algorithm is
-/// unavailable, will respond with `Err(RawSignerError::InternalError)`.
+/// Which signers are available depends on the remote signing service.
+/// It is assumed that the signature returned by the remote signing service
+/// conforms to the public key in the certificate chain
+/// Responds with `Err(RawSignerError::InternalError)` if the required feature are not
+/// enabled
 ///
-/// May return an `Err` response if the certificate chain or url are invalid.
+/// Returns `None` if the signing algorithm is unsupported. May return an `Err`
+/// response if the certificate chain is invalid
 #[allow(unused)]
 pub fn signer_from_cert_chain_and_url(
     cert_chain: &[u8],
@@ -267,11 +270,12 @@ pub fn async_signer_from_cert_chain_and_private_key(
 /// Return a built-in [`AsyncRawSigner`] instance using the provided signing
 /// certificate and url to a remote signing service.
 ///
-/// Which signers are available may vary depending on the platform and which
-/// crate features were enabled. If the desired signing algorithm is
-/// unavailable, it will respond with `Err(RawSignerError::InternalError)`.
+/// Which signers are available depends on the remote signing service.
+/// It is assumed that the signature returned by the remote signing service
+/// conforms to the public key in the certificate chain
 ///
-/// May return an `Err` response if the certificate chain or url are invalid.
+/// Returns `None` if the signing algorithm is unsupported. May return an `Err`
+/// response if the certificate chain is invalid.
 #[allow(unused)]
 pub fn async_signer_from_cert_chain_and_url(
     cert_chain: &[u8],
