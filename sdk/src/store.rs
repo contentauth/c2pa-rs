@@ -3698,7 +3698,10 @@ impl Store {
         context: &Context,
     ) -> Result<Store> {
         let verify = context.settings().verify.verify_after_reading;
-        let store = Self::from_stream(asset_type, &mut *init_segment, validation_log, context)?;
+        let (manifest_bytes, _remote_url) =
+            Store::load_jumbf_from_stream(asset_type, &mut *init_segment, context)?;
+        let mut store = Store::from_jumbf_with_context(&manifest_bytes, validation_log, context)?;
+        store.embedded = true;
 
         // verify the store
         if verify {
