@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.78.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.77.1...c2pa-c-ffi-v0.78.0)
+_11 March 2026_
+
+### Added
+
+* Emscripten ([#1886](https://github.com/contentauth/c2pa-rs/pull/1886))
+
+### Fixed
+
+* Merkle api integration ([#1902](https://github.com/contentauth/c2pa-rs/pull/1902))
+* X86_64 Linux CI build failure ([#1906](https://github.com/contentauth/c2pa-rs/pull/1906))
+
 ## [0.77.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.77.0...c2pa-c-ffi-v0.77.1)
 _10 March 2026_
 
