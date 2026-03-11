@@ -50,6 +50,16 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # Use a separate target directory for Android cross builds to prevent
+      # host-compiled build scripts from being reused inside the cross Docker
+      # container, which causes glibc version mismatches on x86_64 targets.
+      # See: https://github.com/cross-rs/cross/issues/724
+      - name: Set CARGO_TARGET_DIR for Android builds
+        if: contains(matrix.target, 'android')
+        run: |
+          echo "CARGO_TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
+          echo "TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
@@ -70,7 +80,15 @@ jobs:
         if: matrix.os != 'windows-latest' && matrix.os != 'windows-11-arm'
         run: make release TARGET=${{ matrix.target }}
 
-      - name: Upload build artifacts
+      - name: Upload build artifacts (Android)
+        if: contains(matrix.target, 'android')
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
+          path: target-${{ matrix.target }}/artifacts/
+
+      - name: Upload build artifacts (Non-Android)
+        if: "!contains(matrix.target, 'android')"
         uses: actions/upload-artifact@v7
         with:
           name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
