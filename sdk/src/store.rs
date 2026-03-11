@@ -3698,10 +3698,14 @@ impl Store {
         context: &Context,
     ) -> Result<Store> {
         let verify = context.settings().verify.verify_after_reading;
-        let (manifest_bytes, _remote_url) =
+        let (manifest_bytes, remote_url) =
             Store::load_jumbf_from_stream(asset_type, &mut *init_segment, context)?;
         let mut store = Store::from_jumbf_with_context(&manifest_bytes, validation_log, context)?;
-        store.embedded = true;
+        if remote_url.is_none() {
+            store.embedded = true;
+        } else {
+            store.remote_url = remote_url;
+        }
 
         // verify the store
         if verify {
