@@ -1291,10 +1291,8 @@ impl Reader {
                 // round-trips.
                 for ingredient in &mut builder.definition.ingredients {
                     if ingredient.thumbnail_ref().is_none() {
-                        ingredient.set_thumbnail_ref(ResourceRef::new(
-                            "none".to_string(),
-                            "none",
-                        ))?;
+                        ingredient
+                            .set_thumbnail_ref(ResourceRef::new("none".to_string(), "none"))?;
                     }
                 }
                 for assertion in manifest.assertions.iter() {

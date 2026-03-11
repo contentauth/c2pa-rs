@@ -6060,6 +6060,195 @@ mod tests {
         assert!(reader.active_manifest().is_some());
     }
 
+    #[test]
+    fn test_thumbnail_data_accessible_after_archive_roundtrip() {
+        // Verify thumbnail() data accessor (not just thumbnail_ref()) works
+        // correctly after archive round-trip for manifest and ingredients.
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "with_thumb"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "no_thumb", "thumbnail": { "format": "none", "identifier": "none" }}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+
+        let mut builder = archive_round_trip(&mut builder);
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let manifest = reader.active_manifest().unwrap();
+
+        // Manifest thumbnail depends on add_thumbnails feature; if present,
+        // verify it contains real data.
+        if let Some((fmt, data)) = manifest.thumbnail() {
+            assert_ne!(fmt, "none");
+            assert!(
+                !data.is_empty(),
+                "manifest thumbnail data should not be empty"
+            );
+        }
+
+        // Thumbnailed ingredient should have accessible data
+        let with = manifest
+            .ingredients()
+            .iter()
+            .find(|i| i.title() == Some("with_thumb"))
+            .unwrap();
+        assert!(with.thumbnail_ref().is_some());
+        let (fmt, data) = with
+            .thumbnail()
+            .expect("thumbnailed ingredient should have data");
+        assert_ne!(fmt, "none");
+        assert!(!data.is_empty());
+
+        // Suppressed ingredient should return None from both accessors
+        let without = manifest
+            .ingredients()
+            .iter()
+            .find(|i| i.title() == Some("no_thumb"))
+            .unwrap();
+        assert!(without.thumbnail_ref().is_none());
+        assert!(without.thumbnail().is_none());
+    }
+
+    #[test]
+    fn test_double_archive_roundtrip_preserves_thumbnail_state() {
+        // Two consecutive archive round-trips should preserve thumbnail state.
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "has_thumb"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "suppressed", "thumbnail": { "format": "none", "identifier": "none" }}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+
+        // Double round-trip
+        let mut builder = archive_round_trip(&mut builder);
+        let mut builder = archive_round_trip(&mut builder);
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let manifest = reader.active_manifest().unwrap();
+
+        let has = manifest
+            .ingredients()
+            .iter()
+            .find(|i| i.title() == Some("has_thumb"))
+            .unwrap();
+        let suppressed = manifest
+            .ingredients()
+            .iter()
+            .find(|i| i.title() == Some("suppressed"))
+            .unwrap();
+
+        assert!(
+            has.thumbnail().is_some(),
+            "thumbnail should survive double round-trip"
+        );
+        assert!(!has.thumbnail().unwrap().1.is_empty());
+        assert!(
+            suppressed.thumbnail().is_none(),
+            "suppression should survive double round-trip"
+        );
+        assert!(suppressed.thumbnail_ref().is_none());
+
+        let json_str = reader.json();
+        assert!(!json_str.contains(r#""format":"none"#));
+        assert!(!json_str.contains(r#""format": "none"#));
+    }
+
+    #[test]
+    fn test_ingredient_archive_roundtrip_thumbnail_bytes() {
+        // Verify ingredient.thumbnail_bytes() works after ingredient archive round-trip.
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let ingredient = builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Explicit Thumb"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+        ingredient
+            .set_thumbnail("image/jpeg", TEST_THUMBNAIL.to_vec())
+            .unwrap();
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        let archive_bytes = archive.into_inner();
+
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Explicit Thumb"}"#,
+                "application/c2pa",
+                &mut Cursor::new(archive_bytes),
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let ingredient = &reader.active_manifest().unwrap().ingredients()[0];
+
+        let bytes = ingredient
+            .thumbnail_bytes()
+            .expect("thumbnail_bytes should succeed after ingredient archive round-trip");
+        assert!(
+            !bytes.is_empty(),
+            "thumbnail bytes should not be empty after round-trip"
+        );
+    }
+
     // Ensures that the future returned by `Builder::sign_async` implements `Send`, thus making it
     // possible to spawn on a Tokio runtime.
     #[test]
