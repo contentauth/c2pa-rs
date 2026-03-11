@@ -119,7 +119,7 @@ pub fn check_ocsp_status(
                 .await
             };
 
-            // we only care about OCSP value log info the result is OK
+            // we only care about OCSP value log info if the result is OK
             if let Ok(ocsp_response) = result {
                 if ocsp_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
                     log_item!(

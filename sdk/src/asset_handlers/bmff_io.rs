@@ -26,7 +26,7 @@ use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
     asset_io::{
         rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        ComposedManifestRef, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     status_tracker::{ErrorBehavior, StatusTracker},
@@ -43,8 +43,6 @@ pub struct BmffIO {
     #[allow(dead_code)]
     bmff_format: String, // can be used for specialized BMFF cases
 }
-
-const QT_FOURCC: u32 = 0x71742020; // 'qt  ' - used to identify QuickTime format which has some differences from standard BMFF/MP4
 
 const MAX_BOX_DEPTH: usize = 32; // reasonable BMFF box depth, to prevent stack overflow
 
@@ -365,6 +363,29 @@ fn read_box_header_ext<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<(u8, u
     let flags = reader.read_u24::<BigEndian>()?;
     Ok((version, flags))
 }
+
+/// Detect whether a `meta` box omits the FullBox version/flags header.
+///
+/// Per ISO 14496-12 §8.11.1, `meta` is a FullBox whose first child must
+/// be `hdlr`. However, Apple QuickTime (and iOS AVAssetWriter even with
+/// `isom` brand) writes `meta` as a plain Box without the 4-byte
+/// version+flags field. We detect this by peeking at the next 8 bytes:
+/// if bytes 4..8 are `hdlr`, the data is already a child box header so
+/// no FullBox header is present. This matches the approach used by FFmpeg
+/// and Bento4.
+fn meta_box_lacks_fullbox_header<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<bool> {
+    let pos = reader.stream_position()?;
+    let mut buf = [0u8; 8];
+    let ok = reader.read_exact(&mut buf).is_ok();
+    reader.seek(SeekFrom::Start(pos))?;
+
+    if !ok {
+        return Ok(false);
+    }
+
+    Ok(&buf[4..8] == b"hdlr")
+}
+
 fn write_box_header_ext<W: Write>(w: &mut W, v: u8, f: u32) -> Result<u64> {
     w.write_u8(v)?;
     w.write_u24::<BigEndian>(f)?;
@@ -450,7 +471,8 @@ fn write_xmp_box<W: Write>(w: &mut W, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn _write_free_box<W: Write>(w: &mut W, size: usize) -> Result<()> {
+#[allow(unused_imports)]
+fn write_free_box<W: Write>(w: &mut W, size: usize) -> Result<()> {
     if size < 8 {
         return Err(Error::BadParam("cannot adjust free space".to_string()));
     }
@@ -1250,6 +1272,7 @@ fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
     Ok(())
 }
 
+#[allow(clippy::only_used_in_recursion)]
 pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     reader: &mut R,
     end: u64,
@@ -1343,9 +1366,9 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                     // FullBox has version and flags after the header, but for some boxes like QT "meta"
                     // the version and flags are not present even though it is technically a full box,
                     // so we need to conditionally read the extended header based on the box type and in
-                    // the case of "meta" the ftyp major brand of "qt  " indicates the QuickTime exception.
+                    // the case of "meta" we peek at the data to detect the QuickTime exception.
                     let (version, flags) = if BoxType::MetaBox == header.name
-                        && ftyp.major_brand == QT_FOURCC.into()
+                        && meta_box_lacks_fullbox_header(reader)?
                     {
                         (None, None)
                     } else {
@@ -1648,7 +1671,7 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
 
     // get position ordered list of boxes
     let mut box_infos: Vec<BoxInfoLite> = get_top_level_boxes(bmff_tree, bmff_map);
-    box_infos.sort_by(|a, b| a.offset.cmp(&b.offset));
+    box_infos.sort_by_key(|a| a.offset);
 
     Ok(C2PABmffBoxes {
         manifest_bytes,
@@ -1668,7 +1691,9 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
     })
 }
 
-pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
+pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+) -> Result<C2PABmffBoxes> {
     let size = stream_len(reader)?;
     reader.rewind()?;
 
@@ -1818,6 +1843,10 @@ impl AssetIO for BmffIO {
     }
 
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+        Some(self)
+    }
+
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }
 
@@ -2318,6 +2347,14 @@ impl AssetPatch for BmffIO {
     }
 }
 
+impl ComposedManifestRef for BmffIO {
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+        let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(manifest_data.len() * 2);
+        write_c2pa_box(&mut new_c2pa_box, manifest_data, MANIFEST, &[], 0)?;
+        Ok(new_c2pa_box)
+    }
+}
+
 impl RemoteRefEmbed for BmffIO {
     #[allow(unused_variables)]
     fn embed_reference(
@@ -2503,6 +2540,226 @@ impl RemoteRefEmbed for BmffIO {
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
+}
+
+// inject a placeholder free box of free_size at the end of the ftyp box. This is used to reserve
+// space for a manifest box when one does not already exist in the file.
+// Returns the location of the injected placeholder box.  This function assumes the file does not have
+// an existing manifest store and that the placeholder box will be replaced with the manifest store during the first update pass.
+#[allow(dead_code)]
+pub(crate) fn inject_placeholder(
+    input_stream: &mut dyn CAIRead,
+    output_stream: &mut dyn CAIReadWrite,
+    free_size: usize,
+) -> Result<u64> {
+    let size = stream_len(input_stream)?;
+    input_stream.rewind()?;
+
+    let ftyp = read_ftyp_box(input_stream)?;
+    input_stream.rewind()?;
+
+    // create root node
+    let root_box = BoxInfo {
+        path: "".to_string(),
+        offset: 0,
+        size,
+        box_type: BoxType::Empty,
+        parent: None,
+        user_type: None,
+        version: None,
+        flags: None,
+    };
+
+    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+    // build layout of the BMFF structure
+    let mut rl = 0usize;
+    build_bmff_tree(
+        input_stream,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+        &ftyp,
+    )?;
+
+    // figure out what state we are in
+    let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
+    let has_manifest = c2pa_boxes.manifest_bytes.is_some();
+    let has_original = c2pa_boxes.original_bytes.is_some();
+    let has_update = c2pa_boxes.update_bytes.is_some();
+
+    if has_manifest || has_original || has_update {
+        return Err(Error::InvalidAsset(
+            "inject_placeholder should only be called on files without existing manifest stores"
+                .to_string(),
+        ));
+    }
+
+    // since we reached this point we must have an ordinary manifest store so we may need to truncate off
+    // the update manifest
+    // get ftyp location
+    // start after ftyp
+    let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+    let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+    let ftyp_offset = ftyp_info.offset;
+    let ftyp_size = ftyp_info.size;
+
+    // create free box bytes
+    let mut free_box_bytes = Vec::with_capacity(free_size + 8);
+    write_free_box(&mut free_box_bytes, free_size)?;
+
+    // insertion point
+    let start = ftyp_offset + ftyp_size;
+
+    // write content before free box
+    input_stream.rewind()?;
+    let mut before_free = input_stream.take(start);
+    std::io::copy(&mut before_free, output_stream)?;
+
+    // write free box
+    output_stream.write_all(&free_box_bytes)?;
+
+    // write content after free box
+    std::io::copy(input_stream, output_stream)?;
+
+    // calc offset adjustments
+    let offset_adjust: i32 = free_box_bytes.len() as i32;
+
+    // Manipulating the free box means we may need some patch offsets if they are file absolute offsets.
+    if offset_adjust != 0 {
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
+
+        // map box layout of current output file
+        let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
+        let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+        let size = stream_len(output_stream)?;
+        output_stream.rewind()?;
+        let mut rl = 0usize;
+        build_bmff_tree(
+            output_stream,
+            size,
+            &mut output_bmff_tree,
+            &root_token,
+            &mut output_bmff_map,
+            &mut rl,
+            &ftyp,
+        )?;
+
+        // adjust offsets based on current layout
+        output_stream.rewind()?;
+        adjust_known_offsets(
+            output_stream,
+            &output_bmff_tree,
+            &output_bmff_map,
+            offset_adjust,
+        )?;
+    }
+
+    Ok(start)
+}
+
+// write manifest into free box location.  Used inconjunction with inject_placeholder to first
+// inject a free box to reserve space for the manifest and then write the manifest into the
+// free box during the first update pass. This function assumes the manifest box will be the
+// same size or smaller than the placeholder free box. If the manifest box is smaller than the
+// placeholder free box then the remaining free space will be converted to a smaller free box.
+// If the manifest box is larger than the placeholder free box then an error will be returned.
+// manifest_bytes should be the bytes of the manifest box including the header. free_box_start is
+// the file offset of the beginning of the free box to be replaced by the manifest box.
+#[allow(dead_code)]
+pub(crate) fn inject_manifest_into_free_box(
+    stream: &mut dyn CAIReadWrite,
+    manifest_bytes: &[u8],
+    free_box_start: u64,
+) -> Result<()> {
+    let size = stream_len(stream)?;
+    stream.rewind()?;
+
+    let ftyp = read_ftyp_box(stream)?;
+    stream.rewind()?;
+
+    // create root node
+    let root_box = BoxInfo {
+        path: "".to_string(),
+        offset: 0,
+        size,
+        box_type: BoxType::Empty,
+        parent: None,
+        user_type: None,
+        version: None,
+        flags: None,
+    };
+
+    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+    // build layout of the BMFF structure
+    let mut rl = 0usize;
+    build_bmff_tree(
+        stream,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+        &ftyp,
+    )?;
+
+    // get the matching free box
+    let free_tokens = bmff_map.get("/free").ok_or(Error::BadParam(
+        "Did not find free box to inject manifest".to_string(),
+    ))?;
+
+    // find the free box that starts at the expected location
+    let free_token = free_tokens
+        .iter()
+        .find(|token| {
+            let free_info = &bmff_tree[**token].data;
+            free_info.offset == free_box_start
+        })
+        .ok_or(Error::BadParam(
+            "Did not find free box to inject manifest at expected location".to_string(),
+        ))?;
+
+    let free_info = &bmff_tree[*free_token].data;
+
+    if manifest_bytes.len() as u64 > free_info.size {
+        return Err(Error::BadParam(
+            "Manifest size is larger than free box".to_string(),
+        ));
+    }
+
+    // write manifest into free box location
+    stream.seek(SeekFrom::Start(free_info.offset))?;
+    stream.write_all(manifest_bytes)?;
+
+    // convert remaining free space to a smaller free box if needed
+    let remaining_free_space = free_info.size - manifest_bytes.len() as u64;
+    if remaining_free_space > 8 {
+        // need at least 8 bytes to write another free box
+        let mut new_free_box = Vec::with_capacity(remaining_free_space as usize);
+        write_free_box(&mut new_free_box, remaining_free_space as usize)?;
+        stream.write_all(&new_free_box)?;
+    } else {
+        Err(Error::BadParam(
+            "Not enough space to create new free box".to_string(),
+        ))?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, thiserror::Error)]
