@@ -2072,13 +2072,14 @@ impl Store {
                 // save the valid timestamps stored in the StoreValidationInfo
                 // we only use valid timestamps, otherwise just ignore
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
+                    let mut tmp_log = StatusTracker::default();
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
                         if let Ok(sign1) = rc.cose_sign1() {
                             if let Ok(tst_info) = verify_time_stamp(
                                 time_stamp_token,
                                 &sign1.signature,
                                 &self.ctp,
-                                validation_log,
+                                &mut tmp_log,
                                 // no trust checks for leagacy timestamps
                                 rc.version() != 1,
                             ) {
@@ -2288,6 +2289,10 @@ impl Store {
         Ok(dh)
     }
 
+    // This function generates the BMFF hash for the 'mdat' boxes. This is used
+    // in the case where the SDK is automatically generating the Merkle tree leaves.
+    // If the user is supplying their own BmffHash they can specify the Merkle
+    // tree leaves themselves and this function will not be called.
     fn generate_bmff_mdat_hashes(
         asset_stream: &mut dyn CAIRead,
         bmff_hash: &mut BmffHash,
