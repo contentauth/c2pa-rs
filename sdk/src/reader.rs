@@ -46,7 +46,7 @@ use crate::{
     utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
     validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
-    Ingredient, Manifest, ManifestAssertion,
+    Ingredient, Manifest, ManifestAssertion, ResourceRef,
 };
 
 /// MaybeSend allows for no Send bound on wasm32 targets
@@ -1285,6 +1285,15 @@ impl Reader {
                         }
                     }
                     builder.add_ingredient(ingredient);
+                }
+                // Preserve "no thumbnail" intent: if an ingredient has no
+                // thumbnail, mark it as suppressed so the intent survives
+                // round-trips.
+                for ingredient in &mut builder.definition.ingredients {
+                    if ingredient.thumbnail_ref().is_none() {
+                        ingredient
+                            .set_thumbnail_ref(ResourceRef::new("none".to_string(), "none"))?;
+                    }
                 }
                 for assertion in manifest.assertions.iter() {
                     builder.add_assertion(assertion.label(), assertion.value()?)?;
