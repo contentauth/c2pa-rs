@@ -114,10 +114,6 @@ struct CliArgs {
     #[clap(long = "certs")]
     cert_chain: bool,
 
-    /// Do not perform validation of signature after signing.
-    #[clap(long = "no_signing_verify")]
-    no_signing_verify: bool,
-
     /// Print progress phase timings to stderr during signing and reading.
     ///
     /// Each line written to stderr has the form:
@@ -470,10 +466,9 @@ fn build_context(args: &CliArgs) -> Result<Arc<C2paContext>> {
         )?;
     }
 
-    let verify_after_sign = !args.no_signing_verify;
-    settings = settings.with_toml(&format!(
-        "[verify]\nverify_after_sign = {verify_after_sign}"
-    ))?;
+    // The CLI always reads the signed output back via Reader (see main()), which
+    // is a more complete post-sign check than sign-time verify
+    settings.set_value("verify.verify_after_sign", false)?;
 
     let mut context = C2paContext::new().with_settings(settings)?;
 
@@ -876,7 +871,7 @@ fn main() -> Result<()> {
                     file.write_all(&manifest_data)?;
                 }
 
-                // generate a report on the output file
+                // Read the written output as the definitive post-sign verification
                 let mut reader = Reader::from_shared_context(&ctx)
                     .with_file(&output)
                     .map_err(special_errs)?;
