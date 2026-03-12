@@ -1,6 +1,5 @@
 {
     "alg": "ps256",
-    "tsa_url": "http://timestamp.digicert.com",
     "output_path": "target/images",
     "default_ext": "jpg",
     "author": "John Doe",
