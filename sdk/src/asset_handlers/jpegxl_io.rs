@@ -875,7 +875,7 @@ fn build_jxl_with_brob_xmp(xmp_data: &str) -> Vec<u8> {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use std::io::Seek;
+    use std::io::{Read, Seek};
 
     use super::*;
     use crate::utils::io_utils::tempdirectory;
