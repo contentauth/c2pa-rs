@@ -209,9 +209,13 @@ impl ValidationResults {
                 .collect();
             let failure_codes = active_manifest.failure();
             let ingredient_failure = self.ingredient_deltas.as_ref().is_some_and(|deltas| {
-                deltas
-                    .iter()
-                    .any(|idv| !idv.validation_deltas().failure().is_empty())
+                deltas.iter().any(|idv| {
+                    let failures = idv.validation_deltas().failure();
+                    !failures.is_empty()
+                        && !failures.iter().all(|status| {
+                            status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                        })
+                })
             });
 
             // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_valid_manifest
