@@ -903,6 +903,9 @@ impl Builder {
         T: Into<String>,
         R: Read + Seek + Send,
     {
+        self.context
+            .check_progress(ProgressPhase::AddingIngredient, 1, 1)?;
+
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
         if format == "c2pa" || format == "application/c2pa" {
@@ -1742,6 +1745,8 @@ impl Builder {
         let auto_thumbnail = self.context.settings().builder.thumbnail.enabled;
 
         if self.definition.thumbnail.is_none() && auto_thumbnail {
+            self.context
+                .check_progress(ProgressPhase::Thumbnail, 1, 1)?;
             stream.rewind()?;
 
             let mut stream = std::io::BufReader::new(stream);
@@ -2594,15 +2599,9 @@ impl Builder {
 
         self.maybe_add_parent(&format, source)?;
 
-        self.context
-            .check_progress(ProgressPhase::Ingredients, 0.15)?;
-
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
-
-        self.context
-            .check_progress(ProgressPhase::Thumbnail, 0.25)?;
 
         let mut claim = self.to_claim()?;
 
@@ -2700,15 +2699,9 @@ impl Builder {
 
         self.maybe_add_parent(&format, source)?;
 
-        self.context
-            .check_progress(ProgressPhase::Ingredients, 0.15)?;
-
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
-
-        self.context
-            .check_progress(ProgressPhase::Thumbnail, 0.25)?;
 
         // convert the manifest to a store
         let mut store = self.to_store()?;
@@ -5441,12 +5434,12 @@ mod tests {
     fn test_progress_callback_invoked_during_sign() -> Result<()> {
         use std::sync::Mutex;
 
-        let received: std::sync::Arc<Mutex<Vec<(ProgressPhase, f32)>>> =
+        let received: std::sync::Arc<Mutex<Vec<(ProgressPhase, u32, u32)>>> =
             std::sync::Arc::new(Mutex::new(Vec::new()));
         let received_clone = received.clone();
         let ctx = test_context()
-            .with_progress_callback(move |phase, pct| {
-                received_clone.lock().unwrap().push((phase, pct));
+            .with_progress_callback(move |phase, step, total| {
+                received_clone.lock().unwrap().push((phase, step, total));
                 true
             })
             .into_shared();
@@ -5459,10 +5452,10 @@ mod tests {
 
         let r = received.lock().unwrap();
         assert!(!r.is_empty(), "progress callback should be invoked");
-        let phases: Vec<ProgressPhase> = r.iter().map(|(p, _)| p.clone()).collect();
+        let phases: Vec<ProgressPhase> = r.iter().map(|(p, _, _)| p.clone()).collect();
         assert!(
-            phases.contains(&ProgressPhase::Ingredients),
-            "expected Ingredients phase, got {:?}",
+            phases.contains(&ProgressPhase::VerifyingIngredient),
+            "expected VerifyingIngredient phase, got {:?}",
             phases
         );
         assert!(
@@ -5471,17 +5464,28 @@ mod tests {
             phases
         );
         assert!(
-            phases.contains(&ProgressPhase::Verification),
-            "expected Verification phase (verify_after_sign), got {:?}",
+            phases.contains(&ProgressPhase::VerifyingManifest),
+            "expected VerifyingManifest phase (verify_after_sign), got {:?}",
             phases
         );
+        // All checkpoints must have a valid step/total relationship:
+        // step >= 1, total >= 1 (or total == 0 for indeterminate), step <= total.
+        for (phase, step, total) in r.iter() {
+            assert!(*step >= 1, "phase {phase:?} step must be >= 1, got {step}");
+            if *total > 0 {
+                assert!(
+                    *step <= *total,
+                    "phase {phase:?} step {step} must be <= total {total}"
+                );
+            }
+        }
         Ok(())
     }
 
     #[test]
     fn test_progress_callback_cancel_during_sign() -> Result<()> {
         let ctx = test_context()
-            .with_progress_callback(|_, _| false)
+            .with_progress_callback(|_, _, _| false)
             .into_shared();
 
         let mut builder =
@@ -5501,12 +5505,35 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))] // WASM doesn't support threads
     #[test]
     fn test_context_cancel_during_sign() -> Result<()> {
-        use std::{sync::mpsc, thread};
+        use std::{
+            sync::{Arc, Condvar, Mutex},
+            thread,
+        };
 
-        let (tx, rx) = mpsc::channel();
+        // A Condvar-based one-shot rendezvous:
+        // 1. Callback signals "checkpoint reached" and blocks.
+        // 2. Main thread cancels, then signals "you may return".
+        // 3. Callback unblocks and returns `true`; check_progress sees the
+        //    cancel flag and returns OperationCancelled.
+        //
+        // Using a Condvar (instead of mpsc) avoids the !Sync bound on
+        // mpsc::Receiver, allowing the closure to satisfy Send + Sync.
+        let pair = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        //                               ^^^^  ^^^^
+        //                              fired  proceed
+        let pair_cb = pair.clone();
+
         let ctx = test_context()
-            .with_progress_callback(move |_, _| {
-                let _ = tx.send(());
+            .with_progress_callback(move |_, _, _| {
+                let (lock, cvar) = &*pair_cb;
+                let mut state = lock.lock().unwrap();
+                if !state.0 {
+                    // First checkpoint: signal fired, wait for proceed.
+                    state.0 = true;
+                    cvar.notify_all();
+                    state = cvar.wait_while(state, |s| !s.1).unwrap();
+                }
+                drop(state);
                 true
             })
             .into_shared();
@@ -5522,8 +5549,14 @@ mod tests {
             b.save_to_stream("image/jpeg", &mut src, &mut dst)
         });
 
-        rx.recv().expect("callback should fire");
+        // Wait until the first checkpoint fires, then cancel and release.
+        let (lock, cvar) = &*pair;
+        let mut state = lock.lock().unwrap();
+        state = cvar.wait_while(state, |s| !s.0).unwrap();
         ctx.cancel();
+        state.1 = true;
+        cvar.notify_all();
+        drop(state);
 
         let result = handle.join().expect("thread should join");
         assert!(

@@ -37,20 +37,32 @@ use crate::{
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ProgressPhase {
-    /// Reading and validating ingredient assets.
-    Ingredients = 0,
-    /// Generating a thumbnail for the asset.
-    Thumbnail = 1,
-    /// Hashing asset data (potentially the most time-consuming phase for large files).
-    Hashing = 2,
-    /// Signing the claim, including any remote TSA timestamp fetch.
-    Signing = 3,
-    /// Embedding the signed JUMBF manifest into the output asset.
-    Embedding = 4,
-    /// verification of a manifest.
-    Verification = 5,
+    /// Parsing and extracting JUMBF manifest data from an asset stream (I/O phase).
+    Reading = 0,
+    /// Verifying the structure and integrity of a manifest store entry.
+    VerifyingManifest = 1,
+    /// Verifying a COSE cryptographic signature and certificate chain for a claim.
+    /// Fires twice per claim: once before COSE parse (`step=1`) and once after
+    /// OCSP and full signature verification (`step=2`).
+    VerifyingSignature = 2,
+    /// Verifying one ingredient's embedded manifest.  Fires once per ingredient
+    /// (`step` = ingredient index, `total` = total ingredient count).
+    VerifyingIngredient = 3,
+    /// Re-hashing the asset bytes to verify the `c2pa.hash.data` or `c2pa.hash.bmff`
+    /// assertion (the most time-consuming part of reading for large assets).
+    VerifyingAssetHash = 4,
+    /// Adding an ingredient to the manifest.
+    AddingIngredient = 5,
+    /// Generating a thumbnail for the asset (during signing).
+    Thumbnail = 6,
+    /// Hashing asset data to build the hash binding assertion (during signing).
+    Hashing = 7,
+    /// Signing the claim with COSE, including any remote TSA timestamp fetch.
+    Signing = 8,
+    /// Embedding the signed JUMBF manifest store into the output asset.
+    Embedding = 9,
     /// Fetching a remote manifest over the network.
-    RemoteFetch = 6,
+    FetchingRemoteManifest = 10,
 }
 
 /// Progress callback function type.
@@ -61,7 +73,11 @@ pub enum ProgressPhase {
 /// * `phase` – the current [`ProgressPhase`], which fully describes what the SDK
 ///   is doing.  No separate message string is provided; callers should derive any
 ///   user-visible text from `phase` in whatever language they need.
-/// * `pct`   – fraction complete in the range 0.0–1.0 (e.g. 0.75 = 75%).
+/// * `step`  – 1-based index of the current step within this phase (e.g. `1` for
+///   the first chunk hashed, `2` for the second).  Always `1` for single-shot phases.
+/// * `total` – total number of steps in this phase.  `0` means the total is not
+///   known in advance (indeterminate); show a spinner rather than a progress bar.
+///   Always `1` for single-shot phases.
 ///
 /// # Return value
 /// Return `true` to continue, `false` to request cancellation.
@@ -70,11 +86,11 @@ pub enum ProgressPhase {
 /// On non-WASM targets the closure must be `Send + Sync`; on WASM (single-threaded)
 /// no thread-safety bounds are required.
 #[cfg(not(target_arch = "wasm32"))]
-pub type ProgressCallbackFunc = dyn Fn(ProgressPhase, f32) -> bool + Send + Sync;
+pub type ProgressCallbackFunc = dyn Fn(ProgressPhase, u32, u32) -> bool + Send + Sync;
 
 /// Progress callback function type (WASM variant – no `Send + Sync`).
 #[cfg(target_arch = "wasm32")]
-pub type ProgressCallbackFunc = dyn Fn(ProgressPhase, f32) -> bool;
+pub type ProgressCallbackFunc = dyn Fn(ProgressPhase, u32, u32) -> bool;
 
 /// Internal state for sync HTTP resolver selection.
 enum SyncResolverState {
@@ -689,14 +705,14 @@ impl Context {
     ///
     /// ```
     /// # use c2pa::{Context, ProgressPhase};
-    /// let ctx = Context::new().with_progress_callback(|phase, pct| {
-    ///     println!("{phase:?} {:.0}%", pct * 100.0);
+    /// let ctx = Context::new().with_progress_callback(|phase, step, total| {
+    ///     println!("{phase:?} {step}/{total}");
     ///     true // return false to cancel
     /// });
     /// ```
     pub fn with_progress_callback<F>(mut self, callback: F) -> Self
     where
-        F: Fn(ProgressPhase, f32) -> bool + MaybeSend + MaybeSync + 'static,
+        F: Fn(ProgressPhase, u32, u32) -> bool + MaybeSend + MaybeSync + 'static,
     {
         self.progress_callback = Some(Box::new(callback));
         self
@@ -706,7 +722,7 @@ impl Context {
     /// consuming builder pattern).
     pub fn set_progress_callback<F>(&mut self, callback: F)
     where
-        F: Fn(ProgressPhase, f32) -> bool + MaybeSend + MaybeSync + 'static,
+        F: Fn(ProgressPhase, u32, u32) -> bool + MaybeSend + MaybeSync + 'static,
     {
         self.progress_callback = Some(Box::new(callback));
     }
@@ -742,10 +758,14 @@ impl Context {
     /// Invokes the registered [`ProgressCallbackFunc`] (if any), then checks the
     /// embedded cancel flag.  Returns [`Error::OperationCancelled`] if either
     /// signals a stop.
-    pub(crate) fn check_progress(&self, phase: ProgressPhase, pct: f32) -> Result<()> {
-        log::info!("progress: phase={phase:?} pct={pct:.2}");
+    ///
+    /// `step` is the 1-based index of the current step within `phase`; `total` is
+    /// the total number of steps (`0` = indeterminate).  Single-shot phases pass
+    /// `(1, 1)`.
+    pub(crate) fn check_progress(&self, phase: ProgressPhase, step: u32, total: u32) -> Result<()> {
+        log::info!("progress: phase={phase:?} step={step}/{total}");
         if let Some(cb) = self.progress_callback.as_deref() {
-            if !cb(phase, pct) {
+            if !cb(phase, step, total) {
                 return Err(Error::OperationCancelled);
             }
         }
@@ -930,7 +950,7 @@ mod tests {
     #[test]
     fn test_check_progress_no_callback_ok() {
         let context = Context::new();
-        let result = context.check_progress(ProgressPhase::Hashing, 0.5);
+        let result = context.check_progress(ProgressPhase::Hashing, 1, 1);
         assert!(result.is_ok());
     }
 
@@ -938,39 +958,37 @@ mod tests {
     fn test_check_progress_cancelled_returns_error() {
         let context = Context::new();
         context.cancel();
-        let result = context.check_progress(ProgressPhase::Signing, 0.75);
+        let result = context.check_progress(ProgressPhase::Signing, 1, 1);
         assert!(matches!(result, Err(Error::OperationCancelled)));
     }
 
     #[test]
     fn test_check_progress_callback_false_cancels() {
-        let context = Context::new().with_progress_callback(|_, _| false);
-        let result = context.check_progress(ProgressPhase::Ingredients, 0.15);
+        let context = Context::new().with_progress_callback(|_, _, _| false);
+        let result = context.check_progress(ProgressPhase::Reading, 1, 1);
         assert!(matches!(result, Err(Error::OperationCancelled)));
     }
 
     #[test]
-    fn test_check_progress_callback_receives_phase_and_pct() {
+    fn test_check_progress_callback_receives_phase_and_steps() {
         use std::sync::Mutex;
-        let received: std::sync::Arc<Mutex<Vec<(ProgressPhase, f32)>>> =
+        let received: std::sync::Arc<Mutex<Vec<(ProgressPhase, u32, u32)>>> =
             std::sync::Arc::new(Mutex::new(Vec::new()));
         let received_clone = received.clone();
-        let context = Context::new().with_progress_callback(move |phase, pct| {
-            received_clone.lock().unwrap().push((phase, pct));
+        let context = Context::new().with_progress_callback(move |phase, step, total| {
+            received_clone.lock().unwrap().push((phase, step, total));
             true
         });
         context
-            .check_progress(ProgressPhase::Thumbnail, 0.25)
+            .check_progress(ProgressPhase::Thumbnail, 1, 1)
             .unwrap();
         context
-            .check_progress(ProgressPhase::Embedding, 0.9)
+            .check_progress(ProgressPhase::Hashing, 3, 10)
             .unwrap();
         let r = received.lock().unwrap();
         assert_eq!(r.len(), 2);
-        assert_eq!(r[0].0, ProgressPhase::Thumbnail);
-        assert!((r[0].1 - 0.25).abs() < f32::EPSILON);
-        assert_eq!(r[1].0, ProgressPhase::Embedding);
-        assert!((r[1].1 - 0.9).abs() < f32::EPSILON);
+        assert_eq!(r[0], (ProgressPhase::Thumbnail, 1, 1));
+        assert_eq!(r[1], (ProgressPhase::Hashing, 3, 10));
     }
 
     #[test]

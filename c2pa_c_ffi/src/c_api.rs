@@ -12,7 +12,7 @@
 // each license.
 
 use std::{
-    os::raw::{c_char, c_float, c_int, c_uchar, c_void},
+    os::raw::{c_char, c_int, c_uchar, c_void},
     sync::Arc,
 };
 
@@ -520,12 +520,16 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
 ///   `c2pa_context_builder_set_progress_callback`.
 /// * `phase`   – numeric value of the [`ProgressPhase`] (see SDK header for constants).
 ///   Callers should derive any user-visible text from this value in the appropriate language.
-/// * `pct`     – fraction complete in the range 0.0–1.0 (e.g. 0.75 = 75%).
+/// * `step`    – 1-based index of the current step within this phase.  Always `1` for
+///   single-shot phases.
+/// * `total`   – total number of steps in this phase.  `0` means the total is not known
+///   in advance (indeterminate); show a spinner rather than a progress bar.  Always `1`
+///   for single-shot phases.
 ///
 /// # Return value
 /// Return non-zero to continue the operation, zero to cancel.
 pub type ProgressCCallback =
-    unsafe extern "C" fn(context: *const c_void, phase: u8, pct: c_float) -> c_int;
+    unsafe extern "C" fn(context: *const c_void, phase: u8, step: u32, total: u32) -> c_int;
 
 /// Attaches a C progress callback to a context builder.
 ///
@@ -557,9 +561,9 @@ pub unsafe extern "C" fn c2pa_context_builder_set_progress_callback(
     let ud = SendPtr(user_data);
     // Both the C function pointer and user_data are captured in the closure, so
     // no separate context-pointer field is needed on Context.
-    let c_callback = move |phase: ProgressPhase, pct: f32| {
+    let c_callback = move |phase: ProgressPhase, step: u32, total: u32| {
         // SAFETY: caller guarantees `callback` and `ud` are valid.
-        unsafe { (callback)(ud.as_ptr(), phase as u8, pct as c_float) != 0 }
+        unsafe { (callback)(ud.as_ptr(), phase as u8, step, total) != 0 }
     };
     builder.set_progress_callback(c_callback);
     0
