@@ -19,7 +19,7 @@
 //! validation, FLAC stream verification, …).
 
 use std::{
-    fs::OpenOptions,
+    fs::{File, OpenOptions},
     io::{Cursor, Seek, SeekFrom, Write},
     path::Path,
 };
@@ -33,12 +33,12 @@ use memchr::memmem;
 
 use crate::{
     asset_io::{
-        CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, HashBlockObjectType,
-        HashObjectPositions,
+        rename_or_move, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
+        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     utils::{
-        io_utils::{stream_len, ReaderUtils},
+        io_utils::{stream_len, tempfile_builder, ReaderUtils},
         xmp_inmemory_utils::{self, MIN_XMP},
     },
 };
@@ -326,6 +326,63 @@ pub(crate) fn patch_cai_in_id3_asset(asset_path: &Path, store_bytes: &[u8]) -> R
             "patch_cai_store store size mismatch.".to_string(),
         ))
     }
+}
+
+/// Embeds an XMP remote reference into an ID3-tagged asset file in place.
+///
+/// Opens the file at `asset_path`, delegates to
+/// [`RemoteRefEmbed::embed_reference_to_stream`], then writes the result back.
+/// Only [`RemoteRefEmbedType::Xmp`] is supported; all other variants return
+/// [`Error::UnsupportedType`].
+#[allow(unused)]
+pub(crate) fn embed_xmp_reference(
+    embed: &dyn RemoteRefEmbed,
+    asset_path: &std::path::Path,
+    embed_ref: RemoteRefEmbedType,
+) -> Result<()> {
+    match &embed_ref {
+        RemoteRefEmbedType::Xmp(_) => {
+            let mut input_stream = File::open(asset_path)?;
+            let mut output_stream = Cursor::new(Vec::new());
+            embed.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
+            std::fs::write(asset_path, output_stream.into_inner())?;
+            Ok(())
+        }
+        _ => Err(Error::UnsupportedType),
+    }
+}
+
+/// Reads the CAI store from a file on disk via a [`CAIReader`].
+pub(crate) fn read_cai_store_from_path(reader: &dyn CAIReader, asset_path: &Path) -> Result<Vec<u8>> {
+    let mut f = File::open(asset_path)?;
+    reader.read_cai(&mut f)
+}
+
+/// Writes `store_bytes` into an ID3-tagged asset file via a [`CAIWriter`],
+/// replacing any existing C2PA manifest.
+pub(crate) fn save_cai_store_to_path(
+    writer: &dyn CAIWriter,
+    asset_path: &Path,
+    store_bytes: &[u8],
+) -> Result<()> {
+    let mut input_stream = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(asset_path)
+        .map_err(Error::IoError)?;
+    let mut temp_file = tempfile_builder("c2pa_temp")?;
+    writer.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
+    rename_or_move(temp_file, asset_path)
+}
+
+/// Returns the [`HashObjectPositions`] for a file on disk via a [`CAIWriter`].
+#[allow(unused)]
+pub(crate) fn get_object_locations_from_path(
+    writer: &dyn CAIWriter,
+    asset_path: &Path,
+) -> Result<Vec<HashObjectPositions>> {
+    let mut f = File::open(asset_path).map_err(|_| Error::EmbeddingError)?;
+    writer.get_object_locations_from_stream(&mut f)
 }
 
 // ── Shared test helpers ─────────────────────────────────────────────────────

@@ -12,7 +12,6 @@
 // each license.
 
 use std::{
-    fs::File,
     io::{Cursor, SeekFrom},
     path::Path,
 };
@@ -23,11 +22,10 @@ use metaflac::Tag as FlacTag;
 use crate::{
     asset_handlers::id3_helper::{self, ID3V2Header},
     asset_io::{
-        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReadWrapper, CAIReader,
-        CAIWriter, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReadWrapper, CAIReader, CAIWriter,
+        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
-    utils::io_utils::tempfile_builder,
 };
 
 static SUPPORTED_TYPES: [&str; 2] = ["flac", "audio/flac"];
@@ -153,16 +151,7 @@ impl CAIReader for FlacIO {
 
 impl RemoteRefEmbed for FlacIO {
     fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        match &embed_ref {
-            RemoteRefEmbedType::Xmp(_) => {
-                let mut input_stream = File::open(asset_path)?;
-                let mut output_stream = Cursor::new(Vec::new());
-                self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
-                std::fs::write(asset_path, output_stream.into_inner())?;
-                Ok(())
-            }
-            _ => Err(Error::UnsupportedType),
-        }
+        id3_helper::embed_xmp_reference(self, asset_path, embed_ref)
     }
 
     fn embed_reference_to_stream(
@@ -214,24 +203,15 @@ impl AssetIO for FlacIO {
     }
 
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
+        id3_helper::read_cai_store_from_path(self, asset_path)
     }
 
     fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-        rename_or_move(temp_file, asset_path)
+        id3_helper::save_cai_store_to_path(self, asset_path, store_bytes)
     }
 
     fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut f = File::open(asset_path).map_err(|_| Error::EmbeddingError)?;
-        self.get_object_locations_from_stream(&mut f)
+        id3_helper::get_object_locations_from_path(self, asset_path)
     }
 
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
