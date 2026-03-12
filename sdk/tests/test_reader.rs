@@ -71,7 +71,10 @@ fn test_reader_xca_jpg() -> Result<()> {
             .any(|failure| failure.code() == validation_status::ASSERTION_DATAHASH_MISMATCH),
         "expected {expected} in failure codes: {actual:?}",
         expected = validation_status::ASSERTION_DATAHASH_MISMATCH,
-        actual = failures.iter().map(|failure| failure.code()).collect::<Vec<_>>()
+        actual = failures
+            .iter()
+            .map(|failure| failure.code())
+            .collect::<Vec<_>>()
     );
     compare_to_known_good(&reader, "XCA.json")
 }
