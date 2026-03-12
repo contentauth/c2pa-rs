@@ -26,7 +26,7 @@ use sha2::{Digest as _, Sha256, Sha384, Sha512};
 use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
-        cose::CertificateTrustPolicy,
+        cose::{check_end_entity_certificate_profile, CertificateTrustPolicy},
         raw_signature::validator_for_sig_and_hash_algs,
         time_stamp::{
             response::{signed_data_from_time_stamp_response, tst_info_from_signed_data},
@@ -40,6 +40,8 @@ use crate::{
         TIMESTAMP_UNTRUSTED, TIMESTAMP_VALIDATED,
     },
 };
+
+const TIMESTAMP_OID_STR: &str = "1.3.6.1.5.5.7.3.8";
 
 // when signed attributes are present the digest is the DER
 // encoding of the SignerInfo SignedAttributes
@@ -531,12 +533,33 @@ pub fn verify_time_stamp(
 
         // the certificate must be on the trust list to be considered valid
         if verify_trust {
-            // per the spec TSA trust can only be checked against the system trust list not the user trust list
             let mut adjusted_ctp = ctp.clone();
-            adjusted_ctp.set_trust_anchors_only(true);
 
             // Order certificates from leaf to root before trust validation
             let ordered_cert_ders = order_certificates_leaf_to_root(&cert_ders, cert_pos)?;
+
+            // make sure this is a timestamping EKU
+            adjusted_ctp.clear_ekus();
+            adjusted_ctp.add_valid_ekus(TIMESTAMP_OID_STR.as_bytes()); // timestamp signing EKU
+            if check_end_entity_certificate_profile(
+                &ordered_cert_ders[0],
+                &adjusted_ctp,
+                &mut current_validation_log,
+                Some(&tst),
+            )
+            .is_err()
+            {
+                log_item!(
+                    "",
+                    format!("timestamp cert untrusted: {}", &common_name),
+                    "verify_time_stamp"
+                )
+                .validation_status(TIMESTAMP_UNTRUSTED)
+                .informational(&mut current_validation_log);
+
+                last_err = TimeStampError::Untrusted;
+                continue;
+            }
 
             if adjusted_ctp
                 .check_certificate_trust(
