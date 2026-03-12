@@ -2430,7 +2430,7 @@ impl Builder {
             bmff_hash.set_bmff_version(stored_version);
 
             // Add in the Merkle leaf hashes that were collected via hash_bmff_mdat_bytes().
-            // We add any remainders (partially filled fixed-size leaves that are unhashed) as the last leaf of the Merkle leaves for that mdat_id
+            // We add any remainders (partially filled fixed-size leaves that are unhashed) as the last leaf of the Merkle leaves for that mdat_id.
             for (mdat_id, remainder) in &self.bmff_hasher.fixed_size_remainder {
                 let fragment_hash = hash_by_alg(self.bmff_hasher.alg.as_str(), remainder, None);
 
