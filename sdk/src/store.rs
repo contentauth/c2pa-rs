@@ -29,10 +29,9 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
         labels::{self, CLAIM},
-        BmffHash, CertificateStatus, DataBox, DataHash, DataMap, ExclusionsMap, Ingredient,
-        MerkleMap, Relationship, SubsetMap, TimeStamp, User, UserCbor, VecByteBuf,
+        BmffHash, CertificateStatus, DataBox, DataHash, Ingredient, Relationship, TimeStamp, User,
+        UserCbor,
     },
-    asset_handlers::bmff_io::read_bmff_c2pa_boxes,
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
@@ -2073,16 +2072,19 @@ impl Store {
                 // save the valid timestamps stored in the StoreValidationInfo
                 // we only use valid timestamps, otherwise just ignore
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
+                    let mut tmp_log = StatusTracker::default();
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
-                        if let Ok(tst_info) = verify_time_stamp(
-                            time_stamp_token,
-                            rc.signature_val(),
-                            &self.ctp,
-                            validation_log,
-                            // no trust checks for leagacy timestamps
-                            rc.version() != 1,
-                        ) {
-                            svi.timestamps.insert(rc.label().to_owned(), tst_info);
+                        if let Ok(sign1) = rc.cose_sign1() {
+                            if let Ok(tst_info) = verify_time_stamp(
+                                time_stamp_token,
+                                &sign1.signature,
+                                &self.ctp,
+                                &mut tmp_log,
+                                // no trust checks for leagacy timestamps
+                                rc.version() != 1,
+                            ) {
+                                svi.timestamps.insert(rc.label().to_owned(), tst_info);
+                            }
                         }
                     }
                 }
@@ -2197,7 +2199,7 @@ impl Store {
         let mut dh = DataHash::new("jumbf manifest", alg);
 
         // sort blocks by offset
-        block_locations.sort_by(|a, b| a.offset.cmp(&b.offset));
+        block_locations.sort_by_key(|a| a.offset);
 
         // generate default data hash that excludes jumbf block
         // find the first jumbf block (ours are always in order)
@@ -2269,161 +2271,12 @@ impl Store {
         Ok(hashes)
     }
 
-    fn generate_bmff_data_hash_for_stream(
-        asset_stream: &mut dyn CAIRead,
-        alg: &str,
-        settings: &Settings,
-    ) -> Result<BmffHash> {
+    fn generate_bmff_data_hash_for_stream(alg: &str) -> Result<BmffHash> {
         // The spec has mandatory BMFF exclusion ranges for certain atoms.
         // The function makes sure those are included.
 
         let mut dh = BmffHash::new("jumbf manifest", alg, None);
-        let exclusions = dh.exclusions_mut();
-
-        // jumbf exclusion
-        let mut uuid = ExclusionsMap::new("/uuid".to_owned());
-        let data = DataMap {
-            offset: 8,
-            value: vec![
-                216, 254, 195, 214, 27, 14, 72, 60, 146, 151, 88, 40, 135, 126, 196, 129,
-            ], // C2PA identifier
-        };
-        let data_vec = vec![data];
-        uuid.data = Some(data_vec);
-        exclusions.push(uuid);
-
-        // ftyp exclusion
-        let ftyp = ExclusionsMap::new("/ftyp".to_owned());
-        exclusions.push(ftyp);
-
-        // /mfra/ exclusion
-        let mfra = ExclusionsMap::new("/mfra".to_owned());
-        exclusions.push(mfra);
-
-        /*  no longer mandatory
-        // meta/iloc exclusion
-        let iloc = ExclusionsMap::new("/meta/iloc".to_owned());
-        exclusions.push(iloc);
-
-        // /mfra/tfra exclusion
-        let tfra = ExclusionsMap::new("/mfra/tfra".to_owned());
-        exclusions.push(tfra);
-
-        // /moov/trak/mdia/minf/stbl/stco exclusion
-        let mut stco = ExclusionsMap::new("/moov/trak/mdia/minf/stbl/stco".to_owned());
-        let subset_stco = SubsetMap {
-            offset: 16,
-            length: 0,
-        };
-        let subset_stco_vec = vec![subset_stco];
-        stco.subset = Some(subset_stco_vec);
-        exclusions.push(stco);
-
-        // /moov/trak/mdia/minf/stbl/co64 exclusion
-        let mut co64 = ExclusionsMap::new("/moov/trak/mdia/minf/stbl/co64".to_owned());
-        let subset_co64 = SubsetMap {
-            offset: 16,
-            length: 0,
-        };
-        let subset_co64_vec = vec![subset_co64];
-        co64.subset = Some(subset_co64_vec);
-        exclusions.push(co64);
-
-        // /moof/traf/tfhd exclusion
-        let mut tfhd = ExclusionsMap::new("/moof/traf/tfhd".to_owned());
-        let subset_tfhd = SubsetMap {
-            offset: 16,
-            length: 8,
-        };
-        let subset_tfhd_vec = vec![subset_tfhd];
-        tfhd.subset = Some(subset_tfhd_vec);
-        tfhd.flags = Some(ByteBuf::from([1, 0, 0]));
-        exclusions.push(tfhd);
-
-        // /moof/traf/trun exclusion
-        let mut trun = ExclusionsMap::new("/moof/traf/trun".to_owned());
-        let subset_trun = SubsetMap {
-            offset: 16,
-            length: 4,
-        };
-        let subset_trun_vec = vec![subset_trun];
-        trun.subset = Some(subset_trun_vec);
-        trun.flags = Some(ByteBuf::from([1, 0, 0]));
-        exclusions.push(trun);
-        */
-
-        // enable flat flat files with Merkle trees if desired
-        // we do this here because the UUID boxes must be in place
-        // for the later hash generation
-        if let Some(merkle_chunk_size) = settings.core.merkle_tree_chunk_size_in_kb {
-            // mdat boxes are excluded when using Merkle hashing
-            let mut mdat = ExclusionsMap::new("/mdat".to_owned());
-            let subset_mdat = SubsetMap {
-                offset: 16,
-                length: 0,
-            };
-            let subset_mdat_vec = vec![subset_mdat];
-            mdat.subset = Some(subset_mdat_vec);
-            exclusions.push(mdat);
-
-            // get the merkle hashes for the mdat boxes
-            let boxes = read_bmff_c2pa_boxes(asset_stream)?;
-            let mut mdat_boxes = boxes.box_infos.clone();
-            mdat_boxes.retain(|b| b.path == "mdat");
-
-            let mut merkle_maps = Vec::new();
-            let mut uuid_boxes = Vec::new();
-
-            for (index, mdat_box) in mdat_boxes.iter().enumerate() {
-                let fixed_block_size = if merkle_chunk_size > 0 {
-                    Some(1024 * merkle_chunk_size as u64)
-                } else {
-                    None
-                };
-
-                let mut merkle_map = MerkleMap {
-                    unique_id: 0,
-                    local_id: index,
-                    count: 0,
-                    alg: Some(alg.to_string()),
-                    init_hash: None,
-                    hashes: VecByteBuf(Vec::new()),
-                    fixed_block_size,
-                    variable_block_sizes: None,
-                };
-
-                // build list of ordered UUID merkle boxes
-                let mut current_uuid_boxes = dh.create_merkle_map_for_mdat_box(
-                    asset_stream,
-                    mdat_box,
-                    &mut merkle_map,
-                    settings,
-                )?;
-                uuid_boxes.append(&mut current_uuid_boxes);
-
-                merkle_maps.push(merkle_map);
-            }
-
-            if merkle_maps.is_empty() {
-                return Err(Error::BadParam("No mdat boxes found".to_string()));
-            }
-
-            dh.merkle = Some(merkle_maps);
-            if !uuid_boxes.is_empty() {
-                dh.merkle_uuid_boxes = Some(uuid_boxes.into_iter().flatten().collect::<Vec<u8>>());
-
-                // calculate the insertion point for the UUID boxes after the last mdat box
-                let last_mdat_box = mdat_boxes
-                    .last()
-                    .ok_or(Error::BadParam("No mdat boxes found".to_string()))?;
-                dh.merkle_uuid_boxes_insertion_point = last_mdat_box.end();
-
-                // if there are existing Merkle UUID boxes we want to overwrite those
-                if let Some(last_uuid_box) = boxes.bmff_merkle_box_infos.last() {
-                    dh.merkle_replacement_range = last_mdat_box.end() - last_uuid_box.end();
-                }
-            }
-        }
+        dh.set_default_exclusions();
 
         // fill in temporary hash
         match alg {
@@ -2436,12 +2289,33 @@ impl Store {
         Ok(dh)
     }
 
+    // This function generates the BMFF hash for the 'mdat' boxes. This is used
+    // in the case where the SDK is automatically generating the Merkle tree leaves.
+    // If the user is supplying their own BmffHash they can specify the Merkle
+    // tree leaves themselves and this function will not be called.
+    fn generate_bmff_mdat_hashes(
+        asset_stream: &mut dyn CAIRead,
+        bmff_hash: &mut BmffHash,
+        settings: &Settings,
+    ) -> Result<()> {
+        if let Some(merkle_chunk_size) = settings.core.merkle_tree_chunk_size_in_kb {
+            bmff_hash.add_merkle_map_for_mdats(
+                asset_stream,
+                merkle_chunk_size,
+                settings.core.merkle_tree_max_proofs,
+            )?;
+        }
+        Ok(())
+    }
+
     /// This function is used to pre-generate a manifest with place holders for the final
     /// DataHash and Manifest Signature.  The DataHash will reserve space for at least 10
     /// Exclusion ranges.  The Signature box reserved size is based on the size required by
     /// the Signer you plan to use.  This function is not needed when using Box Hash. This function is used
     /// in conjunction with `get_data_hashed_embeddable_manifest`.  The manifest returned
     /// from `get_data_hashed_embeddable_manifest` will have a size that matches this function.
+    /// Note: This function does not support dynamic assertions. Use `get_placeholder`
+    /// if you need dynamic assertion support.
     pub fn get_data_hashed_manifest_placeholder(
         &mut self,
         reserve_size: usize,
@@ -2468,6 +2342,115 @@ impl Store {
         let composed = Self::get_composed_manifest(&jumbf_bytes, format)?;
 
         Ok(composed)
+    }
+
+    /// This function is used to get a placeholder manifest with dynamic assertion support.
+    /// The placeholder is then injected into the asset before calculating hashes.
+    /// Unlike [`data_hashed_placeholder`], this function supports dynamic assertions
+    /// (e.g., CAWG identity assertions) by accepting a signer.
+    ///
+    /// # Arguments
+    /// * `context` - The context to use.
+    /// # Returns
+    /// * The bytes of the `c2pa_manifest` placeholder.
+    /// # Errors
+    /// * Returns an [`Error`] if the placeholder cannot be created.
+    pub fn get_placeholder(&mut self, _format: &str, context: &Context) -> Result<Vec<u8>> {
+        let signer = context.signer()?;
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+        // if user did not supply a hash
+        if pc.hash_assertions().is_empty() {
+            return Err(Error::BadParam(
+                "Claim must have a hard binding assertion".to_string(),
+            ));
+        };
+
+        // add dynamic assertions to the store
+        let dynamic_assertions = signer.dynamic_assertions();
+        let _da_uris = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+
+        self.to_jumbf_internal(signer.reserve_size())
+    }
+
+    /// Signs an already hashed manifest with dynamic assertion support.
+    ///
+    /// # Arguments
+    /// * `signer` - The signer to use.
+    /// * `settings` - The settings to use.
+    /// # Returns
+    /// * The signed manifest bytes.
+    /// # Errors
+    /// * Returns an [`Error`] if the placeholder cannot be signed.
+    pub fn sign_manifest(&mut self, signer: &dyn Signer, settings: &Settings) -> Result<Vec<u8>> {
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+        // if user did not supply a hash
+        if pc.hash_assertions().is_empty() {
+            return Err(Error::BadParam(
+                "Claim must have a valid hard binding assertion".to_string(),
+            ));
+        };
+
+        // Write dynamic assertions only if placeholders were added during placeholder generation.
+        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
+        // weren't added and we should skip writing to avoid size mismatches.
+        let dynamic_assertions = signer.dynamic_assertions();
+        if !dynamic_assertions.is_empty() {
+            // Check if placeholders exist for these dynamic assertions
+            let has_placeholders = {
+                dynamic_assertions
+                    .iter()
+                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
+            };
+
+            if has_placeholders {
+                let mut preliminary_claim = PartialClaim::default();
+                {
+                    for assertion in pc.assertions() {
+                        preliminary_claim.add_assertion(assertion);
+                    }
+                }
+
+                // Drop pc before calling write_dynamic_assertions
+                let _ = pc;
+
+                let _modified =
+                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+
+                // Get pc again
+                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+                let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+                if sig_placeholder.len() != sig.len() {
+                    return Err(Error::CoseSigboxTooSmall);
+                }
+
+                let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+                patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
+                    .map_err(|_| Error::JumbfCreationError)?;
+
+                return Ok(jumbf_bytes);
+            }
+        }
+
+        // No dynamic assertions - sign directly
+        // Drop pc and get an immutable reference for signing
+        let _ = pc;
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+
+        if sig_placeholder.len() != sig.len() {
+            return Err(Error::CoseSigboxTooSmall);
+        }
+
+        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
+            .map_err(|_| Error::JumbfCreationError)?;
+
+        Ok(jumbf_bytes)
     }
 
     fn prep_embeddable_store(
@@ -2545,6 +2528,38 @@ impl Store {
         let mut jumbf_bytes =
             self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
 
+        // Write dynamic assertions only if placeholders were added during placeholder generation.
+        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
+        // weren't added and we should skip writing to avoid size mismatches.
+        let dynamic_assertions = signer.dynamic_assertions();
+        if !dynamic_assertions.is_empty() {
+            // Check if placeholders exist for these dynamic assertions
+            let has_placeholders = {
+                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                dynamic_assertions
+                    .iter()
+                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
+            };
+
+            if has_placeholders {
+                let mut preliminary_claim = PartialClaim::default();
+                {
+                    let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                    for assertion in pc.assertions() {
+                        preliminary_claim.add_assertion(assertion);
+                    }
+                }
+
+                let modified =
+                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+
+                // Regenerate JUMBF if dynamic assertions were written
+                if modified {
+                    jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+                }
+            }
+        }
+
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
@@ -2575,6 +2590,39 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let mut jumbf_bytes =
             self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
+
+        // Write dynamic assertions only if placeholders were added during placeholder generation.
+        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
+        // weren't added and we should skip writing to avoid size mismatches.
+        let dynamic_assertions = signer.dynamic_assertions();
+        if !dynamic_assertions.is_empty() {
+            // Check if placeholders exist for these dynamic assertions
+            let has_placeholders = {
+                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                dynamic_assertions
+                    .iter()
+                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
+            };
+
+            if has_placeholders {
+                let mut preliminary_claim = PartialClaim::default();
+                {
+                    let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                    for assertion in pc.assertions() {
+                        preliminary_claim.add_assertion(assertion);
+                    }
+                }
+
+                let modified = self
+                    .write_dynamic_assertions_async(&dynamic_assertions, &mut preliminary_claim)
+                    .await?;
+
+                // Regenerate JUMBF if dynamic assertions were written
+                if modified {
+                    jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+                }
+            }
+        }
 
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
@@ -2680,7 +2728,7 @@ impl Store {
         &mut self,
         dyn_assertions: &[Box<dyn AsyncDynamicAssertion>],
     ))]
-    fn add_dynamic_assertion_placeholders(
+    pub(crate) fn add_dynamic_assertion_placeholders(
         &mut self,
         dyn_assertions: &[Box<dyn DynamicAssertion>],
     ) -> Result<Vec<HashedUri>> {
@@ -2699,22 +2747,22 @@ impl Store {
         }
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-        // always add dynamic assertions as gathered assertions
+        // add dynamic assertions (respects created_assertion_labels settings)
         assertions.iter().map(|a| pc.add_assertion(a)).collect()
     }
 
     /// Write the dynamic assertions to the manifest.
+    /// Note: This assumes each dynamic assertion label is unique (no instance suffixes).
+    /// Multiple dynamic assertions with different labels are supported.
     #[async_generic(async_signature(
         &mut self,
         dyn_assertions: &[Box<dyn AsyncDynamicAssertion>],
-        dyn_uris: &[HashedUri],
         preliminary_claim: &mut PartialClaim,
     ))]
     #[allow(unused_variables)]
     fn write_dynamic_assertions(
         &mut self,
         dyn_assertions: &[Box<dyn DynamicAssertion>],
-        dyn_uris: &[HashedUri],
         preliminary_claim: &mut PartialClaim,
     ) -> Result<bool> {
         if dyn_assertions.is_empty() {
@@ -2723,9 +2771,10 @@ impl Store {
 
         let mut final_assertions = Vec::new();
 
-        for (da, uri) in dyn_assertions.iter().zip(dyn_uris.iter()) {
-            let label = crate::jumbf::labels::assertion_label_from_uri(&uri.url())
-                .ok_or(Error::BadParam("write_dynamic_assertions".to_string()))?;
+        for da in dyn_assertions.iter() {
+            // Use the dynamic assertion's label directly.
+            // This assumes each dynamic assertion label is unique (no instance suffixes needed).
+            let label = da.label();
 
             let da_size = da.reserve_size()?;
             let da_data = if _sync {
@@ -2777,10 +2826,7 @@ impl Store {
         let mut data;
 
         // 2) Get hash ranges if needed
-        let mut asset_stream = std::fs::File::open(asset_path)?;
-
-        let mut bmff_hash =
-            Store::generate_bmff_data_hash_for_stream(&mut asset_stream, pc.alg(), settings)?;
+        let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(pc.alg())?;
 
         bmff_hash.clear_hash();
         if pc.version() < 2 {
@@ -2855,7 +2901,7 @@ impl Store {
 
         // add dynamic assertions to the store
         let dynamic_assertions = signer.dynamic_assertions();
-        let da_uris = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+        let _ = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
 
         // get temp store as JUMBF
         let jumbf = self.to_jumbf(signer)?;
@@ -2884,11 +2930,8 @@ impl Store {
         }
 
         // Now add the dynamic assertions and update the JUMBF.
-        let modified = temp_store.write_dynamic_assertions(
-            &dynamic_assertions,
-            &da_uris,
-            &mut preliminary_claim,
-        )?;
+        let modified =
+            temp_store.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
 
         // update the JUMBF if modified with dynamic assertions
         if modified {
@@ -2960,12 +3003,13 @@ impl Store {
         let settings = context.settings();
         let dynamic_assertions = signer.dynamic_assertions();
 
-        let da_uris = if _sync {
-            self.add_dynamic_assertion_placeholders(&dynamic_assertions)?
+        // Add dynamic assertion placeholders (URIs no longer needed, we use da.label() directly)
+        if _sync {
+            self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
         } else {
             self.add_dynamic_assertion_placeholders_async(&dynamic_assertions)
-                .await?
-        };
+                .await?;
+        }
 
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
@@ -2994,14 +3038,10 @@ impl Store {
 
         // Now add the dynamic assertions and update the JUMBF.
         let modified = if _sync {
-            self.write_dynamic_assertions(&dynamic_assertions, &da_uris, &mut preliminary_claim)
+            self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)
         } else {
-            self.write_dynamic_assertions_async(
-                &dynamic_assertions,
-                &da_uris,
-                &mut preliminary_claim,
-            )
-            .await
+            self.write_dynamic_assertions_async(&dynamic_assertions, &mut preliminary_claim)
+                .await
         }?;
         // update the JUMBF if modified with dynamic assertions
         if modified {
@@ -3164,21 +3204,26 @@ impl Store {
 
         if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
-            if !pc.update_manifest() {
+            let mut needs_hash = false;
+            if !pc.update_manifest() && pc.bmff_hash_assertions().is_empty() {
                 intermediate_stream.rewind()?;
-                let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(
-                    &mut intermediate_stream,
-                    pc.alg(),
-                    settings,
-                )?;
+                let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(pc.alg())?;
 
                 if pc.version() < 2 {
                     bmff_hash.set_bmff_version(2); // backcompat support
                 }
 
-                // insert UUID boxes at the correct location if required
+                // add Merkle mdats if requested
+                Store::generate_bmff_mdat_hashes(
+                    &mut intermediate_stream,
+                    &mut bmff_hash,
+                    settings,
+                )?;
+
+                // insert Merkle UUID boxes at the correct location if required
                 if let Some(merkle_uuid_boxes) = &bmff_hash.merkle_uuid_boxes {
                     let mut temp_stream = io_utils::stream_with_fs_fallback(threshold);
+                    intermediate_stream.rewind()?;
 
                     insert_data_at(
                         &mut intermediate_stream,
@@ -3191,8 +3236,9 @@ impl Store {
                     temp_stream.rewind()?;
                     intermediate_stream = temp_stream;
                 }
-
                 pc.add_assertion(&bmff_hash)?;
+
+                needs_hash = true;
             }
 
             // 3) Generate in memory CAI jumbf block
@@ -3216,7 +3262,7 @@ impl Store {
             if !pc.update_manifest() {
                 let bmff_hashes = pc.bmff_hash_assertions();
 
-                if !bmff_hashes.is_empty() {
+                if !bmff_hashes.is_empty() && needs_hash {
                     let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0].assertion())?;
 
                     output_stream.rewind()?;
@@ -3660,7 +3706,14 @@ impl Store {
         context: &Context,
     ) -> Result<Store> {
         let verify = context.settings().verify.verify_after_reading;
-        let store = Self::from_stream(asset_type, &mut *init_segment, validation_log, context)?;
+        let (manifest_bytes, remote_url) =
+            Store::load_jumbf_from_stream(asset_type, &mut *init_segment, context)?;
+        let mut store = Store::from_jumbf_with_context(&manifest_bytes, validation_log, context)?;
+        if remote_url.is_none() {
+            store.embedded = true;
+        } else {
+            store.remote_url = remote_url;
+        }
 
         // verify the store
         if verify {
@@ -3881,7 +3934,7 @@ impl Store {
                 // build mapping of ingredients and those claims that reference it
                 svi.ingredient_references
                     .entry(ingredient_label.clone())
-                    .or_insert(HashSet::from_iter(vec![claim_label.to_owned()].into_iter()))
+                    .or_insert(HashSet::from_iter(vec![claim_label.to_owned()]))
                     .insert(claim_label.to_owned());
 
                 // recurse nested ingredients
@@ -4041,12 +4094,10 @@ impl Store {
                         } else {
                             let new_version = match claim
                                 .claim_ingredient_store()
-                                .iter()
-                                .filter_map(|(label, _conflict)| {
-                                    match manifest_label_to_parts(label) {
-                                        Some(mp) => mp.version,
-                                        None => None,
-                                    }
+                                .keys()
+                                .filter_map(|label| match manifest_label_to_parts(label) {
+                                    Some(mp) => mp.version,
+                                    None => None,
                                 })
                                 .max()
                             {
@@ -6905,6 +6956,45 @@ pub mod tests {
 
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
+
+        // Create claims store.
+        let mut store = Store::from_context(&context);
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Move the claim to claims list.
+        store.commit_claim(claim1).unwrap();
+        store
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut output_stream,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+
+        let mut report = StatusTracker::default();
+
+        // can we read back in
+        output_stream.set_position(0);
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
+
+        assert!(!report.has_any_error());
+
+        println!("store = {new_store}");
+    }
+
+    #[test]
+    fn test_bmff_jumbf_generation_qt() {
+        let context = crate::context::Context::new();
+
+        // test adding to actual image
+        let (format, mut input_stream, mut output_stream) = create_test_streams("c.mov");
 
         // Create claims store.
         let mut store = Store::from_context(&context);

@@ -35,16 +35,19 @@ These requirements are enforced in the [Tier 1A workflow](/.github/workflows/tie
 ### Tier 1A for c2pa-rs
 
 * **Ubuntu:** `x86_64-unknown-linux-gnu`, Rust `stable`, `all` features, `openssl` | `rust_native_crypto`, `glibc`
+* **Windows (ARM):** `aarch64-pc-windows-msvc`, Rust `stable`, `all` features, `openssl` | `rust_native_crypto`
 * **Wasm:** `wasm32-unknown-unknown`, Rust `stable`, `fetch_remote_manifests` feature, `rust_native_crypto`
 * **WASI:** `wasm32-wasip2`, Rust `nightly-2026-01-16`, `all` features
 
 ### Tier 1A for c2pa-c-ffi
 
 * **Ubuntu:** `x86_64-unknown-linux-gnu`, Rust `stable`, `all` features, `openssl` | `rust_native_crypto`, `glibc`
+* **Windows (ARM):** `aarch64-pc-windows-msvc`, Rust `stable`, `all` features, `openssl` | `rust_native_crypto`
 
 ### Tier 1A for c2patool
 
 * **Ubuntu:** `x86_64-unknown-linux-gnu`, Rust `stable`, `all` features, `openssl` | `rust_native_crypto`, `glibc`
+* **Windows (ARM):** `aarch64-pc-windows-msvc`, Rust `stable`, `all` features, `openssl` | `rust_native_crypto`
 
 ## Tier 1B
 
@@ -105,6 +108,7 @@ These requirements are enforced in the [Tier 2 workflow](/.github/workflows/tier
 ### Tier 2 for c2pa-c-ffi
 
 * **Ubuntu:** `x86_64-unknown-linux-gnu`, Rust `stable`, `file_io`, `rust_native_crypto`, `glibc`, **build artifacts**
+* **Emscripten:** `wasm32-unknown-emscripten`, Rust `stable`, `file_io`, `fetch_remote_manifests`, `rust_native_crypto`, **build artifacts**
 * **MacOS:** `aarch64-apple-darwin`, Rust `stable`, `file_io`, `rust_native_crypto`, **build artifacts**
 * **Windows:** `x86_64-pc-windows-msvc`, Rust `stable`, `file_io`, `rust_native_crypto`, **build artifacts**
 * **iOS:** `aarch64-apple-ios` | `x86_64-apple-ios` | `aarch64-apple-ios-sim`, `file_io`, `rust_native_crypto`, **build artifacts**

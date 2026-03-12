@@ -18,14 +18,17 @@ mod c_api;
 mod error;
 #[cfg(feature = "file_io")]
 mod json_api;
+mod maybe_send_sync;
 mod signer_info;
 
-pub use c2pa::{AsyncSigner, Builder, Reader, Signer, SigningAlg};
+pub use c2pa::{
+    AsyncSigner, Builder, Error as C2paError, Reader, Result as C2paResult, Signer, SigningAlg,
+};
 pub use c2pa_stream::*;
 pub use c_api::*;
 // Re-export for macro use
 #[doc(hidden)]
 pub use cimpl::cimpl_error::CimplError;
 pub use cimpl::*;
-pub use error::{C2paError, Error, Result};
+pub use error::{Error, Result};
 pub use signer_info::SignerInfo;

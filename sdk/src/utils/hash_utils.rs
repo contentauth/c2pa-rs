@@ -86,11 +86,17 @@ pub fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
        .all(|(a,b)| a == b)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Hasher {
     SHA256(Sha256),
     SHA384(Sha384),
     SHA512(Sha512),
+}
+
+impl Default for Hasher {
+    fn default() -> Self {
+        Hasher::SHA256(Sha256::new())
+    }
 }
 
 impl Hasher {
@@ -113,6 +119,26 @@ impl Hasher {
             SHA256(d) => d.finalize().to_vec(),
             SHA384(d) => d.finalize().to_vec(),
             SHA512(d) => d.finalize().to_vec(),
+        }
+    }
+
+    pub fn finalize_reset(&mut self) -> Vec<u8> {
+        use Hasher::*;
+
+        // return the hash and leave the Hasher open and reset
+        match self {
+            SHA256(ref mut d) => d.finalize_reset().to_vec(),
+            SHA384(ref mut d) => d.finalize_reset().to_vec(),
+            SHA512(ref mut d) => d.finalize_reset().to_vec(),
+        }
+    }
+
+    pub fn new(alg: &str) -> Result<Hasher> {
+        match alg {
+            "sha256" => Ok(Hasher::SHA256(Sha256::new())),
+            "sha384" => Ok(Hasher::SHA384(Sha384::new())),
+            "sha512" => Ok(Hasher::SHA512(Sha512::new())),
+            _ => Err(Error::UnsupportedType),
         }
     }
 }
@@ -189,6 +215,7 @@ pub fn hash_asset_by_alg_with_inclusions(
 
     The data is again split into range sets breaking at the exclusion points and now also the markers.
 */
+/// May be used to generate hashes in combination with embeddable APIs.
 pub fn hash_stream_by_alg<R>(
     alg: &str,
     data: &mut R,
