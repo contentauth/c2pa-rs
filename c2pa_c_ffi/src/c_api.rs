@@ -23,7 +23,7 @@ use c2pa::{
     assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
     CallbackSigner, Context, Reader as C2paReader, Settings as C2paSettings, SigningAlg,
 };
-use tokio::runtime::Runtime; // cawg validator requires async
+use tokio::runtime::Builder;
 
 #[cfg(feature = "file_io")]
 use crate::json_api::{read_file, sign_file};
@@ -202,7 +202,7 @@ pub enum C2paBuilderIntent {
 
 #[repr(C)]
 pub struct C2paSigner {
-    pub signer: Box<dyn c2pa::Signer + Send + Sync>,
+    pub signer: Box<dyn crate::maybe_send_sync::C2paSignerObject>,
 }
 
 /// Defines a callback to read from a stream.
@@ -288,7 +288,7 @@ pub unsafe extern "C" fn c2pa_load_settings(
     let format = cstr_or_return_int!(format);
     // we use the legacy from_string function to set thread-local settings for backward compatibility
     let result = C2paSettings::from_string(&settings, &format);
-    ok_or_return_zero!(result);
+    ok_or_return_int!(result);
     0 // returns 0 on success
 }
 
@@ -757,10 +757,17 @@ pub unsafe extern "C" fn c2pa_free_string_array(ptr: *const *const c_char, count
 fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, c2pa::Error> {
     match result {
         Ok(mut reader) => {
-            let runtime = match Runtime::new() {
+            #[cfg(target_arch = "wasm32")]
+            let runtime = Builder::new_current_thread().enable_all().build();
+
+            #[cfg(not(target_arch = "wasm32"))]
+            let runtime = Builder::new_multi_thread().enable_all().build();
+
+            let runtime = match runtime {
                 Ok(runtime) => runtime,
                 Err(err) => return Err(c2pa::Error::OtherError(Box::new(err))),
             };
+
             match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
                 Ok(_) => Ok(reader),
                 Err(err) => Err(err),
@@ -858,6 +865,47 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     let reader = Box::from_raw(reader);
     let result = (*reader).with_stream(&format, stream);
     let result = ok_or_return_null!(post_validate(result));
+    box_tracked!(result)
+}
+
+/// Configures an existing passed in Reader with manifest data and a stream.
+/// This covers the case when a Reader needs to be able to re-read signed
+/// manifest bytes. This method consumes the original Reader and returns a
+/// new configured Reader. The original Reader pointer becomes invalid after
+/// this call and should not be reused.
+///
+/// # Safety
+///
+/// * `reader` must be a valid pointer to a configured C2paReader
+///   (usually with a Context).
+/// * `format` must be a valid null-terminated string with the MIME type.
+/// * `stream` must be a valid pointer to a C2paStream.
+/// * `manifest_data` must be a valid pointer to manifest bytes.
+/// * `manifest_size` must be the length of the manifest_data buffer.
+/// * After calling this function, the `reader` pointer becomes invalid.
+///
+/// # Returns
+///
+/// A pointer to a newly configured C2paReader, or NULL on error.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
+    reader: *mut C2paReader,
+    format: *const c_char,
+    stream: *mut C2paStream,
+    manifest_data: *const c_uchar,
+    manifest_size: usize,
+) -> *mut C2paReader {
+    let format = cstr_or_return_null!(format);
+    let stream = deref_mut_or_return_null!(stream, C2paStream);
+    let manifest_bytes = bytes_or_return_null!(manifest_data, manifest_size, "manifest_data");
+
+    // Take ownership of the Reader (needs to remove it from tracking to take it)
+    untrack_or_return_null!(reader, C2paReader);
+    let reader = Box::from_raw(reader);
+    let result = (*reader).with_manifest_data_and_stream(manifest_bytes, &format, stream);
+    let result = ok_or_return_null!(post_validate(result));
+
+    // New reader, will be tracked now too
     box_tracked!(result)
 }
 
@@ -1906,6 +1954,78 @@ pub unsafe extern "C" fn c2pa_builder_set_data_hash_exclusions(
     0
 }
 
+/// If set the hasher will hash fixed size chunks of data, padding the final block as needed.
+/// This will produce a Merkle tree for each mdat with fixed size leaves, which can be used
+/// for efficient hashing of large assets.
+///
+/// #Parameters
+/// * builder_ptr: pointer to a Builder (must have called [`c2pa_builder_placeholder`] first).
+/// * fixed_size_kb: length of fixed size blocks. The units are KB.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// builder_ptr must not be NULL.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_set_fixed_size_merkle(
+    builder_ptr: *mut C2paBuilder,
+    fixed_size_kb: usize,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+
+    builder.set_bmff_hash_fixed_leaf_size(fixed_size_kb);
+
+    0
+}
+
+/// Generate the mdat leaf hashes for the asset, the C2paHasher will accumulate the hash values for
+/// each mdat_id.  The data_ptr should be supplied in the order the chunks are written to the mdat.
+/// The mdat_id should be begin with 0 and increment for each mdat in the asset.  For assets with a s
+/// ingle mdat, the mdat_id should be 0.  If fixed size Merkle is enabled, the data will be accumulated
+/// and hashed in fixed size chunks and the final chunk will be padded.  Otherwise the data will be hashed
+/// as a single leaf for each mdat chunk supplied to this call.
+///
+/// #Parameters
+/// * builder_ptr: pointer to the C2paBuilder.
+/// * mdat_id:  specifies which mdat this hash leaf belongs.
+/// * data_ptr: pointer to data to hash.
+/// * data_len: length of data to hash.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// builder_ptr must not be NULL..
+///
+/// # Example
+/// ```c
+///  auto data = std::vector<std::uint8_t> buffer(1024);
+///  
+///  c2pa_builder_hash_mdat_bytes(builder, 1, (const uint8_t*)data.data(), 1024, true);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_hash_mdat_bytes(
+    builder_ptr: *mut C2paBuilder,
+    mdat_id: usize,
+    data_ptr: *const c_uchar,
+    data_len: usize,
+    large_size: bool,
+) -> c_int {
+    ptr_or_return_int!(data_ptr);
+    ptr_or_return_int!(builder_ptr);
+
+    let data = bytes_or_return_int!(data_ptr, data_len, "mdat_data");
+
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+
+    // save to hasher to build Merkle trees during final save
+    ok_or_return_int!(builder.hash_bmff_mdat_bytes(mdat_id, data, large_size));
+    0
+}
+
 /// Updates the hard binding assertion in a Builder by hashing an asset stream.
 ///
 /// Automatically detects the type of hard binding on the Builder:
@@ -1947,74 +2067,6 @@ pub unsafe extern "C" fn c2pa_builder_update_hash_from_stream(
     let format = cstr_or_return_int!(format);
     let stream = deref_mut_or_return_int!(stream, C2paStream);
     ok_or_return_int!(builder.update_hash_from_stream(&format, &mut *stream));
-    0
-}
-
-/// Provides pre-computed mdat chunk hashes to the Builder for Merkle tree construction.
-///
-/// This is part of the large-file external hashing workflow: the caller reads and hashes
-/// mdat content in fixed-size chunks (without the SDK loading it into memory) and passes
-/// those hashes here.  Only the Merkle root is stored in the manifest; no UUID proof
-/// boxes are generated.
-///
-/// The chunk size is read from `core.merkle_tree_chunk_size_in_kb` in the Builder's
-/// Context settings, which must be set before calling [`c2pa_builder_placeholder`].
-///
-/// The hashes are laid out as a flat array: all chunks of mdat\[0\] followed by all chunks
-/// of mdat\[1\], and so on.  `chunk_counts[i]` specifies how many chunks belong to mdat box i.
-///
-/// # Parameters
-/// * builder_ptr: pointer to a Builder.
-/// * hashes_ptr: flat array of hash bytes (mdat0_chunk0 | mdat0_chunk1 | … | mdatN_chunkM).
-/// * hash_size: byte length of each individual hash (e.g. 32 for sha256).
-/// * chunk_counts: array of chunk counts, one per mdat box.
-/// * mdat_count: number of mdat boxes (length of chunk_counts).
-///
-/// # Errors
-/// Returns 0 on success, -1 on error (call c2pa_error() for the message).
-/// Fails if `core.merkle_tree_chunk_size_in_kb` is not set or if no BmffHash assertion exists.
-///
-/// # Safety
-/// All pointers must remain valid for the duration of the call.
-#[no_mangle]
-pub unsafe extern "C" fn c2pa_builder_set_bmff_mdat_hashes(
-    builder_ptr: *mut C2paBuilder,
-    hashes_ptr: *const c_uchar,
-    hash_size: usize,
-    chunk_counts: *const usize,
-    mdat_count: usize,
-) -> c_int {
-    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
-    ptr_or_return_int!(hashes_ptr);
-    ptr_or_return_int!(chunk_counts);
-
-    let chunk_counts_slice = std::slice::from_raw_parts(chunk_counts, mdat_count);
-    let total_chunks: usize = chunk_counts_slice.iter().sum();
-
-    if hash_size == 0 || total_chunks == 0 {
-        CimplError::null_parameter("hash_size or total chunk count is zero").set_last();
-        return -1;
-    }
-
-    let total_hash_bytes = some_or_return_int!(
-        total_chunks.checked_mul(hash_size),
-        CimplError::other("total_chunks * hash_size overflow".to_string())
-    );
-
-    let all_hashes = std::slice::from_raw_parts(hashes_ptr, total_hash_bytes);
-
-    let mut leaf_hashes: Vec<Vec<Vec<u8>>> = Vec::with_capacity(mdat_count);
-    let mut offset = 0usize;
-    for &count in chunk_counts_slice {
-        let mut mdat_hashes: Vec<Vec<u8>> = Vec::with_capacity(count);
-        for _ in 0..count {
-            mdat_hashes.push(all_hashes[offset..offset + hash_size].to_vec());
-            offset += hash_size;
-        }
-        leaf_hashes.push(mdat_hashes);
-    }
-
-    ok_or_return_int!(builder.set_bmff_mdat_hashes(leaf_hashes));
     0
 }
 
@@ -2931,6 +2983,76 @@ mod tests {
             c2pa_free(context as *mut c_void);
             c2pa_free(configured_reader as *mut c_void);
         };
+    }
+
+    #[test]
+    fn test_c2pa_reader_with_manifest_data_and_stream() {
+        // Sign an image to get manifest bytes
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let mut dest_stream = TestStream::new(Vec::new());
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert!(result > 0, "Signing should succeed");
+        assert!(
+            !manifest_bytes_ptr.is_null(),
+            "Manifest bytes should be returned"
+        );
+        let manifest_size = result as usize;
+
+        // Create a context and reader from it
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        let reader = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader.is_null());
+
+        // Consume the reader with manifest data and stream
+        let mut validation_stream = TestStream::new(source_image.to_vec());
+        let configured_reader = unsafe {
+            c2pa_reader_with_manifest_data_and_stream(
+                reader,
+                format.as_ptr(),
+                validation_stream.as_ptr(),
+                manifest_bytes_ptr,
+                manifest_size,
+            )
+        };
+        assert!(
+            !configured_reader.is_null(),
+            "Reader should be configured with manifest data and stream"
+        );
+
+        // Verify the original reader was consumed
+        let free_result = unsafe { c2pa_free(reader as *const c_void) };
+        assert_eq!(free_result, -1);
+
+        // Verify we can read the manifest
+        let json = unsafe { c2pa_reader_json(configured_reader) };
+        assert!(!json.is_null(), "Should be able to get JSON from reader");
+
+        unsafe {
+            c2pa_free(json as *const c_void);
+            c2pa_free(configured_reader as *const c_void);
+            c2pa_free(manifest_bytes_ptr as *const c_void);
+            c2pa_free(builder as *const c_void);
+            c2pa_free(signer as *const c_void);
+            c2pa_free(context as *const c_void);
+        }
     }
 
     #[test]
@@ -4265,12 +4387,6 @@ verify_after_sign = true
             unsafe { c2pa_settings_update_from_string(settings, json_str.as_ptr(), fmt.as_ptr()) };
         assert_eq!(result, 0);
 
-        // Enable Merkle-tree mdat hashing.
-        let path = CString::new("core.merkle_tree_chunk_size_in_kb").unwrap();
-        let value = CString::new("1").unwrap();
-        let result = unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) };
-        assert_eq!(result, 0);
-
         let ctx_builder = unsafe { c2pa_context_builder_new() };
         assert!(!ctx_builder.is_null());
         let result = unsafe { c2pa_context_builder_set_settings(ctx_builder, settings) };
@@ -4312,19 +4428,17 @@ verify_after_sign = true
         );
         assert!(!placeholder_ptr.is_null());
 
+        // break the mdat in fixed sized chunks (1kb) in this example
+        unsafe {
+            c2pa_builder_set_fixed_size_merkle(builder, 1);
+        }
+
         // Supply a single dummy SHA-256 leaf hash for one mdat box (1 chunk).
-        // The Merkle root is derived from these; the video will not validate but
+        // The Merkle leaves is derived from these; the video will not validate but
         // this exercises the full C API call path.
-        let dummy_hash: [u8; 32] = [0xab; 32];
-        let chunk_counts: [usize; 1] = [1];
+        let leaf_data: [u8; 4096] = [0xab; 4096];
         let result = unsafe {
-            c2pa_builder_set_bmff_mdat_hashes(
-                builder,
-                dummy_hash.as_ptr(),
-                32,
-                chunk_counts.as_ptr(),
-                1,
-            )
+            c2pa_builder_hash_mdat_bytes(builder, 0, leaf_data.as_ptr(), leaf_data.len(), true)
         };
         assert_eq!(result, 0, "set_bmff_mdat_hashes failed");
 
