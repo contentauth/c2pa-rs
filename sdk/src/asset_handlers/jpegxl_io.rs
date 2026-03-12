@@ -20,7 +20,14 @@
 //! - The C2PA Manifest Store is embedded as a native `jumb` superbox at the top level.
 //! - A JPEG XL file SHALL contain at most one JUMBF superbox.
 //! - Uses general box hash (`c2pa.hash.boxes`) for hard binding (non-BMFF classification).
-//! - Supports `brob` (Brotli-compressed) boxes for reading metadata.
+//! - Supports `brob` (Brotli-compressed) boxes for reading XMP metadata.
+//!
+//! NOTE: Brotli decompression is intentionally NOT supported for C2PA JUMBF (`jumb`) boxes.
+//! Per C2PA Implementation Guidance §3.2.4, compressed manifests are not compatible with
+//! box-based hashing. A `brob`-wrapped `jumb` would break the hashing model because the
+//! compressed bytes are non-deterministic and the write path always produces uncompressed
+//! `jumb` boxes. Only `brob`-wrapped `xml` (XMP) boxes are decompressed, as XMP is treated
+//! as opaque metadata.
 
 use std::{
     fs::File,
@@ -212,8 +219,11 @@ fn decompress_brob(reader: &mut dyn CAIRead, data_size: u64) -> Result<([u8; 4],
     Ok((original_type, decompressed))
 }
 
-/// Finds the JUMBF data in a JPEG XL container, handling both direct `jumb` boxes
-/// and `brob`-compressed `jumb` boxes.
+/// Finds the JUMBF data in a JPEG XL container handling direct `jumb` boxes
+/// and ignoring `brob`-compressed `jumb` boxes.
+/// NOTE: brob-wrapped jumb boxes are intentionally NOT read here.
+/// Compressed manifests are incompatible with box-based hashing
+/// (see C2PA Implementation Guidance §3.2.4).
 fn find_jumb_data(reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
     let file_len = reader.seek(SeekFrom::End(0))?;
 
@@ -244,19 +254,6 @@ fn find_jumb_data(reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
             let mut data = vec![0u8; ds as usize];
             reader.read_exact(&mut data).map_err(Error::IoError)?;
             jumb_data = Some(data);
-        } else if b.box_type == BOX_BROB {
-            reader.seek(SeekFrom::Start(b.data_offset()))?;
-            let ds = b.data_size(file_len);
-            if ds >= 4 {
-                let (orig_type, decompressed) = decompress_brob(reader, ds)?;
-                if orig_type == BOX_JUMB {
-                    jumb_count += 1;
-                    if jumb_count > 1 {
-                        return Err(Error::TooManyManifestStores);
-                    }
-                    jumb_data = Some(decompressed);
-                }
-            }
         }
     }
 
@@ -342,7 +339,7 @@ fn build_box(box_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
     }
 }
 
-/// Rewrites the container, excluding any `jumb` (or `brob`-wrapped `jumb`) boxes.
+/// Rewrites the container, excluding any `jumb` boxes.
 fn remove_jumb_boxes(reader: &mut dyn CAIRead, writer: &mut dyn CAIReadWrite) -> Result<()> {
     let file_len = reader.seek(SeekFrom::End(0))?;
 
@@ -355,15 +352,9 @@ fn remove_jumb_boxes(reader: &mut dyn CAIRead, writer: &mut dyn CAIReadWrite) ->
     writer.rewind()?;
 
     for b in &boxes {
-        let should_skip = if b.box_type == BOX_JUMB {
-            true
-        } else if b.box_type == BOX_BROB {
-            reader.seek(SeekFrom::Start(b.data_offset()))?;
-            let mut orig_type = [0u8; 4];
-            reader.read_exact(&mut orig_type).ok().is_some() && orig_type == BOX_JUMB
-        } else {
-            false
-        };
+        // Only skip plain jumb boxes; brob-wrapped jumb is treated as opaque data
+        // since compressed manifests are not supported (see module-level doc comment).
+        let should_skip = b.box_type == BOX_JUMB;
 
         if !should_skip {
             let box_end = b.end(file_len);
@@ -426,20 +417,13 @@ impl CAIWriter for JpegXlIO {
         let mut cursor = Cursor::new(&buf);
         let boxes = parse_all_boxes(&mut cursor)?;
 
-        // Collect ranges to remove (jumb boxes and brob-wrapped jumb boxes)
+        // Collect ranges to remove (plain jumb boxes only; brob-wrapped jumb is
+        // treated as opaque data since compressed manifests are not supported).
         let mut remove_ranges: Vec<(usize, usize)> = Vec::new();
         for b in &boxes {
             if b.box_type == BOX_JUMB {
                 let end = b.end(file_len) as usize;
                 remove_ranges.push((b.offset as usize, end));
-            } else if b.box_type == BOX_BROB {
-                let mut c = Cursor::new(&buf);
-                c.seek(SeekFrom::Start(b.data_offset())).ok();
-                let mut orig_type = [0u8; 4];
-                if c.read_exact(&mut orig_type).is_ok() && orig_type == BOX_JUMB {
-                    let end = b.end(file_len) as usize;
-                    remove_ranges.push((b.offset as usize, end));
-                }
             }
         }
 
@@ -711,17 +695,11 @@ impl AssetBoxHash for JpegXlIO {
                 b.total_size
             };
 
+            // Only plain jumb boxes are marked as C2PA; brob boxes (including those
+            // wrapping jumb) are treated as opaque data for hashing purposes, since
+            // compressed manifests are incompatible with box-based hashing.
             let name = if b.box_type == BOX_JUMB {
                 C2PA_BOXHASH.to_string()
-            } else if b.box_type == BOX_BROB {
-                // Check if this brob wraps a jumb
-                input_stream.seek(SeekFrom::Start(b.data_offset()))?;
-                let mut orig_type = [0u8; 4];
-                if input_stream.read_exact(&mut orig_type).is_ok() && orig_type == BOX_JUMB {
-                    C2PA_BOXHASH.to_string()
-                } else {
-                    b.type_str()
-                }
             } else {
                 b.type_str()
             };
@@ -860,7 +838,7 @@ fn build_jxl_with_brob_xmp(xmp_data: &str) -> Vec<u8> {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use std::io::{Read, Seek};
+    use std::io::Seek;
 
     use super::*;
     use crate::utils::io_utils::tempdirectory;
@@ -1192,14 +1170,19 @@ pub mod tests {
     // ─── brob (Brotli-compressed) box tests ───
 
     #[test]
-    fn test_read_cai_from_brob_wrapped_jumb() {
+    fn test_brob_wrapped_jumb_not_supported() {
+        // brob-wrapped jumb is intentionally not supported because compressed
+        // manifests are incompatible with box-based hashing (C2PA Guidance §3.2.4).
         let manifest_data = b"brob_compressed_manifest_store";
         let container = build_jxl_with_brob_jumb(manifest_data);
         let mut cursor = Cursor::new(&container);
 
         let jpegxl_io = JpegXlIO {};
-        let result = jpegxl_io.read_cai(&mut cursor).unwrap();
-        assert_eq!(result, manifest_data);
+        let result = jpegxl_io.read_cai(&mut cursor);
+        assert!(
+            matches!(result, Err(Error::JumbfNotFound)),
+            "brob-wrapped jumb should not be read as a C2PA manifest"
+        );
     }
 
     #[test]
@@ -1228,9 +1211,12 @@ pub mod tests {
     }
 
     #[test]
-    fn test_remove_brob_wrapped_jumb() {
+    fn test_remove_preserves_brob_wrapped_jumb() {
+        // brob-wrapped jumb is treated as opaque data, so remove_cai_store
+        // should NOT remove it (it's not recognized as a C2PA manifest).
         let manifest_data = b"manifest_to_remove";
         let container = build_jxl_with_brob_jumb(manifest_data);
+        let original_len = container.len();
         let mut input = Cursor::new(&container);
         let mut output = Cursor::new(Vec::new());
 
@@ -1239,9 +1225,18 @@ pub mod tests {
             .remove_cai_store_from_stream(&mut input, &mut output)
             .unwrap();
 
+        // The brob box should still be present (not removed)
         output.rewind().unwrap();
-        let result = jpegxl_io.read_cai(&mut output);
-        assert!(matches!(result, Err(Error::JumbfNotFound)));
+        let boxes = parse_all_boxes(&mut output).unwrap();
+        assert!(
+            boxes.iter().any(|b| b.box_type == BOX_BROB),
+            "brob box should be preserved as opaque data"
+        );
+        assert_eq!(
+            output.get_ref().len(),
+            original_len,
+            "output should be same size since nothing was removed"
+        );
     }
 
     // ─── Object locations (hash positions) tests ───
@@ -1369,7 +1364,9 @@ pub mod tests {
     }
 
     #[test]
-    fn test_box_map_brob_jumb_marked_as_c2pa() {
+    fn test_box_map_brob_jumb_not_marked_as_c2pa() {
+        // brob-wrapped jumb is treated as opaque data for hashing, so it should
+        // NOT be marked as C2PA_BOXHASH in the box map.
         let manifest_data = b"brob_wrapped_manifest";
         let container = build_jxl_with_brob_jumb(manifest_data);
         let mut cursor = Cursor::new(&container);
@@ -1383,8 +1380,19 @@ pub mod tests {
             .collect();
         assert_eq!(
             c2pa_entries.len(),
+            0,
+            "brob-wrapped jumb should NOT be identified as C2PA"
+        );
+
+        // The brob box should appear as a regular "brob" entry
+        let brob_entries: Vec<_> = box_map
+            .iter()
+            .filter(|bm| bm.names[0] == "brob")
+            .collect();
+        assert_eq!(
+            brob_entries.len(),
             1,
-            "brob-wrapped jumb should be identified as C2PA"
+            "brob box should appear as opaque data"
         );
     }
 
