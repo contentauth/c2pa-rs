@@ -11,6 +11,7 @@
 .vscode
 
 /semver-checks/target/
+sdk/target/
 
 # Unit test output lands here. TO DO: Fix
 cli/target
