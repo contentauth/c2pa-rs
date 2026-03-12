@@ -88,14 +88,14 @@ impl RawSigner for Ed25519Signer {
         SigningAlg::Ed25519
     }
 
+    fn reserve_size(&self) -> usize {
+        1024 + self.cert_chain_len + self.time_stamp_size
+    }
+
     fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
         let _openssl = OpenSslMutex::acquire()?;
 
         Ok(self.cert_chain.clone())
-    }
-
-    fn reserve_size(&self) -> usize {
-        1024 + self.cert_chain_len + self.time_stamp_size
     }
 }
 
