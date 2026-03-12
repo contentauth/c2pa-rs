@@ -11,6 +11,7 @@ pub(crate) fn remote_signer_mock_server<'a>(
     })
 }
 
+#[allow(clippy::unwrap_used)]
 pub(crate) fn remote_signer_respond_with_signature(
     server: &'_ httpmock::MockServer,
     signer: BoxedSigner,

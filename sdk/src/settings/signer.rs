@@ -207,7 +207,7 @@ impl SignerSettings {
             } => {
                 #[cfg(feature = "remote_signing")]
                 {
-                    let url = Url::parse(&url).map_err(|e| Error::InvalidRemoteUrl(e))?;
+                    let url = Url::parse(&url).map_err(Error::InvalidRemoteUrl)?;
                     let signing_mode = CawgSigningMode::Remote {
                         url,
                         sign_cert: cawg_sign_cert,
@@ -438,6 +438,7 @@ pub mod tests {
     }
 
     #[cfg(all(not(feature = "remote_signing"), not(target_arch = "wasm32")))]
+    #[allow(clippy::unwrap_used)]
     #[test]
     fn test_make_remote_signer_disabled() {
         #[cfg(target_os = "wasi")]
@@ -461,6 +462,7 @@ pub mod tests {
         assert!(signer.is_err());
     }
 
+    #[allow(clippy::unwrap_used)]
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_make_local_cawg_signer() {
@@ -504,6 +506,7 @@ pub mod tests {
         assert!(signer.sign(&[1, 2, 3]).is_ok());
     }
 
+    #[allow(clippy::expect_used, clippy::unwrap_used)]
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg(feature = "remote_signing")]
     #[c2pa_macros::c2pa_test_async]
@@ -544,7 +547,7 @@ pub mod tests {
         let (cawg_sign_cert, cawg_private_key) =
             test_signer::cert_chain_and_private_key_for_alg(cawg_alg);
         let local_cawg_signer =
-            create_signer::from_keys(&cawg_sign_cert, &cawg_private_key, cawg_alg, None).unwrap();
+            create_signer::from_keys(cawg_sign_cert, cawg_private_key, cawg_alg, None).unwrap();
 
         let cawg_server = MockServer::start();
         let _cawg_mock = test_remote_signer::remote_signer_respond_with_signature(

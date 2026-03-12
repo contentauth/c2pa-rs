@@ -180,6 +180,7 @@ mod tests {
         // No need to restore settings - we never modified global state!
     }
 
+    #[allow(clippy::expect_used, clippy::unwrap_used)]
     #[cfg(feature = "remote_signing")]
     #[c2pa_test_async]
     async fn remote_signing_case() {
