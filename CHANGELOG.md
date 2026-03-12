@@ -9,6 +9,51 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.78.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.77.1...c2pa-v0.78.0)
+_11 March 2026_
+
+### Added
+
+* Emscripten ([#1886](https://github.com/contentauth/c2pa-rs/pull/1886))
+
+### Fixed
+
+* Correct validation of OCSP signature ([#1863](https://github.com/contentauth/c2pa-rs/pull/1863))
+* Merkle api integration ([#1902](https://github.com/contentauth/c2pa-rs/pull/1902))
+
+## [0.77.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.77.0...c2pa-v0.77.1)
+_10 March 2026_
+
+### Documented
+
+* Combine docs on Context and Settings to reduce duplication ([#1899](https://github.com/contentauth/c2pa-rs/pull/1899))
+
+## [0.77.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.76.2...c2pa-v0.77.0)
+_04 March 2026_
+
+### Added
+
+* Embeddable manifest API with Context/Settings, CAWG and BMFF.v3 support. ([#1847](https://github.com/contentauth/c2pa-rs/pull/1847))
+
+## [0.76.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.76.1...c2pa-v0.76.2)
+_03 March 2026_
+
+### Fixed
+
+* Panic when validating boxes hash with no names ([#1897](https://github.com/contentauth/c2pa-rs/pull/1897))
+
+## [0.76.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.76.0...c2pa-v0.76.1)
+_02 March 2026_
+
+### Fixed
+
+* Handle meta box without FullBox header from Apple devices ([#1889](https://github.com/contentauth/c2pa-rs/pull/1889))
+
+### Updated dependencies
+
+* Bump png_pong from 0.9.3 to 0.10.0 ([#1850](https://github.com/contentauth/c2pa-rs/pull/1850))
+* Bump toml from 0.9.12+spec-1.1.0 to 1.0.2+spec-1.1.0 ([#1883](https://github.com/contentauth/c2pa-rs/pull/1883))
+
 ## [0.76.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.21...c2pa-v0.76.0)
 _23 February 2026_
 

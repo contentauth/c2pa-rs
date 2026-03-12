@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.35](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.34...c2patool-v0.26.35)
+_11 March 2026_
+
+## [0.26.34](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.33...c2patool-v0.26.34)
+_10 March 2026_
+
+## [0.26.33](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.32...c2patool-v0.26.33)
+_04 March 2026_
+
+## [0.26.32](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.31...c2patool-v0.26.32)
+_03 March 2026_
+
+## [0.26.31](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.30...c2patool-v0.26.31)
+_02 March 2026_
+
+### Updated dependencies
+
+* Bump toml from 0.9.12+spec-1.1.0 to 1.0.2+spec-1.1.0 ([#1883](https://github.com/contentauth/c2pa-rs/pull/1883))
+
 ## [0.26.30](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.29...c2patool-v0.26.30)
 _23 February 2026_
 
