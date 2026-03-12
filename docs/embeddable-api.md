@@ -15,8 +15,10 @@ This new, more generic API replaces the following `Builder` methods that will so
 
 - [`data_hashed_placeholder()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.data_hashed_placeholder)
 - [`sign_data_hashed_embeddable()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_data_hashed_embeddable) and [`sign_data_hashed_embeddable_async()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_data_hashed_embeddable_async)
-- [`sign_box_hashed_embeddable()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_box_hashed_embeddable) and [`sign_box_hashed_embeddable_async()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_box_hashed_embeddable_async)
 
+<!--
+- [`sign_box_hashed_embeddable()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_box_hashed_embeddable) and [`sign_box_hashed_embeddable_async()`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_box_hashed_embeddable_async)
+-->
 
 ## Why use the embeddable API
 
@@ -43,10 +45,17 @@ The embeddable API supports three hard-binding strategies, selected automaticall
 |------|-----------|---------|----------------------|
 | [DataHash](#using-datahash-placeholder) | `DataHash` | JPEG, PNG, GIF, WebP, and others | Yes |
 | [BmffHash](#using-bmffhash-placeholder) | `BmffHash` | MP4, video (BMFF containers), AVIF, HEIF/HEIC | Yes |
+
+<!--
 | [BoxHash](#using-boxhash-directly) | `BoxHash` | JPEG, PNG, GIF, WebP, and others | No |
 
-To use `BoxHash` mode, enable `prefer_box_hash` in [Builder settings (`BuilderSettings`)](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#buildersettings). These formats support chunk-based hashing. This mode inserts the manifest as an independent chunk so byte offsets of existing data are never disturbed, which removes the need for a pre-sized placeholder.
 
+To use `BoxHash` mode, enable `prefer_box_hash` in [Builder settings (`BuilderSettings`)](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#buildersettings). 
+-->
+
+These formats support chunk-based hashing. This mode inserts the manifest as an independent chunk so byte offsets of existing data are never disturbed, which removes the need for a pre-sized placeholder.
+
+<!--
 Enable `BoxHash` mode via settings:
 
 ```rust
@@ -55,6 +64,7 @@ let settings = Settings::new().with_toml(r#"
     prefer_box_hash = true
 "#)?;
 ```
+-->
 
 ### Placeholder sizing
 
@@ -64,16 +74,14 @@ When a placeholder is required, the SDK pre-sizes the JUMBF manifest based on it
 
 | Method | Description |
 |--------|-------------|
-| [`needs_placeholder`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.needs_placeholder) | Returns `true` when the format requires a pre-embedded placeholder before hashing. Always `true` for BMFF formats. Returns `false` when `prefer_box_hash` is enabled and the format supports `BoxHash`, or when a `BoxHash` assertion has already been added. |
+| [`needs_placeholder`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.needs_placeholder) | Returns `true` when the format requires a pre-embedded placeholder before hashing. Always `true` for BMFF formats. Returns `false` <!-- when `prefer_box_hash` is enabled and the format supports `BoxHash`, or when --> a `BoxHash` assertion has already been added. |
 | [`placeholder`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.placeholder) | Composes a placeholder manifest and returns it as format-specific bytes ready to embed (e.g., JPEG APP11 segments). Automatically adds the appropriate hash assertion (`BmffHash` for BMFF formats, `DataHash` for others). Stores the JUMBF length internally so `sign_embeddable()` can pad to the same size. |
 | [`set_data_hash_exclusions`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.set_data_hash_exclusions) | Replaces the dummy exclusion ranges in the `DataHash` assertion with the actual byte offset and length of the embedded placeholder. Call after embedding placeholder bytes and before `update_hash_from_stream()`. |
 | [`update_hash_from_stream`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.update_hash_from_stream) | Reads the asset and computes the hard-binding hash. Automatically selects the appropriate path based on format: `BmffHash` for BMFF (skips manifest box), `BoxHash` for chunk-based formats (creates assertion if needed), or `DataHash` (skips exclusion ranges). |
 | [`set_bmff_mdat_hashes`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.set_bmff_mdat_hashes) | Provides pre-computed Merkle leaf hashes for `mdat` segments in BMFF assets. Use when your code already hashes `mdat` chunks during writing/transcoding to avoid re-reading large files. Call before `sign_embeddable()`. |
 | [`sign_embeddable`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.sign_embeddable) | Signs the manifest and returns bytes ready to embed. For placeholder workflows, pads to match placeholder size for in-place patching. For BoxHash/direct workflows, returns bytes at natural size for appending as a new chunk. |
 
-## Workflows
-
-### Using the DataHash placeholder
+## Using the DataHash placeholder
 
 Use this workflow for JPEG, PNG, and other common image formats (not BMFF formats).
 
@@ -111,7 +119,7 @@ stream.seek(std::io::SeekFrom::Start(insert_offset))?;
 stream.write_all(&final_manifest)?;
 ```
 
-### Using the BmffHash placeholder
+## Using the BmffHash placeholder
 
 Use this workflow with MP4 and other BMFF formats, which always require a placeholder. 
 
@@ -142,7 +150,9 @@ builder.set_bmff_mdat_hashes(leaf_hashes)?;
 let final_manifest = builder.sign_embeddable("video/mp4")?;
 ```
 
-### Using BoxHash directly
+<!-- 
+
+h2. Using BoxHash directly
 
 Use this workflow when you don't need a placeholder. In this case, no placeholder is written; the manifest is appended as a new independent chunk after signing.
 
@@ -171,3 +181,5 @@ let manifest_bytes = builder.sign_embeddable("image/jpeg")?;
 // Append manifest_bytes as a new independent chunk in the asset.
 // The exact mechanism depends on the format handler used by your embedding code.
 ```
+
+-->
