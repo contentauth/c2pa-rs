@@ -150,34 +150,32 @@ impl BoxHash {
             let mut inclusion = HashRange::new(0u64, 0u64);
             for name in &bm.names {
                 match source_bms.get(source_index) {
-                    Some(next_source_bm) => {
-                        if name == &next_source_bm.names[0] {
-                            if inclusion.length() == 0 {
-                                // this is a new item
-                                inclusion.set_start(next_source_bm.range_start);
-                                inclusion.set_length(next_source_bm.range_len);
+                    Some(next_source_bm) if name == &next_source_bm.names[0] => {
+                        if inclusion.length() == 0 {
+                            // this is a new item
+                            inclusion.set_start(next_source_bm.range_start);
+                            inclusion.set_length(next_source_bm.range_len);
 
-                                if name == C2PA_BOXHASH {
-                                    // there should only be 1 collapsed C2PA range
-                                    if bm.names.len() != 1 {
-                                        return Err(Error::HashMismatch(
-                                            "Malformed C2PA box hash".to_owned(),
-                                        ));
-                                    }
-                                    skip_c2pa = true;
+                            if name == C2PA_BOXHASH {
+                                // there should only be 1 collapsed C2PA range
+                                if bm.names.len() != 1 {
+                                    return Err(Error::HashMismatch(
+                                        "Malformed C2PA box hash".to_owned(),
+                                    ));
                                 }
-                            } else {
-                                // count any unknown data between named segments
-                                let len_to_this_seg =
-                                    next_source_bm.range_start - inclusion.start();
-                                // update item
-                                inclusion.set_length(len_to_this_seg + next_source_bm.range_len);
+                                skip_c2pa = true;
                             }
                         } else {
-                            return Err(Error::HashMismatch(
-                                ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
-                            ));
+                            // count any unknown data between named segments
+                            let len_to_this_seg = next_source_bm.range_start - inclusion.start();
+                            // update item
+                            inclusion.set_length(len_to_this_seg + next_source_bm.range_len);
                         }
+                    }
+                    Some(_) => {
+                        return Err(Error::HashMismatch(
+                            ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
+                        ));
                     }
                     None => {
                         return Err(Error::HashMismatch(
