@@ -3127,6 +3127,18 @@ impl Builder {
         let mut claim = self.to_claim()?;
         claim.add_assertion(&box_hash)?;
 
+        // Preserve "none" thumbnail intent so it survives the archive round-trip.
+        // to_claim() skips adding a thumbnail assertion when format is "none",
+        // so we add a zero-byte marker here that from_store() can detect,
+        // otherwise we loose the "suppressive" info after serialization roundtrip
+        if let Some(thumb_ref) = self.definition.thumbnail.as_ref() {
+            if thumb_ref.format == "none" {
+                let marker =
+                    EmbeddedData::new(labels::CLAIM_THUMBNAIL, "none".to_string(), Vec::new());
+                claim.add_assertion(&marker)?;
+            }
+        }
+
         // Now commit and sign it. The signing will allow us to detect tampering.
         let mut store = Store::new();
         store.commit_claim(claim)?;
@@ -5330,6 +5342,441 @@ mod tests {
         assert!(reader_json.contains("thumbnail.ingredient"));
     }
 
+    fn archive_round_trip(builder: &mut Builder) -> Builder {
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        archive.rewind().unwrap();
+        Builder::from_archive(archive).unwrap()
+    }
+
+    #[test]
+    fn test_fine_grained_thumbnail_control_archive() {
+        // Two ingredients through archive round-trip: one with a C2PA source
+        // thumbnail, one suppressed with "none".
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "with_thumbnail"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "no_thumbnail", "thumbnail": { "format": "none", "identifier": "none" }}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+
+        let mut builder = archive_round_trip(&mut builder);
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let active_id = json_value["active_manifest"].as_str().unwrap();
+        let ingredients = json_value["manifests"][active_id]["ingredients"]
+            .as_array()
+            .unwrap();
+
+        let with_thumbnail = ingredients
+            .iter()
+            .find(|i| i["title"] == "with_thumbnail")
+            .unwrap();
+        let without_thumbnail = ingredients
+            .iter()
+            .find(|i| i["title"] == "no_thumbnail")
+            .unwrap();
+
+        assert!(with_thumbnail["thumbnail"].is_object());
+        assert!(without_thumbnail["thumbnail"].is_null());
+    }
+
+    #[test]
+    fn test_manifest_no_thumbnail_ingredients_have_thumbnail_archive() {
+        // Manifest explicitly says "none" (wins over add_thumbnails), but
+        // ingredient retains its thumbnail from C2PA source. Archive round-trip.
+        let manifest_json = json!({
+            "claim_generator_info": [{ "name": "c2pa_test", "version": "0.1.0" }],
+            "title": "Test_Manifest",
+            "thumbnail": { "format": "none", "identifier": "none" },
+            "assertions": [{
+                "label": "c2pa.actions",
+                "data": { "actions": [{ "action": "c2pa.created", "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty" }] }
+            }]
+        })
+        .to_string();
+
+        let mut builder = Builder::from_json(&manifest_json).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Test"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+
+        let mut builder = archive_round_trip(&mut builder);
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let active_id = json_value["active_manifest"].as_str().unwrap();
+        let manifest = &json_value["manifests"][active_id];
+
+        assert!(manifest["thumbnail"].is_null());
+        assert!(manifest["ingredients"][0]["thumbnail"].is_object());
+    }
+
+    fn assert_none_sentinel_absent(use_archive: bool) {
+        // Both manifest and ingredient use "none". After signing (optionally
+        // through archive), verify the sentinel never appears in Reader API
+        // or JSON output.
+        let manifest_json = json!({
+            "claim_generator_info": [{ "name": "c2pa_test", "version": "0.1.0" }],
+            "title": "Sentinel_Test",
+            "thumbnail": { "format": "none", "identifier": "none" },
+            "assertions": [{
+                "label": "c2pa.actions",
+                "data": { "actions": [{ "action": "c2pa.created", "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty" }] }
+            }]
+        })
+        .to_string();
+
+        let mut builder = Builder::from_json(&manifest_json).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Suppressed", "thumbnail": { "format": "none", "identifier": "none" }}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+
+        let mut builder = if use_archive {
+            archive_round_trip(&mut builder)
+        } else {
+            builder
+        };
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+
+        let manifest = reader.active_manifest().unwrap();
+        assert!(
+            manifest.thumbnail_ref().is_none(),
+            "Manifest thumbnail_ref should be None, not Some(\"none\")"
+        );
+        for ingredient in manifest.ingredients() {
+            assert!(
+                ingredient.thumbnail_ref().is_none(),
+                "Ingredient thumbnail_ref should be None, not Some(\"none\")"
+            );
+        }
+
+        let json_str = reader.json();
+        assert!(
+            !json_str.contains(r#""format":"none"#),
+            "JSON should not contain format:none sentinel"
+        );
+        assert!(
+            !json_str.contains(r#""format": "none"#),
+            "JSON should not contain format: none sentinel"
+        );
+    }
+
+    #[test]
+    fn test_none_sentinel_absent_from_final_signed_manifest() {
+        assert_none_sentinel_absent(false);
+    }
+
+    #[test]
+    fn test_none_sentinel_absent_from_final_signed_manifest_via_archive() {
+        assert_none_sentinel_absent(true);
+    }
+
+    fn create_ingredient_archive(ingredient_json: &str, source: &[u8]) -> Vec<u8> {
+        // An ingredient archive is a .c2pa working store containing exactly one
+        // ingredient. It is added back to another builder via
+        // add_ingredient("application/c2pa").
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(ingredient_json, "image/jpeg", &mut Cursor::new(source))
+            .unwrap();
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        archive.into_inner()
+    }
+
+    #[test]
+    fn test_ingredient_archive_mixed_thumbnails() {
+        // Two ingredient archives: one with a C2PA-source thumbnail, one with
+        // "none". Covers both single-ingredient with/without cases together.
+        let archive_with =
+            create_ingredient_archive(r#"{"title": "asset_with_thumbnail"}"#, TEST_IMAGE);
+        let archive_without = create_ingredient_archive(
+            r#"{"title": "no_thumbnail_asset", "thumbnail": {"format": "none", "identifier": "none"}}"#,
+            TEST_IMAGE_CLEAN,
+        );
+
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "asset_with_thumbnail"}"#,
+                "application/c2pa",
+                &mut Cursor::new(archive_with),
+            )
+            .unwrap();
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "no_thumbnail_asset"}"#,
+                "application/c2pa",
+                &mut Cursor::new(archive_without),
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let active_id = json_value["active_manifest"].as_str().unwrap();
+        let ingredients = json_value["manifests"][active_id]["ingredients"]
+            .as_array()
+            .unwrap();
+        assert_eq!(ingredients.len(), 2);
+
+        let with = ingredients
+            .iter()
+            .find(|i| i["title"] == "asset_with_thumbnail")
+            .unwrap();
+        let without = ingredients
+            .iter()
+            .find(|i| i["title"] == "no_thumbnail_asset")
+            .unwrap();
+
+        assert!(with["thumbnail"].is_object());
+        assert!(without["thumbnail"].is_null());
+    }
+
+    #[test]
+    fn test_ingredient_archive_explicit_thumbnail_survives_manifest_none() {
+        // Ingredient gets an explicit thumbnail via set_thumbnail(), but the
+        // archive's manifest says "none". The ingredient thumbnail must survive.
+        let no_thumb_manifest = json!({
+            "claim_generator_info": [{ "name": "c2pa_test", "version": "0.1.0" }],
+            "title": "No Manifest Thumb",
+            "thumbnail": { "format": "none", "identifier": "none" },
+            "assertions": [{
+                "label": "c2pa.actions",
+                "data": { "actions": [{ "action": "c2pa.created", "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty" }] }
+            }]
+        })
+        .to_string();
+
+        let mut builder = Builder::from_json(&no_thumb_manifest).unwrap();
+        let ingredient = builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Explicit Thumb"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+        ingredient
+            .set_thumbnail("image/jpeg", TEST_THUMBNAIL.to_vec())
+            .unwrap();
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        let archive_bytes = archive.into_inner();
+
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Explicit Thumb"}"#,
+                "application/c2pa",
+                &mut Cursor::new(archive_bytes),
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let active_id = json_value["active_manifest"].as_str().unwrap();
+        let ingredients = json_value["manifests"][active_id]["ingredients"]
+            .as_array()
+            .unwrap();
+
+        assert_eq!(ingredients.len(), 1);
+        assert!(ingredients[0]["thumbnail"].is_object());
+    }
+
+    #[test]
+    fn test_ingredient_archive_thumbnail_suppressed_on_add() {
+        // Ingredient archive has an explicit thumbnail, but when adding it to
+        // the consumer builder the JSON says "none", suppressing it via merge().
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let ingredient = builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Explicit Thumb"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+        ingredient
+            .set_thumbnail("image/jpeg", TEST_THUMBNAIL.to_vec())
+            .unwrap();
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        let archive_bytes = archive.into_inner();
+
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Explicit Thumb", "thumbnail": {"format": "none", "identifier": "none"}}"#,
+                "application/c2pa",
+                &mut Cursor::new(archive_bytes),
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let active_id = json_value["active_manifest"].as_str().unwrap();
+        let ingredients = json_value["manifests"][active_id]["ingredients"]
+            .as_array()
+            .unwrap();
+
+        assert_eq!(ingredients.len(), 1);
+        assert!(ingredients[0]["thumbnail"].is_null());
+    }
+
+    #[test]
+    fn test_ingredient_archive_c2pa_thumbnail_survives_manifest_none() {
+        // Ingredient has a thumbnail from C2PA source, but the archive's manifest
+        // says "none". The ingredient thumbnail must survive.
+        let no_thumb_manifest = json!({
+            "claim_generator_info": [{ "name": "c2pa_test", "version": "0.1.0" }],
+            "title": "No Manifest Thumb",
+            "thumbnail": { "format": "none", "identifier": "none" },
+            "assertions": [{
+                "label": "c2pa.actions",
+                "data": { "actions": [{ "action": "c2pa.created", "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty" }] }
+            }]
+        })
+        .to_string();
+
+        let mut builder = Builder::from_json(&no_thumb_manifest).unwrap();
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Has_thumbnail"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        let archive_bytes = archive.into_inner();
+
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Has_thumbnail"}"#,
+                "application/c2pa",
+                &mut Cursor::new(archive_bytes),
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let json_value: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let active_id = json_value["active_manifest"].as_str().unwrap();
+        let ingredients = json_value["manifests"][active_id]["ingredients"]
+            .as_array()
+            .unwrap();
+
+        assert_eq!(ingredients.len(), 1);
+        assert!(ingredients[0]["thumbnail"].is_object());
+    }
+
     #[test]
     fn test_with_archive() -> Result<()> {
         let mut builder =
@@ -5770,6 +6217,195 @@ mod tests {
         }
 
         assert!(reader.active_manifest().is_some());
+    }
+
+    #[test]
+    fn test_thumbnail_data_accessible_after_archive_roundtrip() {
+        // Verify thumbnail() data accessor (not just thumbnail_ref()) works
+        // correctly after archive round-trip for manifest and ingredients.
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "with_thumb"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "no_thumb", "thumbnail": { "format": "none", "identifier": "none" }}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+
+        let mut builder = archive_round_trip(&mut builder);
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let manifest = reader.active_manifest().unwrap();
+
+        // Manifest thumbnail depends on add_thumbnails feature; if present,
+        // verify it contains real data.
+        if let Some((fmt, data)) = manifest.thumbnail() {
+            assert_ne!(fmt, "none");
+            assert!(
+                !data.is_empty(),
+                "manifest thumbnail data should not be empty"
+            );
+        }
+
+        // Thumbnailed ingredient should have accessible data
+        let with = manifest
+            .ingredients()
+            .iter()
+            .find(|i| i.title() == Some("with_thumb"))
+            .unwrap();
+        assert!(with.thumbnail_ref().is_some());
+        let (fmt, data) = with
+            .thumbnail()
+            .expect("thumbnailed ingredient should have data");
+        assert_ne!(fmt, "none");
+        assert!(!data.is_empty());
+
+        // Suppressed ingredient should return None from both accessors
+        let without = manifest
+            .ingredients()
+            .iter()
+            .find(|i| i.title() == Some("no_thumb"))
+            .unwrap();
+        assert!(without.thumbnail_ref().is_none());
+        assert!(without.thumbnail().is_none());
+    }
+
+    #[test]
+    fn test_double_archive_roundtrip_preserves_thumbnail_state() {
+        // Two consecutive archive round-trips should preserve thumbnail state.
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "has_thumb"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "suppressed", "thumbnail": { "format": "none", "identifier": "none" }}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+
+        // Double round-trip
+        let mut builder = archive_round_trip(&mut builder);
+        let mut builder = archive_round_trip(&mut builder);
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let manifest = reader.active_manifest().unwrap();
+
+        let has = manifest
+            .ingredients()
+            .iter()
+            .find(|i| i.title() == Some("has_thumb"))
+            .unwrap();
+        let suppressed = manifest
+            .ingredients()
+            .iter()
+            .find(|i| i.title() == Some("suppressed"))
+            .unwrap();
+
+        assert!(
+            has.thumbnail().is_some(),
+            "thumbnail should survive double round-trip"
+        );
+        assert!(!has.thumbnail().unwrap().1.is_empty());
+        assert!(
+            suppressed.thumbnail().is_none(),
+            "suppression should survive double round-trip"
+        );
+        assert!(suppressed.thumbnail_ref().is_none());
+
+        let json_str = reader.json();
+        assert!(!json_str.contains(r#""format":"none"#));
+        assert!(!json_str.contains(r#""format": "none"#));
+    }
+
+    #[test]
+    fn test_ingredient_archive_roundtrip_thumbnail_bytes() {
+        // Verify ingredient.thumbnail_bytes() works after ingredient archive round-trip.
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let ingredient = builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Explicit Thumb"}"#,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+            )
+            .unwrap();
+        ingredient
+            .set_thumbnail("image/jpeg", TEST_THUMBNAIL.to_vec())
+            .unwrap();
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        let archive_bytes = archive.into_inner();
+
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        builder
+            .add_ingredient_from_stream(
+                r#"{"title": "Explicit Thumb"}"#,
+                "application/c2pa",
+                &mut Cursor::new(archive_bytes),
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &signer,
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut output,
+            )
+            .unwrap();
+
+        let reader = Reader::from_stream("image/jpeg", &mut output).unwrap();
+        let ingredient = &reader.active_manifest().unwrap().ingredients()[0];
+
+        let bytes = ingredient
+            .thumbnail_bytes()
+            .expect("thumbnail_bytes should succeed after ingredient archive round-trip");
+        assert!(
+            !bytes.is_empty(),
+            "thumbnail bytes should not be empty after round-trip"
+        );
     }
 
     // Ensures that the future returned by `Builder::sign_async` implements `Send`, thus making it

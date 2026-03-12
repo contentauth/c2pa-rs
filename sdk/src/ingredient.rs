@@ -80,7 +80,7 @@ pub struct Ingredient {
     /// A thumbnail image capturing the visual state at the time of import.
     ///
     /// A tuple of thumbnail MIME format (for example `image/jpeg`) and binary bits of the image.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "is_none_or_suppressed")]
     thumbnail: Option<ResourceRef>,
 
     /// An optional hash of the asset to prevent duplicates.
@@ -149,6 +149,13 @@ pub struct Ingredient {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     ocsp_responses: Option<Vec<ResourceRef>>,
+}
+
+fn is_none_or_suppressed(thumbnail: &Option<ResourceRef>) -> bool {
+    match thumbnail {
+        None => true,
+        Some(r) => r.format == "none",
+    }
 }
 
 fn default_instance_id() -> String {
@@ -1277,37 +1284,40 @@ impl Ingredient {
             None => (None, None),
         };
 
-        // if the ingredient defines a thumbnail, add it to the claim
-        // otherwise use the parent claim thumbnail if available
         if let Some(thumb_ref) = self.thumbnail_ref() {
-            // if we have a hash, just build the hashed uri
-            let hash_url = match thumb_ref.hash.as_ref() {
-                Some(h) => {
-                    let hash = base64::decode(h)
-                        .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?;
-                    HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash)
-                }
-                None => {
-                    // get the resource data and add it to the claim
-                    let data = get_resource(&thumb_ref.identifier)?;
-                    if claim.version() < 2 {
-                        claim.add_databox(
-                            &thumb_ref.format,
-                            data.into_owned(),
-                            thumb_ref.data_types.clone(),
-                        )?
-                    } else {
-                        // add EmbeddedData thumbnail for v3 assertions in v2 claims
-                        let thumbnail = EmbeddedData::new(
-                            labels::INGREDIENT_THUMBNAIL,
-                            format_to_mime(&thumb_ref.format),
-                            data.into_owned(),
-                        );
-                        claim.add_assertion(&thumbnail)?
+            // Setting the format to "none" suppresses the ingredient thumbnail
+            if thumb_ref.format == "none" {
+                thumbnail = None;
+            } else {
+                // if we have a hash, just build the hashed uri
+                let hash_url = match thumb_ref.hash.as_ref() {
+                    Some(h) => {
+                        let hash = base64::decode(h)
+                            .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?;
+                        HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash)
                     }
-                }
-            };
-            thumbnail = Some(hash_url);
+                    None => {
+                        // get the resource data and add it to the claim
+                        let data = get_resource(&thumb_ref.identifier)?;
+                        if claim.version() < 2 {
+                            claim.add_databox(
+                                &thumb_ref.format,
+                                data.into_owned(),
+                                thumb_ref.data_types.clone(),
+                            )?
+                        } else {
+                            // add EmbeddedData thumbnail for v3 assertions in v2 claims
+                            let thumbnail = EmbeddedData::new(
+                                labels::INGREDIENT_THUMBNAIL,
+                                format_to_mime(&thumb_ref.format),
+                                data.into_owned(),
+                            );
+                            claim.add_assertion(&thumbnail)?
+                        }
+                    }
+                };
+                thumbnail = Some(hash_url);
+            }
         }
 
         // if the ingredient has a data field, resolve and add it to the claim
