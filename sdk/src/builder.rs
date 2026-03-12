@@ -2429,8 +2429,8 @@ impl Builder {
             let mut bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL)?;
             bmff_hash.set_bmff_version(stored_version);
 
-            // add in the Merkle leaf hashes that were collected via hash_bmff_mdat_bytes().
-            // we add any remainders (partially filled fixed-size leaves that are unhashed) as the last leaf of the Merkle leaves for that mdat_id
+            // Add in the Merkle leaf hashes that were collected via hash_bmff_mdat_bytes().
+            // We add any remainders (partially filled fixed-size leaves that are unhashed) as the last leaf of the Merkle leaves for that mdat_id.
             for (mdat_id, remainder) in &self.bmff_hasher.fixed_size_remainder {
                 let fragment_hash = hash_by_alg(self.bmff_hasher.alg.as_str(), remainder, None);
 
@@ -2443,7 +2443,7 @@ impl Builder {
                     .or_insert(vec![(remainder.len() as u64, fragment_hash)]);
             }
 
-            // if there are Merkle hashes we need to create a MerkleMap and add it to the BmffHash
+            // If there are Merkle hashes we need to create a MerkleMap and add it to the BmffHash
             if !self.bmff_hasher.merkle_leaves.is_empty() {
                 // generate MerkleMaps for the mdat leaves stored in C2paHasher
                 let merkle_maps = MerkleMap::create_mms_from_mdat_leaves(
