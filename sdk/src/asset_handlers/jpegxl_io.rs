@@ -31,7 +31,7 @@
 
 use std::{
     fs::File,
-    io::{Cursor, Read, Seek, SeekFrom, Write},
+    io::{Cursor, SeekFrom, Write},
     path::Path,
 };
 
@@ -219,6 +219,18 @@ fn decompress_brob(reader: &mut dyn CAIRead, data_size: u64) -> Result<([u8; 4],
     Ok((original_type, decompressed))
 }
 
+/// Brotli-compresses `data` and wraps it in an ISOBMFF `brob` box with the given inner type.
+fn compress_brob_box(inner_type: &[u8; 4], data: &[u8]) -> Result<Vec<u8>> {
+    let params = brotli::enc::BrotliEncoderParams::default();
+    let mut compressed = Vec::new();
+    brotli::BrotliCompress(&mut Cursor::new(data), &mut compressed, &params)
+        .map_err(|_| Error::InvalidAsset("Failed to compress brob box".to_string()))?;
+    let mut brob_payload = Vec::with_capacity(4 + compressed.len());
+    brob_payload.extend_from_slice(inner_type);
+    brob_payload.extend_from_slice(&compressed);
+    Ok(build_box(&BOX_BROB, &brob_payload))
+}
+
 /// Finds the JUMBF data in a JPEG XL container handling direct `jumb` boxes
 /// and ignoring `brob`-compressed `jumb` boxes.
 /// NOTE: brob-wrapped jumb boxes are intentionally NOT read here.
@@ -369,16 +381,32 @@ fn remove_jumb_boxes(reader: &mut dyn CAIRead, writer: &mut dyn CAIReadWrite) ->
     Ok(())
 }
 
-/// Determines the XMP insertion point (returns offset and length of existing xml box, or
-/// offset for insertion if no xml box exists).
-fn find_xmp_box_info(boxes: &[JxlBoxInfo], file_len: u64) -> (u64, u64) {
+/// Determines the XMP insertion point and whether the existing XMP is Brotli-compressed.
+///
+/// Returns `(offset, len, was_compressed)`:
+/// - `offset` — byte offset of the existing XMP box to replace, or the insertion point
+///   when no XMP box is present.
+/// - `len` — byte length of the existing XMP box (0 when inserting a new box).
+/// - `was_compressed` — `true` when the existing XMP resides in a `brob`-wrapped `xml `
+///   box, so that the write path can preserve the original compression state.
+fn find_xmp_box_info(boxes: &[JxlBoxInfo], file_len: u64, data: &[u8]) -> (u64, u64, bool) {
     for b in boxes {
         if b.box_type == BOX_XML {
-            return (b.offset, b.end(file_len) - b.offset);
+            return (b.offset, b.end(file_len) - b.offset, false);
+        } else if b.box_type == BOX_BROB {
+            let data_start = b.data_offset() as usize;
+            if data.len() >= data_start + 4 {
+                let orig_type: [u8; 4] = data[data_start..data_start + 4]
+                    .try_into()
+                    .unwrap_or([0u8; 4]);
+                if orig_type == BOX_XML {
+                    return (b.offset, b.end(file_len) - b.offset, true);
+                }
+            }
         }
     }
-    // Insert after ftyp, before codestream
-    (find_jumb_insertion_offset(boxes), 0)
+    // No existing XMP box — insert after ftyp, before codestream
+    (find_jumb_insertion_offset(boxes), 0, false)
 }
 
 pub struct JpegXlIO {}
@@ -654,12 +682,21 @@ impl RemoteRefEmbed for JpegXlIO {
                 };
 
                 let updated_xmp = add_provenance(&xmp, &manifest_uri)?;
-                let xmp_box = build_box(&BOX_XML, updated_xmp.as_bytes());
 
                 let mut cursor = Cursor::new(&buf);
                 let boxes = parse_all_boxes(&mut cursor)?;
 
-                let (xmp_offset, xmp_len) = find_xmp_box_info(&boxes, file_len);
+                let (xmp_offset, xmp_len, was_compressed) =
+                    find_xmp_box_info(&boxes, file_len, &buf);
+
+                // Preserve the source file's compression state: if the original XMP
+                // was Brotli-compressed (brob-wrapped), write it back compressed.
+                let xmp_box = if was_compressed {
+                    compress_brob_box(&BOX_XML, updated_xmp.as_bytes())?
+                } else {
+                    build_box(&BOX_XML, updated_xmp.as_bytes())
+                };
+
                 let xmp_offset = xmp_offset as usize;
                 let xmp_len = xmp_len as usize;
 
@@ -1438,6 +1475,46 @@ pub mod tests {
         output.rewind().unwrap();
         let xmp = jpegxl_io.read_xmp(&mut output).unwrap();
         assert!(xmp.contains("https://example.com/updated"));
+    }
+
+    #[test]
+    fn test_embed_xmp_preserves_compression() {
+        // Source file has brob-compressed XMP; the write path must write it back
+        // compressed so the file format is round-tripped faithfully.
+        let original_xmp = MIN_XMP;
+        let container = build_jxl_with_brob_xmp(original_xmp);
+        let mut input = Cursor::new(container);
+        let mut output = Cursor::new(Vec::new());
+
+        let jpegxl_io = JpegXlIO {};
+        jpegxl_io
+            .embed_reference_to_stream(
+                &mut input,
+                &mut output,
+                RemoteRefEmbedType::Xmp("https://example.com/brob-preserved".to_string()),
+            )
+            .unwrap();
+
+        // Verify the output still uses a brob box (not a plain xml box)
+        output.rewind().unwrap();
+        let out_buf = output.get_ref();
+        let boxes = parse_all_boxes(&mut Cursor::new(out_buf)).unwrap();
+        assert!(
+            !boxes.iter().any(|b| b.box_type == BOX_XML),
+            "output should not contain a plain xml box when source was compressed"
+        );
+        assert!(
+            boxes.iter().any(|b| b.box_type == BOX_BROB),
+            "output should contain a brob box preserving the original compression"
+        );
+
+        // Verify the XMP content was correctly updated
+        output.rewind().unwrap();
+        let xmp = jpegxl_io.read_xmp(&mut output).unwrap();
+        assert!(
+            xmp.contains("https://example.com/brob-preserved"),
+            "updated provenance URI should be readable from the compressed box"
+        );
     }
 
     #[test]
