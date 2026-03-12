@@ -3182,6 +3182,13 @@ impl Store {
 
         let io_handler = get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
 
+        // Determine whether we can skip the intermediate copy pass for BMFF assets.
+        // When there is no XMP remote-ref to embed and no manifest stripping needed,
+        // input_stream can be read directly as the BMFF source, saving one full-file
+        // read + write pass (can be several GB for large video assets).
+        let is_bmff = is_bmff_format(format);
+        let bmff_fast_path = is_bmff && url.is_none() && !remove_manifests;
+
         // Do not assume the handler supports XMP or removing manifests unless we need it to
         if let Some(url) = url {
             let external_ref_writer = io_handler
@@ -3217,13 +3224,19 @@ impl Store {
                 .ok_or(Error::UnsupportedType)?;
 
             manifest_writer.remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
-        } else {
-            // just clone stream
+        } else if !bmff_fast_path {
+            // Non-BMFF (or BMFF requiring XMP/manifest-removal, handled above):
+            // copy to intermediate so DataHash ranges can be computed against the
+            // unmodified asset before JUMBF insertion.
+            // For the BMFF normal case (bmff_fast_path = true), we skip this copy
+            // and read input_stream directly, saving one full-file read+write pass.
             input_stream.rewind()?;
             std::io::copy(input_stream, &mut intermediate_stream)?;
         }
 
-        let is_bmff = is_bmff_format(format);
+        // `source_is_intermediate` tracks whether intermediate_stream (true) or
+        // input_stream (false) should be used as the BMFF source for this call.
+        let mut source_is_intermediate = !bmff_fast_path;
 
         let mut data;
         let jumbf_size;
@@ -3232,7 +3245,12 @@ impl Store {
             // 2) Get hash ranges if needed, do not generate for update manifests
             let mut needs_hash = false;
             if !pc.update_manifest() && pc.bmff_hash_assertions().is_empty() {
-                intermediate_stream.rewind()?;
+                if source_is_intermediate {
+                    intermediate_stream.rewind()?;
+                } else {
+                    input_stream.rewind()?;
+                }
+
                 let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(pc.alg())?;
 
                 if pc.version() < 2 {
@@ -3240,17 +3258,29 @@ impl Store {
                 }
 
                 // add Merkle mdats if requested
-                Store::generate_bmff_mdat_hashes(
-                    &mut intermediate_stream,
-                    &mut bmff_hash,
-                    settings,
-                )?;
+                if source_is_intermediate {
+                    Store::generate_bmff_mdat_hashes(
+                        &mut intermediate_stream,
+                        &mut bmff_hash,
+                        settings,
+                    )?;
+                } else {
+                    Store::generate_bmff_mdat_hashes(input_stream, &mut bmff_hash, settings)?;
+                }
 
                 // insert Merkle UUID boxes at the correct location if required
                 if let Some(merkle_uuid_boxes) = &bmff_hash.merkle_uuid_boxes {
                     let mut temp_stream = io_utils::stream_with_fs_fallback(threshold);
-                    intermediate_stream.rewind()?;
 
+                    if !source_is_intermediate {
+                        // Merkle insertion requires a writable source; populate intermediate
+                        // from input_stream so we can call insert_data_at on it.
+                        input_stream.rewind()?;
+                        std::io::copy(input_stream, &mut intermediate_stream)?;
+                        source_is_intermediate = true;
+                    }
+
+                    intermediate_stream.rewind()?;
                     insert_data_at(
                         &mut intermediate_stream,
                         &mut temp_stream,
@@ -3274,10 +3304,21 @@ impl Store {
             jumbf_size = data.len();
             // write the jumbf to the output stream if we are embedding the manifest
             if !remove_manifests {
-                intermediate_stream.rewind()?;
-                save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                if source_is_intermediate {
+                    intermediate_stream.rewind()?;
+                    save_jumbf_to_stream(
+                        format,
+                        &mut intermediate_stream,
+                        output_stream,
+                        &data,
+                    )?;
+                } else {
+                    input_stream.rewind()?;
+                    save_jumbf_to_stream(format, input_stream, output_stream, &data)?;
+                }
             } else {
                 // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
+                // remove_manifests → bmff_fast_path is false → source_is_intermediate is true
                 intermediate_stream.rewind()?;
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }
