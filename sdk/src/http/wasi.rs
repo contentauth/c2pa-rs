@@ -27,6 +27,12 @@ pub mod sync_impl {
 
     use crate::http::{HttpResolverError, SyncHttpResolver};
 
+    pub type Impl = SyncWasiResolver;
+
+    pub fn new() -> Impl {
+        SyncWasiResolver::new()
+    }
+
     struct WasiStream {
         // Important that `stream` is above `body` so that it's dropped first.
         stream: InputStream,
@@ -179,7 +185,7 @@ pub mod sync_impl {
 
 // TODO: Switch to reqwest once it supports WASI https://github.com/contentauth/c2pa-rs/issues/1377
 #[cfg(all(target_os = "wasi", feature = "http_wstd"))]
-mod async_impl {
+pub mod async_impl {
     use std::io::{Cursor, Read};
 
     use async_trait::async_trait;
@@ -187,6 +193,12 @@ mod async_impl {
     use wstd::http::body::StreamedBody;
 
     use crate::http::{AsyncHttpResolver, HttpResolverError};
+
+    pub type Impl = wstd::http::Client;
+
+    pub fn new() -> Impl {
+        wstd::http::Client::new()
+    }
 
     #[async_trait(?Send)]
     impl AsyncHttpResolver for wstd::http::Client {
