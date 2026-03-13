@@ -1,7 +1,7 @@
 use std::{fs, path::Path};
 
 use anyhow::Result;
-use c2pa::{settings::Settings, Builder, ManifestDefinition, Reader};
+use c2pa::{Builder, ManifestDefinition, Reader, Settings};
 use schemars::{schema_for, Schema};
 
 fn write_schema(schema: &Schema, name: &str) {

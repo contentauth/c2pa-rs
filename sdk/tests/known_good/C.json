@@ -2,6 +2,7 @@
   "active_manifest": "contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3",
   "manifests": {
     "contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3": {
+      "claim_version": 1,
       "claim_generator": "make_test_images/0.33.1 c2pa-rs/0.33.1",
       "claim_generator_info": [
         {

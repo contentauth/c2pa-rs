@@ -323,26 +323,24 @@ fn test_deeply_nested_ingredients() -> Result<()> {
     for level in (1..=4).rev() {
         assert!(
             !current_manifest.ingredients().is_empty(),
-            "Should have ingredient at depth {}",
-            level
+            "Should have ingredient at depth {level}"
         );
 
         let ingredient = &current_manifest.ingredients()[0];
-        let expected_title = format!("Level {}", level);
+        let expected_title = format!("Level {level}");
         assert_eq!(
             ingredient.title(),
             Some(expected_title.as_str()),
-            "Ingredient at level {} should have correct title",
-            level
+            "Ingredient at level {level} should have correct title"
         );
 
         if level > 1 {
             let active_manifest_label = ingredient.active_manifest().unwrap_or_else(|| {
-                panic!("Ingredient at level {} should have active manifest", level)
+                panic!("Ingredient at level {level} should have active manifest")
             });
             current_manifest = reader
                 .get_manifest(active_manifest_label)
-                .unwrap_or_else(|| panic!("Should be able to get manifest at level {}", level));
+                .unwrap_or_else(|| panic!("Should be able to get manifest at level {level}"));
         }
     }
 

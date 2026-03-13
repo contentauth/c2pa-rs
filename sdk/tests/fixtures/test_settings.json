@@ -17,7 +17,6 @@
     }
   },
   "builder": {
-    "generate_c2pa_archive": true,
     "claim_generator_info": {
       "name": "c2pa-rs testing",
       "version": "1.0.0",

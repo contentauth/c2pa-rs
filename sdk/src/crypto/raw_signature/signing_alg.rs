@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 /// > specification shall be generated using one of the digital signature
 /// > algorithms and key types listed as described in this section.
 ///
-/// [§13.2, “Digital Signatures”]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_digital_signatures
+/// [§13.2, “Digital Signatures”]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_digital_signatures
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub enum SigningAlg {

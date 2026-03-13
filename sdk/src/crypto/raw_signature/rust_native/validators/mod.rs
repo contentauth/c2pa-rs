@@ -91,10 +91,35 @@ pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignature
 }
 
 /// Select validator based on signing algorithm and hash type or EC curve.
-pub(crate) fn validator_for_sig_and_hash_algs(
-    sig_alg: &Oid,
-    hash_alg: &Oid,
+pub(crate) fn validator_for_sig_and_hash_algs<T: AsRef<[u8]>, U: AsRef<[u8]>>(
+    sig_alg: &Oid<T>,
+    hash_alg: &Oid<U>,
 ) -> Option<Box<dyn RawSignatureValidator>> {
+    // try signature algs first
+    if sig_alg.as_ref() == ECDSA_WITH_SHA256_OID.as_bytes() {
+        return Some(Box::new(EcdsaValidator::Es256));
+    }
+    if sig_alg.as_ref() == ECDSA_WITH_SHA384_OID.as_bytes() {
+        return Some(Box::new(EcdsaValidator::Es384));
+    }
+    if sig_alg.as_ref() == ECDSA_WITH_SHA512_OID.as_bytes() {
+        return Some(Box::new(EcdsaValidator::Es512));
+    }
+    if sig_alg.as_ref() == SHA256_WITH_RSAENCRYPTION_OID.as_bytes() {
+        return Some(Box::new(RsaLegacyValidator::Rsa256));
+    }
+    if sig_alg.as_ref() == SHA384_WITH_RSAENCRYPTION_OID.as_bytes() {
+        return Some(Box::new(RsaLegacyValidator::Rsa384));
+    }
+    if sig_alg.as_ref() == SHA512_WITH_RSAENCRYPTION_OID.as_bytes() {
+        return Some(Box::new(RsaLegacyValidator::Rsa512));
+    }
+    if sig_alg.as_ref() == ED25519_OID.as_bytes() {
+        return Some(Box::new(Ed25519Validator {}));
+    }
+
+    // Test for public key algs next
+
     // Handle legacy RSA.
     if sig_alg.as_ref() == RSA_OID.as_bytes() {
         if hash_alg.as_ref() == SHA256_OID.as_bytes() {
@@ -394,17 +419,17 @@ mod tests {
 
     // Argh. Different Oid types across different crates, so we have to construct
     // our own constants here.
-    const RSA_OID: Oid = bcder::Oid(OctetString::from_static(&[
+    const RSA_OID: Oid<OctetString> = bcder::Oid(OctetString::from_static(&[
         42, 134, 72, 134, 247, 13, 1, 1, 1,
     ]));
 
-    const SHA256_OID: Oid =
+    const SHA256_OID: Oid<OctetString> =
         bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 1]));
 
-    const SHA384_OID: Oid =
+    const SHA384_OID: Oid<OctetString> =
         bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 2]));
 
-    const SHA512_OID: Oid =
+    const SHA512_OID: Oid<OctetString> =
         bcder::Oid(OctetString::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 3]));
 
     #[test]

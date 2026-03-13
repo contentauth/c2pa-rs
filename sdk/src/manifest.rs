@@ -118,6 +118,19 @@ pub struct Manifest {
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
 
+    /// The version of the claim, parsed from the claim label.
+    ///
+    /// For example:
+    /// - `c2pa.claim.v2` -> 2
+    /// - `c2pa.claim` -> 1
+    claim_version: Option<u8>,
+
+    /// The [`CoseSign1::signature`] value.
+    ///
+    /// [`CoseSign1::signature`]: coset::CoseSign1::signature
+    #[serde(skip)]
+    signature: Option<Vec<u8>>,
+
     /// Indicates where a generated manifest goes
     #[serde(skip)]
     remote_manifest: Option<RemoteManifest>,
@@ -234,6 +247,21 @@ impl Manifest {
 
     pub fn signature_info(&self) -> Option<&SignatureInfo> {
         self.signature_info.as_ref()
+    }
+
+    /// Returns the signature field of the `COSE_Sign1_Tagged` structure found in the
+    /// claim signature box.
+    pub fn signature(&self) -> Option<&[u8]> {
+        self.signature.as_deref()
+    }
+
+    /// Returns the version of the claim, parsed from the claim label.
+    ///
+    /// For example:
+    /// - `c2pa.claim.v2` -> 2
+    /// - `c2pa.claim` -> 1
+    pub fn claim_version(&self) -> Option<u8> {
+        self.claim_version
     }
 
     /// Returns the parent ingredient if it exists.
@@ -368,6 +396,11 @@ impl Manifest {
             format: claim.format().map(|s| s.to_owned()),
             instance_id: claim.instance_id().to_owned(),
             label: Some(claim.label().to_owned()),
+            signature: claim
+                .cose_sign1()
+                .ok()
+                .map(|cose_sign1| cose_sign1.signature),
+            claim_version: Some(claim.version().try_into()?),
             ..Default::default()
         };
 
@@ -818,7 +851,7 @@ pub(crate) mod tests {
         const LABEL: &str = "org.cai.test";
         const DATA: &str = r#"{ "l1":"some data", "l2":"some other data" }"#;
         let json: serde_json::Value = serde_json::from_str(DATA).unwrap();
-        let data = serde_cbor::to_vec(&json).unwrap();
+        let data = c2pa_cbor::to_vec(&json).unwrap();
         let cbor = UserCbor::new(LABEL, data);
         let mut manifest = test_manifest();
         manifest.add_assertion(&cbor).expect("add_assertion");

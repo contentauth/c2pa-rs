@@ -116,7 +116,7 @@ jobs:
       - name: Run doc tests (COVERAGE DISABLED)
         run:
           cargo test --workspace --all-features --doc
-      
+
       # - name: Generate code coverage
       #   env:
       #     RUST_BACKTRACE: "1"
@@ -203,7 +203,7 @@ jobs:
       - name: Set up Chrome
         uses: browser-actions/setup-chrome@v2
         with:
-          chrome-version: 142
+          chrome-version: 144
           install-chromedriver: true
 
       - name: Add wasm web target

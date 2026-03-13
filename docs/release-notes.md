@@ -24,7 +24,7 @@ An `AssetType` assertion is now supported.
 
 ### C2PA v2 claims
 
-**NOTE**: The library now supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) by default. V2 claims have many new checks and status codes.  Additionally:
+**NOTE**: The library now supports [C2PA v2 claims](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_claims) by default. V2 claims have many new checks and status codes.  Additionally:
 
 - The `title()` and `format()` methods of both `Manifest` and `Ingredient` objects now return an `Option<String>` because in v2 claims, `title` is optional and `format` does not exist.
 - The first `action` must be `c2pa.created` or `c2pa.opened` (which requires an ingredient). 

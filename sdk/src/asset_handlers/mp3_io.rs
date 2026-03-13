@@ -39,7 +39,8 @@ use crate::{
 
 static SUPPORTED_TYPES: [&str; 2] = ["mp3", "audio/mpeg"];
 
-const GEOB_FRAME_MIME_TYPE: &str = "application/x-c2pa-manifest-store";
+const GEOB_FRAME_MIME_TYPE: &str = "application/c2pa";
+const GEOB_FRAME_MIME_TYPE_DEPRECATED: &str = "application/x-c2pa-manifest-store";
 const GEOB_FRAME_FILE_NAME: &str = "c2pa";
 const GEOB_FRAME_DESCRIPTION: &str = "c2pa manifest store";
 
@@ -101,6 +102,10 @@ impl ID3V2Header {
     }
 }
 
+fn is_c2pa_mime_type(mime_type: &String) -> bool {
+    mime_type == GEOB_FRAME_MIME_TYPE || mime_type == GEOB_FRAME_MIME_TYPE_DEPRECATED
+}
+
 fn get_manifest_pos(mut input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
     input_stream.rewind().ok()?;
     let header = ID3V2Header::read_header(input_stream).ok()?;
@@ -114,7 +119,7 @@ fn get_manifest_pos(mut input_stream: &mut dyn CAIRead) -> Option<(u64, u32)> {
         let mut manifests = Vec::new();
 
         for eo in tag.encapsulated_objects() {
-            if eo.mime_type == GEOB_FRAME_MIME_TYPE {
+            if is_c2pa_mime_type(&eo.mime_type) {
                 manifests.push(eo.data.clone());
             }
         }
@@ -146,7 +151,7 @@ impl CAIReader for Mp3IO {
 
         if let Ok(tag) = Tag::read_from2(input_stream) {
             for eo in tag.encapsulated_objects() {
-                if eo.mime_type == GEOB_FRAME_MIME_TYPE {
+                if is_c2pa_mime_type(&eo.mime_type) {
                     match manifest {
                         Some(_) => {
                             return Err(Error::TooManyManifestStores);

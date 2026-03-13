@@ -86,11 +86,17 @@ pub fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
        .all(|(a,b)| a == b)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Hasher {
     SHA256(Sha256),
     SHA384(Sha384),
     SHA512(Sha512),
+}
+
+impl Default for Hasher {
+    fn default() -> Self {
+        Hasher::SHA256(Sha256::new())
+    }
 }
 
 impl Hasher {
@@ -113,6 +119,26 @@ impl Hasher {
             SHA256(d) => d.finalize().to_vec(),
             SHA384(d) => d.finalize().to_vec(),
             SHA512(d) => d.finalize().to_vec(),
+        }
+    }
+
+    pub fn finalize_reset(&mut self) -> Vec<u8> {
+        use Hasher::*;
+
+        // return the hash and leave the Hasher open and reset
+        match self {
+            SHA256(ref mut d) => d.finalize_reset().to_vec(),
+            SHA384(ref mut d) => d.finalize_reset().to_vec(),
+            SHA512(ref mut d) => d.finalize_reset().to_vec(),
+        }
+    }
+
+    pub fn new(alg: &str) -> Result<Hasher> {
+        match alg {
+            "sha256" => Ok(Hasher::SHA256(Sha256::new())),
+            "sha384" => Ok(Hasher::SHA384(Sha384::new())),
+            "sha512" => Ok(Hasher::SHA512(Sha512::new())),
+            _ => Err(Error::UnsupportedType),
         }
     }
 }
@@ -189,6 +215,7 @@ pub fn hash_asset_by_alg_with_inclusions(
 
     The data is again split into range sets breaking at the exclusion points and now also the markers.
 */
+/// May be used to generate hashes in combination with embeddable APIs.
 pub fn hash_stream_by_alg<R>(
     alg: &str,
     data: &mut R,
@@ -247,7 +274,16 @@ where
                         continue;
                     }
 
-                    let end = exclusion.start() + exclusion.length() - 1;
+                    if exclusion.length() == 0 {
+                        continue;
+                    }
+
+                    let end = exclusion
+                        .start()
+                        .checked_add(exclusion.length())
+                        .ok_or(Error::BadParam("No exclusion range".to_string()))?
+                        .checked_sub(1)
+                        .ok_or(Error::BadParam("No exclusion range".to_string()))?;
                     let exclusion_start = exclusion.start();
                     ranges.remove_range(exclusion_start..=end);
                 }
@@ -310,6 +346,10 @@ where
                 //build final ranges
                 let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
                 for inclusion in hr {
+                    if inclusion.length() == 0 {
+                        continue;
+                    }
+
                     let end = inclusion.start() + inclusion.length() - 1;
                     let inclusion_start = inclusion.start();
 

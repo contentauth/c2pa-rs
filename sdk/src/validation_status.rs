@@ -13,7 +13,7 @@
 
 //! Implements validation status for specific parts of a manifest.
 //!
-//! See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_existing_manifests>.
+//! See [Existing Manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_existing_manifests).
 
 #![deny(missing_docs)]
 
@@ -32,7 +32,7 @@ use crate::{
 /// A `ValidationStatus` struct describes the validation status of a
 /// specific part of a manifest.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_existing_manifests>.
+/// See [Existing Manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_existing_manifests).
 #[derive(Clone, Debug, Deserialize, Serialize, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ValidationStatus {
@@ -79,7 +79,7 @@ impl ValidationStatus {
     /// Returns the validation status code.
     ///
     /// Validation status codes are the labels from the "Value"
-    /// column in <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_existing_manifests>.
+    /// column in [Existing Manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_existing_manifests).
     ///
     /// These are also defined as constants in the
     /// [`validation_status`](crate::validation_status) mod.

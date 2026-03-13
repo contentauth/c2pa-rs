@@ -731,7 +731,9 @@ impl Ingredient {
         path: P,
         options: &dyn IngredientOptions,
     ) -> Result<Self> {
-        let context = Context::new();
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings)?;
         Self::from_file_impl(path.as_ref(), options, &context)
     }
 
@@ -828,7 +830,9 @@ impl Ingredient {
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
-        let context = Context::new();
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings)?;
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
         ingredient.add_stream_internal(format, stream, &context)
@@ -981,7 +985,9 @@ impl Ingredient {
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
-        let context = Context::new();
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings)?;
         Self::from_stream_async_with_settings(format, stream, &context).await
     }
 
@@ -1438,7 +1444,9 @@ impl Ingredient {
         format: &str,
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
-        let context = Context::new();
+        // Legacy behavior: explicitly get global settings for backward compatibility
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings)?;
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
         let mut validation_log = StatusTracker::default();

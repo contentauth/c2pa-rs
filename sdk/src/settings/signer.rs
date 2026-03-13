@@ -36,34 +36,33 @@ use crate::{
 pub enum SignerSettings {
     /// A signer configured locally.
     Local {
-        // Algorithm to use for signing.
+        /// Algorithm to use for signing.
         alg: SigningAlg,
-        // Certificate used for signing (PEM format).
+        /// Certificate used for signing (PEM format).
         sign_cert: String,
-        // Private key used for signing (PEM format).
+        /// Private key used for signing (PEM format).
         private_key: String,
-        // Time stamp authority URL for signing.
+        /// Time stamp authority URL for signing.
         tsa_url: Option<String>,
-        // Referenced assertions for CAWG identity signing (optional).
+        /// Referenced assertions for CAWG identity signing (optional).
         referenced_assertions: Option<Vec<String>>,
-        // Roles for CAWG identity signing (optional).
+        /// Roles for CAWG identity signing (optional).
         roles: Option<Vec<String>>,
     },
     /// A signer configured remotely.
     Remote {
-        // URL to the signer used for signing.
-        //
-        // A POST request with a byte stream will be sent to this URL.
+        /// URL that the signer will use for signing.
+        /// A POST request with a byte-stream will be sent to this URL.
         url: String,
-        // Algorithm to use for signing.
+        /// Algorithm to use for signing.
         alg: SigningAlg,
-        // Certificate used for signing (PEM format).
+        /// Certificate used for signing (PEM format).
         sign_cert: String,
-        // Time stamp authority URL for signing.
+        /// Time stamp authority URL for signing.
         tsa_url: Option<String>,
-        // Referenced assertions for CAWG identity signing (optional).
+        /// Referenced assertions for CAWG identity signing (optional).
         referenced_assertions: Option<Vec<String>>,
-        // Roles for CAWG identity signing (optional).
+        /// Roles for CAWG identity signing (optional).
         roles: Option<Vec<String>>,
     },
 }
@@ -74,7 +73,8 @@ impl SignerSettings {
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
     pub fn signer() -> Result<BoxedSigner> {
-        let signer_info = match Settings::get_value::<Option<SignerSettings>>("signer") {
+        let signer_info = match Settings::get_thread_local_value::<Option<SignerSettings>>("signer")
+        {
             Ok(Some(signer_info)) => signer_info,
             #[cfg(test)]
             _ => {
@@ -90,7 +90,7 @@ impl SignerSettings {
 
         // TO DISCUSS: What if get_value returns an Err(...)?
         if let Ok(Some(cawg_x509_settings)) =
-            Settings::get_value::<Option<SignerSettings>>("cawg_x509_signer")
+            Settings::get_thread_local_value::<Option<SignerSettings>>("cawg_x509_signer")
         {
             cawg_x509_settings.cawg_signer(c2pa_signer)
         } else {

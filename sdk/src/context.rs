@@ -1,10 +1,24 @@
-use std::sync::OnceLock;
+// Copyright 2026 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
+use std::sync::{Arc, OnceLock};
 
 use crate::{
     http::{
         restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
-        BoxedAsyncResolver, BoxedSyncResolver, SyncGenericResolver, SyncHttpResolver,
+        SyncGenericResolver, SyncHttpResolver,
     },
+    maybe_send_sync::{MaybeSend, MaybeSync},
     settings::Settings,
     signer::{BoxedAsyncSigner, BoxedSigner},
     AsyncSigner, Error, Result, Signer,
@@ -13,17 +27,17 @@ use crate::{
 /// Internal state for sync HTTP resolver selection.
 enum SyncResolverState {
     /// User-provided custom resolver.
-    Custom(BoxedSyncResolver),
+    Custom(Arc<dyn SyncHttpResolver>),
     /// Default resolver with lazy initialization.
-    Default(OnceLock<RestrictedResolver<SyncGenericResolver>>),
+    Default(OnceLock<Arc<dyn SyncHttpResolver>>),
 }
 
 /// Internal state for async HTTP resolver selection.
 enum AsyncResolverState {
     /// User-provided custom resolver.
-    Custom(BoxedAsyncResolver),
+    Custom(Arc<dyn AsyncHttpResolver>),
     /// Default resolver with lazy initialization.
-    Default(OnceLock<RestrictedResolver<AsyncGenericResolver>>),
+    Default(OnceLock<Arc<dyn AsyncHttpResolver>>),
 }
 
 /// Internal state for signer selection.
@@ -60,6 +74,12 @@ impl IntoSettings for Settings {
     }
 }
 
+impl IntoSettings for &Settings {
+    fn into_settings(self) -> Result<Settings> {
+        Ok(self.clone())
+    }
+}
+
 /// Implement for &str (JSON/TOML string - tries both formats)
 impl IntoSettings for &str {
     fn into_settings(self) -> Result<Settings> {
@@ -93,9 +113,9 @@ impl IntoSettings for serde_json::Value {
 ///
 /// Context replaces the global Settings pattern with a more flexible, thread-safe approach.
 /// It encapsulates:
-/// - **Settings**: Configuration options for C2PA operations
-/// - **HTTP Resolvers**: Customizable sync and async HTTP resolvers for fetching remote manifests
-/// - **Signer**: The cryptographic signer used to sign manifests
+/// - **Settings**: Configuration options for C2PA operations.
+/// - **HTTP Resolvers**: Customizable sync and async HTTP resolvers for fetching remote manifests.
+/// - **Signer**: The cryptographic signer used to sign manifests.
 ///
 /// # Creating a Signer
 ///
@@ -128,7 +148,9 @@ impl IntoSettings for serde_json::Value {
 /// 2. **Custom Signer**: Use [`with_signer()`](Context::with_signer) to provide a custom signer
 ///    directly. This is useful for HSMs, remote signing services, or custom signing logic.
 ///
-/// # Usage with Builder and Reader
+/// # Examples
+///
+/// ## Usage with Builder and Reader
 ///
 /// Both [`Builder`](crate::Builder) and [`Reader`](crate::Reader) can be created with a Context:
 ///
@@ -148,8 +170,6 @@ impl IntoSettings for serde_json::Value {
 /// # }
 /// ```
 ///
-/// # Examples
-///
 /// ## Basic usage with default settings
 ///
 /// ```
@@ -166,20 +186,6 @@ impl IntoSettings for serde_json::Value {
 /// # Ok(())
 /// # }
 /// ```
-///
-/// ## Configure with TOML settings
-///
-/// ```
-/// # use c2pa::{Context, Result};
-/// # fn main() -> Result<()> {
-/// let toml = r#"
-///     [verify]
-///     verify_after_sign = true
-/// "#;
-/// let context = Context::new().with_settings(toml)?;
-/// # Ok(())
-/// # }
-/// ```
 pub struct Context {
     settings: Settings,
     sync_resolver: SyncResolverState,
@@ -191,7 +197,7 @@ pub struct Context {
 impl Default for Context {
     fn default() -> Self {
         Self {
-            settings: crate::settings::get_settings().unwrap_or_default(),
+            settings: Settings::default(),
             sync_resolver: SyncResolverState::Default(OnceLock::new()),
             async_resolver: AsyncResolverState::Default(OnceLock::new()),
             #[cfg(test)]
@@ -229,6 +235,31 @@ impl Context {
         Self::default()
     }
 
+    /// Consume this context and wrap it in an `Arc` for sharing between components.
+    ///
+    /// This is equivalent to `Arc::new(self)` or `Arc::from(self)`, but more discoverable
+    /// and chainable with the builder pattern.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Result};
+    /// # use std::sync::Arc;
+    /// # fn main() -> Result<()> {
+    /// let context = Context::new()
+    ///     .with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?
+    ///     .into_shared();
+    ///
+    /// // Now context is Arc<Context> and can be shared
+    /// let builder = c2pa::Builder::from_shared_context(&context);
+    /// let reader = c2pa::Reader::from_shared_context(&context);
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn into_shared(self) -> std::sync::Arc<Self> {
+        self.into()
+    }
+
     /// Configure this Context with the provided settings.
     ///
     /// Settings can be provided as a Settings struct, JSON string, TOML string, or serde_json::Value.
@@ -250,6 +281,11 @@ impl Context {
     pub fn with_settings<S: IntoSettings>(mut self, settings: S) -> Result<Self> {
         self.settings = settings.into_settings()?;
         Ok(self)
+    }
+
+    pub fn set_settings<S: IntoSettings>(&mut self, settings: S) -> Result<()> {
+        self.settings = settings.into_settings()?;
+        Ok(())
     }
 
     /// Returns a reference to the settings.
@@ -285,19 +321,20 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `SyncHttpResolver`
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_resolver<T: SyncHttpResolver + Send + Sync + 'static>(
+    pub fn with_resolver<T: SyncHttpResolver + MaybeSend + MaybeSync + 'static>(
         mut self,
         resolver: T,
     ) -> Self {
-        self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
+        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
         self
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub fn with_resolver<T: SyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
-        self.sync_resolver = SyncResolverState::Custom(Box::new(resolver));
-        self
+    pub fn set_resolver<T: SyncHttpResolver + MaybeSend + MaybeSync + 'static>(
+        &mut self,
+        resolver: T,
+    ) -> Result<()> {
+        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
+        Ok(())
     }
 
     /// Configure this Context with a custom asynchronous HTTP resolver.
@@ -307,34 +344,37 @@ impl Context {
     /// # Arguments
     ///
     /// * `resolver` - Any type implementing `AsyncHttpResolver`
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_resolver_async<T: AsyncHttpResolver + Send + Sync + 'static>(
+    pub fn with_resolver_async<T: AsyncHttpResolver + MaybeSend + MaybeSync + 'static>(
         mut self,
         resolver: T,
     ) -> Self {
-        self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
+        self.async_resolver = AsyncResolverState::Custom(Arc::new(resolver));
         self
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub fn with_resolver_async<T: AsyncHttpResolver + 'static>(mut self, resolver: T) -> Self {
-        self.async_resolver = AsyncResolverState::Custom(Box::new(resolver));
-        self
+    pub fn set_resolver_async<T: AsyncHttpResolver + MaybeSend + MaybeSync + 'static>(
+        &mut self,
+        resolver: T,
+    ) -> Result<()> {
+        self.async_resolver = AsyncResolverState::Custom(Arc::new(resolver));
+        Ok(())
     }
 
     /// Returns a reference to the sync resolver.
     ///
     /// The default resolver is a `SyncGenericResolver` wrapped with `RestrictedResolver`
     /// to apply host filtering from the settings.
-    pub fn resolver(&self) -> &dyn SyncHttpResolver {
+    pub fn resolver(&self) -> Arc<dyn SyncHttpResolver> {
         match &self.sync_resolver {
-            SyncResolverState::Custom(resolver) => resolver.as_ref(),
-            SyncResolverState::Default(once_lock) => once_lock.get_or_init(|| {
-                let inner = SyncGenericResolver::new();
-                let mut resolver = RestrictedResolver::new(inner);
-                resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                resolver
-            }),
+            SyncResolverState::Custom(resolver) => resolver.clone(),
+            SyncResolverState::Default(once_lock) => once_lock
+                .get_or_init(|| {
+                    let inner = SyncGenericResolver::new();
+                    let mut resolver = RestrictedResolver::new(inner);
+                    resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
+                    Arc::new(resolver)
+                })
+                .clone(),
         }
     }
 
@@ -342,15 +382,17 @@ impl Context {
     ///
     /// The default resolver is an `AsyncGenericResolver` wrapped with `RestrictedResolver`
     /// to apply host filtering from the settings.
-    pub fn resolver_async(&self) -> &dyn AsyncHttpResolver {
+    pub fn resolver_async(&self) -> Arc<dyn AsyncHttpResolver> {
         match &self.async_resolver {
-            AsyncResolverState::Custom(resolver) => resolver.as_ref(),
-            AsyncResolverState::Default(once_lock) => once_lock.get_or_init(|| {
-                let inner = AsyncGenericResolver::new();
-                let mut resolver = RestrictedResolver::new(inner);
-                resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                resolver
-            }),
+            AsyncResolverState::Custom(resolver) => resolver.clone(),
+            AsyncResolverState::Default(once_lock) => once_lock
+                .get_or_init(|| {
+                    let inner = AsyncGenericResolver::new();
+                    let mut resolver = RestrictedResolver::new(inner);
+                    resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
+                    Arc::new(resolver)
+                })
+                .clone(),
         }
     }
 
@@ -386,16 +428,25 @@ impl Context {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_signer<T: Signer + Send + Sync + 'static>(mut self, signer: T) -> Self {
+    pub fn with_signer<T: Signer + MaybeSend + MaybeSync + 'static>(mut self, signer: T) -> Self {
         self.signer = SignerState::Custom(Box::new(signer));
         self
     }
 
-    #[cfg(target_arch = "wasm32")]
-    pub fn with_signer<T: Signer + 'static>(mut self, signer: T) -> Self {
+    pub fn set_signer<T: Signer + MaybeSend + MaybeSync + 'static>(
+        &mut self,
+        signer: T,
+    ) -> Result<()> {
         self.signer = SignerState::Custom(Box::new(signer));
-        self
+        Ok(())
+    }
+
+    pub fn set_async_signer<T: AsyncSigner + MaybeSend + MaybeSync + 'static>(
+        &mut self,
+        signer: T,
+    ) -> Result<()> {
+        self.async_signer = AsyncSignerState::Custom(Box::new(signer));
+        Ok(())
     }
 
     /// Returns a reference to the signer.
@@ -661,7 +712,7 @@ mod tests {
             "Expected MissingSignerSettings error, got: {}",
             match result {
                 Ok(_) => "Ok(Signer)".to_string(),
-                Err(ref e) => format!("Err({:?})", e),
+                Err(ref e) => format!("Err({e:?})"),
             }
         );
     }
@@ -913,5 +964,190 @@ mod tests {
 
         // The test passes if we can call resolver_async() multiple times without errors
         // The OnceLock ensures the same resolver is returned (initialized once)
+    }
+
+    #[test]
+    fn test_set_resolver() {
+        use std::io::Read;
+
+        use http::{Request, Response};
+
+        use crate::http::SyncHttpResolver;
+
+        // Define a custom resolver
+        struct CustomResolver;
+        impl SyncHttpResolver for CustomResolver {
+            fn http_resolve(
+                &self,
+                _request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, crate::http::HttpResolverError> {
+                let body = Box::new(std::io::Cursor::new(b"custom sync response".to_vec()));
+                Ok(Response::builder()
+                    .status(200)
+                    .body(body as Box<dyn Read>)
+                    .unwrap())
+            }
+        }
+
+        // Create a context and mutate it with set_resolver
+        let mut context = Context::new();
+        let result = context.set_resolver(CustomResolver);
+        assert!(result.is_ok(), "set_resolver should succeed");
+
+        // Verify the resolver was set by calling it
+        let resolver = context.resolver();
+        let request = Request::builder()
+            .uri("http://example.com")
+            .body(Vec::new())
+            .unwrap();
+
+        let response = resolver.http_resolve(request);
+        assert!(response.is_ok(), "Custom resolver should be callable");
+
+        let mut body = response.unwrap().into_body();
+        let mut buffer = Vec::new();
+        body.read_to_end(&mut buffer).unwrap();
+        assert_eq!(buffer, b"custom sync response");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_set_resolver_async() {
+        use std::io::Read;
+
+        use async_trait::async_trait;
+        use http::{Request, Response};
+
+        use crate::http::AsyncHttpResolver;
+
+        // Define a custom async resolver
+        struct CustomAsyncResolver;
+
+        #[async_trait]
+        impl AsyncHttpResolver for CustomAsyncResolver {
+            async fn http_resolve_async(
+                &self,
+                _request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, crate::http::HttpResolverError> {
+                Ok(Response::builder()
+                    .status(200)
+                    .body(
+                        Box::new(std::io::Cursor::new(b"custom async response".to_vec()))
+                            as Box<dyn Read>,
+                    )
+                    .unwrap())
+            }
+        }
+
+        // Create a context and mutate it with set_resolver_async
+        let mut context = Context::new();
+        let result = context.set_resolver_async(CustomAsyncResolver);
+        assert!(result.is_ok(), "set_resolver_async should succeed");
+
+        // Verify the async resolver was set by calling it
+        let resolver = context.resolver_async();
+        let request = Request::builder()
+            .uri("http://example.com")
+            .body(Vec::new())
+            .unwrap();
+
+        let response = resolver.http_resolve_async(request).await;
+        assert!(response.is_ok(), "Custom async resolver should be callable");
+
+        let mut body = response.unwrap().into_body();
+        let mut buffer = Vec::new();
+        body.read_to_end(&mut buffer).unwrap();
+        assert_eq!(buffer, b"custom async response");
+    }
+
+    #[test]
+    fn test_set_signer() {
+        use crate::SigningAlg;
+
+        // Create a custom test signer (Es256)
+        let custom_signer = crate::utils::test_signer::test_signer(SigningAlg::Es256);
+
+        // Create a context and mutate it with set_signer
+        let mut context = Context::new();
+        let result = context.set_signer(custom_signer);
+        assert!(result.is_ok(), "set_signer should succeed");
+
+        // Verify the signer was set by using it
+        let signer = context.signer();
+        assert!(signer.is_ok(), "Should be able to retrieve custom signer");
+
+        let signer = signer.unwrap();
+        assert_eq!(signer.alg(), SigningAlg::Es256, "Signer should be Es256");
+
+        // Verify we can sign data
+        let signature = signer.sign(b"test data");
+        assert!(
+            signature.is_ok(),
+            "Should be able to sign with custom signer"
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_set_async_signer() {
+        use crate::SigningAlg;
+
+        // Create a custom async test signer (Es256)
+        let custom_signer = crate::utils::test_signer::async_test_signer(SigningAlg::Es256);
+
+        // Create a context and mutate it with set_async_signer
+        let mut context = Context::new();
+        let result = context.set_async_signer(custom_signer);
+        assert!(result.is_ok(), "set_async_signer should succeed");
+
+        // Verify the async signer was set by using it
+        let signer = context.async_signer();
+        assert!(
+            signer.is_ok(),
+            "Should be able to retrieve custom async signer"
+        );
+
+        let signer = signer.unwrap();
+        assert_eq!(
+            signer.alg(),
+            SigningAlg::Es256,
+            "Async signer should be Es256"
+        );
+
+        // Verify we can sign data
+        let signature = signer.sign(b"test data".to_vec()).await;
+        assert!(
+            signature.is_ok(),
+            "Should be able to sign with custom async signer"
+        );
+    }
+
+    #[test]
+    fn test_set_methods_replace_previous_values() {
+        use crate::SigningAlg;
+
+        // Create a context with initial signer (Ps256)
+        let initial_signer = crate::utils::test_signer::test_signer(SigningAlg::Ps256);
+        let mut context = Context::new().with_signer(initial_signer);
+
+        // Verify initial signer
+        let signer = context.signer().unwrap();
+        assert_eq!(
+            signer.alg(),
+            SigningAlg::Ps256,
+            "Initial signer should be Ps256"
+        );
+
+        // Replace with new signer (Es256) using set_signer
+        let new_signer = crate::utils::test_signer::test_signer(SigningAlg::Es256);
+        context.set_signer(new_signer).unwrap();
+
+        // Verify signer was replaced
+        let signer = context.signer().unwrap();
+        assert_eq!(
+            signer.alg(),
+            SigningAlg::Es256,
+            "Signer should now be Es256"
+        );
     }
 }

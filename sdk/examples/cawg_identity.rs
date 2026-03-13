@@ -25,7 +25,7 @@ mod cawg {
     use std::path::Path;
 
     use anyhow::Result;
-    use c2pa::{settings::Settings, Builder, DigitalSourceType, Reader};
+    use c2pa::{settings::Settings, Builder, Context, DigitalSourceType, Reader};
     use serde_json::json;
 
     fn manifest_def() -> String {
@@ -65,21 +65,25 @@ mod cawg {
         }
 
         // load our cawg signing settings
-        Settings::from_toml(include_str!(
+        let settings = Settings::new().with_toml(include_str!(
             "../tests/fixtures/test_settings_with_cawg_signing.toml"
         ))?;
+        let context = Context::new().with_settings(settings)?.into_shared();
 
-        // get the signer from settings
-        let signer = Settings::signer()?;
+        // get the signer from context
+        let signer = context.signer()?;
 
-        let mut builder = Builder::from_json(&manifest_def())?;
+        let mut builder =
+            Builder::from_shared_context(&context).with_definition(manifest_def().as_str())?;
         builder.set_intent(c2pa::BuilderIntent::Create(
             DigitalSourceType::DigitalCapture,
         ));
 
-        builder.sign_file(&signer, source, dest)?;
+        builder.sign_file(signer, source, dest)?;
 
-        let reader = Reader::from_file_async(dest).await?;
+        let reader = Reader::from_shared_context(&context)
+            .with_file_async(dest)
+            .await?;
         println!("{reader}");
         Ok(())
     }

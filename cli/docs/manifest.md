@@ -5,18 +5,13 @@ In the manifest definition file, file paths are relative to the location of the 
 
 ## JSON format
 
-The C2PA specification describes a manifest that has a binary structure in JPEG universal metadata box format (JUMBF).  However, C2PA Tool works with a JSON manifest structure that's easier to understand and work with.  It's a declarative language for representing and creating a manifest in binary format. For more information on the JSON manifest, see [Working with manifests](https://opensource.contentauthenticity.org/docs/manifest/understanding-manifest).
+The C2PA specification describes a manifest that has a binary structure in JPEG universal metadata box format (JUMBF).  However, C2PA Tool works with a JSON manifest structure that's easier to understand and work with.  It's a declarative language for representing and creating a manifest in binary format. 
 
-See also:
-
-* <a href="https://opensource.contentauthenticity.org/docs/manifest/manifest-ref" target="_self">Manifest store reference</a>
-* <a href="https://opensource.contentauthenticity.org/docs/manifest/manifest-json-schema" target="_self">Manifest store schema</a>
-* <a href="https://github.com/contentauth/c2pa-rs/blob/main/cli/schemas/manifest-definition.json" target="_self">Manifest definition schema</a>
-* <a href="https://github.com/contentauth/c2pa-rs/blob/main/cli/schemas/ingredient.json" target="_self">Ingredient schema</a>
+See also <a href="https://opensource.contentauthenticity.org/docs/manifest/json-ref/" target="_self">JSON manifest reference</a>.
 
 ## Adding a claim generator icon
 
-You can specify an icon to be displayed by tools such as [Verify](https://contentcredentials.org/verify) to indicate the signer of the manifest.
+You can specify an icon to be displayed by tools such as [Inspect tool on Adobe Content Authenticity (Beta)](https://inspect.cr/) (also called ACA Inspect) to indicate the signer of the manifest.
 
 To do this, add a `claim_generator_info` property to the manifest definition. The `claim_generator_info.icon` property contains information on the icon:
 - `icon.format` specifies the MIME type of the icon file.  SVG format is preferred, but you can also use PNG or JPEG formats. 
@@ -43,43 +38,49 @@ To add the icon using C2PA Tool, make sure the icon file and the manifest defini
 c2patool image_to_sign.jpg -m manifest.json -o signed_with_icon.jpg
 ```
 
-NOTE: The [Verify](https://contentcredentials.org/verify) tool will not display an icon for a signing certificate that is not on the temporary certificate list, such as the C2PA Tool test certificate.
+NOTE: [ACA Inspect](https://inspect.cr/) will only display an icon for a signing certificate if the certificate can be traced back to a root certificate on the [C2PA trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists#c2pa-trust-list).
 
-## Example
+## Special properties used by C2PA Tool
 
-The example below is a snippet of a manifest definition that inserts a `CreativeWork` author assertion. This example uses the default testing certificates in the [sample folder](https://github.com/contentauth/c2pa-rs/tree/main/cli/sample) that are also built into the `c2patool` binary.
-
-**NOTE**:  When you don't specify a key or certificate in the manifest `private_key` and `sign_cert` fields, the tool will use the built-in key and cert. You'll see a warning message, since they are meant for development purposes only. For actual use, provide a permanent key and certificate in the manifest definition or environment variables; see [Creating and using an X.509 certificate](x_509.md). 
-
-The following manifest properties are specific to c2patool and used for signing manifests:
+The following manifest properties are specific to C2PA Tool and used for signing manifests:
 
 - `alg`: Signing algorithm to use. See [Creating and using an X.509 certificate](x_509.md) for possible values. Default: `es256`.
 - `private_key`: Private key to use. Default: `es256_private.key`
 - `sign_cert`: Signing certificate to use. Default: `es256_certs.pem`
-- `ta_url`:  Time Authority URL for getting a time-stamp (for example, `http://timestamp.digicert.com`). A time-stamp provides a way to confirm that the manifest was signed when the certificate was valid, even if the certificate has since expired. Howver, the Time Authority URL requires a live online connection for confirmation, which may not always be available.
+- `ta_url`:  Time Authority URL for getting a time-stamp (for example, `http://timestamp.digicert.com`). A time-stamp provides a way to confirm that the manifest was signed when the certificate was valid, even if the certificate has since expired. However, the Time Authority URL requires a live online connection for confirmation, which may not always be available.
+
+## Example
+
+The example below is a minimal manifest definition that uses a default testing certificate in the [sample folder](https://github.com/contentauth/c2pa-rs/tree/main/cli/sample) that are also built into the `c2patool` binary.
+
+**NOTE**:  When you don't specify a key or certificate in the manifest `private_key` and `sign_cert` fields, the tool will use the built-in key and cert. You'll see a warning message, since they are meant for development purposes only. 
+
+For actual use, provide a permanent key and certificate in the manifest definition or environment variables; see [Creating and using an X.509 certificate](x_509.md). 
 
 ```json
 {
     "alg": "es256",
-    "private_key": "es256_private.key",
-    "sign_cert": "es256_certs.pem",
+    "private_key": "/Users/randmckinney/work/cai/c2pa-rs/cli/sample/es256_private.key",
+    "sign_cert": "/Users/randmckinney/work/cai/c2pa-rs/cli/sample/es256_certs.pem",
     "ta_url": "http://timestamp.digicert.com",
 
     "claim_generator": "TestApp",
     "assertions": [
         {
-            "label": "stds.schema-org.CreativeWork",
-            "data": {
-                "@context": "https://schema.org",
-                "@type": "CreativeWork",
-                "author": [
-                    {
-                        "@type": "Person",
-                        "name": "Joe Bloggs"
-                    }
-                ]
-            }
+          "label": "c2pa.actions.v2",
+          "data": {
+            "actions": [
+              {
+                "action": "c2pa.created",
+                "softwareAgent": "My Demo",
+                "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/digitalArt"
+              }
+            ],
+            "allActionsIncluded": true
+          }
         }
-    ]
+      ]
 }
 ```
+
+

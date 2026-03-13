@@ -19,6 +19,10 @@ You can also read the documentation directly in GitHub:
 - [Usage](https://github.com/contentauth/c2pa-rs/blob/main/docs/usage.md)
 - [Supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md)
 - [Using the CAWG identity assertion](https://github.com/contentauth/c2pa-rs/blob/main/docs/cawg-id.md)
+- [Configuring SDK settings](https://github.com/contentauth/c2pa-rs/blob/main/docs/settings.md)
+- [Using intents](https://github.com/contentauth/c2pa-rs/blob/main/docs/intents.md)
+- [Using working stores and archives](https://github.com/contentauth/c2pa-rs/blob/main/docs/working-stores.md)
+- [Using the embeddable API](https://github.com/contentauth/c2pa-rs/blob/main/docs/embeddable-api.md) that provides explicit control over how a C2PA manifest is embedded into an asset. 
 - [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
 - [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md)
 
@@ -49,11 +53,12 @@ For details on what you can do with the library, see [Using the Rust library](ht
 
 This is a beta release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.
 
-**NOTE**: The library supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) by default, and implementations should not generate deprecated v1 claims.  For details, see [C2PA v2 claims](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes#c2pa-v2-claims).
+> [!NOTE]
+> The library supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) by default, and implementations should not generate deprecated v1 claims.  For details, see [C2PA v2 claims](docs/release-notes.md#c2pa-v2-claims).
 
 ### New API
 
-NOTE: The current release includes a new API that replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/release-notes) for more information.
+The current release API replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](docs/release-notes.md) for more information.
 
 ### Context API for configuration
 
@@ -64,7 +69,7 @@ The library uses a `Context` structure to configure C2PA operations, replacing t
 - **Backwards compatible**: All existing Settings (JSON/TOML) files work unchanged with Context
 - **Automatic signer creation**: Signers are created automatically from settings when needed
 
-See [Using Context for configuration](docs/usage.md#using-context-for-configuration) for details. 
+See [Configuring SDK settings](docs/settings.md) for details. 
 
 ## Installation
 
