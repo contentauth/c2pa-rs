@@ -9,6 +9,17 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.78.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.2...c2pa-v0.78.3)
+_13 March 2026_
+
+### Added
+
+* Impl `Send + Sync` on `EphemeralSigner` ([#1934](https://github.com/contentauth/c2pa-rs/pull/1934))
+
+### Fixed
+
+* Apply same restrictions on ingredient deltas as active manifest for validation state ([#1624](https://github.com/contentauth/c2pa-rs/pull/1624))
+
 ## [0.78.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.1...c2pa-v0.78.2)
 _12 March 2026_
 
