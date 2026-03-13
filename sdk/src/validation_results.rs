@@ -217,6 +217,13 @@ impl ValidationResults {
                         })
                 })
             });
+            let ingredients_trusted = self.ingredient_deltas.as_ref().map_or(true, |deltas| {
+                deltas.iter().all(|idv| {
+                    idv.validation_deltas().success().iter().any(|status| {
+                        status.code() == validation_status::SIGNING_CREDENTIAL_TRUSTED
+                    })
+                })
+            });
 
             // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_valid_manifest
             let is_valid = success_codes.contains(validation_status::CLAIM_SIGNATURE_VALIDATED)
@@ -230,6 +237,7 @@ impl ValidationResults {
             // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_trusted_manifest
             let is_trusted = success_codes.contains(validation_status::SIGNING_CREDENTIAL_TRUSTED)
                 && failure_codes.is_empty()
+                && ingredients_trusted
                 && is_valid;
 
             if is_trusted {
