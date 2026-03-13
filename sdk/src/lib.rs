@@ -221,6 +221,9 @@ pub mod identity;
 /// The `jumbf_io` module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
 
+/// Support for [C2PA Live Video](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_live_video) signing (section 19 of the C2PA Technical Specification).
+pub mod live_video;
+
 /// The settings module provides a way to configure the C2PA SDK.
 pub mod settings;
 

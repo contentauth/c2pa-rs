@@ -89,3 +89,6 @@ pub mod region_of_interest;
 
 mod soft_binding;
 pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope, SoftBindingTimespan};
+
+mod live_video_segment;
+pub use live_video_segment::{ContinuityMethod, LiveVideoSegment};
