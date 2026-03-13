@@ -13,7 +13,7 @@
 
 use std::{
     fs::{File, OpenOptions},
-    io::{Cursor, Seek, SeekFrom, Write},
+    io::{Cursor, Seek, SeekFrom},
     path::Path,
     result,
 };
@@ -717,13 +717,27 @@ impl AssetPatch for RiffIO {
             .read(true)
             .create(false)
             .open(asset_path)?;
+        self.patch_cai_store_from_stream(&mut asset, store_bytes)
+    }
 
-        let (manifest_pos, manifest_len) =
-            get_manifest_pos(&mut asset).ok_or(Error::EmbeddingError)?;
+    fn patch_from_stream_supported(&self) -> bool {
+        true
+    }
 
-        if store_bytes.len() + 8 == manifest_len as usize {
-            asset.seek(SeekFrom::Start(manifest_pos + 8))?; // skip 8 byte chunk data header
-            asset.write_all(store_bytes)?;
+    fn patch_cai_store_from_stream(
+        &self,
+        stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        // Use the lean O(metadata) scanner — reads only chunk headers, not data.
+        let (block_start, total_size) =
+            scan_riff_c2pa_region(stream).ok_or(Error::EmbeddingError)?;
+        let data_offset = block_start + 8; // skip 8-byte chunk header
+        let data_len = (total_size - 8) as usize;
+
+        if store_bytes.len() == data_len {
+            stream.seek(SeekFrom::Start(data_offset))?;
+            stream.write_all(store_bytes)?;
             Ok(())
         } else {
             Err(Error::InvalidAsset(

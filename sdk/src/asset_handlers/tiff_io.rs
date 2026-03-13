@@ -1845,8 +1845,19 @@ impl AssetPatch for TiffIO {
             .read(true)
             .create(false)
             .open(asset_path)?;
+        self.patch_cai_store_from_stream(&mut asset_io, store_bytes)
+    }
 
-        let (tiff_tree, page_tokens, e, big_tiff) = map_tiff(&mut asset_io)?;
+    fn patch_from_stream_supported(&self) -> bool {
+        true
+    }
+
+    fn patch_cai_store_from_stream(
+        &self,
+        stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        let (tiff_tree, page_tokens, e, big_tiff) = map_tiff(stream)?;
 
         let last_page = page_tokens
             .last()
@@ -1866,11 +1877,9 @@ impl AssetPatch for TiffIO {
             .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
 
         if store_bytes.len() == manifest_len {
-            // move read point to start of entry
             let decoded_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
-            asset_io.seek(SeekFrom::Start(decoded_offset))?;
-
-            asset_io.write_all(store_bytes)?;
+            stream.seek(SeekFrom::Start(decoded_offset))?;
+            stream.write_all(store_bytes)?;
             Ok(())
         } else {
             Err(Error::InvalidAsset(

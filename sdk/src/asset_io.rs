@@ -19,7 +19,7 @@ use std::{
 
 use tempfile::NamedTempFile;
 
-use crate::{assertions::BoxMap, error::Result, maybe_send_sync::MaybeSend};
+use crate::{assertions::BoxMap, error::Result, maybe_send_sync::MaybeSend, Error};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HashBlockObjectType {
@@ -215,6 +215,26 @@ pub trait AssetPatch {
     // since any other changes will invalidate asset hashes.
     #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()>;
+
+    // Stream-based in-place patch: finds the existing manifest store in `stream`
+    // and overwrites it with `store_bytes` (which must be the same serialized
+    // size). Defaults to unsupported; override to enable the Pass-4 elimination
+    // optimization in `save_to_stream`.
+    fn patch_cai_store_from_stream(
+        &self,
+        _stream: &mut dyn CAIReadWrite,
+        _store_bytes: &[u8],
+    ) -> Result<()> {
+        Err(Error::UnsupportedType)
+    }
+
+    /// Returns `true` when `patch_cai_store_from_stream` is fully implemented
+    /// for this format. Formats that only implement the file-based
+    /// `patch_cai_store` should leave this at the default `false` so that
+    /// `save_to_stream` falls back to the traditional intermediate-stream path.
+    fn patch_from_stream_supported(&self) -> bool {
+        false
+    }
 }
 
 // `AssetBoxHash` provides interfaces needed to support C2PA BoxHash functionality.

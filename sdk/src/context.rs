@@ -63,6 +63,11 @@ pub enum ProgressPhase {
     Embedding = 9,
     /// Fetching a remote manifest over the network.
     FetchingRemoteManifest = 10,
+    /// Writing the asset with the placeholder JUMBF to the output stream
+    /// (the full-file streaming copy that precedes the hash-readback pass).
+    /// Fires once between the write pass and the hash computation pass so
+    /// callers can distinguish I/O time from CPU hashing time.
+    Writing = 11,
 }
 
 /// Progress callback function type.

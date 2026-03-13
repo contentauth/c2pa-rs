@@ -68,7 +68,7 @@ use crate::{
     },
     jumbf_io::{
         get_assetio_handler, is_bmff_format, load_jumbf_from_stream, object_locations_from_stream,
-        save_jumbf_to_stream,
+        patch_jumbf_in_stream, save_jumbf_to_stream,
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
@@ -3037,16 +3037,74 @@ impl Store {
 
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
+        // Determine whether this format supports in-place stream patching.
+        // When it does, we write the placeholder JUMBF directly to output_stream
+        // and patch in place after signing — eliminating Pass 4 (the full re-write).
+        //
+        // Cases excluded from the fast path:
+        //  - BMFF update manifests: BmffIO::write_cai re-encodes the store with
+        //    to_jumbf_internal(0) and produces ORIGINAL+UPDATE box pairs,
+        //    making in-place patching unsafe.
+        //  - Sidecar / remote manifests: the manifest is NOT embedded in
+        //    output_stream (which may be io::empty()), so hash computation
+        //    cannot read back from it. The intermediate-stream path handles
+        //    these correctly.
+        let pc_remote = self
+            .provenance_claim()
+            .map(|pc| pc.remote_manifest().clone());
+        let is_bmff_update_manifest = is_bmff_format(format)
+            && self
+                .provenance_claim()
+                .map(|pc| pc.update_manifest())
+                .unwrap_or(false);
+        let is_sidecar_or_remote = matches!(
+            &pc_remote,
+            Some(RemoteManifest::SideCar) | Some(RemoteManifest::Remote(_))
+        );
+
+        // Also probe that output_stream supports reading. Callers may pass a
+        // write-only file (e.g. fs::File::create) whose read would return EBADF.
+        // The inplace path reads back from output_stream for hash computation,
+        // so it needs a readable stream. A 1-byte probe detects this cheaply;
+        // Ok(_) means readable (even if the file is currently empty), Err(_)
+        // means write-only → fall back to the intermediate-stream path.
+        let output_is_readable = {
+            let mut probe = [0u8; 1];
+            output_stream.read(&mut probe).is_ok()
+        };
+
+        let supports_inplace_patch = output_is_readable
+            && !is_bmff_update_manifest
+            && !is_sidecar_or_remote
+            && get_assetio_handler(format)
+                .and_then(|h| h.asset_patch_ref())
+                .map(|p| p.patch_from_stream_supported())
+                .unwrap_or(false);
+
+        // For formats without in-place patching, use the traditional intermediate
+        // stream so that output_stream is only touched once on success.
         let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
 
+        // Determine target for start_save_stream: output_stream directly when
+        // in-place patching is available, otherwise the intermediate buffer.
         #[allow(unused_mut)] // Not mutable in the non-async case.
-        let mut jumbf_bytes = self.start_save_stream(
-            format,
-            input_stream,
-            &mut intermediate_stream,
-            signer.reserve_size(),
-            settings,
-        )?;
+        let mut jumbf_bytes = if supports_inplace_patch {
+            self.start_save_stream(
+                format,
+                input_stream,
+                output_stream,
+                signer.reserve_size(),
+                context,
+            )?
+        } else {
+            self.start_save_stream(
+                format,
+                input_stream,
+                &mut intermediate_stream,
+                signer.reserve_size(),
+                context,
+            )?
+        };
 
         context.check_progress(ProgressPhase::Hashing, 1, 1)?;
 
@@ -3072,13 +3130,19 @@ impl Store {
                 RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
                     jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-                    intermediate_stream.rewind()?;
-                    save_jumbf_to_stream(
-                        format,
-                        &mut intermediate_stream,
-                        output_stream,
-                        &jumbf_bytes,
-                    )?;
+                    if supports_inplace_patch {
+                        // output_stream already has the file; patch JUMBF in place.
+                        output_stream.rewind()?;
+                        patch_jumbf_in_stream(format, output_stream, &jumbf_bytes)?;
+                    } else {
+                        intermediate_stream.rewind()?;
+                        save_jumbf_to_stream(
+                            format,
+                            &mut intermediate_stream,
+                            output_stream,
+                            &jumbf_bytes,
+                        )?;
+                    }
                 }
                 RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
                     // we are going to handle the JUMBF like we'd embed, but we won't
@@ -3087,9 +3151,11 @@ impl Store {
                     // Update the JUMBF like it would normally be done
                     jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-                    // Intermediate stream goes to output, but still no embedding
-                    intermediate_stream.rewind()?;
-                    //std::io::copy(&mut intermediate_stream, output_stream)?;
+                    if !supports_inplace_patch {
+                        // Intermediate stream goes to output, but still no embedding
+                        intermediate_stream.rewind()?;
+                        //std::io::copy(&mut intermediate_stream, output_stream)?;
+                    }
                 }
             };
             output_stream.rewind()?;
@@ -3106,16 +3172,31 @@ impl Store {
         }?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
-        intermediate_stream.rewind()?;
-        output_stream.rewind()?;
-        match self.finish_save_stream(
-            jumbf_bytes,
-            format,
-            &mut intermediate_stream,
-            output_stream,
-            sig,
-            &sig_placeholder,
-        ) {
+        match if supports_inplace_patch {
+            // Pass 4 eliminated: patch the signed JUMBF directly into output_stream.
+            // Flush before seeking so buffered write data is committed (important
+            // for FFI-backed streams that require flush before seek/rewind).
+            output_stream.flush()?;
+            self.finish_save_stream_inplace(
+                jumbf_bytes,
+                format,
+                output_stream,
+                sig,
+                &sig_placeholder,
+            )
+        } else {
+            // Traditional path: output_stream is empty; intermediate has the asset.
+            intermediate_stream.rewind()?;
+            output_stream.rewind()?;
+            self.finish_save_stream(
+                jumbf_bytes,
+                format,
+                &mut intermediate_stream,
+                output_stream,
+                sig,
+                &sig_placeholder,
+            )
+        } {
             Ok((s, m)) => {
                 // save sig so store is up to date
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -3163,8 +3244,9 @@ impl Store {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Vec<u8>> {
+        let settings = context.settings();
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
         let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
@@ -3320,6 +3402,9 @@ impl Store {
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }
 
+            // Signal that the write pass is done; hash readback begins next.
+            context.check_progress(ProgressPhase::Writing, 1, 1)?;
+
             // generate actual hash values
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
 
@@ -3395,10 +3480,20 @@ impl Store {
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }
 
+            // Signal that the asset write pass is complete, before the hash
+            // readback pass begins.  This separates "Writing" (streaming
+            // input → output with placeholder JUMBF) from "Hashing" (reading
+            // output to compute the final content-hash binding).
+            context.check_progress(ProgressPhase::Writing, 1, 1)?;
+
             // 4)  determine final object locations and patch the asset hashes with correct offset
             // replace the source with correct asset hashes so that the claim hash will be correct
             if needs_hashing {
                 let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+                // Flush before seeking: FFI-backed streams (and any stream that
+                // buffers writes) must be flushed before seeking back to read.
+                output_stream.flush()?;
 
                 // get the final hash ranges, but not for update manifests
                 output_stream.rewind()?;
@@ -3438,6 +3533,43 @@ impl Store {
         }
 
         Ok(data) // return JUMBF data
+    }
+
+    /// In-place finish: patches `output_stream` (which already contains the
+    /// full asset with placeholder JUMBF) with the signed JUMBF bytes.
+    /// No full-file copy — O(metadata) seek + O(JUMBF size) write.
+    fn finish_save_stream_inplace(
+        &self,
+        mut jumbf_bytes: Vec<u8>,
+        format: &str,
+        output_stream: &mut dyn CAIReadWrite,
+        sig: Vec<u8>,
+        sig_placeholder: &[u8],
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
+        if sig_placeholder.len() != sig.len() {
+            return Err(Error::CoseSigboxTooSmall);
+        }
+
+        patch_bytes(&mut jumbf_bytes, sig_placeholder, &sig)
+            .map_err(|_| Error::JumbfCreationError)?;
+
+        // Flush before seeking so any buffered write data reaches the stream
+        // before the patch scanner reads the box structure (important for FFI
+        // streams that buffer writes internally).
+        output_stream.flush()?;
+
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        match pc.remote_manifest() {
+            RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                patch_jumbf_in_stream(format, output_stream, &jumbf_bytes)?;
+            }
+            RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
+                // No embedded manifest — nothing to patch.
+            }
+        }
+
+        output_stream.flush()?;
+        Ok((sig, jumbf_bytes))
     }
 
     fn finish_save_stream(

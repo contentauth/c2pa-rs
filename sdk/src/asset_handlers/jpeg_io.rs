@@ -13,8 +13,8 @@
 
 use std::{
     collections::HashMap,
-    fs::File,
-    io::{BufReader, Cursor, Write},
+    fs::{File, OpenOptions},
+    io::{BufReader, Cursor, SeekFrom, Write},
     path::*,
 };
 
@@ -31,8 +31,8 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
+        rename_or_move, AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader,
+        CAIWriter, ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
         RemoteRefEmbedType,
     },
     error::{Error, Result},
@@ -570,12 +570,124 @@ impl AssetIO for JpegIO {
         Some(self)
     }
 
+    fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
+        Some(self)
+    }
+
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+}
+
+/// Lean O(metadata) JPEG marker scanner that locates the contiguous C2PA APP11
+/// block.  Reads only 2-byte markers + 2-byte lengths + 4-byte CI/En headers —
+/// never touches image data.
+///
+/// Returns `Some((start_offset, total_bytes))` where `total_bytes` is the sum
+/// of `2 (FF EB) + seg_len` across every consecutive APP11 segment whose
+/// En identifier matches the C2PA value `[0x02, 0x11]`.
+fn scan_jpeg_c2pa_region(stream: &mut dyn CAIRead) -> Option<(u64, u64)> {
+    const C2PA_EN: [u8; 2] = [0x02, 0x11];
+
+    stream.rewind().ok()?;
+
+    let mut buf2 = [0u8; 2];
+    stream.read_exact(&mut buf2).ok()?;
+    if buf2 != [0xff, 0xd8] {
+        return None;
+    }
+
+    let mut c2pa_start: Option<u64> = None;
+    let mut c2pa_total = 0u64;
+
+    loop {
+        let seg_start = stream.stream_position().ok()?;
+
+        stream.read_exact(&mut buf2).ok()?;
+        if buf2[0] != 0xff {
+            break;
+        }
+        let marker = buf2[1];
+
+        match marker {
+            0xd8 => continue,        // SOI — no length
+            0xd9 => break,           // EOI
+            0xd0..=0xd7 => continue, // RST0-7 — no length
+            0x01 => continue,        // TEM — no length
+            0xda => break,           // SOS — image data follows, stop
+            _ => {}
+        }
+
+        // Read 2-byte segment length (big-endian; includes the 2 length bytes).
+        let seg_len = stream.read_u16::<BigEndian>().ok()? as u64;
+        let data_len = seg_len.checked_sub(2)?;
+
+        if marker == 0xeb && data_len >= 4 {
+            // APP11: read CI(2) + En(2)
+            let mut ci_en = [0u8; 4];
+            stream.read_exact(&mut ci_en).ok()?;
+
+            if ci_en[2..4] == C2PA_EN {
+                if c2pa_start.is_none() {
+                    c2pa_start = Some(seg_start);
+                }
+                c2pa_total += 2 + seg_len; // 0xFF 0xEB + length field + data
+                stream.seek(SeekFrom::Current(data_len as i64 - 4)).ok()?;
+                continue;
+            }
+            // Non-C2PA APP11 — skip remaining data
+            stream.seek(SeekFrom::Current(data_len as i64 - 4)).ok()?;
+        } else {
+            stream.seek(SeekFrom::Current(data_len as i64)).ok()?;
+        }
+
+        // First non-C2PA segment after finding the block — stop accumulating.
+        if c2pa_start.is_some() {
+            break;
+        }
+    }
+
+    c2pa_start.map(|s| (s, c2pa_total))
+}
+
+impl AssetPatch for JpegIO {
+    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
+        let mut asset = OpenOptions::new()
+            .write(true)
+            .read(true)
+            .create(false)
+            .open(asset_path)?;
+        self.patch_cai_store_from_stream(&mut asset, store_bytes)
+    }
+
+    fn patch_from_stream_supported(&self) -> bool {
+        true
+    }
+
+    /// In-place stream patch: locates the C2PA APP11 block via a lean marker
+    /// scan, re-frames `store_bytes` with `compose_manifest`, and overwrites
+    /// the exact same bytes — no copy of the rest of the file needed.
+    fn patch_cai_store_from_stream(
+        &self,
+        stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        let (start, total_len) = scan_jpeg_c2pa_region(stream).ok_or(Error::EmbeddingError)?;
+
+        let framed = self.compose_manifest(store_bytes, "jpeg")?;
+        if framed.len() as u64 != total_len {
+            return Err(Error::InvalidAsset(
+                "patch_cai_store_from_stream store size mismatch".to_string(),
+            ));
+        }
+
+        stream.seek(SeekFrom::Start(start))?;
+        stream.write_all(&framed)?;
+        Ok(())
     }
 }
 

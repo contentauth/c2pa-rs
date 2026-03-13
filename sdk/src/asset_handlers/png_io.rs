@@ -12,7 +12,7 @@
 // each license.
 
 use std::{
-    fs::File,
+    fs::{File, OpenOptions},
     io::{Cursor, Read, Seek, SeekFrom},
     path::Path,
 };
@@ -24,8 +24,8 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
+        rename_or_move, AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader,
+        CAIWriter, ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
         RemoteRefEmbedType,
     },
     error::{Error, Result},
@@ -565,12 +565,60 @@ impl AssetIO for PngIO {
         Some(self)
     }
 
+    fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
+        Some(self)
+    }
+
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+}
+
+impl AssetPatch for PngIO {
+    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
+        let mut asset = OpenOptions::new()
+            .write(true)
+            .read(true)
+            .create(false)
+            .open(asset_path)?;
+        self.patch_cai_store_from_stream(&mut asset, store_bytes)
+    }
+
+    /// In-place stream patch: finds the `caBX` chunk via the lean O(metadata)
+    fn patch_from_stream_supported(&self) -> bool {
+        true
+    }
+
+    /// chunk-position scanner, re-frames `store_bytes` with `compose_manifest`
+    /// (which recomputes the PNG CRC automatically), and overwrites the chunk
+    /// in place — no file copy needed.
+    fn patch_cai_store_from_stream(
+        &self,
+        stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        let positions = get_png_chunk_positions(stream)?;
+        let cai_chunk = positions
+            .iter()
+            .find(|p| p.name == CAI_CHUNK)
+            .ok_or(Error::JumbfNotFound)?;
+
+        let framed = self.compose_manifest(store_bytes, "png")?;
+        // PNG chunk on disk: 4 (length) + 4 (name) + data + 4 (CRC) = length + 12
+        let expected_total = cai_chunk.length as u64 + 12;
+        if framed.len() as u64 != expected_total {
+            return Err(Error::InvalidAsset(
+                "patch_cai_store_from_stream store size mismatch".to_string(),
+            ));
+        }
+
+        stream.seek(SeekFrom::Start(cai_chunk.start))?;
+        stream.write_all(&framed)?;
+        Ok(())
     }
 }
 
