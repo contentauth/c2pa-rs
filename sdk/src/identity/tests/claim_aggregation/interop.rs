@@ -91,6 +91,7 @@ async fn adobe_connected_identities() {
             )],
             roles: vec!(),
             sig_type: "cawg.identity_claims_aggregation".to_owned(),
+            ..Default::default()
         }
     );
 
