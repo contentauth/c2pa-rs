@@ -365,7 +365,7 @@ impl Signer for CawgX509IdentitySigner {
 
 #[cfg(test)]
 pub mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
     use crate::{settings::Settings, utils::test_signer, SigningAlg};
 
     #[test]
@@ -438,7 +438,6 @@ pub mod tests {
     }
 
     #[cfg(all(not(feature = "remote_signing"), not(target_arch = "wasm32")))]
-    #[allow(clippy::unwrap_used)]
     #[test]
     fn test_make_remote_signer_disabled() {
         #[cfg(target_os = "wasi")]
@@ -462,7 +461,6 @@ pub mod tests {
         assert!(signer.is_err());
     }
 
-    #[allow(clippy::unwrap_used)]
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_make_local_cawg_signer() {
@@ -506,7 +504,6 @@ pub mod tests {
         assert!(signer.sign(&[1, 2, 3]).is_ok());
     }
 
-    #[allow(clippy::expect_used, clippy::unwrap_used)]
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg(feature = "remote_signing")]
     #[c2pa_macros::c2pa_test_async]
@@ -574,10 +571,7 @@ pub mod tests {
             .with_value("core.decode_identity_assertions", false)
             .expect("Error setting core.decode_identity_assertions to false");
 
-        let context = Context::new()
-            .with_settings(&config_settings)
-            .expect("Error creating context")
-            .into_shared();
+        let context = Context::from(config_settings).into_shared();
 
         let format = "image/jpeg";
         let mut source = Cursor::new(include_bytes!("../../tests/fixtures/CA.jpg"));

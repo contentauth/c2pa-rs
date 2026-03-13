@@ -200,12 +200,11 @@ impl Default for Context {
             settings: Settings::default(),
             sync_resolver: SyncResolverState::Default(OnceLock::new()),
             async_resolver: AsyncResolverState::Default(OnceLock::new()),
-            // Testing cawg remote signer created from Context requires SignerState::FromSettings
-            #[cfg(all(test, not(feature = "remote_signing")))]
+            #[cfg(test)]
             signer: SignerState::Custom(crate::utils::test_signer::test_signer(
                 crate::SigningAlg::Ps256,
             )),
-            #[cfg(any(not(test), feature = "remote_signing"))]
+            #[cfg(not(test))]
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
         }
@@ -617,6 +616,28 @@ impl Context {
     pub fn with_async_signer(mut self, signer: impl AsyncSigner + 'static) -> Self {
         self.async_signer = AsyncSignerState::Custom(Box::new(signer));
         self
+    }
+}
+
+/// Creates a `context::Context` from `settings::Settings` for remote signing test cases
+///
+/// Testing remote signers created from test contexts requires `SignerState::FromSettings` as a state
+/// Note that, combining compilation flags for tests in Context:new() using default()
+/// cannot satisfy both  `settings::signer::tests` test cases and `builder::tests` test cases
+/// which require `Context::default()` with `SignerState::Custom` state
+#[cfg(all(test, feature = "remote_signing"))]
+impl From<Settings> for Context {
+    /// This is a utility implementation that creates a test context directly from settings and should
+    /// be the used by default when testing remote signers created from settings.
+    fn from(settings: Settings) -> Self {
+        Self {
+            settings,
+            sync_resolver: SyncResolverState::Default(OnceLock::new()),
+            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            // It always sets the signer to `SignerState::FromSettings'
+            signer: SignerState::FromSettings(OnceLock::new()),
+            async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
+        }
     }
 }
 
