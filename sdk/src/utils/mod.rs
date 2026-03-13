@@ -38,6 +38,9 @@ pub mod test;
 #[cfg(test)]
 pub(crate) mod test_signer;
 
+#[cfg(all(test, feature = "remote_signing", not(target_arch = "wasm32")))]
+pub(crate) mod test_remote_signer;
+
 // fast 0 vector test using byte alignment to perform faster native byte align comparison
 pub(crate) fn is_zero(bytes: &[u8]) -> bool {
     if bytes.is_empty() {

@@ -225,6 +225,12 @@ pub enum Error {
     #[error("failed to fetch the remote settings")]
     FailedToFetchSettings,
 
+    #[error(transparent)]
+    InvalidRemoteUrl(#[from] url::ParseError),
+
+    #[error("remote signing feature is not enabled")]
+    RemoteSigningNotEnabled,
+
     #[error("failed to remotely sign data")]
     FailedToRemoteSign,
 

@@ -29,6 +29,11 @@ pub use signer::{
     async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
     AsyncRawSigner, RawSigner, RawSignerError,
 };
+#[cfg(all(
+    feature = "remote_signing",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
+pub use signer::{async_signer_from_cert_chain_and_url, signer_from_cert_chain_and_url};
 
 mod signing_alg;
 pub use signing_alg::{SigningAlg, UnknownAlgorithmError};

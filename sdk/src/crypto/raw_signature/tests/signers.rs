@@ -193,3 +193,44 @@ fn ps512() {
     let validator = validator_for_signing_alg(SigningAlg::Ps512).unwrap();
     validator.validate(&signature, data, pub_key).unwrap();
 }
+
+#[test]
+#[cfg(all(
+    feature = "remote_signing",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
+fn remote_signing() {
+    use httpmock::MockServer;
+
+    use crate::{
+        create_signer, crypto::raw_signature::openssl::signers::signer_from_cert_chain_and_url,
+        utils::test_remote_signer, Signer,
+    };
+
+    let alg = SigningAlg::Es256;
+    let cert_chain = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es256.pub");
+    let private_key = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es256.priv");
+
+    let data = b"some sample content to sign";
+    let mock_signer = create_signer::from_keys(cert_chain, private_key, alg, None).unwrap();
+    let signed_bytes = mock_signer.sign(data).unwrap();
+
+    let server = MockServer::start();
+    let mock = test_remote_signer::remote_signer_mock_server(&server, &signed_bytes);
+
+    let url = url::Url::parse(&server.base_url()).unwrap();
+
+    let signer = signer_from_cert_chain_and_url(cert_chain, url, alg, None).unwrap();
+
+    let signature = signer.sign(data).unwrap();
+
+    println!("signature len = {}", signature.len());
+    assert!(signature.len() <= signer.reserve_size());
+
+    let pub_key = include_bytes!("../../../../tests/fixtures/crypto/raw_signature/es256.pub_key");
+
+    let validator = validator_for_signing_alg(alg).unwrap();
+    validator.validate(&signature, data, pub_key).unwrap();
+
+    mock.assert();
+}
