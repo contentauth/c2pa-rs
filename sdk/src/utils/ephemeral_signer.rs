@@ -42,7 +42,7 @@ use crate::{
 /// not be considered trusted in the C2PA conformance sense.
 pub struct EphemeralSigner {
     /// Raw signer (EE key) used for signing.
-    pub(crate) raw_signer: Box<dyn RawSigner>,
+    pub(crate) raw_signer: Box<dyn RawSigner + Send + Sync>,
 
     /// Full certificate chain in DER: end-entity then CA.
     pub(crate) cert_chain_der: Vec<Vec<u8>>,
