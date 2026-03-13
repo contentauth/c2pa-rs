@@ -41,7 +41,7 @@ use crate::{
     },
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
-    context::Context,
+    context::{Context, ProgressPhase},
     cose_validator::{
         get_signing_cert_serial_num, get_signing_info, get_signing_info_async, verify_cose,
         verify_cose_async,
@@ -1921,7 +1921,7 @@ impl Claim {
         .await;
 
         let result =
-            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, settings);
+            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, context);
         validation_log.pop_current_uri();
         result
     }
@@ -1993,6 +1993,7 @@ impl Claim {
             }
         };
 
+        context.check_progress(ProgressPhase::VerifyingSignature, 1, 2)?;
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
 
         let certificate_serial_num = get_signing_cert_serial_num(&sign1)?.to_string();
@@ -2007,6 +2008,7 @@ impl Claim {
             context,
         )?;
 
+        context.check_progress(ProgressPhase::VerifyingSignature, 2, 2)?;
         let verified = verify_cose(
             sig,
             data,
@@ -2018,14 +2020,8 @@ impl Claim {
             &adjusted_settings,
         );
 
-        let result = Claim::verify_internal(
-            claim,
-            asset_data,
-            svi,
-            verified,
-            validation_log,
-            &adjusted_settings,
-        );
+        let result =
+            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, context);
         validation_log.pop_current_uri();
         result
     }
@@ -2604,6 +2600,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         svi: &StoreValidationInfo,
         validation_log: &mut StatusTracker,
+        context: &Context,
     ) -> Result<()> {
         const UNNAMED: &str = "unnamed";
         let default_str = |s: &String| s.clone();
@@ -2696,6 +2693,7 @@ impl Claim {
                         }
 
                         // only verify local hashes here
+                        context.check_progress(ProgressPhase::VerifyingAssetHash, 1, 1)?;
                         let hash_result = match asset_data {
                             #[cfg(feature = "file_io")]
                             ClaimAssetData::Path(asset_path) => {
@@ -2758,6 +2756,7 @@ impl Claim {
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
 
+                    context.check_progress(ProgressPhase::VerifyingAssetHash, 1, 1)?;
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
@@ -2921,7 +2920,7 @@ impl Claim {
         svi: &StoreValidationInfo,
         verified: Result<CertificateInfo>,
         validation_log: &mut StatusTracker,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<()> {
         // signature check
         match verified {
@@ -3242,10 +3241,10 @@ impl Claim {
         }
 
         // verify data hashes for provenance claims
-        Claim::verify_hash_binding(claim, asset_data, svi, validation_log)?;
+        Claim::verify_hash_binding(claim, asset_data, svi, validation_log, context)?;
 
         // check action rules
-        Claim::verify_actions(claim, svi, validation_log, settings)?;
+        Claim::verify_actions(claim, svi, validation_log, context.settings())?;
 
         // check metadata rules
         if claim.version() >= 2 {

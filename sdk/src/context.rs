@@ -11,7 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, OnceLock,
+};
 
 use crate::{
     http::{
@@ -23,6 +26,71 @@ use crate::{
     signer::{BoxedAsyncSigner, BoxedSigner},
     AsyncSigner, Error, Result, Signer,
 };
+
+/// Phases reported by the progress callback.
+///
+/// Passed to the progress callback registered on [`Context`] so callers can
+/// display progress indicators or make phase-specific cancellation decisions.
+///
+/// `#[repr(u8)]` ensures stable integer values for FFI and WASM consumers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+#[repr(u8)]
+pub enum ProgressPhase {
+    /// Parsing and extracting JUMBF manifest data from an asset stream (I/O phase).
+    Reading = 0,
+    /// Verifying the structure and integrity of a manifest store entry.
+    VerifyingManifest = 1,
+    /// Verifying a COSE cryptographic signature and certificate chain for a claim.
+    /// Fires twice per claim: once before COSE parse (`step=1`) and once after
+    /// OCSP and full signature verification (`step=2`).
+    VerifyingSignature = 2,
+    /// Verifying one ingredient's embedded manifest.  Fires once per ingredient
+    /// (`step` = ingredient index, `total` = total ingredient count).
+    VerifyingIngredient = 3,
+    /// Re-hashing the asset bytes to verify the `c2pa.hash.data` or `c2pa.hash.bmff`
+    /// assertion (the most time-consuming part of reading for large assets).
+    VerifyingAssetHash = 4,
+    /// Adding an ingredient to the manifest.
+    AddingIngredient = 5,
+    /// Generating a thumbnail for the asset (during signing).
+    Thumbnail = 6,
+    /// Hashing asset data to build the hash binding assertion (during signing).
+    Hashing = 7,
+    /// Signing the claim with COSE, including any remote TSA timestamp fetch.
+    Signing = 8,
+    /// Embedding the signed JUMBF manifest store into the output asset.
+    Embedding = 9,
+    /// Fetching a remote manifest over the network.
+    FetchingRemoteManifest = 10,
+}
+
+/// Progress callback function type.
+///
+/// Called at key checkpoints during signing and reading operations.
+///
+/// # Parameters
+/// * `phase` – the current [`ProgressPhase`], which fully describes what the SDK
+///   is doing.  No separate message string is provided; callers should derive any
+///   user-visible text from `phase` in whatever language they need.
+/// * `step`  – 1-based index of the current step within this phase (e.g. `1` for
+///   the first chunk hashed, `2` for the second).  Always `1` for single-shot phases.
+/// * `total` – total number of steps in this phase.  `0` means the total is not
+///   known in advance (indeterminate); show a spinner rather than a progress bar.
+///   Always `1` for single-shot phases.
+///
+/// # Return value
+/// Return `true` to continue, `false` to request cancellation.
+/// The SDK returns [`Error::OperationCancelled`] at the next safe checkpoint.
+///
+/// On non-WASM targets the closure must be `Send + Sync`; on WASM (single-threaded)
+/// no thread-safety bounds are required.
+#[cfg(not(target_arch = "wasm32"))]
+pub type ProgressCallbackFunc = dyn Fn(ProgressPhase, u32, u32) -> bool + Send + Sync;
+
+/// Progress callback function type (WASM variant – no `Send + Sync`).
+#[cfg(target_arch = "wasm32")]
+pub type ProgressCallbackFunc = dyn Fn(ProgressPhase, u32, u32) -> bool;
 
 /// Internal state for sync HTTP resolver selection.
 enum SyncResolverState {
@@ -192,6 +260,10 @@ pub struct Context {
     async_resolver: AsyncResolverState,
     signer: SignerState,
     async_signer: AsyncSignerState,
+    progress_callback: Option<Box<ProgressCallbackFunc>>,
+    /// Embedded cancellation flag.  Any thread holding an `Arc<Context>` can call
+    /// [`cancel()`](Context::cancel) without needing a separate token object.
+    cancel_flag: AtomicBool,
 }
 
 impl Default for Context {
@@ -207,6 +279,8 @@ impl Default for Context {
             #[cfg(not(test))]
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
+            progress_callback: None,
+            cancel_flag: AtomicBool::new(false),
         }
     }
 }
@@ -617,6 +691,89 @@ impl Context {
         self.async_signer = AsyncSignerState::Custom(Box::new(signer));
         self
     }
+
+    /// Register a progress callback that will be invoked at key phases of
+    /// long-running operations (signing, hashing, embedding, etc.).
+    ///
+    /// The callback receives the current [`ProgressPhase`], an approximate
+    /// percentage (`0–100`), and a human-readable status string.  Returning
+    /// `false` from the callback will cause the operation to return
+    /// [`Error::OperationCancelled`] at the next safe checkpoint.
+    ///
+    /// Closures close over whatever external state they need.  C and WASM adapters
+    /// capture their `user_data` / JS reference inside the Rust closure.
+    ///
+    /// ```
+    /// # use c2pa::{Context, ProgressPhase};
+    /// let ctx = Context::new().with_progress_callback(|phase, step, total| {
+    ///     println!("{phase:?} {step}/{total}");
+    ///     true // return false to cancel
+    /// });
+    /// ```
+    pub fn with_progress_callback<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(ProgressPhase, u32, u32) -> bool + MaybeSend + MaybeSync + 'static,
+    {
+        self.progress_callback = Some(Box::new(callback));
+        self
+    }
+
+    /// Mutable setter for the progress callback (for FFI builders that cannot use the
+    /// consuming builder pattern).
+    pub fn set_progress_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(ProgressPhase, u32, u32) -> bool + MaybeSend + MaybeSync + 'static,
+    {
+        self.progress_callback = Some(Box::new(callback));
+    }
+
+    /// Request cancellation of any in-progress operation on this context.
+    ///
+    /// This is thread-safe and may be called from any thread that holds an
+    /// `Arc<Context>`.  The operation will return [`Error::OperationCancelled`]
+    /// at the next safe checkpoint.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use c2pa::Context;
+    /// # use std::sync::Arc;
+    /// let ctx = Arc::new(Context::new());
+    ///
+    /// // Hand a clone to a background thread; call cancel() to abort.
+    /// let ctx2 = ctx.clone();
+    /// // std::thread::spawn(move || ctx2.cancel());
+    /// ```
+    pub fn cancel(&self) {
+        self.cancel_flag.store(true, Ordering::Relaxed);
+    }
+
+    /// Returns `true` if [`cancel()`](Context::cancel) has been called.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_flag.load(Ordering::Relaxed)
+    }
+
+    /// Report progress and check for cancellation at a single checkpoint.
+    ///
+    /// Invokes the registered [`ProgressCallbackFunc`] (if any), then checks the
+    /// embedded cancel flag.  Returns [`Error::OperationCancelled`] if either
+    /// signals a stop.
+    ///
+    /// `step` is the 1-based index of the current step within `phase`; `total` is
+    /// the total number of steps (`0` = indeterminate).  Single-shot phases pass
+    /// `(1, 1)`.
+    pub(crate) fn check_progress(&self, phase: ProgressPhase, step: u32, total: u32) -> Result<()> {
+        log::info!("progress: phase={phase:?} step={step}/{total}");
+        if let Some(cb) = self.progress_callback.as_deref() {
+            if !cb(phase, step, total) {
+                return Err(Error::OperationCancelled);
+            }
+        }
+        if self.cancel_flag.load(Ordering::Relaxed) {
+            return Err(Error::OperationCancelled);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -694,6 +851,8 @@ mod tests {
             async_resolver: AsyncResolverState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
+            progress_callback: None,
+            cancel_flag: AtomicBool::new(false),
         };
 
         // Update settings to ensure no signer configuration
@@ -770,6 +929,8 @@ mod tests {
             async_resolver: AsyncResolverState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
+            progress_callback: None,
+            cancel_flag: AtomicBool::new(false),
         };
 
         // Verify that async_signer() returns an error when no async signer settings are present
@@ -784,6 +945,58 @@ mod tests {
             matches!(result, Err(Error::BadParam(_))),
             "Expected BadParam error"
         );
+    }
+
+    #[test]
+    fn test_check_progress_no_callback_ok() {
+        let context = Context::new();
+        let result = context.check_progress(ProgressPhase::Hashing, 1, 1);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_check_progress_cancelled_returns_error() {
+        let context = Context::new();
+        context.cancel();
+        let result = context.check_progress(ProgressPhase::Signing, 1, 1);
+        assert!(matches!(result, Err(Error::OperationCancelled)));
+    }
+
+    #[test]
+    fn test_check_progress_callback_false_cancels() {
+        let context = Context::new().with_progress_callback(|_, _, _| false);
+        let result = context.check_progress(ProgressPhase::Reading, 1, 1);
+        assert!(matches!(result, Err(Error::OperationCancelled)));
+    }
+
+    #[test]
+    fn test_check_progress_callback_receives_phase_and_steps() {
+        use std::sync::Mutex;
+        let received: std::sync::Arc<Mutex<Vec<(ProgressPhase, u32, u32)>>> =
+            std::sync::Arc::new(Mutex::new(Vec::new()));
+        let received_clone = received.clone();
+        let context = Context::new().with_progress_callback(move |phase, step, total| {
+            received_clone.lock().unwrap().push((phase, step, total));
+            true
+        });
+        context
+            .check_progress(ProgressPhase::Thumbnail, 1, 1)
+            .unwrap();
+        context
+            .check_progress(ProgressPhase::Hashing, 3, 10)
+            .unwrap();
+        let r = received.lock().unwrap();
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0], (ProgressPhase::Thumbnail, 1, 1));
+        assert_eq!(r[1], (ProgressPhase::Hashing, 3, 10));
+    }
+
+    #[test]
+    fn test_is_cancelled_after_cancel() {
+        let context = Context::new();
+        assert!(!context.is_cancelled());
+        context.cancel();
+        assert!(context.is_cancelled());
     }
 
     #[test]

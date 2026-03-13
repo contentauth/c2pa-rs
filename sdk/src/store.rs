@@ -39,7 +39,7 @@ use crate::{
         check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssertion, ClaimAssetData,
         RemoteManifest,
     },
-    context::Context,
+    context::{Context, ProgressPhase},
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
     crypto::{
@@ -1558,8 +1558,20 @@ impl Store {
         context: &Context,
     ) -> Result<()> {
         let settings = context.settings();
+
+        // Pre-count verifiable ingredients so we can emit accurate step/total values.
+        let total_ingredients = claim.ingredient_assertions().len() as u32;
+        let mut ingredient_step = 0u32;
+
         // walk the ingredients
         for i in claim.ingredient_assertions() {
+            ingredient_step += 1;
+            context.check_progress(
+                ProgressPhase::VerifyingIngredient,
+                ingredient_step,
+                total_ingredients,
+            )?;
+
             // allow for zero out ingredient assertions
             if is_zero(i.assertion().data()) {
                 continue;
@@ -1774,6 +1786,14 @@ impl Store {
         context: &Context,
     ) -> Result<()> {
         let settings = context.settings();
+
+        let total_ingredients = claim
+            .ingredient_assertions()
+            .iter()
+            .filter(|i| !is_zero(i.assertion().data()))
+            .count() as u32;
+        let mut ingredient_step = 0u32;
+
         // walk the ingredients
         for i in claim.ingredient_assertions() {
             // allow for zero out ingredient assertions
@@ -1795,6 +1815,13 @@ impl Store {
             if ingredient_assertion.relationship == Relationship::InputTo {
                 continue;
             }
+
+            ingredient_step += 1;
+            context.check_progress(
+                ProgressPhase::VerifyingIngredient,
+                ingredient_step,
+                total_ingredients,
+            )?;
 
             validation_log
                 .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
@@ -2132,6 +2159,7 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<()> {
+        context.check_progress(ProgressPhase::VerifyingManifest, 1, 1)?;
         let claim = match store.provenance_claim() {
             Some(c) => c,
             None => {
@@ -3020,6 +3048,8 @@ impl Store {
             settings,
         )?;
 
+        context.check_progress(ProgressPhase::Hashing, 1, 1)?;
+
         let mut preliminary_claim = PartialClaim::default();
         {
             let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
@@ -3065,6 +3095,8 @@ impl Store {
             output_stream.rewind()?;
         }
 
+        context.check_progress(ProgressPhase::Signing, 1, 1)?;
+
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
             self.sign_claim(pc, signer, signer.reserve_size(), settings)
@@ -3091,6 +3123,8 @@ impl Store {
 
                 output_stream.flush()?;
                 output_stream.rewind()?;
+
+                context.check_progress(ProgressPhase::Embedding, 1, 1)?;
 
                 let verify_after_sign = settings.verify.verify_after_sign;
                 // Also catch the case where we may have written to io::empty() or similar
@@ -3426,6 +3460,8 @@ impl Store {
     #[async_generic]
     fn fetch_remote_manifest(url: &str, context: &Context) -> Result<Vec<u8>> {
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
+
+        context.check_progress(ProgressPhase::FetchingRemoteManifest, 1, 1)?;
 
         let request = http::Request::get(url).body(Vec::new())?;
         let response = if _sync {
