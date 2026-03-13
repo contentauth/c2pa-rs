@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.78.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.1...c2pa-c-ffi-v0.78.2)
+_12 March 2026_
+
+### Fixed
+
+* Windows Build flags ([#1930](https://github.com/contentauth/c2pa-rs/pull/1930))
+
+## [0.78.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.0...c2pa-c-ffi-v0.78.1)
+_12 March 2026_
+
+## [0.78.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.77.1...c2pa-c-ffi-v0.78.0)
+_11 March 2026_
+
+### Added
+
+* Emscripten ([#1886](https://github.com/contentauth/c2pa-rs/pull/1886))
+
+### Fixed
+
+* Merkle api integration ([#1902](https://github.com/contentauth/c2pa-rs/pull/1902))
+* X86_64 Linux CI build failure ([#1906](https://github.com/contentauth/c2pa-rs/pull/1906))
+
+## [0.77.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.77.0...c2pa-c-ffi-v0.77.1)
+_10 March 2026_
+
+### Fixed
+
+* Add API to read manifest bytes using reader+context ([#1904](https://github.com/contentauth/c2pa-rs/pull/1904))
+* Return -1 on settings failure ([#1905](https://github.com/contentauth/c2pa-rs/pull/1905))
+
 ## [0.77.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.76.2...c2pa-c-ffi-v0.77.0)
 _04 March 2026_
 
