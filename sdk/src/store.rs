@@ -3187,7 +3187,9 @@ impl Store {
         // input_stream can be read directly as the BMFF source, saving one full-file
         // read + write pass (can be several GB for large video assets).
         let is_bmff = is_bmff_format(format);
-        let bmff_fast_path = is_bmff && url.is_none() && !remove_manifests;
+        // fast_path applies to all formats: when there is no XMP embed and no manifest removal,
+        // we can pass input_stream directly to the write/hash steps, skipping one full-file copy.
+        let fast_path = url.is_none() && !remove_manifests;
 
         // Do not assume the handler supports XMP or removing manifests unless we need it to
         if let Some(url) = url {
@@ -3224,19 +3226,19 @@ impl Store {
                 .ok_or(Error::UnsupportedType)?;
 
             manifest_writer.remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
-        } else if !bmff_fast_path {
-            // Non-BMFF (or BMFF requiring XMP/manifest-removal, handled above):
-            // copy to intermediate so DataHash ranges can be computed against the
-            // unmodified asset before JUMBF insertion.
-            // For the BMFF normal case (bmff_fast_path = true), we skip this copy
-            // and read input_stream directly, saving one full-file read+write pass.
+        } else if !fast_path {
+            // XMP or manifest-removal was NOT the trigger — but fast_path is false,
+            // which can only happen if remove_manifests is true (already handled above).
+            // This branch is a safety net; in practice it should be unreachable here.
             input_stream.rewind()?;
             std::io::copy(input_stream, &mut intermediate_stream)?;
         }
 
         // `source_is_intermediate` tracks whether intermediate_stream (true) or
-        // input_stream (false) should be used as the BMFF source for this call.
-        let mut source_is_intermediate = !bmff_fast_path;
+        // input_stream (false) should be used as the asset source for this call.
+        // When fast_path is true we skip the intermediate copy for ALL formats, not
+        // just BMFF, saving one full-file read+write pass.
+        let mut source_is_intermediate = !fast_path;
 
         let mut data;
         let jumbf_size;
@@ -3306,19 +3308,14 @@ impl Store {
             if !remove_manifests {
                 if source_is_intermediate {
                     intermediate_stream.rewind()?;
-                    save_jumbf_to_stream(
-                        format,
-                        &mut intermediate_stream,
-                        output_stream,
-                        &data,
-                    )?;
+                    save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
                 } else {
                     input_stream.rewind()?;
                     save_jumbf_to_stream(format, input_stream, output_stream, &data)?;
                 }
             } else {
                 // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
-                // remove_manifests → bmff_fast_path is false → source_is_intermediate is true
+                // remove_manifests → fast_path is false → source_is_intermediate is true
                 intermediate_stream.rewind()?;
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }
@@ -3341,14 +3338,26 @@ impl Store {
             // we will not do automatic hashing if we detect a box hash present
             let mut needs_hashing = false;
             if pc.hash_assertions().is_empty() {
-                // 2) Get hash ranges if needed, do not generate for update manifests
-                let mut hash_ranges =
-                    object_locations_from_stream(format, &mut intermediate_stream)?;
+                // 2) Get hash ranges if needed, do not generate for update manifests.
+                // When fast_path is true, source_is_intermediate is false and we read
+                // input_stream directly, skipping the intermediate copy pass.
+                let mut hash_ranges = if source_is_intermediate {
+                    object_locations_from_stream(format, &mut intermediate_stream)?
+                } else {
+                    object_locations_from_stream(format, input_stream)?
+                };
                 let hashes: Vec<DataHash> = if pc.update_manifest() {
                     Vec::new()
-                } else {
+                } else if source_is_intermediate {
                     Store::generate_data_hashes_for_stream(
                         &mut intermediate_stream,
+                        pc.alg(),
+                        &mut hash_ranges,
+                        false,
+                    )?
+                } else {
+                    Store::generate_data_hashes_for_stream(
+                        input_stream,
                         pc.alg(),
                         &mut hash_ranges,
                         false,
@@ -3372,10 +3381,16 @@ impl Store {
 
             // write the jumbf to the output stream if we are embedding the manifest
             if !remove_manifests {
-                intermediate_stream.rewind()?;
-                save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                if source_is_intermediate {
+                    intermediate_stream.rewind()?;
+                    save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                } else {
+                    input_stream.rewind()?;
+                    save_jumbf_to_stream(format, input_stream, output_stream, &data)?;
+                }
             } else {
-                // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
+                // just copy the asset to the output stream without an embedded manifest
+                // remove_manifests → fast_path is false → source_is_intermediate is true
                 intermediate_stream.rewind()?;
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }

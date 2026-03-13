@@ -783,21 +783,35 @@ fn main() -> Result<()> {
             builder.set_no_embed(true);
         }
 
-        let signer = if let Some(signer_process_name) = args.signer_path {
-            let cb_config = CallbackSignerConfig::new(&sign_config, args.reserve_size)?;
+        // Anchor any owned signers here so borrows below remain valid for the
+        // entire signing block. Exactly one of these will be populated per branch.
+        let _callback_signer_box: Option<Box<dyn Signer>>;
+        let _fallback_signer_box: Option<Box<dyn Signer>>;
 
+        let signer: &dyn Signer = if let Some(signer_process_name) = args.signer_path {
+            let cb_config = CallbackSignerConfig::new(&sign_config, args.reserve_size)?;
             let process_runner = Box::new(ExternalProcessRunner::new(
                 cb_config.clone(),
                 signer_process_name,
             ));
-            let signer = CallbackSigner::new(process_runner, cb_config);
-
-            Box::new(signer)
+            _callback_signer_box = Some(Box::new(CallbackSigner::new(process_runner, cb_config)));
+            _fallback_signer_box = None;
+            _callback_signer_box.as_deref().unwrap()
         } else {
-            match Settings::signer() {
-                Ok(signer) => signer,
-                Err(Error::MissingSignerSettings) => sign_config.signer()?,
-                Err(err) => Err(err)?,
+            _callback_signer_box = None;
+            // Use the context signer so that cawg_x509_signer from settings is
+            // correctly applied (Settings::signer() reads thread-local which is
+            // not populated by the builder-pattern Context::with_settings path).
+            match ctx.signer() {
+                Ok(signer) => {
+                    _fallback_signer_box = None;
+                    signer
+                }
+                Err(Error::MissingSignerSettings) => {
+                    _fallback_signer_box = Some(sign_config.signer()?);
+                    _fallback_signer_box.as_deref().unwrap()
+                }
+                Err(err) => return Err(err.into()),
             }
         };
 
@@ -809,7 +823,7 @@ fn main() -> Result<()> {
                 }
 
                 if let Some(fg) = &fragments_glob {
-                    return sign_fragmented(&mut builder, signer.as_ref(), &args.path, fg, &output);
+                    return sign_fragmented(&mut builder, signer, &args.path, fg, &output);
                 } else {
                     bail!("fragments_glob must be set");
                 }
@@ -833,7 +847,7 @@ fn main() -> Result<()> {
 
                 let manifest_data = if args.path != output {
                     builder
-                        .sign_file(signer.as_ref(), &args.path, &output)
+                        .sign_file(signer, &args.path, &output)
                         .context("embedding manifest")?
                 } else {
                     let mut file = NamedTempFile::new()?;
@@ -844,8 +858,7 @@ fn main() -> Result<()> {
                             builder.definition.title = Some(title.to_string_lossy().to_string());
                         }
                     }
-                    let manifest_data =
-                        builder.sign(signer.as_ref(), &format, &mut source, &mut file)?;
+                    let manifest_data = builder.sign(signer, &format, &mut source, &mut file)?;
 
                     if !output.exists() {
                         // ensure the path to the file exists
