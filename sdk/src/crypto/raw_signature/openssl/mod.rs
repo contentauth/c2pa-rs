@@ -18,7 +18,7 @@
 //!
 //! [`openssl` native code library]: https://crates.io/crates/openssl
 
-mod cert_chain;
+pub(super) mod cert_chain;
 
 mod ffi_mutex;
 pub(crate) use ffi_mutex::{OpenSslMutex, OpenSslMutexUnavailable};

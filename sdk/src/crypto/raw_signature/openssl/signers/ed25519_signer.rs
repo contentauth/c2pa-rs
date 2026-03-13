@@ -14,13 +14,12 @@
 use openssl::{
     pkey::{PKey, Private},
     sign::Signer,
-    x509::X509,
 };
 
 use crate::crypto::{
     raw_signature::{
         openssl::{
-            cert_chain::{cert_chain_to_der, check_chain_order},
+            cert_chain::parse_and_check_chain_order,
             OpenSslMutex,
         },
         RawSigner, RawSignerError, SigningAlg,
@@ -46,18 +45,9 @@ impl Ed25519Signer {
         private_key: &[u8],
         time_stamp_service_url: Option<String>,
     ) -> Result<Self, RawSignerError> {
-        let _openssl = OpenSslMutex::acquire()?;
 
-        let cert_chain = X509::stack_from_pem(cert_chain)?;
-
-        if !check_chain_order(&cert_chain) {
-            return Err(RawSignerError::InvalidSigningCredentials(
-                "certificate chain in incorrect order".to_string(),
-            ));
-        }
-
-        // certs in DER format
-        let cert_chain = cert_chain_to_der(&cert_chain)?;
+        //get validly ordered certs in DER format
+        let cert_chain = parse_and_check_chain_order(cert_chain)?;
 
         // get the actual length of the certificate chain
         let cert_chain_len = cert_chain.iter().fold(0usize, |sum, c| sum + c.len());

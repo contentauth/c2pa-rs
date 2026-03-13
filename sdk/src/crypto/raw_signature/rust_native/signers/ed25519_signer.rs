@@ -18,6 +18,7 @@ use crate::crypto::{
     raw_signature::{RawSigner, RawSignerError, SigningAlg},
     time_stamp::TimeStampProvider,
 };
+use crate::crypto::raw_signature::rust_native::cert_chain::cert_chain_to_der;
 
 /// Implements `RawSigner` trait using `ed25519_dalek` crate's implementation of
 /// Edwards Curve encryption.
@@ -38,14 +39,7 @@ impl Ed25519Signer {
         private_key: &[u8],
         time_stamp_service_url: Option<String>,
     ) -> Result<Self, RawSignerError> {
-        let cert_chain = Pem::iter_from_buffer(cert_chain)
-            .map(|r| match r {
-                Ok(pem) => Ok(pem.contents),
-                Err(e) => Err(e),
-            })
-            .collect::<Result<Vec<Vec<u8>>, PEMError>>()
-            .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
-
+        let cert_chain =  cert_chain_to_der(cert_chain)?;
         let cert_chain_len = cert_chain.iter().fold(0usize, |sum, c| sum + c.len());
 
         let private_key_pem = std::str::from_utf8(private_key).map_err(|e| {

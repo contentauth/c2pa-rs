@@ -23,3 +23,4 @@
 pub(crate) mod check_certificate_trust;
 pub(crate) mod signers;
 pub(crate) mod validators;
+pub(super) mod cert_chain;

@@ -1,14 +1,22 @@
+// Copyright 2022 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
 use http::Request;
-use openssl::x509::X509;
 use url::Url;
 
 use crate::{
     crypto::{
         raw_signature::{
-            openssl::{
-                cert_chain::{cert_chain_to_der, check_chain_order},
-                OpenSslMutex,
-            },
             RawSigner, RawSignerError,
         },
         time_stamp::TimeStampProvider,
@@ -16,7 +24,7 @@ use crate::{
     http::{SyncGenericResolver, SyncHttpResolver},
     Error, SigningAlg,
 };
-
+use crate::crypto::raw_signature::remote::cert_chain::parse_and_check_chain_order;
 // ============================================================================
 // Remote Raw Signer for CAWG Identity
 // ============================================================================
@@ -48,17 +56,8 @@ impl RemoteRawSigner {
         alg: SigningAlg,
         time_stamp_service_url: Option<String>,
     ) -> Result<Self, RawSignerError> {
-        let _openssl = OpenSslMutex::acquire()?;
-
-        let cert_chain = X509::stack_from_pem(cert_chain)?;
-
-        if !check_chain_order(&cert_chain) {
-            return Err(RawSignerError::InvalidSigningCredentials(
-                "certificate chain in incorrect order".to_string(),
-            ));
-        }
-
-        let cert_chain = cert_chain_to_der(&cert_chain)?;
+        // get validly ordered certificate in DER format
+        let cert_chain = parse_and_check_chain_order(cert_chain)?;
 
         let cert_chain_len = cert_chain.iter().fold(0usize, |sum, c| sum + c.len());
 
@@ -102,8 +101,20 @@ impl RawSigner for RemoteRawSigner {
     }
 
     fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
-        let _openssl = OpenSslMutex::acquire()?;
-        Ok(self.cert_chain.clone())
+        #[cfg(all(
+            feature = "openssl",
+            not(any(feature = "rust_native_crypto", target_arch = "wasm32"))
+        ))]
+         {
+            use crate::crypto::raw_signature::openssl::OpenSslMutex;
+            let _openssl = OpenSslMutex::acquire()?;
+             Ok(self.cert_chain.clone())
+        }
+
+        #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
+        {
+            Ok(self.cert_chain.clone())
+        }
     }
 
     fn reserve_size(&self) -> usize {

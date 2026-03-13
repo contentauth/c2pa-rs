@@ -14,6 +14,27 @@
 use openssl::x509::X509;
 
 use crate::crypto::raw_signature::RawSignerError;
+use crate::crypto::raw_signature::openssl::OpenSslMutex;
+
+/// Verifies the order of a X509 certificate chain and converts it to DER format.
+///
+/// # Arguments
+/// * `cert_chain` - A chain of PEM X509 certificates
+///
+/// # Returns
+/// A Result containing a valid ordered Vec of DER-encoded certificates or error
+pub(crate) fn parse_and_check_chain_order(cert_chain: &[u8]) -> Result<Vec<Vec<u8>>, RawSignerError>{
+    let _openssl = OpenSslMutex::acquire()?;
+
+    let cert_chain = X509::stack_from_pem(cert_chain)?;
+
+    if !check_chain_order(&cert_chain) {
+        return Err(RawSignerError::InvalidSigningCredentials(
+            "certificate chain in incorrect order".to_string(),
+        ));
+    }
+    cert_chain_to_der(&cert_chain)
+}
 
 /// Converts an X509 certificate stack to DER format.
 ///
