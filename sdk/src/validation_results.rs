@@ -217,10 +217,10 @@ impl ValidationResults {
                         })
                 })
             });
-            let ingredients_trusted = self.ingredient_deltas.as_ref().map_or(true, |deltas| {
-                deltas.iter().all(|idv| {
-                    idv.validation_deltas().success().iter().any(|status| {
-                        status.code() == validation_status::SIGNING_CREDENTIAL_TRUSTED
+            let ingredients_trusted = !self.ingredient_deltas.as_ref().is_some_and(|deltas| {
+                deltas.iter().any(|idv| {
+                    idv.validation_deltas().failure().iter().any(|status| {
+                        status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
                     })
                 })
             });
