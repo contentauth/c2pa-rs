@@ -270,8 +270,7 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::io::Cursor;
-    use std::path::Path;
+    use std::{io::Cursor, path::Path};
 
     use super::*;
     use crate::{

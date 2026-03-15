@@ -372,8 +372,8 @@ pub mod tests {
     fn test_read_cai_store_no_id3() {
         let mp3_io = Mp3IO::new("mp3");
         // Minimal MPEG frame sync: first 11 bits set (0xFF 0xE0 …).
-        let mpeg_stream: Vec<u8> = std::iter::once(0xFF_u8)
-            .chain(std::iter::once(0xE0_u8))
+        let mpeg_stream: Vec<u8> = std::iter::once(0xff_u8)
+            .chain(std::iter::once(0xe0_u8))
             .chain(std::iter::repeat_n(0, 20))
             .collect();
         let mut cursor = Cursor::new(mpeg_stream);

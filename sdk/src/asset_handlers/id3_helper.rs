@@ -395,7 +395,10 @@ pub(crate) mod test_helpers {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::{io::Cursor, io::Seek, path::Path};
+    use std::{
+        io::{Cursor, Seek},
+        path::Path,
+    };
 
     use id3::{
         frame::{Content, EncapsulatedObject},
