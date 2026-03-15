@@ -374,7 +374,7 @@ pub mod tests {
         // Minimal MPEG frame sync: first 11 bits set (0xFF 0xE0 …).
         let mpeg_stream: Vec<u8> = std::iter::once(0xFF_u8)
             .chain(std::iter::once(0xE0_u8))
-            .chain(std::iter::repeat(0).take(20))
+            .chain(std::iter::repeat_n(0, 20))
             .collect();
         let mut cursor = Cursor::new(mpeg_stream);
         match mp3_io.read_cai(&mut cursor) {

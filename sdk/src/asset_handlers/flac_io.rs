@@ -142,9 +142,7 @@ impl CAIReader for FlacIO {
         // XMP is only present when there is an ID3 tag.
         input_stream.rewind().ok()?;
         let header = read_header(input_stream).ok()?;
-        if header.is_none() {
-            return None;
-        }
+        header.as_ref()?;
         id3_helper::read_xmp_from_id3(input_stream)
     }
 }
