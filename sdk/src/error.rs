@@ -19,8 +19,9 @@ use thiserror::Error;
 use crate::asset_handlers::pdf_io::PdfError;
 use crate::{
     asset_handlers::{
-        bmff_io::BmffError, gif_io::GifError, jpeg_io::JpegError, mp3_io::Mp3Error,
-        png_io::PngError, riff_io::RiffError, svg_io::SvgError, tiff_io::TiffError,
+        bmff_io::BmffError, flac_io::FlacError, gif_io::GifError, jpeg_io::JpegError,
+        mp3_io::Mp3Error, png_io::PngError, riff_io::RiffError, svg_io::SvgError,
+        tiff_io::TiffError,
     },
     crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
     http::HttpResolverError,
@@ -394,6 +395,9 @@ pub enum Error {
 
     #[error("error parsing MP3: {0}")]
     Mp3Error(#[from] Mp3Error),
+
+    #[error("error parsing FLAC: {0}")]
+    FlacError(#[from] FlacError),
 
     #[cfg(feature = "pdf")]
     #[error("error parsing PDF: {0}")]
