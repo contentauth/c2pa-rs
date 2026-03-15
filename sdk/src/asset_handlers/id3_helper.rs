@@ -315,8 +315,7 @@ pub(crate) fn patch_cai_in_id3_asset(asset_path: &Path, store_bytes: &[u8]) -> R
         .read(true)
         .create(false)
         .open(asset_path)?;
-    let (manifest_pos, manifest_len) =
-        get_manifest_pos(&mut asset).ok_or(Error::EmbeddingError)?;
+    let (manifest_pos, manifest_len) = get_manifest_pos(&mut asset).ok_or(Error::EmbeddingError)?;
     if store_bytes.len() == manifest_len as usize {
         asset.seek(SeekFrom::Start(manifest_pos))?;
         asset.write_all(store_bytes)?;
@@ -353,7 +352,10 @@ pub(crate) fn embed_xmp_reference(
 }
 
 /// Reads the CAI store from a file on disk via a [`CAIReader`].
-pub(crate) fn read_cai_store_from_path(reader: &dyn CAIReader, asset_path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read_cai_store_from_path(
+    reader: &dyn CAIReader,
+    asset_path: &Path,
+) -> Result<Vec<u8>> {
     let mut f = File::open(asset_path)?;
     reader.read_cai(&mut f)
 }
@@ -443,7 +445,10 @@ pub(crate) mod test_helpers {
         let mut cursor = Cursor::new(buf);
         match handler.get_reader().read_cai(&mut cursor) {
             Err(Error::UnsupportedType) => {}
-            other => panic!("expected UnsupportedType for unknown magic, got {:?}", other),
+            other => panic!(
+                "expected UnsupportedType for unknown magic, got {:?}",
+                other
+            ),
         }
     }
 
@@ -533,7 +538,8 @@ pub(crate) mod test_helpers {
             .unwrap()
             .patch_cai_store(tmp, b"wrong length")
         {
-            Err(Error::InvalidAsset(msg)) if msg.contains("patch_cai_store store size mismatch") => {}
+            Err(Error::InvalidAsset(msg))
+                if msg.contains("patch_cai_store store size mismatch") => {}
             other => panic!("expected InvalidAsset(size mismatch), got {:?}", other),
         }
     }
@@ -586,8 +592,13 @@ pub(crate) mod test_helpers {
         assert_eq!(positions.len(), 3, "expected [Cai, Other, Other]");
         let file_len = std::fs::metadata(tmp).unwrap().len() as usize;
         let sum_len: usize = positions.iter().map(|p| p.length).sum();
-        assert_eq!(sum_len, file_len, "position lengths should sum to file size");
-        assert!(positions.iter().any(|p| p.htype == HashBlockObjectType::Cai));
+        assert_eq!(
+            sum_len, file_len,
+            "position lengths should sum to file size"
+        );
+        assert!(positions
+            .iter()
+            .any(|p| p.htype == HashBlockObjectType::Cai));
         assert!(positions
             .iter()
             .any(|p| p.htype == HashBlockObjectType::Other && p.offset == 0));
@@ -662,7 +673,11 @@ pub(crate) mod test_helpers {
         assert!(vec_compare(payload, &read));
     }
 
-    pub(crate) fn run_supported_types(handler: &dyn AssetIO, expected_ext: &str, expected_mime: &str) {
+    pub(crate) fn run_supported_types(
+        handler: &dyn AssetIO,
+        expected_ext: &str,
+        expected_mime: &str,
+    ) {
         let types = handler.supported_types();
         assert!(types.contains(&expected_ext));
         assert!(types.contains(&expected_mime));
@@ -677,7 +692,10 @@ pub(crate) mod test_helpers {
     ) {
         std::fs::copy(fixture, tmp).unwrap();
         embed
-            .embed_reference(tmp, RemoteRefEmbedType::Xmp("https://example.com/ref".to_string()))
+            .embed_reference(
+                tmp,
+                RemoteRefEmbedType::Xmp("https://example.com/ref".to_string()),
+            )
             .unwrap();
         let mut f = std::fs::File::open(tmp).unwrap();
         let xmp = handler.get_reader().read_xmp(&mut f).expect("xmp present");

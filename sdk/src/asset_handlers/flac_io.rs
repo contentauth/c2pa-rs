@@ -22,7 +22,7 @@ use metaflac::Tag as FlacTag;
 use crate::{
     asset_handlers::id3_helper::{self, ID3V2Header},
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReadWrapper, CAIReader, CAIWriter,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReader, CAIWriter,
         HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
