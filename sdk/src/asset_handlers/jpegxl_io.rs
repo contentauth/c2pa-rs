@@ -31,11 +31,11 @@
 
 use std::{
     fs::File,
-    io::{Cursor, SeekFrom, Write},
+    io::{Cursor, SeekFrom},
     path::Path,
 };
 
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{BigEndian, ReadBytesExt};
 use serde_bytes::ByteBuf;
 
 use crate::{
@@ -352,25 +352,18 @@ fn build_box(box_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
     let total_size = BOX_HEADER_SIZE as usize + data.len();
     if total_size <= u32::MAX as usize {
         let mut buf = Vec::with_capacity(total_size);
-        buf.write_u32::<BigEndian>(total_size as u32)
-            .expect("infallible: Vec write cannot fail");
-        buf.write_all(box_type)
-            .expect("infallible: Vec write cannot fail");
-        buf.write_all(data)
-            .expect("infallible: Vec write cannot fail");
+        buf.extend_from_slice(&(total_size as u32).to_be_bytes()); // big-endian size
+        buf.extend_from_slice(box_type);
+        buf.extend_from_slice(data);
         buf
     } else {
-        // Use large box format
+        // Use large box format (ISO/IEC 14496-12: size=1 signals an 8-byte largesize field)
         let total_large = BOX_HEADER_SIZE_LARGE as usize + data.len();
         let mut buf = Vec::with_capacity(total_large);
-        buf.write_u32::<BigEndian>(1)
-            .expect("infallible: Vec write cannot fail"); // size=1 signals extended size
-        buf.write_all(box_type)
-            .expect("infallible: Vec write cannot fail");
-        buf.write_u64::<BigEndian>(total_large as u64)
-            .expect("infallible: Vec write cannot fail");
-        buf.write_all(data)
-            .expect("infallible: Vec write cannot fail");
+        buf.extend_from_slice(&1u32.to_be_bytes()); // size=1 signals extended size
+        buf.extend_from_slice(box_type);
+        buf.extend_from_slice(&(total_large as u64).to_be_bytes()); // big-endian largesize
+        buf.extend_from_slice(data);
         buf
     }
 }
@@ -836,7 +829,7 @@ fn build_jxl_with_xmp(xmp_data: &str) -> Vec<u8> {
 
 /// Builds a JPEG XL container with a `brob`-wrapped `jumb` box.
 #[cfg(test)]
-fn build_jxl_with_brob_jumb(manifest_data: &[u8]) -> Vec<u8> {
+fn build_jxl_with_brob_jumb(manifest_data: &[u8]) -> Result<Vec<u8>> {
     let ftyp_data = b"jxl \0\0\0\0jxl ";
     let ftyp_box = build_box(&BOX_FTYP, ftyp_data);
 
@@ -845,7 +838,7 @@ fn build_jxl_with_brob_jumb(manifest_data: &[u8]) -> Vec<u8> {
     {
         let params = brotli::enc::BrotliEncoderParams::default();
         brotli::BrotliCompress(&mut Cursor::new(manifest_data), &mut compressed, &params)
-            .expect("brotli compression failed");
+            .map_err(Error::IoError)?;
     }
 
     // brob payload = original_type(4) + compressed_data
@@ -862,12 +855,12 @@ fn build_jxl_with_brob_jumb(manifest_data: &[u8]) -> Vec<u8> {
     container.extend_from_slice(&ftyp_box);
     container.extend_from_slice(&brob_box);
     container.extend_from_slice(&jxlc_box);
-    container
+    Ok(container)
 }
 
 /// Builds a JPEG XL container with a `brob`-wrapped `xml ` box.
 #[cfg(test)]
-fn build_jxl_with_brob_xmp(xmp_data: &str) -> Vec<u8> {
+fn build_jxl_with_brob_xmp(xmp_data: &str) -> Result<Vec<u8>> {
     let ftyp_data = b"jxl \0\0\0\0jxl ";
     let ftyp_box = build_box(&BOX_FTYP, ftyp_data);
 
@@ -879,7 +872,7 @@ fn build_jxl_with_brob_xmp(xmp_data: &str) -> Vec<u8> {
             &mut compressed,
             &params,
         )
-        .expect("brotli compression failed");
+        .map_err(Error::IoError)?;
     }
 
     let mut brob_payload = Vec::new();
@@ -895,7 +888,7 @@ fn build_jxl_with_brob_xmp(xmp_data: &str) -> Vec<u8> {
     container.extend_from_slice(&ftyp_box);
     container.extend_from_slice(&brob_box);
     container.extend_from_slice(&jxlc_box);
-    container
+    Ok(container)
 }
 
 #[cfg(test)]
@@ -903,6 +896,8 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use std::io::{Read, Seek};
+
+    use byteorder::WriteBytesExt;
 
     use super::*;
     use crate::utils::io_utils::tempdirectory;
@@ -1221,24 +1216,25 @@ pub mod tests {
     }
 
     #[test]
-    fn test_read_xmp_from_brob_wrapped_xml() {
+    fn test_read_xmp_from_brob_wrapped_xml() -> Result<()> {
         let xmp_content = "<x:xmpmeta>brob-wrapped xmp content</x:xmpmeta>";
-        let container = build_jxl_with_brob_xmp(xmp_content);
+        let container = build_jxl_with_brob_xmp(xmp_content)?;
         let mut cursor = Cursor::new(&container);
 
         let jpegxl_io = JpegXlIO {};
         let xmp = jpegxl_io.read_xmp(&mut cursor);
         assert_eq!(xmp.unwrap(), xmp_content);
+        Ok(())
     }
 
     // ─── brob (Brotli-compressed) box tests ───
 
     #[test]
-    fn test_brob_wrapped_jumb_not_supported() {
+    fn test_brob_wrapped_jumb_not_supported() -> Result<()> {
         // brob-wrapped jumb is intentionally not supported because compressed
         // manifests are incompatible with box-based hashing (C2PA Guidance §3.2.4).
         let manifest_data = b"brob_compressed_manifest_store";
-        let container = build_jxl_with_brob_jumb(manifest_data);
+        let container = build_jxl_with_brob_jumb(manifest_data)?;
         let mut cursor = Cursor::new(&container);
 
         let jpegxl_io = JpegXlIO {};
@@ -1247,6 +1243,7 @@ pub mod tests {
             matches!(result, Err(Error::JumbfNotFound)),
             "brob-wrapped jumb should not be read as a C2PA manifest"
         );
+        Ok(())
     }
 
     #[test]
@@ -1275,11 +1272,11 @@ pub mod tests {
     }
 
     #[test]
-    fn test_remove_preserves_brob_wrapped_jumb() {
+    fn test_remove_preserves_brob_wrapped_jumb() -> Result<()> {
         // brob-wrapped jumb is treated as opaque data, so remove_cai_store
         // should NOT remove it (it's not recognized as a C2PA manifest).
         let manifest_data = b"manifest_to_remove";
-        let container = build_jxl_with_brob_jumb(manifest_data);
+        let container = build_jxl_with_brob_jumb(manifest_data)?;
         let original_len = container.len();
         let mut input = Cursor::new(&container);
         let mut output = Cursor::new(Vec::new());
@@ -1301,6 +1298,7 @@ pub mod tests {
             original_len,
             "output should be same size since nothing was removed"
         );
+        Ok(())
     }
 
     // ─── Object locations (hash positions) tests ───
@@ -1428,11 +1426,11 @@ pub mod tests {
     }
 
     #[test]
-    fn test_box_map_brob_jumb_not_marked_as_c2pa() {
+    fn test_box_map_brob_jumb_not_marked_as_c2pa() -> Result<()> {
         // brob-wrapped jumb is treated as opaque data for hashing, so it should
         // NOT be marked as C2PA_BOXHASH in the box map.
         let manifest_data = b"brob_wrapped_manifest";
-        let container = build_jxl_with_brob_jumb(manifest_data);
+        let container = build_jxl_with_brob_jumb(manifest_data)?;
         let mut cursor = Cursor::new(&container);
 
         let jpegxl_io = JpegXlIO {};
@@ -1455,6 +1453,7 @@ pub mod tests {
             1,
             "brob box should appear as opaque data"
         );
+        Ok(())
     }
 
     // ─── Remote reference (XMP embedding) tests ───
@@ -1502,11 +1501,11 @@ pub mod tests {
     }
 
     #[test]
-    fn test_embed_xmp_preserves_compression() {
+    fn test_embed_xmp_preserves_compression() -> Result<()> {
         // Source file has brob-compressed XMP; the write path must write it back
         // compressed so the file format is round-tripped faithfully.
         let original_xmp = MIN_XMP;
-        let container = build_jxl_with_brob_xmp(original_xmp);
+        let container = build_jxl_with_brob_xmp(original_xmp)?;
         let mut input = Cursor::new(container);
         let mut output = Cursor::new(Vec::new());
 
@@ -1539,6 +1538,7 @@ pub mod tests {
             xmp.contains("https://example.com/brob-preserved"),
             "updated provenance URI should be readable from the compressed box"
         );
+        Ok(())
     }
 
     #[test]
