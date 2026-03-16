@@ -3046,6 +3046,7 @@ impl Store {
             &mut intermediate_stream,
             signer.reserve_size(),
             settings,
+            context,
         )?;
 
         context.check_progress(ProgressPhase::Hashing, 1, 1)?;
@@ -3164,6 +3165,7 @@ impl Store {
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
         settings: &Settings,
+        context: &Context,
     ) -> Result<Vec<u8>> {
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
@@ -3282,6 +3284,9 @@ impl Store {
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }
 
+            // Signal that the write pass is done; hash readback begins next.
+            context.check_progress(ProgressPhase::Writing, 1, 1)?;
+
             // generate actual hash values
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
 
@@ -3338,6 +3343,12 @@ impl Store {
                 intermediate_stream.rewind()?;
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }
+
+            // Signal that the asset write pass is complete, before the hash
+            // readback pass begins.  This separates "Writing" (streaming
+            // input → output with placeholder JUMBF) from "Hashing" (reading
+            // output to compute the final content-hash binding).
+            context.check_progress(ProgressPhase::Writing, 1, 1)?;
 
             // 4)  determine final object locations and patch the asset hashes with correct offset
             // replace the source with correct asset hashes so that the claim hash will be correct
