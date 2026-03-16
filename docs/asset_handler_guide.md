@@ -188,10 +188,12 @@ pub trait ComposedManifestRef {
 }
 ```
 
-Wraps raw manifest bytes into the format-specific container structure. For example:
+Wraps raw manifest store bytes into the format-specific container structure. For example:
 - **JPEG**: Wraps into multi-segment APP11 data with JPEG XT headers
-- **JPEG XL**: Wraps into a single ISOBMFF `jumb` box
+- **JPEG XL**: Wraps into a single ISOBMFF `jumb` superbox containing the C2PA manifest store
 - **PNG**: Wraps into a `caBX` chunk with CRC
+
+> **Note:** `ComposedManifestRef` is only used by the embeddable manifest API to provide a composed manifest ready for direct insertion into an asset. When composed manifests are used, the asset handler is **not** performing the manifest embedding.
 
 ---
 
@@ -203,7 +205,7 @@ Adding a new handler requires touching exactly **4 files**:
 |------|------|------------|
 | 1 | `sdk/src/asset_handlers/mod.rs` | Add `pub mod your_format_io;` |
 | 2 | `sdk/src/jumbf_io.rs` (imports) | Add `use crate::asset_handlers::your_format_io::YourFormatIO;` |
-| 3 | `sdk/src/jumbf_io.rs` (registration) | Add `Box::new(YourFormatIO::new(""))` to both `CAI_READERS` and `CAI_WRITERS` lazy_static blocks |
+| 3 | `sdk/src/jumbf_io.rs` (registration) | Add `Box::new(YourFormatIO::new(""))` to both `CAI_READERS` and, if supported, `CAI_WRITERS` lazy_static blocks |
 | 4 | `sdk/src/jumbf_io.rs` (tests) | Add handler to `test_get_assetio`, `test_get_reader`, `test_get_writer`; add extension to `test_get_supported_list`; add a `test_streams_yourformat` integration test |
 | 5 | `docs/supported-formats.md` | Add to the supported formats table |
 
@@ -245,7 +247,7 @@ pub struct HashObjectPositions {
 
 The box map entries must:
 
-- **Cover the entire file** — sum of all `range_len` values equals file length
+- **Cover the contents of all boxes present in the file** — all boxes must be represented in the list
 - **Be ordered by offset** — ascending `range_start`
 - **Be non-overlapping** — no two entries share byte ranges
 - **Label the C2PA manifest entry** with the constant name `C2PA_BOXHASH` (value: `"C2PA"`)
@@ -273,6 +275,8 @@ All traits require `Sync + Send`. Handlers must be **stateless structs** with no
 | `Error::EmbeddingError` | Failed to embed manifest into the asset |
 | `Error::IoError(io::Error)` | Underlying I/O failure |
 
+> **Note:** Handlers may also return format-specific errors to provide more detailed diagnostics.
+
 ---
 
 ## 5. Trait Implementation Matrix
@@ -295,9 +299,8 @@ All traits require `Sync + Send`. Handlers must be **stateless structs** with no
 
 - `CAIReader` + `AssetIO` are implemented by **every** handler (minimum requirement)
 - `CAIWriter` is implemented by everything except PDF (which is currently read-only)
-- `AssetBoxHash` + `ComposedManifestRef` tend to go together (both are needed for box-hash based signing)
 - `AssetPatch` is a performance optimization — formats that support it can update manifests in-place
-- BMFF has its own box hash mechanism separate from `AssetBoxHash` (BMFF-specific merkle hashing)
+- All traits are independent; which ones to implement is determined by the format's capabilities as defined by the C2PA specification
 
 ---
 
@@ -317,10 +320,10 @@ Verifies the full round-trip:
 
 ### `test_remote_ref(asset_type, reader)`
 
-Verifies remote reference embedding:
+Verifies remote reference embedding (only applicable if the handler supports `RemoteRefEmbed`):
 1. Get the `RemoteRefEmbed` from the handler
-2. Embed an XMP remote URL into the asset
-3. Read XMP back from the output
+2. Embed an XMP remote URL into the asset if supported
+3. Read XMP back from the output if supported
 4. Extract provenance URL from the XMP
 5. Assert it matches the original URL
 
