@@ -55,15 +55,15 @@ use crate::{
 // JPEG XL container signature (ISO/IEC 18181-2:2024, Clause 4.1)
 // This is itself a box: size=12, type='JXL ' (0x4A584C20), payload=0x0D0A870A
 const JXL_CONTAINER_MAGIC: [u8; 12] = [
-    0x00, 0x00, 0x00, 0x0C, // size = 12
-    0x4A, 0x58, 0x4C, 0x20, // type = 'JXL '
-    0x0D, 0x0A, 0x87, 0x0A, // magic payload
+    0x00, 0x00, 0x00, 0x0c, // size = 12
+    0x4a, 0x58, 0x4c, 0x20, // type = 'JXL '
+    0x0d, 0x0a, 0x87, 0x0a, // magic payload
 ];
 
 const JXL_CONTAINER_MAGIC_LEN: u64 = 12;
 
 // Naked codestream signature - cannot embed C2PA manifests
-const JXL_CODESTREAM_SIG: [u8; 2] = [0xFF, 0x0A];
+const JXL_CODESTREAM_SIG: [u8; 2] = [0xff, 0x0a];
 
 // Box type FourCCs (big-endian u32)
 const BOX_JUMB: [u8; 4] = *b"jumb"; // JUMBF superbox (C2PA manifest store)
@@ -206,7 +206,9 @@ fn parse_all_boxes(reader: &mut dyn CAIRead) -> Result<Vec<JxlBoxInfo>> {
 /// The reader should be positioned at the start of the brob box's data area.
 fn decompress_brob(reader: &mut dyn CAIRead, data_size: u64) -> Result<([u8; 4], Vec<u8>)> {
     let mut original_type = [0u8; 4];
-    reader.read_exact(&mut original_type).map_err(Error::IoError)?;
+    reader
+        .read_exact(&mut original_type)
+        .map_err(Error::IoError)?;
 
     let compressed_size = data_size.saturating_sub(4);
     let mut compressed = vec![0u8; compressed_size as usize];
@@ -363,7 +365,9 @@ fn remove_jumb_boxes(reader: &mut dyn CAIRead, writer: &mut dyn CAIReadWrite) ->
     let file_len = reader.seek(SeekFrom::End(0))?;
 
     if !is_jxl_container(reader)? {
-        return Err(Error::InvalidAsset("Not a valid JPEG XL container".to_string()));
+        return Err(Error::InvalidAsset(
+            "Not a valid JPEG XL container".to_string(),
+        ));
     }
 
     let boxes = parse_all_boxes(reader)?;
@@ -644,11 +648,7 @@ impl AssetIO for JpegXlIO {
 
 impl RemoteRefEmbed for JpegXlIO {
     #[allow(unused_variables)]
-    fn embed_reference(
-        &self,
-        asset_path: &Path,
-        embed_ref: RemoteRefEmbedType,
-    ) -> Result<()> {
+    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
         match &embed_ref {
             RemoteRefEmbedType::Xmp(_) => {
                 let mut file = File::open(asset_path)?;
@@ -681,7 +681,9 @@ impl RemoteRefEmbed for JpegXlIO {
 
                 source_stream.rewind()?;
                 let mut buf = Vec::new();
-                source_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+                source_stream
+                    .read_to_end(&mut buf)
+                    .map_err(Error::IoError)?;
 
                 let xmp = match find_xmp_data(source_stream) {
                     Some(s) => s,
@@ -726,7 +728,9 @@ impl AssetBoxHash for JpegXlIO {
         let file_len = input_stream.seek(SeekFrom::End(0))?;
 
         if !is_jxl_container(input_stream)? {
-            return Err(Error::InvalidAsset("Not a valid JPEG XL container".to_string()));
+            return Err(Error::InvalidAsset(
+                "Not a valid JPEG XL container".to_string(),
+            ));
         }
 
         let boxes = parse_all_boxes(input_stream)?;
@@ -787,7 +791,7 @@ fn build_minimal_jxl_container() -> Vec<u8> {
     let ftyp_data = b"jxl \0\0\0\0jxl ";
     let ftyp_box = build_box(&BOX_FTYP, ftyp_data);
 
-    let jxlc_data = &[0xFF, 0x0A, 0x00]; // minimal codestream stub
+    let jxlc_data = &[0xff, 0x0a, 0x00]; // minimal codestream stub
     let jxlc_box = build_box(&BOX_JXLC, jxlc_data);
 
     let mut container = Vec::new();
@@ -804,7 +808,7 @@ fn build_jxl_with_xmp(xmp_data: &str) -> Vec<u8> {
     let ftyp_box = build_box(&BOX_FTYP, ftyp_data);
     let xml_box = build_box(&BOX_XML, xmp_data.as_bytes());
 
-    let jxlc_data = &[0xFF, 0x0A, 0x00];
+    let jxlc_data = &[0xff, 0x0a, 0x00];
     let jxlc_box = build_box(&BOX_JXLC, jxlc_data);
 
     let mut container = Vec::new();
@@ -835,7 +839,7 @@ fn build_jxl_with_brob_jumb(manifest_data: &[u8]) -> Vec<u8> {
     brob_payload.extend_from_slice(&compressed);
     let brob_box = build_box(&BOX_BROB, &brob_payload);
 
-    let jxlc_data = &[0xFF, 0x0A, 0x00];
+    let jxlc_data = &[0xff, 0x0a, 0x00];
     let jxlc_box = build_box(&BOX_JXLC, jxlc_data);
 
     let mut container = Vec::new();
@@ -868,7 +872,7 @@ fn build_jxl_with_brob_xmp(xmp_data: &str) -> Vec<u8> {
     brob_payload.extend_from_slice(&compressed);
     let brob_box = build_box(&BOX_BROB, &brob_payload);
 
-    let jxlc_data = &[0xFF, 0x0A, 0x00];
+    let jxlc_data = &[0xff, 0x0a, 0x00];
     let jxlc_box = build_box(&BOX_JXLC, jxlc_data);
 
     let mut container = Vec::new();
@@ -911,14 +915,14 @@ pub mod tests {
 
     #[test]
     fn test_detect_naked_codestream() {
-        let naked = vec![0xFF, 0x0A, 0x00, 0x00, 0x00];
+        let naked = vec![0xff, 0x0a, 0x00, 0x00, 0x00];
         let mut cursor = Cursor::new(&naked);
         assert!(is_naked_codestream(&mut cursor).unwrap());
     }
 
     #[test]
     fn test_reject_naked_codestream_for_c2pa() {
-        let naked = vec![0xFF, 0x0A, 0x00, 0x00, 0x00];
+        let naked = vec![0xff, 0x0a, 0x00, 0x00, 0x00];
         let mut cursor = Cursor::new(&naked);
         let jpegxl_io = JpegXlIO {};
         let result = jpegxl_io.read_cai(&mut cursor);
@@ -937,7 +941,7 @@ pub mod tests {
         let manifest2 = b"manifest_data_2";
         let jumb_box2 = build_box(&BOX_JUMB, manifest2);
 
-        let jxlc_box = build_box(&BOX_JXLC, &[0xFF, 0x0A, 0x00]);
+        let jxlc_box = build_box(&BOX_JXLC, &[0xff, 0x0a, 0x00]);
 
         let mut container = Vec::new();
         container.extend_from_slice(&JXL_CONTAINER_MAGIC);
@@ -995,7 +999,7 @@ pub mod tests {
         // Manually add a box with size=0 (extends to EOF)
         container.write_u32::<BigEndian>(0).unwrap(); // size = 0
         container.extend_from_slice(&BOX_JXLC);
-        container.extend_from_slice(&[0xFF, 0x0A, 0x00, 0x01, 0x02]);
+        container.extend_from_slice(&[0xff, 0x0a, 0x00, 0x01, 0x02]);
 
         let file_len = container.len() as u64;
         let mut cursor = Cursor::new(&container);
@@ -1017,7 +1021,7 @@ pub mod tests {
         container.extend_from_slice(&ftyp_box);
 
         // Add a box with extended size (size field = 1)
-        let payload = vec![0xAA; 10];
+        let payload = vec![0xaa; 10];
         let large_total: u64 = BOX_HEADER_SIZE_LARGE + payload.len() as u64;
         container.write_u32::<BigEndian>(1).unwrap();
         container.extend_from_slice(&BOX_JXLC);
@@ -1430,10 +1434,7 @@ pub mod tests {
         );
 
         // The brob box should appear as a regular "brob" entry
-        let brob_entries: Vec<_> = box_map
-            .iter()
-            .filter(|bm| bm.names[0] == "brob")
-            .collect();
+        let brob_entries: Vec<_> = box_map.iter().filter(|bm| bm.names[0] == "brob").collect();
         assert_eq!(
             brob_entries.len(),
             1,
@@ -1546,9 +1547,7 @@ pub mod tests {
     fn test_composed_manifest() {
         let manifest_data = b"test_manifest_for_composition";
         let jpegxl_io = JpegXlIO {};
-        let composed = jpegxl_io
-            .compose_manifest(manifest_data, "jxl")
-            .unwrap();
+        let composed = jpegxl_io.compose_manifest(manifest_data, "jxl").unwrap();
 
         // Verify it's a properly formatted ISOBMFF box
         let mut cursor = Cursor::new(&composed);
@@ -1585,9 +1584,7 @@ pub mod tests {
         assert_eq!(curr_manifest, original_manifest);
 
         // Compose it
-        let composed = jpegxl_io
-            .compose_manifest(&curr_manifest, "jxl")
-            .unwrap();
+        let composed = jpegxl_io.compose_manifest(&curr_manifest, "jxl").unwrap();
 
         // Verify the composed data can be parsed as a valid jumb box
         let mut c = Cursor::new(&composed);
@@ -1640,9 +1637,7 @@ pub mod tests {
         let mut output = Cursor::new(Vec::new());
 
         let jpegxl_io = JpegXlIO {};
-        jpegxl_io
-            .write_cai(&mut input, &mut output, &[])
-            .unwrap();
+        jpegxl_io.write_cai(&mut input, &mut output, &[]).unwrap();
 
         // Should still be readable (empty jumb box)
         output.rewind().unwrap();
@@ -1676,7 +1671,7 @@ pub mod tests {
         let ftyp_data = b"jxl \0\0\0\0jxl ";
         let ftyp_box = build_box(&BOX_FTYP, ftyp_data);
         let exif_box = build_box(&BOX_EXIF, b"exif_data_here");
-        let jxlc_box = build_box(&BOX_JXLC, &[0xFF, 0x0A, 0x00]);
+        let jxlc_box = build_box(&BOX_JXLC, &[0xff, 0x0a, 0x00]);
 
         let mut container = Vec::new();
         container.extend_from_slice(&JXL_CONTAINER_MAGIC);
@@ -1708,7 +1703,7 @@ pub mod tests {
         let ftyp_box = build_box(&BOX_FTYP, ftyp_data);
         let exif_box = build_box(&BOX_EXIF, b"exif_data");
         let xml_box = build_box(&BOX_XML, b"<xmp>data</xmp>");
-        let jxlc_box = build_box(&BOX_JXLC, &[0xFF, 0x0A, 0x00]);
+        let jxlc_box = build_box(&BOX_JXLC, &[0xff, 0x0a, 0x00]);
 
         let mut container = Vec::new();
         container.extend_from_slice(&JXL_CONTAINER_MAGIC);
@@ -1738,7 +1733,7 @@ pub mod tests {
     #[test]
     fn test_large_manifest_store() {
         let container = build_minimal_jxl_container();
-        let large_manifest = vec![0xAB; 256 * 1024]; // 256 KB
+        let large_manifest = vec![0xab; 256 * 1024]; // 256 KB
 
         let mut input = Cursor::new(container);
         let mut output = Cursor::new(Vec::new());
@@ -1804,11 +1799,9 @@ pub mod tests {
             .unwrap();
 
         let locations = jpegxl_io.get_object_locations(&test_path).unwrap();
-        assert!(
-            locations
-                .iter()
-                .any(|l| l.htype == HashBlockObjectType::Cai)
-        );
+        assert!(locations
+            .iter()
+            .any(|l| l.htype == HashBlockObjectType::Cai));
     }
 
     // ─── Spec compliance: container with jxlp (partial codestream) ───
@@ -1821,7 +1814,7 @@ pub mod tests {
         // Partial codestream boxes (jxlp has a 4-byte counter prefix)
         let mut jxlp1_data = Vec::new();
         jxlp1_data.write_u32::<BigEndian>(0).unwrap(); // counter = 0
-        jxlp1_data.extend_from_slice(&[0xFF, 0x0A]);
+        jxlp1_data.extend_from_slice(&[0xff, 0x0a]);
         let jxlp1_box = build_box(&BOX_JXLP, &jxlp1_data);
 
         let mut jxlp2_data = Vec::new();
