@@ -42,10 +42,6 @@
                 "$ref": "#/definitions/manifest"
             }
         },
-        "validationInfo": {
-            "description": "Validation information summary and validation time (signature codes, trust, content). Document-level.",
-            "$ref": "#/definitions/validationInfo"
-        },
         "jsonGenerator": {
             "description": "Information about the tool used to generate this JSON, and when it was generated",
             "$ref": "#/definitions/jsonGenerator"
@@ -122,8 +118,8 @@
                     "$ref": "#/definitions/signature"
                 },
                 "validationResults": {
-                    "$ref": "#/definitions/statusCodes",
-                    "description": "Validation status codes for this manifest (success, informational, failure)"
+                    "$ref": "#/definitions/manifestValidationResults",
+                    "description": "Validation status codes for this manifest (success, informational, failure) and when validation was performed"
                 },
                 "ingredientDeltas": {
                     "type": "array",
@@ -1208,24 +1204,27 @@
             },
             "additionalProperties": false
         },
-        "validationInfo": {
+        "manifestValidationResults": {
             "type": "object",
-            "description": "Validation information summary (signature codes, trust, content) and validation time. Document-level.",
+            "description": "Per-manifest validation status codes and validation time. Used in each manifest's validationResults.",
             "properties": {
-                "signature": {
+                "success": {
                     "type": "array",
-                    "description": "All status codes related to claim signature (claimSignature*)",
                     "items": {
-                        "type": "string"
+                        "$ref": "#/definitions/validationStatusEntry"
                     }
                 },
-                "content": {
-                    "type": "string",
-                    "description": "Content validation status"
+                "informational": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/validationStatusEntry"
+                    }
                 },
-                "trust": {
-                    "type": "string",
-                    "description": "Trust validation status"
+                "failure": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/validationStatusEntry"
+                    }
                 },
                 "validationTime": {
                     "type": "string",
@@ -1233,6 +1232,11 @@
                     "description": "Time when the validation was performed; RFC 3339 format"
                 }
             },
+            "required": [
+                "success",
+                "informational",
+                "failure"
+            ],
             "additionalProperties": false
         },
         "ingredientAssertionV1": {
@@ -1373,10 +1377,14 @@
         },
         "ingredientAssertionV3": {
             "type": "object",
-            "description": "Ingredient assertion (v3) (c2pa.ingredient.v3). CDDL: ingredient.cddl ingredient-map-v3.",
+            "description": "Ingredient assertion (v3) (c2pa.ingredient.v3). CDDL: ingredient.cddl ingredient-map-v3. When the ingredient is a C2PA asset, activeManifest and validationResults are both required (validation is performed to determine the active manifest).",
             "required": [
                 "relationship"
             ],
+            "dependentRequired": {
+                "activeManifest": ["validationResults"],
+                "validationResults": ["activeManifest"]
+            },
             "properties": {
                 "dc:title": {
                     "type": "string",

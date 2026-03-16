@@ -19,8 +19,11 @@ use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
 use x509_parser::{certificate::X509Certificate, prelude::FromDer};
 
+use std::collections::HashMap;
+
 use crate::{
-    assertion::AssertionData,
+    assertion::{AssertionBase, AssertionData},
+    assertions::Ingredient,
     claim::Claim,
     crypto::{
         base64,
@@ -28,17 +31,10 @@ use crate::{
         time_stamp::tsa_signer_cert_der_from_token,
     },
     error::{Error, Result},
-    jumbf::labels::{manifest_label_from_uri, to_absolute_uri},
+    jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_assertion_uri},
     reader::Reader,
     status_tracker::StatusTracker,
-    validation_results::{
-        validation_codes::{
-            SIGNING_CREDENTIAL_EXPIRED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
-            SIGNING_CREDENTIAL_UNTRUSTED,
-        },
-        StatusCodes,
-    },
-    validation_status::ValidationStatus,
+    validation_results::StatusCodes,
     Manifest,
 };
 
@@ -67,13 +63,6 @@ impl<'a> CrJsonExporter<'a> {
         let manifests_array = self.convert_manifests_to_array()?;
         result["manifests"] = manifests_array;
 
-        // Add document-level validationInfo (summary + validationTime). ingredientDeltas are per-manifest.
-        if let Some(validation_results) = self.reader.validation_results() {
-            if let Some(vs) = self.build_validation_info(validation_results)? {
-                result["validationInfo"] = vs;
-            }
-        }
-
         result["jsonGenerator"] = self.build_json_generator()?;
 
         Ok(result)
@@ -89,6 +78,7 @@ impl<'a> CrJsonExporter<'a> {
 
     fn convert_manifests_to_array(&self) -> Result<Value> {
         let active_label = self.reader.active_label();
+        let validation_map = self.build_validation_results_per_manifest();
         let mut labeled: Vec<(String, Value)> = Vec::new();
 
         for (label, manifest) in self.reader.manifests().iter() {
@@ -119,8 +109,9 @@ impl<'a> CrJsonExporter<'a> {
                 .unwrap_or_else(|| Value::Object(Map::new()));
             manifest_obj.insert("signature".to_string(), signature);
 
-            // Build validationResults (statusCodes) for this manifest (required; use empty success/informational/failure when none)
-            let validation_results = self.build_manifest_validation_results(label);
+            // Each manifest's validationResults holds the validation result for THAT manifest (active or ingredient).
+            let validation_results =
+                self.build_manifest_validation_results(label, &validation_map);
             manifest_obj.insert("validationResults".to_string(), validation_results);
 
             // Per-manifest ingredientDeltas: deltas whose ingredientAssertionURI belongs to this manifest
@@ -572,65 +563,86 @@ impl<'a> CrJsonExporter<'a> {
         Ok(Some(Value::Object(claim_signature)))
     }
 
-    /// Build document-level validationInfo object (signature codes array, trust, content, validationTime).
-    fn build_validation_info(
+    /// Build a map from each manifest label to its validation results (status codes + validation time).
+    /// The document's active manifest gets active_manifest codes; each ingredient manifest gets the
+    /// codes from the ingredient_delta that refers to it (resolved via the ingredient assertion's
+    /// activeManifest/c2pa_manifest target).
+    fn build_validation_results_per_manifest(
         &self,
-        validation_results: &crate::validation_results::ValidationResults,
-    ) -> Result<Option<Value>> {
-        let active_codes = match validation_results.active_manifest() {
-            Some(am) => am,
-            None => return Ok(None),
+    ) -> HashMap<String, (StatusCodes, Option<String>)> {
+        let mut map: HashMap<String, (StatusCodes, Option<String>)> = HashMap::new();
+        let Some(vr) = self.reader.validation_results() else {
+            return map;
         };
+        let validation_time = vr.validation_time().map(String::from);
 
-        let mut info = Map::new();
-
-        let sig_codes = find_all_validation_codes(active_codes, "claimSignature");
-        if !sig_codes.is_empty() {
-            info.insert("signature".to_string(), json!(sig_codes));
-        }
-        if let Some(trust_code) = find_preferred_trust_code(active_codes) {
-            info.insert("trust".to_string(), json!(trust_code));
-        } else if let Some(trust_code) =
-            find_validation_code(active_codes.success(), "signingCredential")
-        {
-            info.insert("trust".to_string(), json!(trust_code));
-        } else if let Some(trust_code) =
-            find_validation_code(active_codes.failure(), "signingCredential")
-        {
-            info.insert("trust".to_string(), json!(trust_code));
-        }
-        if let Some(content_code) =
-            find_validation_code(active_codes.success(), "assertion.dataHash")
-        {
-            info.insert("content".to_string(), json!(content_code));
+        // Document active manifest
+        if let Some(active_label) = self.reader.active_label() {
+            let codes = vr
+                .active_manifest()
+                .cloned()
+                .unwrap_or_default();
+            map.insert(active_label.to_string(), (codes, validation_time.clone()));
         }
 
-        if let Some(t) = validation_results.validation_time() {
-            info.insert("validationTime".to_string(), json!(t));
+        // Each ingredient_delta: resolve its assertion URI to the target manifest label, then map that label to the delta's codes
+        let Some(deltas) = vr.ingredient_deltas() else {
+            return map;
+        };
+        for idv in deltas {
+            let Some(target_label) = self.ingredient_assertion_uri_to_manifest_label(idv.ingredient_assertion_uri()) else {
+                continue;
+            };
+            let codes = idv.validation_deltas().clone();
+            map.insert(target_label, (codes, validation_time.clone()));
         }
-
-        Ok(Some(Value::Object(info)))
+        map
     }
 
-    /// Build validationResults (statusCodes) for a single manifest. Active manifest gets its codes; others get empty.
-    fn build_manifest_validation_results(&self, label: &str) -> Value {
-        let codes: StatusCodes =
-            match (self.reader.active_label(), self.reader.validation_results()) {
-                (Some(active), Some(vr)) if active == label => {
-                    vr.active_manifest().cloned().unwrap_or_default()
-                }
-                _ => StatusCodes::default(),
-            };
-        serde_json::to_value(&codes).unwrap_or_else(|_| {
+    /// Resolve an ingredient assertion URI (in a parent manifest) to the target manifest label (the ingredient's active manifest).
+    fn ingredient_assertion_uri_to_manifest_label(&self, assertion_uri: &str) -> Option<String> {
+        let parent_label = manifest_label_from_uri(assertion_uri)?;
+        let claim = self.reader.store.get_claim(&parent_label)?;
+        for ing_ref in claim.ingredient_assertions() {
+            let build_uri = to_assertion_uri(claim.label(), ing_ref.label().as_str());
+            if build_uri == assertion_uri
+                || to_absolute_uri(&parent_label, &build_uri) == assertion_uri
+            {
+                let ingredient = Ingredient::from_assertion(ing_ref.assertion()).ok()?;
+                let hashed = ingredient.c2pa_manifest()?;
+                return manifest_label_from_uri(&hashed.url());
+            }
+        }
+        None
+    }
+
+    /// Build validationResults (statusCodes + validationTime) for one manifest. Each element of the
+    /// manifests array gets the validation result for THAT manifest (active or ingredient).
+    fn build_manifest_validation_results(
+        &self,
+        label: &str,
+        validation_map: &HashMap<String, (StatusCodes, Option<String>)>,
+    ) -> Value {
+        let (codes, validation_time) = validation_map
+            .get(label)
+            .cloned()
+            .unwrap_or_else(|| (StatusCodes::default(), None));
+        let mut base = serde_json::to_value(&codes).unwrap_or_else(|_| {
             json!({
                 "success": [],
                 "informational": [],
                 "failure": []
             })
-        })
+        });
+        if let (Some(t), Some(obj)) = (validation_time, base.as_object_mut()) {
+            obj.insert("validationTime".to_string(), json!(t));
+        }
+        base
     }
 
-    /// Build ingredientDeltas for a single manifest: deltas whose ingredientAssertionURI belongs to this manifest.
+    /// Build ingredientDeltas for a single manifest. Each delta is attributed to the manifest that
+    /// declares the ingredient (ingredientAssertionURI identifies the assertion in a manifest),
+    /// so ingredient manifest validation results are correctly reflected on the declaring manifest.
     fn build_manifest_ingredient_deltas(&self, label: &str) -> Option<Value> {
         let validation_results = self.reader.validation_results()?;
         let deltas = validation_results.ingredient_deltas()?;
@@ -980,52 +992,6 @@ fn decode_cawg_signature(signature_bytes: &[u8]) -> Result<Value> {
     }
 
     Ok(Value::Object(signature_obj))
-}
-
-fn find_preferred_trust_code(
-    active_codes: &crate::validation_results::StatusCodes,
-) -> Option<String> {
-    if active_codes
-        .success()
-        .iter()
-        .any(|s| s.code() == SIGNING_CREDENTIAL_TRUSTED)
-    {
-        return Some(SIGNING_CREDENTIAL_TRUSTED.to_string());
-    }
-    for code in &[
-        SIGNING_CREDENTIAL_INVALID,
-        SIGNING_CREDENTIAL_UNTRUSTED,
-        SIGNING_CREDENTIAL_EXPIRED,
-    ] {
-        if active_codes.failure().iter().any(|s| s.code() == *code) {
-            return Some((*code).to_string());
-        }
-    }
-    None
-}
-
-fn find_validation_code(statuses: &[ValidationStatus], prefix: &str) -> Option<String> {
-    statuses
-        .iter()
-        .find(|s| s.code().starts_with(prefix))
-        .map(|s| s.code().to_string())
-}
-
-/// Collect all validation codes (from success, informational, failure) that start with the given prefix.
-fn find_all_validation_codes(
-    active_codes: &crate::validation_results::StatusCodes,
-    prefix: &str,
-) -> Vec<String> {
-    let mut codes: Vec<String> = active_codes
-        .success()
-        .iter()
-        .chain(active_codes.informational().iter())
-        .chain(active_codes.failure().iter())
-        .filter(|s| s.code().starts_with(prefix))
-        .map(|s| s.code().to_string())
-        .collect();
-    codes.dedup();
-    codes
 }
 
 #[cfg(test)]

@@ -54,33 +54,7 @@ fn test_validation_results_schema_compliance() -> Result<()> {
 
     let json_value = reader.to_crjson_value()?;
 
-    // Document-level validationInfo (summary + validationTime)
-    if let Some(validation_info) = json_value.get("validationInfo") {
-        assert!(
-            validation_info.is_object(),
-            "validationInfo should be an object"
-        );
-        let vi = validation_info.as_object().unwrap();
-        if let Some(signature) = vi.get("signature") {
-            assert!(
-                signature.is_array(),
-                "validationInfo.signature should be array of status codes"
-            );
-            for item in signature.as_array().unwrap() {
-                assert!(
-                    item.is_string(),
-                    "validationInfo.signature items should be strings"
-                );
-            }
-        }
-        for key in &["trust", "content", "validationTime"] {
-            if let Some(v) = vi.get(*key) {
-                assert!(v.is_string(), "validationInfo.{} should be string", key);
-            }
-        }
-    }
-
-    // Per-manifest validationResults (statusCodes: success, informational, failure) and optional ingredientDeltas
+    // Per-manifest validationResults (statusCodes: success, informational, failure, optional validationTime) and optional ingredientDeltas
     let manifests = json_value
         .get("manifests")
         .and_then(|m| m.as_array())
@@ -108,6 +82,10 @@ fn test_validation_results_schema_compliance() -> Result<()> {
                     "code should be string"
                 );
             }
+        }
+        // Optional: per-manifest validationTime (when validation was run)
+        if let Some(vt) = vr_obj.get("validationTime") {
+            assert!(vt.is_string(), "validationTime should be string (RFC 3339)");
         }
         // Optional: per-manifest ingredientDeltas
         if let Some(deltas) = first.get("ingredientDeltas") {
@@ -137,38 +115,7 @@ fn test_manifest_validation_and_status_schema_compliance() -> Result<()> {
     let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
-    // Document-level validationInfo (signature array, trust, content, validationTime)
-    if let Some(validation_info) = json_value.get("validationInfo") {
-        assert!(
-            validation_info.is_object(),
-            "validationInfo should be an object"
-        );
-        let info_obj = validation_info.as_object().unwrap();
-
-        if let Some(signature) = info_obj.get("signature") {
-            assert!(
-                signature.is_array(),
-                "signature should be array of status codes"
-            );
-            for item in signature.as_array().unwrap() {
-                assert!(item.is_string(), "signature items should be strings");
-            }
-        }
-        if let Some(trust) = info_obj.get("trust") {
-            assert!(trust.is_string(), "trust status should be string");
-        }
-        if let Some(content) = info_obj.get("content") {
-            assert!(content.is_string(), "content status should be string");
-        }
-        if let Some(validation_time) = info_obj.get("validationTime") {
-            assert!(
-                validation_time.is_string(),
-                "validationTime should be string"
-            );
-        }
-    }
-
-    // Each manifest has validationResults (statusCodes)
+    // Each manifest has validationResults (manifestValidationResults: success, informational, failure, optional validationTime)
     let manifests = json_value
         .get("manifests")
         .expect("manifests should exist")
@@ -183,6 +130,9 @@ fn test_manifest_validation_and_status_schema_compliance() -> Result<()> {
         assert!(vr_obj.contains_key("success"));
         assert!(vr_obj.contains_key("informational"));
         assert!(vr_obj.contains_key("failure"));
+        if let Some(vt) = vr_obj.get("validationTime") {
+            assert!(vt.is_string(), "validationTime should be string (RFC 3339)");
+        }
     }
 
     Ok(())
@@ -304,11 +254,6 @@ fn test_complete_schema_structure() -> Result<()> {
     // Verify all top-level required fields (no asset_info, content, or metadata)
     assert!(json_value.get("@context").is_some(), "@context missing");
     assert!(json_value.get("manifests").is_some(), "manifests missing");
-    // validationInfo present when validation was run; manifests have validationResults
-    assert!(
-        json_value.get("validationInfo").is_some(),
-        "validationInfo missing"
-    );
 
     // CrJSON does not include asset_info, content, or metadata
     assert!(json_value.get("asset_info").is_none());
@@ -318,7 +263,6 @@ fn test_complete_schema_structure() -> Result<()> {
     // Verify types
     assert!(json_value["@context"].is_object());
     assert!(json_value["manifests"].is_array());
-    assert!(json_value["validationInfo"].is_object());
 
     Ok(())
 }
@@ -344,12 +288,8 @@ fn test_cr_json_schema_file_valid_and_matches_format() -> Result<()> {
         props.contains_key("manifests"),
         "schema must define manifests"
     );
-    assert!(
-        props.contains_key("validationInfo"),
-        "schema must define validationInfo"
-    );
 
-    // Manifest definition must allow ingredientDeltas (per-manifest)
+    // Manifest definition must have validationResults (manifestValidationResults) and ingredientDeltas (per-manifest)
     let definitions = schema_value
         .get("definitions")
         .and_then(|d| d.as_object())
@@ -362,6 +302,10 @@ fn test_cr_json_schema_file_valid_and_matches_format() -> Result<()> {
         .get("properties")
         .and_then(|p| p.as_object())
         .expect("manifest must have properties");
+    assert!(
+        manifest_props.contains_key("validationResults"),
+        "manifest must define validationResults (manifestValidationResults with validationTime)"
+    );
     assert!(
         manifest_props.contains_key("ingredientDeltas"),
         "manifest must define ingredientDeltas (per-manifest)"
@@ -423,6 +367,7 @@ fn test_cr_json_output_matches_schema_root() -> Result<()> {
     }
 
     // Output must not contain removed root keys
+    assert!(json_value.get("validationInfo").is_none(), "validationInfo was removed; use per-manifest validationResults.validationTime");
     assert!(json_value.get("declaration").is_none());
     assert!(json_value.get("asset_info").is_none());
     assert!(json_value.get("content").is_none());
