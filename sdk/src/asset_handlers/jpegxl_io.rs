@@ -335,18 +335,25 @@ fn build_box(box_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
     let total_size = BOX_HEADER_SIZE as usize + data.len();
     if total_size <= u32::MAX as usize {
         let mut buf = Vec::with_capacity(total_size);
-        buf.write_u32::<BigEndian>(total_size as u32).unwrap();
-        buf.write_all(box_type).unwrap();
-        buf.write_all(data).unwrap();
+        buf.write_u32::<BigEndian>(total_size as u32)
+            .expect("infallible: Vec write cannot fail");
+        buf.write_all(box_type)
+            .expect("infallible: Vec write cannot fail");
+        buf.write_all(data)
+            .expect("infallible: Vec write cannot fail");
         buf
     } else {
         // Use large box format
         let total_large = BOX_HEADER_SIZE_LARGE as usize + data.len();
         let mut buf = Vec::with_capacity(total_large);
-        buf.write_u32::<BigEndian>(1).unwrap(); // size=1 signals extended size
-        buf.write_all(box_type).unwrap();
-        buf.write_u64::<BigEndian>(total_large as u64).unwrap();
-        buf.write_all(data).unwrap();
+        buf.write_u32::<BigEndian>(1)
+            .expect("infallible: Vec write cannot fail"); // size=1 signals extended size
+        buf.write_all(box_type)
+            .expect("infallible: Vec write cannot fail");
+        buf.write_u64::<BigEndian>(total_large as u64)
+            .expect("infallible: Vec write cannot fail");
+        buf.write_all(data)
+            .expect("infallible: Vec write cannot fail");
         buf
     }
 }
@@ -818,7 +825,8 @@ fn build_jxl_with_brob_jumb(manifest_data: &[u8]) -> Vec<u8> {
     let mut compressed = Vec::new();
     {
         let params = brotli::enc::BrotliEncoderParams::default();
-        brotli::BrotliCompress(&mut Cursor::new(manifest_data), &mut compressed, &params).unwrap();
+        brotli::BrotliCompress(&mut Cursor::new(manifest_data), &mut compressed, &params)
+            .expect("brotli compression failed");
     }
 
     // brob payload = original_type(4) + compressed_data
@@ -852,7 +860,7 @@ fn build_jxl_with_brob_xmp(xmp_data: &str) -> Vec<u8> {
             &mut compressed,
             &params,
         )
-        .unwrap();
+        .expect("brotli compression failed");
     }
 
     let mut brob_payload = Vec::new();
@@ -1093,7 +1101,7 @@ pub mod tests {
         let boxes = parse_all_boxes(&mut output).unwrap();
         let types: Vec<[u8; 4]> = boxes.iter().map(|b| b.box_type).collect();
 
-        assert!(types.contains(&*b"JXL "));
+        assert!(types.contains(b"JXL "));
         assert!(types.contains(&BOX_FTYP));
         assert!(types.contains(&BOX_JUMB));
         assert!(types.contains(&BOX_JXLC));
