@@ -47,7 +47,7 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::tempfile_builder,
+        io_utils::{safe_vec, tempfile_builder},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -211,7 +211,7 @@ fn decompress_brob(reader: &mut dyn CAIRead, data_size: u64) -> Result<([u8; 4],
         .map_err(Error::IoError)?;
 
     let compressed_size = data_size.saturating_sub(4);
-    let mut compressed = vec![0u8; compressed_size as usize];
+    let mut compressed = safe_vec(compressed_size, Some(0u8))?;
     reader.read_exact(&mut compressed).map_err(Error::IoError)?;
 
     let mut decompressed = Vec::new();
@@ -230,6 +230,9 @@ fn compress_brob_box(inner_type: &[u8; 4], data: &[u8]) -> Result<Vec<u8>> {
     let mut brob_payload = Vec::with_capacity(4 + compressed.len());
     brob_payload.extend_from_slice(inner_type);
     brob_payload.extend_from_slice(&compressed);
+    // build_box already handles the largesize case (ISO/IEC 14496-12): if the total
+    // box size exceeds u32::MAX it emits a size=1 header followed by a 64-bit largesize
+    // field, so payloads larger than 4 GiB are handled correctly here.
     Ok(build_box(&BOX_BROB, &brob_payload))
 }
 
@@ -257,6 +260,18 @@ fn find_jumb_data(reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
     let mut jumb_count = 0u32;
     let mut jumb_data: Option<Vec<u8>> = None;
 
+    // TODO: Spec clarification needed (C2PA v2.3 §A.3.9).
+    // The spec mandates at most one JUMBF superbox per JPEG XL file, but does not
+    // define the required behaviour when a pre-existing `jumb` box contains
+    // non-C2PA content. Options under consideration:
+    //   a) Remove the non-C2PA `jumb` box and insert a new C2PA `jumb` box
+    //      (compliant with "at most one" but silently destroys non-C2PA content).
+    //   b) Return an error to avoid silent data loss.
+    //   c) Merge the C2PA content into the existing `jumb` box.
+    // CURRENT IMPLEMENTATION: option (a) — write_cai() removes ALL plain `jumb`
+    // boxes (regardless of content) before inserting the new C2PA `jumb` box.
+    // This loop therefore counts ALL `jumb` boxes toward `jumb_count`.
+    // Revisit once the spec wording is clarified.
     for b in &boxes {
         if b.box_type == BOX_JUMB {
             jumb_count += 1;
