@@ -1148,28 +1148,15 @@ impl Reader {
             path.push(claim_label.clone());
 
             for ing_assertion in claim.ingredient_assertions() {
-                match IngredientAssertion::from_assertion(ing_assertion.assertion()) {
-                    Ok(ingredient) => {
-                        let manifest_uri = ingredient
-                            .active_manifest
-                            .as_ref()
-                            .or(ingredient.c2pa_manifest.as_ref());
-                        if let Some(manifest_uri) = manifest_uri {
-                            let ingredient_label =
-                                Store::manifest_label_from_path(&manifest_uri.url());
-                            if let Some(ingredient_claim) = store.get_claim(&ingredient_label) {
-                                collect_flat(
-                                    store,
-                                    ingredient_claim,
-                                    ingredient_store,
-                                    visited,
-                                    path,
-                                )?;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to deserialize ingredient assertion: {e}");
+                let ingredient = IngredientAssertion::from_assertion(ing_assertion.assertion())?;
+                let manifest_uri = ingredient
+                    .active_manifest
+                    .as_ref()
+                    .or(ingredient.c2pa_manifest.as_ref());
+                if let Some(manifest_uri) = manifest_uri {
+                    let ingredient_label = Store::manifest_label_from_path(&manifest_uri.url());
+                    if let Some(ingredient_claim) = store.get_claim(&ingredient_label) {
+                        collect_flat(store, ingredient_claim, ingredient_store, visited, path)?;
                     }
                 }
             }
