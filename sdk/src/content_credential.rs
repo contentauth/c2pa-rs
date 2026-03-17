@@ -32,8 +32,8 @@ use crate::{
     status_tracker::StatusTracker,
     store::Store,
     utils::hash_utils::hash_to_b64,
-    validation_status::ValidationStatus,
     validation_results::ValidationState,
+    validation_status::ValidationStatus,
     DigitalSourceType, Error, HashedUri, Result, ValidationResults,
 };
 
@@ -155,7 +155,8 @@ impl<'a> ContentCredential<'a> {
         )?;
 
         // Add the ingredient assertion (replaces store for parent)
-        let ingredient_uri = self.add_ingredient_assertion(&ingredient, manifest_bytes.as_deref())?;
+        let ingredient_uri =
+            self.add_ingredient_assertion(&ingredient, manifest_bytes.as_deref())?;
 
         // Add OPENED action
         self.add_action(Action::new(c2pa_action::OPENED).add_ingredient(ingredient_uri)?)?;
@@ -270,7 +271,7 @@ impl<'a> ContentCredential<'a> {
         }
     }
 
-    /// Writes a signed credential to a stream 
+    /// Writes a signed credential to a stream
     /// This does not sign or hash the credential, it only adds the jumbf to the stream
     pub fn write_to_stream<R, W>(
         &self,
@@ -282,16 +283,13 @@ impl<'a> ContentCredential<'a> {
         R: Read + Seek + Send,
         W: Write + Read + Seek + Send,
     {
-        let jumbf_bytes = self.store.to_jumbf_internal(self.context.signer()?.reserve_size())?;
+        let jumbf_bytes = self
+            .store
+            .to_jumbf_internal(self.context.signer()?.reserve_size())?;
 
-        crate::jumbf_io::save_jumbf_to_stream(
-            format,
-            source,
-            dest,
-            &jumbf_bytes,
-        )?;
+        crate::jumbf_io::save_jumbf_to_stream(format, source, dest, &jumbf_bytes)?;
         Ok(jumbf_bytes)
-     }
+    }
 
     /// Generates a value similar to the C2PA Reader output
     pub fn reader_value(&self) -> Result<Value> {

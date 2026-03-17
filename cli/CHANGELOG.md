@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.39](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.38...c2patool-v0.26.39)
+_16 March 2026_
+
+### Fixed
+
+* Pin `atree` to 0.5.2 ([#1940](https://github.com/contentauth/c2pa-rs/pull/1940))
+
+## [0.26.38](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.37...c2patool-v0.26.38)
+_13 March 2026_
+
+## [0.26.37](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.36...c2patool-v0.26.37)
+_12 March 2026_
+
+## [0.26.36](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.35...c2patool-v0.26.36)
+_12 March 2026_
+
+## [0.26.35](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.34...c2patool-v0.26.35)
+_11 March 2026_
+
+## [0.26.34](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.33...c2patool-v0.26.34)
+_10 March 2026_
+
+## [0.26.33](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.32...c2patool-v0.26.33)
+_04 March 2026_
+
+## [0.26.32](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.31...c2patool-v0.26.32)
+_03 March 2026_
+
+## [0.26.31](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.30...c2patool-v0.26.31)
+_02 March 2026_
+
+### Updated dependencies
+
+* Bump toml from 0.9.12+spec-1.1.0 to 1.0.2+spec-1.1.0 ([#1883](https://github.com/contentauth/c2pa-rs/pull/1883))
+
+## [0.26.30](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.29...c2patool-v0.26.30)
+_23 February 2026_
+
+## [0.26.29](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.28...c2patool-v0.26.29)
+_12 February 2026_
+
+## [0.26.28](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.27...c2patool-v0.26.28)
+_12 February 2026_
+
+## [0.26.27](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.26...c2patool-v0.26.27)
+_09 February 2026_
+
+## [0.26.26](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.25...c2patool-v0.26.26)
+_06 February 2026_
+
+## [0.26.25](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.24...c2patool-v0.26.25)
+_06 February 2026_
+
 ## [0.26.24](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.23...c2patool-v0.26.24)
 _03 February 2026_
 

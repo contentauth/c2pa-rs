@@ -18,27 +18,31 @@ name = "c2pa_c"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [features]
-default = ["c2pa/openssl"]
+default = ["c2pa/openssl", "http", "add_thumbnails"]
 file_io = ["c2pa/file_io"]
 rust_native_crypto = ["c2pa/rust_native_crypto"]
-pdf = ["c2pa/pdf"]
+# HTTP and thumbnails: not enabled by default because reqwest pulls in wasm-bindgen-futures
+# (incompatible with -Z build-std=panic_abort on wasm32-unknown-emscripten).
+# Enable for native builds when you need HTTP or thumbnails.
+http = ["c2pa/http_reqwest", "c2pa/http_reqwest_blocking"]
+add_thumbnails = ["c2pa/add_thumbnails"]
 
 [dependencies]
-c2pa = { path = "../sdk", version = "0.75.13", default-features = false, features = [
-    "add_thumbnails",
+c2pa = { path = "../sdk", version = "0.78.4", default-features = false, features = [
     "fetch_remote_manifests",
     "file_io",
     "pdf",
-    # We don't use the `default_http` feature because it also includes `http_ureq`.
-    # TODO: use `default_http` pending https://github.com/contentauth/c2pa-rs/issues/1364
-    "http_reqwest_blocking",
-    "http_reqwest",
 ] }
 scopeguard = "1.2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0.17"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.36", features = ["rt-multi-thread", "rt"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.36", features = ["rt", "macros", "io-util", "time"] }
 
 [dev-dependencies]
 tempfile = "3.7.0"

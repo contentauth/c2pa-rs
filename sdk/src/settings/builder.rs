@@ -399,18 +399,18 @@ pub struct ActionsSettings {
     pub(crate) actions: Option<Vec<ActionSettings>>,
     /// Whether to automatically generate a c2pa.created [Action] assertion or error that it doesn't already exist.
     ///
-    /// For more information about the mandatory conditions for a c2pa.created action assertion, see here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion>
+    /// For more information about the mandatory conditions for a c2pa.created action assertion, see the
+    /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion).
     pub auto_created_action: AutoActionSettings,
     /// Whether to automatically generate a c2pa.opened [Action] assertion or error that it doesn't already exist.
     ///
-    /// For more information about the mandatory conditions for a c2pa.opened action assertion, see here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion>
+    /// For more information about the mandatory conditions for a c2pa.opened action assertion, see the
+    /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion).
     pub auto_opened_action: AutoActionSettings,
     /// Whether to automatically generate a c2pa.placed [Action] assertion or error that it doesn't already exist.
     ///
-    /// For more information about the mandatory conditions for a c2pa.placed action assertion, see:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship>
+    /// For more information about the mandatory conditions for a c2pa.placed action assertion, see
+    /// [Relationship - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_relationship)
     pub auto_placed_action: AutoActionSettings,
 }
 
@@ -531,8 +531,7 @@ pub struct BuilderSettings {
     ///
     /// The default is to not fetch them at all.
     ///
-    /// See more information in the spec here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#certificate_status_assertion>
+    /// For more information, see [Certificate status assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#certificate_status_assertion).
     ///
     /// [`CertificateStatus`]: crate::assertions::CertificateStatus
     pub(crate) certificate_status_fetch: Option<OcspFetchScope>,
@@ -559,8 +558,24 @@ pub struct BuilderSettings {
     /// Note that the label should be a **base label**, not including the assertion version nor instance.
     ///
     /// See more information on the difference between created vs gathered assertions in the spec here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_fields>
+    /// [fields - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_fields)
     pub created_assertion_labels: Option<Vec<String>>,
+    /// When `true`, use [`BoxHash`] instead of [`crate::assertions::DataHash`] for formats
+    /// that support it (JPEG, PNG, GIF, etc.) when no explicit hard binding assertion has
+    /// been set.
+    ///
+    /// Formats that support `BoxHash` can embed the C2PA manifest as a new chunk/segment
+    /// without shifting existing byte offsets, so a placeholder is never required.
+    /// Setting this to `true` enables the direct workflow (`Builder::sign_embeddable`
+    /// Mode 2) for those formats and makes `Builder::needs_placeholder` return `false`.
+    ///
+    /// Defaults to `false` to preserve existing behaviour until `BoxHash` support is
+    /// more widely tested.  Set to `true` (or configure it per-[`Context`]) whenever
+    /// you are ready to prefer box-based hashing for supported formats.
+    ///
+    /// [`BoxHash`]: crate::assertions::BoxHash
+    /// [`Context`]: crate::Context
+    pub prefer_box_hash: bool,
     /// Whether to generate a C2PA archive (instead of zip) when writing the manifest builder.
     /// Now always defaults to true - the ability to disable it will be removed in the future.
     pub generate_c2pa_archive: Option<bool>,
@@ -581,6 +596,7 @@ impl Default for BuilderSettings {
             certificate_status_should_override: None,
             intent: None,
             created_assertion_labels: None,
+            prefer_box_hash: false,
             generate_c2pa_archive: Some(true),
             auto_timestamp_assertion: TimeStampSettings::default(),
         }

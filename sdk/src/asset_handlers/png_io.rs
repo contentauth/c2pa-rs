@@ -717,6 +717,8 @@ impl AssetBoxHash for PngIO {
 
         let ps = get_png_chunk_positions(input_stream)?;
 
+        let has_c2pa = ps.iter().any(|pc| pc.name == CAI_CHUNK);
+
         let mut box_maps = Vec::new();
 
         // add PNGh header
@@ -749,7 +751,9 @@ impl AssetBoxHash for PngIO {
             }
 
             // all other chunks
-            let c2pa_bm = BoxMap {
+            let chunk_end = pc.end(); // byte immediately after this chunk
+            let is_ihdr = pc.name == IMG_HDR;
+            let bm = BoxMap {
                 names: vec![pc.name_str],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
@@ -758,7 +762,25 @@ impl AssetBoxHash for PngIO {
                 range_start: pc.start,
                 range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
             };
-            box_maps.push(c2pa_bm);
+            box_maps.push(bm);
+
+            // If no C2PA chunk exists, inject a synthetic excluded placeholder
+            // immediately after IHDR (the mandatory first data chunk after the PNG
+            // signature).  PNG's CAI writer always inserts the caBX chunk at this
+            // position, so the box list will align with the embedded file during
+            // verification.  When a real C2PA chunk is present this block is skipped.
+            if !has_c2pa && is_ihdr {
+                let synthetic = BoxMap {
+                    names: vec![C2PA_BOXHASH.to_string()],
+                    alg: None,
+                    hash: ByteBuf::from(Vec::new()),
+                    excluded: Some(true),
+                    pad: ByteBuf::from(Vec::new()),
+                    range_start: chunk_end,
+                    range_len: 0,
+                };
+                box_maps.push(synthetic);
+            }
         }
 
         Ok(box_maps)

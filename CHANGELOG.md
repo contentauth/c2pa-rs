@@ -9,6 +9,141 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.78.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.3...c2pa-v0.78.4)
+_16 March 2026_
+
+### Fixed
+
+* Pin `atree` to 0.5.2 ([#1940](https://github.com/contentauth/c2pa-rs/pull/1940))
+* Remove exponential memory growth from nested claim reconstruction ([#1885](https://github.com/contentauth/c2pa-rs/pull/1885)) ([#1887](https://github.com/contentauth/c2pa-rs/pull/1887))
+
+## [0.78.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.2...c2pa-v0.78.3)
+_13 March 2026_
+
+### Added
+
+* Impl `Send + Sync` on `EphemeralSigner` ([#1934](https://github.com/contentauth/c2pa-rs/pull/1934))
+
+### Fixed
+
+* Apply same restrictions on ingredient deltas as active manifest for validation state ([#1624](https://github.com/contentauth/c2pa-rs/pull/1624))
+
+## [0.78.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.1...c2pa-v0.78.2)
+_12 March 2026_
+
+### Fixed
+
+* Windows Build flags ([#1930](https://github.com/contentauth/c2pa-rs/pull/1930))
+
+## [0.78.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.0...c2pa-v0.78.1)
+_12 March 2026_
+
+### Fixed
+
+* Fragmented video verification ([#1925](https://github.com/contentauth/c2pa-rs/pull/1925))
+
+## [0.78.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.77.1...c2pa-v0.78.0)
+_11 March 2026_
+
+### Added
+
+* Emscripten ([#1886](https://github.com/contentauth/c2pa-rs/pull/1886))
+
+### Fixed
+
+* Correct validation of OCSP signature ([#1863](https://github.com/contentauth/c2pa-rs/pull/1863))
+* Merkle api integration ([#1902](https://github.com/contentauth/c2pa-rs/pull/1902))
+
+## [0.77.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.77.0...c2pa-v0.77.1)
+_10 March 2026_
+
+### Documented
+
+* Combine docs on Context and Settings to reduce duplication ([#1899](https://github.com/contentauth/c2pa-rs/pull/1899))
+
+## [0.77.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.76.2...c2pa-v0.77.0)
+_04 March 2026_
+
+### Added
+
+* Embeddable manifest API with Context/Settings, CAWG and BMFF.v3 support. ([#1847](https://github.com/contentauth/c2pa-rs/pull/1847))
+
+## [0.76.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.76.1...c2pa-v0.76.2)
+_03 March 2026_
+
+### Fixed
+
+* Panic when validating boxes hash with no names ([#1897](https://github.com/contentauth/c2pa-rs/pull/1897))
+
+## [0.76.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.76.0...c2pa-v0.76.1)
+_02 March 2026_
+
+### Fixed
+
+* Handle meta box without FullBox header from Apple devices ([#1889](https://github.com/contentauth/c2pa-rs/pull/1889))
+
+### Updated dependencies
+
+* Bump png_pong from 0.9.3 to 0.10.0 ([#1850](https://github.com/contentauth/c2pa-rs/pull/1850))
+* Bump toml from 0.9.12+spec-1.1.0 to 1.0.2+spec-1.1.0 ([#1883](https://github.com/contentauth/c2pa-rs/pull/1883))
+
+## [0.76.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.21...c2pa-v0.76.0)
+_23 February 2026_
+
+### Added
+
+* Enable self-signed ephemeral certs on Wasm build ([#1858](https://github.com/contentauth/c2pa-rs/pull/1858))
+
+### Documented
+
+* Fix doc for verify_after_sign due to bug ([#1876](https://github.com/contentauth/c2pa-rs/pull/1876))
+* Doc cleanup and some reorg ([#1822](https://github.com/contentauth/c2pa-rs/pull/1822))
+* SignerSettings doc comments ([#1856](https://github.com/contentauth/c2pa-rs/pull/1856))
+
+### Fixed
+
+* Use cose_sign1 signature field for timestamp assertion verification ([#1867](https://github.com/contentauth/c2pa-rs/pull/1867))
+* [**breaking**] Allow `Builder::sign_async` future to be spawnable on Tokio runtime ([#1846](https://github.com/contentauth/c2pa-rs/pull/1846))
+
+### Updated dependencies
+
+* Bump zip from 7.4.0 to 8.1.0 ([#1864](https://github.com/contentauth/c2pa-rs/pull/1864))
+* Bump zip from 6.0.0 to 7.4.0 ([#1857](https://github.com/contentauth/c2pa-rs/pull/1857))
+
+## [0.75.21](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.20...c2pa-v0.75.21)
+_12 February 2026_
+
+No-op re-release to address previous build failure.
+
+## [0.75.20](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.19...c2pa-v0.75.20)
+_12 February 2026_
+
+### Added
+
+* Use ephemeral self-signed cert to sign working store / archive ([#1839](https://github.com/contentauth/c2pa-rs/pull/1839))
+
+## [0.75.19](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.18...c2pa-v0.75.19)
+_09 February 2026_
+
+### Fixed
+
+* Support QT style 'meta' boxes ([#1844](https://github.com/contentauth/c2pa-rs/pull/1844))
+* Settings.builder.created_assertion_lables was not being applied. ([#1828](https://github.com/contentauth/c2pa-rs/pull/1828))
+
+## [0.75.18](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.17...c2pa-v0.75.18)
+_06 February 2026_
+
+### Fixed
+
+* Wrong size being written out for XMP box ([#1835](https://github.com/contentauth/c2pa-rs/pull/1835))
+
+## [0.75.17](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.16...c2pa-v0.75.17)
+_06 February 2026_
+
+### Fixed
+
+* Capture default values in schema generation ([#1824](https://github.com/contentauth/c2pa-rs/pull/1824))
+
 ## [0.75.13](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.75.12...c2pa-v0.75.13)
 _03 February 2026_
 

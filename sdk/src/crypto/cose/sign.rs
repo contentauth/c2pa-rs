@@ -74,7 +74,7 @@ use crate::crypto::{
 /// > * If multiple certificates are conveyed, a CBOR array of byte strings is
 /// > used, with each certificate being in its own byte string.
 ///
-/// [§14.5, X.509 Certificates]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#x509_certificates
+/// [§14.5, X.509 Certificates]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#x509_certificates
 /// [RFC 9360]: https://datatracker.ietf.org/doc/html/rfc9360
 #[async_generic(async_signature(
     signer: &dyn AsyncRawSigner,
@@ -271,7 +271,7 @@ pub enum CosePayload {
 /// > * If multiple certificates are conveyed, a CBOR array of byte strings is
 /// > used, with each certificate being in its own byte string.
 ///
-/// [§14.5, X.509 Certificates]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#x509_certificates
+/// [§14.5, X.509 Certificates]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#x509_certificates
 /// [RFC 9360]: https://datatracker.ietf.org/doc/html/rfc9360
 #[async_generic(async_signature(
     signer: &dyn AsyncRawSigner,

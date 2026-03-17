@@ -36,34 +36,33 @@ use crate::{
 pub enum SignerSettings {
     /// A signer configured locally.
     Local {
-        // Algorithm to use for signing.
+        /// Algorithm to use for signing.
         alg: SigningAlg,
-        // Certificate used for signing (PEM format).
+        /// Certificate used for signing (PEM format).
         sign_cert: String,
-        // Private key used for signing (PEM format).
+        /// Private key used for signing (PEM format).
         private_key: String,
-        // Time stamp authority URL for signing.
+        /// Time stamp authority URL for signing.
         tsa_url: Option<String>,
-        // Referenced assertions for CAWG identity signing (optional).
+        /// Referenced assertions for CAWG identity signing (optional).
         referenced_assertions: Option<Vec<String>>,
-        // Roles for CAWG identity signing (optional).
+        /// Roles for CAWG identity signing (optional).
         roles: Option<Vec<String>>,
     },
     /// A signer configured remotely.
     Remote {
-        // URL to the signer used for signing.
-        //
-        // A POST request with a byte stream will be sent to this URL.
+        /// URL that the signer will use for signing.
+        /// A POST request with a byte-stream will be sent to this URL.
         url: String,
-        // Algorithm to use for signing.
+        /// Algorithm to use for signing.
         alg: SigningAlg,
-        // Certificate used for signing (PEM format).
+        /// Certificate used for signing (PEM format).
         sign_cert: String,
-        // Time stamp authority URL for signing.
+        /// Time stamp authority URL for signing.
         tsa_url: Option<String>,
-        // Referenced assertions for CAWG identity signing (optional).
+        /// Referenced assertions for CAWG identity signing (optional).
         referenced_assertions: Option<Vec<String>>,
-        // Roles for CAWG identity signing (optional).
+        /// Roles for CAWG identity signing (optional).
         roles: Option<Vec<String>>,
     },
 }

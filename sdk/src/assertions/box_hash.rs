@@ -170,7 +170,15 @@ impl BoxHash {
 
         // check to see we source index starts at PNGh and skip if not included in the hash list
         if let Some(first_expected_bms) = source_bms.get(source_index) {
-            if first_expected_bms.names[0] == "PNGh" && self.boxes[0].names[0] != "PNGh" {
+            if first_expected_bms
+                .names
+                .first()
+                .is_some_and(|name| name == "PNGh")
+                && self.boxes[0]
+                    .names
+                    .first()
+                    .is_some_and(|name| name != "PNGh")
+            {
                 source_index += 1;
             }
         } else {
@@ -185,34 +193,32 @@ impl BoxHash {
             let mut inclusion = HashRange::new(0u64, 0u64);
             for name in &bm.names {
                 match source_bms.get(source_index) {
-                    Some(next_source_bm) => {
-                        if name == &next_source_bm.names[0] {
-                            if inclusion.length() == 0 {
-                                // this is a new item
-                                inclusion.set_start(next_source_bm.range_start);
-                                inclusion.set_length(next_source_bm.range_len);
+                    Some(next_source_bm) if name == &next_source_bm.names[0] => {
+                        if inclusion.length() == 0 {
+                            // this is a new item
+                            inclusion.set_start(next_source_bm.range_start);
+                            inclusion.set_length(next_source_bm.range_len);
 
-                                if name == C2PA_BOXHASH {
-                                    // there should only be 1 collapsed C2PA range
-                                    if bm.names.len() != 1 {
-                                        return Err(Error::HashMismatch(
-                                            "Malformed C2PA box hash".to_owned(),
-                                        ));
-                                    }
-                                    skip_c2pa = true;
+                            if name == C2PA_BOXHASH {
+                                // there should only be 1 collapsed C2PA range
+                                if bm.names.len() != 1 {
+                                    return Err(Error::HashMismatch(
+                                        "Malformed C2PA box hash".to_owned(),
+                                    ));
                                 }
-                            } else {
-                                // count any unknown data between named segments
-                                let len_to_this_seg =
-                                    next_source_bm.range_start - inclusion.start();
-                                // update item
-                                inclusion.set_length(len_to_this_seg + next_source_bm.range_len);
+                                skip_c2pa = true;
                             }
                         } else {
-                            return Err(Error::HashMismatch(
-                                ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
-                            ));
+                            // count any unknown data between named segments
+                            let len_to_this_seg = next_source_bm.range_start - inclusion.start();
+                            // update item
+                            inclusion.set_length(len_to_this_seg + next_source_bm.range_len);
                         }
+                    }
+                    Some(_) => {
+                        return Err(Error::HashMismatch(
+                            ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
+                        ));
                     }
                     None => {
                         return Err(Error::HashMismatch(
@@ -248,7 +254,6 @@ impl BoxHash {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn generate_box_hash_from_stream(
         &mut self,
         reader: &mut dyn CAIRead,
@@ -720,24 +725,49 @@ mod tests {
     }
 
     #[test]
+
     fn test_from_stream() {
         let ap = fixture_path("CA.jpg");
 
-        let mut input = File::open(&ap).unwrap();
-
-        // Use the new from_stream method
-        let bh = BoxHash::from_stream(&mut input, "image/jpeg", "sha256", true).unwrap();
-
-        // Verify box hash was created
-        assert!(!bh.boxes.is_empty());
-
-        // Verify it works with verification
         let bhp = get_assetio_handler_from_path(&ap)
             .unwrap()
             .asset_box_hash_ref()
             .unwrap();
 
+        let mut input = File::open(&ap).unwrap();
+
+        let bh = BoxHash::from_stream(&mut input, "image/jpeg", "sha256", true).unwrap();
+
+        assert!(!bh.boxes.is_empty());
+
         bh.verify_stream_hash(&mut input, Some("sha256"), bhp)
             .unwrap();
+    }
+
+    #[test]
+    fn test_verify_stream_hash_with_empty_names() {
+        let ap = fixture_path("libpng-test.png");
+
+        let bhp = get_assetio_handler_from_path(&ap)
+            .unwrap()
+            .asset_box_hash_ref()
+            .unwrap();
+
+        let mut input = File::open(&ap).unwrap();
+
+        let malicious_bh = BoxHash {
+            boxes: vec![BoxMap {
+                names: vec![],
+                alg: Some("sha256".to_string()),
+                hash: ByteBuf::from(vec![0]),
+                excluded: None,
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 0,
+            }],
+        };
+
+        // This shouldn't crash.
+        let _ = malicious_bh.verify_stream_hash(&mut input, Some("sha256"), bhp);
     }
 }

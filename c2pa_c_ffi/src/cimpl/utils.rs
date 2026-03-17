@@ -25,7 +25,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{cimpl::cimpl_error::CimplError, error::Error};
+use crate::{cimpl::cimpl_error::CimplError, error::Error, maybe_send_sync::MaybeSend};
 
 // ============================================================================
 // Pointer Registry - Tracks pointers with their cleanup functions
@@ -63,13 +63,53 @@ impl PointerRegistry {
             return Err(Error::from(CimplError::null_parameter("pointer")));
         }
 
-        let tracked = self.tracked.lock().map_err(|_| {
-            Error::from(CimplError::other("mutex poisoned - thread panic detected"))
-        })?;
+        let tracked = self
+            .tracked
+            .lock()
+            .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
         match tracked.get(&ptr) {
             Some((actual_type, _)) if *actual_type == expected_type => Ok(()),
-            Some(_) => Err(Error::from(CimplError::wrong_handle_type(ptr as u64))),
-            None => Err(Error::from(CimplError::invalid_handle(ptr as u64))),
+            Some(_) => Err(Error::from(CimplError::wrong_pointer_type(ptr as u64))),
+            None => Err(Error::from(CimplError::untracked_pointer(ptr as u64))),
+        }
+    }
+
+    /// Remove a pointer from tracking without running its cleanup function.
+    ///
+    /// Use this when an FFI function consumes a tracked pointer by calling
+    /// `Box::from_raw()` — the pointer must be untracked first so the registry
+    /// doesn't hold a stale entry that would cause a double-free on `cimpl_free()`
+    /// or a false leak warning at shutdown.
+    ///
+    /// After untracking, the registry no longer knows about this pointer:
+    /// - `cimpl_free()` will return an error (untracked pointer), not double-free
+    /// - The leak detector will not report it at shutdown
+    /// - The caller now owns the memory and must drop it (typically via `Box::from_raw()`)
+    ///
+    /// # When to use
+    ///
+    /// Any time a `box_tracked!` pointer is consumed by Rust rather than freed by C:
+    /// - `c2pa_context_builder_set_signer`: signer is moved into the builder
+    /// - `c2pa_context_builder_build`: builder is consumed to produce a context
+    /// - `c2pa_reader_with_stream`: reader is consumed to produce a new reader
+    /// - `c2pa_builder_with_definition`: builder is consumed to produce a new builder
+    pub fn untrack(&self, ptr: usize, expected_type: TypeId) -> Result<(), Error> {
+        if ptr == 0 {
+            return Err(Error::from(CimplError::null_parameter("pointer")));
+        }
+
+        let mut tracked = self
+            .tracked
+            .lock()
+            .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+
+        match tracked.get(&ptr) {
+            Some((actual_type, _)) if *actual_type == expected_type => {
+                tracked.remove(&ptr);
+                Ok(())
+            }
+            Some(_) => Err(Error::from(CimplError::wrong_pointer_type(ptr as u64))),
+            None => Err(Error::from(CimplError::untracked_pointer(ptr as u64))),
         }
     }
 
@@ -80,12 +120,13 @@ impl PointerRegistry {
         }
 
         let mut cleanup = {
-            let mut tracked = self.tracked.lock().map_err(|_| {
-                Error::from(CimplError::other("mutex poisoned - thread panic detected"))
-            })?;
+            let mut tracked = self
+                .tracked
+                .lock()
+                .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
             match tracked.remove(&ptr) {
                 Some((_, cleanup)) => cleanup,
-                None => return Err(Error::from(CimplError::invalid_handle(ptr as u64))),
+                None => return Err(Error::from(CimplError::untracked_pointer(ptr as u64))),
             }
         }; // Release lock before cleanup
 
@@ -147,7 +188,7 @@ pub(crate) fn get_registry() -> &'static PointerRegistry {
 /// ```ignore
 /// let ptr = track_box(Box::into_raw(Box::new(value)));
 /// ```
-pub fn track_box<T: 'static + Send>(ptr: *mut T) -> *mut T {
+pub fn track_box<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
     let ptr_val = ptr as usize; // Store as usize to make it Send
     let cleanup = move || unsafe {
         drop(Box::from_raw(ptr_val as *mut T));
@@ -168,7 +209,7 @@ pub fn track_box<T: 'static + Send>(ptr: *mut T) -> *mut T {
 /// ```ignore
 /// let ptr = track_arc(Arc::into_raw(Arc::new(value)));
 /// ```
-pub fn track_arc<T: 'static + Send>(ptr: *mut T) -> *mut T {
+pub fn track_arc<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
     let ptr_val = ptr as usize; // Store as usize to make it Send
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const T));
@@ -189,7 +230,7 @@ pub fn track_arc<T: 'static + Send>(ptr: *mut T) -> *mut T {
 /// ```ignore
 /// let ptr = track_arc_mutex(Arc::into_raw(Arc::new(Mutex::new(value))));
 /// ```
-pub fn track_arc_mutex<T: 'static + Send>(ptr: *mut Mutex<T>) -> *mut Mutex<T> {
+pub fn track_arc_mutex<T: 'static + MaybeSend>(ptr: *mut Mutex<T>) -> *mut Mutex<T> {
     let ptr_val = ptr as usize; // Store as usize to make it Send
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const Mutex<T>));
@@ -201,6 +242,30 @@ pub fn track_arc_mutex<T: 'static + Send>(ptr: *mut Mutex<T>) -> *mut Mutex<T> {
 /// Validate that a pointer is tracked and has the expected type
 pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
     get_registry().validate(ptr as usize, TypeId::of::<T>())
+}
+
+/// Remove a pointer from tracking without running its cleanup function.
+///
+/// Use this in FFI functions that consume a tracked pointer (take ownership
+/// back from C into Rust). Untracking must happen *before* `Box::from_raw()`
+/// so the registry doesn't hold a stale entry that would cause a double-free
+/// on `cimpl_free()` or a false leak warning at shutdown.
+///
+/// After this call, the pointer is no longer managed by the registry. The
+/// caller owns the underlying allocation and must drop it — typically by
+/// calling `Box::from_raw()` immediately after untracking.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // FFI function that consumes a signer to configure a builder:
+/// untrack_or_return_int!(signer_ptr, C2paSigner);
+/// let signer = Box::from_raw(signer_ptr);   // sole owner now
+/// builder.set_signer(signer.signer);         // inner value moved into builder
+/// // C2paSigner wrapper dropped here — no double-free risk
+/// ```
+pub fn untrack_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
+    get_registry().untrack(ptr as usize, TypeId::of::<T>())
 }
 
 /// Universal free function for any tracked pointer
@@ -342,9 +407,9 @@ pub unsafe fn safe_slice_from_raw_parts(
     }
 
     if !is_safe_buffer_size(len, ptr) {
-        return Err(Error::from(CimplError::other(format!(
-            "Buffer size {len} is invalid for parameter '{param_name}'",
-        ))));
+        return Err(Error::from(CimplError::invalid_buffer_size(
+            len, param_name,
+        )));
     }
 
     Ok(std::slice::from_raw_parts(ptr, len))
@@ -471,5 +536,58 @@ mod tests {
         let c_string = to_c_string(bad_string);
         assert!(c_string.is_null());
         // No need to free since it's null
+    }
+
+    #[test]
+    fn test_untrack_pointer_removes_from_registry() {
+        let ptr = track_box(Box::into_raw(Box::new(42i32)));
+        assert!(validate_pointer::<i32>(ptr).is_ok());
+
+        assert!(untrack_pointer::<i32>(ptr).is_ok());
+
+        // No longer tracked - cimpl_free should fail
+        let result = cimpl_free(ptr as *mut std::ffi::c_void);
+        assert_eq!(result, -1);
+
+        // Clean up manually since we took ownership
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    #[test]
+    fn test_untrack_wrong_type_fails() {
+        let ptr = track_box(Box::into_raw(Box::new(42i32)));
+
+        let result = untrack_pointer::<u64>(ptr as *mut u64);
+        assert!(result.is_err());
+
+        // Original pointer still tracked
+        assert!(validate_pointer::<i32>(ptr).is_ok());
+        cimpl_free(ptr as *mut std::ffi::c_void);
+    }
+
+    #[test]
+    fn test_untrack_null_pointer_fails() {
+        let result = untrack_pointer::<i32>(std::ptr::null_mut());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_untrack_unregistered_pointer_fails() {
+        let ptr = Box::into_raw(Box::new(42i32));
+        let result = untrack_pointer::<i32>(ptr);
+        assert!(result.is_err());
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    #[test]
+    fn test_untrack_already_untracked_fails() {
+        let ptr = track_box(Box::into_raw(Box::new(42i32)));
+        assert!(untrack_pointer::<i32>(ptr).is_ok());
+
+        // Second untrack fails
+        let result = untrack_pointer::<i32>(ptr);
+        assert!(result.is_err());
+
+        unsafe { drop(Box::from_raw(ptr)) };
     }
 }

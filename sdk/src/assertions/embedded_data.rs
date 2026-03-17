@@ -24,7 +24,7 @@ use crate::{
 /// It replaces the old Thumbnail assertion type.
 /// The label is used to identify the type of data, and the content type specifies the format.
 /// The data is stored as a binary vector.
-/// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_embedded_data>
+/// [embedded_data - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_embedded_data)
 #[derive(Serialize)]
 pub struct EmbeddedData {
     pub label: String,

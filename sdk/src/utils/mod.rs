@@ -16,6 +16,9 @@ pub(crate) mod cbor_types;
 mod debug_byte_slice;
 pub(crate) use debug_byte_slice::DebugByteSlice;
 
+mod ephemeral_cert;
+pub mod ephemeral_signer;
+
 #[allow(dead_code)]
 pub(crate) mod hash_utils;
 pub(crate) mod io_utils;
