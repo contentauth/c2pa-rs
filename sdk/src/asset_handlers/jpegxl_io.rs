@@ -2209,7 +2209,7 @@ pub mod tests {
         // Active manifest must be present.
         let manifest = reader
             .active_manifest()
-            .expect("signed JXL must have an active manifest");
+            .ok_or_else(|| crate::Error::ClaimEncoding)?;
 
         assert_eq!(
             manifest.title().unwrap_or_default(),
@@ -2357,7 +2357,7 @@ pub mod tests {
         // Exactly one C2PA_BOXHASH entry with a non-zero range.
         let c2pa_entries: Vec<_> = box_map
             .iter()
-            .filter(|bm| bm.names.first().map_or(false, |n| n == C2PA_BOXHASH))
+            .filter(|bm| bm.names.first().is_some_and(|n| n == C2PA_BOXHASH))
             .collect();
         assert_eq!(
             c2pa_entries.len(),
