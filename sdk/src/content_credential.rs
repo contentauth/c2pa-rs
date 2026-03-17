@@ -265,9 +265,9 @@ impl<'a> ContentCredential<'a> {
         }
         self.store.commit_claim(self.claim.clone())?;
         if _sync {
-            self.store.get_embeddable_manifest(self.context)
+            self.store.sign_manifest(self.context)
         } else {
-            self.store.get_embeddable_manifest_async(self.context).await
+            self.store.sign_manifest_async(self.context).await
         }
     }
 

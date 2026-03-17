@@ -2319,13 +2319,20 @@ impl Store {
     /// Signs an already hashed manifest with dynamic assertion support.
     ///
     /// # Arguments
-    /// * `signer` - The signer to use.
-    /// * `settings` - The settings to use.
+    /// * `context` - The context to use.
     /// # Returns
     /// * The signed manifest bytes.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be signed.
-    pub fn sign_manifest(&mut self, signer: &dyn Signer, settings: &Settings) -> Result<Vec<u8>> {
+    #[async_generic()]
+    pub fn sign_manifest(&mut self, context: &Context) -> Result<Vec<u8>> {
+        let signer = if _sync {
+            context.signer()?
+        } else {
+            context.async_signer()?
+        };
+        let settings = context.settings();
+
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         // if user did not supply a hash
@@ -2341,29 +2348,34 @@ impl Store {
         let dynamic_assertions = signer.dynamic_assertions();
         if !dynamic_assertions.is_empty() {
             // Check if placeholders exist for these dynamic assertions
-            let has_placeholders = {
-                dynamic_assertions
-                    .iter()
-                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
-            };
+            let has_placeholders = dynamic_assertions
+                .iter()
+                .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some());
 
             if has_placeholders {
                 let mut preliminary_claim = PartialClaim::default();
-                {
-                    for assertion in pc.assertions() {
-                        preliminary_claim.add_assertion(assertion);
-                    }
+                for assertion in pc.assertions() {
+                    preliminary_claim.add_assertion(assertion);
                 }
 
                 // Drop pc before calling write_dynamic_assertions
                 let _ = pc;
 
-                let _modified =
-                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+                let _modified = if _sync {
+                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?
+                } else {
+                    self.write_dynamic_assertions_async(&dynamic_assertions, &mut preliminary_claim)
+                        .await?
+                };
 
                 // Get pc again
                 let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+                let sig = if _sync {
+                    self.sign_claim(pc, signer, signer.reserve_size(), settings)?
+                } else {
+                    self.sign_claim_async(pc, signer, signer.reserve_size(), settings)
+                        .await?
+                };
                 let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
                 if sig_placeholder.len() != sig.len() {
@@ -2382,7 +2394,12 @@ impl Store {
         // Drop pc and get an immutable reference for signing
         let _ = pc;
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+        let sig = if _sync {
+            self.sign_claim(pc, signer, signer.reserve_size(), settings)?
+        } else {
+            self.sign_claim_async(pc, signer, signer.reserve_size(), settings)
+                .await?
+        };
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -2642,46 +2659,6 @@ impl Store {
         let sig = self
             .sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
             .await?;
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
-
-        if sig_placeholder.len() != sig.len() {
-            return Err(Error::CoseSigboxTooSmall);
-        }
-
-        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
-            .map_err(|_| Error::JumbfCreationError)?;
-
-        Ok(jumbf_bytes)
-    }
-
-    /// Returns a finalized, signed manifest. The claim must have exactly one
-    /// hard binding assertion (DataHash, BMFF Hash, or Box Hash) with pregenerated hashes.
-    #[async_generic()]
-    pub fn get_embeddable_manifest(&mut self, context: &Context) -> Result<Vec<u8>> {
-        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-
-        // make sure there is exactly one hard binding assertion
-        if pc.hash_assertions().len() != 1 {
-            return Err(Error::BadParam(
-                "Claim must have exactly one hard binding assertion".to_string(),
-            ));
-        }
-
-        let signer = if _sync {
-            context.signer()?
-        } else {
-            context.async_signer()?
-        };
-        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-
-        // sign contents
-        let sig = if _sync {
-            self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?
-        } else {
-            self.sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
-                .await?
-        };
-
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
