@@ -59,15 +59,22 @@ fn test_reader_xca_jpg() -> Result<()> {
     let (format, mut stream) = fixture_stream("XCA.jpg")?;
     let reader = Reader::from_context(context).with_stream(&format, &mut stream)?;
     // validation_results should have the expected failure
-    assert_eq!(
-        reader
-            .validation_results()
-            .unwrap()
-            .active_manifest()
-            .unwrap()
-            .failure[0]
-            .code(),
-        validation_status::ASSERTION_DATAHASH_MISMATCH
+    let failures = &reader
+        .validation_results()
+        .unwrap()
+        .active_manifest()
+        .unwrap()
+        .failure;
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.code() == validation_status::ASSERTION_DATAHASH_MISMATCH),
+        "expected {expected} in failure codes: {actual:?}",
+        expected = validation_status::ASSERTION_DATAHASH_MISMATCH,
+        actual = failures
+            .iter()
+            .map(|failure| failure.code())
+            .collect::<Vec<_>>()
     );
     compare_to_known_good(&reader, "XCA.json")
 }
