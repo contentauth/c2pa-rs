@@ -324,7 +324,9 @@ fn find_jumb_data(reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
                 let box_size = b.end(file_len) - b.offset;
                 reader.seek(SeekFrom::Start(b.offset))?;
                 let mut complete_box = vec![0u8; box_size as usize];
-                reader.read_exact(&mut complete_box).map_err(Error::IoError)?;
+                reader
+                    .read_exact(&mut complete_box)
+                    .map_err(Error::IoError)?;
                 c2pa_jumb = Some(complete_box);
             }
         }
@@ -1162,7 +1164,10 @@ pub mod tests {
         output.rewind().unwrap();
         let out_boxes = parse_all_boxes(&mut output).unwrap();
         let jumb_count = out_boxes.iter().filter(|b| b.box_type == BOX_JUMB).count();
-        assert_eq!(jumb_count, 1, "EXIF jumb should be preserved after C2PA removal");
+        assert_eq!(
+            jumb_count, 1,
+            "EXIF jumb should be preserved after C2PA removal"
+        );
     }
 
     /// write_cai on a file with a non-C2PA `jumb` box preserves that box and
@@ -1193,7 +1198,10 @@ pub mod tests {
         output.rewind().unwrap();
         let out_boxes = parse_all_boxes(&mut output).unwrap();
         let jumb_count = out_boxes.iter().filter(|b| b.box_type == BOX_JUMB).count();
-        assert_eq!(jumb_count, 2, "both EXIF and C2PA jumb boxes should be present");
+        assert_eq!(
+            jumb_count, 2,
+            "both EXIF and C2PA jumb boxes should be present"
+        );
     }
 
     // ─── Box parsing tests ───
@@ -2151,9 +2159,7 @@ pub mod tests {
 
         // Load the test trust anchors and verification settings so that the
         // Ed25519 test certificate is trusted during read-back.
-        crate::Settings::from_toml(include_str!(
-            "../../tests/fixtures/test_settings.toml"
-        ))?;
+        crate::Settings::from_toml(include_str!("../../tests/fixtures/test_settings.toml"))?;
 
         let signer_fn = |_ctx: *const (), data: &[u8]| ed_sign(data, PRIVATE_KEY);
         let signer = crate::CallbackSigner::new(signer_fn, crate::SigningAlg::Ed25519, CERTS);
@@ -2239,10 +2245,7 @@ pub mod tests {
                 assert!(
                     hard_failures.is_empty(),
                     "unexpected hard validation failures: {:?}",
-                    hard_failures
-                        .iter()
-                        .map(|f| f.code())
-                        .collect::<Vec<_>>()
+                    hard_failures.iter().map(|f| f.code()).collect::<Vec<_>>()
                 );
 
                 // Claim signature must be cryptographically valid.
@@ -2278,8 +2281,7 @@ pub mod tests {
         // Full coverage: sum of all lengths == file size.
         let total_covered: usize = sorted_locs.iter().map(|l| l.length).sum();
         assert_eq!(
-            total_covered,
-            file_len as usize,
+            total_covered, file_len as usize,
             "object locations must cover the entire file ({file_len} bytes total); \
              got {total_covered} bytes covered"
         );
