@@ -14,6 +14,5 @@
 mod asset_hash;
 mod created_gathered;
 mod hash_assertions;
-mod hash_encoding;
 mod ingredients;
 mod schema_compliance;

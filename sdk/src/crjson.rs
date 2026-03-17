@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2026 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -15,11 +15,12 @@
 //! This module converts a [`Reader`]'s manifest store into crJSON format
 //! as described in the crJSON specification.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use serde_json::{json, Map, Value};
 use x509_parser::{certificate::X509Certificate, prelude::FromDer};
-
-use std::collections::HashMap;
 
 use crate::{
     assertion::{AssertionBase, AssertionData},
@@ -27,21 +28,183 @@ use crate::{
     claim::Claim,
     crypto::{
         base64,
-        cose::{parse_cose_sign1, timestamp_token_bytes_from_sign1},
+        cose::{
+            cert_chain_from_sign1, parse_cose_sign1, signing_alg_from_sign1,
+            signing_time_from_sign1, timestamp_token_bytes_from_sign1,
+        },
         time_stamp::tsa_signer_cert_der_from_token,
     },
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_assertion_uri},
     reader::Reader,
     status_tracker::StatusTracker,
-    validation_results::StatusCodes,
-    Manifest,
+    validation_results::{IngredientDeltaValidationResult, StatusCodes},
+    validation_status::ValidationStatus,
 };
+
+// ── Output types ────────────────────────────────────────────────────────────
+
+/// A `Vec<u8>` that always serializes as standard (padded) base64.
+struct Base64Bytes(Vec<u8>);
+
+impl Serialize for Base64Bytes {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(&base64::encode(&self.0))
+    }
+}
+
+/// A `hashedURIMap` as defined in the crJSON specification: `{ url, hash, alg? }`.
+#[derive(Serialize)]
+struct HashedUriMap {
+    url: String,
+    hash: Base64Bytes,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    alg: Option<String>,
+}
+
+/// Validity period for a certificate.
+#[derive(Serialize)]
+struct CrJsonValidity {
+    #[serde(rename = "notBefore")]
+    not_before: String,
+    #[serde(rename = "notAfter")]
+    not_after: String,
+}
+
+/// Certificate details within a `signature` or `timeStampInfo` object.
+#[derive(Serialize, Default)]
+struct CrJsonCertInfo {
+    #[serde(rename = "serialNumber", skip_serializing_if = "Option::is_none")]
+    serial_number: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    issuer: Option<Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subject: Option<Map<String, Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validity: Option<CrJsonValidity>,
+}
+
+/// Timestamp authority info embedded in a manifest signature.
+#[derive(Serialize)]
+struct CrJsonTimestampInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timestamp: Option<String>,
+    #[serde(rename = "certificateInfo", skip_serializing_if = "Option::is_none")]
+    certificate_info: Option<CrJsonCertInfo>,
+}
+
+/// The crJSON `signature` object for a manifest.
+#[derive(Serialize, Default)]
+struct CrJsonSignature {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    algorithm: Option<String>,
+    #[serde(rename = "certificateInfo", skip_serializing_if = "Option::is_none")]
+    certificate_info: Option<CrJsonCertInfo>,
+    #[serde(rename = "timeStampInfo", skip_serializing_if = "Option::is_none")]
+    time_stamp_info: Option<CrJsonTimestampInfo>,
+}
+
+/// Validation results for a single manifest entry.
+#[derive(Serialize)]
+struct ManifestValidationResults {
+    success: Vec<ValidationStatus>,
+    informational: Vec<ValidationStatus>,
+    failure: Vec<ValidationStatus>,
+    #[serde(rename = "validationTime", skip_serializing_if = "Option::is_none")]
+    validation_time: Option<String>,
+}
+
+/// A C2PA claim — shared struct for both v1 and v2 format.
+///
+/// Fields that only apply to one version are wrapped in `Option` and omitted when absent.
+/// The parent `CrJsonManifest` places this under the `"claim"` key for v1 and `"claim.v2"` for v2.
+#[derive(Serialize)]
+struct CrJsonClaim {
+    // ── Present in both versions ──────────────────────────────────────────
+    #[serde(rename = "instanceID")]
+    instance_id: String,
+    /// JUMBF URI reference to the claim's COSE signature assertion.
+    signature: String,
+    claim_generator_info: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    alg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    alg_soft: Option<String>,
+    #[serde(rename = "dc:title", skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(
+        rename = "redacted_assertions",
+        skip_serializing_if = "Option::is_none"
+    )]
+    redacted_assertions: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<Value>,
+
+    // ── V1 only ───────────────────────────────────────────────────────────
+    #[serde(skip_serializing_if = "Option::is_none")]
+    claim_generator: Option<String>,
+    #[serde(rename = "dc:format", skip_serializing_if = "Option::is_none")]
+    format: Option<String>,
+    /// V1 assertion references — all assertions as a single hashed-URI array.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    assertions: Option<Vec<HashedUriMap>>,
+
+    // ── V2 only ───────────────────────────────────────────────────────────
+    #[serde(rename = "created_assertions", skip_serializing_if = "Option::is_none")]
+    created_assertions: Option<Vec<HashedUriMap>>,
+    #[serde(
+        rename = "gathered_assertions",
+        skip_serializing_if = "Option::is_none"
+    )]
+    gathered_assertions: Option<Vec<HashedUriMap>>,
+}
+
+/// A single entry in the crJSON `manifests` array.
+#[derive(Serialize)]
+struct CrJsonManifest {
+    label: String,
+    /// Assertions map: `label -> assertion value`. Keys may include instance suffixes
+    /// such as `c2pa.actions__2`.
+    assertions: Map<String, Value>,
+    /// Present only for v1 claims.
+    #[serde(rename = "claim", skip_serializing_if = "Option::is_none")]
+    claim_v1: Option<CrJsonClaim>,
+    /// Present only for v2 claims.
+    #[serde(rename = "claim.v2", skip_serializing_if = "Option::is_none")]
+    claim_v2: Option<CrJsonClaim>,
+    signature: CrJsonSignature,
+    #[serde(rename = "validationResults")]
+    validation_results: ManifestValidationResults,
+    #[serde(rename = "ingredientDeltas", skip_serializing_if = "Option::is_none")]
+    ingredient_deltas: Option<Vec<IngredientDeltaValidationResult>>,
+}
+
+/// crJSON generator identification block.
+#[derive(Serialize)]
+struct JsonGenerator {
+    name: &'static str,
+    version: &'static str,
+    date: String,
+}
+
+/// The top-level crJSON document.
+#[derive(Serialize)]
+struct CrJsonDocument {
+    #[serde(rename = "@context")]
+    context: Value,
+    manifests: Vec<CrJsonManifest>,
+    #[serde(rename = "jsonGenerator")]
+    json_generator: JsonGenerator,
+}
+
+// ── Public entry point ──────────────────────────────────────────────────────
 
 /// Convert a Reader's manifest store to crJSON format.
 pub fn from_reader(reader: &Reader) -> Result<Value> {
     CrJsonExporter::new(reader).to_value()
 }
+
+// ── Exporter ────────────────────────────────────────────────────────────────
 
 struct CrJsonExporter<'a> {
     reader: &'a Reader,
@@ -53,197 +216,175 @@ impl<'a> CrJsonExporter<'a> {
     }
 
     fn to_value(&self) -> Result<Value> {
-        let mut result = json!({
-            "@context": {
-                "@vocab": "https://contentcredentials.org/crjson",
-                "extras": "https://contentcredentials.org/crjson/extras"
-            }
-        });
-
-        let manifests_array = self.convert_manifests_to_array()?;
-        result["manifests"] = manifests_array;
-
-        result["jsonGenerator"] = self.build_json_generator()?;
-
-        Ok(result)
+        let doc = self.build_document()?;
+        serde_json::to_value(doc).map_err(Error::JsonError)
     }
 
-    fn build_json_generator(&self) -> Result<Value> {
-        Ok(json!({
-            "name": "c2pa-rs",
-            "version": env!("CARGO_PKG_VERSION"),
-            "date": Utc::now().to_rfc3339()
-        }))
-    }
-
-    fn convert_manifests_to_array(&self) -> Result<Value> {
+    fn build_document(&self) -> Result<CrJsonDocument> {
         let active_label = self.reader.active_label();
         let validation_map = self.build_validation_results_per_manifest();
-        let mut labeled: Vec<(String, Value)> = Vec::new();
+        let claims = self.reader.store.claims();
 
-        for (label, manifest) in self.reader.manifests().iter() {
-            let mut manifest_obj = Map::new();
-            manifest_obj.insert("label".to_string(), json!(label));
-
-            let assertions_obj = self.convert_assertions(manifest, label)?;
-            manifest_obj.insert("assertions".to_string(), json!(assertions_obj));
-
-            let claim = self
-                .reader
-                .store
-                .get_claim(label)
-                .ok_or_else(|| Error::ClaimMissing {
-                    label: label.to_owned(),
-                })?;
-            if claim.version() == 1 {
-                let claim_v1 = self.build_claim_v1(manifest, label, claim)?;
-                manifest_obj.insert("claim".to_string(), claim_v1);
-            } else {
-                let claim_v2 = self.build_claim_v2(manifest, label)?;
-                manifest_obj.insert("claim.v2".to_string(), claim_v2);
-            }
-
-            let claim_ref = self.reader.store.get_claim(label);
-            let signature = self
-                .build_claim_signature(manifest, claim_ref)?
-                .unwrap_or_else(|| Value::Object(Map::new()));
-            manifest_obj.insert("signature".to_string(), signature);
-
-            // Each manifest's validationResults holds the validation result for THAT manifest (active or ingredient).
-            let validation_results =
-                self.build_manifest_validation_results(label, &validation_map);
-            manifest_obj.insert("validationResults".to_string(), validation_results);
-
-            // Per-manifest ingredientDeltas: deltas whose ingredientAssertionURI belongs to this manifest
-            if let Some(deltas) = self.build_manifest_ingredient_deltas(label) {
-                manifest_obj.insert("ingredientDeltas".to_string(), deltas);
-            }
-
-            labeled.push((label.clone(), Value::Object(manifest_obj)));
+        // Collect (store_index, manifest) so we can sort afterwards.
+        let mut indexed: Vec<(usize, CrJsonManifest)> = Vec::with_capacity(claims.len());
+        for (idx, claim) in claims.iter().enumerate() {
+            indexed.push((idx, self.build_manifest(claim, &validation_map)?));
         }
 
-        let store_order: std::collections::HashMap<String, usize> = self
-            .reader
-            .store
-            .claims()
-            .into_iter()
-            .enumerate()
-            .map(|(i, claim)| (claim.label().to_string(), i))
-            .collect();
-        labeled.sort_by(|a, b| {
-            let a_active = active_label.is_some_and(|l| l == a.0);
-            let b_active = active_label.is_some_and(|l| l == b.0);
+        // Active manifest first; all others in reverse store order (newest first).
+        indexed.sort_by(|(a_idx, _), (b_idx, _)| {
+            let a_active = active_label.is_some_and(|l| l == claims[*a_idx].label());
+            let b_active = active_label.is_some_and(|l| l == claims[*b_idx].label());
             match (a_active, b_active) {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
-                _ => {
-                    let a_idx = store_order.get(&a.0).copied().unwrap_or(0);
-                    let b_idx = store_order.get(&b.0).copied().unwrap_or(0);
-                    b_idx.cmp(&a_idx)
-                }
+                _ => b_idx.cmp(a_idx),
             }
         });
 
-        let manifests_array = labeled.into_iter().map(|(_, v)| v).collect();
-        Ok(Value::Array(manifests_array))
+        Ok(CrJsonDocument {
+            context: json!({
+                "@vocab": "https://contentcredentials.org/crjson",
+                "extras": "https://contentcredentials.org/crjson/extras"
+            }),
+            manifests: indexed.into_iter().map(|(_, m)| m).collect(),
+            json_generator: JsonGenerator {
+                name: "c2pa-rs",
+                version: env!("CARGO_PKG_VERSION"),
+                date: Utc::now().to_rfc3339(),
+            },
+        })
     }
 
-    fn convert_assertions(
+    fn build_manifest(
         &self,
-        manifest: &Manifest,
-        manifest_label: &str,
-    ) -> Result<Map<String, Value>> {
+        claim: &Claim,
+        validation_map: &HashMap<String, (StatusCodes, Option<String>)>,
+    ) -> Result<CrJsonManifest> {
+        let label = claim.label();
+        let assertions = self.build_assertions(claim)?;
+        let claim_obj = self.build_claim(claim)?;
+        let signature = self.build_signature(claim)?;
+        let validation_results = build_manifest_validation_results(label, validation_map);
+        let ingredient_deltas = self.build_manifest_ingredient_deltas(label);
+
+        let (claim_v1, claim_v2) = if claim.version() == 1 {
+            (Some(claim_obj), None)
+        } else {
+            (None, Some(claim_obj))
+        };
+
+        Ok(CrJsonManifest {
+            label: label.to_string(),
+            assertions,
+            claim_v1,
+            claim_v2,
+            signature,
+            validation_results,
+            ingredient_deltas,
+        })
+    }
+
+    fn build_claim(&self, claim: &Claim) -> Result<CrJsonClaim> {
+        let is_v1 = claim.version() == 1;
+        let claim_generator_info = build_claim_generator_info(claim, is_v1);
+        let (assertions, created_assertions, gathered_assertions) = build_assertion_refs(claim);
+
+        Ok(CrJsonClaim {
+            instance_id: claim.instance_id().to_string(),
+            signature: format!("self#jumbf=/c2pa/{}/c2pa.signature", claim.label()),
+            claim_generator_info,
+            alg: Some(claim.alg().to_string()),
+            alg_soft: claim.alg_soft().map(|s| s.to_string()),
+            title: claim.title().map(|s| s.to_string()),
+            redacted_assertions: claim.redactions().and_then(|r| {
+                if r.is_empty() {
+                    None
+                } else {
+                    Some(r.to_vec())
+                }
+            }),
+            metadata: claim.metadata().and_then(|m| {
+                if m.is_empty() {
+                    None
+                } else {
+                    serde_json::to_value(m).ok()
+                }
+            }),
+            claim_generator: if is_v1 {
+                claim.claim_generator().map(|s| s.to_string())
+            } else {
+                None
+            },
+            format: if is_v1 {
+                Some(claim.format().unwrap_or("").to_string())
+            } else {
+                None
+            },
+            assertions: if is_v1 { Some(assertions) } else { None },
+            created_assertions: if !is_v1 {
+                Some(created_assertions)
+            } else {
+                None
+            },
+            gathered_assertions: if !is_v1 {
+                Some(gathered_assertions)
+            } else {
+                None
+            },
+        })
+    }
+
+    // ── Assertions ──────────────────────────────────────────────────────────
+
+    fn build_assertions(&self, claim: &Claim) -> Result<Map<String, Value>> {
+        let manifest_label = claim.label();
         let mut assertions_obj = Map::new();
 
-        for assertion in manifest.assertions() {
-            let label = assertion.label().to_string();
-            let value_result = if let Ok(value) = assertion.value() {
-                Ok(value.clone())
-            } else {
-                decode_assertion_data(assertion)
-            };
-
-            if let Ok(value) = value_result {
-                let fixed_value = fix_hash_encoding(value);
-                assertions_obj.insert(label, fixed_value);
+        // Single pass over all physically stored assertions in this claim's JUMBF.
+        // ClaimAssertion::label() already encodes the instance suffix as `base__N`.
+        for ca in claim.claim_assertion_store() {
+            let key = ca.label();
+            if assertions_obj.contains_key(&key) {
+                continue;
+            }
+            if let Some(value) = self.claim_assertion_to_value(manifest_label, ca)? {
+                assertions_obj.insert(key, value);
             }
         }
 
-        if let Some(claim) = self.reader.store.get_claim(manifest_label) {
-            for hash_assertion in claim.hash_assertions() {
-                let label = hash_assertion.label_raw();
-                let instance = hash_assertion.instance();
-                if let Some(assertion) = claim.get_claim_assertion(&label, instance) {
-                    if let Ok(assertion_obj) = assertion.assertion().as_json_object() {
-                        let fixed_value = fix_hash_encoding(assertion_obj);
-                        let final_label = if instance > 0 {
-                            format!("{}_{}", label, instance + 1)
-                        } else {
-                            label
-                        };
-                        assertions_obj.insert(final_label, fixed_value);
-                    }
+        // V2 gathered assertions may reference assertions stored in OTHER claims.
+        // Try to resolve them from the source claim; fall back to a reference object.
+        if let Some(gathered) = claim.gathered_assertions() {
+            for assertion_ref in gathered {
+                let (label, instance) = Claim::assertion_label_from_link(&assertion_ref.url());
+                let key = Claim::label_with_instance(&label, instance);
+                if assertions_obj.contains_key(&key) {
+                    continue;
                 }
-            }
-        }
+                let resolved = manifest_label_from_uri(&assertion_ref.url())
+                    .and_then(|src_label| self.reader.store.get_claim(&src_label))
+                    .and_then(|src_claim| {
+                        src_claim
+                            .get_claim_assertion(&label, instance)
+                            .and_then(|src_ca| {
+                                self.claim_assertion_to_value(manifest_label, src_ca)
+                                    .ok()
+                                    .flatten()
+                            })
+                    });
 
-        for (index, ingredient) in manifest.ingredients().iter().enumerate() {
-            if let Ok(ingredient_json) = serde_json::to_value(ingredient) {
-                let mut fixed_ingredient = fix_hash_encoding(ingredient_json);
-                let base_label = if let Some(label_value) = fixed_ingredient.get("label") {
-                    label_value
-                        .as_str()
-                        .unwrap_or("c2pa.ingredient")
-                        .to_string()
+                if let Some(value) = resolved {
+                    assertions_obj.insert(key, value);
                 } else {
-                    "c2pa.ingredient".to_string()
-                };
-                if let Some(obj) = fixed_ingredient.as_object_mut() {
-                    obj.remove("label");
-                }
-                let label = if manifest.ingredients().len() > 1 {
-                    format!("{}__{}", base_label, index + 1)
-                } else {
-                    base_label
-                };
-                assertions_obj.insert(label, fixed_ingredient);
-            }
-        }
-
-        if let Some(claim) = self.reader.store.get_claim(manifest_label) {
-            if let Some(gathered) = claim.gathered_assertions() {
-                for assertion_ref in gathered {
-                    let (label, instance) = Claim::assertion_label_from_link(&assertion_ref.url());
-                    let final_label = if instance > 0 {
-                        format!("{}_{}", label, instance + 1)
-                    } else {
-                        label.clone()
-                    };
-                    if assertions_obj.contains_key(&final_label) {
-                        continue;
-                    }
-                    if let Some(claim_assertion) = claim.get_claim_assertion(&label, instance) {
-                        let assertion = claim_assertion.assertion();
-                        let use_ref_format = matches!(
-                            assertion.decode_data(),
-                            AssertionData::Binary(_) | AssertionData::Uuid(_, _)
-                        );
-                        if use_ref_format {
-                            let absolute_uri =
-                                to_absolute_uri(manifest_label, &assertion_ref.url());
-                            let mut ref_obj = Map::new();
-                            ref_obj.insert("format".to_string(), json!(assertion.content_type()));
-                            ref_obj.insert("identifier".to_string(), json!(absolute_uri));
-                            ref_obj.insert(
-                                "hash".to_string(),
-                                json!(base64::encode(&assertion_ref.hash())),
-                            );
-                            assertions_obj.insert(final_label, Value::Object(ref_obj));
-                        } else if let Ok(assertion_obj) = assertion.as_json_object() {
-                            let fixed_value = fix_hash_encoding(assertion_obj);
-                            assertions_obj.insert(final_label, fixed_value);
-                        }
-                    }
+                    let absolute_uri = to_absolute_uri(manifest_label, &assertion_ref.url());
+                    assertions_obj.insert(
+                        key,
+                        json!({
+                            "identifier": absolute_uri,
+                            "hash": base64::encode(&assertion_ref.hash())
+                        }),
+                    );
                 }
             }
         }
@@ -251,322 +392,100 @@ impl<'a> CrJsonExporter<'a> {
         Ok(assertions_obj)
     }
 
-    fn build_claim_v1(&self, manifest: &Manifest, label: &str, claim: &Claim) -> Result<Value> {
-        let mut claim_v1 = Map::new();
-        claim_v1.insert(
-            "claim_generator".to_string(),
-            json!(claim
-                .claim_generator()
-                .or_else(|| manifest.claim_generator())
-                .unwrap_or("")),
-        );
-
-        if let Some(ref info_vec) = manifest.claim_generator_info {
-            let mut info_array = Vec::new();
-            for info in info_vec {
-                if let Ok(info_value) = serde_json::to_value(info) {
-                    let fixed_info = fix_hash_encoding(info_value);
-                    let mut info_obj = match fixed_info {
-                        Value::Object(m) => m,
-                        _ => continue,
-                    };
-                    if let Some(icon_val) = info_obj.get_mut("icon") {
-                        if let Some(resolved) =
-                            resolve_icon_to_hashed_uri_map(claim, label, icon_val)
-                        {
-                            *icon_val = resolved;
-                        }
-                        if let Some(icon_obj) = icon_val.as_object_mut() {
-                            icon_retain_only_hashed_uri_map_keys(icon_obj);
-                        }
-                    }
-                    info_array.push(Value::Object(info_obj));
-                }
-            }
-            if !info_array.is_empty() {
-                claim_v1.insert("claim_generator_info".to_string(), Value::Array(info_array));
-            }
-        }
-        if !claim_v1.contains_key("claim_generator_info") {
-            claim_v1.insert(
-                "claim_generator_info".to_string(),
-                json!([{"name": claim.claim_generator().unwrap_or("")}]),
-            );
-        }
-
-        let signature_ref = format!("self#jumbf=/c2pa/{}/c2pa.signature", label);
-        claim_v1.insert("signature".to_string(), json!(signature_ref));
-
-        let mut assertions_arr = Vec::new();
-        for assertion_ref in claim.assertions() {
-            let mut ref_obj = Map::new();
-            ref_obj.insert(
-                "url".to_string(),
-                json!(to_absolute_uri(label, &assertion_ref.url())),
-            );
-            ref_obj.insert(
-                "hash".to_string(),
-                json!(base64::encode(&assertion_ref.hash())),
-            );
-            if let Some(alg) = assertion_ref.alg() {
-                ref_obj.insert("alg".to_string(), json!(alg));
-            }
-            assertions_arr.push(Value::Object(ref_obj));
-        }
-        claim_v1.insert("assertions".to_string(), Value::Array(assertions_arr));
-
-        claim_v1.insert(
-            "dc:format".to_string(),
-            json!(manifest.format().or_else(|| claim.format()).unwrap_or("")),
-        );
-        claim_v1.insert("instanceID".to_string(), json!(manifest.instance_id()));
-
-        let title_str = manifest
-            .title()
-            .or_else(|| claim.title().map(|s| s.as_str()));
-        if let Some(title) = title_str {
-            claim_v1.insert("dc:title".to_string(), json!(title));
-        }
-        if let Some(redacted) = claim.redactions() {
-            if !redacted.is_empty() {
-                claim_v1.insert("redacted_assertions".to_string(), json!(redacted));
-            }
-        }
-        claim_v1.insert("alg".to_string(), json!(claim.alg()));
-        if let Some(alg_soft) = claim.alg_soft() {
-            claim_v1.insert("alg_soft".to_string(), json!(alg_soft));
-        }
-        if let Some(metadata) = claim.metadata() {
-            if !metadata.is_empty() {
-                if let Ok(v) = serde_json::to_value(metadata) {
-                    claim_v1.insert("metadata".to_string(), v);
-                }
-            }
-        }
-
-        Ok(Value::Object(claim_v1))
-    }
-
-    fn build_claim_v2(&self, manifest: &Manifest, label: &str) -> Result<Value> {
-        let mut claim_v2 = Map::new();
-
-        if let Some(title) = manifest.title() {
-            claim_v2.insert("dc:title".to_string(), json!(title));
-        }
-        claim_v2.insert("instanceID".to_string(), json!(manifest.instance_id()));
-
-        if let Some(claim_generator) = manifest.claim_generator() {
-            claim_v2.insert("claim_generator".to_string(), json!(claim_generator));
-        }
-
-        if let Some(ref info_vec) = manifest.claim_generator_info {
-            if let Some(first) = info_vec.first() {
-                if let Ok(info_value) = serde_json::to_value(first) {
-                    let fixed_info = fix_hash_encoding(info_value);
-                    let mut info_for_claim = match &fixed_info {
-                        Value::Array(arr) if !arr.is_empty() => arr[0].clone(),
-                        _ => fixed_info,
-                    };
-                    if let Some(claim) = self.reader.store.get_claim(label) {
-                        if let Some(info_obj) = info_for_claim.as_object_mut() {
-                            if let Some(icon_val) = info_obj.get_mut("icon") {
-                                if let Some(resolved) =
-                                    resolve_icon_to_hashed_uri_map(claim, label, icon_val)
-                                {
-                                    *icon_val = resolved;
-                                }
-                            }
-                        }
-                    }
-                    claim_v2.insert("claim_generator_info".to_string(), info_for_claim);
-                }
-            }
-        }
-        if !claim_v2.contains_key("claim_generator_info") {
-            let fallback = manifest
-                .claim_generator()
-                .map_or_else(|| json!({"name": "Unknown"}), |cg| json!({"name": cg}));
-            claim_v2.insert("claim_generator_info".to_string(), fallback);
-        }
-
-        claim_v2.insert("alg".to_string(), json!("SHA-256"));
-        let signature_ref = format!("self#jumbf=/c2pa/{}/c2pa.signature", label);
-        claim_v2.insert("signature".to_string(), json!(signature_ref));
-
-        let (created_assertions, gathered_assertions) =
-            self.build_assertion_references(manifest, label)?;
-        claim_v2.insert("created_assertions".to_string(), created_assertions);
-        claim_v2.insert("gathered_assertions".to_string(), gathered_assertions);
-        claim_v2.insert("redacted_assertions".to_string(), json!([]));
-
-        if let Some(existing) = claim_v2.get("claim_generator_info") {
-            if let Some(arr) = existing.as_array() {
-                if !arr.is_empty() {
-                    claim_v2.insert("claim_generator_info".to_string(), arr[0].clone());
-                }
-            }
-        }
-
-        if let Some(claim) = self.reader.store.get_claim(label) {
-            if let Some(cgi) = claim_v2.get_mut("claim_generator_info") {
-                if let Some(info_obj) = cgi.as_object_mut() {
-                    if let Some(icon_val) = info_obj.get_mut("icon") {
-                        let is_hashed_uri_map = icon_val
-                            .as_object()
-                            .and_then(|o| o.get("url").and_then(|v| v.as_str()))
-                            .is_some()
-                            && icon_val
-                                .as_object()
-                                .and_then(|o| o.get("hash").and_then(|v| v.as_str()))
-                                .is_some();
-                        if !is_hashed_uri_map {
-                            if let Some(resolved) =
-                                resolve_icon_to_hashed_uri_map(claim, label, icon_val)
-                            {
-                                *icon_val = resolved;
-                            }
-                        }
-                        if let Some(icon_obj) = icon_val.as_object_mut() {
-                            icon_retain_only_hashed_uri_map_keys(icon_obj);
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(Value::Object(claim_v2))
-    }
-
-    fn build_assertion_references(
+    /// Serialize a single [`ClaimAssertion`] into a crJSON value.
+    ///
+    /// * Ingredient assertions use the internal [`assertions::Ingredient`] custom serializer,
+    ///   which emits Dublin-Core field names (`dc:title`, `dc:format`, …).
+    /// * Binary / UUID assertions emit the reference-object form `{format, identifier, hash}`.
+    /// * Everything else is decoded via [`Assertion::as_json_object`] and passed through
+    ///   [`fix_hash_encoding`] to convert byte arrays to base64.
+    fn claim_assertion_to_value(
         &self,
-        _manifest: &Manifest,
-        label: &str,
-    ) -> Result<(Value, Value)> {
-        let claim = self
-            .reader
-            .store
-            .get_claim(label)
-            .ok_or_else(|| Error::ClaimMissing {
-                label: label.to_owned(),
-            })?;
-
-        let mut created_refs = Vec::new();
-        for assertion_ref in claim.created_assertions() {
-            let mut ref_obj = Map::new();
-            ref_obj.insert("url".to_string(), json!(assertion_ref.url()));
-            let hash = assertion_ref.hash();
-            ref_obj.insert("hash".to_string(), json!(base64::encode(&hash)));
-            created_refs.push(Value::Object(ref_obj));
-        }
-
-        let mut gathered_refs = Vec::new();
-        if let Some(gathered) = claim.gathered_assertions() {
-            for assertion_ref in gathered {
-                let mut ref_obj = Map::new();
-                ref_obj.insert("url".to_string(), json!(assertion_ref.url()));
-                let hash = assertion_ref.hash();
-                ref_obj.insert("hash".to_string(), json!(base64::encode(&hash)));
-                gathered_refs.push(Value::Object(ref_obj));
-            }
-        }
-
-        if created_refs.is_empty() && gathered_refs.is_empty() && claim.version() == 1 {
-            for assertion_ref in claim.assertions() {
-                let mut ref_obj = Map::new();
-                ref_obj.insert("url".to_string(), json!(assertion_ref.url()));
-                let hash = assertion_ref.hash();
-                ref_obj.insert("hash".to_string(), json!(base64::encode(&hash)));
-                created_refs.push(Value::Object(ref_obj));
-            }
-        }
-
-        Ok((Value::Array(created_refs), Value::Array(gathered_refs)))
-    }
-
-    fn build_claim_signature(
-        &self,
-        manifest: &Manifest,
-        claim: Option<&Claim>,
+        manifest_label: &str,
+        ca: &crate::claim::ClaimAssertion,
     ) -> Result<Option<Value>> {
-        let sig_info = match manifest.signature_info() {
-            Some(info) => info,
-            None => return Ok(None),
+        use crate::assertions::labels as assertion_labels;
+
+        let assertion = ca.assertion();
+
+        if ca.label_raw().starts_with(assertion_labels::INGREDIENT) {
+            return match Ingredient::from_assertion(assertion) {
+                Ok(ingredient) => {
+                    let v = serde_json::to_value(&ingredient).map_err(Error::JsonError)?;
+                    Ok(Some(fix_hash_encoding(v)))
+                }
+                Err(_) => Ok(None),
+            };
+        }
+
+        match assertion.decode_data() {
+            AssertionData::Binary(_) | AssertionData::Uuid(_, _) => {
+                let absolute_uri = to_assertion_uri(manifest_label, &ca.label());
+                Ok(Some(json!({
+                    "format": assertion.content_type(),
+                    "identifier": absolute_uri,
+                    "hash": base64::encode(ca.hash())
+                })))
+            }
+            _ => Ok(assertion.as_json_object().ok().map(fix_hash_encoding)),
+        }
+    }
+
+    // ── Signature ───────────────────────────────────────────────────────────
+
+    /// Build the crJSON `signature` object by parsing the claim's COSE Sign1 bytes directly.
+    fn build_signature(&self, claim: &Claim) -> Result<CrJsonSignature> {
+        let sig_bytes = claim.signature_val();
+        if sig_bytes.is_empty() {
+            return Ok(CrJsonSignature::default());
+        }
+        let data = match claim.data() {
+            Ok(d) => d,
+            Err(_) => return Ok(CrJsonSignature::default()),
         };
 
-        let mut claim_signature = Map::new();
-        let alg_str = sig_info
-            .alg
-            .as_ref()
-            .map_or_else(String::new, |a| a.to_string());
-        claim_signature.insert("algorithm".to_string(), json!(alg_str));
+        let mut log = StatusTracker::default();
+        let sign1 = match parse_cose_sign1(sig_bytes, data.as_ref(), &mut log) {
+            Ok(s) => s,
+            Err(_) => return Ok(CrJsonSignature::default()),
+        };
 
-        let mut cert_info_obj = Map::new();
-        if let Some(cert_info) = parse_certificate(&sig_info.cert_chain)? {
-            if let Some(serial) = cert_info.serial_number {
-                cert_info_obj.insert("serialNumber".to_string(), json!(serial));
-            }
-            if let Some(issuer) = cert_info.issuer {
-                cert_info_obj.insert("issuer".to_string(), json!(issuer));
-            }
-            if let Some(subject) = cert_info.subject {
-                cert_info_obj.insert("subject".to_string(), json!(subject));
-            }
-            if let Some(validity) = cert_info.validity {
-                cert_info_obj.insert("validity".to_string(), validity);
-            }
-        }
-        claim_signature.insert("certificateInfo".to_string(), Value::Object(cert_info_obj));
+        let algorithm = signing_alg_from_sign1(&sign1).map(|a| a.to_string()).ok();
 
-        let has_ts_time = sig_info.time.is_some();
-        let mut tsa_cert_info_obj = Map::new();
-        if let Some(claim) = claim {
-            if let Ok(data) = claim.data() {
-                let sig_bytes = claim.signature_val();
-                let mut log = StatusTracker::default();
-                if let Ok(sign1) = parse_cose_sign1(sig_bytes, data.as_ref(), &mut log) {
-                    if let Some(token_bytes) = timestamp_token_bytes_from_sign1(&sign1) {
-                        if let Ok(Some(tsa_der)) = tsa_signer_cert_der_from_token(&token_bytes) {
-                            if let Ok(Some(tsa_info)) = parse_certificate_from_der(&tsa_der) {
-                                if let Some(serial) = tsa_info.serial_number {
-                                    tsa_cert_info_obj
-                                        .insert("serialNumber".to_string(), json!(serial));
-                                }
-                                if let Some(issuer) = tsa_info.issuer {
-                                    tsa_cert_info_obj.insert("issuer".to_string(), json!(issuer));
-                                }
-                                if let Some(subject) = tsa_info.subject {
-                                    tsa_cert_info_obj.insert("subject".to_string(), json!(subject));
-                                }
-                                if let Some(validity) = tsa_info.validity {
-                                    tsa_cert_info_obj.insert("validity".to_string(), validity);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if has_ts_time || !tsa_cert_info_obj.is_empty() {
-            let mut time_stamp_info = Map::new();
-            if let Some(time) = &sig_info.time {
-                time_stamp_info.insert("timestamp".to_string(), json!(time));
-            }
-            if !tsa_cert_info_obj.is_empty() {
-                time_stamp_info.insert(
-                    "certificateInfo".to_string(),
-                    Value::Object(tsa_cert_info_obj),
-                );
-            }
-            claim_signature.insert("timeStampInfo".to_string(), Value::Object(time_stamp_info));
-        }
+        let certificate_info = cert_chain_from_sign1(&sign1).ok().and_then(|chain| {
+            chain
+                .first()
+                .and_then(|der| parse_certificate_from_der(der).ok().flatten())
+        });
 
-        Ok(Some(Value::Object(claim_signature)))
+        let ts_time = signing_time_from_sign1(&sign1, data.as_ref(), false).map(|t| t.to_rfc3339());
+
+        let tsa_cert_info = timestamp_token_bytes_from_sign1(&sign1).and_then(|token_bytes| {
+            tsa_signer_cert_der_from_token(&token_bytes)
+                .ok()
+                .flatten()
+                .and_then(|tsa_der| parse_certificate_from_der(&tsa_der).ok().flatten())
+        });
+
+        let time_stamp_info = if ts_time.is_some() || tsa_cert_info.is_some() {
+            Some(CrJsonTimestampInfo {
+                timestamp: ts_time,
+                certificate_info: tsa_cert_info,
+            })
+        } else {
+            None
+        };
+
+        Ok(CrJsonSignature {
+            algorithm,
+            certificate_info,
+            time_stamp_info,
+        })
     }
 
-    /// Build a map from each manifest label to its validation results (status codes + validation time).
-    /// The document's active manifest gets active_manifest codes; each ingredient manifest gets the
-    /// codes from the ingredient_delta that refers to it (resolved via the ingredient assertion's
-    /// activeManifest/c2pa_manifest target).
+    // ── Validation ──────────────────────────────────────────────────────────
+
+    /// Build a map from each manifest label to its (StatusCodes, validation_time).
     fn build_validation_results_per_manifest(
         &self,
     ) -> HashMap<String, (StatusCodes, Option<String>)> {
@@ -576,21 +495,18 @@ impl<'a> CrJsonExporter<'a> {
         };
         let validation_time = vr.validation_time().map(String::from);
 
-        // Document active manifest
         if let Some(active_label) = self.reader.active_label() {
-            let codes = vr
-                .active_manifest()
-                .cloned()
-                .unwrap_or_default();
+            let codes = vr.active_manifest().cloned().unwrap_or_default();
             map.insert(active_label.to_string(), (codes, validation_time.clone()));
         }
 
-        // Each ingredient_delta: resolve its assertion URI to the target manifest label, then map that label to the delta's codes
         let Some(deltas) = vr.ingredient_deltas() else {
             return map;
         };
         for idv in deltas {
-            let Some(target_label) = self.ingredient_assertion_uri_to_manifest_label(idv.ingredient_assertion_uri()) else {
+            let Some(target_label) =
+                self.ingredient_assertion_uri_to_manifest_label(idv.ingredient_assertion_uri())
+            else {
                 continue;
             };
             let codes = idv.validation_deltas().clone();
@@ -599,7 +515,6 @@ impl<'a> CrJsonExporter<'a> {
         map
     }
 
-    /// Resolve an ingredient assertion URI (in a parent manifest) to the target manifest label (the ingredient's active manifest).
     fn ingredient_assertion_uri_to_manifest_label(&self, assertion_uri: &str) -> Option<String> {
         let parent_label = manifest_label_from_uri(assertion_uri)?;
         let claim = self.reader.store.get_claim(&parent_label)?;
@@ -616,62 +531,127 @@ impl<'a> CrJsonExporter<'a> {
         None
     }
 
-    /// Build validationResults (statusCodes + validationTime) for one manifest. Each element of the
-    /// manifests array gets the validation result for THAT manifest (active or ingredient).
-    fn build_manifest_validation_results(
+    fn build_manifest_ingredient_deltas(
         &self,
         label: &str,
-        validation_map: &HashMap<String, (StatusCodes, Option<String>)>,
-    ) -> Value {
-        let (codes, validation_time) = validation_map
-            .get(label)
-            .cloned()
-            .unwrap_or_else(|| (StatusCodes::default(), None));
-        let mut base = serde_json::to_value(&codes).unwrap_or_else(|_| {
-            json!({
-                "success": [],
-                "informational": [],
-                "failure": []
-            })
-        });
-        if let (Some(t), Some(obj)) = (validation_time, base.as_object_mut()) {
-            obj.insert("validationTime".to_string(), json!(t));
-        }
-        base
-    }
-
-    /// Build ingredientDeltas for a single manifest. Each delta is attributed to the manifest that
-    /// declares the ingredient (ingredientAssertionURI identifies the assertion in a manifest),
-    /// so ingredient manifest validation results are correctly reflected on the declaring manifest.
-    fn build_manifest_ingredient_deltas(&self, label: &str) -> Option<Value> {
+    ) -> Option<Vec<IngredientDeltaValidationResult>> {
         let validation_results = self.reader.validation_results()?;
         let deltas = validation_results.ingredient_deltas()?;
-        let for_manifest: Vec<_> = deltas
+        let for_manifest: Vec<IngredientDeltaValidationResult> = deltas
             .iter()
             .filter(|idv| {
                 manifest_label_from_uri(idv.ingredient_assertion_uri()).as_deref() == Some(label)
             })
+            .cloned()
             .collect();
         if for_manifest.is_empty() {
-            return None;
+            None
+        } else {
+            Some(for_manifest)
         }
-        serde_json::to_value(&for_manifest).ok()
     }
 }
 
-fn decode_assertion_data(assertion: &crate::ManifestAssertion) -> Result<Value> {
-    if let Ok(binary) = assertion.binary() {
-        let cbor_value: c2pa_cbor::Value = c2pa_cbor::from_slice(binary)?;
-        let json_value: Value = serde_json::to_value(&cbor_value)?;
-        Ok(json_value)
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/// Serialize claim generator info into the crJSON shape: an array for v1, a single object for v2.
+/// `fix_hash_encoding` is applied to convert the icon hash from a byte array to base64.
+fn build_claim_generator_info(claim: &Claim, is_v1: bool) -> Value {
+    let to_value = |info| {
+        serde_json::to_value(info)
+            .map(fix_hash_encoding)
+            .unwrap_or_else(|_| json!({}))
+    };
+
+    if let Some(info_slice) = claim.claim_generator_info() {
+        if is_v1 {
+            let agents: Vec<Value> = info_slice.iter().map(to_value).collect();
+            if !agents.is_empty() {
+                return Value::Array(agents);
+            }
+        } else if let Some(first) = info_slice.first() {
+            return to_value(first);
+        }
+    }
+
+    let fallback = json!({ "name": claim.claim_generator().unwrap_or("Unknown") });
+    if is_v1 {
+        json!([fallback])
     } else {
-        Err(Error::UnsupportedType)
+        fallback
     }
 }
 
+/// Build the three assertion-reference lists for a claim.
+///
+/// Returns `(v1_assertions, created_assertions, gathered_assertions)`.
+/// For v1 claims only the first list is populated; for v2 only the latter two.
+fn build_assertion_refs(
+    claim: &Claim,
+) -> (Vec<HashedUriMap>, Vec<HashedUriMap>, Vec<HashedUriMap>) {
+    let label = claim.label();
+    if claim.version() == 1 {
+        let v1 = claim
+            .assertions()
+            .iter()
+            .map(|r| HashedUriMap {
+                url: to_absolute_uri(label, &r.url()),
+                hash: Base64Bytes(r.hash()),
+                alg: r.alg(),
+            })
+            .collect();
+        return (v1, Vec::new(), Vec::new());
+    }
+
+    let created = claim
+        .created_assertions()
+        .iter()
+        .map(|r| HashedUriMap {
+            url: r.url(),
+            hash: Base64Bytes(r.hash()),
+            alg: r.alg(),
+        })
+        .collect();
+
+    let gathered = claim
+        .gathered_assertions()
+        .iter()
+        .flat_map(|g| g.iter())
+        .map(|r| HashedUriMap {
+            url: r.url(),
+            hash: Base64Bytes(r.hash()),
+            alg: r.alg(),
+        })
+        .collect();
+
+    (Vec::new(), created, gathered)
+}
+
+fn build_manifest_validation_results(
+    label: &str,
+    validation_map: &HashMap<String, (StatusCodes, Option<String>)>,
+) -> ManifestValidationResults {
+    let (codes, validation_time) = validation_map
+        .get(label)
+        .cloned()
+        .unwrap_or_else(|| (StatusCodes::default(), None));
+    ManifestValidationResults {
+        success: codes.success().clone(),
+        informational: codes.informational().clone(),
+        failure: codes.failure().clone(),
+        validation_time,
+    }
+}
+
+/// Normalize byte-array hash/pad/signature fields to base64 strings after CBOR→JSON decoding.
+///
+/// This is applied to assertion values obtained via [`Assertion::as_json_object`] and to
+/// ingredient assertions serialized via the internal [`Ingredient`] type.
+/// All other output paths use typed structs with [`Base64Bytes`] serialization.
 fn fix_hash_encoding(value: Value) -> Value {
     match value {
         Value::Object(mut map) => {
+            // Canonicalize the legacy CBOR key for operating_system used in some claim generators.
             const SCHEMA_ORG_OS_KEY: &str = "schema.org.SoftwareApplication.operatingSystem";
             if let Some(os_value) = map.remove(SCHEMA_ORG_OS_KEY) {
                 if !map.contains_key("operating_system") {
@@ -679,93 +659,57 @@ fn fix_hash_encoding(value: Value) -> Value {
                 }
             }
 
-            if let Some(hash_value) = map.get("hash") {
-                if let Some(hash_array) = hash_value.as_array() {
-                    if hash_array.iter().all(|v| v.is_u64() || v.is_i64()) {
-                        let bytes: Vec<u8> = hash_array
-                            .iter()
-                            .filter_map(|v| v.as_u64().map(|n| n as u8))
-                            .collect();
-                        let hash_b64 = base64::encode(&bytes);
-                        map.insert("hash".to_string(), json!(hash_b64));
+            for field in &["hash", "pad", "pad1", "pad2"] {
+                if let Some(arr_val) = map.get(*field) {
+                    if let Some(arr) = arr_val.as_array() {
+                        if arr.iter().all(|v| v.is_u64() || v.is_i64()) {
+                            let bytes: Vec<u8> = arr
+                                .iter()
+                                .filter_map(|v| v.as_u64().map(|n| n as u8))
+                                .collect();
+                            map.insert(field.to_string(), json!(base64::encode(&bytes)));
+                        }
                     }
                 }
             }
 
-            if let Some(pad_value) = map.get("pad") {
-                if let Some(pad_array) = pad_value.as_array() {
-                    if pad_array.iter().all(|v| v.is_u64() || v.is_i64()) {
-                        let bytes: Vec<u8> = pad_array
-                            .iter()
-                            .filter_map(|v| v.as_u64().map(|n| n as u8))
-                            .collect();
-                        let pad_b64 = base64::encode(&bytes);
-                        map.insert("pad".to_string(), json!(pad_b64));
-                    }
-                }
-            }
-
-            if let Some(pad1_value) = map.get("pad1") {
-                if let Some(pad1_array) = pad1_value.as_array() {
-                    if pad1_array.iter().all(|v| v.is_u64() || v.is_i64()) {
-                        let bytes: Vec<u8> = pad1_array
-                            .iter()
-                            .filter_map(|v| v.as_u64().map(|n| n as u8))
-                            .collect();
-                        let pad1_b64 = base64::encode(&bytes);
-                        map.insert("pad1".to_string(), json!(pad1_b64));
-                    }
-                }
-            }
-
-            if let Some(pad2_value) = map.get("pad2") {
-                if let Some(pad2_array) = pad2_value.as_array() {
-                    if pad2_array.iter().all(|v| v.is_u64() || v.is_i64()) {
-                        let bytes: Vec<u8> = pad2_array
-                            .iter()
-                            .filter_map(|v| v.as_u64().map(|n| n as u8))
-                            .collect();
-                        let pad2_b64 = base64::encode(&bytes);
-                        map.insert("pad2".to_string(), json!(pad2_b64));
-                    }
-                }
-            }
-
+            // Ensure hash-bearing objects also carry a (possibly empty) pad field.
             if map.contains_key("hash") && !map.contains_key("pad") {
                 map.insert("pad".to_string(), json!(""));
             }
 
-            if let Some(signature_value) = map.get("signature") {
-                if let Some(sig_array) = signature_value.as_array() {
-                    if sig_array.iter().all(|v| v.is_u64() || v.is_i64()) {
-                        let sig_bytes: Vec<u8> = sig_array
+            if let Some(sig_val) = map.get("signature") {
+                if let Some(sig_arr) = sig_val.as_array() {
+                    if sig_arr.iter().all(|v| v.is_u64() || v.is_i64()) {
+                        let sig_bytes: Vec<u8> = sig_arr
                             .iter()
                             .filter_map(|v| v.as_u64().map(|n| n as u8))
                             .collect();
-                        if let Ok(decoded_sig) = decode_cawg_signature(&sig_bytes) {
-                            map.insert("signature".to_string(), decoded_sig);
-                        } else {
-                            let sig_b64 = base64::encode(&sig_bytes);
-                            map.insert("signature".to_string(), json!(sig_b64));
-                        }
+                        let decoded = decode_cawg_signature(&sig_bytes)
+                            .unwrap_or_else(|_| json!(base64::encode(&sig_bytes)));
+                        map.insert("signature".to_string(), decoded);
                     }
                 }
             }
 
-            for (_key, val) in map.iter_mut() {
+            // Recurse into nested objects/arrays.
+            for val in map.values_mut() {
                 *val = fix_hash_encoding(val.clone());
             }
 
+            // Normalize icon fields inside assertion values (e.g. softwareAgent in actions).
             if let Some(icon_val) = map.get_mut("icon") {
                 if let Some(icon_obj) = icon_val.as_object_mut() {
                     if !icon_obj.contains_key("url") {
-                        if let Some(id_val) = icon_obj.get("identifier") {
-                            if let Some(id_str) = id_val.as_str() {
-                                icon_obj.insert("url".to_string(), json!(id_str));
-                            }
+                        if let Some(id_str) = icon_obj
+                            .get("identifier")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                        {
+                            icon_obj.insert("url".to_string(), json!(id_str));
                         }
                     }
-                    icon_retain_only_hashed_uri_map_keys(icon_obj);
+                    icon_obj.retain(|k, _| matches!(k.as_str(), "url" | "hash" | "alg"));
                 }
             }
 
@@ -776,89 +720,9 @@ fn fix_hash_encoding(value: Value) -> Value {
     }
 }
 
-fn icon_retain_only_hashed_uri_map_keys(icon_obj: &mut Map<String, Value>) {
-    const ALLOWED: &[&str] = &["url", "hash", "alg"];
-    icon_obj.retain(|k, _| ALLOWED.contains(&k.as_str()));
-}
+// ── Certificate parsing ─────────────────────────────────────────────────────
 
-fn resolve_icon_to_hashed_uri_map(
-    claim: &Claim,
-    manifest_label: &str,
-    icon_val: &Value,
-) -> Option<Value> {
-    let icon_obj = icon_val.as_object()?;
-    let url_str = icon_obj.get("url").and_then(|v| v.as_str());
-    let hash_str = icon_obj.get("hash").and_then(|v| v.as_str());
-    let identifier_str = icon_obj.get("identifier").and_then(|v| v.as_str());
-    if url_str.is_some() && hash_str.is_some() {
-        return None;
-    }
-    if let (Some(uri), Some(hash)) = (identifier_str.or(url_str), hash_str) {
-        let mut map = Map::new();
-        map.insert("url".to_string(), json!(uri));
-        map.insert("hash".to_string(), json!(hash));
-        if let Some(alg) = icon_obj.get("alg").and_then(|v| v.as_str()) {
-            map.insert("alg".to_string(), json!(alg));
-        }
-        return Some(Value::Object(map));
-    }
-    let uri = identifier_str.or(url_str)?;
-    let (label, instance) = Claim::assertion_label_from_link(uri);
-    let (url, hash_b64, alg) = if let Some((hashed_uri, _)) =
-        claim.assertion_hashed_uri_from_label(&Claim::label_with_instance(&label, instance))
-    {
-        (
-            to_absolute_uri(manifest_label, &hashed_uri.url()),
-            base64::encode(&hashed_uri.hash()),
-            hashed_uri.alg(),
-        )
-    } else if let Some(ca) = claim.get_claim_assertion(&label, instance) {
-        (uri.to_string(), base64::encode(ca.hash()), None)
-    } else {
-        return None;
-    };
-    let mut map = Map::new();
-    map.insert("url".to_string(), json!(url));
-    map.insert("hash".to_string(), json!(hash_b64));
-    if let Some(alg) = alg {
-        map.insert("alg".to_string(), json!(alg));
-    }
-    Some(Value::Object(map))
-}
-
-#[derive(Debug, Default)]
-struct CertificateDetails {
-    serial_number: Option<String>,
-    issuer: Option<Map<String, Value>>,
-    subject: Option<Map<String, Value>>,
-    validity: Option<Value>,
-}
-
-fn parse_certificate(cert_chain: &str) -> Result<Option<CertificateDetails>> {
-    let cert_der = parse_pem_to_der(cert_chain)?;
-    if cert_der.is_empty() {
-        return Ok(None);
-    }
-    let (_, cert) = X509Certificate::from_der(&cert_der[0]).map_err(|_e| Error::CoseInvalidCert)?;
-    let not_before = cert.validity().not_before.to_datetime();
-    let not_after = cert.validity().not_after.to_datetime();
-    let not_before_chrono: DateTime<Utc> =
-        DateTime::from_timestamp(not_before.unix_timestamp(), 0).ok_or(Error::CoseInvalidCert)?;
-    let not_after_chrono: DateTime<Utc> =
-        DateTime::from_timestamp(not_after.unix_timestamp(), 0).ok_or(Error::CoseInvalidCert)?;
-    let details = CertificateDetails {
-        serial_number: Some(format!("{:x}", cert.serial)),
-        issuer: Some(extract_dn_components(cert.issuer())?),
-        subject: Some(extract_dn_components(cert.subject())?),
-        validity: Some(json!({
-            "notBefore": not_before_chrono.to_rfc3339(),
-            "notAfter": not_after_chrono.to_rfc3339()
-        })),
-    };
-    Ok(Some(details))
-}
-
-fn parse_certificate_from_der(der: &[u8]) -> Result<Option<CertificateDetails>> {
+fn parse_certificate_from_der(der: &[u8]) -> Result<Option<CrJsonCertInfo>> {
     let (_, cert) = X509Certificate::from_der(der).map_err(|_e| Error::CoseInvalidCert)?;
     let not_before = cert.validity().not_before.to_datetime();
     let not_after = cert.validity().not_after.to_datetime();
@@ -866,16 +730,15 @@ fn parse_certificate_from_der(der: &[u8]) -> Result<Option<CertificateDetails>> 
         DateTime::from_timestamp(not_before.unix_timestamp(), 0).ok_or(Error::CoseInvalidCert)?;
     let not_after_chrono: DateTime<Utc> =
         DateTime::from_timestamp(not_after.unix_timestamp(), 0).ok_or(Error::CoseInvalidCert)?;
-    let details = CertificateDetails {
+    Ok(Some(CrJsonCertInfo {
         serial_number: Some(format!("{:x}", cert.serial)),
         issuer: Some(extract_dn_components(cert.issuer())?),
         subject: Some(extract_dn_components(cert.subject())?),
-        validity: Some(json!({
-            "notBefore": not_before_chrono.to_rfc3339(),
-            "notAfter": not_after_chrono.to_rfc3339()
-        })),
-    };
-    Ok(Some(details))
+        validity: Some(CrJsonValidity {
+            not_before: not_before_chrono.to_rfc3339(),
+            not_after: not_after_chrono.to_rfc3339(),
+        }),
+    }))
 }
 
 fn extract_dn_components(name: &x509_parser::x509::X509Name) -> Result<Map<String, Value>> {
@@ -899,22 +762,6 @@ fn extract_dn_components(name: &x509_parser::x509::X509Name) -> Result<Map<Strin
     Ok(components)
 }
 
-fn parse_pem_to_der(pem_chain: &str) -> Result<Vec<Vec<u8>>> {
-    let mut certs = Vec::new();
-    for pem in pem_chain.split("-----BEGIN CERTIFICATE-----") {
-        if let Some(end_idx) = pem.find("-----END CERTIFICATE-----") {
-            let pem_data: String = pem[..end_idx]
-                .chars()
-                .filter(|c| !c.is_whitespace())
-                .collect();
-            if let Ok(der) = base64::decode(&pem_data) {
-                certs.push(der);
-            }
-        }
-    }
-    Ok(certs)
-}
-
 fn decode_cawg_signature(signature_bytes: &[u8]) -> Result<Value> {
     use coset::{CoseSign1, TaggedCborSerializable};
 
@@ -930,37 +777,12 @@ fn decode_cawg_signature(signature_bytes: &[u8]) -> Result<Value> {
     }
 
     if let Ok(cert_chain) = cert_chain_from_sign1(&sign1) {
-        if !cert_chain.is_empty() {
-            if let Ok((_rem, cert)) = X509Certificate::from_der(&cert_chain[0]) {
-                let mut cert_info = Map::new();
-                cert_info.insert(
-                    "serialNumber".to_string(),
-                    json!(format!("{:x}", cert.serial)),
-                );
-                if let Ok(issuer) = extract_dn_components(cert.issuer()) {
-                    cert_info.insert("issuer".to_string(), json!(issuer));
-                }
-                if let Ok(subject) = extract_dn_components(cert.subject()) {
-                    cert_info.insert("subject".to_string(), json!(subject));
-                }
-                let not_before = cert.validity().not_before.to_datetime();
-                let not_after = cert.validity().not_after.to_datetime();
-                if let Some(not_before_chrono) =
-                    DateTime::<Utc>::from_timestamp(not_before.unix_timestamp(), 0)
-                {
-                    if let Some(not_after_chrono) =
-                        DateTime::<Utc>::from_timestamp(not_after.unix_timestamp(), 0)
-                    {
-                        cert_info.insert(
-                            "validity".to_string(),
-                            json!({
-                                "notBefore": not_before_chrono.to_rfc3339(),
-                                "notAfter": not_after_chrono.to_rfc3339()
-                            }),
-                        );
-                    }
-                }
-                signature_obj.insert("certificateInfo".to_string(), Value::Object(cert_info));
+        if let Some(cert_info) = cert_chain
+            .first()
+            .and_then(|der| parse_certificate_from_der(der).ok().flatten())
+        {
+            if let Ok(v) = serde_json::to_value(cert_info) {
+                signature_obj.insert("certificateInfo".to_string(), v);
             }
         }
     }

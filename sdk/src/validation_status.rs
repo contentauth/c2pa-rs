@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 pub use crate::validation_results::validation_codes::*;
 use crate::{
     error::Error,
+    jumbf,
     status_tracker::{LogItem, LogKind},
 };
 
@@ -191,6 +192,16 @@ impl ValidationStatus {
                     .set_url(item.label.to_string())
                     .set_explanation(format!("{}: {}", item.description, e))
             }),
+        }
+    }
+
+    // converts a validation status url into and absolute URI given the manifest label.
+    pub(crate) fn make_absolute(&mut self, manifest_label: &str) {
+        if let Some(url) = &self.url {
+            if url.starts_with("self#jumbf") {
+                // Some are just labels (i.e. "Cose_Sign1")
+                self.url = Some(jumbf::labels::to_absolute_uri(manifest_label, url));
+            }
         }
     }
 }

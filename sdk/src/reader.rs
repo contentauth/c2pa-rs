@@ -667,9 +667,15 @@ impl Reader {
     /// crJSON is a standardized JSON format for C2PA manifest data.
     /// Returns `"{}"` if conversion or formatting fails.
     pub fn crjson(&self) -> String {
+        self.crjson_checked().unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Get the manifest store as a pretty-printed crJSON string, returning an error if it fails.
+    ///
+    /// crJSON is a standardized JSON format for C2PA manifest data.
+    pub fn crjson_checked(&self) -> Result<String> {
         self.to_crjson_value()
             .and_then(|v| serde_json::to_string_pretty(&v).map_err(Error::JsonError))
-            .unwrap_or_else(|_| "{}".to_string())
     }
 
     /// Get the Reader as a JSON string, returning an error if formatting fails

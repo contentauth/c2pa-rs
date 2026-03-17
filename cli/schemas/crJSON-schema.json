@@ -214,7 +214,7 @@
                 },
                 "hash": {
                     "type": "string",
-                    "description": "Hash value (e.g. Base64-encoded)"
+                    "description": "Hash value (Base64-encoded)"
                 },
                 "alg": {
                     "type": "string",
@@ -1127,7 +1127,7 @@
                 "subject",
                 "validity"
             ],
-            "additionalProperties": false
+            "additionalProperties": true
         },
         "signature": {
             "type": "object",
@@ -1147,7 +1147,7 @@
                         "timestamp": {
                             "type": "string",
                             "format": "date-time",
-                            "description": "Time when the claim was signed (e.g. from TSA timestamp); RFC 3339 format"
+                            "description": "Time at which the time-stamp was created; RFC 3339 format"
                         },
                         "certificateInfo": {
                             "$ref": "#/definitions/certificateInfo"

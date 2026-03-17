@@ -47,15 +47,15 @@ fn test_ingredient_assertions_included() -> Result<()> {
     let ingredient = &assertions["c2pa.ingredient"];
     assert!(ingredient.is_object(), "ingredient should be an object");
 
-    // Check for expected ingredient fields
+    // Check for expected ingredient fields (spec uses dc: Dublin Core prefixes)
     let ingredient_obj = ingredient.as_object().unwrap();
     assert!(
-        ingredient_obj.contains_key("title"),
-        "ingredient should have title"
+        ingredient_obj.contains_key("dc:title"),
+        "ingredient should have dc:title (Dublin Core, per crJSON spec)"
     );
     assert!(
-        ingredient_obj.contains_key("format"),
-        "ingredient should have format"
+        ingredient_obj.contains_key("dc:format"),
+        "ingredient should have dc:format (Dublin Core, per crJSON spec)"
     );
 
     // Verify all hashes in ingredient are base64 strings, not byte arrays

@@ -19,9 +19,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    assertion::AssertionBase,
+    assertions::Ingredient,
+    jumbf::labels::manifest_label_from_uri,
     status_tracker::{LogKind, StatusTracker},
     store::Store,
-    validation_status::{self, ValidationStatus},
+    validation_status::{self, log_kind, ValidationStatus},
 };
 
 /// Represents the levels of assurance a manifest store achieves when evaluated against the C2PA
@@ -114,7 +117,7 @@ pub struct ValidationResults {
     #[serde(rename = "ingredientDeltas", skip_serializing_if = "Option::is_none")]
     ingredient_deltas: Option<Vec<IngredientDeltaValidationResult>>,
 
-    /// Time when the validation was performed (RFC 3339 date-time). Not serialized in ValidationResults (e.g. ingredient assertions); crJSON exports it per-manifest in each manifest's validationResults.validationTime.
+    /// Time when the validation was performed (RFC 3339 date-time). Used only for document-level validationInfo; not serialized in validationResults (e.g. ingredient assertions).
     #[serde(rename = "validationTime", skip_serializing)]
     validation_time: Option<String>,
 }
@@ -123,22 +126,80 @@ impl ValidationResults {
     pub(crate) fn from_store(store: &Store, validation_log: &StatusTracker) -> Self {
         let mut results = ValidationResults::default();
 
-        let statuses: Vec<ValidationStatus> = validation_log
+        let mut statuses: Vec<ValidationStatus> = validation_log
             .logged_items()
             .iter()
             .filter_map(ValidationStatus::from_log_item)
             .collect();
 
+        // Filter out any status that is already captured in an ingredient assertion.
         // There is always an active manifest in a manifest store; ensure active_manifest is set
         // so serialization (e.g. crJSON) always includes activeManifest when validationResults exist.
-        // Add all statuses so both the active manifest and each ingredient's current validation
-        // are present. Ingredient statuses (with ingredient_uri set) go into ingredient_deltas and
-        // are exported in crJSON as each manifest's ingredientDeltas[].validationDeltas.
-        if let Some(_claim) = store.provenance_claim() {
+        if let Some(claim) = store.provenance_claim() {
             let _ = results
                 .active_manifest
                 .get_or_insert_with(StatusCodes::default);
+            let active_manifest = Some(claim.label().to_string());
 
+            // This closure returns true if the URI references the store's active manifest.
+            let is_active_manifest = |uri: Option<&str>| {
+                uri.is_some_and(|uri| manifest_label_from_uri(uri) == active_manifest)
+            };
+
+            // Returns a flat list of validation statuses from the ingredient with absolute URIs.
+            let get_statuses = |i: Ingredient| {
+                // Get a flat list of validation statuses from the ingredient.
+                // If validation_results are present, use them, otherwise use the ingredient's validation_status.
+                let validation_status = match i.validation_results {
+                    Some(v) => Some(v.validation_status()),
+                    None => i.validation_status.map(|s| {
+                        s.iter()
+                            .map(|s| {
+                                let status = s.to_owned();
+                                // We need to fix up kind since the older validation statuses don't have it set.
+                                let kind = log_kind(status.code());
+                                status.set_kind(kind)
+                            })
+                            .collect()
+                    }),
+                };
+
+                // Convert any relative manifest urls found in ingredient validation statuses to absolute.
+                validation_status.map(|mut statuses| {
+                    if let Some(label) = i
+                        .active_manifest
+                        .as_ref()
+                        .or(i.c2pa_manifest.as_ref())
+                        .map(|m| m.url())
+                        .and_then(|uri| manifest_label_from_uri(&uri))
+                    {
+                        for status in &mut statuses {
+                            status.make_absolute(&label)
+                        }
+                    }
+                    statuses
+                })
+            };
+
+            // We only need to do the more detailed filtering if there are any status
+            // reports that reference ingredients.
+            if statuses.iter().any(|s| !is_active_manifest(s.url())) {
+                // Collect all the ValidationStatus records from all the ingredients in the store.
+                // Since we need to process v1,v2 and v3 ingredients, we process all in the same format.
+                let ingredient_statuses: Vec<ValidationStatus> = store
+                    .claims()
+                    .iter()
+                    .flat_map(|c| c.ingredient_assertions())
+                    .filter_map(|a| Ingredient::from_assertion(a.assertion()).ok())
+                    .filter_map(get_statuses)
+                    .flatten()
+                    .collect();
+
+                // Filter statuses to only contain those from the active manifest and those not found in any ingredient.
+                statuses.retain(|s| {
+                    is_active_manifest(s.url()) || !ingredient_statuses.iter().any(|i| i == s)
+                })
+            }
             for status in statuses {
                 results.add_status(status);
             }
@@ -204,6 +265,24 @@ impl ValidationResults {
         } else {
             Some(status_vec)
         }
+    }
+
+    /// Returns a list of all validation status codes in [ValidationResults].
+    pub(crate) fn validation_status(&self) -> Vec<ValidationStatus> {
+        let mut status = Vec::new();
+        if let Some(active_manifest) = self.active_manifest.as_ref() {
+            status.extend(active_manifest.success().to_vec());
+            status.extend(active_manifest.informational().to_vec());
+            status.extend(active_manifest.failure().to_vec());
+        }
+        if let Some(ingredient_deltas) = self.ingredient_deltas.as_ref() {
+            for idv in ingredient_deltas.iter() {
+                status.extend(idv.validation_deltas().success().to_vec());
+                status.extend(idv.validation_deltas().informational().to_vec());
+                status.extend(idv.validation_deltas().failure().to_vec());
+            }
+        }
+        status
     }
 
     /// Adds a [ValidationStatus] to the [ValidationResults].
