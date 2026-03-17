@@ -3017,6 +3017,14 @@ impl Store {
         }?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
+        // Regenerate JUMBF after ALL claim modifications (including DataHash
+        // updates from save_jumbf_to_stream) so it matches what sign_claim signed.
+        // Without this, dynamic assertions cause jumbf_bytes to contain stale
+        // claim data from before DataHash finalization → claimSignature.mismatch.
+        if modified {
+            jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+        }
+
         intermediate_stream.rewind()?;
         output_stream.rewind()?;
         match self.finish_save_stream(
