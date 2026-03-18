@@ -110,6 +110,8 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
 }
 
+use crate::settings::max_assertions;
+
 /// A `Store` maintains a list of `Claim` structs.
 ///
 /// Typically, this list of `Claim`s represents all of the claims in an asset.
@@ -1376,6 +1378,15 @@ impl Store {
                 .sbox;
 
             let num_assertions = assertion_store_box.data_box_count();
+
+            // Reject manifests that embed more assertions than the configured limit to
+            // prevent unbounded memory and CPU consumption on untrusted input.
+            let max_assertions = max_assertions();
+            if num_assertions > max_assertions {
+                return Err(Error::TooManyAssertions {
+                    max: max_assertions,
+                });
+            }
 
             // loop over all assertions in assertion store...
             let mut check_for_legacy_assertion = true;

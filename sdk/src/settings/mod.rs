@@ -34,6 +34,11 @@ use crate::{
 
 const VERSION: u32 = 1;
 
+/// Default maximum number of assertions allowed per manifest.
+/// Shared by [`BuilderSettings`], [`Verify`], [`crate::Claim`], and [`crate::Store`] so that
+/// all enforcement points use the same value.
+pub(crate) const MAX_ASSERTIONS: usize = 100_000;
+
 thread_local!(
     static SETTINGS: RefCell<Config> =
         RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default());
@@ -379,6 +384,17 @@ pub struct Verify {
     ///
     /// The default value is false.
     pub strict_v1_validation: bool,
+    /// Maximum number of assertions that will be parsed from a single manifest when reading
+    /// or validating an existing C2PA file.
+    ///
+    /// Limits resource consumption when processing untrusted manifests that embed an
+    /// arbitrarily large number of assertions. Parsing is aborted with
+    /// [`Error::TooManyAssertions`] if the assertion count in the file exceeds this limit.
+    ///
+    /// The default value is 100,000.
+    ///
+    /// [`Error::TooManyAssertions`]: crate::Error::TooManyAssertions
+    pub max_assertions: usize,
 }
 
 impl Default for Verify {
@@ -392,6 +408,7 @@ impl Default for Verify {
             remote_manifest_fetch: true,
             skip_ingredient_conflict_resolution: false,
             strict_v1_validation: false,
+            max_assertions: MAX_ASSERTIONS,
         }
     }
 }
@@ -972,6 +989,19 @@ pub(crate) fn get_thread_local_settings() -> Settings {
             .clone()
             .try_deserialize::<Settings>()
             .unwrap_or_default()
+    })
+}
+
+/// Returns the configured maximum number of assertions allowed per manifest.
+///
+/// Reads `verify.max_assertions` from thread-local settings. Returns the
+/// user-configured value when set, or [`MAX_ASSERTIONS`] (100,000) when
+/// no limit has been configured.
+pub(crate) fn max_assertions() -> usize {
+    SETTINGS.with_borrow(|config| {
+        config
+            .get::<usize>("verify.max_assertions")
+            .unwrap_or(MAX_ASSERTIONS)
     })
 }
 
