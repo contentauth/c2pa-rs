@@ -67,7 +67,7 @@ fn add_required_frame(
             output_stream.rewind()?;
             std::io::copy(input_stream, output_stream)?;
             Ok(())
-        },
+        }
         Err(Error::JumbfNotFound) => {
             input_stream.rewind()?;
             mp3io.write_cai(input_stream, output_stream, &[1, 2, 3, 4])

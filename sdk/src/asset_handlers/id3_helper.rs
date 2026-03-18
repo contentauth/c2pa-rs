@@ -112,9 +112,7 @@ pub(crate) fn is_c2pa_mime_type(mime_type: &str) -> bool {
 
 /// Returns `(manifest_byte_offset, manifest_byte_length)` within the stream's
 /// ID3 tag, or `None` when no single C2PA manifest GEOB frame is found.
-pub(crate) fn get_manifest_pos(
-    mut input_stream: &mut dyn CAIRead
-) -> Result<Option<(u64, u32)>> {
+pub(crate) fn get_manifest_pos(mut input_stream: &mut dyn CAIRead) -> Result<Option<(u64, u32)>> {
     input_stream.rewind()?;
     let mut buf = [0u8; 10];
     input_stream.read_exact(&mut buf)?;
@@ -133,8 +131,7 @@ pub(crate) fn get_manifest_pos(
         }
         if manifests.len() == 1 {
             input_stream.rewind()?;
-            let tag_bytes = input_stream
-                .read_to_vec(header.map_or(0, |h| h.get_size()) as u64)?;
+            let tag_bytes = input_stream.read_to_vec(header.map_or(0, |h| h.get_size()) as u64)?;
             if let Some(pos) = memmem::find(&tag_bytes, &manifests[0]) {
                 return Ok(Some((pos as u64, manifests[0].len() as u32)));
             }
@@ -317,7 +314,8 @@ pub(crate) fn patch_cai_in_id3_asset(asset_path: &Path, store_bytes: &[u8]) -> R
         .read(true)
         .create(false)
         .open(asset_path)?;
-    let (manifest_pos, manifest_len) = get_manifest_pos(&mut asset)?.ok_or(Error::EmbeddingError)?;
+    let (manifest_pos, manifest_len) =
+        get_manifest_pos(&mut asset)?.ok_or(Error::EmbeddingError)?;
     if store_bytes.len() == manifest_len as usize {
         asset.seek(SeekFrom::Start(manifest_pos))?;
         asset.write_all(store_bytes)?;

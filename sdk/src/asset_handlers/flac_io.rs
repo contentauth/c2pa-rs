@@ -21,7 +21,8 @@ use id3::Tag;
 use crate::{
     asset_handlers::id3_helper::{self, ID3V2Header},
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReader, CAIWriter,
+        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -62,7 +63,9 @@ fn validate_flac_stream(reader: &mut dyn CAIRead) -> Result<()> {
     let mut marker = [0u8; 4];
     reader.read_exact(&mut marker).map_err(Error::IoError)?;
     if &marker != b"fLaC" {
-        return Err(Error::InvalidAsset("invalid FLAC stream: missing fLaC marker".to_string()));
+        return Err(Error::InvalidAsset(
+            "invalid FLAC stream: missing fLaC marker".to_string(),
+        ));
     }
     Ok(())
 }
@@ -89,7 +92,7 @@ fn add_required_frame(
             input_stream.rewind()?;
             flac_io.write_cai(input_stream, output_stream, &[1, 2, 3, 4])
         }
-        Err(e) => Err(e)
+        Err(e) => Err(e),
     }
 }
 
