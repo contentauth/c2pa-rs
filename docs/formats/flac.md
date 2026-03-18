@@ -24,7 +24,7 @@ So the file layout is: `[optional ID3v2][fLaC stream]`.
 ## Crates
 
 - **id3**: Used to read and write the optional prepended ID3v2 tag and the GEOB frame that holds the C2PA manifest (same approach as [sdk/src/asset_handlers/mp3_io.rs](../sdk/src/asset_handlers/mp3_io.rs)).
-- **metaflac**: Used to validate the FLAC container (the stream after the optional ID3v2). The remainder of the file (starting with `fLaC`) is parsed with `metaflac::Tag::read_from` to ensure it is valid FLAC; the FLAC stream is not modified when writing—only the optional ID3 block is added or replaced.
+The FLAC stream is validated by checking that the first 4 bytes after the optional ID3v2 block are `fLaC`. The FLAC stream is not modified when writing—only the optional ID3 block is added or replaced.
 
 ## Implementation summary
 
@@ -33,14 +33,12 @@ So the file layout is: `[optional ID3v2][fLaC stream]`.
 - **Traits**: `CAIReader`, `CAIWriter`, `AssetIO`, `AssetPatch`, `RemoteRefEmbed` (XMP in ID3 PRIV frame, same as MP3).
 - **Shared ID3 logic**: The bulk of ID3 read/write operations (GEOB frame handling, XMP embedding, object-location computation, patching) is delegated to `sdk/src/asset_handlers/id3_helper.rs`, which is shared with the MP3 handler. `FlacIO` only adds FLAC-specific header detection and stream validation on top.
 - **Flow**:
-  - **Read**: Detect ID3 vs pure FLAC via `read_header()`; if ID3, use `id3_helper` to find the GEOB frame and extract the manifest; if no ID3 or no GEOB, return no manifest. After the optional ID3, the remainder is validated as FLAC with metaflac.
+  - **Read**: Detect ID3 vs pure FLAC via `read_header()`; if ID3, use `id3_helper` to find the GEOB frame and extract the manifest; if no ID3 or no GEOB, return no manifest. After the optional ID3, the first 4 bytes of the remainder are checked for the `fLaC` marke
   - **Write**: Delegate to `id3_helper::write_cai_with_id3`, which builds or replaces the ID3 block with a GEOB containing the manifest, then appends the FLAC stream.
   - **Object locations**: `add_required_frame` ensures a placeholder GEOB exists before calling `id3_helper::get_object_locations`, so positions can be computed even on files without an existing manifest.
-- **Difference from MP3**: After the optional ID3, the remainder must start with `fLaC` and is validated with metaflac; the FLAC stream itself is never rewritten.
 
 ## Files touched
 
-- `sdk/Cargo.toml` – added `metaflac` dependency.
 - `sdk/src/asset_handlers/flac_io.rs` – new FLAC handler.
 - `sdk/src/asset_handlers/id3_helper.rs` – shared ID3v2 logic (GEOB read/write, XMP embed, patching, object locations, test helpers); used by both FLAC and MP3 handlers.
 - `sdk/src/asset_handlers/mod.rs` – `pub mod flac_io`.

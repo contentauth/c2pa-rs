@@ -17,13 +17,11 @@ use std::{
 };
 
 use id3::Tag;
-use metaflac::Tag as FlacTag;
 
 use crate::{
     asset_handlers::id3_helper::{self, ID3V2Header},
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReader, CAIWriter,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
 };
@@ -61,8 +59,11 @@ fn read_header(reader: &mut dyn CAIRead) -> Result<Option<ID3V2Header>> {
 /// Validates that the reader's current position is the start of a valid FLAC
 /// stream (i.e. starts with the `fLaC` marker).
 fn validate_flac_stream(reader: &mut dyn CAIRead) -> Result<()> {
-    FlacTag::read_from(reader)
-        .map_err(|e| Error::InvalidAsset(format!("invalid FLAC stream: {}", e)))?;
+    let mut marker = [0u8; 4];
+    reader.read_exact(&mut marker).map_err(Error::IoError)?;
+    if &marker != b"fLaC" {
+        return Err(Error::InvalidAsset("invalid FLAC stream: missing fLaC marker".to_string()));
+    }
     Ok(())
 }
 
@@ -84,10 +85,11 @@ fn add_required_frame(
             std::io::copy(input_stream, output_stream)?;
             Ok(())
         }
-        Err(_) => {
+        Err(Error::JumbfNotFound) => {
             input_stream.rewind()?;
             flac_io.write_cai(input_stream, output_stream, &[1, 2, 3, 4])
         }
+        Err(e) => Err(e)
     }
 }
 
@@ -143,7 +145,7 @@ impl CAIReader for FlacIO {
         input_stream.rewind().ok()?;
         let header = read_header(input_stream).ok()?;
         header.as_ref()?;
-        id3_helper::read_xmp_from_id3(input_stream)
+        id3_helper::read_xmp_from_id3(input_stream).ok()?
     }
 }
 

@@ -34,7 +34,7 @@ static SUPPORTED_TYPES: [&str; 2] = ["mp3", "audio/mpeg"];
 /// does not start with `"ID3"`, in which case `Ok(None)` is returned.
 fn read_header(reader: &mut dyn CAIRead) -> Result<Option<ID3V2Header>> {
     let mut buf = [0u8; 10];
-    reader.read_exact(&mut buf).map_err(Error::IoError)?;
+    reader.read_exact(&mut buf)?;
 
     match ID3V2Header::parse_from_bytes(&buf)? {
         Some(h) => Ok(Some(h)),
@@ -67,11 +67,12 @@ fn add_required_frame(
             output_stream.rewind()?;
             std::io::copy(input_stream, output_stream)?;
             Ok(())
-        }
-        Err(_) => {
+        },
+        Err(Error::JumbfNotFound) => {
             input_stream.rewind()?;
             mp3io.write_cai(input_stream, output_stream, &[1, 2, 3, 4])
         }
+        Err(e) => Err(e),
     }
 }
 
@@ -99,7 +100,7 @@ impl CAIReader for Mp3IO {
     }
 
     fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
-        id3_helper::read_xmp_from_id3(input_stream)
+        id3_helper::read_xmp_from_id3(input_stream).ok()?
     }
 }
 
