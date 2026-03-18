@@ -42,14 +42,19 @@ use crate::{
     validation_status::ValidationStatus,
 };
 
+// ── Constants ───────────────────────────────────────────────────────────────
+
+/// Version of the crJSON specification implemented by this exporter.
+const CRJSON_SPEC_VERSION: &str = "2.3.0";
+
 // ── Output types ────────────────────────────────────────────────────────────
 
-/// A `Vec<u8>` that always serializes as standard (padded) base64.
+/// A `Vec<u8>` that always serializes as a `b64'`-prefixed base64 string.
 struct Base64Bytes(Vec<u8>);
 
 impl Serialize for Base64Bytes {
     fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        s.serialize_str(&base64::encode(&self.0))
+        s.serialize_str(&format!("b64'{}", base64::encode(&self.0)))
     }
 }
 
@@ -110,8 +115,10 @@ struct ManifestValidationResults {
     success: Vec<ValidationStatus>,
     informational: Vec<ValidationStatus>,
     failure: Vec<ValidationStatus>,
-    #[serde(rename = "validationTime", skip_serializing_if = "Option::is_none")]
-    validation_time: Option<String>,
+    #[serde(rename = "specVersion")]
+    spec_version: &'static str,
+    #[serde(rename = "validationTime")]
+    validation_time: String,
 }
 
 /// A C2PA claim — shared struct for both v1 and v2 format.
@@ -184,7 +191,6 @@ struct CrJsonManifest {
 struct JsonGenerator {
     name: &'static str,
     version: &'static str,
-    date: String,
 }
 
 /// The top-level crJSON document.
@@ -251,7 +257,6 @@ impl<'a> CrJsonExporter<'a> {
             json_generator: JsonGenerator {
                 name: "c2pa-rs",
                 version: env!("CARGO_PKG_VERSION"),
-                date: Utc::now().to_rfc3339(),
             },
         })
     }
@@ -259,7 +264,7 @@ impl<'a> CrJsonExporter<'a> {
     fn build_manifest(
         &self,
         claim: &Claim,
-        validation_map: &HashMap<String, (StatusCodes, Option<String>)>,
+        validation_map: &HashMap<String, (StatusCodes, String)>,
     ) -> Result<CrJsonManifest> {
         let label = claim.label();
         let assertions = self.build_assertions(claim)?;
@@ -382,7 +387,7 @@ impl<'a> CrJsonExporter<'a> {
                         key,
                         json!({
                             "identifier": absolute_uri,
-                            "hash": base64::encode(&assertion_ref.hash())
+                            "hash": format!("b64'{}", base64::encode(&assertion_ref.hash()))
                         }),
                     );
                 }
@@ -424,7 +429,7 @@ impl<'a> CrJsonExporter<'a> {
                 Ok(Some(json!({
                     "format": assertion.content_type(),
                     "identifier": absolute_uri,
-                    "hash": base64::encode(ca.hash())
+                    "hash": format!("b64'{}", base64::encode(ca.hash()))
                 })))
             }
             _ => Ok(assertion.as_json_object().ok().map(fix_hash_encoding)),
@@ -486,14 +491,19 @@ impl<'a> CrJsonExporter<'a> {
     // ── Validation ──────────────────────────────────────────────────────────
 
     /// Build a map from each manifest label to its (StatusCodes, validation_time).
+    ///
+    /// `validation_time` falls back to the current UTC time when the reader supplies none.
     fn build_validation_results_per_manifest(
         &self,
-    ) -> HashMap<String, (StatusCodes, Option<String>)> {
-        let mut map: HashMap<String, (StatusCodes, Option<String>)> = HashMap::new();
+    ) -> HashMap<String, (StatusCodes, String)> {
+        let mut map: HashMap<String, (StatusCodes, String)> = HashMap::new();
         let Some(vr) = self.reader.validation_results() else {
             return map;
         };
-        let validation_time = vr.validation_time().map(String::from);
+        let validation_time = vr
+            .validation_time()
+            .map(String::from)
+            .unwrap_or_else(|| Utc::now().to_rfc3339());
 
         if let Some(active_label) = self.reader.active_label() {
             let codes = vr.active_manifest().cloned().unwrap_or_default();
@@ -629,16 +639,17 @@ fn build_assertion_refs(
 
 fn build_manifest_validation_results(
     label: &str,
-    validation_map: &HashMap<String, (StatusCodes, Option<String>)>,
+    validation_map: &HashMap<String, (StatusCodes, String)>,
 ) -> ManifestValidationResults {
     let (codes, validation_time) = validation_map
         .get(label)
         .cloned()
-        .unwrap_or_else(|| (StatusCodes::default(), None));
+        .unwrap_or_else(|| (StatusCodes::default(), Utc::now().to_rfc3339()));
     ManifestValidationResults {
         success: codes.success().clone(),
         informational: codes.informational().clone(),
         failure: codes.failure().clone(),
+        spec_version: CRJSON_SPEC_VERSION,
         validation_time,
     }
 }
@@ -659,7 +670,7 @@ fn fix_hash_encoding(value: Value) -> Value {
                 }
             }
 
-            for field in &["hash", "pad", "pad1", "pad2"] {
+            for field in &["hash", "pad", "pad2"] {
                 if let Some(arr_val) = map.get(*field) {
                     if let Some(arr) = arr_val.as_array() {
                         if arr.iter().all(|v| v.is_u64() || v.is_i64()) {
@@ -667,7 +678,10 @@ fn fix_hash_encoding(value: Value) -> Value {
                                 .iter()
                                 .filter_map(|v| v.as_u64().map(|n| n as u8))
                                 .collect();
-                            map.insert(field.to_string(), json!(base64::encode(&bytes)));
+                            map.insert(
+                                field.to_string(),
+                                json!(format!("b64'{}", base64::encode(&bytes))),
+                            );
                         }
                     }
                 }
@@ -675,7 +689,7 @@ fn fix_hash_encoding(value: Value) -> Value {
 
             // Ensure hash-bearing objects also carry a (possibly empty) pad field.
             if map.contains_key("hash") && !map.contains_key("pad") {
-                map.insert("pad".to_string(), json!(""));
+                map.insert("pad".to_string(), json!("b64'"));
             }
 
             if let Some(sig_val) = map.get("signature") {
@@ -686,7 +700,7 @@ fn fix_hash_encoding(value: Value) -> Value {
                             .filter_map(|v| v.as_u64().map(|n| n as u8))
                             .collect();
                         let decoded = decode_cawg_signature(&sig_bytes)
-                            .unwrap_or_else(|_| json!(base64::encode(&sig_bytes)));
+                            .unwrap_or_else(|_| json!(format!("b64'{}", base64::encode(&sig_bytes))));
                         map.insert("signature".to_string(), decoded);
                     }
                 }
@@ -846,14 +860,13 @@ mod tests {
             "jsonGenerator must be present"
         );
 
-        // jsonGenerator is c2pa-rs (this library) with name, version, date
+        // jsonGenerator is c2pa-rs (this library) with name and version
         let jg = &json_value["jsonGenerator"];
         assert_eq!(jg.get("name").and_then(|v| v.as_str()), Some("c2pa-rs"));
         assert!(
             jg.get("version").and_then(|v| v.as_str()).is_some(),
             "jsonGenerator.version required"
         );
-        assert!(jg.get("date").is_some(), "jsonGenerator.date required");
 
         // Verify manifests is an array
         assert!(json_value["manifests"].is_array());
@@ -979,15 +992,11 @@ mod tests {
 
         let cawg_identity = cawg_identity.unwrap();
 
-        // Verify pad1 and pad2 are base64 strings, not arrays
-        assert!(
-            cawg_identity["pad1"].is_string(),
-            "pad1 should be a base64 string, not an array"
-        );
-        if cawg_identity.get("pad2").is_some() {
+        // Verify pad2 is a b64'-prefixed string if present (pad1 does not exist in the schema)
+        if let Some(pad2) = cawg_identity.get("pad2").and_then(|v| v.as_str()) {
             assert!(
-                cawg_identity["pad2"].is_string(),
-                "pad2 should be a base64 string, not an array"
+                pad2.starts_with("b64'"),
+                "pad2 must start with \"b64'\" prefix, got: {pad2:?}"
             );
         }
 
@@ -1065,11 +1074,13 @@ mod tests {
                 .unwrap();
             let cawg_identity = &assertions[cawg_identity_key];
 
-            // Verify pad fields are base64 strings
-            assert!(
-                cawg_identity["pad1"].is_string(),
-                "pad1 should be a base64 string"
-            );
+            // Verify pad2 is a b64'-prefixed string if present (pad1 does not exist in the schema)
+            if let Some(pad2) = cawg_identity.get("pad2").and_then(|v| v.as_str()) {
+                assert!(
+                    pad2.starts_with("b64'"),
+                    "pad2 must start with \"b64'\" prefix, got: {pad2:?}"
+                );
+            }
 
             // Verify signature is decoded
             let signature = &cawg_identity["signature"];

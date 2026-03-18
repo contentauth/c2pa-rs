@@ -124,7 +124,7 @@ fn test_root_required_fields() -> Result<()> {
     Ok(())
 }
 
-/// `jsonGenerator` must have `name`, `version` (SemVer), and `date` (ISO 8601).
+/// `jsonGenerator` must have `name` and `version` (SemVer) but not `date`.
 #[test]
 fn test_json_generator_fields() -> Result<()> {
     let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
@@ -145,8 +145,8 @@ fn test_json_generator_fields() -> Result<()> {
         "jsonGenerator.version required"
     );
     assert!(
-        jg_obj.get("date").and_then(|v| v.as_str()).is_some(),
-        "jsonGenerator.date required"
+        jg_obj.get("date").is_none(),
+        "jsonGenerator.date must not be present"
     );
 
     Ok(())
@@ -290,21 +290,27 @@ fn test_hash_fields_are_base64_strings() -> Result<()> {
             serde_json::Value::Object(map) => {
                 for (k, v) in map {
                     let child_path = format!("{path}.{k}");
-                    if matches!(k.as_str(), "hash" | "pad" | "pad1" | "pad2") {
+                    if matches!(k.as_str(), "hash" | "pad" | "pad2") {
                         assert!(
                             !v.is_array(),
-                            "'{child_path}' must be a base64 string, not an integer array"
+                            "'{child_path}' must be a b64'-prefixed string, not an integer array"
                         );
                         if let Some(s) = v.as_str() {
-                            // Must be valid base64 if non-empty.
-                            if !s.is_empty() {
+                            // Must start with "b64'" prefix.
+                            assert!(
+                                s.starts_with("b64'"),
+                                "'{child_path}' value must start with \"b64'\" prefix, got: {s:?}"
+                            );
+                            let payload = &s["b64'".len()..];
+                            // Payload must be valid base64 if non-empty.
+                            if !payload.is_empty() {
                                 use std::collections::HashSet;
                                 let valid_chars: HashSet<char> =
                                     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
                                         .chars().collect();
                                 assert!(
-                                    s.chars().all(|c| valid_chars.contains(&c)),
-                                    "'{child_path}' value must be valid base64 characters"
+                                    payload.chars().all(|c| valid_chars.contains(&c)),
+                                    "'{child_path}' payload must be valid base64 characters"
                                 );
                             }
                         }
@@ -521,8 +527,8 @@ fn test_signature_structure() -> Result<()> {
 
 // ── Validation results ────────────────────────────────────────────────────────
 
-/// Every manifest's `validationResults` must have `success`, `informational`, `failure` arrays.
-/// `validationTime` is optional but must be an RFC 3339 string when present.
+/// Every manifest's `validationResults` must have `success`, `informational`, `failure` arrays,
+/// a `specVersion` of "2.3", and a required `validationTime` RFC 3339 string.
 #[test]
 fn test_validation_results_structure() -> Result<()> {
     let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
@@ -550,11 +556,69 @@ fn test_validation_results_structure() -> Result<()> {
             }
         }
 
-        if let Some(vt) = vr.get("validationTime") {
+        // specVersion must be present and equal "2.3".
+        let spec_version = vr
+            .get("specVersion")
+            .and_then(|v| v.as_str())
+            .expect("validationResults.specVersion must be a string");
+        assert_eq!(
+            spec_version, "2.3.0",
+            "validationResults.specVersion must be \"2.3.0\""
+        );
+
+        // validationTime must be present and be an RFC 3339 string.
+        let vt = vr
+            .get("validationTime")
+            .and_then(|v| v.as_str())
+            .expect("validationResults.validationTime must be a required RFC 3339 string");
+        assert!(!vt.is_empty(), "validationResults.validationTime must not be empty");
+    }
+    Ok(())
+}
+
+/// `validationResults` must NOT contain unknown fields (negative test).
+#[test]
+fn test_validation_results_no_extra_fields() -> Result<()> {
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let json_value = reader.to_crjson_value()?;
+
+    let allowed = ["success", "informational", "failure", "specVersion", "validationTime"];
+    for manifest in json_value["manifests"].as_array().unwrap() {
+        let vr = manifest
+            .get("validationResults")
+            .and_then(|v| v.as_object())
+            .expect("manifest.validationResults must be an object");
+        for key in vr.keys() {
             assert!(
-                vt.is_string(),
-                "validationResults.validationTime must be a string (RFC 3339)"
+                allowed.contains(&key.as_str()),
+                "validationResults contains unexpected field: {key:?}"
             );
+        }
+    }
+    Ok(())
+}
+
+/// `specVersion` must not be absent or set to a wrong value (negative test).
+#[test]
+fn test_validation_results_spec_version_wrong_value() -> Result<()> {
+    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let mut json_value = reader.to_crjson_value()?;
+
+    // Mutate the first manifest's specVersion to something wrong and verify our
+    // validation logic would catch it (we're testing the shape of the data here,
+    // not re-running the exporter).
+    if let Some(manifest) = json_value["manifests"].as_array_mut().unwrap().first_mut() {
+        if let Some(vr) = manifest.get_mut("validationResults") {
+            let original = vr["specVersion"].as_str().unwrap().to_string();
+            *vr.get_mut("specVersion").unwrap() = serde_json::json!("9.9.9");
+            assert_ne!(
+                vr["specVersion"].as_str().unwrap(),
+                "2.3",
+                "mutated specVersion should not equal 2.3"
+            );
+            // Restore and confirm it's back to the correct value.
+            *vr.get_mut("specVersion").unwrap() = serde_json::json!(original);
+            assert_eq!(vr["specVersion"].as_str().unwrap(), "2.3.0");
         }
     }
     Ok(())

@@ -61,17 +61,11 @@
                     "type": "string",
                     "description": "Version of the software (SemVer 2.0: major.minor.patch with optional pre-release and build)",
                     "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
-                },
-                "date": {
-                    "type": "string",
-                    "format": "date-time",
-                    "description": "Date and time when the CrJSON was generated (ISO 8601)"
                 }
             },
             "required": [
                 "name",
-                "version",
-                "date"
+                "version"
             ],
             "additionalProperties": true
         },
@@ -1226,6 +1220,11 @@
                         "$ref": "#/definitions/validationStatusEntry"
                     }
                 },
+                "specVersion": {
+                    "type": "string",
+                    "description": "The version of the specification against which the validation was performed (SemVer formatted string)",
+                    "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+                },
                 "validationTime": {
                     "type": "string",
                     "format": "date-time",
@@ -1235,7 +1234,9 @@
             "required": [
                 "success",
                 "informational",
-                "failure"
+                "failure",
+                "specVersion",
+                "validationTime"
             ],
             "additionalProperties": false
         },
