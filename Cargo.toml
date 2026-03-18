@@ -17,6 +17,10 @@ version = "0.78.4"
 [workspace.dependencies]
 c2pa = { path = "sdk", default-features = false }
 
+[profile.dev]
+opt-level = 1          # slightly better codegen than 0, much faster than 2
+debug = 1  
+
 [profile.release]
 strip = true  # Automatically strip symbols from the binary.
 opt-level = 3
