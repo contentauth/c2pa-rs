@@ -2155,6 +2155,15 @@ impl BoxReader {
         reader: &mut R,
         size: u64,
     ) -> JumbfParseResult<JUMBFEmbeddedFileDescriptionBox> {
+        // A bfdb box must contain at minimum 1 byte (toggles); media type is optional.
+        // Minimum total BMFF size = HEADER_SIZE + TOGGLE_SIZE = 9.
+        // Reject boxes below this threshold to prevent u64 underflow in the data_len
+        // computation (size - HEADER_SIZE - TOGGLE_SIZE) for size < 9.
+        const BFDB_MIN_SIZE: u64 = HEADER_SIZE + TOGGLE_SIZE;
+        if size < BFDB_MIN_SIZE {
+            return Err(JumbfParseError::InvalidDescriptionBox);
+        }
+
         let header =
             BoxReader::read_header(reader).map_err(|_| JumbfParseError::InvalidBoxHeader)?;
         if header.size == 0 {
@@ -2196,7 +2205,7 @@ impl BoxReader {
             }
             _ => {
                 // we do not store the trailing 0 on load
-                if buf[buf.len() - 1] == 0 {
+                if buf.last() == Some(&0) {
                     buf.pop();
                 }
 
@@ -2785,6 +2794,47 @@ pub mod tests {
         let desc_box = BoxReader::read_desc_box(&mut buf_reader, jumd_header.size).unwrap();
         assert_eq!(desc_box.label(), labels::MANIFEST_STORE);
         assert_eq!(desc_box.uuid(), "6332706100110010800000AA00389B71");
+    }
+
+    // Verify the two aspects of the bfdb vulnerability fix:
+    //
+    // 1. size=9 (exact reported case): payload is 1-byte toggles, empty media type buffer.
+    //    The writer legitimately produces 9-byte bfdb boxes for empty media types, so this
+    //    must parse successfully. Without the buf.last() fix, buf[buf.len()-1] panics when
+    //    togs != 1 and buf is empty.
+    //
+    // 2. size < 9: data_len = size - HEADER_SIZE - TOGGLE_SIZE underflows on u64.
+    //    The minimum size guard (BFDB_MIN_SIZE = 9) must reject these before any reads.
+    #[test]
+    fn embedded_media_desc_box_handles_empty_media_type_and_rejects_undersized() {
+        // Craft a valid 9-byte bfdb BMFF box: 4-byte big-endian size=9, 4-byte type "bfdb",
+        // then 1-byte toggles=0x00 (hits the `_` arm). Without the buf.last() fix, the
+        // empty buf causes buf[buf.len()-1] = buf[usize::MAX] → index-out-of-bounds panic.
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&[0x00, 0x00, 0x00, 0x09]); // BMFF size = 9
+        stream.extend_from_slice(b"bfdb"); // box type
+        stream.push(0x00); // toggles = 0x00 (non-1, hits `_` arm)
+        stream.extend_from_slice(&[0x00u8; 32]); // padding
+
+        let mut reader = Cursor::new(&stream);
+        assert!(
+            BoxReader::read_embedded_media_desc_box(&mut reader, 9).is_ok(),
+            "size=9 with empty media type should parse successfully"
+        );
+
+        // size=8: minimum size guard rejects before any reads — data_len would underflow.
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_embedded_media_desc_box(&mut reader, 8),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+
+        // size=0: BMFF "extends to EOF" sentinel — invalid for a bounded inner box.
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_embedded_media_desc_box(&mut reader, 0),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
     }
 
     // Verify that read_desc_box rejects jumd boxes whose declared BMFF size is below the
