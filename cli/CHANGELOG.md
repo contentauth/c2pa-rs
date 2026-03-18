@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.39](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.38...c2patool-v0.26.39)
+_16 March 2026_
+
+### Fixed
+
+* Pin `atree` to 0.5.2 ([#1940](https://github.com/contentauth/c2pa-rs/pull/1940))
+
+## [0.26.38](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.37...c2patool-v0.26.38)
+_13 March 2026_
+
 ## [0.26.37](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.36...c2patool-v0.26.37)
 _12 March 2026_
 
