@@ -78,11 +78,18 @@ pub enum ProgressPhase {
 /// * `phase` – the current [`ProgressPhase`], which fully describes what the SDK
 ///   is doing.  No separate message string is provided; callers should derive any
 ///   user-visible text from `phase` in whatever language they need.
-/// * `step`  – 1-based index of the current step within this phase (e.g. `1` for
-///   the first chunk hashed, `2` for the second).  Always `1` for single-shot phases.
-/// * `total` – total number of steps in this phase.  `0` means the total is not
-///   known in advance (indeterminate); show a spinner rather than a progress bar.
-///   Always `1` for single-shot phases.
+/// * `step`  – monotonically increasing counter within the current phase, starting
+///   at `1`.  Resets to `1` at the start of each new phase.  Use it as a liveness
+///   signal: as long as `step` keeps rising, the SDK is making forward progress.
+///   The unit is phase-specific (e.g. chunk index for [`ProgressPhase::Hashing`],
+///   ingredient index for [`ProgressPhase::VerifyingIngredient`]) and should
+///   otherwise be treated as opaque.
+/// * `total` – interpreted as follows:
+///   - `0` – indeterminate; the count is not known in advance.  Show a spinner
+///     and use the rising `step` value as a liveness heartbeat.
+///   - `1` – single-shot phase; the callback itself is the notification.
+///   - `> 1` – determinate; `step / total` gives a completion fraction suitable
+///     for a progress bar.
 ///
 /// # Return value
 /// Return `true` to continue, `false` to request cancellation.
@@ -700,10 +707,11 @@ impl Context {
     /// Register a progress callback that will be invoked at key phases of
     /// long-running operations (signing, hashing, embedding, etc.).
     ///
-    /// The callback receives the current [`ProgressPhase`], an approximate
-    /// percentage (`0–100`), and a human-readable status string.  Returning
-    /// `false` from the callback will cause the operation to return
-    /// [`Error::OperationCancelled`] at the next safe checkpoint.
+    /// The callback receives the current [`ProgressPhase`], a monotonically
+    /// increasing step counter, and an optional total (see [`ProgressCallbackFunc`]
+    /// for the full `step`/`total` semantics).  Returning `false` from the callback
+    /// will cause the operation to return [`Error::OperationCancelled`] at the next
+    /// safe checkpoint.
     ///
     /// Closures close over whatever external state they need.  C and WASM adapters
     /// capture their `user_data` / JS reference inside the Rust closure.
@@ -764,9 +772,10 @@ impl Context {
     /// embedded cancel flag.  Returns [`Error::OperationCancelled`] if either
     /// signals a stop.
     ///
-    /// `step` is the 1-based index of the current step within `phase`; `total` is
-    /// the total number of steps (`0` = indeterminate).  Single-shot phases pass
-    /// `(1, 1)`.
+    /// `step` is a monotonically increasing counter within `phase` (resets to `1`
+    /// at each new phase).  `total` is `0` for indeterminate, `1` for single-shot,
+    /// or `> 1` for a determinate phase where `step / total` gives a completion
+    /// fraction.  See [`ProgressCallbackFunc`] for the full semantics.
     pub(crate) fn check_progress(&self, phase: ProgressPhase, step: u32, total: u32) -> Result<()> {
         log::info!("progress: phase={phase:?} step={step}/{total}");
         if let Some(cb) = self.progress_callback.as_deref() {
@@ -994,6 +1003,43 @@ mod tests {
         assert_eq!(r.len(), 2);
         assert_eq!(r[0], (ProgressPhase::Thumbnail, 1, 1));
         assert_eq!(r[1], (ProgressPhase::Hashing, 3, 10));
+    }
+
+    #[test]
+    fn test_check_progress_indeterminate_total_passes_through() {
+        // total=0 means indeterminate; the callback must still receive it correctly
+        // and returning true should not cancel.
+        use std::sync::Mutex;
+        let received: std::sync::Arc<Mutex<Vec<(ProgressPhase, u32, u32)>>> =
+            std::sync::Arc::new(Mutex::new(Vec::new()));
+        let received_clone = received.clone();
+        let context = Context::new().with_progress_callback(move |phase, step, total| {
+            received_clone.lock().unwrap().push((phase, step, total));
+            true
+        });
+        context
+            .check_progress(ProgressPhase::Hashing, 1, 0)
+            .unwrap();
+        context
+            .check_progress(ProgressPhase::Hashing, 2, 0)
+            .unwrap();
+        let r = received.lock().unwrap();
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0], (ProgressPhase::Hashing, 1, 0));
+        assert_eq!(r[1], (ProgressPhase::Hashing, 2, 0));
+    }
+
+    #[test]
+    fn test_cancel_flag_checked_between_callbacks() {
+        // cancel() called between two check_progress calls (no callback involved)
+        // should cause the second call to return OperationCancelled.
+        let context = Context::new();
+        assert!(context.check_progress(ProgressPhase::Hashing, 1, 0).is_ok());
+        context.cancel();
+        assert!(matches!(
+            context.check_progress(ProgressPhase::Hashing, 2, 0),
+            Err(Error::OperationCancelled)
+        ));
     }
 
     #[test]
