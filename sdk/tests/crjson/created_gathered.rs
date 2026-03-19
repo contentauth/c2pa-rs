@@ -217,7 +217,7 @@ fn test_hash_assertions_in_created() -> Result<()> {
     // Find the manifest with our test assertions (the newly created one with claim v2)
     let active_manifest = manifests
         .iter()
-        .filter(|m| {
+        .rfind(|m| {
             // Filter for claim v2 manifests with non-empty created_assertions
             if let Some(claim_v2) = m.get("claim.v2") {
                 if let Some(created) = claim_v2.get("created_assertions") {
@@ -228,7 +228,6 @@ fn test_hash_assertions_in_created() -> Result<()> {
             }
             false
         })
-        .next_back()
         .expect("should have at least one claim v2 manifest");
 
     // Check claim.v2
