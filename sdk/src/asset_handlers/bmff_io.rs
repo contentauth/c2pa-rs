@@ -21,7 +21,6 @@ use std::{
 
 use atree::{Arena, Token};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use mp4::Mp4Reader;
 
 use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
