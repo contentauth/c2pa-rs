@@ -39,8 +39,12 @@ fn test_hash_data_assertion_structure() -> Result<()> {
     let hash = obj
         .get("hash")
         .and_then(|v| v.as_str())
-        .expect("c2pa.hash.data.hash must be a base64 string");
-    assert!(!hash.is_empty(), "c2pa.hash.data.hash must not be empty");
+        .expect("c2pa.hash.data.hash must be a b64'-prefixed string");
+    assert!(
+        hash.starts_with("b64'"),
+        "c2pa.hash.data.hash must start with \"b64'\" prefix, got: {hash:?}"
+    );
+    assert!(hash.len() > "b64'".len(), "c2pa.hash.data.hash payload must not be empty");
 
     let alg = obj
         .get("alg")
@@ -52,10 +56,12 @@ fn test_hash_data_assertion_structure() -> Result<()> {
     );
 
     if let Some(pad) = obj.get("pad") {
+        let pad_str = pad
+            .as_str()
+            .unwrap_or_else(|| panic!("c2pa.hash.data.pad must be a b64'-prefixed string, not {pad:?}"));
         assert!(
-            pad.is_string(),
-            "c2pa.hash.data.pad must be a base64 string, not {:?}",
-            pad
+            pad_str.starts_with("b64'"),
+            "c2pa.hash.data.pad must start with \"b64'\" prefix, got: {pad_str:?}"
         );
     }
 
@@ -139,11 +145,11 @@ fn test_action_ingredient_hash_is_base64() -> Result<()> {
             .and_then(|ing| ing.get("hash"))
         {
             let hash_str = hash.as_str().unwrap_or_else(|| {
-                panic!("action[{i}] ingredient hash must be a string, not an array")
+                panic!("action[{i}] ingredient hash must be a b64'-prefixed string, not an array")
             });
             assert!(
-                !hash_str.is_empty(),
-                "action[{i}] ingredient hash must not be empty"
+                hash_str.starts_with("b64'"),
+                "action[{i}] ingredient hash must start with \"b64'\" prefix, got: {hash_str:?}"
             );
         }
     }
