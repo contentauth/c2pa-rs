@@ -2475,7 +2475,9 @@ impl Builder {
 
             // gen_hash_from_stream uses the BmffHash's own path-based exclusion list
             // and its own alg field (set when the assertion was created).
-            bmff_hash.gen_hash_from_stream(stream)?;
+            let ctx = &self.context;
+            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
+            bmff_hash.gen_hash_from_stream_with_progress(stream, Some(&mut cb))?;
 
             self.definition
                 .assertions
@@ -2497,7 +2499,15 @@ impl Builder {
             // separate BoxMap entries by jfifdump while also being counted
             // inside the preceding SOS entropy range, which causes the sum to
             // exceed the file length and triggers a range-validation error.
-            bh.generate_box_hash_from_stream(stream, definition_alg, bhp, false)?;
+            let ctx = &self.context;
+            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
+            bh.generate_box_hash_from_stream_with_progress(
+                stream,
+                definition_alg,
+                bhp,
+                false,
+                Some(&mut cb),
+            )?;
             self.definition
                 .assertions
                 .retain(|a| !a.label.starts_with(BoxHash::LABEL));
@@ -2524,7 +2534,15 @@ impl Builder {
             } else {
                 Some(exclusions.clone())
             };
-            let hash = crate::hash_stream_by_alg(&alg, stream, exclusion_arg, true)?;
+            let ctx = &self.context;
+            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
+            let hash = crate::utils::hash_utils::hash_stream_by_alg_with_progress(
+                &alg,
+                stream,
+                exclusion_arg,
+                true,
+                Some(&mut cb),
+            )?;
 
             // Preserve the existing assertion's name or use the default.
             let name = existing
@@ -2611,7 +2629,7 @@ impl Builder {
             store.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
         }
 
-        let mut jumbf = store.sign_manifest(signer, self.context().settings())?;
+        let mut jumbf = store.sign_manifest(signer, &self.context())?;
 
         // Mode 1 only: zero-pad the signed JUMBF to match the pre-committed placeholder
         // size so the composed result is byte-for-byte the same length as the composed

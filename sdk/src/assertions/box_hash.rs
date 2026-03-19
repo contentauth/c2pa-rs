@@ -29,7 +29,7 @@ use crate::{
     hash_utils::hash_by_alg,
     maybe_send_sync::MaybeSend,
     utils::{
-        hash_utils::{hash_stream_by_alg, verify_stream_by_alg, HashRange},
+        hash_utils::{hash_stream_by_alg_with_progress, vec_compare, HashRange},
         io_utils::ReaderUtils,
     },
     validation_results::validation_codes::ASSERTION_BOXHASH_UNKNOWN_BOX,
@@ -115,17 +115,26 @@ impl BoxHash {
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
     ) -> Result<()> {
-        // it is a failure if no hashes are listed
+        self.verify_stream_hash_with_progress(reader, alg, bhp, None)
+    }
+
+    /// Like [`verify_stream_hash`] but fires `progress(step, total)` once per hashed
+    /// box so callers with a [`Context`] can report `ProgressPhase::VerifyingAssetHash`
+    /// ticks and support cancellation.
+    pub(crate) fn verify_stream_hash_with_progress(
+        &self,
+        reader: &mut dyn CAIRead,
+        alg: Option<&str>,
+        bhp: &dyn AssetBoxHash,
+        progress: Option<&mut dyn FnMut(u32, u32) -> Result<()>>,
+    ) -> Result<()> {
         if self.boxes.is_empty() {
             return Err(Error::HashMismatch("No box hash found".to_string()));
         }
 
-        // get source box list, the source list is returned expanded
-        // to show each box as an individual entry
         let source_bms = bhp.get_box_map(reader)?;
         let mut source_index = 0;
 
-        // check to see we source index starts at PNGh and skip if not included in the hash list
         if let Some(first_expected_bms) = source_bms.get(source_index) {
             if first_expected_bms
                 .names
@@ -142,22 +151,23 @@ impl BoxHash {
             return Err(Error::HashMismatch("No data boxes found".to_string()));
         };
 
+        let total = self.boxes.len() as u32;
+        let mut step: u32 = 0;
+        let mut progress = progress;
+
         for bm in &self.boxes {
             let mut inclusions = Vec::new();
 
-            // build up current inclusion, consuming all names in this BoxMap
             let mut skip_c2pa = false;
             let mut inclusion = HashRange::new(0u64, 0u64);
             for name in &bm.names {
                 match source_bms.get(source_index) {
                     Some(next_source_bm) if name == &next_source_bm.names[0] => {
                         if inclusion.length() == 0 {
-                            // this is a new item
                             inclusion.set_start(next_source_bm.range_start);
                             inclusion.set_length(next_source_bm.range_len);
 
                             if name == C2PA_BOXHASH {
-                                // there should only be 1 collapsed C2PA range
                                 if bm.names.len() != 1 {
                                     return Err(Error::HashMismatch(
                                         "Malformed C2PA box hash".to_owned(),
@@ -166,9 +176,7 @@ impl BoxHash {
                                 skip_c2pa = true;
                             }
                         } else {
-                            // count any unknown data between named segments
                             let len_to_this_seg = next_source_bm.range_start - inclusion.start();
-                            // update item
                             inclusion.set_length(len_to_this_seg + next_source_bm.range_len);
                         }
                     }
@@ -186,8 +194,6 @@ impl BoxHash {
                 source_index += 1;
             }
 
-            // C2PA chunks are skipped for hashing purposes
-            // or if the box is explicitly excluded
             let exclude = bm.excluded.unwrap_or(false);
             if skip_c2pa || exclude {
                 continue;
@@ -203,7 +209,14 @@ impl BoxHash {
                 },
             };
 
-            if !verify_stream_by_alg(&curr_alg, &bm.hash, reader, Some(inclusions), false) {
+            step += 1;
+            if let Some(cb) = progress.as_mut() {
+                cb(step, total)?;
+            }
+
+            let computed =
+                hash_stream_by_alg_with_progress(&curr_alg, reader, Some(inclusions), false, None)?;
+            if !vec_compare(&bm.hash, &computed) {
                 return Err(Error::HashMismatch("Hashes do not match".to_owned()));
             }
         }
@@ -217,6 +230,23 @@ impl BoxHash {
         alg: &str,
         bhp: &dyn AssetBoxHash,
         minimal_form: bool,
+    ) -> Result<()>
+    where
+        R: Read + Seek + MaybeSend,
+    {
+        self.generate_box_hash_from_stream_with_progress(reader, alg, bhp, minimal_form, None)
+    }
+
+    /// Like [`generate_box_hash_from_stream`] but fires `progress(step, total)` once
+    /// per hashed box so callers with a [`Context`] can report `ProgressPhase::Hashing`
+    /// ticks and support cancellation.
+    pub(crate) fn generate_box_hash_from_stream_with_progress<R>(
+        &mut self,
+        reader: &mut R,
+        alg: &str,
+        bhp: &dyn AssetBoxHash,
+        minimal_form: bool,
+        mut progress: Option<&mut dyn FnMut(u32, u32) -> Result<()>>,
     ) -> Result<()>
     where
         R: Read + Seek + MaybeSend,
@@ -306,6 +336,13 @@ impl BoxHash {
             }
             self.boxes = boxes;
 
+            let total = self
+                .boxes
+                .iter()
+                .filter(|bm| bm.names[0] != C2PA_BOXHASH)
+                .count() as u32;
+            let mut step: u32 = 0;
+
             // compute the hashes
             for bm in self.boxes.iter_mut() {
                 // skip c2pa box
@@ -313,14 +350,24 @@ impl BoxHash {
                     continue;
                 }
 
-                let mut inclusions = Vec::new();
+                let inclusions = vec![HashRange::new(bm.range_start, bm.range_len)];
+                bm.hash = ByteBuf::from(hash_stream_by_alg_with_progress(
+                    alg,
+                    reader,
+                    Some(inclusions),
+                    false,
+                    None,
+                )?);
 
-                let inclusion = HashRange::new(bm.range_start, bm.range_len);
-                inclusions.push(inclusion);
-
-                bm.hash = ByteBuf::from(hash_stream_by_alg(alg, reader, Some(inclusions), false)?);
+                step += 1;
+                if let Some(cb) = progress.as_mut() {
+                    cb(step, total)?;
+                }
             }
         } else {
+            let total = source_bms.iter().filter(|bm| bm.names[0] != "C2PA").count() as u32;
+            let mut step: u32 = 0;
+
             for mut bm in source_bms {
                 if bm.names[0] == "C2PA" {
                     // there should only be 1 collapsed C2PA range
@@ -333,17 +380,22 @@ impl BoxHash {
                     continue;
                 }
 
-                // this is a new item
-                let mut inclusions = Vec::new();
-
-                let inclusion = HashRange::new(bm.range_start, bm.range_len);
-                inclusions.push(inclusion);
-
+                let inclusions = vec![HashRange::new(bm.range_start, bm.range_len)];
                 bm.alg = Some(alg.to_string());
-                bm.hash = ByteBuf::from(hash_stream_by_alg(alg, reader, Some(inclusions), false)?);
+                bm.hash = ByteBuf::from(hash_stream_by_alg_with_progress(
+                    alg,
+                    reader,
+                    Some(inclusions),
+                    false,
+                    None,
+                )?);
                 bm.pad = ByteBuf::from(vec![]);
-
                 self.boxes.push(bm);
+
+                step += 1;
+                if let Some(cb) = progress.as_mut() {
+                    cb(step, total)?;
+                }
             }
         }
 

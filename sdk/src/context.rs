@@ -68,6 +68,10 @@ pub enum ProgressPhase {
     /// Fires once between the write pass and the hash computation pass so
     /// callers can distinguish I/O time from CPU hashing time.
     Writing = 11,
+    /// Fetching an OCSP response over the network.
+    FetchingOCSP = 12,
+    /// Fetching a timestamp from a remote TSA over the network.
+    FetchingTimestamp = 13,
 }
 
 /// Progress callback function type.

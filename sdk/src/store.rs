@@ -2155,6 +2155,7 @@ impl Store {
         alg: &str,
         block_locations: &mut Vec<HashObjectPositions>,
         calc_hashes: bool,
+        progress: Option<&mut dyn FnMut(u32, u32) -> Result<()>>,
     ) -> Result<Vec<DataHash>>
     where
         R: Read + Seek + ?Sized,
@@ -2226,7 +2227,7 @@ impl Store {
         // Generate or set placeholder hash
         if calc_hashes {
             // Second signing pass: calcultate the actual real hash
-            dh.gen_hash_from_stream(stream)?;
+            dh.gen_hash_from_stream_with_progress(stream, progress)?;
         } else {
             // First signing pass: zero-filled placeholder hash (to get to end size)
             match alg {
@@ -2353,7 +2354,8 @@ impl Store {
     /// * The signed manifest bytes.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be signed.
-    pub fn sign_manifest(&mut self, signer: &dyn Signer, settings: &Settings) -> Result<Vec<u8>> {
+    pub fn sign_manifest(&mut self, signer: &dyn Signer, context: &Context) -> Result<Vec<u8>> {
+        let settings = context.settings();
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         // if user did not supply a hash
@@ -2406,6 +2408,8 @@ impl Store {
             }
         }
 
+        context.check_progress(ProgressPhase::Signing, 1, 1)?;
+
         // No dynamic assertions - sign directly
         // Drop pc and get an immutable reference for signing
         let _ = pc;
@@ -2429,6 +2433,7 @@ impl Store {
         reserve_size: usize,
         dh: &DataHash,
         asset_reader: Option<&mut dyn CAIRead>,
+        context: &Context,
     ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
@@ -2452,7 +2457,8 @@ impl Store {
 
         if let Some(reader) = asset_reader {
             // calc hashes
-            adjusted_dh.gen_hash_from_stream(reader)?;
+            let mut cb = |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
+            adjusted_dh.gen_hash_from_stream_with_progress(reader, Some(&mut cb))?;
         }
 
         // update the placeholder hash
@@ -2497,7 +2503,7 @@ impl Store {
         context: &Context,
     ) -> Result<Vec<u8>> {
         let mut jumbf_bytes =
-            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
+            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader, context)?;
 
         // Write dynamic assertions only if placeholders were added during placeholder generation.
         // We check if the dynamic assertion labels exist in the claim - if not, placeholders
@@ -2531,6 +2537,8 @@ impl Store {
             }
         }
 
+        context.check_progress(ProgressPhase::Signing, 1, 1)?;
+
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
@@ -2560,7 +2568,7 @@ impl Store {
         context: &Context,
     ) -> Result<Vec<u8>> {
         let mut jumbf_bytes =
-            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
+            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader, context)?;
 
         // Write dynamic assertions only if placeholders were added during placeholder generation.
         // We check if the dynamic assertion labels exist in the claim - if not, placeholders
@@ -2595,6 +2603,8 @@ impl Store {
             }
         }
 
+        context.check_progress(ProgressPhase::Signing, 1, 1)?;
+
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self
@@ -2628,6 +2638,8 @@ impl Store {
         }
 
         let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        context.check_progress(ProgressPhase::Signing, 1, 1)?;
 
         // sign contents
         let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
@@ -2992,8 +3004,6 @@ impl Store {
             context,
         )?;
 
-        context.check_progress(ProgressPhase::Hashing, 1, 1)?;
-
         let mut preliminary_claim = PartialClaim::default();
         {
             let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
@@ -3240,7 +3250,9 @@ impl Store {
                     let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0].assertion())?;
 
                     output_stream.rewind()?;
-                    bmff_hash.gen_hash_from_stream(output_stream)?;
+                    let mut cb =
+                        |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
+                    bmff_hash.gen_hash_from_stream_with_progress(output_stream, Some(&mut cb))?;
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }
@@ -3259,6 +3271,7 @@ impl Store {
                         pc.alg(),
                         &mut hash_ranges,
                         false,
+                        None,
                     )?
                 };
 
@@ -3314,11 +3327,14 @@ impl Store {
                         });
                     }
 
+                    let mut cb =
+                        |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
                     let updated_hashes = Store::generate_data_hashes_for_stream(
                         output_stream,
                         pc.alg(),
                         &mut new_hash_ranges,
                         true,
+                        Some(&mut cb),
                     )?;
 
                     // patch existing claim hash with updated data
