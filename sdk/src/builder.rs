@@ -846,22 +846,23 @@ impl Builder {
 
         // if an actions assertion already exists, we will append to it
         // if not, we will create a new one
-        let actions = if let Some(pos) = self
+        let (actions, original_label) = if let Some(pos) = self
             .definition
             .assertions
             .iter()
-            .position(|a| a.label() == Actions::LABEL)
+            .position(|a| a.label().starts_with(Actions::LABEL))
         {
             // Remove and use the existing actions assertion
             let assertion_def = self.definition.assertions.remove(pos);
-            assertion_def.to_assertion()?
+            let original_label = assertion_def.label.clone();
+            (assertion_def.to_assertion()?, original_label)
         } else {
-            Actions::new()
+            (Actions::new(), Actions::LABEL_VERSIONED.to_string())
         };
 
         let actions = actions.add_action(action);
 
-        self.add_assertion(Actions::LABEL, &actions)?;
+        self.add_assertion(original_label, &actions)?;
         Ok(self)
     }
 
@@ -2031,7 +2032,7 @@ impl Builder {
     /// The placeholder manifest does not account for the size of the Merkles leaves.  This is completely
     /// defined by the encoding or the fixed size specified by the user and cannot be known at compile time. The means that the caller must
     /// estimate the addition size to reserve in addition to the placeholder manifest size.  The size of the
-    /// manifest will be the size of the placeholder + at least (number of leaves * size of hash).  
+    /// manifest will be the size of the placeholder + at least (number of leaves * size of hash).
     /// For example, if the caller is using a fixed leaf size and sha256 hashes, then the caller
     /// must reserve at least 32 bytes for each fixed leaf chunk of the asset's mdat in addition to the placeholder manifest size.
     /// For sha384 hashes, the caller must reserve at least 48 bytes for each fixed leaf chunk, and for
@@ -2115,7 +2116,7 @@ impl Builder {
 
     /// Sets the exclusion object for the [`BmffHash`] assertion in the Builder.
     ///
-    /// Call this before [`Builder::placeholder`] to register the list of boxes to exclude from the BMFF hash calculation.  
+    /// Call this before [`Builder::placeholder`] to register the list of boxes to exclude from the BMFF hash calculation.
     /// This is necessary when a composed placeholder was embedded in the asset.  This information is needed
     /// upfront because BMFF exclusion, e.g.
     /// [
@@ -2230,7 +2231,7 @@ impl Builder {
     }
 
     /// Support hashing mdat bytes as the client writes the mdat box. This is an alternative to
-    /// letting the SDK read and hash the mdat content after the fact, which can be costly for large assets.  
+    /// letting the SDK read and hash the mdat content after the fact, which can be costly for large assets.
     /// With this method, the client can pass chunks of data for each mdat, and the SDK will compute the Merkle
     /// leaves and store it in the BmffHash assertion.  This requires that the placeholder manifest was created with
     /// a BmffHash assertion that has a reserved placeholder hash (call [`Builder::placeholder`] first to set this up).
@@ -2238,7 +2239,7 @@ impl Builder {
     /// This is typically called as chunk data is presented from the rendering engine and writing the output. The
     /// Merkle leaf will be the size of the chunk by default generating a Merkle tree with varible length
     /// leaves, but the leaf size can be configured by `set_bmff_hash_fixed_leaf_size` if the client prefers a fixed
-    /// leaf size.  The leaf chunking is handled by the SDK.  
+    /// leaf size.  The leaf chunking is handled by the SDK.
     ///
     /// The Merkle tree spans a single mdat box. There is one tree per mdat. The mdat_id specifies which mdat box the chunk belongs to,
     /// and the SDK will maintain a separate Merkle tree for each mdat. The mdat_id should start from 0 and increment
@@ -2429,8 +2430,8 @@ impl Builder {
             let mut bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL)?;
             bmff_hash.set_bmff_version(stored_version);
 
-            // add in the Merkle leaf hashes that were collected via hash_bmff_mdat_bytes().
-            // we add any remainders (partially filled fixed-size leaves that are unhashed) as the last leaf of the Merkle leaves for that mdat_id
+            // Add in the Merkle leaf hashes that were collected via hash_bmff_mdat_bytes().
+            // We add any remainders (partially filled fixed-size leaves that are unhashed) as the last leaf of the Merkle leaves for that mdat_id.
             for (mdat_id, remainder) in &self.bmff_hasher.fixed_size_remainder {
                 let fragment_hash = hash_by_alg(self.bmff_hasher.alg.as_str(), remainder, None);
 
@@ -2443,7 +2444,7 @@ impl Builder {
                     .or_insert(vec![(remainder.len() as u64, fragment_hash)]);
             }
 
-            // if there are Merkle hashes we need to create a MerkleMap and add it to the BmffHash
+            // If there are Merkle hashes we need to create a MerkleMap and add it to the BmffHash
             if !self.bmff_hasher.merkle_leaves.is_empty() {
                 // generate MerkleMaps for the mdat leaves stored in C2paHasher
                 let merkle_maps = MerkleMap::create_mms_from_mdat_leaves(
@@ -4472,7 +4473,7 @@ mod tests {
     /// random chunks.  Then each of those chunks will be sent hashed using 'hash_bmff_mdat_bytes'.
     /// One the file is written, the file is hashed using 'update_hash_from_stream' which will use the
     /// pre-computed mdat hashes to calculate the Merkle root and hash the remaining content. We then sign
-    /// the manifest and patch the file with the signed manifest by overridding the placeholder free box.  
+    /// the manifest and patch the file with the signed manifest by overridding the placeholder free box.
     #[test]
     fn test_bmff_mdat_hashed_placeholder_workflow_complete() -> Result<()> {
         use std::io::{Seek, SeekFrom};
