@@ -21,6 +21,7 @@ use std::{
 
 use atree::{Arena, Token};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use mp4::Mp4Reader;
 
 use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
@@ -1297,15 +1298,22 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
             .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {err}")))?;
 
         // Break if size zero BoxHeader
-        let s = header.size;
+        let mut s = header.size;
         if s == 0 {
             break;
         }
 
         if current + s > end {
-            return Err(Error::InvalidAsset(
-                "Box size extends beyond asset bounds".to_string(),
-            ));
+            if BoxType::MdatBox == header.name {
+                // for mdat boxes that extend beyond the end of the file we will just set the size to the remaining bytes in the file since
+                // some files have malformed mdat sizes but we can still hash the content by treating it as a truncated box
+                let remaining_bytes = end - current;
+                s = remaining_bytes;
+            } else {
+                return Err(Error::InvalidAsset(
+                    "Box size extends beyond asset bounds".to_string(),
+                ));
+            }
         }
 
         // Match and parse the supported atom boxes.
