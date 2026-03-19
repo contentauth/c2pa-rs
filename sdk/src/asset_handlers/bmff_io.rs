@@ -1307,8 +1307,7 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
             if BoxType::MdatBox == header.name {
                 // for mdat boxes that extend beyond the end of the file we will just set the size to the remaining bytes in the file since
                 // some files have malformed mdat sizes but we can still hash the content by treating it as a truncated box
-                let remaining_bytes = end - current;
-                s = remaining_bytes;
+                s = end - current;
             } else {
                 return Err(Error::InvalidAsset(
                     "Box size extends beyond asset bounds".to_string(),
