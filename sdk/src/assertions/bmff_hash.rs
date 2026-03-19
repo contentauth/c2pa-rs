@@ -1873,11 +1873,19 @@ impl BmffHash {
             .or(self.alg.as_ref())
             .ok_or(Error::BadParam("alg is required".to_string()))?;
 
+        // Per the C2PA spec exclusion list requirements, mdat boxes always exclude exactly 16
+        // bytes from the start regardless of whether the box uses standard (8-byte) or
+        // large-size (16-byte) encoding.  The spec fixes the exclusion at 16 so that a single
+        // xpath expression can cover both encodings; for a standard-size mdat this means the
+        // first 8 bytes of the mdat payload are also excluded.
+        // saturating_sub guards against underflow when box_info.size() < MDAT_EXCLUSION_SIZE.
+        const MDAT_EXCLUSION_SIZE: u64 = 16;
+
         // generate leaves in the Merkle tree based on the box length and fixed or variable block sizes
         let mut leaves = Vec::new();
         if let Some(fixed_block_size) = merkle_map.fixed_block_size {
-            let mut block_start = box_info.start() + 16;
-            let mut bytes_left = box_info.size().saturating_sub(16);
+            let mut block_start = box_info.start() + MDAT_EXCLUSION_SIZE;
+            let mut bytes_left = box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE);
 
             // sanity check that fixed_block_size is greater than 0
             if fixed_block_size == 0 {
@@ -1894,10 +1902,12 @@ impl BmffHash {
                 block_start += leaf_length;
             }
         } else if let Some(variable_block_sizes) = &merkle_map.variable_block_sizes {
-            let mut block_start = box_info.start() + 16;
+            let mut block_start = box_info.start() + MDAT_EXCLUSION_SIZE;
 
             // make sure variable_block_sizes == length of the box
-            if box_info.size() - 16 != variable_block_sizes.iter().sum::<u64>() {
+            if box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE)
+                != variable_block_sizes.iter().sum::<u64>()
+            {
                 return Err(Error::C2PAValidation(
                     "variable block sizes do not match box size".to_string(),
                 ));
@@ -1912,7 +1922,10 @@ impl BmffHash {
             }
         } else {
             // only one leaf, so just hash the entire box
-            let hash_range = vec![HashRange::new(box_info.start() + 16, box_info.size() - 16)];
+            let hash_range = vec![HashRange::new(
+                box_info.start() + MDAT_EXCLUSION_SIZE,
+                box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE),
+            )];
             let leaf_hash = hash_stream_by_alg(alg, reader, Some(hash_range), false)?;
             leaves.push(crate::utils::merkle::MerkleNode(leaf_hash));
         }
@@ -2044,11 +2057,17 @@ impl BmffHash {
             ));
         }
 
+        // Per the C2PA spec exclusion list requirements, mdat boxes always exclude exactly 16
+        // bytes from the start regardless of whether the box uses standard (8-byte) or
+        // large-size (16-byte) encoding.
+        // saturating_sub guards against underflow when box_info.size() < MDAT_EXCLUSION_SIZE.
+        const MDAT_EXCLUSION_SIZE: u64 = 16;
+
         // find the hash ranges for each mdat
         for (index, (box_info, merkle_map)) in mdats.into_iter().zip(mm_vec).enumerate() {
             if let Some(fixed_block_size) = merkle_map.fixed_block_size {
-                let mut block_start = box_info.start() + 16;
-                let mut bytes_left = box_info.size() - 16;
+                let mut block_start = box_info.start() + MDAT_EXCLUSION_SIZE;
+                let mut bytes_left = box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE);
 
                 // sanity check that fixed_block_size is greater than 0
                 if fixed_block_size <= 1 {
@@ -2067,10 +2086,12 @@ impl BmffHash {
                 }
                 mdat_ranges.insert(index, hash_ranges);
             } else if let Some(variable_block_sizes) = &merkle_map.variable_block_sizes {
-                let mut block_start = box_info.start() + 16;
+                let mut block_start = box_info.start() + MDAT_EXCLUSION_SIZE;
 
                 // make sure variable_block_sizes == length of the box
-                if box_info.size() - 16 != variable_block_sizes.iter().sum::<u64>() {
+                if box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE)
+                    != variable_block_sizes.iter().sum::<u64>()
+                {
                     return Err(Error::C2PAValidation(
                         "variable block sizes does not match mdat box size".to_string(),
                     ));
@@ -2086,7 +2107,10 @@ impl BmffHash {
                 // only one leaf, so just hash the entire box
                 mdat_ranges.insert(
                     index,
-                    vec![HashRange::new(box_info.start() + 16, box_info.size() - 16)],
+                    vec![HashRange::new(
+                        box_info.start() + MDAT_EXCLUSION_SIZE,
+                        box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE),
+                    )],
                 );
             }
         }
@@ -2251,6 +2275,87 @@ fn stsc_index(track: &Mp4Track, sample_id: u32) -> crate::Result<usize> {
         }
     }
     Ok(track.trak.mdia.minf.stbl.stsc.entries.len() - 1)
+}
+
+#[cfg(test)]
+mod bmff_hash_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::io::Cursor;
+
+    use super::*;
+    use crate::asset_handlers::bmff_io::{BoxInfoLite, C2PABmffBoxes};
+
+    fn small_mdat_box_info() -> BoxInfoLite {
+        // A standard BMFF mdat box with an 8-byte header and no payload (size = 8).
+        // The C2PA spec exclusion always skips 16 bytes; saturating_sub handles the case
+        // where size < 16 without integer underflow.
+        BoxInfoLite {
+            path: "mdat".to_string(),
+            offset: 0,
+            size: 8,
+        }
+    }
+
+    fn minimal_merkle_map() -> MerkleMap {
+        MerkleMap {
+            alg: Some("sha256".to_string()),
+            unique_id: 0,
+            local_id: 0,
+            count: 1,
+            init_hash: None,
+            hashes: VecByteBuf(vec![]),
+            fixed_block_size: None,
+            variable_block_sizes: None,
+        }
+    }
+
+    /// Verifies that a small mdat box (size < 16) does not cause integer underflow.
+    /// The function should return without panicking; the empty payload yields one leaf
+    /// hashing zero bytes.
+    #[test]
+    fn test_create_merkle_tree_no_underflow_for_small_mdat_box() {
+        let bmff_hash = BmffHash::new("test", "sha256", None);
+        let box_info = small_mdat_box_info();
+        let mut merkle_map = minimal_merkle_map();
+        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+
+        // Must not panic or arithmetic-overflow regardless of the result.
+        let _ = bmff_hash.create_merkle_tree_for_merkle_map(
+            reader.as_mut(),
+            &box_info,
+            &mut merkle_map,
+        );
+    }
+
+    /// Verifies that a small mdat box (size < 16) does not cause integer underflow
+    /// during validation.
+    #[test]
+    fn test_validate_merkle_maps_no_underflow_for_small_mdat_box() {
+        let mut bmff_hash = BmffHash::new("test", "sha256", None);
+        bmff_hash.set_merkle(vec![minimal_merkle_map()]);
+
+        let c2pa_boxes = C2PABmffBoxes {
+            manifest_bytes: None,
+            original_bytes: None,
+            update_bytes: None,
+            manifest_box_bytes: None,
+            update_box_bytes: None,
+            bmff_merkle: Vec::new(),
+            bmff_merkle_box_infos: Vec::new(),
+            box_infos: vec![small_mdat_box_info()],
+            xmp: None,
+            manifest_box_offset: None,
+            update_box_offset: None,
+            first_aux_uuid_offset: 0,
+            xmp_box_offset: 0,
+            xmp_box_size: 0,
+        };
+
+        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        // Must not panic or arithmetic-overflow regardless of the result.
+        let _ = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
+    }
 }
 
 /* we need shippable examples
