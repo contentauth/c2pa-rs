@@ -44,7 +44,10 @@ fn test_hash_data_assertion_structure() -> Result<()> {
         hash.starts_with("b64'"),
         "c2pa.hash.data.hash must start with \"b64'\" prefix, got: {hash:?}"
     );
-    assert!(hash.len() > "b64'".len(), "c2pa.hash.data.hash payload must not be empty");
+    assert!(
+        hash.len() > "b64'".len(),
+        "c2pa.hash.data.hash payload must not be empty"
+    );
 
     let alg = obj
         .get("alg")
@@ -56,9 +59,9 @@ fn test_hash_data_assertion_structure() -> Result<()> {
     );
 
     if let Some(pad) = obj.get("pad") {
-        let pad_str = pad
-            .as_str()
-            .unwrap_or_else(|| panic!("c2pa.hash.data.pad must be a b64'-prefixed string, not {pad:?}"));
+        let pad_str = pad.as_str().unwrap_or_else(|| {
+            panic!("c2pa.hash.data.pad must be a b64'-prefixed string, not {pad:?}")
+        });
         assert!(
             pad_str.starts_with("b64'"),
             "c2pa.hash.data.pad must start with \"b64'\" prefix, got: {pad_str:?}"

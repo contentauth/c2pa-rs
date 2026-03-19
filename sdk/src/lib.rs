@@ -221,9 +221,6 @@ pub mod identity;
 /// The `jumbf_io` module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
 
-/// The crjson module provides crJSON format export for C2PA manifests.
-pub mod crjson;
-
 /// The settings module provides a way to configure the C2PA SDK.
 pub mod settings;
 
@@ -282,6 +279,7 @@ pub(crate) mod claim;
 pub(crate) mod claim_generator_info;
 pub(crate) mod context;
 pub(crate) mod cose_validator;
+pub(crate) mod crjson;
 pub(crate) mod error;
 pub(crate) mod external_manifest;
 pub(crate) mod hashed_uri;

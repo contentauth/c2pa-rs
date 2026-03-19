@@ -33,7 +33,6 @@ use crate::{
     assertions::{labels, AssetType, EmbeddedData},
     asset_io::CAIRead,
     claim::Claim,
-    crypto::base64,
     error::Error,
     hashed_uri::HashedUri,
     jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
@@ -100,10 +99,7 @@ impl UriOrResource {
                     )
                 };
                 let url = to_absolute_uri(claim.label(), &h.url());
-                let mut resource_ref = resources.add_uri(&url, &format, data)?;
-                // Preserve hash and alg so crJSON (and other consumers) can always emit hashedUriMap
-                resource_ref.hash = Some(base64::encode(&h.hash()));
-                resource_ref.alg = h.alg();
+                let resource_ref = resources.add_with(&url, &format, data)?;
                 Ok(UriOrResource::ResourceRef(resource_ref))
             }
         }

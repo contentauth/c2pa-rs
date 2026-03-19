@@ -493,9 +493,7 @@ impl<'a> CrJsonExporter<'a> {
     /// Build a map from each manifest label to its (StatusCodes, validation_time).
     ///
     /// `validation_time` falls back to the current UTC time when the reader supplies none.
-    fn build_validation_results_per_manifest(
-        &self,
-    ) -> HashMap<String, (StatusCodes, String)> {
+    fn build_validation_results_per_manifest(&self) -> HashMap<String, (StatusCodes, String)> {
         let mut map: HashMap<String, (StatusCodes, String)> = HashMap::new();
         let Some(vr) = self.reader.validation_results() else {
             return map;
@@ -699,8 +697,9 @@ fn fix_hash_encoding(value: Value) -> Value {
                             .iter()
                             .filter_map(|v| v.as_u64().map(|n| n as u8))
                             .collect();
-                        let decoded = decode_cawg_signature(&sig_bytes)
-                            .unwrap_or_else(|_| json!(format!("b64'{}", base64::encode(&sig_bytes))));
+                        let decoded = decode_cawg_signature(&sig_bytes).unwrap_or_else(|_| {
+                            json!(format!("b64'{}", base64::encode(&sig_bytes)))
+                        });
                         map.insert("signature".to_string(), decoded);
                     }
                 }

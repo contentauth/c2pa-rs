@@ -35,7 +35,7 @@ const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
 const IMAGE_WITH_INGREDIENT: &[u8] = include_bytes!("../fixtures/CA.jpg");
 
 /// The crJSON JSON Schema bundled with the project.
-const CRJSON_SCHEMA: &str = include_str!("../../../cli/schemas/crJSON-schema.json");
+const CRJSON_SCHEMA: &str = include_str!("../fixtures/schemas/crJSON-schema.json");
 
 /// When `C2PA_WRITE_CRJSON` is set, write crJSON to `target/crjson_test_output/`
 /// so you can inspect the exact output.
@@ -571,7 +571,10 @@ fn test_validation_results_structure() -> Result<()> {
             .get("validationTime")
             .and_then(|v| v.as_str())
             .expect("validationResults.validationTime must be a required RFC 3339 string");
-        assert!(!vt.is_empty(), "validationResults.validationTime must not be empty");
+        assert!(
+            !vt.is_empty(),
+            "validationResults.validationTime must not be empty"
+        );
     }
     Ok(())
 }
@@ -582,7 +585,13 @@ fn test_validation_results_no_extra_fields() -> Result<()> {
     let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
-    let allowed = ["success", "informational", "failure", "specVersion", "validationTime"];
+    let allowed = [
+        "success",
+        "informational",
+        "failure",
+        "specVersion",
+        "validationTime",
+    ];
     for manifest in json_value["manifests"].as_array().unwrap() {
         let vr = manifest
             .get("validationResults")
