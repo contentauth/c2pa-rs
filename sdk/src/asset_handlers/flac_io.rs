@@ -92,6 +92,7 @@ fn add_required_frame(
             input_stream.rewind()?;
             flac_io.write_cai(input_stream, output_stream, &[1, 2, 3, 4])
         }
+        Err(Error::TooManyManifestStores) => Ok(()),
         Err(e) => Err(e),
     }
 }
