@@ -35,7 +35,7 @@ test-local:
 
 # Quick SDK-only test pass: unit tests + integration tests, no examples, benches,
 # WASM, or doc checks. Use this during active development for a fast feedback loop.
-test-sdk:
+test-sdk: check-format check-docs clippy
 	$(CARGO_TEST) -p c2pa --features="$(FEATURES)" --lib --tests
 
 test-wasm:
