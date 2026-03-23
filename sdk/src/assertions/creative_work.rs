@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![allow(deprecated)]
+
 use std::ops::Deref;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -25,13 +27,24 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 1;
 const CW_AUTHOR: &str = "author";
 
+/// Assertion that implements various schema.org-based assertions,
+/// including the now-deprecated CreativeWork assertion.
+///
+/// This structure is here to allow parsing of existing C2PA 1.x manifests
+/// this assertion. The CreativeWork assertion is no longer part of the
+/// C2PA Technical Specification and it should not be used when creating
+/// new manifests.
+#[deprecated(
+    since = "0.59.0",
+    note = "The CreativeWork assertion is no longer part of the C2PA Technical Specification. Please use the CAWG identity and/or metadata assertion instead (https://opensource.contentauthenticity.org/docs/manifest/cawg-id)."
+)]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CreativeWork(SchemaDotOrg);
 
 impl CreativeWork {
-    /// Label prefix for a creative work assertion.
+    /// Label prefix for a creative work assertion. NOTE: This is deprecated.
     ///
-    /// See <https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_creative_work>.
+    /// See [Creative_work assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_creative_work). NOTE: This is an old version of the spec.
     pub const LABEL: &'static str = labels::CREATIVE_WORK;
 
     pub fn new() -> CreativeWork {
@@ -115,7 +128,7 @@ pub mod tests {
     const IDENTITY_URI: &str = "https://some_identity/service/";
 
     // example CreativeWork from
-    // https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review
+    // https://spec.c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review
     const SAMPLE_CREATIVE_WORK: &str = r#"{
         "@context": [
           "http://schema.org/",

@@ -15,17 +15,23 @@
 
 #![deny(missing_docs)]
 
-use ciborium::value::Value;
-use coset::{
-    iana, CoseSign1, CoseSign1Builder, Header, HeaderBuilder, Label, TaggedCborSerializable,
-};
+use async_generic::async_generic;
+use async_trait::async_trait;
 
 use crate::{
     claim::Claim,
     cose_validator::verify_cose,
-    status_tracker::OneShotStatusTracker,
-    time_stamp::{cose_timestamp_countersign, make_cose_timestamp},
-    Error, Result, Signer, SigningAlg,
+    crypto::{
+        cose::{
+            check_end_entity_certificate_profile, sign, sign_async, CertificateTrustPolicy,
+            TimeStampStorage,
+        },
+        raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
+        time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
+    },
+    settings::Settings,
+    status_tracker::{ErrorBehavior, StatusTracker},
+    AsyncSigner, Error, Result, Signer,
 };
 
 /// Generate a COSE signature for a block of bytes which must be a valid C2PA
@@ -45,310 +51,300 @@ use crate::{
 ///    will respond with an error.)
 /// 3. Verifies that the signature is valid COSE. Will respond with an error
 ///    [`Error::CoseSignature`] if unable to validate.
-pub fn sign_claim(claim_bytes: &[u8], signer: &dyn Signer, box_size: usize) -> Result<Vec<u8>> {
+#[async_generic(async_signature(
+    claim_bytes: &[u8],
+    signer: &dyn AsyncSigner,
+    box_size: usize,
+    settings: &Settings,
+))]
+pub fn sign_claim(
+    claim_bytes: &[u8],
+    signer: &dyn Signer,
+    box_size: usize,
+    settings: &Settings,
+) -> Result<Vec<u8>> {
     // Must be a valid claim.
     let label = "dummy_label";
-    let _claim = Claim::from_data(label, claim_bytes)?;
+    let claim = Claim::from_data(label, claim_bytes)?;
 
-    // Generate and verify a CoseSign1 representation of the data.
-    cose_sign(signer, claim_bytes, box_size).and_then(|sig| {
-        // Sanity check: Ensure that this signature is valid.
-        let mut cose_log = OneShotStatusTracker::new();
+    let tss = if claim.version() > 1 {
+        TimeStampStorage::V2_sigTst2_CTT
+    } else {
+        TimeStampStorage::V1_sigTst
+    };
 
-        match verify_cose(&sig, claim_bytes, b"", false, &mut cose_log) {
-            Ok(r) => {
-                if !r.validated {
-                    Err(Error::CoseSignature)
-                } else {
-                    Ok(sig)
+    let signed_bytes = if _sync {
+        cose_sign(signer, claim_bytes, box_size, tss, settings)
+    } else {
+        cose_sign_async(signer, claim_bytes, box_size, tss, settings).await
+    };
+
+    match signed_bytes {
+        Ok(signed_bytes) => {
+            // Sanity check: Ensure that this signature is valid.
+            let mut cose_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+            let passthrough_cap = CertificateTrustPolicy::default();
+
+            match verify_cose(
+                &signed_bytes,
+                claim_bytes,
+                b"",
+                true,
+                &passthrough_cap,
+                None,
+                &mut cose_log,
+                settings,
+            ) {
+                Ok(r) => {
+                    if !r.validated {
+                        Err(Error::CoseSignature)
+                    } else {
+                        Ok(signed_bytes)
+                    }
                 }
+                Err(err) => Err(err),
             }
-            Err(err) => Err(err),
         }
-    })
+        Err(err) => Err(err),
+    }
 }
 
 /// Returns signed Cose_Sign1 bytes for `data`.
 /// The Cose_Sign1 will be signed with the algorithm from [`Signer`].
-pub(crate) fn cose_sign(signer: &dyn Signer, data: &[u8], box_size: usize) -> Result<Vec<u8>> {
-    // 13.2.1. X.509 Certificates
-    //
-    // X.509 Certificates are stored in a header named x5chain draft-ietf-cose-x509.
-    // The value is a CBOR array of byte strings, each of which contains the certificate
-    // encoded as ASN.1 distinguished encoding rules (DER). This array must contain at
-    // least one element. The first element of the array must be the certificate of
-    // the signer, and the subjectPublicKeyInfo element of the certificate will be the
-    // public key used to validate the signature. The Validity member of the TBSCertificate
-    // sequence provides the time validity period of the certificate.
-
-    /*
-       This header parameter allows for a single X.509 certificate or a
-       chain of X.509 certificates to be carried in the message.
-
-       *  If a single certificate is conveyed, it is placed in a CBOR
-           byte string.
-
-       *  If multiple certificates are conveyed, a CBOR array of byte
-           strings is used, with each certificate being in its own byte
-           string.
-    */
-
-    let alg = signer.alg();
-
-    // build complete header
-    let (alg_id, unprotected_header) = build_unprotected_header(
-        data,
-        alg,
-        signer.certs()?,
-        signer.time_authority_url(),
-        signer.ocsp_val(),
-    )?;
-
-    let aad = b""; // no additional data required here
-
-    let sign1_builder = CoseSign1Builder::new()
-        .protected(alg_id)
-        .unprotected(unprotected_header)
-        .payload(data.to_vec())
-        .try_create_signature(aad, |bytes| signer.sign(bytes))?;
-
-    let mut sign1 = sign1_builder.build();
-    sign1.payload = None; // clear the payload since it is known
-
-    let c2pa_sig_data = pad_cose_sig(&mut sign1, box_size)?;
-
-    // println!("sig: {}", Hexlify(&c2pa_sig_data));
-
-    Ok(c2pa_sig_data)
-}
-
-/// Returns signed Cose_Sign1 bytes for "data".  The Cose_Sign1 will be signed with the algorithm from `Signer`.
-pub async fn cose_sign_async(
-    signer: &dyn crate::AsyncSigner,
+#[async_generic(async_signature(
+    signer: &dyn AsyncSigner,
     data: &[u8],
     box_size: usize,
-) -> Result<Vec<u8>> {
-    // 13.2.1. X.509 Certificates
-    //
-    // X.509 Certificates are stored in a header named x5chain draft-ietf-cose-x509.
-    // The value is a CBOR array of byte strings, each of which contains the certificate
-    // encoded as ASN.1 distinguished encoding rules (DER). This array must contain at
-    // least one element. The first element of the array must be the certificate of
-    // the signer, and the subjectPublicKeyInfo element of the certificate will be the
-    // public key used to validate the signature. The Validity member of the TBSCertificate
-    // sequence provides the time validity period of the certificate.
-
-    /*
-       This header parameter allows for a single X.509 certificate or a
-       chain of X.509 certificates to be carried in the message.
-
-       *  If a single certificate is conveyed, it is placed in a CBOR
-           byte string.
-
-       *  If multiple certificates are conveyed, a CBOR array of byte
-           strings is used, with each certificate being in its own byte
-           string.
-    */
-
-    let alg = signer.alg();
-
-    // build complete header
-    let (alg_id, unprotected_header) = build_unprotected_header(
-        data,
-        alg,
-        signer.certs()?,
-        signer.time_authority_url(),
-        signer.ocsp_val(),
-    )?;
-
-    let aad = b""; // no additional data required here
-
-    let sign1_builder = CoseSign1Builder::new()
-        .protected(alg_id)
-        .unprotected(unprotected_header)
-        .payload(data.to_vec());
-
-    let mut sign1 = sign1_builder.build();
-
-    let tbs = coset::sig_structure_data(
-        coset::SignatureContext::CoseSign1,
-        sign1.protected.clone(),
-        None,
-        aad,
-        sign1.payload.as_ref().unwrap_or(&vec![]),
-    );
-    sign1.signature = signer.sign(tbs).await?;
-
-    sign1.payload = None; // clear the payload since it is known
-
-    let c2pa_sig_data = pad_cose_sig(&mut sign1, box_size)?;
-
-    // println!("sig: {}", Hexlify(&c2pa_sig_data));
-
-    Ok(c2pa_sig_data)
-}
-
-fn build_unprotected_header(
+    time_stamp_storage: TimeStampStorage,
+    settings: &Settings,
+))]
+pub(crate) fn cose_sign(
+    signer: &dyn Signer,
     data: &[u8],
-    alg: SigningAlg,
-    certs: Vec<Vec<u8>>,
-    ta_url: Option<String>,
-    ocsp_val: Option<Vec<u8>>,
-) -> Result<(Header, Header)> {
-    let alg_id = match alg {
-        SigningAlg::Ps256 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::PS256)
-            .build(),
-        SigningAlg::Ps384 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::PS384)
-            .build(),
-        SigningAlg::Ps512 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::PS512)
-            .build(),
-        SigningAlg::Es256 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::ES256)
-            .build(),
-        SigningAlg::Es384 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::ES384)
-            .build(),
-        SigningAlg::Es512 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::ES512)
-            .build(),
-        SigningAlg::Ed25519 => HeaderBuilder::new()
-            .algorithm(iana::Algorithm::EdDSA)
-            .build(),
-    };
-
-    let sc_der_array_or_bytes = match certs.len() {
-        1 => Value::Bytes(certs[0].clone()), // single cert
-        _ => {
-            let mut sc_der_array: Vec<Value> = Vec::new();
-            for cert in certs {
-                sc_der_array.push(Value::Bytes(cert));
-            }
-            Value::Array(sc_der_array) // provide vec of certs when required
-        }
-    };
-
-    let mut unprotected = if let Some(url) = ta_url {
-        let cts = cose_timestamp_countersign(data, alg, &url)?;
-        let sigtst_vec = serde_cbor::to_vec(&make_cose_timestamp(&cts))?;
-        let sigtst_cbor = serde_cbor::from_slice(&sigtst_vec)?;
-
-        HeaderBuilder::new()
-            .text_value("x5chain".to_string(), sc_der_array_or_bytes)
-            .text_value("sigTst".to_string(), sigtst_cbor)
+    box_size: usize,
+    time_stamp_storage: TimeStampStorage,
+    settings: &Settings,
+) -> Result<Vec<u8>> {
+    // Make sure the signing cert is valid.
+    let certs = signer.certs()?;
+    if let Some(signing_cert) = certs.first() {
+        signing_cert_valid(signing_cert, settings)?;
     } else {
-        HeaderBuilder::new().text_value("x5chain".to_string(), sc_der_array_or_bytes)
-    };
-
-    // set the ocsp responder response if available
-    if let Some(ocsp) = ocsp_val {
-        let mut ocsp_vec: Vec<Value> = Vec::new();
-        let mut r_vals: Vec<(Value, Value)> = vec![];
-
-        ocsp_vec.push(Value::Bytes(ocsp));
-        r_vals.push((Value::Text("ocspVals".to_string()), Value::Array(ocsp_vec)));
-
-        unprotected = unprotected.text_value("rVals".to_string(), Value::Map(r_vals));
+        return Err(Error::CoseNoCerts);
     }
 
-    // build complete header
-    let unprotected_header = unprotected.build();
-
-    Ok((alg_id, unprotected_header))
+    if _sync {
+        match signer.raw_signer() {
+            Some(raw_signer) => Ok(sign(*raw_signer, data, Some(box_size), time_stamp_storage)?),
+            None => {
+                let wrapper = SignerWrapper(signer);
+                Ok(sign(&wrapper, data, Some(box_size), time_stamp_storage)?)
+            }
+        }
+    } else {
+        match signer.async_raw_signer() {
+            Some(raw_signer) => {
+                Ok(sign_async(*raw_signer, data, Some(box_size), time_stamp_storage).await?)
+            }
+            None => {
+                let wrapper = AsyncSignerWrapper(signer);
+                Ok(sign_async(&wrapper, data, Some(box_size), time_stamp_storage).await?)
+            }
+        }
+    }
 }
 
-const PAD: &str = "pad";
-const PAD2: &str = "pad2";
-const PAD_OFFSET: usize = 7;
+fn signing_cert_valid(signing_cert: &[u8], settings: &Settings) -> Result<()> {
+    // make sure signer certs are valid
+    let mut cose_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    let mut passthrough_cap = CertificateTrustPolicy::default();
 
-// Pad the CoseSign1 structure with 0s to match the reserved box size.
-// There are some values lengths that are impossible to hit with a single padding so
-// when that happens a second padding is added to change the remaining needed padding.
-// The default initial guess works for almost all sizes, without the need for additional loops.
-fn pad_cose_sig(sign1: &mut CoseSign1, end_size: usize) -> Result<Vec<u8>> {
-    let mut sign1_clone = sign1.clone();
-    let cur_vec = sign1_clone
-        .to_tagged_vec()
-        .map_err(|_e| Error::CoseSignature)?;
-    let cur_size = cur_vec.len();
+    // Allow user EKUs through this check if configured.
+    // TODO (https://github.com/contentauth/c2pa-rs/issues/1313):
+    // Need to determine if we're using C2PA or CAWG trust config here.
+    if let Some(trust_config) = &settings.trust.trust_config {
+        // allow for JSON-encoded PEMs with \n
+        let trust_config = trust_config.to_owned().replace("\\n", "\n").into_bytes();
 
-    if cur_size == end_size {
-        return Ok(cur_vec);
+        passthrough_cap.add_valid_ekus(&trust_config);
     }
 
-    // check for box too small and matched size
-    if cur_size + PAD_OFFSET > end_size {
-        return Err(Error::CoseSigboxTooSmall);
+    Ok(check_end_entity_certificate_profile(
+        signing_cert,
+        &passthrough_cap,
+        &mut cose_log,
+        None,
+    )?)
+}
+
+struct SignerWrapper<'a>(&'a dyn Signer);
+
+impl RawSigner for SignerWrapper<'_> {
+    fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+        Ok(self.0.sign(data)?)
     }
 
-    let mut padding_found = false;
-    let mut last_pad = 0;
-    let mut target_guess = end_size - cur_size - PAD_OFFSET; // start close to desired end_size accounting for label
-    loop {
-        // clone to use
-        sign1_clone = sign1.clone();
-
-        // replace padding with new estimate
-        for header_pair in &mut sign1_clone.unprotected.rest {
-            if header_pair.0 == Label::Text("pad".to_string()) {
-                if let Value::Bytes(b) = &header_pair.1 {
-                    last_pad = b.len();
-                }
-                header_pair.1 = Value::Bytes(vec![0u8; target_guess]);
-                padding_found = true;
-                break;
-            }
-        }
-
-        // if there was no padding add it and call again
-        if !padding_found {
-            sign1_clone.unprotected.rest.push((
-                Label::Text(PAD.to_string()),
-                Value::Bytes(vec![0u8; target_guess]),
-            ));
-            return pad_cose_sig(&mut sign1_clone, end_size);
-        }
-
-        // get current cbor vec to size if we reached target size
-        let new_cbor = sign1_clone
-            .to_tagged_vec()
-            .map_err(|_e| Error::CoseSignature)?;
-
-        match new_cbor.len() < end_size {
-            true => target_guess += 1,
-            false if new_cbor.len() == end_size => return Ok(new_cbor),
-            false => break, // we could not match end_size in a single pad so break and add a second
-        }
+    fn alg(&self) -> SigningAlg {
+        self.0.alg()
     }
 
-    // if we reach here we need a new second padding object to hit exact size
-    sign1.unprotected.rest.push((
-        Label::Text(PAD2.to_string()),
-        Value::Bytes(vec![0u8; last_pad - 10]),
-    ));
-    pad_cose_sig(sign1, end_size)
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        Ok(self.0.certs()?)
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
+    }
+
+    fn ocsp_response(&self) -> Option<Vec<u8>> {
+        self.0.ocsp_val()
+    }
+}
+
+impl TimeStampProvider for SignerWrapper<'_> {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.0.time_authority_url()
+    }
+
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.0.timestamp_request_headers()
+    }
+
+    fn time_stamp_request_body(
+        &self,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, TimeStampError> {
+        Ok(self.0.timestamp_request_body(message)?)
+    }
+
+    fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+        self.0
+            .send_timestamp_request(message)
+            .map(|r| r.map_err(|e| e.into()))
+    }
+}
+
+struct AsyncSignerWrapper<'a>(&'a dyn AsyncSigner);
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl AsyncRawSigner for AsyncSignerWrapper<'_> {
+    async fn sign(&self, data: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
+        Ok(self.0.sign(data).await?)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.0.alg()
+    }
+
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        Ok(self.0.certs()?)
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
+    }
+
+    async fn ocsp_response(&self) -> Option<Vec<u8>> {
+        self.0.ocsp_val().await
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl AsyncTimeStampProvider for AsyncSignerWrapper<'_> {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.0.time_authority_url()
+    }
+
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.0.timestamp_request_headers()
+    }
+
+    fn time_stamp_request_body(
+        &self,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, TimeStampError> {
+        Ok(self.0.timestamp_request_body(message)?)
+    }
+
+    async fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+        self.0
+            .send_timestamp_request(message)
+            .await
+            .map(|r| r.map_err(|e| e.into()))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use c2pa_macros::c2pa_test_async;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
     use super::sign_claim;
-    use crate::{claim::Claim, utils::test::temp_signer};
+    use crate::{
+        claim::Claim,
+        crypto::raw_signature::SigningAlg,
+        settings::Settings,
+        utils::test_signer::{async_test_signer, test_signer},
+        Result, Signer,
+    };
 
     #[test]
     fn test_sign_claim() {
-        let mut claim = Claim::new("extern_sign_test", Some("contentauth"));
+        // todo: we have to disable trust checks here for now because these
+        // tests use the passthrough mode:
+        // let passthrough_cap = CertificateTrustPolicy::default();
+        // mode which does not pass through the top level (c2pa-rs) unit tests
+        //configuration so the test trust list is not loaded
+        let mut settings = Settings::default();
+        settings.verify.verify_trust = false;
+
+        let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();
 
-        let signer = temp_signer();
+        let signer = test_signer(SigningAlg::Ps256);
+        let box_size = Signer::reserve_size(signer.as_ref());
+
+        let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size, &settings).unwrap();
+
+        assert_eq!(cose_sign1.len(), box_size);
+    }
+
+    #[c2pa_test_async]
+    async fn test_sign_claim_async() {
+        // todo: we have to disable trust checks here for now because these
+        // tests use the passthrough mode:
+        // let passthrough_cap = CertificateTrustPolicy::default();
+        // mode which does not pass through the top level (c2pa-rs) unit tests
+        //configuration so the test trust list is not loaded
+        let mut settings = Settings::default();
+        settings.verify.verify_trust = false;
+
+        use crate::{cose_sign::sign_claim_async, crypto::raw_signature::SigningAlg, AsyncSigner};
+
+        let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
+        claim.build().unwrap();
+
+        let claim_bytes = claim.data().unwrap();
+
+        let signer = async_test_signer(SigningAlg::Ps256);
         let box_size = signer.reserve_size();
 
-        let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size).unwrap();
+        let cose_sign1 = sign_claim_async(&claim_bytes, &signer, box_size, &settings)
+            .await
+            .unwrap();
 
         assert_eq!(cose_sign1.len(), box_size);
     }
@@ -361,17 +357,17 @@ mod tests {
         }
     }
 
-    impl crate::Signer for BogusSigner {
-        fn sign(&self, _data: &[u8]) -> crate::error::Result<Vec<u8>> {
+    impl Signer for BogusSigner {
+        fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
             eprintln!("Canary, canary, please cause this deploy to fail!");
             Ok(b"totally bogus signature".to_vec())
         }
 
-        fn alg(&self) -> crate::SigningAlg {
-            crate::SigningAlg::Ps256
+        fn alg(&self) -> crate::crypto::raw_signature::SigningAlg {
+            crate::crypto::raw_signature::SigningAlg::Ps256
         }
 
-        fn certs(&self) -> crate::error::Result<Vec<Vec<u8>>> {
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
             let cert_vec: Vec<u8> = Vec::new();
             let certs = vec![cert_vec];
             Ok(certs)
@@ -380,11 +376,17 @@ mod tests {
         fn reserve_size(&self) -> usize {
             1024
         }
+
+        fn send_timestamp_request(&self, _message: &[u8]) -> Option<crate::error::Result<Vec<u8>>> {
+            Some(Ok(Vec::new()))
+        }
     }
 
     #[test]
     fn test_bogus_signer() {
-        let mut claim = Claim::new("bogus_sign_test", Some("contentauth"));
+        let settings = Settings::default();
+
+        let mut claim = Claim::new("bogus_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
 
         let claim_bytes = claim.data().unwrap();
@@ -393,8 +395,8 @@ mod tests {
 
         let signer = BogusSigner::new();
 
-        let cose_sign1 = sign_claim(&claim_bytes, &signer, box_size);
+        let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size, &settings);
 
-        assert!(cose_sign1.is_err());
+        assert!(_cose_sign1.is_err());
     }
 }

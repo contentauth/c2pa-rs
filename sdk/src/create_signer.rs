@@ -13,19 +13,19 @@
 
 #![deny(missing_docs)]
 
-//! The `create_signer` module provides a way to obtain a [`Signer`]
+//! The `create_signer` module provides a way to obtain a [`Signer`](crate::Signer)
 //! instance for each signing format supported by this crate.
 #[cfg(feature = "file_io")]
 use std::path::Path;
 
 use crate::{
+    crypto::raw_signature::{signer_from_cert_chain_and_private_key, SigningAlg},
     error::Result,
-    openssl::{EcSigner, EdSigner, RsaSigner},
-    signer::ConfigurableSigner,
-    Signer, SigningAlg,
+    signer::RawSignerWrapper,
+    BoxedSigner,
 };
 
-/// Creates a [`Signer`] instance using signing certificate and private key
+/// Creates a [`Signer`](crate::Signer) instance using signing certificate and private key
 /// as byte slices.
 ///
 /// The signing certificate and private key are passed to the underlying
@@ -42,21 +42,13 @@ pub fn from_keys(
     pkey: &[u8],
     alg: SigningAlg,
     tsa_url: Option<String>,
-) -> Result<Box<dyn Signer>> {
-    Ok(match alg {
-        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => Box::new(
-            RsaSigner::from_signcert_and_pkey(signcert, pkey, alg, tsa_url)?,
-        ),
-        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => Box::new(
-            EcSigner::from_signcert_and_pkey(signcert, pkey, alg, tsa_url)?,
-        ),
-        SigningAlg::Ed25519 => Box::new(EdSigner::from_signcert_and_pkey(
-            signcert, pkey, alg, tsa_url,
-        )?),
-    })
+) -> Result<BoxedSigner> {
+    Ok(Box::new(RawSignerWrapper(
+        signer_from_cert_chain_and_private_key(signcert, pkey, alg, tsa_url)?,
+    )))
 }
 
-/// Creates a [`Signer`] instance using signing certificate and
+/// Creates a [`Signer`](crate::Signer) instance using signing certificate and
 /// private key files.
 ///
 /// # Arguments
@@ -71,19 +63,9 @@ pub fn from_files<P: AsRef<Path>>(
     pkey_path: P,
     alg: SigningAlg,
     tsa_url: Option<String>,
-) -> Result<Box<dyn Signer>> {
-    Ok(match alg {
-        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => Box::new(
-            RsaSigner::from_files(&signcert_path, &pkey_path, alg, tsa_url)?,
-        ),
-        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => Box::new(
-            EcSigner::from_files(&signcert_path, &pkey_path, alg, tsa_url)?,
-        ),
-        SigningAlg::Ed25519 => Box::new(EdSigner::from_files(
-            &signcert_path,
-            &pkey_path,
-            alg,
-            tsa_url,
-        )?),
-    })
+) -> Result<BoxedSigner> {
+    let cert_chain = std::fs::read(signcert_path)?;
+    let private_key = std::fs::read(pkey_path)?;
+
+    from_keys(&cert_chain, &private_key, alg, tsa_url)
 }

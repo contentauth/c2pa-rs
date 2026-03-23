@@ -4,11 +4,19 @@
 version: 2
 updates:
   - package-ecosystem: "cargo"
-    directory: "sdk"
+    directory: "/"
     schedule:
       interval: "daily"
+    commit-message:
+      prefix: "update"
+    cooldown:
+      default-days: 7
 
-  - package-ecosystem: "cargo"
-    directory: "make_test_images"
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+    cooldown:
+      default-days: 7

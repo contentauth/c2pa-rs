@@ -1,0 +1,12 @@
+codecov:
+  notify:
+    # Update this depending on how many independent jobs upload coverage results.
+    # https://docs.codecov.com/docs/notifications#section-preventing-notifications-until-after-n-builds
+    after_n_builds: 3
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%

@@ -1,0 +1,108 @@
+# Enforce Tier 2 support tier.
+
+# If you change the supported platforms in this workflow, please also
+# update docs/support-tiers.md to match the changes you're making.
+
+# Cool trick: If you want to assess release readiness for any PR,
+# add the "check-release" label to the PR.
+
+name: Tier 2
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+
+jobs:
+  c-library-mobile-builds:
+    name: C library mobile builds
+    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-ios
+          - os: macos-latest
+            target: x86_64-apple-ios
+          - os: macos-latest
+            target: aarch64-apple-ios-sim
+          - os: ubuntu-latest
+            target: aarch64-linux-android
+          - os: ubuntu-latest
+            target: armv7-linux-androideabi
+          - os: ubuntu-latest
+            target: i686-linux-android
+          - os: ubuntu-latest
+            target: x86_64-linux-android
+          - os: ubuntu-latest
+            target: wasm32-unknown-emscripten
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        if: matrix.target != 'wasm32-unknown-emscripten'
+        uses: dtolnay/rust-toolchain@stable
+
+      # Use a separate target directory for Android cross builds to prevent
+      # host-compiled build scripts from being reused inside the cross Docker
+      # container, which causes glibc version mismatches on x86_64 targets.
+      # See: https://github.com/cross-rs/cross/issues/724
+      - name: Set CARGO_TARGET_DIR for Android builds
+        if: contains(matrix.target, 'android')
+        run: |
+          echo "CARGO_TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
+          echo "TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
+
+      - name: Install Rust nightly toolchain for Emscripten
+        if: matrix.target == 'wasm32-unknown-emscripten'
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-emscripten
+          components: rust-src
+
+      - name: Checkout Emscripten SDK
+        if: matrix.target == 'wasm32-unknown-emscripten'
+        uses: actions/checkout@v6
+        with:
+          repository: emscripten-core/emsdk
+          path: emsdk
+
+      - name: Set up Emscripten
+        if: matrix.target == 'wasm32-unknown-emscripten'
+        run: |
+          cd emsdk
+          ./emsdk install latest
+          ./emsdk activate latest
+          source ./emsdk_env.sh
+          echo "PATH=$PATH" >> $GITHUB_ENV
+          emcc --version
+
+      - name: Cache emsdk
+        if: matrix.target == 'wasm32-unknown-emscripten'
+        uses: actions/cache@v4
+        with:
+          path: emsdk
+          key: emsdk-${{ runner.os }}-latest
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build C library for mobile target
+        if: matrix.target != 'wasm32-unknown-emscripten'
+        run: make release TARGET=${{ matrix.target }}
+        working-directory: ./c2pa_c_ffi
+
+      - name: Build C library for emscripten
+        if: matrix.target == 'wasm32-unknown-emscripten'
+        env:
+          RUSTFLAGS: -C target-feature=+atomics,+bulk-memory -C link-arg=-pthread -C link-arg=-sUSE_PTHREADS=1 -C link-arg=-sSIDE_MODULE=1 -C link-arg=-flto
+        run: make release TARGET=${{ matrix.target }}
+        working-directory: ./c2pa_c_ffi

@@ -1,0 +1,188 @@
+// Copyright 2022 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
+use std::io::Read;
+
+use async_generic::async_generic;
+use http::header;
+use rasn::prelude::*;
+use rasn_pkix::Certificate;
+use x509_parser::{
+    der_parser::{oid, Oid},
+    extensions::ParsedExtension,
+    prelude::*,
+};
+
+use crate::{context::Context, crypto::base64};
+
+const AD_OCSP_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .48 .1);
+const AUTHORITY_INFO_ACCESS_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .1 .1);
+
+// Common types and structures used across all targets
+struct OcspRequestData {
+    request_str: String,
+    url: url::Url,
+}
+
+// Common function to extract AIA responders from a certificate
+fn extract_aia_responders(cert: &x509_parser::certificate::X509Certificate) -> Option<Vec<String>> {
+    let em = cert.extensions_map().ok()?;
+
+    let aia_extension = em.get(&AUTHORITY_INFO_ACCESS_OID)?;
+
+    let ParsedExtension::AuthorityInfoAccess(aia) = aia_extension.parsed_extension() else {
+        return None;
+    };
+
+    let mut output = Vec::new();
+
+    for ad in &aia.accessdescs {
+        if let x509_parser::extensions::GeneralName::URI(uri) = ad.access_location {
+            if ad.access_method == AD_OCSP_OID {
+                output.push(uri.to_string())
+            }
+        }
+    }
+    Some(output)
+}
+
+// Common function to build OCSP request data
+fn build_ocsp_request(certs: &[Vec<u8>], responder_url: &str) -> Option<OcspRequestData> {
+    let subject: Certificate = rasn::der::decode(&certs[0]).ok()?;
+    let issuer: Certificate = rasn::der::decode(&certs[1]).ok()?;
+
+    let issuer_name_raw = rasn::der::encode(&issuer.tbs_certificate.subject).ok()?;
+    let issuer_key_raw = &issuer
+        .tbs_certificate
+        .subject_public_key_info
+        .subject_public_key
+        .as_raw_slice();
+
+    let issuer_name_hash = OctetString::from(crate::crypto::hash::sha1(&issuer_name_raw));
+    let issuer_key_hash = OctetString::from(crate::crypto::hash::sha1(issuer_key_raw));
+    let serial_number = subject.tbs_certificate.serial_number;
+
+    // Build request structures
+    let sha1_oid = rasn::types::Oid::new(&[1, 3, 14, 3, 2, 26])?;
+    let alg = rasn::types::ObjectIdentifier::from(sha1_oid);
+
+    let sha1_ai = rasn_pkix::AlgorithmIdentifier {
+        algorithm: alg,
+        parameters: Some(Any::new(rasn::der::encode(&()).ok()?)),
+        // Many OCSP responders expect this to be NULL not None.
+    };
+
+    let req_cert = rasn_ocsp::CertId {
+        hash_algorithm: sha1_ai,
+        issuer_name_hash,
+        issuer_key_hash,
+        serial_number,
+    };
+
+    let ocsp_req = rasn_ocsp::Request {
+        req_cert,
+        single_request_extensions: None,
+    };
+
+    let request_list = vec![ocsp_req];
+
+    let tbs_request = rasn_ocsp::TbsRequest {
+        version: rasn_ocsp::Version::from(0u8),
+        requestor_name: None,
+        request_list,
+        request_extensions: None,
+    };
+
+    let ocsp_request = rasn_ocsp::OcspRequest {
+        tbs_request,
+        optional_signature: None,
+    };
+
+    let request_der = rasn::der::encode(&ocsp_request).ok()?;
+    let request_str = base64::encode(&request_der);
+    let url = url::Url::parse(responder_url).ok()?;
+
+    Some(OcspRequestData { request_str, url })
+}
+
+fn process_ocsp_responders(certs: &[Vec<u8>]) -> Option<Vec<OcspRequestData>> {
+    if certs.len() < 2 {
+        return None;
+    }
+
+    let (_rem, cert) = X509Certificate::from_der(&certs[0]).ok()?;
+
+    let requests: Vec<_> = extract_aia_responders(&cert)
+        .into_iter()
+        .flat_map(|responders| {
+            responders
+                .into_iter()
+                .filter_map(|responder| build_ocsp_request(certs, &responder))
+        })
+        .collect();
+
+    if requests.is_empty() {
+        None
+    } else {
+        Some(requests)
+    }
+}
+
+/// Retrieve an OCSP response if available.
+///
+/// Checks for an OCSP responder in the end-entity certificate. If found, it
+/// will attempt to retrieve the raw DER-encoded OCSP response.
+#[async_generic]
+pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>], context: &Context) -> Option<Vec<u8>> {
+    let requests = process_ocsp_responders(certs)?;
+    for request_data in requests {
+        let req_url = request_data.url.join(&request_data.request_str).ok()?;
+
+        let mut request = http::Request::get(req_url.to_string());
+        if let Some(host) = req_url.host() {
+            // for responders that don't support http 1.0
+            request = request.header(header::HOST, host.to_string());
+        }
+
+        let request = request.body(Vec::new()).ok()?;
+        let response = if _sync {
+            context.resolver().http_resolve(request).ok()?
+        } else {
+            context
+                .resolver_async()
+                .http_resolve_async(request)
+                .await
+                .ok()?
+        };
+
+        if response.status() == 200 {
+            let len = response
+                .headers()
+                .get(header::CONTENT_LENGTH)
+                .and_then(|content_length| content_length.to_str().ok())
+                .and_then(|content_length| content_length.parse().ok())
+                .unwrap_or(10000);
+
+            let mut ocsp_rsp: Vec<u8> = Vec::with_capacity(len);
+
+            response
+                .into_body()
+                .take(1000000)
+                .read_to_end(&mut ocsp_rsp)
+                .ok()?;
+
+            return Some(ocsp_rsp);
+        }
+    }
+    None
+}

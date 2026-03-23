@@ -43,8 +43,8 @@ impl AssertionBase for UserCbor {
 
     fn to_assertion(&self) -> Result<Assertion> {
         // validate cbor
-        let _value: serde_cbor::Value =
-            serde_cbor::from_slice(&self.cbor_data).map_err(|_err| Error::AssertionEncoding)?;
+        let _value: c2pa_cbor::Value = c2pa_cbor::from_slice(&self.cbor_data)
+            .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
         let data = AssertionData::Cbor(self.cbor_data.clone());
         Ok(Assertion::new(&self.label, None, data))
     }
@@ -53,7 +53,7 @@ impl AssertionBase for UserCbor {
         match assertion.decode_data() {
             AssertionData::Cbor(data) => {
                 // validate cbor
-                let _value: serde_cbor::Value = serde_cbor::from_slice(data).map_err(|e| {
+                let _value: c2pa_cbor::Value = c2pa_cbor::from_slice(data).map_err(|e| {
                     Error::AssertionDecoding(AssertionDecodeError::from_assertion_and_cbor_err(
                         assertion, e,
                     ))
@@ -75,15 +75,13 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertion::Assertion;
-
     const LABEL: &str = "user_test_assertion";
     const DATA: &str = r#"{ "l1":"some data", "l2":"some other data" }"#;
 
     #[test]
     fn assertion_user_cbor() {
         let json: serde_json::Value = serde_json::from_str(DATA).unwrap();
-        let data = serde_cbor::to_vec(&json).unwrap();
+        let data = c2pa_cbor::to_vec(&json).unwrap();
         let original = UserCbor::new(LABEL, data);
         let assertion = original.to_assertion().expect("build_assertion");
         assert_eq!(assertion.mime_type(), "application/cbor");

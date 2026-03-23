@@ -1,0 +1,18 @@
+# This ensures that when a ticket is reopened in Jira, it will update the
+# workflow labels in GitHub appropriately.
+
+name: Reopening ticket
+on:
+  issues:
+    types: [reopened]
+jobs:
+  label_issues:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - run: 'gh issue edit "$NUMBER" --add-label "status: todo" --remove-label "status: wip,status: done,status: in progress,status: in test,status: not prioritized,status: blocked,status: api review,status: code review,status: design review,status: code complete,status: ready"'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}

@@ -1,0 +1,36 @@
+{
+  "claim_version": 1,
+  "ta_url": "http://timestamp.digicert.com",
+  "claim_generator_info":[{
+    "name": "TestApp",
+    "version": "1.0.0"
+  }],
+  "title": "My Title",
+  "assertions": [
+    {
+      "label": "c2pa.actions",
+      "data": {
+        "actions": [
+          {
+            "action": "c2pa.opened"
+          }
+        ],
+        "metadata": {
+          "reviewRatings": [
+            {
+              "code": "c2pa.unknown",
+              "explanation": "Something untracked happened",
+              "value": 4
+            }
+          ]
+        }
+      }
+    },
+    {
+      "label": "my.assertion",
+      "data": {
+        "any_tag": "whatever I want"
+      }
+    }
+  ]
+}

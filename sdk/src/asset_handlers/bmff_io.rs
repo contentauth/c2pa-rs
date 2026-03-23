@@ -12,28 +12,31 @@
 // each license.
 
 use std::{
+    cmp::min,
     collections::HashMap,
-    convert::{From, TryFrom},
     fs::{File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    io::{Cursor, Read, Seek, SeekFrom, Write},
     path::Path,
 };
 
 use atree::{Arena, Token};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use conv::ValueFrom;
-use serde::{Deserialize, Serialize};
-use serde_bytes::ByteBuf;
-use tempfile::Builder;
 
 use crate::{
-    assertions::ExclusionsMap,
+    assertions::{BmffMerkleMap, ExclusionsMap},
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, HashObjectPositions, RemoteRefEmbed,
-        RemoteRefEmbedType,
+        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
-    utils::hash_utils::{vec_compare, Exclusion},
+    status_tracker::{ErrorBehavior, StatusTracker},
+    store::Store,
+    utils::{
+        hash_utils::{vec_compare, HashRange},
+        io_utils::{patch_stream, stream_len, tempfile_builder, ReaderUtils},
+        patch::patch_bytes,
+        xmp_inmemory_utils::{add_provenance, MIN_XMP},
+    },
 };
 
 pub struct BmffIO {
@@ -41,14 +44,21 @@ pub struct BmffIO {
     bmff_format: String, // can be used for specialized BMFF cases
 }
 
+const MAX_BOX_DEPTH: usize = 32; // reasonable BMFF box depth, to prevent stack overflow
+
 const HEADER_SIZE: u64 = 8; // 4 byte type + 4 byte size
 const HEADER_SIZE_LARGE: u64 = 16; // 4 byte type + 4 byte size + 8 byte large size
 
 const C2PA_UUID: [u8; 16] = [
     0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c, 0x92, 0x97, 0x58, 0x28, 0x87, 0x7e, 0xc4, 0x81,
 ];
-const MANIFEST: &str = "manifest";
-const MERKLE: &str = "merkle";
+const XMP_UUID: [u8; 16] = [
+    0xbe, 0x7a, 0xcf, 0xcb, 0x97, 0xa9, 0x42, 0xe8, 0x9c, 0x71, 0x99, 0x94, 0x91, 0xe3, 0xaf, 0xac,
+];
+pub(crate) const MANIFEST: &str = "manifest";
+pub(crate) const MERKLE: &str = "merkle";
+const ORIGINAL: &str = "original";
+const UPDATE: &str = "update";
 
 // ISO IEC 14496-12_2022 FullBoxes
 const FULL_BOX_TYPES: &[&str; 80] = &[
@@ -61,19 +71,22 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
-static SUPPORTED_TYPES: [&str; 12] = [
+static SUPPORTED_TYPES: [&str; 15] = [
     "avif",
     "heif",
     "heic",
     "mp4",
     "m4a",
     "mov",
+    "m4v",
     "application/mp4",
     "audio/mp4",
     "image/avif",
     "image/heic",
     "image/heif",
     "video/mp4",
+    "video/quicktime",
+    "video/x-m4v",
 ];
 
 macro_rules! boxtype {
@@ -158,17 +171,10 @@ boxtype! {
     Vp09Box => 0x76703039,
     MetaBox => 0x6D657461,
     SchiBox => 0x73636869,
-    IlocBox => 0x696C6F63
-}
-
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct BmffMerkleMap {
-    #[serde(rename = "uniqueId")]
-    unique_id: u32,
-    #[serde(rename = "localId")]
-    local_id: u32,
-    location: u32,
-    hashes: Option<Vec<ByteBuf>>,
+    IlocBox => 0x696C6F63,
+    MfroBox => 0x6d66726f,
+    TfraBox => 0x74667261,
+    SaioBox => 0x7361696f
 }
 
 struct BoxHeaderLite {
@@ -188,7 +194,9 @@ impl BoxHeaderLite {
         }
     }
 
-    pub fn read<R: Read + ?Sized>(reader: &mut R) -> Result<Self> {
+    pub fn read<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<Self> {
+        let box_start = reader.stream_position()?;
+
         // Create and read to buf.
         let mut buf = [0u8; 8]; // 8 bytes for box header.
         reader.read_exact(&mut buf)?;
@@ -214,6 +222,17 @@ impl BoxHeaderLite {
                 size: largesize,
                 fourcc,
                 large_size: true,
+            })
+        } else if size == 0 {
+            // special case to indicate the size goes to the end of the file
+            let end_of_stream = stream_len(reader)?;
+            let actual_size = end_of_stream - box_start;
+
+            Ok(BoxHeaderLite {
+                name: BoxType::from(typ),
+                size: actual_size,
+                fourcc,
+                large_size: false,
             })
         } else {
             Ok(BoxHeaderLite {
@@ -244,30 +263,136 @@ fn write_box_uuid_extension<W: Write>(w: &mut W, uuid: &[u8; 16]) -> Result<u64>
     Ok(16)
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BoxInfo {
     path: String,
     parent: Option<Token>,
-    offset: u64,
-    size: u64,
+    pub offset: u64,
+    pub size: u64,
     box_type: BoxType,
     user_type: Option<Vec<u8>>,
     version: Option<u8>,
     flags: Option<u32>,
 }
 
-fn read_box_header_ext(reader: &mut dyn CAIRead) -> Result<(u8, u32)> {
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct BoxInfoLite {
+    pub path: String,
+    pub offset: u64,
+    pub size: u64,
+}
+
+impl BoxInfoLite {
+    pub fn start(&self) -> u64 {
+        self.offset
+    }
+
+    pub fn end(&self) -> u64 {
+        self.offset + self.size
+    }
+
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FourCC {
+    pub value: [u8; 4],
+}
+
+impl From<u32> for FourCC {
+    fn from(number: u32) -> Self {
+        FourCC {
+            value: number.to_be_bytes(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FileTypeBox {
+    pub major_brand: FourCC,
+    pub minor_version: u32,
+    pub compatible_brands: Vec<FourCC>,
+}
+
+fn read_ftyp_box<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<FileTypeBox> {
+    let start = reader.stream_position()?;
+
+    let header = BoxHeaderLite::read(reader)
+        .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {err}")))?;
+
+    if header.name != BoxType::FtypBox {
+        // when no ftyp is present ISOBMFF parsers typically treat the file as if it had an ftyp box with major_brand of 'mp41' and minor_version of 0, so we will do the same for our purposes
+        return Ok(FileTypeBox {
+            major_brand: From::from(0x6d703431), // 'mp41'
+            minor_version: 0,
+            compatible_brands: Vec::new(),
+        });
+    }
+
+    let size = header.size;
+
+    if size < 16 || size % 4 != 0 {
+        return Err(Error::InvalidAsset(
+            "ftyp size too small or not aligned".to_string(),
+        ));
+    }
+
+    let brand_count = (size - 16) / 4; // header + major + minor
+    let major = reader.read_u32::<BigEndian>()?;
+    let minor = reader.read_u32::<BigEndian>()?;
+
+    let mut brands = Vec::new();
+    for _ in 0..brand_count {
+        let b = reader.read_u32::<BigEndian>()?;
+        brands.push(From::from(b));
+    }
+
+    skip_bytes_to(reader, start + size)?;
+
+    Ok(FileTypeBox {
+        major_brand: From::from(major),
+        minor_version: minor,
+        compatible_brands: brands,
+    })
+}
+
+fn read_box_header_ext<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<(u8, u32)> {
     let version = reader.read_u8()?;
     let flags = reader.read_u24::<BigEndian>()?;
     Ok((version, flags))
 }
+
+/// Detect whether a `meta` box omits the FullBox version/flags header.
+///
+/// Per ISO 14496-12 §8.11.1, `meta` is a FullBox whose first child must
+/// be `hdlr`. However, Apple QuickTime (and iOS AVAssetWriter even with
+/// `isom` brand) writes `meta` as a plain Box without the 4-byte
+/// version+flags field. We detect this by peeking at the next 8 bytes:
+/// if bytes 4..8 are `hdlr`, the data is already a child box header so
+/// no FullBox header is present. This matches the approach used by FFmpeg
+/// and Bento4.
+fn meta_box_lacks_fullbox_header<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<bool> {
+    let pos = reader.stream_position()?;
+    let mut buf = [0u8; 8];
+    let ok = reader.read_exact(&mut buf).is_ok();
+    reader.seek(SeekFrom::Start(pos))?;
+
+    if !ok {
+        return Ok(false);
+    }
+
+    Ok(&buf[4..8] == b"hdlr")
+}
+
 fn write_box_header_ext<W: Write>(w: &mut W, v: u8, f: u32) -> Result<u64> {
     w.write_u8(v)?;
     w.write_u24::<BigEndian>(f)?;
     Ok(4)
 }
 
-fn box_start(reader: &mut dyn CAIRead, is_large: bool) -> Result<u64> {
+fn box_start<R: Read + Seek + ?Sized>(reader: &mut R, is_large: bool) -> Result<u64> {
     if is_large {
         Ok(reader.stream_position()? - HEADER_SIZE_LARGE)
     } else {
@@ -275,29 +400,31 @@ fn box_start(reader: &mut dyn CAIRead, is_large: bool) -> Result<u64> {
     }
 }
 
-fn _skip_bytes(reader: &mut dyn CAIRead, size: u64) -> Result<()> {
+fn _skip_bytes<R: Read + Seek + ?Sized>(reader: &mut R, size: u64) -> Result<()> {
     reader.seek(SeekFrom::Current(size as i64))?;
     Ok(())
 }
 
-fn skip_bytes_to(reader: &mut dyn CAIRead, pos: u64) -> Result<u64> {
+fn skip_bytes_to<R: Read + Seek + ?Sized>(reader: &mut R, pos: u64) -> Result<u64> {
     let pos = reader.seek(SeekFrom::Start(pos))?;
     Ok(pos)
 }
 
-fn write_c2pa_box<W: Write>(
+pub(crate) fn write_c2pa_box<W: Write>(
     w: &mut W,
     data: &[u8],
-    is_manifest: bool,
+    purpose: &str,
     merkle_data: &[u8],
+    merkle_offset: u64,
 ) -> Result<()> {
-    let purpose_size = if is_manifest {
-        MANIFEST.len() + 1
+    let purpose_size = purpose.len() + 1;
+
+    let box_size = if purpose == MERKLE {
+        merkle_data.len()
     } else {
-        MERKLE.len() + 1
+        8
     };
-    let merkle_size = if is_manifest { 8 } else { merkle_data.len() };
-    let size = 8 + 16 + 4 + purpose_size + merkle_size + data.len(); // header + UUID + version/flags + data + zero terminated purpose + merkle data
+    let size = 8 + 16 + 4 + purpose_size + box_size + data.len(); // header + UUID + version/flags + data + zero terminated purpose + merkle data
     let bh = BoxHeaderLite::new(BoxType::UuidBox, size as u64, "uuid");
 
     // write out header
@@ -311,19 +438,15 @@ fn write_c2pa_box<W: Write>(
     let flags: u32 = 0;
     write_box_header_ext(w, version, flags)?;
 
-    // write purpose
-    if is_manifest {
-        w.write_all(MANIFEST.as_bytes())?;
-        w.write_u8(0)?;
-
-        // write no merkle flag
-        w.write_u64::<BigEndian>(0)?;
-    } else {
-        w.write_all(MERKLE.as_bytes())?;
-        w.write_u8(0)?;
-
+    // write with appropriate purpose
+    w.write_all(purpose.as_bytes())?;
+    w.write_u8(0)?;
+    if purpose == MERKLE {
         // write merkle cbor
         w.write_all(merkle_data)?;
+    } else {
+        // write merkle offset
+        w.write_u64::<BigEndian>(merkle_offset)?;
     }
 
     // write out data
@@ -332,7 +455,24 @@ fn write_c2pa_box<W: Write>(
     Ok(())
 }
 
-fn _write_free_box<W: Write>(w: &mut W, size: usize) -> Result<()> {
+fn write_xmp_box<W: Write>(w: &mut W, data: &[u8]) -> Result<()> {
+    let size = 8 + 16 + data.len(); // header + UUID + data
+    let bh = BoxHeaderLite::new(BoxType::UuidBox, size as u64, "uuid");
+
+    // write out header
+    bh.write(w)?;
+
+    // write out XMP extension UUID
+    write_box_uuid_extension(w, &XMP_UUID)?;
+
+    // write out data
+    w.write_all(data)?;
+
+    Ok(())
+}
+
+#[allow(unused_imports)]
+fn write_free_box<W: Write>(w: &mut W, size: usize) -> Result<()> {
     if size < 8 {
         return Err(Error::BadParam("cannot adjust free space".to_string()));
     }
@@ -358,7 +498,7 @@ fn add_token_to_cache(bmff_path_map: &mut HashMap<String, Vec<Token>>, path: Str
     }
 }
 
-fn path_from_token(bmff_tree: &mut Arena<BoxInfo>, current_node_token: &Token) -> Result<String> {
+fn path_from_token(bmff_tree: &Arena<BoxInfo>, current_node_token: &Token) -> Result<String> {
     let ancestors = current_node_token.ancestors(bmff_tree);
     let mut path = bmff_tree[*current_node_token].data.path.clone();
 
@@ -393,14 +533,43 @@ fn get_top_level_box_offsets(
     tl_offsets
 }
 
-pub fn bmff_to_jumbf_exclusions(
-    reader: &mut dyn CAIRead,
+fn get_top_level_boxes(
+    bmff_tree: &Arena<BoxInfo>,
+    bmff_path_map: &HashMap<String, Vec<Token>>,
+) -> Vec<BoxInfoLite> {
+    let mut tl_boxes = Vec::new();
+
+    for (p, t) in bmff_path_map {
+        // look for top level offsets
+        if p.matches('/').count() == 1 {
+            for token in t {
+                if let Some(box_info) = bmff_tree.get(*token) {
+                    tl_boxes.push(BoxInfoLite {
+                        path: box_info.data.path.clone(),
+                        offset: box_info.data.offset,
+                        size: box_info.data.size,
+                    });
+                }
+            }
+        }
+    }
+
+    tl_boxes
+}
+
+pub fn bmff_to_jumbf_exclusions<R>(
+    mut reader: &mut R,
     bmff_exclusions: &[ExclusionsMap],
     bmff_v2: bool,
-) -> Result<Vec<Exclusion>> {
-    let start = reader.stream_position()?;
-    let size = reader.seek(SeekFrom::End(0))?;
-    reader.seek(SeekFrom::Start(start))?;
+) -> Result<Vec<HashRange>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let size = stream_len(reader)?;
+    reader.rewind()?;
+
+    let ftyp = read_ftyp_box(reader)?;
+    reader.rewind()?;
 
     // create root node
     let root_box = BoxInfo {
@@ -418,7 +587,16 @@ pub fn bmff_to_jumbf_exclusions(
     let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
     // build layout of the BMFF structure
-    build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+    let mut rl = 0usize;
+    build_bmff_tree(
+        reader,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+        &ftyp,
+    )?;
 
     // get top level box offsets
     let mut tl_offsets = get_top_level_box_offsets(&bmff_tree, &bmff_map);
@@ -441,7 +619,7 @@ pub fn bmff_to_jumbf_exclusions(
 
                 // check the length
                 if let Some(desired_length) = bmff_exclusion.length {
-                    if desired_length as u64 != box_length {
+                    if desired_length != box_length {
                         continue;
                     }
                 }
@@ -466,11 +644,7 @@ pub fn bmff_to_jumbf_exclusions(
                     let desired_flags = u32::from_be_bytes(temp_bytes);
 
                     if let Some(box_flags) = box_info.flags {
-                        let exact = if let Some(is_exact) = bmff_exclusion.exact {
-                            is_exact
-                        } else {
-                            true
-                        };
+                        let exact = bmff_exclusion.exact.unwrap_or(true);
 
                         if exact {
                             if desired_flags != box_flags {
@@ -491,11 +665,10 @@ pub fn bmff_to_jumbf_exclusions(
 
                     for data_map in data_map_vec {
                         // move to the start of exclusion
-                        skip_bytes_to(reader, box_start + data_map.offset as u64)?;
+                        skip_bytes_to(reader, box_start + data_map.offset)?;
 
                         // match the data
-                        let mut buf = vec![0u8; data_map.value.len()];
-                        reader.read_exact(&mut buf)?;
+                        let buf = reader.read_to_vec(data_map.value.len() as u64)?;
 
                         // does not match so skip
                         if !vec_compare(&data_map.value, &buf) {
@@ -511,21 +684,25 @@ pub fn bmff_to_jumbf_exclusions(
                 // reduce range if desired
                 if let Some(subset_vec) = &bmff_exclusion.subset {
                     for subset in subset_vec {
-                        let exclusion = Exclusion::new(
-                            (exclusion_start + subset.offset as u64) as usize,
-                            (if subset.length == 0 {
-                                exclusion_length - subset.offset as u64
-                            } else {
-                                subset.length as u64
-                            }) as usize,
-                        );
+                        // if the subset offset is past the end of the box, skip
+                        if subset.offset > exclusion_length {
+                            continue;
+                        }
+
+                        let new_start = exclusion_start + subset.offset;
+                        let new_length = if subset.length == 0 {
+                            exclusion_length - subset.offset
+                        } else {
+                            min(subset.length, exclusion_length - subset.offset)
+                        };
+
+                        let exclusion = HashRange::new(new_start, new_length);
 
                         exclusions.push(exclusion);
                     }
                 } else {
                     // exclude box in its entirty
-                    let exclusion =
-                        Exclusion::new(exclusion_start as usize, exclusion_length as usize);
+                    let exclusion = HashRange::new(exclusion_start, exclusion_length);
 
                     exclusions.push(exclusion);
 
@@ -543,7 +720,7 @@ pub fn bmff_to_jumbf_exclusions(
     // note: this is technically not an exclusion but a replacement with a new range of bytes to be hashed
     if bmff_v2 {
         for tl_start in tl_offsets {
-            let mut exclusion = Exclusion::new(tl_start as usize, 1);
+            let mut exclusion = HashRange::new(tl_start, 1u64);
             exclusion.set_bmff_offset(tl_start);
 
             exclusions.push(exclusion);
@@ -553,10 +730,9 @@ pub fn bmff_to_jumbf_exclusions(
     Ok(exclusions)
 }
 
-// `iloc`, `stco` and `co64` elements contain absolute file offsets so they need to be adjusted based on whether content was added or removed.
-// todo: when fragment support is added adjust these (/moof/iloc, /moof/mfro, /moof/traf/saio, /sidx)
-fn adjust_known_offsets<W: Write + CAIRead>(
-    output: &mut W,
+// `iloc`, `stco`, `co64`, `mfro`, `saio`, `sidx`, `tdhd`, and `tfra` elements contain absolute file offsets so they need to be adjusted based on whether content was added or removed.
+fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
+    mut output: &mut W,
     bmff_tree: &Arena<BoxInfo>,
     bmff_path_map: &HashMap<String, Vec<Token>>,
     adjust: i32,
@@ -726,8 +902,8 @@ fn adjust_known_offsets<W: Write + CAIRead>(
                     }
                 };
 
-                // read constuction method
-                let constuction_method = if version == 1 || version == 2 {
+                // read construction method
+                let construction_method = if version == 1 || version == 2 {
                     let mut cm_bytes = [0u8, 2];
                     output.read_exact(&mut cm_bytes)?;
 
@@ -753,7 +929,7 @@ fn adjust_known_offsets<W: Write + CAIRead>(
                 };
 
                 // patch the offsets if needed
-                if constuction_method == 0 {
+                if construction_method == 0 {
                     // file offset construction method
                     if base_offset_size == 4 {
                         let new_offset = if adjust < 0 {
@@ -807,7 +983,8 @@ fn adjust_known_offsets<W: Write + CAIRead>(
                         None
                     };
 
-                    let _extent_offset = match offset_size {
+                    let extent_offset_file_pos = output.stream_position()?;
+                    let extent_offset = match offset_size {
                         0 => 0_u64,
                         4 => output.read_u32::<BigEndian>()? as u64,
                         8 => output.read_u64::<BigEndian>()?,
@@ -817,6 +994,54 @@ fn adjust_known_offsets<W: Write + CAIRead>(
                             ))
                         }
                     };
+
+                    // no base offset so just adjust the raw extent_offset value
+                    if construction_method == 0 && base_offset == 0 && extent_offset != 0 {
+                        output.seek(SeekFrom::Start(extent_offset_file_pos))?;
+                        match offset_size {
+                            4 => {
+                                let new_offset = if adjust < 0 {
+                                    extent_offset as u32
+                                        - u32::try_from(adjust.abs()).map_err(|_| {
+                                            Error::InvalidAsset(
+                                                "Bad BMFF offset adjustment".to_string(),
+                                            )
+                                        })?
+                                } else {
+                                    extent_offset as u32
+                                        + u32::try_from(adjust).map_err(|_| {
+                                            Error::InvalidAsset(
+                                                "Bad BMFF offset adjustment".to_string(),
+                                            )
+                                        })?
+                                };
+                                output.write_u32::<BigEndian>(new_offset)?;
+                            }
+                            8 => {
+                                let new_offset = if adjust < 0 {
+                                    extent_offset
+                                        - u64::try_from(adjust.abs()).map_err(|_| {
+                                            Error::InvalidAsset(
+                                                "Bad BMFF offset adjustment".to_string(),
+                                            )
+                                        })?
+                                } else {
+                                    extent_offset
+                                        + u64::try_from(adjust).map_err(|_| {
+                                            Error::InvalidAsset(
+                                                "Bad BMFF offset adjustment".to_string(),
+                                            )
+                                        })?
+                                };
+                                output.write_u64::<BigEndian>(new_offset)?;
+                            }
+                            _ => {
+                                return Err(Error::InvalidAsset(
+                                    "Bad BMFF: unknown extent_offset format".to_string(),
+                                ))
+                            }
+                        }
+                    }
 
                     let _extent_length = match length_size {
                         0 => 0_u64,
@@ -833,6 +1058,213 @@ fn adjust_known_offsets<W: Write + CAIRead>(
         }
     }
 
+    // map to store track to moof mapping
+    let mut track_id_to_moof_mapping = HashMap::new();
+
+    // handle moof traf tfhd
+    if let Some(tfhd_list) = bmff_path_map.get("/moof/traf/tfhd") {
+        for tfhd_token in tfhd_list {
+            let tfhd_box_info = &bmff_tree[*tfhd_token].data;
+            if tfhd_box_info.box_type != BoxType::TfhdBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read box and patch
+            output.seek(SeekFrom::Start(tfhd_box_info.offset))?;
+
+            // read header
+            let header = BoxHeaderLite::read(output)
+                .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
+            if header.name != BoxType::TfhdBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read extended header
+            let (_version, tf_flags) = read_box_header_ext(output)?; // box extensions
+
+            // track ID
+            let track_id = output.read_u32::<BigEndian>()?;
+
+            // get to outter moof box
+            let ancestors = tfhd_token.ancestors(bmff_tree);
+            for ancestor in ancestors {
+                if ancestor.data.path == "moof" {
+                    track_id_to_moof_mapping.insert(track_id, ancestor.data.offset);
+                }
+            }
+
+            // fix up base offset and write out if flags indicate to do so
+            if tf_flags & 1 == 1 {
+                let base_data_offset_pos = output.stream_position()?;
+                let mut base_data_offset = output.read_u64::<BigEndian>()?;
+
+                base_data_offset = if adjust < 0 {
+                    base_data_offset
+                        - u64::try_from(adjust.abs()).map_err(|_| {
+                            Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                        })?
+                } else {
+                    base_data_offset
+                        + u64::try_from(adjust).map_err(|_| {
+                            Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                        })?
+                };
+
+                output.seek(SeekFrom::Start(base_data_offset_pos))?;
+                output.write_u64::<BigEndian>(base_data_offset)?;
+            }
+
+            // ignore rest of fields
+        }
+    }
+
+    // handle mfra tfra
+    if let Some(tfra_list) = bmff_path_map.get("/mfra/tfra") {
+        for tfra_token in tfra_list {
+            let tfra_box_info = &bmff_tree[*tfra_token].data;
+            if tfra_box_info.box_type != BoxType::TfraBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read iloc box and patch
+            output.seek(SeekFrom::Start(tfra_box_info.offset))?;
+
+            // read header
+            let header = BoxHeaderLite::read(output)
+                .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
+            if header.name != BoxType::TfraBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read extended header
+            let (version, _flags) = read_box_header_ext(output)?; // box extensions
+
+            // track ID
+            let track_id = output.read_u32::<BigEndian>()?;
+
+            // tfr flags
+            let tfra_info = output.read_u32::<BigEndian>()?;
+            let length_size_of_traf_num = (tfra_info >> 4) & 0x03;
+            let length_size_of_trun_num = (tfra_info >> 2) & 0x03;
+            let length_size_of_sample_num = tfra_info & 0x03;
+
+            // num entries
+            let num_entries = output.read_u32::<BigEndian>()?;
+
+            // get the moof boxes
+            // fix up the offsets in the entry list
+            for _entries in 0..num_entries {
+                if version == 1 {
+                    let _time = output.read_u64::<BigEndian>()?;
+
+                    // write out mapped value of the moof position for this track
+                    let moof_offset = track_id_to_moof_mapping
+                        .get(&track_id)
+                        .ok_or(Error::InvalidAsset("Bad BMFF".to_string()))?;
+                    output.write_u64::<BigEndian>(*moof_offset)?;
+                } else {
+                    let _time = output.read_u32::<BigEndian>()?;
+
+                    // write out mapped value of the moof position for this track
+                    let moof_offset_u64 = track_id_to_moof_mapping
+                        .get(&track_id)
+                        .ok_or(Error::InvalidAsset("Bad BMFF".to_string()))?;
+
+                    let moof_offset = u32::try_from(*moof_offset_u64).map_err(|_e| {
+                        Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                    })?;
+                    output.write_u32::<BigEndian>(moof_offset)?;
+                }
+
+                // read extra stuff to move the position
+                let traf_num_bytes = length_size_of_traf_num + 1;
+                output.read_to_vec(traf_num_bytes as u64)?;
+                let trun_num_bytes = length_size_of_trun_num + 1;
+                output.read_to_vec(trun_num_bytes as u64)?;
+                let sample_num_bytes = length_size_of_sample_num + 1;
+                output.read_to_vec(sample_num_bytes as u64)?;
+            }
+        }
+    }
+
+    // handle moov trak mdia minf stbl saio
+    if let Some(saio_list) = bmff_path_map.get("/moov/trak/mdia/minf/stbl/saio") {
+        for saio_token in saio_list {
+            let saio_box_info = &bmff_tree[*saio_token].data;
+            if saio_box_info.box_type != BoxType::SaioBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read saio box and patch
+            output.seek(SeekFrom::Start(saio_box_info.offset))?;
+
+            // read header
+            let header = BoxHeaderLite::read(output)
+                .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
+            if header.name != BoxType::SaioBox {
+                return Err(Error::InvalidAsset("Bad BMFF".to_string()));
+            }
+
+            // read extended header
+            let (version, flags) = read_box_header_ext(output)?; // box extensions
+            if (flags & 1) == 1 {
+                let _aux_info_type = output.read_u32::<BigEndian>()?;
+                let _aux_info_type_parameter = output.read_u32::<BigEndian>()?;
+            }
+
+            // get count of offsets
+            let entry_count = output.read_u32::<BigEndian>()?;
+
+            // read and patch offsets
+            let entry_start_pos = output.stream_position()?;
+            let mut entries: Vec<u64> = Vec::new();
+            for _e in 0..entry_count {
+                if version == 0 {
+                    let offset = output.read_u32::<BigEndian>()?;
+                    let new_offset = if adjust < 0 {
+                        offset
+                            - u32::try_from(adjust.abs()).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })?
+                    } else {
+                        offset
+                            + u32::try_from(adjust).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })?
+                    };
+                    entries.push(new_offset as u64);
+                } else {
+                    let offset = output.read_u64::<BigEndian>()?;
+                    let new_offset = if adjust < 0 {
+                        offset
+                            - u64::try_from(adjust.abs()).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })?
+                    } else {
+                        offset
+                            + u64::try_from(adjust).map_err(|_| {
+                                Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                            })?
+                    };
+                    entries.push(new_offset);
+                }
+            }
+
+            // write updated offsets
+            output.seek(SeekFrom::Start(entry_start_pos))?;
+            for e in entries {
+                if version == 0 {
+                    let e32 = u32::try_from(e).map_err(|_| {
+                        Error::InvalidAsset("Bad BMFF offset adjustment".to_string())
+                    })?;
+                    output.write_u32::<BigEndian>(e32)?;
+                } else {
+                    output.write_u64::<BigEndian>(e)?;
+                }
+            }
+        }
+    }
+
     // restore seek point
     output.seek(SeekFrom::Start(start_pos))?;
     output.flush()?;
@@ -840,25 +1272,46 @@ fn adjust_known_offsets<W: Write + CAIRead>(
     Ok(())
 }
 
-pub(crate) fn build_bmff_tree(
-    reader: &mut dyn CAIRead,
+#[allow(clippy::only_used_in_recursion)]
+pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
+    reader: &mut R,
     end: u64,
     bmff_tree: &mut Arena<BoxInfo>,
     current_node: &Token,
     bmff_path_map: &mut HashMap<String, Vec<Token>>,
+    recursion_level: &mut usize,
+    ftyp: &FileTypeBox,
 ) -> Result<()> {
-    let start = reader.stream_position()?;
+    *recursion_level += 1;
+    if *recursion_level > MAX_BOX_DEPTH {
+        return Err(Error::InvalidAsset(
+            "Boxes are too deply nested, unsupported asset".to_string(),
+        ));
+    }
 
+    let start = reader.stream_position()?;
     let mut current = start;
     while current < end {
         // Get box header.
         let header = BoxHeaderLite::read(reader)
-            .map_err(|_err| Error::InvalidAsset("Bad BMFF".to_string()))?;
+            .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {err}")))?;
 
         // Break if size zero BoxHeader
-        let s = header.size;
+        let mut s = header.size;
         if s == 0 {
             break;
+        }
+
+        if current + s > end {
+            if BoxType::MdatBox == header.name {
+                // for mdat boxes that extend beyond the end of the file we will just set the size to the remaining bytes in the file since
+                // some files have malformed mdat sizes but we can still hash the content by treating it as a truncated box
+                s = end - current;
+            } else {
+                return Err(Error::InvalidAsset(
+                    "Box size extends beyond asset bounds".to_string(),
+                ));
+            }
         }
 
         // Match and parse the supported atom boxes.
@@ -869,7 +1322,13 @@ pub(crate) fn build_bmff_tree(
                 let mut extended_type = [0u8; 16]; // 16 bytes of UUID
                 reader.read_exact(&mut extended_type)?;
 
-                let (version, flags) = read_box_header_ext(reader)?;
+                // if this is a C2PA ContentProvenanceBox it is a FullBox so it has version and flags
+                let (version, flags) = if extended_type == C2PA_UUID {
+                    let (v, f) = read_box_header_ext(reader)?;
+                    (Some(v), Some(f))
+                } else {
+                    (None, None)
+                };
 
                 let b = BoxInfo {
                     path: header.fourcc.clone(),
@@ -878,8 +1337,8 @@ pub(crate) fn build_bmff_tree(
                     box_type: BoxType::UuidBox,
                     parent: Some(*current_node),
                     user_type: Some(extended_type.to_vec()),
-                    version: Some(version),
-                    flags: Some(flags),
+                    version,
+                    flags,
                 };
 
                 let new_token = current_node.append(bmff_tree, b);
@@ -910,7 +1369,19 @@ pub(crate) fn build_bmff_tree(
                 let start = box_start(reader, header.large_size)?;
 
                 let b = if FULL_BOX_TYPES.contains(&header.fourcc.as_str()) {
-                    let (version, flags) = read_box_header_ext(reader)?; // box extensions
+                    // FullBox has version and flags after the header, but for some boxes like QT "meta"
+                    // the version and flags are not present even though it is technically a full box,
+                    // so we need to conditionally read the extended header based on the box type and in
+                    // the case of "meta" we peek at the data to detect the QuickTime exception.
+                    let (version, flags) = if BoxType::MetaBox == header.name
+                        && meta_box_lacks_fullbox_header(reader)?
+                    {
+                        (None, None)
+                    } else {
+                        let (v, f) = read_box_header_ext(reader)?;
+                        (Some(v), Some(f))
+                    };
+
                     BoxInfo {
                         path: header.fourcc.clone(),
                         offset: start,
@@ -918,8 +1389,8 @@ pub(crate) fn build_bmff_tree(
                         box_type: header.name,
                         parent: Some(*current_node),
                         user_type: None,
-                        version: Some(version),
-                        flags: Some(flags),
+                        version,
+                        flags,
                     }
                 } else {
                     BoxInfo {
@@ -946,7 +1417,15 @@ pub(crate) fn build_bmff_tree(
                 let mut current = reader.stream_position()?;
                 let end = start + s;
                 while current < end {
-                    build_bmff_tree(reader, end, bmff_tree, &new_token, bmff_path_map)?;
+                    build_bmff_tree(
+                        reader,
+                        end,
+                        bmff_tree,
+                        &new_token,
+                        bmff_path_map,
+                        recursion_level,
+                        ftyp,
+                    )?;
                     current = reader.stream_position()?;
                 }
 
@@ -993,14 +1472,129 @@ pub(crate) fn build_bmff_tree(
         current = reader.stream_position()?;
     }
 
+    *recursion_level -= 1;
+
     Ok(())
 }
 
-fn get_manifest_token(
+fn get_uuid_box_purpose<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+    box_info: &atree::Node<BoxInfo>,
+) -> Result<(String, u64)> {
+    if box_info.data.box_type == BoxType::UuidBox {
+        let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
+
+        // set reader to start of box contents
+        skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
+
+        // Fullbox => 8 bits for version 24 bits for flags
+        let (_version, _flags) = read_box_header_ext(reader)?;
+        data_len -= 4;
+
+        // get the purpose
+        let mut purpose_bytes = Vec::with_capacity(64);
+        loop {
+            let mut buf = [0; 1];
+            reader.read_exact(&mut buf)?;
+            data_len -= 1;
+            if buf[0] == 0x00 {
+                break;
+            } else {
+                purpose_bytes.push(buf[0]);
+            }
+        }
+
+        let purpose = String::from_utf8_lossy(&purpose_bytes);
+
+        return Ok((purpose.to_string(), data_len));
+    }
+
+    Err(Error::C2PAValidation(
+        "C2PA UUID box does not contain a purpose".to_string(),
+    ))
+}
+
+fn get_uuid_token(
+    reader: &mut dyn CAIRead,
     bmff_tree: &Arena<BoxInfo>,
     bmff_map: &HashMap<String, Vec<Token>>,
-) -> Option<Token> {
+    uuid: &[u8; 16],
+    purpose: Option<&[&str]>,
+) -> Result<Token> {
     if let Some(uuid_list) = bmff_map.get("/uuid") {
+        for uuid_token in uuid_list {
+            let box_info = &bmff_tree[*uuid_token];
+
+            // make sure it is UUID box
+            if box_info.data.box_type == BoxType::UuidBox {
+                if let Some(found_uuid) = &box_info.data.user_type {
+                    // make sure uuids match
+                    if vec_compare(uuid, found_uuid) {
+                        // if C2PA_UUID also check against purpose if present
+                        if vec_compare(&C2PA_UUID, uuid) {
+                            let (box_purpose, _) = get_uuid_box_purpose(reader, box_info)?;
+
+                            // if there is a purpose, match it
+                            if let Some(target_purposes) = purpose {
+                                for target_purpose in target_purposes {
+                                    if box_purpose == *target_purpose {
+                                        return Ok(*uuid_token);
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+                        return Ok(*uuid_token);
+                    }
+                }
+            }
+        }
+    }
+    Err(Error::NotFound)
+}
+
+#[allow(dead_code)]
+pub(crate) struct C2PABmffBoxes {
+    pub manifest_bytes: Option<Vec<u8>>,
+    pub original_bytes: Option<Vec<u8>>,
+    pub update_bytes: Option<Vec<u8>>,
+    pub manifest_box_bytes: Option<Vec<u8>>,
+    pub update_box_bytes: Option<Vec<u8>>,
+    pub bmff_merkle: Vec<BmffMerkleMap>,
+    pub bmff_merkle_box_infos: Vec<BoxInfoLite>,
+    pub box_infos: Vec<BoxInfoLite>,
+    pub xmp: Option<String>,
+    pub manifest_box_offset: Option<u64>,
+    pub update_box_offset: Option<u64>,
+    pub first_aux_uuid_offset: u64,
+    pub xmp_box_offset: u64,
+    pub xmp_box_size: u64,
+}
+
+fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
+    mut reader: &mut R,
+    bmff_tree: &Arena<BoxInfo>,
+    bmff_map: &HashMap<String, Vec<Token>>,
+) -> Result<C2PABmffBoxes> {
+    let mut manifest_bytes: Option<Vec<u8>> = None;
+    let mut original_bytes: Option<Vec<u8>> = None;
+    let mut update_bytes: Option<Vec<u8>> = None;
+    let mut manifest_box_bytes: Option<Vec<u8>> = None;
+    let mut update_box_bytes: Option<Vec<u8>> = None;
+    let mut xmp: Option<String> = None;
+    let mut manifest_box_offset = None;
+    let mut update_box_offset = None;
+    let mut first_aux_uuid_offset = 0u64;
+    let mut merkle_boxes: Vec<BmffMerkleMap> = Vec::new();
+    let mut merkle_box_infos: Vec<BoxInfoLite> = Vec::new();
+    let mut xmp_box_offset = 0;
+    let mut xmp_box_size = 0;
+
+    // grab top level (for now) C2PA box
+    if let Some(uuid_list) = bmff_map.get("/uuid") {
+        let mut manifest_store_cnt = 0;
+        let mut update_store_cnt = 0;
+
         for uuid_token in uuid_list {
             let box_info = &bmff_tree[*uuid_token];
 
@@ -1009,119 +1603,184 @@ fn get_manifest_token(
                 if let Some(uuid) = &box_info.data.user_type {
                     // make sure it is a C2PA ContentProvenanceBox box
                     if vec_compare(&C2PA_UUID, uuid) {
-                        return Some(*uuid_token);
-                    }
-                }
-            }
-        }
-    }
-    None
-}
+                        let (purpose, mut data_len) = get_uuid_box_purpose(reader, box_info)?;
 
-impl CAIReader for BmffIO {
-    fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let start = reader.stream_position()?;
-        let size = reader.seek(SeekFrom::End(0))?;
-        reader.seek(SeekFrom::Start(start))?;
+                        // is the purpose manifest?
+                        if purpose == MANIFEST || purpose == ORIGINAL || purpose == UPDATE {
+                            // offset to first aux uuid with purpose merkle
+                            let mut buf = [0u8; 8];
+                            reader.read_exact(&mut buf)?;
+                            data_len -= 8;
 
-        // create root node
-        let root_box = BoxInfo {
-            path: "".to_string(),
-            offset: 0,
-            size,
-            box_type: BoxType::Empty,
-            parent: None,
-            user_type: None,
-            version: None,
-            flags: None,
-        };
+                            // read the manifest box contents
+                            let manifest = reader.read_to_vec(data_len)?;
 
-        let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-        let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+                            // read the entire manifest box
+                            skip_bytes_to(reader, box_info.data.offset)?;
+                            let box_bytes = Some(reader.read_to_vec(box_info.data.size)?);
 
-        // build layout of the BMFF structure
-        build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
-
-        let mut output: Option<Vec<u8>> = None;
-
-        // grab top level (for now) C2PA box
-        if let Some(uuid_list) = bmff_map.get("/uuid") {
-            let mut manifest_store_cnt = 0;
-
-            for uuid_token in uuid_list {
-                let box_info = &bmff_tree[*uuid_token];
-
-                // make sure it is UUID box
-                if box_info.data.box_type == BoxType::UuidBox {
-                    if let Some(uuid) = &box_info.data.user_type {
-                        // make sure it is a C2PA ContentProvenanceBox box
-                        if vec_compare(&C2PA_UUID, uuid) {
-                            let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
-
-                            // set reader to start of box contents
-                            skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
-
-                            // Fullbox => 8 bits for version 24 bits for flags
-                            let (_version, _flags) = read_box_header_ext(reader)?;
-                            data_len -= 4;
-
-                            // get the purpose
-                            let mut purpose = Vec::with_capacity(64);
-                            loop {
-                                let mut buf = [0; 1];
-                                reader.read_exact(&mut buf)?;
-                                data_len -= 1;
-                                if buf[0] == 0x00 {
-                                    break;
-                                } else {
-                                    purpose.push(buf[0]);
-                                }
-                            }
-
-                            // is the purpose manifest?
-                            if vec_compare(&purpose, MANIFEST.as_bytes()) {
-                                // offset to first aux uuid with purpose merkle
-                                let mut buf = [0u8; 8];
-                                reader.read_exact(&mut buf)?;
-                                data_len -= 8;
-
+                            if purpose == MANIFEST {
+                                manifest_bytes = Some(manifest);
+                                manifest_box_offset = Some(box_info.data.offset);
+                                manifest_box_bytes = box_bytes;
+                                manifest_store_cnt += 1;
                                 // offset to first aux uuid
-                                let offset = u64::from_be_bytes(buf);
-
-                                // if no offset this contains the manifest
-                                if offset == 0 {
-                                    if manifest_store_cnt == 0 {
-                                        let mut manifest = vec![0u8; data_len as usize];
-                                        reader.read_exact(&mut manifest)?;
-                                        output = Some(manifest);
-
-                                        manifest_store_cnt += 1;
-                                    } else {
-                                        return Err(Error::TooManyManifestStores);
-                                    }
-                                } else {
-                                    // handle aux uuids
-                                    let mut buf = vec![0u8; data_len as usize];
-                                    reader.read_exact(&mut buf)?;
-
-                                    let _mm: BmffMerkleMap = serde_cbor::from_slice(&buf)?;
-                                }
-                            } else if vec_compare(&purpose, MERKLE.as_bytes()) {
-                                // handle merkle boxes not yet handled
-                                return Err(Error::UnsupportedType);
+                                first_aux_uuid_offset = u64::from_be_bytes(buf);
+                            } else if purpose == ORIGINAL {
+                                original_bytes = Some(manifest);
+                                manifest_box_offset = Some(box_info.data.offset);
+                                manifest_box_bytes = box_bytes;
+                                manifest_store_cnt += 1;
+                                // offset to first aux uuid
+                                first_aux_uuid_offset = u64::from_be_bytes(buf);
+                            } else if purpose == UPDATE {
+                                update_bytes = Some(manifest);
+                                update_box_offset = Some(box_info.data.offset);
+                                update_box_bytes = box_bytes;
+                                update_store_cnt += 1;
                             }
+
+                            if manifest_store_cnt > 1 || update_store_cnt > 1 {
+                                return Err(Error::TooManyManifestStores);
+                            }
+                        } else if purpose == MERKLE {
+                            let merkle = reader.read_to_vec(data_len)?;
+
+                            // use this method since it will strip trailing zeros padding if there
+                            let mut deserializer = c2pa_cbor::de::Deserializer::from_slice(&merkle);
+                            let mm: BmffMerkleMap =
+                                serde::Deserialize::deserialize(&mut deserializer)?;
+                            merkle_boxes.push(mm);
+                            merkle_box_infos.push(BoxInfoLite {
+                                path: box_info.data.path.clone(),
+                                offset: box_info.data.offset,
+                                size: box_info.data.size,
+                            });
+                        }
+                    } else if vec_compare(&XMP_UUID, uuid) {
+                        let data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
+
+                        // set reader to start of box contents
+                        skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
+
+                        let xmp_vec = reader.read_to_vec(data_len)?;
+                        if let Ok(xmp_string) = String::from_utf8(xmp_vec) {
+                            xmp = Some(xmp_string);
+                            xmp_box_offset = box_info.data.offset;
+                            xmp_box_size = box_info.data.size;
                         }
                     }
                 }
             }
         }
+    }
 
-        output.ok_or(Error::JumbfNotFound)
+    // get position ordered list of boxes
+    let mut box_infos: Vec<BoxInfoLite> = get_top_level_boxes(bmff_tree, bmff_map);
+    box_infos.sort_by_key(|a| a.offset);
+
+    Ok(C2PABmffBoxes {
+        manifest_bytes,
+        original_bytes,
+        update_bytes,
+        manifest_box_bytes,
+        update_box_bytes,
+        bmff_merkle: merkle_boxes,
+        bmff_merkle_box_infos: merkle_box_infos,
+        box_infos,
+        xmp,
+        manifest_box_offset,
+        update_box_offset,
+        first_aux_uuid_offset,
+        xmp_box_offset,
+        xmp_box_size,
+    })
+}
+
+pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+) -> Result<C2PABmffBoxes> {
+    let size = stream_len(reader)?;
+    reader.rewind()?;
+
+    let ftyp = read_ftyp_box(reader)?;
+    reader.rewind()?;
+
+    // create root node
+    let root_box = BoxInfo {
+        path: "".to_string(),
+        offset: 0,
+        size,
+        box_type: BoxType::Empty,
+        parent: None,
+        user_type: None,
+        version: None,
+        flags: None,
+    };
+
+    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+    // build layout of the BMFF structure
+    let mut rl = 0usize;
+    build_bmff_tree(
+        reader,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+        &ftyp,
+    )?;
+    c2pa_boxes_from_tree_and_map(reader, &bmff_tree, &bmff_map)
+}
+
+impl CAIReader for BmffIO {
+    fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        reader.seek(SeekFrom::Start(4))?;
+
+        let mut header = [0u8; 4];
+        reader.read_exact(&mut header)?;
+
+        if header[..4] != *b"ftyp" {
+            return Err(BmffError::InvalidFileSignature {
+                reason: format!(
+                    "invalid BMFF structure: expected box type \"ftyp\" at offset 4, found {}",
+                    String::from_utf8_lossy(&header[..4])
+                ),
+            }
+            .into());
+        }
+
+        let c2pa_boxes = read_bmff_c2pa_boxes(reader)?;
+
+        // is this an update manifest?
+        if let Some(original_bytes) = c2pa_boxes.original_bytes {
+            if let Some(update_bytes) = c2pa_boxes.update_bytes {
+                let mut validation_log = StatusTracker::default();
+
+                // combine original Store and update Store to single logical manifest Store
+                let mut original_store = Store::from_jumbf(&original_bytes, &mut validation_log)?;
+                let update_store = Store::from_jumbf(&update_bytes, &mut validation_log)?;
+
+                original_store.append_store(&update_store);
+
+                return original_store.to_jumbf_internal(0);
+            } else {
+                return Err(Error::C2PAValidation(
+                    "original manifest without update manifest".to_string(),
+                ));
+            }
+        }
+
+        c2pa_boxes.manifest_bytes.ok_or(Error::JumbfNotFound)
     }
 
     // Get XMP block
-    fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
-        None // todo: figure out where XMP is stored for supported formats
+    fn read_xmp(&self, reader: &mut dyn CAIRead) -> Option<String> {
+        let c2pa_boxes = read_bmff_c2pa_boxes(reader).ok()?;
+
+        c2pa_boxes.xmp
     }
 }
 
@@ -1136,145 +1795,17 @@ impl AssetIO for BmffIO {
     }
 
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input = File::open(asset_path)?;
-        let size = input.seek(SeekFrom::End(0))?;
-        input.rewind()?;
+        let mut input_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
 
-        // create root node
-        let root_box = BoxInfo {
-            path: "".to_string(),
-            offset: 0,
-            size,
-            box_type: BoxType::Empty,
-            parent: None,
-            user_type: None,
-            version: None,
-            flags: None,
-        };
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
-        let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-        let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-        // build layout of the BMFF structure
-        build_bmff_tree(&mut input, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
-
-        // get ftyp location
-        // start after ftyp
-        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we supprt any special format requirements
-        let ftyp_info = &bmff_tree[ftyp_token[0]].data;
-        let ftyp_offset = ftyp_info.offset;
-        let ftyp_size = ftyp_info.size;
-
-        // get position to insert c2pa
-        let (c2pa_start, c2pa_length) =
-            if let Some(c2pa_token) = get_manifest_token(&bmff_tree, &bmff_map) {
-                let uuid_info = &bmff_tree[c2pa_token].data;
-
-                (uuid_info.offset, Some(uuid_info.size))
-            } else {
-                ((ftyp_offset + ftyp_size), None)
-            };
-
-        let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
-        let merkle_data: &[u8] = &[]; // not yet supported
-        write_c2pa_box(&mut new_c2pa_box, store_bytes, true, merkle_data)?;
-        let new_c2pa_box_size = new_c2pa_box.len();
-
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
-
-        let (start, end) = if let Some(c2pa_length) = c2pa_length {
-            let start = usize::value_from(c2pa_start)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
-
-            let end = usize::value_from(c2pa_start + c2pa_length)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-            (start, end)
-        } else {
-            // insert new c2pa
-            let end = usize::value_from(c2pa_start)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-            (end, end)
-        };
-
-        // write content before ContentProvenanceBox
-        input.rewind()?;
-        let mut b = vec![0u8; start];
-        input.read_exact(&mut b)?;
-        temp_file.write_all(&b)?;
-
-        // write ContentProvenanceBox
-        temp_file.write_all(&new_c2pa_box)?;
-
-        // calc offset adjustments
-        let offset_adjust: i32 = if end == 0 {
-            new_c2pa_box_size as i32
-        } else {
-            // value could be negative if box is truncated
-            let existing_c2pa_box_size = end - start;
-            let pad_size: i32 = new_c2pa_box_size as i32 - existing_c2pa_box_size as i32;
-            pad_size
-        };
-
-        // write content after ContentProvenanceBox
-        input.seek(SeekFrom::Start(end as u64))?;
-        let mut chunk = vec![0u8; 1024 * 1024];
-        loop {
-            let len = match input.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(len) => len,
-                Err(e) => return Err(Error::IoError(e)),
-            };
-
-            temp_file.write_all(&chunk[0..len])?;
-        }
-        temp_file.flush()?;
-
-        // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
-
-        // create root node
-        let root_box = BoxInfo {
-            path: "".to_string(),
-            offset: 0,
-            size,
-            box_type: BoxType::Empty,
-            parent: None,
-            user_type: None,
-            version: None,
-            flags: None,
-        };
-
-        // map box layout of current output file
-        let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
-        let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-        let size = temp_file.seek(SeekFrom::End(0))?;
-        temp_file.rewind()?;
-        build_bmff_tree(
-            &mut temp_file,
-            size,
-            &mut output_bmff_tree,
-            &root_token,
-            &mut output_bmff_map,
-        )?;
-
-        // adjust offsets based on current layout
-        adjust_known_offsets(
-            &mut temp_file,
-            &output_bmff_tree,
-            &output_bmff_map,
-            offset_adjust,
-        )?;
+        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
 
         // copy temp file to asset
-        std::fs::rename(temp_file.path(), asset_path)
-            // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-            .map_err(Error::IoError)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn get_object_locations(
@@ -1286,126 +1817,14 @@ impl AssetIO for BmffIO {
     }
 
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        let mut input = File::open(asset_path)?;
-        let size = input.seek(SeekFrom::End(0))?;
-        input.rewind()?;
+        let mut input_file = std::fs::File::open(asset_path)?;
 
-        // create root node
-        let root_box = BoxInfo {
-            path: "".to_string(),
-            offset: 0,
-            size,
-            box_type: BoxType::Empty,
-            parent: None,
-            user_type: None,
-            version: None,
-            flags: None,
-        };
+        let mut temp_file = tempfile_builder("c2pa_temp")?;
 
-        let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-        let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-        // build layout of the BMFF structure
-        build_bmff_tree(&mut input, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
-
-        // get position of c2pa manifest
-        let (c2pa_start, c2pa_length) =
-            if let Some(c2pa_token) = get_manifest_token(&bmff_tree, &bmff_map) {
-                let uuid_info = &bmff_tree[c2pa_token].data;
-
-                (uuid_info.offset, Some(uuid_info.size))
-            } else {
-                return Ok(()); // no box to remove
-            };
-
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
-
-        let (start, end) = if let Some(c2pa_length) = c2pa_length {
-            let start = usize::value_from(c2pa_start)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
-
-            let end = usize::value_from(c2pa_start + c2pa_length)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-            (start, end)
-        } else {
-            return Err(Error::InvalidAsset("value out of range".to_string()));
-        };
-
-        // write content before ContentProvenanceBox
-        input.rewind()?;
-        let mut b = vec![0u8; start];
-        input.read_exact(&mut b)?;
-        temp_file.write_all(&b)?;
-
-        // calc offset adjustments
-        // value will be negative since the box is truncated
-        let new_c2pa_box_size: i32 = 0;
-        let existing_c2pa_box_size = end - start;
-        let offset_adjust = new_c2pa_box_size - existing_c2pa_box_size as i32;
-
-        // write content after ContentProvenanceBox
-        input.seek(SeekFrom::Start(end as u64))?;
-        let mut chunk = vec![0u8; 1024 * 1024];
-        loop {
-            let len = match input.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(len) => len,
-                Err(e) => return Err(Error::IoError(e)),
-            };
-
-            temp_file.write_all(&chunk[0..len])?;
-        }
-        temp_file.flush()?;
-
-        // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
-        match self.bmff_format.as_ref() {
-            "m4a" | "mp4" | "mov" => {
-                // create root node
-                let root_box = BoxInfo {
-                    path: "".to_string(),
-                    offset: 0,
-                    size,
-                    box_type: BoxType::Empty,
-                    parent: None,
-                    user_type: None,
-                    version: None,
-                    flags: None,
-                };
-
-                // rebuild box layout for output file
-                let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
-                let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-                let size = temp_file.seek(SeekFrom::End(0))?;
-                temp_file.rewind()?;
-                build_bmff_tree(
-                    &mut temp_file,
-                    size,
-                    &mut output_bmff_tree,
-                    &root_token,
-                    &mut output_bmff_map,
-                )?;
-
-                // adjust based on current layout
-                adjust_known_offsets(
-                    &mut temp_file,
-                    &output_bmff_tree,
-                    &output_bmff_map,
-                    offset_adjust,
-                )?;
-            }
-            _ => (), // todo: handle more patching cases as necessary
-        }
+        self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
 
         // copy temp file to asset
-        std::fs::rename(temp_file.path(), asset_path)
-            // if rename fails, try to copy in case we are on different volumes
-            .or_else(|_| std::fs::copy(temp_file.path(), asset_path).and(Ok(())))
-            .map_err(Error::IoError)
+        rename_or_move(temp_file, asset_path)
     }
 
     fn new(asset_type: &str) -> Self
@@ -1425,12 +1844,426 @@ impl AssetIO for BmffIO {
         self
     }
 
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+        Some(Box::new(BmffIO::new(asset_type)))
+    }
+
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+        Some(self)
+    }
+
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+}
+
+impl CAIWriter for BmffIO {
+    fn write_cai(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        let size = stream_len(input_stream)?;
+        input_stream.rewind()?;
+
+        let ftyp = read_ftyp_box(input_stream)?;
+        input_stream.rewind()?;
+
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
+
+        let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+        let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+        // build layout of the BMFF structure
+        let mut rl = 0usize;
+        build_bmff_tree(
+            input_stream,
+            size,
+            &mut bmff_tree,
+            &root_token,
+            &mut bmff_map,
+            &mut rl,
+            &ftyp,
+        )?;
+
+        // figure out what state we are in
+        let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
+        let has_manifest = c2pa_boxes.manifest_bytes.is_some();
+        let has_original = c2pa_boxes.original_bytes.is_some();
+        let has_update = c2pa_boxes.update_bytes.is_some();
+        // if the incoming Store has an update manifest we must split it into original and update stores
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let (pc, is_update) = if let Ok(store) = Store::from_jumbf(store_bytes, &mut validation_log)
+        {
+            let pc = store
+                .provenance_claim()
+                .ok_or(Error::BadParam("no provenance claim".to_string()))?;
+            let is_update = pc.update_manifest();
+            (Some(pc.clone()), is_update)
+        } else {
+            (None, false)
+        };
+
+        // "original" manifest store and "update" manifest store can only appear together
+        if has_original && !has_update || !has_original && has_update {
+            return Err(Error::BadParam(
+                "BMFF save failure, found original manifest store without update manifest store"
+                    .to_string(),
+            ));
+        }
+
+        // if is an ordinary manifest store then it should not have an update manifest store
+        if has_manifest && has_update {
+            return Err(Error::BadParam(
+                "BMFF save failure, found manifest store with update manifest store".to_string(),
+            ));
+        }
+
+        // if we already have an "original" manifest store and an "update" manifest store
+        // then we can just apppend to the update store
+        if has_original && has_update && is_update {
+            let update_manifest_bytes = &c2pa_boxes
+                .update_bytes
+                .ok_or(Error::BadParam("no update manifest".to_string()))?;
+            let update_box_offset = c2pa_boxes
+                .update_box_offset
+                .ok_or(Error::BadParam("no update manifest".to_string()))?;
+            let update_box_size = c2pa_boxes
+                .update_box_bytes
+                .ok_or(Error::BadParam("no update manifest".to_string()))?
+                .len();
+            let pc = pc.ok_or(Error::BadParam("no provenance manifest".to_string()))?;
+
+            let mut update_store = Store::from_jumbf(update_manifest_bytes, &mut validation_log)?;
+            // add new update manfiest or replace existing one if the is a finalization pass
+            update_store.replace_claim_or_insert(pc.label().to_string(), pc);
+
+            let new_update_bytes = update_store.to_jumbf_internal(0)?;
+            let mut new_update_box = Vec::new();
+            write_c2pa_box(&mut new_update_box, &new_update_bytes, UPDATE, &[], 0)?;
+
+            patch_stream(
+                input_stream,
+                output_stream,
+                update_box_offset,
+                update_box_size as u64,
+                &new_update_box,
+            )?;
+
+            return Ok(());
+        }
+
+        // if we have an ordinary manifest store and we are adding a new update manifest
+        // then we need to split off incoming provenance claim into and add to update new update manifest
+        if has_manifest && !has_update && is_update {
+            let pc = pc.ok_or(Error::BadParam("no provenance manifest".to_string()))?;
+
+            let mut update_store = Store::new();
+            update_store.insert_restored_claim(pc.label().to_string(), pc);
+            let new_update_bytes = update_store.to_jumbf_internal(0)?;
+
+            // patch the purpose of the original manifest store
+            let mut manifest_box_bytes = c2pa_boxes
+                .manifest_box_bytes
+                .ok_or(Error::BadParam("no original manifest".to_string()))?
+                .clone();
+            let manifest_box_offset = c2pa_boxes
+                .manifest_box_offset
+                .ok_or(Error::BadParam("no original manifest offset".to_string()))?;
+
+            // update the manifest purpose
+            patch_bytes(
+                &mut manifest_box_bytes,
+                MANIFEST.as_bytes(),
+                ORIGINAL.as_bytes(),
+            )?;
+
+            // write the stream with manifest bytes containing updated manifest PURPOSE
+            patch_stream(
+                input_stream,
+                output_stream,
+                manifest_box_offset,
+                manifest_box_bytes.len() as u64,
+                &manifest_box_bytes,
+            )?;
+
+            // append new update manifest store to end of stream
+            let mut update_manifest = Vec::new();
+            write_c2pa_box(&mut update_manifest, &new_update_bytes, UPDATE, &[], 0)?;
+            output_stream.seek(SeekFrom::End(0))?;
+            output_stream.write_all(&update_manifest)?;
+
+            return Ok(());
+        }
+
+        // since we reached this point we must have an ordinary manifest store so we may need to truncate off
+        // the update manifest
+        // get ftyp location
+        // start after ftyp
+        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+        let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+        let ftyp_offset = ftyp_info.offset;
+        let ftyp_size = ftyp_info.size;
+
+        // get position to insert c2pa primary manifest store
+        let (c2pa_start, c2pa_length) = match get_uuid_token(
+            input_stream,
+            &bmff_tree,
+            &bmff_map,
+            &C2PA_UUID,
+            Some(&[MANIFEST, ORIGINAL]),
+        ) {
+            Ok(c2pa_token) => {
+                let uuid_info = &bmff_tree[c2pa_token].data;
+
+                (uuid_info.offset, Some(uuid_info.size))
+            }
+            Err(Error::NotFound) => ((ftyp_offset + ftyp_size), None),
+            Err(e) => return Err(e),
+        };
+
+        let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
+        let merkle_data: &[u8] = &[]; // not yet supported
+        write_c2pa_box(&mut new_c2pa_box, store_bytes, MANIFEST, merkle_data, 0)?;
+        let new_c2pa_box_size = new_c2pa_box.len();
+
+        let (start, end) = if let Some(c2pa_length) = c2pa_length {
+            let start = usize::try_from(c2pa_start)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+
+            let end = usize::try_from(c2pa_start + c2pa_length)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+            (start, end)
+        } else {
+            // insert new c2pa
+            let end = usize::try_from(c2pa_start)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+            (end, end)
+        };
+
+        // write content before ContentProvenanceBox
+        input_stream.rewind()?;
+        let mut before_manifest = input_stream.take(start as u64);
+        std::io::copy(&mut before_manifest, output_stream)?;
+
+        // write ContentProvenanceBox
+        output_stream.write_all(&new_c2pa_box)?;
+
+        // calc offset adjustments
+        let offset_adjust: i32 = if end == 0 {
+            new_c2pa_box_size as i32
+        } else {
+            // value could be negative if box is truncated
+            let existing_c2pa_box_size = end - start;
+            let pad_size: i32 = new_c2pa_box_size as i32 - existing_c2pa_box_size as i32;
+            pad_size
+        };
+
+        // write content after ContentProvenanceBox
+        // since we reached this point we must have an ordinary manifest store so we may need to truncate off
+        // the update manifest
+        input_stream.seek(SeekFrom::Start(end as u64))?;
+        if has_update {
+            let update_offset = c2pa_boxes
+                .update_box_offset
+                .ok_or(Error::BadParam("no update manifest".to_string()))?;
+            let len_to_update = update_offset - end as u64;
+            let mut truncating_reader = input_stream.take(len_to_update);
+            std::io::copy(&mut truncating_reader, output_stream)?;
+        } else {
+            std::io::copy(input_stream, output_stream)?;
+        }
+
+        // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
+        if offset_adjust != 0 {
+            // create root node
+            let root_box = BoxInfo {
+                path: "".to_string(),
+                offset: 0,
+                size,
+                box_type: BoxType::Empty,
+                parent: None,
+                user_type: None,
+                version: None,
+                flags: None,
+            };
+
+            // map box layout of current output file
+            let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
+            let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+            let size = stream_len(output_stream)?;
+            output_stream.rewind()?;
+            let mut rl = 0usize;
+            build_bmff_tree(
+                output_stream,
+                size,
+                &mut output_bmff_tree,
+                &root_token,
+                &mut output_bmff_map,
+                &mut rl,
+                &ftyp,
+            )?;
+
+            // adjust offsets based on current layout
+            output_stream.rewind()?;
+            adjust_known_offsets(
+                output_stream,
+                &output_bmff_tree,
+                &output_bmff_map,
+                offset_adjust,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn get_object_locations_from_stream(
+        &self,
+        _input_stream: &mut dyn CAIRead,
+    ) -> Result<Vec<HashObjectPositions>> {
+        let vec: Vec<HashObjectPositions> = Vec::new();
+        Ok(vec)
+    }
+
+    fn remove_cai_store_from_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()> {
+        let size = stream_len(input_stream)?;
+        input_stream.rewind()?;
+
+        let ftyp = read_ftyp_box(input_stream)?;
+        input_stream.rewind()?;
+
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
+
+        let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+        let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+        // build layout of the BMFF structure
+        let mut rl = 0usize;
+        build_bmff_tree(
+            input_stream,
+            size,
+            &mut bmff_tree,
+            &root_token,
+            &mut bmff_map,
+            &mut rl,
+            &ftyp,
+        )?;
+
+        // get position of c2pa manifest
+        let (c2pa_start, c2pa_length) =
+            match get_uuid_token(input_stream, &bmff_tree, &bmff_map, &C2PA_UUID, None) {
+                Ok(c2pa_token) => {
+                    let uuid_info = &bmff_tree[c2pa_token].data;
+
+                    (uuid_info.offset, Some(uuid_info.size))
+                }
+                Err(Error::NotFound) => {
+                    input_stream.rewind()?;
+                    std::io::copy(input_stream, output_stream)?;
+                    return Ok(()); // no box to remove, propagate source to output
+                }
+                Err(e) => return Err(e),
+            };
+
+        let (start, end) = if let Some(c2pa_length) = c2pa_length {
+            let start = usize::try_from(c2pa_start)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+
+            let end = usize::try_from(c2pa_start + c2pa_length)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+            (start, end)
+        } else {
+            return Err(Error::InvalidAsset("value out of range".to_string()));
+        };
+
+        // write content before ContentProvenanceBox
+        input_stream.rewind()?;
+        let mut before_manifest = input_stream.take(start as u64);
+        std::io::copy(&mut before_manifest, output_stream)?;
+
+        // calc offset adjustments
+        // value will be negative since the box is truncated
+        let new_c2pa_box_size: i32 = 0;
+        let existing_c2pa_box_size = end - start;
+        let offset_adjust = new_c2pa_box_size - existing_c2pa_box_size as i32;
+
+        // write content after ContentProvenanceBox
+        input_stream.seek(SeekFrom::Start(end as u64))?;
+        std::io::copy(input_stream, output_stream)?;
+
+        // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
+
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
+
+        // map box layout of current output file
+        let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
+        let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+        let size = stream_len(output_stream)?;
+        output_stream.rewind()?;
+        let mut rl = 0usize;
+        build_bmff_tree(
+            output_stream,
+            size,
+            &mut output_bmff_tree,
+            &root_token,
+            &mut output_bmff_map,
+            &mut rl,
+            &ftyp,
+        )?;
+
+        // adjust offsets based on current layout
+        output_stream.rewind()?;
+        adjust_known_offsets(
+            output_stream,
+            &output_bmff_tree,
+            &output_bmff_map,
+            offset_adjust,
+        )
     }
 }
 
@@ -1441,7 +2274,10 @@ impl AssetPatch for BmffIO {
             .read(true)
             .create(false)
             .open(asset_path)?;
-        let size = asset.seek(SeekFrom::End(0))?;
+        let size = stream_len(&mut asset)?;
+        asset.rewind()?;
+
+        let ftyp = read_ftyp_box(&mut asset)?;
         asset.rewind()?;
 
         // create root node
@@ -1460,7 +2296,16 @@ impl AssetPatch for BmffIO {
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         // build layout of the BMFF structure
-        build_bmff_tree(&mut asset, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+        let mut rl = 0usize;
+        build_bmff_tree(
+            &mut asset,
+            size,
+            &mut bmff_tree,
+            &root_token,
+            &mut bmff_map,
+            &mut rl,
+            &ftyp,
+        )?;
 
         // get position to insert c2pa
         let (c2pa_start, c2pa_length) = if let Some(uuid_tokens) = bmff_map.get("/uuid") {
@@ -1488,7 +2333,7 @@ impl AssetPatch for BmffIO {
         if let Some(manifest_length) = c2pa_length {
             let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
             let merkle_data: &[u8] = &[]; // not yet supported
-            write_c2pa_box(&mut new_c2pa_box, store_bytes, true, merkle_data)?;
+            write_c2pa_box(&mut new_c2pa_box, store_bytes, MANIFEST, merkle_data, 0)?;
             let new_c2pa_box_size = new_c2pa_box.len();
 
             if new_c2pa_box_size as u64 == manifest_length {
@@ -1508,6 +2353,14 @@ impl AssetPatch for BmffIO {
     }
 }
 
+impl ComposedManifestRef for BmffIO {
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+        let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(manifest_data.len() * 2);
+        write_c2pa_box(&mut new_c2pa_box, manifest_data, MANIFEST, &[], 0)?;
+        Ok(new_c2pa_box)
+    }
+}
+
 impl RemoteRefEmbed for BmffIO {
     #[allow(unused_variables)]
     fn embed_reference(
@@ -1517,20 +2370,22 @@ impl RemoteRefEmbed for BmffIO {
     ) -> Result<()> {
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                #[cfg(feature = "xmp_write")]
+                let output_buf = Vec::new();
+                let mut output_stream = Cursor::new(output_buf);
+
+                // block so that source file is closed after embed
                 {
-                    match self.bmff_format.as_ref() {
-                        "heic" | "avif" => Err(Error::XmpNotSupported),
-                        _ => {
-                            crate::embedded_xmp::add_manifest_uri_to_file(asset_path, &manifest_uri)
-                        }
-                    }
+                    let mut source_stream = std::fs::File::open(asset_path)?;
+                    self.embed_reference_to_stream(
+                        &mut source_stream,
+                        &mut output_stream,
+                        RemoteRefEmbedType::Xmp(manifest_uri),
+                    )?;
                 }
 
-                #[cfg(not(feature = "xmp_write"))]
-                {
-                    Err(crate::error::Error::MissingFeature("xmp_write".to_string()))
-                }
+                // write will replace exisiting contents
+                std::fs::write(asset_path, output_stream.into_inner())?;
+                Ok(())
             }
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
@@ -1540,43 +2395,446 @@ impl RemoteRefEmbed for BmffIO {
 
     fn embed_reference_to_stream(
         &self,
-        _source_stream: &mut dyn CAIRead,
-        _output_stream: &mut dyn CAIReadWrite,
-        _embed_ref: RemoteRefEmbedType,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        embed_ref: RemoteRefEmbedType,
     ) -> Result<()> {
-        Err(Error::UnsupportedType)
+        match embed_ref {
+            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
+                let size = stream_len(input_stream)?;
+                input_stream.rewind()?;
+
+                let ftyp = read_ftyp_box(input_stream)?;
+                input_stream.rewind()?;
+
+                // create root node
+                let root_box = BoxInfo {
+                    path: "".to_string(),
+                    offset: 0,
+                    size,
+                    box_type: BoxType::Empty,
+                    parent: None,
+                    user_type: None,
+                    version: None,
+                    flags: None,
+                };
+
+                let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+                let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+                // build layout of the BMFF structure
+                let mut rl = 0usize;
+                build_bmff_tree(
+                    input_stream,
+                    size,
+                    &mut bmff_tree,
+                    &root_token,
+                    &mut bmff_map,
+                    &mut rl,
+                    &ftyp,
+                )?;
+
+                let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
+
+                let xmp = match &c2pa_boxes.xmp {
+                    Some(xmp) => add_provenance(xmp, &manifest_uri)?,
+                    None => {
+                        let xmp = MIN_XMP.to_string();
+                        add_provenance(&xmp, &manifest_uri)?
+                    }
+                };
+
+                // get position to insert xmp
+                let (xmp_start, xmp_length) = match &c2pa_boxes.xmp {
+                    Some(_xmp) => (c2pa_boxes.xmp_box_offset, Some(c2pa_boxes.xmp_box_size)),
+                    None => {
+                        // get ftyp location
+                        // start after ftyp
+                        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+                        let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+                        let ftyp_offset = ftyp_info.offset;
+                        let ftyp_size = ftyp_info.size;
+
+                        ((ftyp_offset + ftyp_size), None)
+                    }
+                };
+
+                let mut new_xmp_box: Vec<u8> = Vec::with_capacity(xmp.len() * 2);
+                write_xmp_box(&mut new_xmp_box, xmp.as_bytes())?;
+                let new_xmp_box_size = new_xmp_box.len();
+
+                let (start, end) = if let Some(xmp_length) = xmp_length {
+                    let start = usize::try_from(xmp_start)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+
+                    let end = usize::try_from(xmp_start + xmp_length)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    (start, end)
+                } else {
+                    // insert new c2pa
+                    let end = usize::try_from(xmp_start)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    (end, end)
+                };
+
+                // write content before XMP box
+                input_stream.rewind()?;
+                let mut before_xmp = input_stream.take(start as u64);
+                std::io::copy(&mut before_xmp, output_stream)?;
+
+                // write ContentProvenanceBox
+                output_stream.write_all(&new_xmp_box)?;
+
+                // calc offset adjustments
+                let offset_adjust: i32 = if end == 0 {
+                    new_xmp_box_size as i32
+                } else {
+                    // value could be negative if box is truncated
+                    let existing_xmp_box_size = end - start;
+                    let pad_size: i32 = new_xmp_box_size as i32 - existing_xmp_box_size as i32;
+                    pad_size
+                };
+
+                // write content after XMP box
+                input_stream.seek(SeekFrom::Start(end as u64))?;
+                std::io::copy(input_stream, output_stream)?;
+
+                // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
+
+                // create root node
+                let root_box = BoxInfo {
+                    path: "".to_string(),
+                    offset: 0,
+                    size,
+                    box_type: BoxType::Empty,
+                    parent: None,
+                    user_type: None,
+                    version: None,
+                    flags: None,
+                };
+
+                // map box layout of current output file
+                let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
+                let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+                let size = stream_len(output_stream)?;
+                output_stream.rewind()?;
+                let mut rl = 0usize;
+                build_bmff_tree(
+                    output_stream,
+                    size,
+                    &mut output_bmff_tree,
+                    &root_token,
+                    &mut output_bmff_map,
+                    &mut rl,
+                    &ftyp,
+                )?;
+
+                // adjust offsets based on current layout
+                output_stream.rewind()?;
+                adjust_known_offsets(
+                    output_stream,
+                    &output_bmff_tree,
+                    &output_bmff_map,
+                    offset_adjust,
+                )
+            }
+            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
+            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        }
     }
 }
+
+// inject a placeholder free box of free_size at the end of the ftyp box. This is used to reserve
+// space for a manifest box when one does not already exist in the file.
+// Returns the location of the injected placeholder box.  This function assumes the file does not have
+// an existing manifest store and that the placeholder box will be replaced with the manifest store during the first update pass.
+#[allow(dead_code)]
+pub(crate) fn inject_placeholder(
+    input_stream: &mut dyn CAIRead,
+    output_stream: &mut dyn CAIReadWrite,
+    free_size: usize,
+) -> Result<u64> {
+    let size = stream_len(input_stream)?;
+    input_stream.rewind()?;
+
+    let ftyp = read_ftyp_box(input_stream)?;
+    input_stream.rewind()?;
+
+    // create root node
+    let root_box = BoxInfo {
+        path: "".to_string(),
+        offset: 0,
+        size,
+        box_type: BoxType::Empty,
+        parent: None,
+        user_type: None,
+        version: None,
+        flags: None,
+    };
+
+    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+    // build layout of the BMFF structure
+    let mut rl = 0usize;
+    build_bmff_tree(
+        input_stream,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+        &ftyp,
+    )?;
+
+    // figure out what state we are in
+    let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
+    let has_manifest = c2pa_boxes.manifest_bytes.is_some();
+    let has_original = c2pa_boxes.original_bytes.is_some();
+    let has_update = c2pa_boxes.update_bytes.is_some();
+
+    if has_manifest || has_original || has_update {
+        return Err(Error::InvalidAsset(
+            "inject_placeholder should only be called on files without existing manifest stores"
+                .to_string(),
+        ));
+    }
+
+    // since we reached this point we must have an ordinary manifest store so we may need to truncate off
+    // the update manifest
+    // get ftyp location
+    // start after ftyp
+    let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+    let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+    let ftyp_offset = ftyp_info.offset;
+    let ftyp_size = ftyp_info.size;
+
+    // create free box bytes
+    let mut free_box_bytes = Vec::with_capacity(free_size + 8);
+    write_free_box(&mut free_box_bytes, free_size)?;
+
+    // insertion point
+    let start = ftyp_offset + ftyp_size;
+
+    // write content before free box
+    input_stream.rewind()?;
+    let mut before_free = input_stream.take(start);
+    std::io::copy(&mut before_free, output_stream)?;
+
+    // write free box
+    output_stream.write_all(&free_box_bytes)?;
+
+    // write content after free box
+    std::io::copy(input_stream, output_stream)?;
+
+    // calc offset adjustments
+    let offset_adjust: i32 = free_box_bytes.len() as i32;
+
+    // Manipulating the free box means we may need some patch offsets if they are file absolute offsets.
+    if offset_adjust != 0 {
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
+
+        // map box layout of current output file
+        let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
+        let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+        let size = stream_len(output_stream)?;
+        output_stream.rewind()?;
+        let mut rl = 0usize;
+        build_bmff_tree(
+            output_stream,
+            size,
+            &mut output_bmff_tree,
+            &root_token,
+            &mut output_bmff_map,
+            &mut rl,
+            &ftyp,
+        )?;
+
+        // adjust offsets based on current layout
+        output_stream.rewind()?;
+        adjust_known_offsets(
+            output_stream,
+            &output_bmff_tree,
+            &output_bmff_map,
+            offset_adjust,
+        )?;
+    }
+
+    Ok(start)
+}
+
+// write manifest into free box location.  Used inconjunction with inject_placeholder to first
+// inject a free box to reserve space for the manifest and then write the manifest into the
+// free box during the first update pass. This function assumes the manifest box will be the
+// same size or smaller than the placeholder free box. If the manifest box is smaller than the
+// placeholder free box then the remaining free space will be converted to a smaller free box.
+// If the manifest box is larger than the placeholder free box then an error will be returned.
+// manifest_bytes should be the bytes of the manifest box including the header. free_box_start is
+// the file offset of the beginning of the free box to be replaced by the manifest box.
+#[allow(dead_code)]
+pub(crate) fn inject_manifest_into_free_box(
+    stream: &mut dyn CAIReadWrite,
+    manifest_bytes: &[u8],
+    free_box_start: u64,
+) -> Result<()> {
+    let size = stream_len(stream)?;
+    stream.rewind()?;
+
+    let ftyp = read_ftyp_box(stream)?;
+    stream.rewind()?;
+
+    // create root node
+    let root_box = BoxInfo {
+        path: "".to_string(),
+        offset: 0,
+        size,
+        box_type: BoxType::Empty,
+        parent: None,
+        user_type: None,
+        version: None,
+        flags: None,
+    };
+
+    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+    // build layout of the BMFF structure
+    let mut rl = 0usize;
+    build_bmff_tree(
+        stream,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+        &ftyp,
+    )?;
+
+    // get the matching free box
+    let free_tokens = bmff_map.get("/free").ok_or(Error::BadParam(
+        "Did not find free box to inject manifest".to_string(),
+    ))?;
+
+    // find the free box that starts at the expected location
+    let free_token = free_tokens
+        .iter()
+        .find(|token| {
+            let free_info = &bmff_tree[**token].data;
+            free_info.offset == free_box_start
+        })
+        .ok_or(Error::BadParam(
+            "Did not find free box to inject manifest at expected location".to_string(),
+        ))?;
+
+    let free_info = &bmff_tree[*free_token].data;
+
+    if manifest_bytes.len() as u64 > free_info.size {
+        return Err(Error::BadParam(
+            "Manifest size is larger than free box".to_string(),
+        ));
+    }
+
+    // write manifest into free box location
+    stream.seek(SeekFrom::Start(free_info.offset))?;
+    stream.write_all(manifest_bytes)?;
+
+    // convert remaining free space to a smaller free box if needed
+    let remaining_free_space = free_info.size - manifest_bytes.len() as u64;
+    if remaining_free_space > 8 {
+        // need at least 8 bytes to write another free box
+        let mut new_free_box = Vec::with_capacity(remaining_free_space as usize);
+        write_free_box(&mut new_free_box, remaining_free_space as usize)?;
+        stream.write_all(&new_free_box)?;
+    } else {
+        Err(Error::BadParam(
+            "Not enough space to create new free box".to_string(),
+        ))?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BmffError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use tempfile::tempdir;
-
     use super::*;
-    use crate::utils::test::{fixture_path, temp_dir_path};
+    use crate::utils::{
+        io_utils::tempdirectory,
+        test::{fixture_path, temp_dir_path},
+    };
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_read_deep_nesting() {
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
+        let ap = fixture_path("nested_moov_1000.mp4");
+        let mut input_stream = std::fs::File::open(&ap).unwrap();
+
+        let bmff = BmffIO::new("mp4");
+        let cai = bmff.read_cai(&mut input_stream);
+
+        assert!(cai.is_err());
+    }
+
     #[test]
     fn test_read_mp4() {
-        use crate::{
-            status_tracker::{report_split_errors, DetailedStatusTracker, StatusTracker},
-            store::Store,
-        };
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let ap = fixture_path("video1.mp4");
+        let mut input_stream = std::fs::File::open(&ap).unwrap();
 
-        let mut log = DetailedStatusTracker::default();
-        let store = Store::load_from_asset(&ap, true, &mut log);
+        let bmff = BmffIO::new("mp4");
+        let cai = bmff.read_cai(&mut input_stream).unwrap();
 
-        let errors = report_split_errors(log.get_log_mut());
-        assert!(errors.is_empty());
+        assert!(!cai.is_empty());
+    }
 
-        if let Ok(s) = store {
-            print!("Store: \n{s}");
-        }
+    #[test]
+    fn test_xmp_write() {
+        let data = "some test data";
+        let source = fixture_path("video1.mp4");
+
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "video1-out.mp4");
+
+        std::fs::copy(source, &output).unwrap();
+
+        let bmff = BmffIO::new("mp4");
+
+        let eh = bmff.remote_ref_writer_ref().unwrap();
+
+        eh.embed_reference(&output, RemoteRefEmbedType::Xmp(data.to_string()))
+            .unwrap();
+
+        let mut output_stream = std::fs::File::open(&output).unwrap();
+        let xmp = bmff.get_reader().read_xmp(&mut output_stream).unwrap();
+
+        let loaded = crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap();
+
+        assert_eq!(&loaded, data);
     }
 
     #[test]
@@ -1585,7 +2843,7 @@ pub mod tests {
         let source = fixture_path("video1.mp4");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -1609,7 +2867,7 @@ pub mod tests {
         let source = fixture_path("video1.mp4");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
             if let Ok(_size) = std::fs::copy(&source, &output) {
@@ -1635,7 +2893,7 @@ pub mod tests {
         let source = fixture_path("video1.mp4");
 
         let mut success = false;
-        if let Ok(temp_dir) = tempdir() {
+        if let Ok(temp_dir) = tempdirectory() {
             let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
             if let Ok(_size) = std::fs::copy(source, &output) {
@@ -1662,7 +2920,7 @@ pub mod tests {
     fn test_remove_c2pa() {
         let source = fixture_path("video1.mp4");
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "mp4_test.mp4");
 
         std::fs::copy(source, &output).unwrap();

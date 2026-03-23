@@ -11,34 +11,36 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![deny(warnings)]
 #![deny(clippy::expect_used)]
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
-#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg, doc_cfg_hide))]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
-//! This library supports reading, creating and embedding C2PA data
-//! with JPEG and PNG images.
+//! This library supports reading, creating, and embedding C2PA data
+//! for a variety of asset types.
 //!
-//! To read or write a manifest file, you must add the `file_io` dependency to your Cargo.toml.
-//! EXCEPTION: If you are building for WASM, do not add this dependency.
-//! For example:
+//! Some functionality requires you to enable specific crate features,
+//! as noted in the documentation.
 //!
-//! ```text
-//! c2pa = {version="0.11.0", features=["file_io"]}
-//! ```
+//! The library has a Builder/Reader API that focuses on simplicity
+//! and stream support.
 //!
-//! # Example: Reading a ManifestStore
+//! For more information, see [CAI open source SDK - Rust library](https://opensource.contentauthenticity.org/docs/rust-sdk/)
+//!
+//! # Examples
+//!
+//! ## Reading a manifest
 //!
 //! ```
 //! # use c2pa::Result;
-//! use c2pa::{assertions::Actions, ManifestStore};
+//! use c2pa::{assertions::Actions, Reader};
 //!
 //! # fn main() -> Result<()> {
-//! let manifest_store = ManifestStore::from_file("tests/fixtures/C.jpg")?;
-//! println!("{}", manifest_store);
+//! let stream = std::fs::File::open("tests/fixtures/C.jpg")?;
+//! let reader = Reader::from_stream("image/jpeg", stream)?;
+//! println!("{}", reader.json());
 //!
-//! if let Some(manifest) = manifest_store.get_active() {
+//! if let Some(manifest) = reader.active_manifest() {
 //!     let actions: Actions = manifest.find_assertion(Actions::LABEL)?;
 //!     for action in actions.actions {
 //!         println!("{}\n", action.action());
@@ -48,103 +50,256 @@
 //! # }
 //! ```
 //!
-//! # Example: Adding a Manifest to a file
+//! ## Reading a manifest using Context, Settings, and trust list
 //!
-//! ```
-//! # use c2pa::Result;
-//! use std::path::PathBuf;
+//! Download the official [C2PA trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists) PEM and
+//! point `trust.trust_anchors` to its contents.
 //!
-//! use c2pa::{assertions::User, create_signer, Manifest, SigningAlg};
-//! use tempfile::tempdir;
+//! ```no_run
+//! use c2pa::{settings::Settings, Context, Reader, Result};
 //!
 //! # fn main() -> Result<()> {
-//! let mut manifest = Manifest::new("my_app".to_owned());
-//! manifest.add_assertion(&User::new(
-//!     "org.contentauth.mylabel",
-//!     r#"{"my_tag":"Anything I want"}"#,
-//! ))?;
+//! #[cfg(feature = "file_io")]
+//! {
+//!     // Load the official C2PA trust list (PEM bundle) from a local file you downloaded.
+//!     let trust_pem = std::fs::read_to_string("path/to/C2PA-TRUST-LIST.pem")?;
 //!
-//! let source = PathBuf::from("tests/fixtures/C.jpg");
-//! let dir = tempdir()?;
-//! let dest = dir.path().join("test_file.jpg");
+//!     // Build Settings enabling certificate trust verification against the C2PA trust anchors.
+//!     let settings = Settings::new().with_value("trust.trust_anchors", trust_pem)?;
 //!
-//! // Create a ps256 signer using certs and key files
-//! let signcert_path = "tests/fixtures/certs/ps256.pub";
-//! let pkey_path = "tests/fixtures/certs/ps256.pem";
-//! let signer = create_signer::from_files(signcert_path, pkey_path, SigningAlg::Ps256, None)?;
+//!     // Create a Context with these settings and read an asset.
+//!     let context = Context::new().with_settings(settings)?;
+//!     let reader = Reader::from_context(context).with_file("path/to/asset.jpg")?;
 //!
-//! // embed a manifest using the signer
-//! manifest.embed(&source, &dest, &*signer)?;
+//!     println!("{}", reader.json());
+//! }
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! ## Adding a signed manifest to a file
+//!
+//! ```
+//! # use c2pa::Result;
+//! use std::io::Cursor;
+//!
+//! use c2pa::{Builder, BuilderIntent, Context};
+//! use serde::Serialize;
+//! use serde_json::json;
+//!
+//! #[derive(Serialize)]
+//! struct Test {
+//!     my_tag: usize,
+//! }
+//!
+//! # fn main() -> Result<()> {
+//! // Create context with signer configuration.
+//! let context =
+//!     Context::new().with_settings(include_str!("../tests/fixtures/test_settings.toml"))?;
+//!
+//! // Build manifest.
+//! let mut builder = Builder::from_context(context)
+//!     .with_definition(json!({"title": "Test"}))?;
+//! // Use Edit intent so the parent ingredient is captured from the source stream.
+//! builder.set_intent(BuilderIntent::Edit);
+//! builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+//!
+//! // Save with automatic signer from context (created from settings).
+//! let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
+//! let mut dest = Cursor::new(Vec::new());
+//! let _c2pa_data = builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## Adding an ingredient and signing
+//!
+//! ```
+//! # use c2pa::Result;
+//! use std::io::Cursor;
+//!
+//! use c2pa::{Builder, BuilderIntent, Context, DigitalSourceType};
+//! use serde_json::json;
+//!
+//! # fn main() -> Result<()> {
+//! // Create context with signer configuration.
+//! let context =
+//!     Context::new().with_settings(include_str!("../tests/fixtures/test_settings.toml"))?;
+//!
+//! // Build manifest.
+//! let mut builder = Builder::from_context(context)
+//!     .with_definition(json!({"title": "Created Asset"}))?;
+//! // Use Create intent with a source type and add a component ingredient.
+//! builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+//!
+//! // Add an ingredient using Builder helper (no direct Ingredient struct).
+//! let ingredient_json = json!({
+//!     "title": "My ingredient",
+//!     "relationship": "componentOf"
+//! }).to_string();
+//! let mut ingredient = std::fs::File::open("tests/fixtures/sample1.png")?;
+//! builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut ingredient)?;
+//!
+//! // Sign and embed using the context's signer.
+//! let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
+//! let mut dest = Cursor::new(Vec::new());
+//! let _c2pa_data = builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Features
+//!
+//! The crate provides the following features:
+//!
+//! These features are enabled by default:
+//! - **default_http**: Enables default HTTP features for sync and async HTTP resolvers (`http_req`, `http_reqwest`, `http_wasi`, and `http_std`).
+//! - **openssl**: Use the vendored `openssl` implementation for cryptography.
+//!
+//! One of `openssl` or `rust_native_crypto` must be enabled.
+//! If both are enabled, `rust_native_crypto` is used.
+//!
+//! Other features:
+//! - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
+//! - **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
+//! - **file_io**: Enables APIs that use filesystem I/O.
+//! - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
+//! - **pdf**: Enables basic PDF read support.
+//! - **rust_native_crypto**: Use Rust native cryptography.
+//!
+//! ## HTTP features
+//! WARNING: These features are for advanced users.  Most people can ignore them.
+//! These features toggle compilation with different HTTP libraries, depending on the one you use.
+//! Some are async-only and others are sync-only.
+//! Disabling all of them will disable HTTP, speed up compilation, and decrease build size.
+//!
+//! - **http_ureq**: Enables `ureq` for sync HTTP requests.
+//! - **http_reqwest**: Enables `reqwest` for async HTTP requests.
+//! - **http_reqwest_blocking**: Enables the `blocking` feature of `reqwest` for sync HTTP requests.
+//! - **http_wasi**: Enables `wasi` for sync HTTP requests on WASI.
+//! - **http_wstd**: Enables `wstd` for async HTTP requests on WASI.
+//!
+//! ## WASM and WASI
+//!
+//! For WASM the only supported HTTP feature is `http_reqwest`. This means WASM
+//! only supports the async API for network requests.
+//!
+//! For WASI the only supported HTTP features are `http_wasi`, which enables sync network requests,
+//! and `http_wstd` which enables async network requests.
 
-pub use assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson};
+/// The internal name of the C2PA SDK.
+pub const NAME: &str = "c2pa-rs";
+
+/// The version of this C2PA SDK.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// Public modules
+/// The `assertions` module contains the definitions for the assertions that are part of the C2PA specification.
 pub mod assertions;
 
-mod cose_validator;
+/// The `cose_sign` module contains the definitions for the COSE signing algorithms.
+pub mod cose_sign;
 
-#[cfg(feature = "openssl_sign")]
+/// The `create_signer` module contains the definitions for the signers that are part of the C2PA specification.
 pub mod create_signer;
 
-mod error;
-pub use error::{Error, Result};
+/// Cryptography primitives.
+#[doc(hidden)]
+pub mod crypto;
 
-mod ingredient;
-pub use ingredient::Ingredient;
+/// Dynamic assertions are a new feature that allows you to add assertions to a C2PA file as a part of the signing process.
+#[doc(hidden)]
+pub mod dynamic_assertion;
+
+/// The `http` module contains generic traits for configuring sync and async HTTP resolvers.
+pub mod http;
+
+/// The `identity` module provides support for the [CAWG identity assertion](https://cawg.io/identity).
+#[doc(hidden)]
+pub mod identity;
+
+/// The `jumbf_io` module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
-mod manifest;
-pub use manifest::Manifest;
-mod manifest_assertion;
-pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 
-mod manifest_store;
-pub use manifest_store::ManifestStore;
+/// The settings module provides a way to configure the C2PA SDK.
+pub mod settings;
 
-mod manifest_store_report;
-pub use manifest_store_report::ManifestStoreReport;
+/// Supports status tracking as defined in the C2PA Technical Specification.
+#[doc(hidden)]
+pub mod status_tracker;
 
-mod resource_store;
-pub use resource_store::{ResourceRef, ResourceStore};
+/// The `validation_results` module contains the definitions for the
+/// validation results that are part of the C2PA specification.
+pub mod validation_results;
 
-mod signing_alg;
+/// The `validation_status` module contains the definitions for the
+/// validation status that are part of the C2PA specification.
+#[doc(hidden)]
+pub mod validation_status;
+
+// Public exports
+#[doc(inline)]
+pub use assertions::DigitalSourceType;
+#[doc(inline)]
+pub use assertions::Relationship;
+pub use builder::{Builder, BuilderIntent, ManifestDefinition};
+pub use callback_signer::{CallbackFunc, CallbackSigner};
+pub use claim_generator_info::ClaimGeneratorInfo;
+#[doc(inline)]
+pub use context::Context;
+pub use crypto::raw_signature::SigningAlg;
+pub use error::{Error, Result};
+#[doc(hidden)]
+pub use external_manifest::ManifestPatchCallback;
+pub use hash_utils::{hash_stream_by_alg, HashRange};
+pub use hashed_uri::HashedUri;
+pub use ingredient::Ingredient;
 #[cfg(feature = "file_io")]
+#[doc(hidden)]
 pub use ingredient::{DefaultOptions, IngredientOptions};
-pub use signing_alg::{SigningAlg, UnknownAlgorithmError};
-#[cfg(feature = "openssl_sign")]
-pub(crate) mod ocsp_utils;
-#[cfg(feature = "openssl_sign")]
-mod openssl;
+pub use manifest::{Manifest, SignatureInfo};
+pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
+pub use reader::Reader;
+#[doc(inline)]
+pub use resource_store::{ResourceRef, ResourceStore};
+#[doc(inline)]
+pub use settings::Settings;
+pub use signer::{AsyncSigner, BoxedAsyncSigner, BoxedSigner, Signer};
+pub use utils::{ephemeral_signer::EphemeralSigner, mime::format_from_path};
+#[doc(inline)]
+pub use validation_results::{ValidationResults, ValidationState};
 
-mod signer;
-pub use signer::{AsyncSigner, RemoteSigner, Signer};
-#[allow(dead_code, clippy::enum_variant_names)]
-pub(crate) mod asn1;
+// Internal modules
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
-/// crate private declarations
+pub(crate) mod builder;
+pub(crate) mod callback_signer;
 pub(crate) mod claim;
-
-pub mod cose_sign;
-
-#[cfg(all(feature = "xmp_write", feature = "file_io"))]
-pub(crate) mod embedded_xmp;
+pub(crate) mod claim_generator_info;
+pub(crate) mod context;
+pub(crate) mod cose_validator;
+pub(crate) mod error;
+pub(crate) mod external_manifest;
 pub(crate) mod hashed_uri;
+pub(crate) mod ingredient;
+
 #[allow(dead_code)]
 pub(crate) mod jumbf;
-pub(crate) mod salt;
-pub(crate) mod status_tracker;
-pub(crate) mod store;
-pub(crate) mod time_stamp;
-pub(crate) mod utils;
-pub mod validation_status;
-pub(crate) use utils::{cbor_types, hash_utils};
-pub(crate) mod validator;
-#[cfg(target_arch = "wasm32")]
-pub mod wasm;
 
-/// The internal name of the C2PA SDK
-pub const NAME: &str = "c2pa-rs";
-/// The version of this C2PA SDK
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) mod manifest;
+pub(crate) mod manifest_assertion;
+pub(crate) mod manifest_store_report;
+/// The `maybe_send_sync` module contains traits for conditional Send bounds based on target architecture.
+pub(crate) mod maybe_send_sync;
+pub(crate) mod reader;
+pub(crate) mod resource_store;
+pub(crate) mod salt;
+pub(crate) mod signer;
+pub(crate) mod store;
+
+pub(crate) mod utils;
+pub(crate) use utils::{cbor_types, hash_utils};
+
+#[cfg(not(any(feature = "openssl", feature = "rust_native_crypto")))]
+compile_error!("Either 'openssl' or 'rust_native_crypto' feature must be enabled.");
