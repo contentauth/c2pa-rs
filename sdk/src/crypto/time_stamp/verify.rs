@@ -255,7 +255,7 @@ pub fn verify_time_stamp(
                                 .informational(&mut current_validation_log);
 
                                 last_err = TimeStampError::DecodeError(
-                                    "unable to decode igned message data".to_string(),
+                                    "unable to decode signed message data".to_string(),
                                 );
                                 continue;
                             }
@@ -597,6 +597,65 @@ pub fn verify_time_stamp(
 
     validation_log.append(&current_validation_log);
     Err(last_err)
+}
+
+/// Extract the TSA signer certificate (DER) from an RFC 3161 timestamp token.
+/// Does not verify the token; only parses it and returns the first signer's certificate.
+pub fn tsa_signer_cert_der_from_token(ts: &[u8]) -> Result<Option<Vec<u8>>, TimeStampError> {
+    let Some(sd) = signed_data_from_time_stamp_response(ts)? else {
+        return Ok(None);
+    };
+    let Some(certs) = &sd.certificates else {
+        return Ok(None);
+    };
+    let certs_vec = certs.to_vec();
+    let cert_ders: Vec<Vec<u8>> = certs_vec
+        .iter()
+        .filter_map(|cc| {
+            if let CertificateChoices::Certificate(c) = cc {
+                rasn::der::encode(c).ok()
+            } else {
+                None
+            }
+        })
+        .collect();
+    if cert_ders.len() != certs_vec.len() {
+        return Err(TimeStampError::DecodeError(
+            "time stamp certificate could not be processed".to_string(),
+        ));
+    }
+    let Some(signer_info) = sd.signer_infos.to_vec().into_iter().next() else {
+        return Ok(None);
+    };
+    let Some(cert_pos) = certs_vec.iter().position(|cc| {
+        let c = match cc {
+            CertificateChoices::Certificate(c) => c,
+            _ => return false,
+        };
+        match &signer_info.sid {
+            SignerIdentifier::IssuerAndSerialNumber(sn) => {
+                sn.issuer == c.tbs_certificate.issuer
+                    && sn.serial_number == c.tbs_certificate.serial_number
+            }
+            SignerIdentifier::SubjectKeyIdentifier(ski) => {
+                if let Some(extensions) = &c.tbs_certificate.extensions {
+                    extensions.iter().any(|e| {
+                        if e.extn_id
+                            == Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER
+                        {
+                            return *ski == e.extn_value;
+                        }
+                        false
+                    })
+                } else {
+                    false
+                }
+            }
+        }
+    }) else {
+        return Ok(None);
+    };
+    Ok(Some(cert_ders[cert_pos].clone()))
 }
 
 fn generalized_time_to_datetime<T: Into<DateTime<Utc>>>(gt: T) -> DateTime<Utc> {
