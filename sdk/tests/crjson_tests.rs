@@ -11,21 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Functions for working with [RFC 3161] time stamp service providers.
-//!
-//! [RFC 3161]: https://www.ietf.org/rfc/rfc3161.txt
+//! CrJSON integration tests.
+//! Tests are organized in the crjson/ subfolder.
 
-mod error;
-pub use error::TimeStampError;
-
-mod http_request;
-pub use http_request::{default_rfc3161_request, default_rfc3161_request_async};
-
-mod provider;
-pub use provider::{default_rfc3161_message, AsyncTimeStampProvider, TimeStampProvider};
-
-mod response;
-pub(crate) use response::{ContentInfo, TimeStampResponse};
-
-mod verify;
-pub use verify::{tsa_signer_cert_der_from_token, verify_time_stamp, verify_time_stamp_async};
+mod crjson;
