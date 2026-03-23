@@ -384,18 +384,9 @@ impl CAIWriter for PngIO {
 
         add_required_chunks_to_stream(input_stream, &mut output_stream)?;
 
-        let mut png_buf: Vec<u8> = Vec::new();
         output_stream.rewind()?;
-        output_stream
-            .read_to_end(&mut png_buf)
-            .map_err(Error::IoError)?;
-        output_stream.rewind()?;
-
-        let mut cursor = Cursor::new(png_buf);
-        let ps = get_png_chunk_positions(&mut cursor)?;
-
-        // get back buffer
-        png_buf = cursor.into_inner();
+        let ps = get_png_chunk_positions(&mut output_stream)?;
+        let file_end = output_stream.seek(SeekFrom::End(0))? as usize;
 
         let pcp = ps
             .into_iter()
@@ -417,7 +408,6 @@ impl CAIWriter for PngIO {
 
         // add position from cai to end
         let end = pcp.end() as usize;
-        let file_end = png_buf.len();
         positions.push(HashObjectPositions {
             offset: end, // len of cai
             length: file_end - end,
