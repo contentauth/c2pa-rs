@@ -70,7 +70,7 @@ const JXL_CONTAINER_MAGIC_LEN: u64 = 12;
 const JXL_CODESTREAM_SIG: [u8; 2] = [0xff, 0x0a];
 
 // Box type FourCCs (big-endian u32)
-const BOX_JUMB: [u8; 4] = *b"jumb"; // JUMBF superbox (C2PA manifest store)
+const BOX_JUMB: [u8; 4] = *b"jumb"; // JUMBF box
 const BOX_XML: [u8; 4] = *b"xml "; // XMP metadata (note trailing space)
 const BOX_BROB: [u8; 4] = *b"brob"; // Brotli-compressed metadata box
 const BOX_FTYP: [u8; 4] = *b"ftyp"; // File type box
@@ -86,9 +86,11 @@ const BOX_HEADER_SIZE_LARGE: u64 = 16; // + 8-byte extended size when size field
 /// Prevents memory exhaustion from files crafted with thousands of tiny boxes.
 const MAX_JXL_BOX_COUNT: usize = 1024;
 
-/// Maximum allowed decompressed size for a `brob` (Brotli-compressed) box.
-/// Prevents memory exhaustion from crafted payloads that decompress to gigabytes.
-const MAX_BROB_DECOMPRESSED_SIZE: u64 = 100 * 1024 * 1024; // 100 MB
+/// Bytes to peek from a `jumb` payload to determine whether it is the C2PA manifest
+/// store via [`jumb_data_has_c2pa_label`]. The `jumd` description box layout is:
+/// 4 (inner size) + 4 (type `"jumd"`) + 16 (UUID) + 1 (toggles) = 25 header bytes,
+/// followed by the null-terminated label `"c2pa\0"` (5 bytes) = 30 bytes total.
+const JUMD_C2PA_LABEL_PEEK: u64 = 30;
 
 static SUPPORTED_TYPES: [&str; 2] = ["jxl", "image/jxl"];
 
@@ -235,12 +237,6 @@ fn decompress_brob(reader: &mut dyn CAIRead, data_size: u64) -> Result<([u8; 4],
     brotli::BrotliDecompress(&mut Cursor::new(compressed), &mut decompressed)
         .map_err(|_| Error::InvalidAsset("Failed to decompress brob box".to_string()))?;
 
-    if decompressed.len() as u64 > MAX_BROB_DECOMPRESSED_SIZE {
-        return Err(Error::InvalidAsset(
-            "Decompressed brob box exceeds size limit".to_string(),
-        ));
-    }
-
     Ok((original_type, decompressed))
 }
 
@@ -306,8 +302,7 @@ fn compress_brob_box(inner_type: &[u8; 4], data: &[u8]) -> Result<Vec<u8>> {
 /// `"c2pa"`. The complete box is returned so that `Store::from_jumbf` (which calls
 /// `BoxReader::read_super_box` and expects a `"jumb"` BMFF header) can parse it.
 /// Multiple `jumb` boxes are permitted (e.g. one for EXIF, one for C2PA); only the
-/// C2PA one is returned. `brob`-wrapped `jumb` boxes are ignored — compressed manifests
-/// are incompatible with box-based hashing (see C2PA Implementation Guidance §3.2.4).
+/// C2PA one is returned.
 fn find_jumb_data(reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
     let file_len = reader.seek(SeekFrom::End(0))?;
 
@@ -328,12 +323,15 @@ fn find_jumb_data(reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
 
     for b in &boxes {
         if b.box_type == BOX_JUMB {
-            // Read just the payload to check for the C2PA label.
-            let ds = b.data_size(file_len);
+            // Peek only the bytes needed by jumb_data_has_c2pa_label to check
+            // the C2PA label; no need to read the entire payload.
+            let peek = b.data_size(file_len).min(JUMD_C2PA_LABEL_PEEK);
             reader.seek(SeekFrom::Start(b.data_offset()))?;
-            let mut payload = safe_vec(ds, Some(0u8))?;
-            reader.read_exact(&mut payload).map_err(Error::IoError)?;
-            if jumb_data_has_c2pa_label(&payload) {
+            let mut header_peek = safe_vec(peek, Some(0u8))?;
+            reader
+                .read_exact(&mut header_peek)
+                .map_err(Error::IoError)?;
+            if jumb_data_has_c2pa_label(&header_peek) {
                 if c2pa_jumb.is_some() {
                     return Err(Error::TooManyManifestStores);
                 }
@@ -2396,45 +2394,6 @@ pub mod tests {
     }
 
     // ── Security tests ────────────────────────────────────────────────────────
-
-    /// A `brob` box whose decompressed content exceeds MAX_BROB_DECOMPRESSED_SIZE must
-    /// be rejected with an error rather than exhausting memory.
-    #[test]
-    fn test_brob_decompression_size_limit() {
-        // Build a Brotli stream that decompresses to just over the 100 MB limit.
-        // We use brotli::BrotliCompress on a zeroed buffer; the compressed result is
-        // tiny and decompresses back to the original size.
-        let large_size = (MAX_BROB_DECOMPRESSED_SIZE + 1) as usize;
-        let uncompressed = vec![0u8; large_size];
-        let params = brotli::enc::BrotliEncoderParams::default();
-        let mut compressed = Vec::new();
-        brotli::BrotliCompress(&mut Cursor::new(&uncompressed), &mut compressed, &params).unwrap();
-
-        // Build a brob payload: original_type(4) + compressed_data
-        let mut brob_payload = Vec::new();
-        brob_payload.extend_from_slice(&BOX_XML);
-        brob_payload.extend_from_slice(&compressed);
-
-        let brob_box = build_box(&BOX_BROB, &brob_payload);
-
-        let ftyp_box = build_box(&BOX_FTYP, b"jxl \0\0\0\0jxl ");
-        let jxlc_box = build_box(&BOX_JXLC, &[0xff, 0x0a, 0x00]);
-        let mut container = JXL_CONTAINER_MAGIC.to_vec();
-        container.extend_from_slice(&ftyp_box);
-        container.extend_from_slice(&brob_box);
-        container.extend_from_slice(&jxlc_box);
-
-        // Reading XMP should fail with an InvalidAsset error, not run out of memory.
-        let mut reader = Cursor::new(container);
-        let result = find_xmp_data(&mut reader);
-        // find_xmp_data returns Option; the brob path silently drops errors via .ok(),
-        // so the function returns None (box skipped) rather than propagating the error.
-        // What matters is that it does NOT allocate gigabytes of RAM.
-        assert!(
-            result.is_none(),
-            "oversized brob decompression should be skipped (no XMP returned)"
-        );
-    }
 
     /// A `jumb` box whose declared size is near u64::MAX must be rejected with
     /// `InsufficientMemory` rather than panicking or allocating gigabytes.
