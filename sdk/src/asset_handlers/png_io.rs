@@ -959,7 +959,7 @@ pub mod tests {
         let png_io = PngIO {};
         assert!(matches!(
             png_io.get_object_locations_from_stream(&mut stream),
-            Err(Error::UnsupportedType)
+            Err(Error::PngError(PngError::InvalidFileSignature { .. }))
         ));
     }
 
