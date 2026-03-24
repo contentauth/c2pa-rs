@@ -279,6 +279,7 @@ pub(crate) mod claim;
 pub(crate) mod claim_generator_info;
 pub(crate) mod context;
 pub(crate) mod cose_validator;
+pub(crate) mod crjson;
 pub(crate) mod error;
 pub(crate) mod external_manifest;
 pub(crate) mod hashed_uri;

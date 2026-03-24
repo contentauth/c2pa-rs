@@ -27,8 +27,8 @@ use lazy_static::lazy_static;
 use crate::asset_handlers::pdf_io::PdfIO;
 use crate::{
     asset_handlers::{
-        bmff_io::BmffIO, c2pa_io::C2paIO, gif_io::GifIO, jpeg_io::JpegIO, mp3_io::Mp3IO,
-        png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO, tiff_io::TiffIO,
+        bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
+        mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO, tiff_io::TiffIO,
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
@@ -50,6 +50,7 @@ lazy_static! {
             Box::new(TiffIO::new("")),
             Box::new(Mp3IO::new("")),
             Box::new(GifIO::new("")),
+            Box::new(FlacIO::new("")),
         ];
 
         let mut handler_map = HashMap::new();
@@ -78,6 +79,7 @@ lazy_static! {
             Box::new(SvgIO::new("")),
             Box::new(TiffIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(FlacIO::new("")),
             Box::new(GifIO::new("")),
         ];
         let mut handler_map = HashMap::new();
@@ -394,6 +396,7 @@ pub mod tests {
             Box::new(TiffIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(FlacIO::new("")),
         ];
 
         // build handler map
@@ -418,6 +421,7 @@ pub mod tests {
             Box::new(TiffIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(FlacIO::new("")),
         ];
 
         // build handler map
@@ -435,6 +439,7 @@ pub mod tests {
             Box::new(JpegIO::new("")),
             Box::new(PngIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(FlacIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(GifIO::new("")),

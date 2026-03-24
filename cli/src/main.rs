@@ -78,8 +78,12 @@ struct CliArgs {
     config: Option<String>,
 
     /// Display detailed C2PA-formatted manifest data.
-    #[clap(short, long)]
+    #[clap(short, long, conflicts_with = "crjson")]
     detailed: bool,
+
+    /// Output manifest data in crJSON format.
+    #[clap(long, conflicts_with = "detailed")]
+    crjson: bool,
 
     /// Force overwrite of output if it already exists.
     #[clap(short, long)]
@@ -622,8 +626,10 @@ fn reader_from_args(args: &CliArgs, ctx: &Arc<C2paContext>) -> Result<Reader> {
 
 // Utility to catch reader formatting errors and print the reader json or detailed json
 // formatting can fail if Reader CBOR is deeply nested or malformed
-fn print_reader(reader: &Reader, detailed: bool) -> Result<()> {
-    let result = if detailed {
+fn print_reader(reader: &Reader, detailed: bool, crjson: bool) -> Result<()> {
+    let result = if crjson {
+        reader.crjson_checked()
+    } else if detailed {
         reader.detailed_json_checked()
     } else {
         reader.json_checked()
@@ -889,7 +895,7 @@ fn main() -> Result<()> {
                     .with_file(&output)
                     .map_err(special_errs)?;
                 validate_cawg(&mut reader)?;
-                print_reader(&reader, args.detailed)?;
+                print_reader(&reader, args.detailed, args.crjson)?;
             }
         } else {
             bail!("Output path required with manifest definition")
@@ -952,7 +958,7 @@ fn main() -> Result<()> {
     } else {
         let mut reader = reader_from_args(&args, &ctx)?;
         validate_cawg(&mut reader)?;
-        print_reader(&reader, args.detailed)?;
+        print_reader(&reader, args.detailed, args.crjson)?;
     }
 
     Ok(())

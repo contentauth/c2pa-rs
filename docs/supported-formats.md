@@ -9,6 +9,7 @@ The following table summarizes the supported media (asset) file formats.  This i
  | `avif`        | `image/avif`                                                                  |
  | `c2pa`        | `application/x-c2pa-manifest-store`                                           |
  | `dng`         | `image/x-adobe-dng`                                                           |
+ | `flac`        | `audio/flac`                                                                  |
  | `gif`         | `image/gif`                                                                   |
  | `heic`        | `image/heic`                                                                  |
  | `heif`        | `image/heif`                                                                  |
