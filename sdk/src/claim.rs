@@ -2693,18 +2693,33 @@ impl Claim {
                         }
 
                         // only verify local hashes here
-                        context.check_progress(ProgressPhase::VerifyingAssetHash, 1, 1)?;
+                        let mut cb = |step, total| {
+                            context.check_progress(ProgressPhase::VerifyingAssetHash, step, total)
+                        };
                         let hash_result = match asset_data {
                             #[cfg(feature = "file_io")]
                             ClaimAssetData::Path(asset_path) => {
-                                dh.verify_hash(asset_path, Some(claim.alg()))
+                                let mut file = std::fs::File::open(asset_path)?;
+                                dh.verify_stream_hash_with_progress(
+                                    &mut file,
+                                    Some(claim.alg()),
+                                    Some(&mut cb),
+                                )
                             }
                             ClaimAssetData::Bytes(asset_bytes, _) => {
-                                dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
+                                let mut cursor = std::io::Cursor::new(*asset_bytes);
+                                dh.verify_stream_hash_with_progress(
+                                    &mut cursor,
+                                    Some(claim.alg()),
+                                    Some(&mut cb),
+                                )
                             }
-                            ClaimAssetData::Stream(stream_data, _) => {
-                                dh.verify_stream_hash(*stream_data, Some(claim.alg()))
-                            }
+                            ClaimAssetData::Stream(stream_data, _) => dh
+                                .verify_stream_hash_with_progress(
+                                    *stream_data,
+                                    Some(claim.alg()),
+                                    Some(&mut cb),
+                                ),
                             _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
                         };
 
@@ -2827,6 +2842,9 @@ impl Claim {
                     // handle BMFF data hashes
                     let bh = BoxHash::from_assertion(hash_binding_assertion.assertion())?;
 
+                    let mut cb = |step, total| {
+                        context.check_progress(ProgressPhase::VerifyingAssetHash, step, total)
+                    };
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
@@ -2838,7 +2856,13 @@ impl Claim {
                                         "Box hash not supported".to_string(),
                                     ))?;
 
-                            bh.verify_hash(asset_path, Some(claim.alg()), box_hash_processor)
+                            let mut file = std::fs::File::open(asset_path)?;
+                            bh.verify_stream_hash_with_progress(
+                                &mut file,
+                                Some(claim.alg()),
+                                box_hash_processor,
+                                Some(&mut cb),
+                            )
                         }
                         ClaimAssetData::Bytes(asset_bytes, asset_type) => {
                             let box_hash_processor = get_assetio_handler(asset_type)
@@ -2848,10 +2872,12 @@ impl Claim {
                                     "Box hash not supported for: {asset_type}"
                                 )))?;
 
-                            bh.verify_in_memory_hash(
-                                asset_bytes,
+                            let mut cursor = std::io::Cursor::new(*asset_bytes);
+                            bh.verify_stream_hash_with_progress(
+                                &mut cursor,
                                 Some(claim.alg()),
                                 box_hash_processor,
+                                Some(&mut cb),
                             )
                         }
                         ClaimAssetData::Stream(stream_data, asset_type) => {
@@ -2862,10 +2888,11 @@ impl Claim {
                                     "Box hash not supported for: {asset_type}"
                                 )))?;
 
-                            bh.verify_stream_hash(
+                            bh.verify_stream_hash_with_progress(
                                 *stream_data,
                                 Some(claim.alg()),
                                 box_hash_processor,
+                                Some(&mut cb),
                             )
                         }
                         _ => return Err(Error::UnsupportedType),

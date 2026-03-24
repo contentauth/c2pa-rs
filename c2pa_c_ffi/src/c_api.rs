@@ -520,11 +520,13 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
 ///   `c2pa_context_builder_set_progress_callback`.
 /// * `phase`   – numeric value of the [`ProgressPhase`] (see SDK header for constants).
 ///   Callers should derive any user-visible text from this value in the appropriate language.
-/// * `step`    – 1-based index of the current step within this phase.  Always `1` for
-///   single-shot phases.
-/// * `total`   – total number of steps in this phase.  `0` means the total is not known
-///   in advance (indeterminate); show a spinner rather than a progress bar.  Always `1`
-///   for single-shot phases.
+/// * `step`    – monotonically increasing counter within the current phase, starting at
+///   `1`.  Resets to `1` at the start of each new phase.  Use as a liveness heartbeat:
+///   a rising `step` means the SDK is making forward progress.  The unit is
+///   phase-specific and should otherwise be treated as opaque.
+/// * `total`   – `0` = indeterminate (show a spinner, use `step` as liveness signal);
+///   `1` = single-shot phase (the callback itself is the notification);
+///   `> 1` = determinate (`step / total` gives a completion fraction for a progress bar).
 ///
 /// # Return value
 /// Return non-zero to continue the operation, zero to cancel.
@@ -4610,5 +4612,114 @@ verify_after_sign = true
         assert_eq!(result, -1, "Null signer should be rejected");
 
         unsafe { c2pa_free(builder as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_context_builder_set_progress_callback() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let call_count = Arc::new(AtomicU32::new(0));
+        let raw_ptr = Arc::as_ptr(&call_count) as *const c_void;
+
+        unsafe extern "C" fn progress_cb(
+            context: *const c_void,
+            _phase: u8,
+            _step: u32,
+            _total: u32,
+        ) -> c_int {
+            let counter = &*(context as *const AtomicU32);
+            counter.fetch_add(1, Ordering::SeqCst);
+            1
+        }
+
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let result =
+            unsafe { c2pa_context_builder_set_progress_callback(builder, raw_ptr, progress_cb) };
+        assert_eq!(result, 0, "set_progress_callback should succeed");
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+
+        unsafe { c2pa_free(context as *mut c_void) };
+        // Arc still alive here so the AtomicU32 is valid throughout.
+    }
+
+    #[test]
+    fn test_c2pa_context_builder_set_progress_callback_null_user_data() {
+        unsafe extern "C" fn progress_cb(
+            _context: *const c_void,
+            _phase: u8,
+            _step: u32,
+            _total: u32,
+        ) -> c_int {
+            1
+        }
+
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let result = unsafe {
+            c2pa_context_builder_set_progress_callback(builder, std::ptr::null(), progress_cb)
+        };
+        assert_eq!(result, 0, "NULL user_data should be accepted");
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+
+        unsafe { c2pa_free(context as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_context_builder_set_progress_callback_null_builder() {
+        unsafe extern "C" fn progress_cb(
+            _context: *const c_void,
+            _phase: u8,
+            _step: u32,
+            _total: u32,
+        ) -> c_int {
+            1
+        }
+
+        let result = unsafe {
+            c2pa_context_builder_set_progress_callback(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                progress_cb,
+            )
+        };
+        assert_eq!(result, -1, "NULL builder should return error");
+    }
+
+    #[test]
+    fn test_c2pa_context_cancel() {
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        let result = unsafe { c2pa_context_cancel(context) };
+        assert_eq!(result, 0, "cancel should succeed on a valid context");
+
+        unsafe { c2pa_free(context as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_context_cancel_null() {
+        let result = unsafe { c2pa_context_cancel(std::ptr::null_mut()) };
+        assert_eq!(result, -1, "NULL context should return error");
+    }
+
+    #[test]
+    fn test_c2pa_context_cancel_via_builder() {
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+
+        let result = unsafe { c2pa_context_cancel(context) };
+        assert_eq!(result, 0, "cancel should work on a built context");
+
+        unsafe { c2pa_free(context as *mut c_void) };
     }
 }
