@@ -507,6 +507,13 @@ jobs:
           run: cargo codspeed run
           token: ${{ secrets.CODSPEED_TOKEN }}
 
+      - name: Run the memory benchmarks
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: memory
+          run: cargo codspeed run
+          token: ${{ secrets.CODSPEED_TOKEN }}
+
   tests-wasi:
     name: Unit tests (WASI)
     needs: get-features

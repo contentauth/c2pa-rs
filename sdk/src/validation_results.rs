@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use chrono::Utc;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -24,7 +25,7 @@ use crate::{
     validation_status::{self, log_kind, ValidationStatus},
 };
 
-/// Represents the levels of assurance a manifest store achives when evaluated against the C2PA
+/// Represents the levels of assurance a manifest store achieves when evaluated against the C2PA
 /// specifications structural, cryptographic, and trust requirements.
 ///
 /// See [Validation states - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_validation_states).
@@ -55,7 +56,7 @@ pub struct StatusCodes {
     pub success: Vec<ValidationStatus>,
     /// An array of validation informational codes. May be empty.
     pub informational: Vec<ValidationStatus>,
-    // An array of validation failure codes. May be empty.
+    /// An array of validation failure codes. May be empty.
     pub failure: Vec<ValidationStatus>,
 }
 
@@ -113,6 +114,10 @@ pub struct ValidationResults {
     /// manifest. Present if the the ingredient is a C2PA asset.
     #[serde(rename = "ingredientDeltas", skip_serializing_if = "Option::is_none")]
     ingredient_deltas: Option<Vec<IngredientDeltaValidationResult>>,
+
+    /// Time when the validation was performed (RFC 3339 date-time). Used only for document-level validationInfo; not serialized in validationResults (e.g. ingredient assertions).
+    #[serde(rename = "validationTime", skip_serializing)]
+    validation_time: Option<String>,
 }
 
 impl ValidationResults {
@@ -126,7 +131,12 @@ impl ValidationResults {
             .collect();
 
         // Filter out any status that is already captured in an ingredient assertion.
+        // There is always an active manifest in a manifest store; ensure active_manifest is set
+        // so serialization (e.g. crJSON) always includes activeManifest when validationResults exist.
         if let Some(claim) = store.provenance_claim() {
+            let _ = results
+                .active_manifest
+                .get_or_insert_with(StatusCodes::default);
             let active_manifest = Some(claim.label().to_string());
 
             // This closure returns true if the URI references the store's active manifest.
@@ -192,6 +202,7 @@ impl ValidationResults {
                 results.add_status(status);
             }
         }
+        results.validation_time = Some(Utc::now().to_rfc3339());
         results
     }
 
@@ -328,6 +339,11 @@ impl ValidationResults {
     /// Returns the ingredient deltas, if present.
     pub fn ingredient_deltas(&self) -> Option<&Vec<IngredientDeltaValidationResult>> {
         self.ingredient_deltas.as_ref()
+    }
+
+    /// Returns the time when validation was performed (RFC 3339), if set.
+    pub fn validation_time(&self) -> Option<&str> {
+        self.validation_time.as_deref()
     }
 
     pub fn add_active_manifest(mut self, scm: StatusCodes) -> Self {
