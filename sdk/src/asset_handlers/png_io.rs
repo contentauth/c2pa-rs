@@ -147,36 +147,6 @@ fn get_cai_data<R: Read + Seek + ?Sized>(mut f: &mut R) -> Result<Vec<u8>> {
     f.read_to_vec(length as u64)
 }
 
-fn add_required_chunks_to_stream(
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
-) -> Result<()> {
-    let mut buf: Vec<u8> = Vec::new();
-    input_stream.rewind()?;
-    input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-    input_stream.rewind()?;
-
-    let img_out = img_parts::DynImage::from_bytes(buf.into())
-        .map_err(|_err| Error::InvalidAsset("Could not parse input PNG".to_owned()))?;
-
-    if let Some(img_parts::DynImage::Png(png)) = img_out {
-        if png.chunk_by_type(CAI_CHUNK).is_none() {
-            let no_bytes: Vec<u8> = Vec::new();
-            let aio = PngIO {};
-            aio.write_cai(input_stream, output_stream, &no_bytes)?;
-        } else {
-            // just clone
-            input_stream.rewind()?;
-            output_stream.rewind()?;
-            std::io::copy(input_stream, output_stream)?;
-        }
-    } else {
-        return Err(Error::UnsupportedType);
-    }
-
-    Ok(())
-}
-
 fn read_string(asset_reader: &mut dyn CAIRead, max_read: u32) -> Result<String> {
     let mut bytes_read: u32 = 0;
     let mut s: Vec<u8> = Vec::with_capacity(80);
@@ -378,15 +348,21 @@ impl CAIWriter for PngIO {
     ) -> Result<Vec<HashObjectPositions>> {
         let mut positions: Vec<HashObjectPositions> = Vec::new();
 
-        // Ensure the stream has the required chunks so we can generate the required offsets.
-        let output: Vec<u8> = Vec::new();
-        let mut output_stream = Cursor::new(output);
+        input_stream.rewind()?;
+        let ps = get_png_chunk_positions(input_stream)?;
 
-        add_required_chunks_to_stream(input_stream, &mut output_stream)?;
+        let (ps, file_end) = if ps.iter().any(|chunk| chunk.name == CAI_CHUNK) {
+            let file_end = input_stream.seek(SeekFrom::End(0))? as usize;
+            (ps, file_end)
+        } else {
+            let mut output_stream = Cursor::new(Vec::new());
+            self.write_cai(input_stream, &mut output_stream, &[])?;
 
-        output_stream.rewind()?;
-        let ps = get_png_chunk_positions(&mut output_stream)?;
-        let file_end = output_stream.seek(SeekFrom::End(0))? as usize;
+            output_stream.rewind()?;
+            let ps = get_png_chunk_positions(&mut output_stream)?;
+            let file_end = output_stream.seek(SeekFrom::End(0))? as usize;
+            (ps, file_end)
+        };
 
         let pcp = ps
             .into_iter()
