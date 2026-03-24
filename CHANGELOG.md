@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.78.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.5...c2pa-v0.78.6)
+_23 March 2026_
+
+### Added
+
+* Add FLAC format support ([#1912](https://github.com/contentauth/c2pa-rs/pull/1912))
+
 ## [0.78.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.4...c2pa-v0.78.5)
 _23 March 2026_
 
