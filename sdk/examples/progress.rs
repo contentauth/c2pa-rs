@@ -27,12 +27,13 @@
 use std::{
     env,
     fs::{self, OpenOptions},
-    io::{self, BufReader, Cursor},
+    io::{BufReader, Cursor},
     path::PathBuf,
     sync::{Arc, Mutex},
-    thread,
     time::Instant,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use std::{io, thread};
 
 use anyhow::{Context as _, Result};
 use c2pa::{Builder, BuilderIntent, Context, Error, ProgressPhase, Reader, Settings};
@@ -47,8 +48,7 @@ fn format_for_path(path: &std::path::Path) -> String {
 }
 
 fn default_output_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../target/progress_output.jpg")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/progress_output.jpg")
 }
 
 fn manifest_def(title: &str, format: &str) -> String {
@@ -65,9 +65,7 @@ fn manifest_def(title: &str, format: &str) -> String {
 
 fn print_progress(phase: ProgressPhase, step: u32, total: u32, elapsed_ms: f64) {
     if total == 0 {
-        println!(
-            "[{elapsed_ms:>8.3}ms] {phase:?} {step}/? (indeterminate)"
-        );
+        println!("[{elapsed_ms:>8.3}ms] {phase:?} {step}/? (indeterminate)");
     } else {
         println!("[{elapsed_ms:>8.3}ms] {phase:?} {step}/{total}");
     }
@@ -79,10 +77,7 @@ fn main() -> Result<()> {
     let (input_path, output_path): (Option<PathBuf>, Option<PathBuf>) = match args.len() {
         1 => (None, Some(default_output_path())),
         2 => (Some(PathBuf::from(&args[1])), None),
-        _ => (
-            Some(PathBuf::from(&args[1])),
-            Some(PathBuf::from(&args[2])),
-        ),
+        _ => (Some(PathBuf::from(&args[1])), Some(PathBuf::from(&args[2]))),
     };
 
     let settings =
@@ -103,15 +98,19 @@ fn main() -> Result<()> {
     // Spawn a thread that cancels the operation when the user presses Enter.
     // If stdin is not a terminal (e.g. redirected from /dev/null) we ignore
     // the immediate EOF and leave the operation to complete normally.
-    let cancel_ctx = context.clone();
-    thread::spawn(move || {
-        eprintln!("(press Enter to cancel)");
-        let mut buf = String::new();
-        if io::stdin().read_line(&mut buf).unwrap_or(0) > 0 {
-            eprintln!("Cancelling...");
-            cancel_ctx.cancel();
-        }
-    });
+    // Not available on WASM targets (no threads or stdin).
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let cancel_ctx = context.clone();
+        thread::spawn(move || {
+            eprintln!("(press Enter to cancel)");
+            let mut buf = String::new();
+            if io::stdin().read_line(&mut buf).unwrap_or(0) > 0 {
+                eprintln!("Cancelling...");
+                cancel_ctx.cancel();
+            }
+        });
+    }
 
     let result = if let Some(ref out_path) = output_path {
         run_sign(&context, &timer, input_path.as_deref(), out_path)
@@ -137,7 +136,9 @@ fn run_read(
 ) -> Result<()> {
     eprintln!(
         "Reading: {}",
-        input.map(|p| p.display().to_string()).unwrap_or_else(|| "CA.jpg (embedded)".into())
+        input
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "CA.jpg (embedded)".into())
     );
     *timer.lock().unwrap() = Instant::now();
 
@@ -167,7 +168,9 @@ fn run_sign(
 ) -> Result<()> {
     eprintln!(
         "Signing: {} -> {}",
-        input.map(|p| p.display().to_string()).unwrap_or_else(|| "CA.jpg (embedded)".into()),
+        input
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "CA.jpg (embedded)".into()),
         output.display()
     );
 
@@ -207,7 +210,6 @@ fn run_sign(
     }
 
     builder.set_intent(BuilderIntent::Edit);
-    let signer = context.signer()?;
 
     *timer.lock().unwrap() = Instant::now();
 
@@ -226,11 +228,11 @@ fn run_sign(
             let mut source = BufReader::new(
                 std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?,
             );
-            builder.sign(&*signer, &format, &mut source, &mut dest)
+            builder.save_to_stream(&format, &mut source, &mut dest)
         }
         None => {
             let mut source = Cursor::new(SOURCE_IMAGE);
-            builder.sign(&*signer, DEFAULT_FORMAT, &mut source, &mut dest)
+            builder.save_to_stream(DEFAULT_FORMAT, &mut source, &mut dest)
         }
     };
 
@@ -272,9 +274,10 @@ mod tests {
         let out = default_output_path();
         run_sign(
             &Context::new()
-                .with_settings(Settings::new().with_json(include_str!(
-                    "../tests/fixtures/test_settings.json"
-                ))?)?
+                .with_settings(
+                    Settings::new()
+                        .with_json(include_str!("../tests/fixtures/test_settings.json"))?,
+                )?
                 .into_shared(),
             &Arc::new(Mutex::new(Instant::now())),
             None,
