@@ -317,28 +317,6 @@ impl CAIReader for RiffIO {
     }
 }
 
-fn add_required_chunks(
-    asset_type: &str,
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
-) -> Result<()> {
-    let aio = RiffIO::new(asset_type);
-
-    match aio.read_cai(input_stream) {
-        Ok(_) => {
-            // just clone
-            input_stream.rewind()?;
-            output_stream.rewind()?;
-            std::io::copy(input_stream, output_stream)?;
-            Ok(())
-        }
-        Err(_) => {
-            input_stream.rewind()?;
-            aio.write_cai(input_stream, output_stream, &[1, 2, 3, 4]) // save arbitrary data
-        }
-    }
-}
-
 impl AssetIO for RiffIO {
     fn new(riff_format: &str) -> Self {
         RiffIO {
