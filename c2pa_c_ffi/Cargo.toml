@@ -28,7 +28,7 @@ http = ["c2pa/http_reqwest", "c2pa/http_reqwest_blocking"]
 add_thumbnails = ["c2pa/add_thumbnails"]
 
 [dependencies]
-c2pa = { path = "../sdk", version = "0.78.5", default-features = false, features = [
+c2pa = { path = "../sdk", version = "0.78.6", default-features = false, features = [
     "fetch_remote_manifests",
     "file_io",
     "pdf",
