@@ -1704,6 +1704,53 @@ impl CAIWriter for TiffIO {
         &self,
         input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>> {
+        // Fast path: call map_tiff directly.  map_tiff reads only the IFD chain
+        // (a few seeks over a few KB of header data regardless of image size) and
+        // avoids the O(file_size) copy that add_required_tags_to_stream performs.
+        // This fast path is taken whenever the C2PA tag already exists in the IFD,
+        // which includes every re-sign case and every call on the output stream.
+        if let Ok((ifds, page_tokens, e, big_tiff)) = map_tiff(input_stream) {
+            if let Some(last_page) = page_tokens.last() {
+                if let Some(cai_ifd_entry) = ifds[*last_page].data.get_tag(C2PA_TAG).copied() {
+                    if cai_ifd_entry.entry_type == C2PA_FIELD_TYPE {
+                        let decoded_offset =
+                            decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
+                        let manifest_offset = usize::try_from(decoded_offset).map_err(|_err| {
+                            Error::InvalidAsset("TIFF/DNG out of range".to_string())
+                        })?;
+                        let manifest_len =
+                            usize::try_from(cai_ifd_entry.value_count).map_err(|_err| {
+                                Error::InvalidAsset("TIFF/DNG out of range".to_string())
+                            })?;
+
+                        let entry_cnt_size = if big_tiff { 8u64 } else { 2u64 };
+                        let count_offset = ifds[*last_page].data.offset
+                            + entry_cnt_size
+                            + 2 // 1st tag field
+                            + 2; // 1st type field
+                        let count_size = if big_tiff { 8 } else { 4 };
+
+                        return Ok(vec![
+                            HashObjectPositions {
+                                offset: manifest_offset,
+                                length: manifest_len,
+                                htype: HashBlockObjectType::Cai,
+                            },
+                            HashObjectPositions {
+                                offset: usize::try_from(count_offset).map_err(|_err| {
+                                    Error::InvalidAsset("TIFF/DNG out of range".to_string())
+                                })?,
+                                length: count_size,
+                                htype: HashBlockObjectType::OtherExclusion,
+                            },
+                        ]);
+                    }
+                }
+            }
+        }
+
+        // Slow path: C2PA tag not found (fresh signing).  add_required_tags_to_stream
+        // inserts a placeholder tag so we can discover the insertion point.
         let len = stream_len(input_stream)?;
         let vec_cap = usize::try_from(len)
             .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
@@ -1798,8 +1845,19 @@ impl AssetPatch for TiffIO {
             .read(true)
             .create(false)
             .open(asset_path)?;
+        self.patch_cai_store_from_stream(&mut asset_io, store_bytes)
+    }
 
-        let (tiff_tree, page_tokens, e, big_tiff) = map_tiff(&mut asset_io)?;
+    fn patch_from_stream_supported(&self) -> bool {
+        true
+    }
+
+    fn patch_cai_store_from_stream(
+        &self,
+        stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        let (tiff_tree, page_tokens, e, big_tiff) = map_tiff(stream)?;
 
         let last_page = page_tokens
             .last()
@@ -1819,11 +1877,9 @@ impl AssetPatch for TiffIO {
             .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
 
         if store_bytes.len() == manifest_len {
-            // move read point to start of entry
             let decoded_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
-            asset_io.seek(SeekFrom::Start(decoded_offset))?;
-
-            asset_io.write_all(store_bytes)?;
+            stream.seek(SeekFrom::Start(decoded_offset))?;
+            stream.write_all(store_bytes)?;
             Ok(())
         } else {
             Err(Error::InvalidAsset(

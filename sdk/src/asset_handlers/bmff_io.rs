@@ -2274,11 +2274,23 @@ impl AssetPatch for BmffIO {
             .read(true)
             .create(false)
             .open(asset_path)?;
-        let size = stream_len(&mut asset)?;
-        asset.rewind()?;
+        self.patch_cai_store_from_stream(&mut asset, store_bytes)
+    }
 
-        let ftyp = read_ftyp_box(&mut asset)?;
-        asset.rewind()?;
+    fn patch_from_stream_supported(&self) -> bool {
+        true
+    }
+
+    fn patch_cai_store_from_stream(
+        &self,
+        stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        let size = stream_len(stream)?;
+        stream.rewind()?;
+
+        let ftyp = read_ftyp_box(stream)?;
+        stream.rewind()?;
 
         // create root node
         let root_box = BoxInfo {
@@ -2295,10 +2307,10 @@ impl AssetPatch for BmffIO {
         let (mut bmff_tree, root_token) = Arena::with_data(root_box);
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
-        // build layout of the BMFF structure
+        // build layout of the BMFF structure (O(metadata) — reads only box headers)
         let mut rl = 0usize;
         build_bmff_tree(
-            &mut asset,
+            stream,
             size,
             &mut bmff_tree,
             &root_token,
@@ -2337,8 +2349,8 @@ impl AssetPatch for BmffIO {
             let new_c2pa_box_size = new_c2pa_box.len();
 
             if new_c2pa_box_size as u64 == manifest_length {
-                asset.seek(SeekFrom::Start(c2pa_start))?;
-                asset.write_all(&new_c2pa_box)?;
+                stream.seek(SeekFrom::Start(c2pa_start))?;
+                stream.write_all(&new_c2pa_box)?;
                 Ok(())
             } else {
                 Err(Error::InvalidAsset(

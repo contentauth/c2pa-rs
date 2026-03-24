@@ -68,7 +68,7 @@ use crate::{
     },
     jumbf_io::{
         get_assetio_handler, is_bmff_format, load_jumbf_from_stream, object_locations_from_stream,
-        save_jumbf_to_stream,
+        patch_jumbf_in_stream, save_jumbf_to_stream,
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
@@ -2992,17 +2992,76 @@ impl Store {
 
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
+        // Determine whether this format supports in-place stream patching.
+        // When it does, we write the placeholder JUMBF directly to output_stream
+        // and patch in place after signing — eliminating Pass 4 (the full re-write).
+        //
+        // Cases excluded from the fast path:
+        //  - BMFF update manifests: BmffIO::write_cai re-encodes the store with
+        //    to_jumbf_internal(0) and produces ORIGINAL+UPDATE box pairs,
+        //    making in-place patching unsafe.
+        //  - Sidecar / remote manifests: the manifest is NOT embedded in
+        //    output_stream (which may be io::empty()), so hash computation
+        //    cannot read back from it. The intermediate-stream path handles
+        //    these correctly.
+        let pc_remote = self
+            .provenance_claim()
+            .map(|pc| pc.remote_manifest().clone());
+        let is_bmff_update_manifest = is_bmff_format(format)
+            && self
+                .provenance_claim()
+                .map(|pc| pc.update_manifest())
+                .unwrap_or(false);
+        let is_sidecar_or_remote = matches!(
+            &pc_remote,
+            Some(RemoteManifest::SideCar) | Some(RemoteManifest::Remote(_))
+        );
+
+        // Also probe that output_stream supports reading. Callers may pass a
+        // write-only file (e.g. fs::File::create) whose read would return EBADF.
+        // The inplace path reads back from output_stream for hash computation,
+        // so it needs a readable stream. A 1-byte probe detects this cheaply;
+        // Ok(_) means readable (even if the file is currently empty), Err(_)
+        // means write-only → fall back to the intermediate-stream path.
+        let output_is_readable = {
+            let mut probe = [0u8; 1];
+            output_stream.read(&mut probe).is_ok()
+        };
+
+        let supports_inplace_patch = output_is_readable
+            && !is_bmff_update_manifest
+            && !is_sidecar_or_remote
+            && get_assetio_handler(format)
+                .and_then(|h| h.asset_patch_ref())
+                .map(|p| p.patch_from_stream_supported())
+                .unwrap_or(false);
+
+        // For formats without in-place patching, use the traditional intermediate
+        // stream so that output_stream is only touched once on success.
         let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
 
+        // Determine target for start_save_stream: output_stream directly when
+        // in-place patching is available, otherwise the intermediate buffer.
         #[allow(unused_mut)] // Not mutable in the non-async case.
-        let mut jumbf_bytes = self.start_save_stream(
-            format,
-            input_stream,
-            &mut intermediate_stream,
-            signer.reserve_size(),
-            settings,
-            context,
-        )?;
+        let mut jumbf_bytes = if supports_inplace_patch {
+            self.start_save_stream(
+                format,
+                input_stream,
+                output_stream,
+                signer.reserve_size(),
+                context,
+            )?
+        } else {
+            self.start_save_stream(
+                format,
+                input_stream,
+                &mut intermediate_stream,
+                signer.reserve_size(),
+                context,
+            )?
+        };
+
+        context.check_progress(ProgressPhase::Hashing, 1, 1)?;
 
         let mut preliminary_claim = PartialClaim::default();
         {
@@ -3026,13 +3085,19 @@ impl Store {
                 RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
                     jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-                    intermediate_stream.rewind()?;
-                    save_jumbf_to_stream(
-                        format,
-                        &mut intermediate_stream,
-                        output_stream,
-                        &jumbf_bytes,
-                    )?;
+                    if supports_inplace_patch {
+                        // output_stream already has the file; patch JUMBF in place.
+                        output_stream.rewind()?;
+                        patch_jumbf_in_stream(format, output_stream, &jumbf_bytes)?;
+                    } else {
+                        intermediate_stream.rewind()?;
+                        save_jumbf_to_stream(
+                            format,
+                            &mut intermediate_stream,
+                            output_stream,
+                            &jumbf_bytes,
+                        )?;
+                    }
                 }
                 RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
                     // we are going to handle the JUMBF like we'd embed, but we won't
@@ -3041,9 +3106,11 @@ impl Store {
                     // Update the JUMBF like it would normally be done
                     jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-                    // Intermediate stream goes to output, but still no embedding
-                    intermediate_stream.rewind()?;
-                    //std::io::copy(&mut intermediate_stream, output_stream)?;
+                    if !supports_inplace_patch {
+                        // Intermediate stream goes to output, but still no embedding
+                        intermediate_stream.rewind()?;
+                        //std::io::copy(&mut intermediate_stream, output_stream)?;
+                    }
                 }
             };
             output_stream.rewind()?;
@@ -3060,16 +3127,31 @@ impl Store {
         }?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
-        intermediate_stream.rewind()?;
-        output_stream.rewind()?;
-        match self.finish_save_stream(
-            jumbf_bytes,
-            format,
-            &mut intermediate_stream,
-            output_stream,
-            sig,
-            &sig_placeholder,
-        ) {
+        match if supports_inplace_patch {
+            // Pass 4 eliminated: patch the signed JUMBF directly into output_stream.
+            // Flush before seeking so buffered write data is committed (important
+            // for FFI-backed streams that require flush before seek/rewind).
+            output_stream.flush()?;
+            self.finish_save_stream_inplace(
+                jumbf_bytes,
+                format,
+                output_stream,
+                sig,
+                &sig_placeholder,
+            )
+        } else {
+            // Traditional path: output_stream is empty; intermediate has the asset.
+            intermediate_stream.rewind()?;
+            output_stream.rewind()?;
+            self.finish_save_stream(
+                jumbf_bytes,
+                format,
+                &mut intermediate_stream,
+                output_stream,
+                sig,
+                &sig_placeholder,
+            )
+        } {
             Ok((s, m)) => {
                 // save sig so store is up to date
                 let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -3117,9 +3199,9 @@ impl Store {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
-        settings: &Settings,
         context: &Context,
     ) -> Result<Vec<u8>> {
+        let settings = context.settings();
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
         let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
@@ -3136,6 +3218,15 @@ impl Store {
         };
 
         let io_handler = get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
+
+        // Determine whether we can skip the intermediate copy pass for BMFF assets.
+        // When there is no XMP remote-ref to embed and no manifest stripping needed,
+        // input_stream can be read directly as the BMFF source, saving one full-file
+        // read + write pass (can be several GB for large video assets).
+        let is_bmff = is_bmff_format(format);
+        // fast_path applies to all formats: when there is no XMP embed and no manifest removal,
+        // we can pass input_stream directly to the write/hash steps, skipping one full-file copy.
+        let fast_path = url.is_none() && !remove_manifests;
 
         // Do not assume the handler supports XMP or removing manifests unless we need it to
         if let Some(url) = url {
@@ -3172,13 +3263,19 @@ impl Store {
                 .ok_or(Error::UnsupportedType)?;
 
             manifest_writer.remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
-        } else {
-            // just clone stream
+        } else if !fast_path {
+            // XMP or manifest-removal was NOT the trigger — but fast_path is false,
+            // which can only happen if remove_manifests is true (already handled above).
+            // This branch is a safety net; in practice it should be unreachable here.
             input_stream.rewind()?;
             std::io::copy(input_stream, &mut intermediate_stream)?;
         }
 
-        let is_bmff = is_bmff_format(format);
+        // `source_is_intermediate` tracks whether intermediate_stream (true) or
+        // input_stream (false) should be used as the asset source for this call.
+        // When fast_path is true we skip the intermediate copy for ALL formats, not
+        // just BMFF, saving one full-file read+write pass.
+        let mut source_is_intermediate = !fast_path;
 
         let mut data;
         let jumbf_size;
@@ -3187,7 +3284,12 @@ impl Store {
             // 2) Get hash ranges if needed, do not generate for update manifests
             let mut needs_hash = false;
             if !pc.update_manifest() && pc.bmff_hash_assertions().is_empty() {
-                intermediate_stream.rewind()?;
+                if source_is_intermediate {
+                    intermediate_stream.rewind()?;
+                } else {
+                    input_stream.rewind()?;
+                }
+
                 let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(pc.alg())?;
 
                 if pc.version() < 2 {
@@ -3195,17 +3297,29 @@ impl Store {
                 }
 
                 // add Merkle mdats if requested
-                Store::generate_bmff_mdat_hashes(
-                    &mut intermediate_stream,
-                    &mut bmff_hash,
-                    settings,
-                )?;
+                if source_is_intermediate {
+                    Store::generate_bmff_mdat_hashes(
+                        &mut intermediate_stream,
+                        &mut bmff_hash,
+                        settings,
+                    )?;
+                } else {
+                    Store::generate_bmff_mdat_hashes(input_stream, &mut bmff_hash, settings)?;
+                }
 
                 // insert Merkle UUID boxes at the correct location if required
                 if let Some(merkle_uuid_boxes) = &bmff_hash.merkle_uuid_boxes {
                     let mut temp_stream = io_utils::stream_with_fs_fallback(threshold);
-                    intermediate_stream.rewind()?;
 
+                    if !source_is_intermediate {
+                        // Merkle insertion requires a writable source; populate intermediate
+                        // from input_stream so we can call insert_data_at on it.
+                        input_stream.rewind()?;
+                        std::io::copy(input_stream, &mut intermediate_stream)?;
+                        source_is_intermediate = true;
+                    }
+
+                    intermediate_stream.rewind()?;
                     insert_data_at(
                         &mut intermediate_stream,
                         &mut temp_stream,
@@ -3229,10 +3343,16 @@ impl Store {
             jumbf_size = data.len();
             // write the jumbf to the output stream if we are embedding the manifest
             if !remove_manifests {
-                intermediate_stream.rewind()?;
-                save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                if source_is_intermediate {
+                    intermediate_stream.rewind()?;
+                    save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                } else {
+                    input_stream.rewind()?;
+                    save_jumbf_to_stream(format, input_stream, output_stream, &data)?;
+                }
             } else {
                 // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
+                // remove_manifests → fast_path is false → source_is_intermediate is true
                 intermediate_stream.rewind()?;
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }
@@ -3260,14 +3380,27 @@ impl Store {
             // we will not do automatic hashing if we detect a box hash present
             let mut needs_hashing = false;
             if pc.hash_assertions().is_empty() {
-                // 2) Get hash ranges if needed, do not generate for update manifests
-                let mut hash_ranges =
-                    object_locations_from_stream(format, &mut intermediate_stream)?;
+                // 2) Get hash ranges if needed, do not generate for update manifests.
+                // When fast_path is true, source_is_intermediate is false and we read
+                // input_stream directly, skipping the intermediate copy pass.
+                let mut hash_ranges = if source_is_intermediate {
+                    object_locations_from_stream(format, &mut intermediate_stream)?
+                } else {
+                    object_locations_from_stream(format, input_stream)?
+                };
                 let hashes: Vec<DataHash> = if pc.update_manifest() {
                     Vec::new()
-                } else {
+                } else if source_is_intermediate {
                     Store::generate_data_hashes_for_stream(
                         &mut intermediate_stream,
+                        pc.alg(),
+                        &mut hash_ranges,
+                        false,
+                        None,
+                    )?
+                } else {
+                    Store::generate_data_hashes_for_stream(
+                        input_stream,
                         pc.alg(),
                         &mut hash_ranges,
                         false,
@@ -3292,10 +3425,16 @@ impl Store {
 
             // write the jumbf to the output stream if we are embedding the manifest
             if !remove_manifests {
-                intermediate_stream.rewind()?;
-                save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                if source_is_intermediate {
+                    intermediate_stream.rewind()?;
+                    save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                } else {
+                    input_stream.rewind()?;
+                    save_jumbf_to_stream(format, input_stream, output_stream, &data)?;
+                }
             } else {
-                // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
+                // just copy the asset to the output stream without an embedded manifest
+                // remove_manifests → fast_path is false → source_is_intermediate is true
                 intermediate_stream.rewind()?;
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }
@@ -3310,6 +3449,10 @@ impl Store {
             // replace the source with correct asset hashes so that the claim hash will be correct
             if needs_hashing {
                 let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+                // Flush before seeking: FFI-backed streams (and any stream that
+                // buffers writes) must be flushed before seeking back to read.
+                output_stream.flush()?;
 
                 // get the final hash ranges, but not for update manifests
                 output_stream.rewind()?;
@@ -3352,6 +3495,43 @@ impl Store {
         }
 
         Ok(data) // return JUMBF data
+    }
+
+    /// In-place finish: patches `output_stream` (which already contains the
+    /// full asset with placeholder JUMBF) with the signed JUMBF bytes.
+    /// No full-file copy — O(metadata) seek + O(JUMBF size) write.
+    fn finish_save_stream_inplace(
+        &self,
+        mut jumbf_bytes: Vec<u8>,
+        format: &str,
+        output_stream: &mut dyn CAIReadWrite,
+        sig: Vec<u8>,
+        sig_placeholder: &[u8],
+    ) -> Result<(Vec<u8>, Vec<u8>)> {
+        if sig_placeholder.len() != sig.len() {
+            return Err(Error::CoseSigboxTooSmall);
+        }
+
+        patch_bytes(&mut jumbf_bytes, sig_placeholder, &sig)
+            .map_err(|_| Error::JumbfCreationError)?;
+
+        // Flush before seeking so any buffered write data reaches the stream
+        // before the patch scanner reads the box structure (important for FFI
+        // streams that buffer writes internally).
+        output_stream.flush()?;
+
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        match pc.remote_manifest() {
+            RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
+                patch_jumbf_in_stream(format, output_stream, &jumbf_bytes)?;
+            }
+            RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
+                // No embedded manifest — nothing to patch.
+            }
+        }
+
+        output_stream.flush()?;
+        Ok((sig, jumbf_bytes))
     }
 
     fn finish_save_stream(
@@ -4974,6 +5154,49 @@ pub mod tests {
                     .expect("Should find assertion");
             }
         }
+    }
+
+    /// Verify the `ClaimAssetData::Path` branch of BoxHash verification in `claim.rs`.
+    ///
+    /// PNG uses BoxHash, so signing a PNG to a file and then verifying it via
+    /// `Store::verify_from_path` (which passes `ClaimAssetData::Path`) exercises
+    /// the otherwise-untested cfg(file_io) branch.
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_png_box_hash_verify_from_path() {
+        use std::fs::File;
+
+        let ap = fixture_path("libpng-test.png");
+        let temp_dir = tempdirectory().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
+
+        // Sign a PNG and write it to a temp file on disk.
+        let context = Context::new();
+        let mut store = Store::from_context(&context);
+        let claim = create_test_claim().unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        store.commit_claim(claim).unwrap();
+
+        let mut input = File::open(&ap).expect("open fixture");
+        let mut output = File::create(&op).expect("create output");
+        store
+            .save_to_stream("png", &mut input, &mut output, signer.as_ref(), &context)
+            .expect("save_to_stream failed");
+        drop(output);
+
+        // Load the JUMBF from the file path and parse into a store, then verify
+        // using the Path variant — this exercises ClaimAssetData::Path in claim.rs.
+        let jumbf = Store::load_jumbf_from_path(&op, &context).expect("load_jumbf_from_path");
+        let mut report = StatusTracker::default();
+        let mut loaded =
+            Store::from_jumbf_with_context(&jumbf, &mut report, &context).expect("from_jumbf");
+
+        loaded
+            .verify_from_path(&op, &mut report, &context)
+            .expect("verify_from_path failed");
+
+        assert!(!report.has_any_error(), "Unexpected errors: {report:?}");
+        assert_eq!(loaded.claims().len(), 1);
     }
 
     #[test]

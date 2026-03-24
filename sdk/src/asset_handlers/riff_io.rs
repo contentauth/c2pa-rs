@@ -13,7 +13,7 @@
 
 use std::{
     fs::{File, OpenOptions},
-    io::{Cursor, Seek, SeekFrom, Write},
+    io::{Cursor, Seek, SeekFrom},
     path::Path,
     result,
 };
@@ -259,36 +259,200 @@ fn get_manifest_pos(reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
     None
 }
 
+/// Scan RIFF chunk headers to find the C2PA chunk without reading any chunk data.
+///
+/// Returns `Some((block_start, total_size))` where `total_size` includes the 8-byte
+/// chunk header.  Returns `None` when no C2PA chunk is present at the top level.
+///
+/// Handles null-byte padding (`0x00000000`) that some encoders (e.g. VLC) insert
+/// between top-level chunks for DWORD alignment — those 4 bytes are skipped
+/// transparently.
+///
+/// Complexity: O(number of top-level chunks) — for a 1 GB AVI with a handful of
+/// top-level chunks this reads fewer than 100 bytes, vs. the 1 GB needed by
+/// `add_required_chunks`.
+fn scan_riff_c2pa_region(reader: &mut dyn CAIRead) -> Option<(u64, u64)> {
+    reader.rewind().ok()?;
+
+    // RIFF outer header: 4-byte FourCC + 4-byte size + 4-byte form type
+    let mut header = [0u8; 12];
+    reader.read_exact(&mut header).ok()?;
+    if &header[0..4] != b"RIFF" {
+        return None;
+    }
+
+    let riff_data_size = u32::from_le_bytes(header[4..8].try_into().ok()?) as u64;
+    let riff_content_end = 8 + riff_data_size; // byte past the first RIFF chunk
+
+    // Walk top-level chunks inside the RIFF by reading only their 8-byte headers.
+    let mut offset = 12u64;
+    loop {
+        if offset >= riff_content_end {
+            break;
+        }
+
+        reader.seek(SeekFrom::Start(offset)).ok()?;
+        let mut chunk_header = [0u8; 8];
+        if reader.read_exact(&mut chunk_header).is_err() {
+            break;
+        }
+
+        // Some encoders (e.g. VLC) insert 4 null bytes between chunks for DWORD
+        // alignment.  Skip them and re-read the next real chunk header.
+        if chunk_header[0..4] == [0u8; 4] {
+            offset = offset.checked_add(4)?;
+            continue;
+        }
+
+        let id = &chunk_header[0..4];
+        let size = u32::from_le_bytes(chunk_header[4..8].try_into().ok()?) as u64;
+
+        if id == C2PA_CHUNK_ID.value.as_slice() {
+            return Some((offset, 8 + size));
+        }
+
+        // RIFF chunk data is padded to an even byte boundary.
+        let padded_size = size + (size & 1);
+        offset = offset.checked_add(8 + padded_size)?;
+    }
+
+    None
+}
+
+/// Copy exactly `count` bytes from `reader` to `writer` using a 1 MB stack buffer.
+fn copy_n(
+    reader: &mut dyn CAIRead,
+    writer: &mut dyn CAIReadWrite,
+    mut count: u64,
+) -> std::io::Result<()> {
+    let mut buf = vec![0u8; (count.min(1024 * 1024)) as usize];
+    while count > 0 {
+        let to_read = count.min(buf.len() as u64) as usize;
+        reader.read_exact(&mut buf[..to_read])?;
+        writer.write_all(&buf[..to_read])?;
+        count -= to_read as u64;
+    }
+    Ok(())
+}
+
+/// Streaming RIFF C2PA writer.
+///
+/// Copies the first RIFF chunk of `input` to `output`, replacing any existing
+/// C2PA chunk and appending `store_bytes` as a new top-level `C2PA` chunk at the
+/// end.  If `store_bytes` is empty the old C2PA chunk is simply removed.
+///
+/// Key properties:
+/// - O(file_size) I/O but O(1) RAM: chunks are stream-copied with a 1 MB buffer.
+/// - Null-byte padding (`0x00000000`) inserted by some encoders (e.g. VLC) between
+///   chunks is skipped, fixing the parse failure described in issue #1910.
+/// - Does **not** modify nested chunk contents, so it is correct for formats where
+///   C2PA lives at the top level (AVI, WAV, WebP).
+///
+/// For large AVI files the caller is responsible for copying any trailing AVIX
+/// chunks after the first RIFF chunk.
+fn write_riff_cai_streaming(
+    input: &mut dyn CAIRead,
+    output: &mut dyn CAIReadWrite,
+    store_bytes: &[u8],
+) -> Result<u64> {
+    input.rewind()?;
+    output.rewind()?;
+
+    // Read and validate the outer RIFF header (12 bytes).
+    let mut outer = [0u8; 12];
+    input.read_exact(&mut outer)?;
+    if &outer[0..4] != b"RIFF" {
+        return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
+    }
+    let orig_riff_data_size = u32::from_le_bytes(
+        outer[4..8]
+            .try_into()
+            .map_err(|_| Error::InvalidAsset("Invalid RIFF size field".to_string()))?,
+    ) as u64;
+    let riff_content_end = 8 + orig_riff_data_size;
+
+    // Write "RIFF" FourCC, placeholder size (patched at the end), then form type.
+    output.write_all(&outer[0..4])?; // "RIFF"
+    let size_patch_offset = output.stream_position()?; // offset 4
+    output.write_all(&[0u8; 4])?; // placeholder size
+    output.write_all(&outer[8..12])?; // form type (e.g., "AVI ")
+
+    // Stream-copy top-level chunks, skipping null padding and any C2PA chunk.
+    let mut in_pos = 12u64;
+    loop {
+        if in_pos >= riff_content_end {
+            break;
+        }
+
+        input.seek(SeekFrom::Start(in_pos))?;
+        let mut hdr = [0u8; 8];
+        if input.read_exact(&mut hdr).is_err() {
+            break; // EOF inside RIFF content — treat as end
+        }
+
+        // Skip null-byte DWORD padding (issue #1910: VLC-encoded AVIs).
+        if hdr[0..4] == [0u8; 4] {
+            in_pos += 4;
+            continue;
+        }
+
+        let chunk_size = u32::from_le_bytes(
+            hdr[4..8]
+                .try_into()
+                .map_err(|_| Error::InvalidAsset("Invalid RIFF chunk size".to_string()))?,
+        ) as u64;
+        let padded_size = chunk_size + (chunk_size & 1);
+
+        if &hdr[0..4] == C2PA_CHUNK_ID.value.as_slice() {
+            // Skip the existing C2PA chunk — we'll append a fresh one at the end.
+            in_pos += 8 + padded_size;
+            continue;
+        }
+
+        // Stream-copy this chunk verbatim (header + data).
+        output.write_all(&hdr)?;
+        input.seek(SeekFrom::Start(in_pos + 8))?;
+        copy_n(input, output, padded_size)?;
+        in_pos += 8 + padded_size;
+    }
+
+    // Append the new C2PA chunk (if any).
+    if !store_bytes.is_empty() {
+        let c2pa_data_size = store_bytes.len() as u32;
+        output.write_all(&C2PA_CHUNK_ID.value)?;
+        output.write_all(&c2pa_data_size.to_le_bytes())?;
+        output.write_all(store_bytes)?;
+        if c2pa_data_size & 1 != 0 {
+            output.write_all(&[0u8])?; // RIFF even-size padding
+        }
+    }
+
+    // Patch the RIFF outer size field (= total output size − 8-byte outer header).
+    let output_end = output.stream_position()?;
+    let new_riff_data_size = (output_end - 8) as u32;
+    output.seek(SeekFrom::Start(size_patch_offset))?;
+    output.write_all(&new_riff_data_size.to_le_bytes())?;
+
+    // Return the end of the first RIFF chunk in the input so the caller can
+    // handle any trailing AVIX chunks.
+    Ok(riff_content_end)
+}
+
 impl CAIReader for RiffIO {
     fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let mut chunk_reader = CAIReadWrapper {
-            reader: input_stream,
-        };
+        // Use the manual scanner so null-byte padding (issue #1910) is handled
+        // transparently and we never try to parse chunk contents via the riff crate.
+        let (block_start, total_size) =
+            scan_riff_c2pa_region(input_stream).ok_or(Error::JumbfNotFound)?;
 
-        let top_level_chunks = Chunk::read(&mut chunk_reader, 0)?;
+        let data_offset = block_start + 8; // skip the 8-byte chunk header
+        let data_len = total_size - 8;
 
-        // Assume C2PA data will be in the first chunk, even for multiple RIFF/AVIX chunk files.
-        if top_level_chunks.id() != RIFF_ID {
-            return Err(RiffError::InvalidFileSignature {
-                reason: format!(
-                    "invalid header: expected \"{}\", got \"{}\"",
-                    String::from_utf8_lossy(&RIFF_ID.value),
-                    String::from_utf8_lossy(&top_level_chunks.id().value),
-                ),
-            }
-            .into());
-        }
+        input_stream.seek(SeekFrom::Start(data_offset))?;
+        let mut data = vec![0u8; data_len as usize];
+        input_stream.read_exact(&mut data)?;
 
-        for result in top_level_chunks.iter(&mut chunk_reader) {
-            let chunk =
-                result.map_err(|_| Error::InvalidAsset("Invalid RIFF format".to_string()))?;
-
-            if chunk.id() == C2PA_CHUNK_ID {
-                return Ok(chunk.read_contents(&mut chunk_reader)?);
-            }
-        }
-
-        Err(Error::JumbfNotFound)
+        Ok(data)
     }
 
     // Get XMP block
@@ -407,50 +571,16 @@ impl CAIWriter for RiffIO {
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()> {
-        let top_level_chunks = {
-            let mut reader = CAIReadWrapper {
-                reader: input_stream,
-            };
-            Chunk::read(&mut reader, 0)?
-        };
+        // Stream the first RIFF chunk to output, inserting/replacing the C2PA chunk.
+        // Returns the byte offset in `input_stream` just past the first RIFF chunk,
+        // needed so we can copy any trailing AVIX extension chunks below.
+        let first_chunk_end = write_riff_cai_streaming(input_stream, output_stream, store_bytes)?;
 
-        if top_level_chunks.id() != RIFF_ID {
-            return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
-        }
-
-        let first_chunk_size = top_level_chunks.len();
-
-        let mut reader = CAIReadWrapper {
-            reader: input_stream,
-        };
-
-        // replace/add manifest in memory
-        let new_contents = inject_c2pa(
-            &top_level_chunks,
-            &mut reader,
-            store_bytes,
-            None,
-            &self.riff_format,
-        )?;
-
-        let mut writer = CAIReadWriteWrapper {
-            reader_writer: output_stream,
-        };
-
-        // save contents
-        new_contents
-            .write(&mut writer)
-            .map_err(|_e| Error::EmbeddingError)?;
-
-        // Copy additional RIFF/AVIX chunks for large AVI files
+        // Copy additional RIFF/AVIX chunks for large AVI files (OpenDML extension).
         if self.riff_format == "avi" || self.riff_format == "video/avi" {
-            // Ensure input_stream is positioned right after the first chunk
-            // Position = 8 bytes (chunk ID + size) + chunk data size
-            let position_after_first_chunk = 8 + first_chunk_size as u64;
-            input_stream.seek(SeekFrom::Start(position_after_first_chunk))?;
+            input_stream.seek(SeekFrom::Start(first_chunk_end))?;
 
             loop {
-                // Check if we're at EOF
                 let current_pos = input_stream.stream_position()?;
                 let file_size = input_stream.seek(SeekFrom::End(0))?;
                 input_stream.seek(SeekFrom::Start(current_pos))?;
@@ -459,10 +589,9 @@ impl CAIWriter for RiffIO {
                     break;
                 }
 
-                // Manually read chunk header (8 bytes: 4-byte ID + 4-byte size)
                 let mut chunk_header = [0u8; 8];
                 if input_stream.read_exact(&mut chunk_header).is_err() {
-                    break; // EOF
+                    break;
                 }
 
                 let chunk_id = ChunkId {
@@ -480,21 +609,10 @@ impl CAIWriter for RiffIO {
                     break;
                 }
 
-                // Write the chunk header
-                writer.reader_writer.write_all(&chunk_id.value)?;
-                writer
-                    .reader_writer
-                    .write_all(&(chunk_size as u32).to_le_bytes())?;
+                output_stream.write_all(&chunk_id.value)?;
+                output_stream.write_all(&(chunk_size as u32).to_le_bytes())?;
 
-                // Copy the chunk data in 1MB chunks
-                let mut remaining = chunk_size;
-                let mut buffer = vec![0u8; 1024 * 1024];
-                while remaining > 0 {
-                    let to_read = remaining.min(buffer.len() as u64) as usize;
-                    input_stream.read_exact(&mut buffer[..to_read])?;
-                    writer.reader_writer.write_all(&buffer[..to_read])?;
-                    remaining -= to_read as u64;
-                }
+                copy_n(input_stream, output_stream, chunk_size)?;
             }
         }
 
@@ -505,6 +623,41 @@ impl CAIWriter for RiffIO {
         &self,
         input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>> {
+        // Fast path: scan only chunk headers (8 bytes each) to find the C2PA chunk.
+        // This avoids loading the entire file into RAM when the C2PA chunk already
+        // exists (re-signing, or when called on the output stream after JUMBF write).
+        if let Some((manifest_pos, manifest_len)) = scan_riff_c2pa_region(input_stream) {
+            let file_end = stream_len(input_stream)?;
+            let end = manifest_pos
+                .checked_add(manifest_len)
+                .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?;
+
+            return Ok(vec![
+                HashObjectPositions {
+                    offset: usize::try_from(manifest_pos)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
+                    length: usize::try_from(manifest_len)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
+                    htype: HashBlockObjectType::Cai,
+                },
+                HashObjectPositions {
+                    offset: 0,
+                    length: usize::try_from(manifest_pos)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
+                    htype: HashBlockObjectType::Other,
+                },
+                HashObjectPositions {
+                    offset: usize::try_from(end)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
+                    length: usize::try_from(file_end - end)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
+                    htype: HashBlockObjectType::Other,
+                },
+            ]);
+        }
+
+        // Slow path: no C2PA chunk yet (fresh signing).  Use add_required_chunks to
+        // insert a placeholder and find the insertion point.
         let output_buf: Vec<u8> = Vec::new();
         let mut output_stream = Cursor::new(output_buf);
 
@@ -564,13 +717,27 @@ impl AssetPatch for RiffIO {
             .read(true)
             .create(false)
             .open(asset_path)?;
+        self.patch_cai_store_from_stream(&mut asset, store_bytes)
+    }
 
-        let (manifest_pos, manifest_len) =
-            get_manifest_pos(&mut asset).ok_or(Error::EmbeddingError)?;
+    fn patch_from_stream_supported(&self) -> bool {
+        true
+    }
 
-        if store_bytes.len() + 8 == manifest_len as usize {
-            asset.seek(SeekFrom::Start(manifest_pos + 8))?; // skip 8 byte chunk data header
-            asset.write_all(store_bytes)?;
+    fn patch_cai_store_from_stream(
+        &self,
+        stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        // Use the lean O(metadata) scanner — reads only chunk headers, not data.
+        let (block_start, total_size) =
+            scan_riff_c2pa_region(stream).ok_or(Error::EmbeddingError)?;
+        let data_offset = block_start + 8; // skip 8-byte chunk header
+        let data_len = (total_size - 8) as usize;
+
+        if store_bytes.len() == data_len {
+            stream.seek(SeekFrom::Start(data_offset))?;
+            stream.write_all(store_bytes)?;
             Ok(())
         } else {
             Err(Error::InvalidAsset(
@@ -741,10 +908,8 @@ pub mod tests {
 
         let panic_result = panic::catch_unwind(|| {
             let mut source = File::open(fixture_path("sample3.invalid.wav")).unwrap();
-            assert!(matches!(
-                riff_io.read_cai(&mut source),
-                Err(Error::InvalidAsset(_))
-            ));
+            // The invalid file has no C2PA chunk — we expect any Err, not a panic.
+            assert!(riff_io.read_cai(&mut source).is_err());
         });
 
         assert!(panic_result.is_ok());

@@ -136,6 +136,25 @@ pub fn save_jumbf_to_stream(
     }
 }
 
+/// Patches an existing JUMBF manifest store in `stream` in-place, without
+/// copying or re-writing the rest of the asset.  The handler must support
+/// `AssetPatch::patch_cai_store_from_stream`; for formats that don't, this
+/// returns `Err(Error::UnsupportedType)` and the caller should fall back to
+/// `save_jumbf_to_stream`.
+pub(crate) fn patch_jumbf_in_stream(
+    asset_type: &str,
+    stream: &mut dyn CAIReadWrite,
+    store_bytes: &[u8],
+) -> Result<()> {
+    match get_assetio_handler(asset_type) {
+        Some(handler) => match handler.asset_patch_ref() {
+            Some(patch_handler) => patch_handler.patch_cai_store_from_stream(stream, store_bytes),
+            None => Err(Error::UnsupportedType),
+        },
+        None => Err(Error::UnsupportedType),
+    }
+}
+
 /// writes the jumbf data in store_bytes into an asset in data and returns the newly created asset
 pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -> Result<Vec<u8>> {
     let mut input_stream = Cursor::new(data);
