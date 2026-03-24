@@ -240,11 +240,8 @@ where
 }
 
 fn get_manifest_pos(reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
-    let mut asset: Vec<u8> = Vec::new();
     reader.rewind().ok()?;
-    reader.read_to_end(&mut asset).ok()?;
-
-    let mut chunk_reader = Cursor::new(asset);
+    let mut chunk_reader = CAIReadWrapper { reader };
 
     let top_level_chunks = Chunk::read(&mut chunk_reader, 0).ok()?;
 
@@ -505,15 +502,20 @@ impl CAIWriter for RiffIO {
         &self,
         input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>> {
-        let output_buf: Vec<u8> = Vec::new();
-        let mut output_stream = Cursor::new(output_buf);
-
-        add_required_chunks(&self.riff_format, input_stream, &mut output_stream)?;
-
         let mut positions: Vec<HashObjectPositions> = Vec::new();
 
-        let (manifest_pos, manifest_len) =
-            get_manifest_pos(&mut output_stream).ok_or(Error::EmbeddingError)?;
+        let (manifest_pos, manifest_len, file_end) =
+            if let Some((position, len)) = get_manifest_pos(input_stream) {
+                let file_end = stream_len(input_stream)?;
+                (position, len, file_end)
+            } else {
+                let mut output_stream = Cursor::new(Vec::new());
+                self.write_cai(input_stream, &mut output_stream, &[1, 2, 3, 4])?;
+                let (position, len) =
+                    get_manifest_pos(&mut output_stream).ok_or(Error::EmbeddingError)?;
+                let file_end = output_stream.seek(SeekFrom::End(0))?;
+                (position, len, file_end)
+            };
 
         positions.push(HashObjectPositions {
             offset: usize::try_from(manifest_pos)
@@ -535,8 +537,6 @@ impl CAIWriter for RiffIO {
         let Some(end) = u64::checked_add(manifest_pos, manifest_len as u64) else {
             return Err(Error::InvalidAsset("value out of range".to_string()));
         };
-
-        let file_end = stream_len(&mut output_stream)?;
         positions.push(HashObjectPositions {
             offset: usize::try_from(end)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?, // len of cai
