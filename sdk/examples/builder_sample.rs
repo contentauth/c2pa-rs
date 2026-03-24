@@ -11,18 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Example App showing how to work with Builders, ingredients, and the
-//! progress/cancel API.
+//! Example App showing how to work archive and restore Builders and ingredients.
 use std::{
     io::{self, Cursor, Read, Seek},
-    sync::{Arc, Mutex},
-    time::Instant,
+    sync::Arc,
 };
 
 use anyhow::Result;
 use c2pa::{
-    validation_results::ValidationState, Builder, Context, DigitalSourceType, ProgressPhase,
-    Reader, Settings,
+    validation_results::ValidationState, Builder, Context, DigitalSourceType, Reader, Settings,
 };
 use serde_json::json;
 
@@ -94,46 +91,8 @@ fn main() -> Result<()> {
 
     let settings =
         Settings::new().with_json(include_str!("../tests/fixtures/test_settings.json"))?;
-    // --- Progress / cancel API demonstration ---
-    //
-    // A context can carry a progress callback that is invoked at each major
-    // phase of a signing or reading operation.  The callback receives the
-    // current phase along with a step index and total step count.  Returning
-    // `false` from the callback (or calling `ctx.cancel()` from another
-    // thread) requests cancellation; the SDK will return
-    // `Error::OperationCancelled` at the next checkpoint.
-    //
-    // `total == 0` means the total is not known in advance (indeterminate).
-    // Single-shot phases always report `step=1, total=1`.
-    let phases_seen: Arc<Mutex<Vec<(ProgressPhase, u32, u32)>>> = Arc::new(Mutex::new(Vec::new()));
-    let phases_seen_cb = phases_seen.clone();
+    let context = Context::new().with_settings(settings)?.into_shared();
 
-    // Shared timer reset before each operation so elapsed times are relative.
-    let timer: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now()));
-    let timer_cb = timer.clone();
-
-    let context = Context::new()
-        .with_settings(settings)?
-        .with_progress_callback(move |phase, step, total| {
-            let elapsed = timer_cb.lock().unwrap().elapsed();
-            if total == 0 {
-                println!(
-                    "  [{:>8.3}ms] {phase:?} {step}/? (indeterminate)",
-                    elapsed.as_secs_f64() * 1000.0
-                );
-            } else {
-                println!(
-                    "  [{:>8.3}ms] {phase:?} {step}/{total}",
-                    elapsed.as_secs_f64() * 1000.0
-                );
-            }
-            phases_seen_cb.lock().unwrap().push((phase, step, total));
-            true // return false here (or call ctx.cancel()) to abort
-        })
-        .into_shared();
-
-    println!("Capturing an ingredient, adding to builder and archiving ");
-    *timer.lock().unwrap() = Instant::now();
     // Here we capture an ingredient with its validation into a c2pa_data object.
     let ingredient_c2pa = capture_ingredient(FORMAT, &mut ingredient_source, &context)?;
     // The ingredient_c2pa can be saved to a file, blob storage, a database, or wherever you want to keep it.
@@ -175,32 +134,18 @@ fn main() -> Result<()> {
     // let debug_path = format!("{}/../target/archive_test.c2pa", env!("CARGO_MANIFEST_DIR"));
     // std::fs::write(&debug_path, archive.get_ref())?;
 
-    println!("Signing archived builder with progress tracking:");
-    *timer.lock().unwrap() = Instant::now();
+    // unpack the manifest builder from the archived stream
     archive.rewind()?;
+    let mut builder = Builder::from_shared_context(&context).with_archive(&mut archive)?;
+
+    // Now we will sign a new image that will reference the previously captured ingredient
     let mut source = Cursor::new(SOURCE_IMAGE);
     let mut dest = Cursor::new(Vec::new());
-    Builder::from_shared_context(&context)
-        .with_archive(&mut archive)?
-        .save_to_stream(FORMAT, &mut source, &mut dest)?;
-
-    let seen = phases_seen.lock().unwrap();
-    assert!(
-        seen.iter().any(|(p, _, _)| *p == ProgressPhase::Hashing),
-        "expected at least a Hashing checkpoint"
-    );
-    assert!(
-        seen.iter()
-            .any(|(p, _, _)| *p == ProgressPhase::VerifyingManifest),
-        "expected at least a VerifyingManifest checkpoint"
-    );
-    drop(seen);
+    builder.save_to_stream(FORMAT, &mut source, &mut dest)?;
 
     // read and validate the signed manifest store
     dest.rewind()?;
 
-    println!("Reading with progress tracking:");
-    *timer.lock().unwrap() = Instant::now();
     let reader = Reader::from_shared_context(&context).with_stream(FORMAT, &mut dest)?;
     println!("{}", reader.json());
     assert_eq!(reader.validation_state(), ValidationState::Trusted);
