@@ -9,6 +9,18 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.78.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.4...c2pa-v0.78.5)
+_23 March 2026_
+
+### Added
+
+* Add `cr_json()` and `cr_json_value()` to `Reader`; remove separate `CrJsonReader` ([#1919](https://github.com/contentauth/c2pa-rs/pull/1919))
+
+### Fixed
+
+* Add compatibility for source assets that report mdat box sizes that e… ([#1956](https://github.com/contentauth/c2pa-rs/pull/1956))
+* Change `Builder::add_action` to add original actions or v2 actions ([#1946](https://github.com/contentauth/c2pa-rs/pull/1946))
+
 ## [0.78.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.3...c2pa-v0.78.4)
 _16 March 2026_
 
