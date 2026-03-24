@@ -762,12 +762,12 @@ impl Context {
     /// // std::thread::spawn(move || ctx2.cancel());
     /// ```
     pub fn cancel(&self) {
-        self.cancel_flag.store(true, Ordering::Relaxed);
+        self.cancel_flag.store(true, Ordering::Release);
     }
 
     /// Returns `true` if [`cancel()`](Context::cancel) has been called.
     pub fn is_cancelled(&self) -> bool {
-        self.cancel_flag.load(Ordering::Relaxed)
+        self.cancel_flag.load(Ordering::Acquire)
     }
 
     /// Report progress and check for cancellation at a single checkpoint.
@@ -787,7 +787,7 @@ impl Context {
                 return Err(Error::OperationCancelled);
             }
         }
-        if self.cancel_flag.load(Ordering::Relaxed) {
+        if self.cancel_flag.load(Ordering::Acquire) {
             return Err(Error::OperationCancelled);
         }
         Ok(())
