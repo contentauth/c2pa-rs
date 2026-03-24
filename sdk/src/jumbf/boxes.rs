@@ -94,6 +94,9 @@ pub enum JumbfParseError {
 
     #[error("invalid JUMD box")]
     InvalidDescriptionBox,
+
+    #[error("JUMB box nesting depth exceeds the maximum allowed depth")]
+    BoxNestingTooDeep,
 }
 
 /// A specialized `JumbfParseResult` type for JUMBF parsing operations.
@@ -1880,6 +1883,10 @@ impl BoxHeader {
 pub struct BoxReader {}
 
 impl BoxReader {
+    /// Maximum allowed nesting depth for JUMB superboxes.
+    /// Prevents stack overflow from crafted files with arbitrarily deep nesting.
+    const MAX_JUMB_DEPTH: usize = 32;
+
     pub fn read_header<R: Read>(reader: &mut R) -> JumbfParseResult<BoxHeader> {
         // Create and read to buf.
         let mut buf = [0u8; 8]; // 8 bytes for box header.
@@ -2210,6 +2217,17 @@ impl BoxReader {
     }
 
     pub fn read_super_box<R: Read + Seek>(reader: &mut R) -> JumbfParseResult<JUMBFSuperBox> {
+        BoxReader::read_super_box_impl(reader, 0)
+    }
+
+    fn read_super_box_impl<R: Read + Seek>(
+        reader: &mut R,
+        depth: usize,
+    ) -> JumbfParseResult<JUMBFSuperBox> {
+        if depth >= BoxReader::MAX_JUMB_DEPTH {
+            return Err(JumbfParseError::BoxNestingTooDeep);
+        }
+
         // find out where we're starting...
         let start_pos = current_pos(reader).map_err(|_| JumbfParseError::InvalidBoxRange)?;
 
@@ -2255,9 +2273,7 @@ impl BoxReader {
             } else {
                 unread_bytes(reader, HEADER_SIZE)?; // seek back to the beginning of the box
                 let next_box: Box<dyn BMFFBox> = match box_header.name {
-                    BoxType::Jumb => Box::new(
-                        BoxReader::read_super_box(reader)?, //.map_err(|_| JumbfParseError::InvalidJumbBox)?,
-                    ),
+                    BoxType::Jumb => Box::new(BoxReader::read_super_box_impl(reader, depth + 1)?),
                     BoxType::Json => Box::new(
                         BoxReader::read_json_box(reader, box_header.size)
                             .map_err(|_| JumbfParseError::InvalidJsonBox)?,
@@ -2887,6 +2903,47 @@ pub mod tests {
         }
     }
     */
+
+    /// Builds a JUMBF buffer with `levels` of nested `jumb` superboxes.
+    /// The outermost box wraps the next, and so on down to a single innermost box.
+    fn build_nested_jumb(levels: usize) -> Vec<u8> {
+        assert!(levels >= 1);
+        let mut sbox = JUMBFSuperBox::new("t", None);
+        for _ in 1..levels {
+            let mut wrapper = JUMBFSuperBox::new("t", None);
+            wrapper.add_data_box(Box::new(sbox));
+            sbox = wrapper;
+        }
+        let mut buf = Vec::new();
+        sbox.write_box(&mut buf).expect("write failed");
+        buf
+    }
+
+    #[test]
+    fn test_read_super_box_at_max_depth() {
+        // MAX_JUMB_DEPTH levels should parse successfully (innermost reads at depth MAX-1).
+        let buf = build_nested_jumb(BoxReader::MAX_JUMB_DEPTH);
+        let mut reader = Cursor::new(buf);
+        assert!(
+            BoxReader::read_super_box(&mut reader).is_ok(),
+            "expected Ok for exactly MAX_JUMB_DEPTH nested boxes"
+        );
+    }
+
+    #[test]
+    fn test_read_super_box_exceeds_max_depth() {
+        // One level beyond the limit must return BoxNestingTooDeep, not stack-overflow.
+        let buf = build_nested_jumb(BoxReader::MAX_JUMB_DEPTH + 1);
+        let mut reader = Cursor::new(buf);
+        assert!(
+            matches!(
+                BoxReader::read_super_box(&mut reader),
+                Err(JumbfParseError::BoxNestingTooDeep)
+            ),
+            "expected BoxNestingTooDeep for {} nested boxes",
+            BoxReader::MAX_JUMB_DEPTH + 1
+        );
+    }
 }
 
 // !SECTION
