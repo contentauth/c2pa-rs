@@ -24,15 +24,12 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::Arc,
-    time::Instant,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
     format_from_path, identity::validator::CawgValidator, settings::Settings, Builder,
-    ClaimGeneratorInfo, Context as C2paContext, Error, Ingredient, ManifestDefinition,
-    ProgressPhase, Reader, Signer,
+    ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer,
 };
 use clap::{Parser, Subcommand};
 use etcetera::BaseStrategy;
@@ -118,14 +115,9 @@ struct CliArgs {
     #[clap(long = "certs")]
     cert_chain: bool,
 
-    /// Print progress phase timings to stderr during signing and reading.
-    ///
-    /// Each line written to stderr has the form:
-    ///   [  12.345ms] VerifyingSignature 1/2
-    ///
-    /// This does not affect the JSON written to stdout.
-    #[clap(long)]
-    progress: bool,
+    /// Do not perform validation of signature after signing.
+    #[clap(long = "no_signing_verify")]
+    no_signing_verify: bool,
 
     #[command(subcommand)]
     command: Option<Commands>,
@@ -400,16 +392,9 @@ fn blocking_get(url: &str) -> Result<String> {
     }
 }
 
-/// Build a shared [`C2paContext`] from CLI arguments.
-///
-/// Applies settings from the settings file and any trust sub-command options,
-/// then optionally attaches a progress callback (when `--progress` is set) that
-/// prints phase timings to stderr.
-fn build_context(args: &CliArgs) -> Result<Arc<C2paContext>> {
-    let mut settings = Settings::new();
-
+fn configure_sdk(args: &CliArgs) -> Result<()> {
     if args.settings.exists() {
-        settings = settings.with_file(&args.settings)?;
+        Settings::from_file(&args.settings)?;
     }
 
     let mut enable_trust_checks = false;
@@ -422,46 +407,54 @@ fn build_context(args: &CliArgs) -> Result<Arc<C2paContext>> {
     {
         if let Some(trust_list) = &trust_anchors {
             debug!("Using trust anchors from {trust_list:?}");
+
             let data = load_trust_resource(trust_list)?;
-            settings = settings.with_toml(
+            Settings::from_toml(
                 &toml::toml! {
                     [trust]
                     trust_anchors = data
                 }
                 .to_string(),
             )?;
+
             enable_trust_checks = true;
         }
 
         if let Some(allowed_list) = &allowed_list {
             debug!("Using allowed list from {allowed_list:?}");
+
             let data = load_trust_resource(allowed_list)?;
-            settings = settings.with_toml(
+            Settings::from_toml(
                 &toml::toml! {
                     [trust]
                     allowed_list = data
                 }
                 .to_string(),
             )?;
+
             enable_trust_checks = true;
         }
 
         if let Some(trust_config) = &trust_config {
             debug!("Using trust config from {trust_config:?}");
+
             let data = load_trust_resource(trust_config)?;
-            settings = settings.with_toml(
+            Settings::from_toml(
                 &toml::toml! {
                     [trust]
                     trust_config = data
                 }
                 .to_string(),
             )?;
+
             enable_trust_checks = true;
         }
     }
 
+    // if any trust setting is provided enable the trust checks
+    // there is no disabling of default setting only the ability to enable if they were internally disabled
     if enable_trust_checks {
-        settings = settings.with_toml(
+        Settings::from_toml(
             &toml::toml! {
                 [verify]
                 verify_trust = true
@@ -470,26 +463,18 @@ fn build_context(args: &CliArgs) -> Result<Arc<C2paContext>> {
         )?;
     }
 
-    // The CLI always reads the signed output back via Reader (see main()), which
-    // is a more complete post-sign check than sign-time verify
-    settings.set_value("verify.verify_after_sign", false)?;
-
-    let mut context = C2paContext::new().with_settings(settings)?;
-
-    if args.progress {
-        let timer = Instant::now();
-        context = context.with_progress_callback(move |phase: ProgressPhase, step, total| {
-            let elapsed_ms = timer.elapsed().as_secs_f64() * 1000.0;
-            if total == 0 {
-                eprintln!("[{elapsed_ms:>8.3}ms] {phase:?} {step}/? (indeterminate)");
-            } else {
-                eprintln!("[{elapsed_ms:>8.3}ms] {phase:?} {step}/{total}");
+    // enable or disable verification after signing
+    {
+        Settings::from_toml(
+            &toml::toml! {
+                [trust]
+                verify_after_sign = (!args.no_signing_verify)
             }
-            true
-        });
+            .to_string(),
+        )?;
     }
 
-    Ok(Arc::new(context))
+    Ok(())
 }
 
 fn sign_fragmented(
@@ -603,7 +588,7 @@ fn validate_cawg(reader: &mut Reader) -> Result<()> {
     }
 }
 
-fn reader_from_args(args: &CliArgs, ctx: &Arc<C2paContext>) -> Result<Reader> {
+fn reader_from_args(args: &CliArgs) -> Result<Reader> {
     if let Some(external_manifest) = &args.external_manifest {
         let c2pa_data = fs::read(external_manifest)?;
         let format = match c2pa::format_from_path(&args.path) {
@@ -612,15 +597,12 @@ fn reader_from_args(args: &CliArgs, ctx: &Arc<C2paContext>) -> Result<Reader> {
                 bail!("Format for {:?} is unrecognized", args.path);
             }
         };
-        // No context-based API for external manifest + stream; progress not reported here.
         Ok(
             Reader::from_manifest_data_and_stream(&c2pa_data, &format, File::open(&args.path)?)
                 .map_err(special_errs)?,
         )
     } else {
-        Ok(Reader::from_shared_context(ctx)
-            .with_file(&args.path)
-            .map_err(special_errs)?)
+        Ok(Reader::from_file(&args.path).map_err(special_errs)?)
     }
 }
 
@@ -682,8 +664,8 @@ fn main() -> Result<()> {
         Some(Commands::Fragment { fragments_glob: _ })
     );
 
-    // Build the shared context (settings + optional progress callback).
-    let ctx = build_context(&args).context("Could not configure c2pa-rs")?;
+    // configure the SDK
+    configure_sdk(&args).context("Could not configure c2pa-rs")?;
 
     // Remove manifest needs to also remove XMP provenance
     // if args.remove_manifest {
@@ -723,9 +705,9 @@ fn main() -> Result<()> {
         // read the signing information from the manifest definition
         let mut sign_config = SignConfig::from_json(&json)?;
 
-        // read the manifest information, then build the builder from the shared
-        // context so progress callbacks fire during signing.
+        // read the manifest information
         let manifest_def: ManifestDef = serde_json::from_slice(json.as_bytes())?;
+        let mut builder = Builder::from_json(&json)?;
         let mut manifest = manifest_def.manifest;
 
         // add claim_tool generator so we know this was created using this tool
@@ -738,8 +720,6 @@ fn main() -> Result<()> {
         } else {
             manifest.claim_generator_info.insert(1, tool_generator);
         }
-
-        let mut builder = Builder::from_shared_context(&ctx).with_definition(manifest)?;
 
         // set manifest base path before ingredients so ingredients can override it
         if let Some(base) = base_path.as_ref() {
@@ -789,35 +769,21 @@ fn main() -> Result<()> {
             builder.set_no_embed(true);
         }
 
-        // Anchor any owned signers here so borrows below remain valid for the
-        // entire signing block. Exactly one of these will be populated per branch.
-        let _callback_signer_box: Option<Box<dyn Signer>>;
-        let _fallback_signer_box: Option<Box<dyn Signer>>;
-
-        let signer: &dyn Signer = if let Some(signer_process_name) = args.signer_path {
+        let signer = if let Some(signer_process_name) = args.signer_path {
             let cb_config = CallbackSignerConfig::new(&sign_config, args.reserve_size)?;
+
             let process_runner = Box::new(ExternalProcessRunner::new(
                 cb_config.clone(),
                 signer_process_name,
             ));
-            _callback_signer_box = Some(Box::new(CallbackSigner::new(process_runner, cb_config)));
-            _fallback_signer_box = None;
-            _callback_signer_box.as_deref().unwrap()
+            let signer = CallbackSigner::new(process_runner, cb_config);
+
+            Box::new(signer)
         } else {
-            _callback_signer_box = None;
-            // Use the context signer so that cawg_x509_signer from settings is
-            // correctly applied (Settings::signer() reads thread-local which is
-            // not populated by the builder-pattern Context::with_settings path).
-            match ctx.signer() {
-                Ok(signer) => {
-                    _fallback_signer_box = None;
-                    signer
-                }
-                Err(Error::MissingSignerSettings) => {
-                    _fallback_signer_box = Some(sign_config.signer()?);
-                    _fallback_signer_box.as_deref().unwrap()
-                }
-                Err(err) => return Err(err.into()),
+            match Settings::signer() {
+                Ok(signer) => signer,
+                Err(Error::MissingSignerSettings) => sign_config.signer()?,
+                Err(err) => Err(err)?,
             }
         };
 
@@ -829,7 +795,7 @@ fn main() -> Result<()> {
                 }
 
                 if let Some(fg) = &fragments_glob {
-                    return sign_fragmented(&mut builder, signer, &args.path, fg, &output);
+                    return sign_fragmented(&mut builder, signer.as_ref(), &args.path, fg, &output);
                 } else {
                     bail!("fragments_glob must be set");
                 }
@@ -853,7 +819,7 @@ fn main() -> Result<()> {
 
                 let manifest_data = if args.path != output {
                     builder
-                        .sign_file(signer, &args.path, &output)
+                        .sign_file(signer.as_ref(), &args.path, &output)
                         .context("embedding manifest")?
                 } else {
                     let mut file = NamedTempFile::new()?;
@@ -864,7 +830,8 @@ fn main() -> Result<()> {
                             builder.definition.title = Some(title.to_string_lossy().to_string());
                         }
                     }
-                    let manifest_data = builder.sign(signer, &format, &mut source, &mut file)?;
+                    let manifest_data =
+                        builder.sign(signer.as_ref(), &format, &mut source, &mut file)?;
 
                     if !output.exists() {
                         // ensure the path to the file exists
@@ -890,10 +857,8 @@ fn main() -> Result<()> {
                     file.write_all(&manifest_data)?;
                 }
 
-                // Read the written output as the definitive post-sign verification
-                let mut reader = Reader::from_shared_context(&ctx)
-                    .with_file(&output)
-                    .map_err(special_errs)?;
+                // generate a report on the output file
+                let mut reader = Reader::from_file(&output).map_err(special_errs)?;
                 validate_cawg(&mut reader)?;
                 print_reader(&reader, args.detailed, args.crjson)?;
             }
@@ -921,9 +886,7 @@ fn main() -> Result<()> {
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
             println!("Ingredient report written to the directory {:?}", &output);
         } else {
-            let mut reader = Reader::from_shared_context(&ctx)
-                .with_file(&args.path)
-                .map_err(special_errs)?;
+            let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
             validate_cawg(&mut reader)?;
             reader.to_folder(&output)?;
             let report = reader.to_string();
@@ -956,7 +919,7 @@ fn main() -> Result<()> {
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        let mut reader = reader_from_args(&args, &ctx)?;
+        let mut reader = reader_from_args(&args)?;
         validate_cawg(&mut reader)?;
         print_reader(&reader, args.detailed, args.crjson)?;
     }
