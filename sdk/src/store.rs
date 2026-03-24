@@ -4913,6 +4913,49 @@ pub mod tests {
         }
     }
 
+    /// Verify the `ClaimAssetData::Path` branch of BoxHash verification in `claim.rs`.
+    ///
+    /// PNG uses BoxHash, so signing a PNG to a file and then verifying it via
+    /// `Store::verify_from_path` (which passes `ClaimAssetData::Path`) exercises
+    /// the otherwise-untested cfg(file_io) branch.
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_png_box_hash_verify_from_path() {
+        use std::fs::File;
+
+        let ap = fixture_path("libpng-test.png");
+        let temp_dir = tempdirectory().expect("temp dir");
+        let op = temp_dir_path(&temp_dir, "libpng-test-c2pa.png");
+
+        // Sign a PNG and write it to a temp file on disk.
+        let context = Context::new();
+        let mut store = Store::from_context(&context);
+        let claim = create_test_claim().unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        store.commit_claim(claim).unwrap();
+
+        let mut input = File::open(&ap).expect("open fixture");
+        let mut output = File::create(&op).expect("create output");
+        store
+            .save_to_stream("png", &mut input, &mut output, signer.as_ref(), &context)
+            .expect("save_to_stream failed");
+        drop(output);
+
+        // Load the JUMBF from the file path and parse into a store, then verify
+        // using the Path variant — this exercises ClaimAssetData::Path in claim.rs.
+        let jumbf = Store::load_jumbf_from_path(&op, &context).expect("load_jumbf_from_path");
+        let mut report = StatusTracker::default();
+        let mut loaded =
+            Store::from_jumbf_with_context(&jumbf, &mut report, &context).expect("from_jumbf");
+
+        loaded
+            .verify_from_path(&op, &mut report, &context)
+            .expect("verify_from_path failed");
+
+        assert!(!report.has_any_error(), "Unexpected errors: {report:?}");
+        assert_eq!(loaded.claims().len(), 1);
+    }
+
     #[test]
     #[cfg(feature = "file_io")]
     fn test_get_data_boxes() {
