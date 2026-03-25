@@ -1474,6 +1474,7 @@ where
     let cai_ifd_entry = match last_ifd.get_tag(C2PA_TAG) {
         Some(entry) => entry,
         None => {
+            // if the last page doesn't have the C2PA tag, check the first page for backwards compatibility with older TIFFs
             let first_ifd = &tiff_tree[*first_page].data;
             first_ifd.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?
         }
