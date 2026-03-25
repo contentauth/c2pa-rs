@@ -21,7 +21,8 @@ use std::{
 use c2pa::Ingredient;
 use c2pa::{
     assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
-    CallbackSigner, Context, Reader as C2paReader, Settings as C2paSettings, SigningAlg,
+    CallbackSigner, Context, ProgressPhase, Reader as C2paReader, Settings as C2paSettings,
+    SigningAlg,
 };
 use tokio::runtime::Builder;
 
@@ -92,6 +93,23 @@ mod cbindgen_fix {
 
 type C2paContextBuilder = Context;
 type C2paContext = Arc<Context>;
+
+/// Wraps a `*const c_void` (C `void*`) so it can be moved into a `Send + Sync` closure.
+///
+/// Accessing through [`as_ptr()`](SendPtr::as_ptr) rather than the raw `.0` field
+/// ensures the Rust 2021 disjoint-capture analysis captures the whole `SendPtr`
+/// (which is `Send + Sync`) rather than the inner `*const c_void` (which is not).
+///
+/// # Safety
+/// The caller must guarantee the pointer is valid for the closure's lifetime.
+struct SendPtr(*const c_void);
+unsafe impl Send for SendPtr {}
+unsafe impl Sync for SendPtr {}
+impl SendPtr {
+    fn as_ptr(&self) -> *const c_void {
+        self.0
+    }
+}
 
 /// List of supported signing algorithms.
 #[repr(C)]
@@ -495,6 +513,64 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
     0
 }
 
+/// C-callable progress callback function type.
+///
+/// # Parameters
+/// * `context` – the opaque `user_data` pointer passed to
+///   `c2pa_context_builder_set_progress_callback`.
+/// * `phase`   – numeric value of the [`ProgressPhase`] (see SDK header for constants).
+///   Callers should derive any user-visible text from this value in the appropriate language.
+/// * `step`    – monotonically increasing counter within the current phase, starting at
+///   `1`.  Resets to `1` at the start of each new phase.  Use as a liveness heartbeat:
+///   a rising `step` means the SDK is making forward progress.  The unit is
+///   phase-specific and should otherwise be treated as opaque.
+/// * `total`   – `0` = indeterminate (show a spinner, use `step` as liveness signal);
+///   `1` = single-shot phase (the callback itself is the notification);
+///   `> 1` = determinate (`step / total` gives a completion fraction for a progress bar).
+///
+/// # Return value
+/// Return non-zero to continue the operation, zero to cancel.
+pub type ProgressCCallback =
+    unsafe extern "C" fn(context: *const c_void, phase: u8, step: u32, total: u32) -> c_int;
+
+/// Attaches a C progress callback to a context builder.
+///
+/// The `callback` is invoked at key checkpoints during signing and reading
+/// operations.  Returning `0` from the callback requests cancellation; the SDK
+/// will return an error at the next safe stopping point.
+///
+/// # Parameters
+/// * `builder`  – a valid `C2paContextBuilder` pointer.
+/// * `user_data` – opaque `void*` captured by the closure and passed as the first argument
+///   of every `callback` invocation.  Pass `NULL` if the callback does not need user data.
+/// * `callback` – C function pointer matching [`ProgressCCallback`].
+///
+/// # Returns
+/// `0` on success, non-zero on error (check `c2pa_error()`).
+///
+/// # Safety
+/// * `builder` must be valid and not yet built.
+/// * `user_data` must remain valid for the entire lifetime of the built context.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_builder_set_progress_callback(
+    builder: *mut C2paContextBuilder,
+    user_data: *const c_void,
+    callback: ProgressCCallback,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
+    // Wrap user_data so the closure can be Send + Sync.
+    // SAFETY: caller guarantees `user_data` outlives the context.
+    let ud = SendPtr(user_data);
+    // Both the C function pointer and user_data are captured in the closure, so
+    // no separate context-pointer field is needed on Context.
+    let c_callback = move |phase: ProgressPhase, step: u32, total: u32| {
+        // SAFETY: caller guarantees `callback` and `ud` are valid.
+        unsafe { (callback)(ud.as_ptr(), phase as u8, step, total) != 0 }
+    };
+    builder.set_progress_callback(c_callback);
+    0
+}
+
 /// Builds an immutable, shareable context from the builder.
 ///
 /// The builder is consumed by this operation and becomes invalid.
@@ -540,6 +616,28 @@ pub unsafe extern "C" fn c2pa_context_builder_build(
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_context_new() -> *mut C2paContext {
     box_tracked!(Context::new().into_shared())
+}
+
+/// Requests cancellation of any in-progress operation on this context.
+///
+/// Thread-safe — may be called from any thread that holds a valid `C2paContext`
+/// pointer.  The SDK will return an `OperationCancelled` error at the next safe
+/// checkpoint inside the running operation.
+///
+/// # Parameters
+/// * `ctx` – a valid, non-null `C2paContext` pointer obtained from
+///   `c2pa_context_builder_build()` or `c2pa_context_new()`.
+///
+/// # Returns
+/// `0` on success, non-zero if `ctx` is null or invalid.
+///
+/// # Safety
+/// `ctx` must be a valid pointer and must not be freed concurrently with this call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_cancel(ctx: *mut C2paContext) -> c_int {
+    let ctx = deref_or_return_int!(ctx, C2paContext);
+    ctx.cancel();
+    0
 }
 
 ///
@@ -4514,5 +4612,114 @@ verify_after_sign = true
         assert_eq!(result, -1, "Null signer should be rejected");
 
         unsafe { c2pa_free(builder as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_context_builder_set_progress_callback() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let call_count = Arc::new(AtomicU32::new(0));
+        let raw_ptr = Arc::as_ptr(&call_count) as *const c_void;
+
+        unsafe extern "C" fn progress_cb(
+            context: *const c_void,
+            _phase: u8,
+            _step: u32,
+            _total: u32,
+        ) -> c_int {
+            let counter = &*(context as *const AtomicU32);
+            counter.fetch_add(1, Ordering::SeqCst);
+            1
+        }
+
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let result =
+            unsafe { c2pa_context_builder_set_progress_callback(builder, raw_ptr, progress_cb) };
+        assert_eq!(result, 0, "set_progress_callback should succeed");
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+
+        unsafe { c2pa_free(context as *mut c_void) };
+        // Arc still alive here so the AtomicU32 is valid throughout.
+    }
+
+    #[test]
+    fn test_c2pa_context_builder_set_progress_callback_null_user_data() {
+        unsafe extern "C" fn progress_cb(
+            _context: *const c_void,
+            _phase: u8,
+            _step: u32,
+            _total: u32,
+        ) -> c_int {
+            1
+        }
+
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let result = unsafe {
+            c2pa_context_builder_set_progress_callback(builder, std::ptr::null(), progress_cb)
+        };
+        assert_eq!(result, 0, "NULL user_data should be accepted");
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+
+        unsafe { c2pa_free(context as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_context_builder_set_progress_callback_null_builder() {
+        unsafe extern "C" fn progress_cb(
+            _context: *const c_void,
+            _phase: u8,
+            _step: u32,
+            _total: u32,
+        ) -> c_int {
+            1
+        }
+
+        let result = unsafe {
+            c2pa_context_builder_set_progress_callback(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                progress_cb,
+            )
+        };
+        assert_eq!(result, -1, "NULL builder should return error");
+    }
+
+    #[test]
+    fn test_c2pa_context_cancel() {
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        let result = unsafe { c2pa_context_cancel(context) };
+        assert_eq!(result, 0, "cancel should succeed on a valid context");
+
+        unsafe { c2pa_free(context as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_context_cancel_null() {
+        let result = unsafe { c2pa_context_cancel(std::ptr::null_mut()) };
+        assert_eq!(result, -1, "NULL context should return error");
+    }
+
+    #[test]
+    fn test_c2pa_context_cancel_via_builder() {
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+
+        let result = unsafe { c2pa_context_cancel(context) };
+        assert_eq!(result, 0, "cancel should work on a built context");
+
+        unsafe { c2pa_free(context as *mut c_void) };
     }
 }

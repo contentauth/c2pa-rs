@@ -128,6 +128,7 @@ define_fixtures!(
     SAMPLE_PSD => ("Purple Square.psd", "image/vnd.adobe.photoshop"),
     TEST_TEXT_PLAIN => ("unsupported_type.txt", "text/plain"),
     PRE_RELEASE => ("prerelease.jpg", "image/jpeg"),
+    C_MOV => ("c.mov", "video/quicktime"),
 
     // Add more as needed
 );
