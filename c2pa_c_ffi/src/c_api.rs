@@ -513,12 +513,34 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
     0
 }
 
+// TODO: eliminate this duplication — investigate cbindgen `extra_bindings`
+// to emit ProgressPhase directly from the SDK crate.
+/// Progress phase constants passed to C progress callbacks.
+/// These mirror [`c2pa::ProgressPhase`] variants.
+#[repr(C)]
+pub enum C2paProgressPhase {
+    Reading = 0,
+    VerifyingManifest = 1,
+    VerifyingSignature = 2,
+    VerifyingIngredient = 3,
+    VerifyingAssetHash = 4,
+    AddingIngredient = 5,
+    Thumbnail = 6,
+    Hashing = 7,
+    Signing = 8,
+    Embedding = 9,
+    FetchingRemoteManifest = 10,
+    Writing = 11,
+    FetchingOcsp = 12,
+    FetchingTimestamp = 13,
+}
+
 /// C-callable progress callback function type.
 ///
 /// # Parameters
 /// * `context` – the opaque `user_data` pointer passed to
 ///   `c2pa_context_builder_set_progress_callback`.
-/// * `phase`   – numeric value of the [`ProgressPhase`] (see SDK header for constants).
+/// * `phase`   – a [`C2paProgressPhase`] value identifying the current operation.
 ///   Callers should derive any user-visible text from this value in the appropriate language.
 /// * `step`    – monotonically increasing counter within the current phase, starting at
 ///   `1`.  Resets to `1` at the start of each new phase.  Use as a liveness heartbeat:
@@ -530,8 +552,12 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
 ///
 /// # Return value
 /// Return non-zero to continue the operation, zero to cancel.
-pub type ProgressCCallback =
-    unsafe extern "C" fn(context: *const c_void, phase: u8, step: u32, total: u32) -> c_int;
+pub type ProgressCCallback = unsafe extern "C" fn(
+    context: *const c_void,
+    phase: C2paProgressPhase,
+    step: u32,
+    total: u32,
+) -> c_int;
 
 /// Attaches a C progress callback to a context builder.
 ///
@@ -564,8 +590,10 @@ pub unsafe extern "C" fn c2pa_context_builder_set_progress_callback(
     // Both the C function pointer and user_data are captured in the closure, so
     // no separate context-pointer field is needed on Context.
     let c_callback = move |phase: ProgressPhase, step: u32, total: u32| {
-        // SAFETY: caller guarantees `callback` and `ud` are valid.
-        unsafe { (callback)(ud.as_ptr(), phase as u8, step, total) != 0 }
+        // SAFETY: both enums share identical discriminant values; caller
+        // guarantees `callback` and `ud` are valid.
+        let c_phase: C2paProgressPhase = unsafe { std::mem::transmute(phase as u8 as i32) };
+        unsafe { (callback)(ud.as_ptr(), c_phase, step, total) != 0 }
     };
     builder.set_progress_callback(c_callback);
     0
@@ -4623,7 +4651,7 @@ verify_after_sign = true
 
         unsafe extern "C" fn progress_cb(
             context: *const c_void,
-            _phase: u8,
+            _phase: C2paProgressPhase,
             _step: u32,
             _total: u32,
         ) -> c_int {
@@ -4650,7 +4678,7 @@ verify_after_sign = true
     fn test_c2pa_context_builder_set_progress_callback_null_user_data() {
         unsafe extern "C" fn progress_cb(
             _context: *const c_void,
-            _phase: u8,
+            _phase: C2paProgressPhase,
             _step: u32,
             _total: u32,
         ) -> c_int {
@@ -4675,7 +4703,7 @@ verify_after_sign = true
     fn test_c2pa_context_builder_set_progress_callback_null_builder() {
         unsafe extern "C" fn progress_cb(
             _context: *const c_void,
-            _phase: u8,
+            _phase: C2paProgressPhase,
             _step: u32,
             _total: u32,
         ) -> c_int {

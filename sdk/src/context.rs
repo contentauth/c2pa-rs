@@ -31,11 +31,8 @@ use crate::{
 ///
 /// Passed to the progress callback registered on [`Context`] so callers can
 /// display progress indicators or make phase-specific cancellation decisions.
-///
-/// `#[repr(u8)]` ensures stable integer values for FFI and WASM consumers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-#[repr(u8)]
 pub enum ProgressPhase {
     /// Parsing and extracting JUMBF manifest data from an asset stream (I/O phase).
     Reading = 0,
