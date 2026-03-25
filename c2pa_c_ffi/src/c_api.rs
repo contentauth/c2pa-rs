@@ -94,7 +94,6 @@ mod cbindgen_fix {
 type C2paContextBuilder = Context;
 type C2paContext = Arc<Context>;
 
-
 /// Progress phase constants passed to C progress callbacks.
 /// These mirror [`c2pa::ProgressPhase`] variants.
 #[repr(C)]
@@ -111,7 +110,7 @@ pub enum C2paProgressPhase {
     Embedding = 9,
     FetchingRemoteManifest = 10,
     Writing = 11,
-    FetchingOcsp = 12,
+    FetchingOCSP = 12,
     FetchingTimestamp = 13,
 }
 
@@ -130,7 +129,7 @@ impl From<ProgressPhase> for C2paProgressPhase {
             ProgressPhase::Embedding => Self::Embedding,
             ProgressPhase::FetchingRemoteManifest => Self::FetchingRemoteManifest,
             ProgressPhase::Writing => Self::Writing,
-            ProgressPhase::FetchingOCSP => Self::FetchingOcsp,
+            ProgressPhase::FetchingOCSP => Self::FetchingOCSP,
             ProgressPhase::FetchingTimestamp => Self::FetchingTimestamp,
             _ => Self::Reading, // fallback for #[non_exhaustive]
         }
@@ -589,8 +588,8 @@ pub unsafe extern "C" fn c2pa_context_builder_set_progress_callback(
 ) -> c_int {
     let builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
     let ud = user_data as usize;
-    let c_callback = move |phase: ProgressPhase, step: u32, total: u32| {
-        unsafe { (callback)(ud as *const c_void, phase.into(), step, total) != 0 }
+    let c_callback = move |phase: ProgressPhase, step: u32, total: u32| unsafe {
+        (callback)(ud as *const c_void, phase.into(), step, total) != 0
     };
     builder.set_progress_callback(c_callback);
     0
@@ -4715,6 +4714,30 @@ verify_after_sign = true
             )
         };
         assert_eq!(result, -1, "NULL builder should return error");
+    }
+
+    #[test]
+    fn test_progress_phase_to_c2pa_progress_phase() {
+        let cases: &[(ProgressPhase, i32)] = &[
+            (ProgressPhase::Reading, 0),
+            (ProgressPhase::VerifyingManifest, 1),
+            (ProgressPhase::VerifyingSignature, 2),
+            (ProgressPhase::VerifyingIngredient, 3),
+            (ProgressPhase::VerifyingAssetHash, 4),
+            (ProgressPhase::AddingIngredient, 5),
+            (ProgressPhase::Thumbnail, 6),
+            (ProgressPhase::Hashing, 7),
+            (ProgressPhase::Signing, 8),
+            (ProgressPhase::Embedding, 9),
+            (ProgressPhase::FetchingRemoteManifest, 10),
+            (ProgressPhase::Writing, 11),
+            (ProgressPhase::FetchingOCSP, 12),
+            (ProgressPhase::FetchingTimestamp, 13),
+        ];
+        for (sdk_phase, expected) in cases {
+            let c_phase = C2paProgressPhase::from(sdk_phase.clone());
+            assert_eq!(c_phase as i32, *expected, "mismatch for {sdk_phase:?}");
+        }
     }
 
     #[test]
