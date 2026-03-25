@@ -94,20 +94,45 @@ mod cbindgen_fix {
 type C2paContextBuilder = Context;
 type C2paContext = Arc<Context>;
 
-/// Wraps a `*const c_void` (C `void*`) so it can be moved into a `Send + Sync` closure.
-///
-/// Accessing through [`as_ptr()`](SendPtr::as_ptr) rather than the raw `.0` field
-/// ensures the Rust 2021 disjoint-capture analysis captures the whole `SendPtr`
-/// (which is `Send + Sync`) rather than the inner `*const c_void` (which is not).
-///
-/// # Safety
-/// The caller must guarantee the pointer is valid for the closure's lifetime.
-struct SendPtr(*const c_void);
-unsafe impl Send for SendPtr {}
-unsafe impl Sync for SendPtr {}
-impl SendPtr {
-    fn as_ptr(&self) -> *const c_void {
-        self.0
+/// Progress phase constants passed to C progress callbacks.
+/// These mirror [`c2pa::ProgressPhase`] variants.
+#[repr(C)]
+pub enum C2paProgressPhase {
+    Reading = 0,
+    VerifyingManifest = 1,
+    VerifyingSignature = 2,
+    VerifyingIngredient = 3,
+    VerifyingAssetHash = 4,
+    AddingIngredient = 5,
+    Thumbnail = 6,
+    Hashing = 7,
+    Signing = 8,
+    Embedding = 9,
+    FetchingRemoteManifest = 10,
+    Writing = 11,
+    FetchingOCSP = 12,
+    FetchingTimestamp = 13,
+}
+
+impl From<ProgressPhase> for C2paProgressPhase {
+    fn from(phase: ProgressPhase) -> Self {
+        match phase {
+            ProgressPhase::Reading => Self::Reading,
+            ProgressPhase::VerifyingManifest => Self::VerifyingManifest,
+            ProgressPhase::VerifyingSignature => Self::VerifyingSignature,
+            ProgressPhase::VerifyingIngredient => Self::VerifyingIngredient,
+            ProgressPhase::VerifyingAssetHash => Self::VerifyingAssetHash,
+            ProgressPhase::AddingIngredient => Self::AddingIngredient,
+            ProgressPhase::Thumbnail => Self::Thumbnail,
+            ProgressPhase::Hashing => Self::Hashing,
+            ProgressPhase::Signing => Self::Signing,
+            ProgressPhase::Embedding => Self::Embedding,
+            ProgressPhase::FetchingRemoteManifest => Self::FetchingRemoteManifest,
+            ProgressPhase::Writing => Self::Writing,
+            ProgressPhase::FetchingOCSP => Self::FetchingOCSP,
+            ProgressPhase::FetchingTimestamp => Self::FetchingTimestamp,
+            _ => Self::Reading, // fallback for #[non_exhaustive]
+        }
     }
 }
 
@@ -518,7 +543,7 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
 /// # Parameters
 /// * `context` – the opaque `user_data` pointer passed to
 ///   `c2pa_context_builder_set_progress_callback`.
-/// * `phase`   – numeric value of the [`ProgressPhase`] (see SDK header for constants).
+/// * `phase`   – a [`C2paProgressPhase`] value identifying the current operation.
 ///   Callers should derive any user-visible text from this value in the appropriate language.
 /// * `step`    – monotonically increasing counter within the current phase, starting at
 ///   `1`.  Resets to `1` at the start of each new phase.  Use as a liveness heartbeat:
@@ -530,8 +555,12 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
 ///
 /// # Return value
 /// Return non-zero to continue the operation, zero to cancel.
-pub type ProgressCCallback =
-    unsafe extern "C" fn(context: *const c_void, phase: u8, step: u32, total: u32) -> c_int;
+pub type ProgressCCallback = unsafe extern "C" fn(
+    context: *const c_void,
+    phase: C2paProgressPhase,
+    step: u32,
+    total: u32,
+) -> c_int;
 
 /// Attaches a C progress callback to a context builder.
 ///
@@ -558,14 +587,9 @@ pub unsafe extern "C" fn c2pa_context_builder_set_progress_callback(
     callback: ProgressCCallback,
 ) -> c_int {
     let builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
-    // Wrap user_data so the closure can be Send + Sync.
-    // SAFETY: caller guarantees `user_data` outlives the context.
-    let ud = SendPtr(user_data);
-    // Both the C function pointer and user_data are captured in the closure, so
-    // no separate context-pointer field is needed on Context.
-    let c_callback = move |phase: ProgressPhase, step: u32, total: u32| {
-        // SAFETY: caller guarantees `callback` and `ud` are valid.
-        unsafe { (callback)(ud.as_ptr(), phase as u8, step, total) != 0 }
+    let ud = user_data as usize;
+    let c_callback = move |phase: ProgressPhase, step: u32, total: u32| unsafe {
+        (callback)(ud as *const c_void, phase.into(), step, total) != 0
     };
     builder.set_progress_callback(c_callback);
     0
@@ -4623,7 +4647,7 @@ verify_after_sign = true
 
         unsafe extern "C" fn progress_cb(
             context: *const c_void,
-            _phase: u8,
+            _phase: C2paProgressPhase,
             _step: u32,
             _total: u32,
         ) -> c_int {
@@ -4650,7 +4674,7 @@ verify_after_sign = true
     fn test_c2pa_context_builder_set_progress_callback_null_user_data() {
         unsafe extern "C" fn progress_cb(
             _context: *const c_void,
-            _phase: u8,
+            _phase: C2paProgressPhase,
             _step: u32,
             _total: u32,
         ) -> c_int {
@@ -4675,7 +4699,7 @@ verify_after_sign = true
     fn test_c2pa_context_builder_set_progress_callback_null_builder() {
         unsafe extern "C" fn progress_cb(
             _context: *const c_void,
-            _phase: u8,
+            _phase: C2paProgressPhase,
             _step: u32,
             _total: u32,
         ) -> c_int {
@@ -4690,6 +4714,30 @@ verify_after_sign = true
             )
         };
         assert_eq!(result, -1, "NULL builder should return error");
+    }
+
+    #[test]
+    fn test_progress_phase_to_c2pa_progress_phase() {
+        let cases: &[(ProgressPhase, i32)] = &[
+            (ProgressPhase::Reading, 0),
+            (ProgressPhase::VerifyingManifest, 1),
+            (ProgressPhase::VerifyingSignature, 2),
+            (ProgressPhase::VerifyingIngredient, 3),
+            (ProgressPhase::VerifyingAssetHash, 4),
+            (ProgressPhase::AddingIngredient, 5),
+            (ProgressPhase::Thumbnail, 6),
+            (ProgressPhase::Hashing, 7),
+            (ProgressPhase::Signing, 8),
+            (ProgressPhase::Embedding, 9),
+            (ProgressPhase::FetchingRemoteManifest, 10),
+            (ProgressPhase::Writing, 11),
+            (ProgressPhase::FetchingOCSP, 12),
+            (ProgressPhase::FetchingTimestamp, 13),
+        ];
+        for (sdk_phase, expected) in cases {
+            let c_phase = C2paProgressPhase::from(sdk_phase.clone());
+            assert_eq!(c_phase as i32, *expected, "mismatch for {sdk_phase:?}");
+        }
     }
 
     #[test]
