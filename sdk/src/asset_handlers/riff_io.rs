@@ -160,7 +160,14 @@ where
 
         // duplicate all top level children
         for child in children {
-            children_contents.push(inject_c2pa(&child, stream, data, xmp_data, format, depth + 1)?);
+            children_contents.push(inject_c2pa(
+                &child,
+                stream,
+                data,
+                xmp_data,
+                format,
+                depth + 1,
+            )?);
         }
 
         // add XMP if needed
@@ -236,7 +243,14 @@ where
         let mut children_contents: Vec<ChunkContents> = Vec::new();
 
         for child in children {
-            children_contents.push(inject_c2pa(&child, stream, data, xmp_data, format, depth + 1)?);
+            children_contents.push(inject_c2pa(
+                &child,
+                stream,
+                data,
+                xmp_data,
+                format,
+                depth + 1,
+            )?);
         }
 
         Ok(ChunkContents::ChildrenNoType(id, children_contents))
@@ -440,7 +454,7 @@ impl CAIWriter for RiffIO {
             store_bytes,
             None,
             &self.riff_format,
-            0
+            0,
         )?;
 
         let mut writer = CAIReadWriteWrapper {
@@ -641,7 +655,7 @@ impl RemoteRefEmbed for RiffIO {
                         &[],
                         Some(new_xmp.as_bytes()),
                         &self.riff_format,
-                        0
+                        0,
                     )?;
 
                     // save contents
@@ -682,7 +696,7 @@ impl RemoteRefEmbed for RiffIO {
                         &[],
                         Some(new_xmp.as_bytes()),
                         &self.riff_format,
-                        0
+                        0,
                     )?;
 
                     // save contents
@@ -763,10 +777,30 @@ pub mod tests {
     }
 
     #[test]
+    fn test_write_cai_with_large_recursion_does_not_panic() {
+        let more_data = "some more test data".as_bytes();
+
+        let riff_io = RiffIO::new("wav");
+        if let Ok(temp_dir) = tempdirectory() {
+            let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
+
+            let panic_result = panic::catch_unwind(|| {
+                let mut output_stream = File::create(&output).unwrap();
+                let mut source = File::open(fixture_path("riff_bomb_1000.wav")).unwrap();
+                assert!(matches!(
+                    riff_io.write_cai(&mut source, &mut output_stream, more_data),
+                    Err(Error::InvalidAsset(_))
+                ));
+            });
+
+            assert!(panic_result.is_ok());
+        }
+    }
+
+    #[test]
     fn test_write_wav_stream() {
         let more_data = "some more test data".as_bytes();
-        //let mut source = File::open(fixture_path("sample1.wav")).unwrap();
-        let mut source = File::open("/Users/mfisher/Downloads/riff_bomb_1000.wav").unwrap();
+        let mut source = File::open(fixture_path("sample1.wav")).unwrap();
 
         let riff_io = RiffIO::new("wav");
         if let Ok(temp_dir) = tempdirectory() {
