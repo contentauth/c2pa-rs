@@ -35,7 +35,7 @@
 
 use std::{
     fs::File,
-    io::{Cursor, SeekFrom},
+    io::{Cursor, Seek, SeekFrom},
     path::Path,
 };
 
@@ -51,7 +51,7 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::{safe_vec, tempfile_builder},
+        io_utils::{patch_stream, safe_vec, tempfile_builder},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -303,6 +303,42 @@ fn compress_brob_box(inner_type: &[u8; 4], data: &[u8]) -> Result<Vec<u8>> {
 /// `BoxReader::read_super_box` and expects a `"jumb"` BMFF header) can parse it.
 /// Multiple `jumb` boxes are permitted (e.g. one for EXIF, one for C2PA); only the
 /// C2PA one is returned.
+/// Scans the parsed box list for the single C2PA `jumb` box, peeking only the
+/// minimum bytes needed to verify the C2PA label.
+///
+/// Returns `Some((box_offset, box_size))` when exactly one C2PA `jumb` box is
+/// found, `None` when none is found, and `Err(TooManyManifestStores)` when more
+/// than one is found.  `box_size` is computed with `saturating_sub` so it is
+/// always safe to pass to `safe_vec`.
+fn find_c2pa_jumb_location(
+    reader: &mut dyn CAIRead,
+    boxes: &[JxlBoxInfo],
+    file_len: u64,
+) -> Result<Option<(u64, u64)>> {
+    let mut found: Option<(u64, u64)> = None;
+    for b in boxes {
+        if b.box_type != BOX_JUMB {
+            continue;
+        }
+        // Peek only the bytes needed by jumb_data_has_c2pa_label to check
+        // the C2PA label; no need to read the entire payload.
+        let peek = b.data_size(file_len).min(JUMD_C2PA_LABEL_PEEK);
+        reader.seek(SeekFrom::Start(b.data_offset()))?;
+        let mut header_peek = safe_vec(peek, Some(0u8))?;
+        reader
+            .read_exact(&mut header_peek)
+            .map_err(Error::IoError)?;
+        if jumb_data_has_c2pa_label(&header_peek) {
+            if found.is_some() {
+                return Err(Error::TooManyManifestStores);
+            }
+            let box_size = b.end(file_len).saturating_sub(b.offset);
+            found = Some((b.offset, box_size));
+        }
+    }
+    Ok(found)
+}
+
 fn find_jumb_data(reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
     let file_len = reader.seek(SeekFrom::End(0))?;
 
@@ -319,37 +355,18 @@ fn find_jumb_data(reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
 
     let boxes = parse_all_boxes(reader)?;
 
-    let mut c2pa_jumb: Option<Vec<u8>> = None;
+    let (offset, box_size) =
+        find_c2pa_jumb_location(reader, &boxes, file_len)?.ok_or(Error::JumbfNotFound)?;
 
-    for b in &boxes {
-        if b.box_type == BOX_JUMB {
-            // Peek only the bytes needed by jumb_data_has_c2pa_label to check
-            // the C2PA label; no need to read the entire payload.
-            let peek = b.data_size(file_len).min(JUMD_C2PA_LABEL_PEEK);
-            reader.seek(SeekFrom::Start(b.data_offset()))?;
-            let mut header_peek = safe_vec(peek, Some(0u8))?;
-            reader
-                .read_exact(&mut header_peek)
-                .map_err(Error::IoError)?;
-            if jumb_data_has_c2pa_label(&header_peek) {
-                if c2pa_jumb.is_some() {
-                    return Err(Error::TooManyManifestStores);
-                }
-                // Return the complete jumb BMFF box (header + payload) so that
-                // Store::from_jumbf (which calls BoxReader::read_super_box and
-                // expects a "jumb" box header) can parse it correctly.
-                let box_size = b.end(file_len).saturating_sub(b.offset);
-                reader.seek(SeekFrom::Start(b.offset))?;
-                let mut complete_box = safe_vec(box_size, Some(0u8))?;
-                reader
-                    .read_exact(&mut complete_box)
-                    .map_err(Error::IoError)?;
-                c2pa_jumb = Some(complete_box);
-            }
-        }
-    }
-
-    c2pa_jumb.ok_or(Error::JumbfNotFound)
+    // Return the complete jumb BMFF box (header + payload) so that
+    // Store::from_jumbf (which calls BoxReader::read_super_box and
+    // expects a "jumb" box header) can parse it correctly.
+    reader.seek(SeekFrom::Start(offset))?;
+    let mut complete_box = safe_vec(box_size, Some(0u8))?;
+    reader
+        .read_exact(&mut complete_box)
+        .map_err(Error::IoError)?;
+    Ok(complete_box)
 }
 
 /// Reads XMP data from the JPEG XL container (from `xml ` or `brob`-wrapped `xml ` boxes).
@@ -483,24 +500,26 @@ fn remove_c2pa_jumb_box(reader: &mut dyn CAIRead, writer: &mut dyn CAIReadWrite)
 /// - `len` — byte length of the existing XMP box (0 when inserting a new box).
 /// - `was_compressed` — `true` when the existing XMP resides in a `brob`-wrapped `xml `
 ///   box, so that the write path can preserve the original compression state.
-fn find_xmp_box_info(boxes: &[JxlBoxInfo], file_len: u64, data: &[u8]) -> (u64, u64, bool) {
+fn find_xmp_box_info(
+    reader: &mut dyn CAIRead,
+    boxes: &[JxlBoxInfo],
+    file_len: u64,
+) -> Result<(u64, u64, bool)> {
     for b in boxes {
         if b.box_type == BOX_XML {
-            return (b.offset, b.end(file_len) - b.offset, false);
-        } else if b.box_type == BOX_BROB {
-            let data_start = b.data_offset() as usize;
-            if data.len() >= data_start + 4 {
-                let orig_type: [u8; 4] = data[data_start..data_start + 4]
-                    .try_into()
-                    .unwrap_or([0u8; 4]);
-                if orig_type == BOX_XML {
-                    return (b.offset, b.end(file_len) - b.offset, true);
-                }
+            return Ok((b.offset, b.end(file_len).saturating_sub(b.offset), false));
+        } else if b.box_type == BOX_BROB && b.data_size(file_len) >= 4 {
+            // Peek the 4-byte orig_type field at the start of the brob payload.
+            reader.seek(SeekFrom::Start(b.data_offset()))?;
+            let mut orig_type = [0u8; 4];
+            reader.read_exact(&mut orig_type).map_err(Error::IoError)?;
+            if orig_type == BOX_XML {
+                return Ok((b.offset, b.end(file_len).saturating_sub(b.offset), true));
             }
         }
     }
-    // No existing XMP box — insert after ftyp, before codestream
-    (find_jumb_insertion_offset(boxes), 0, false)
+    // No existing XMP box — insert after ftyp, before codestream.
+    Ok((find_jumb_insertion_offset(boxes), 0, false))
 }
 
 pub struct JpegXlIO {}
@@ -530,55 +549,32 @@ impl CAIWriter for JpegXlIO {
             ));
         }
 
-        // Read entire input
-        input_stream.rewind()?;
-        let mut buf = Vec::new();
-        input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-
-        // Parse boxes to find and remove existing jumb
-        let mut cursor = Cursor::new(&buf);
-        let boxes = parse_all_boxes(&mut cursor)?;
-
-        // Find the existing C2PA jumb box to remove, if any. The spec allows at most one,
-        // so this is an Option rather than a Vec. Other jumb boxes (e.g. EXIF) and
-        // brob-wrapped jumb boxes are left untouched.
-        let existing_c2pa_jumb: Option<(usize, usize)> = boxes.iter().find_map(|b| {
-            if b.box_type != BOX_JUMB {
-                return None;
-            }
-            let data_start = b.data_offset() as usize;
-            let data_end = b.end(file_len) as usize;
-            if data_end <= buf.len() && jumb_data_has_c2pa_label(&buf[data_start..data_end]) {
-                Some((b.offset as usize, data_end))
-            } else {
-                None
-            }
-        });
-
-        if let Some((start, end)) = existing_c2pa_jumb {
-            buf.drain(start..end);
-        }
-
-        // Only re-parse when an existing C2PA jumb box was removed, because draining
-        // bytes invalidates the offsets captured in the first parse. When nothing
-        // was removed the original parse results are still accurate.
-        let insert_offset = if existing_c2pa_jumb.is_none() {
-            find_jumb_insertion_offset(&boxes) as usize
-        } else {
-            let mut cursor = Cursor::new(&buf);
-            let boxes = parse_all_boxes(&mut cursor)?;
-            find_jumb_insertion_offset(&boxes) as usize
-        };
+        // Parse only box headers — no full file read required.
+        let boxes = parse_all_boxes(input_stream)?;
 
         // store_bytes is already a complete `jumb` BMFF box produced by the C2PA SDK
         // (Store::to_jumbf). Do NOT wrap it in another jumb box.
-        let jumb_box = store_bytes.to_vec();
-
-        // Insert
-        buf.splice(insert_offset..insert_offset, jumb_box.iter().cloned());
-
-        output_stream.rewind()?;
-        output_stream.write_all(&buf).map_err(Error::IoError)?;
+        //
+        // Use patch_stream to stream data directly from input to output without
+        // loading the entire file into memory.  JPEG XL boxes are independent so
+        // we can splice at an arbitrary byte offset.
+        if let Some((offset, replace_len)) =
+            find_c2pa_jumb_location(input_stream, &boxes, file_len)?
+        {
+            // Replace the existing C2PA jumb box.
+            patch_stream(
+                input_stream,
+                output_stream,
+                offset,
+                replace_len,
+                store_bytes,
+            )?;
+        } else {
+            // No existing C2PA jumb box; insert at the spec-compliant position
+            // (after ftyp, before the first codestream box).
+            let insert_offset = find_jumb_insertion_offset(&boxes);
+            patch_stream(input_stream, output_stream, insert_offset, 0, store_bytes)?;
+        }
 
         Ok(())
     }
@@ -587,17 +583,22 @@ impl CAIWriter for JpegXlIO {
         &self,
         input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>> {
-        // Ensure there is a jumb placeholder
-        let output_vec: Vec<u8> = Vec::new();
-        let mut output_stream = Cursor::new(output_vec);
+        // Ensure there is a C2PA jumb placeholder in the output so that the
+        // hashing layer has a correctly-sized Cai exclusion region to work with.
+        let mut output_stream = Cursor::new(Vec::<u8>::new());
         add_required_jumb_to_stream(input_stream, &mut output_stream)?;
 
-        let buf = output_stream.into_inner();
-        let file_len = buf.len() as u64;
-        let mut cursor = Cursor::new(&buf);
-        let boxes = parse_all_boxes(&mut cursor)?;
+        let file_len = output_stream
+            .seek(SeekFrom::End(0))
+            .map_err(Error::IoError)?;
 
-        let positions: Vec<HashObjectPositions> = boxes
+        let boxes = parse_all_boxes(&mut output_stream)?;
+
+        // Identify boxes by offset: C2PA via 30-byte label peek, XMP via box type.
+        let c2pa_offset =
+            find_c2pa_jumb_location(&mut output_stream, &boxes, file_len)?.map(|(off, _)| off);
+
+        let positions = boxes
             .iter()
             .map(|b| {
                 let length = if b.total_size == 0 {
@@ -605,23 +606,8 @@ impl CAIWriter for JpegXlIO {
                 } else {
                     b.total_size as usize
                 };
-                let htype = if b.box_type == BOX_JUMB {
-                    // Only mark as CAI if this is the C2PA manifest store (identified by
-                    // its "c2pa" jumd label). The placeholder inserted by
-                    // add_required_jumb_to_stream also carries this label, so no special
-                    // empty-payload handling is needed.
-                    let data_start = b.data_offset() as usize;
-                    let data_end = b.end(file_len) as usize;
-                    let data = if data_end <= buf.len() {
-                        &buf[data_start..data_end]
-                    } else {
-                        &[]
-                    };
-                    if jumb_data_has_c2pa_label(data) {
-                        HashBlockObjectType::Cai
-                    } else {
-                        HashBlockObjectType::Other
-                    }
+                let htype = if Some(b.offset) == c2pa_offset {
+                    HashBlockObjectType::Cai
                 } else if b.box_type == BOX_XML {
                     HashBlockObjectType::Xmp
                 } else {
@@ -666,41 +652,43 @@ fn build_c2pa_jumd_placeholder() -> Vec<u8> {
     build_box(b"jumb", &jumd)
 }
 
-/// Ensures the JPEG XL container has a jumb box placeholder for hashing.
+/// Ensures the JPEG XL container has a C2PA `jumb` placeholder for hashing.
+///
+/// If the input already contains a C2PA `jumb` box it is streamed to the output
+/// unchanged.  Otherwise a minimal labelled placeholder is inserted at the
+/// spec-compliant position (after `ftyp`, before the first codestream box) so
+/// that the hashing layer has a correctly-sized `Cai` exclusion region.
+///
+/// No full-file read is performed — only box headers and the 30-byte JUMD label
+/// peek are read from the input stream.
 fn add_required_jumb_to_stream(
     input_stream: &mut dyn CAIRead,
     output_stream: &mut dyn CAIReadWrite,
 ) -> Result<()> {
-    input_stream.rewind()?;
+    let file_len = input_stream.seek(SeekFrom::End(0))?;
 
-    let mut buf = Vec::new();
-    input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-    input_stream.rewind()?;
+    if !is_jxl_container(input_stream)? {
+        return Err(Error::InvalidAsset(
+            "Not a valid JPEG XL container".to_string(),
+        ));
+    }
 
-    let mut cursor = Cursor::new(&buf);
-    let boxes = parse_all_boxes(&mut cursor)?;
+    // Parse only box headers — no full file read required.
+    let boxes = parse_all_boxes(input_stream)?;
 
     // Check specifically for a C2PA jumb box (not just any jumb box), so that a file
     // with only non-C2PA jumb boxes (e.g. EXIF) still gets a C2PA placeholder inserted.
-    let has_c2pa_jumb = boxes.iter().any(|b| {
-        if b.box_type != BOX_JUMB {
-            return false;
-        }
-        let data_start = b.data_offset() as usize;
-        let data_end = b.end(buf.len() as u64) as usize;
-        data_end <= buf.len() && jumb_data_has_c2pa_label(&buf[data_start..data_end])
-    });
+    let has_c2pa_jumb = find_c2pa_jumb_location(input_stream, &boxes, file_len)?.is_some();
 
     if !has_c2pa_jumb {
-        // Use a minimal valid jumd "c2pa" payload so the placeholder is identifiable
-        // by jumb_data_has_c2pa_label and cannot be confused with any other jumb box.
+        // Insert a minimal labelled placeholder so the hashing layer can identify
+        // the Cai exclusion region before the real manifest is written.
         let placeholder = build_c2pa_jumd_placeholder();
-        let jpegxl_io = JpegXlIO {};
-        let mut input = Cursor::new(buf);
-        jpegxl_io.write_cai(&mut input, output_stream, &placeholder)?;
+        let insert_offset = find_jumb_insertion_offset(&boxes);
+        patch_stream(input_stream, output_stream, insert_offset, 0, &placeholder)?;
     } else {
-        output_stream.rewind()?;
-        output_stream.write_all(&buf).map_err(Error::IoError)?;
+        // Stream input to output unchanged — C2PA jumb box is already present.
+        patch_stream(input_stream, output_stream, file_len, 0, &[])?;
     }
 
     Ok(())
@@ -814,24 +802,14 @@ impl RemoteRefEmbed for JpegXlIO {
                     ));
                 }
 
-                source_stream.rewind()?;
-                let mut buf = Vec::new();
-                source_stream
-                    .read_to_end(&mut buf)
-                    .map_err(Error::IoError)?;
+                // Parse only box headers — no full file read required.
+                let boxes = parse_all_boxes(source_stream)?;
 
-                let xmp = match find_xmp_data(source_stream) {
-                    Some(s) => s,
-                    None => MIN_XMP.to_string(),
-                };
-
+                let xmp = find_xmp_data(source_stream).unwrap_or_else(|| MIN_XMP.to_string());
                 let updated_xmp = add_provenance(&xmp, &manifest_uri)?;
 
-                let mut cursor = Cursor::new(&buf);
-                let boxes = parse_all_boxes(&mut cursor)?;
-
                 let (xmp_offset, xmp_len, was_compressed) =
-                    find_xmp_box_info(&boxes, file_len, &buf);
+                    find_xmp_box_info(source_stream, &boxes, file_len)?;
 
                 // Preserve the source file's compression state: if the original XMP
                 // was Brotli-compressed (brob-wrapped), write it back compressed.
@@ -841,13 +819,9 @@ impl RemoteRefEmbed for JpegXlIO {
                     build_box(&BOX_XML, updated_xmp.as_bytes())
                 };
 
-                let xmp_offset = xmp_offset as usize;
-                let xmp_len = xmp_len as usize;
-
-                buf.splice(xmp_offset..xmp_offset + xmp_len, xmp_box.iter().cloned());
-
-                output_stream.rewind()?;
-                output_stream.write_all(&buf).map_err(Error::IoError)?;
+                // Use patch_stream to stream data directly without loading the entire
+                // file into memory.
+                patch_stream(source_stream, output_stream, xmp_offset, xmp_len, &xmp_box)?;
 
                 Ok(())
             }
@@ -904,7 +878,9 @@ impl AssetBoxHash for JpegXlIO {
 
 impl ComposedManifestRef for JpegXlIO {
     fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
-        Ok(build_box(&BOX_JUMB, manifest_data))
+        // manifest_data is already a complete `jumb` BMFF box produced by the C2PA SDK
+        // (Store::to_jumbf). Return it unchanged — do NOT wrap it in another jumb box.
+        Ok(manifest_data.to_vec())
     }
 }
 
@@ -1815,23 +1791,11 @@ pub mod tests {
 
     #[test]
     fn test_composed_manifest() {
-        let manifest_data = b"test_manifest_for_composition";
+        // manifest_data is already a complete jumb box; compose_manifest must return it unchanged.
+        let manifest_data = c2pa_store(b"test_manifest_for_composition");
         let jpegxl_io = JpegXlIO {};
-        let composed = jpegxl_io.compose_manifest(manifest_data, "jxl").unwrap();
-
-        // Verify it's a properly formatted ISOBMFF box
-        let mut cursor = Cursor::new(&composed);
-        let size = cursor.read_u32::<BigEndian>().unwrap();
-        let mut box_type = [0u8; 4];
-        cursor.read_exact(&mut box_type).unwrap();
-
-        assert_eq!(size as usize, composed.len());
-        assert_eq!(box_type, BOX_JUMB);
-
-        // Payload should be the manifest data
-        let mut payload = vec![0u8; manifest_data.len()];
-        cursor.read_exact(&mut payload).unwrap();
-        assert_eq!(payload, manifest_data);
+        let composed = jpegxl_io.compose_manifest(&manifest_data, "jxl").unwrap();
+        assert_eq!(composed, manifest_data);
     }
 
     #[test]
@@ -1853,14 +1817,9 @@ pub mod tests {
         let curr_manifest = jpegxl_io.read_cai(&mut with_manifest).unwrap();
         assert_eq!(curr_manifest, original_manifest);
 
-        // Compose it
+        // compose_manifest must return the jumb box unchanged — no re-wrapping.
         let composed = jpegxl_io.compose_manifest(&curr_manifest, "jxl").unwrap();
-
-        // Verify the composed data can be parsed as a valid jumb box
-        let mut c = Cursor::new(&composed);
-        let header = read_box_header(&mut c).unwrap().unwrap();
-        assert_eq!(header.box_type, BOX_JUMB);
-        assert_eq!(header.total_size as usize, composed.len());
+        assert_eq!(composed, curr_manifest);
     }
 
     // ─── Supported types tests ───
