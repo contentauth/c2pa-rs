@@ -49,6 +49,8 @@ static SUPPORTED_TYPES: [&str; 12] = [
     "video/x-msvideo",
 ];
 
+const MAX_DEPTH: usize = 32; // max depth to search for VP8/VP8L chunks
+
 pub struct RiffIO {
     #[allow(dead_code)]
     riff_format: String, // can be used for specialized RIFF cases
@@ -121,6 +123,7 @@ fn inject_c2pa<T>(
     data: &[u8],
     xmp_data: Option<&[u8]>,
     format: &str,
+    depth: usize,
 ) -> Result<ChunkContents>
 where
     T: Seek + std::io::Read,
@@ -128,6 +131,12 @@ where
     let id = chunk.id();
     let is_riff_chunk: bool = id == RIFF_ID;
     stream.rewind()?;
+
+    if depth > MAX_DEPTH {
+        return Err(Error::InvalidAsset(
+            "RIFF chunk nesting too deep".to_string(),
+        ));
+    }
 
     if is_riff_chunk || id == LIST_ID {
         let chunk_type = chunk.read_type(stream).map_err(|_| {
@@ -151,7 +160,14 @@ where
 
         // duplicate all top level children
         for child in children {
-            children_contents.push(inject_c2pa(&child, stream, data, xmp_data, format)?);
+            children_contents.push(inject_c2pa(
+                &child,
+                stream,
+                data,
+                xmp_data,
+                format,
+                depth + 1,
+            )?);
         }
 
         // add XMP if needed
@@ -227,7 +243,14 @@ where
         let mut children_contents: Vec<ChunkContents> = Vec::new();
 
         for child in children {
-            children_contents.push(inject_c2pa(&child, stream, data, xmp_data, format)?);
+            children_contents.push(inject_c2pa(
+                &child,
+                stream,
+                data,
+                xmp_data,
+                format,
+                depth + 1,
+            )?);
         }
 
         Ok(ChunkContents::ChildrenNoType(id, children_contents))
@@ -431,6 +454,7 @@ impl CAIWriter for RiffIO {
             store_bytes,
             None,
             &self.riff_format,
+            0,
         )?;
 
         let mut writer = CAIReadWriteWrapper {
@@ -631,6 +655,7 @@ impl RemoteRefEmbed for RiffIO {
                         &[],
                         Some(new_xmp.as_bytes()),
                         &self.riff_format,
+                        0,
                     )?;
 
                     // save contents
@@ -671,6 +696,7 @@ impl RemoteRefEmbed for RiffIO {
                         &[],
                         Some(new_xmp.as_bytes()),
                         &self.riff_format,
+                        0,
                     )?;
 
                     // save contents
@@ -748,6 +774,27 @@ pub mod tests {
         });
 
         assert!(panic_result.is_ok());
+    }
+
+    #[test]
+    fn test_write_cai_with_large_recursion_does_not_panic() {
+        let more_data = "some more test data".as_bytes();
+
+        let riff_io = RiffIO::new("wav");
+        if let Ok(temp_dir) = tempdirectory() {
+            let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
+
+            let panic_result = panic::catch_unwind(|| {
+                let mut output_stream = File::create(&output).unwrap();
+                let mut source = File::open(fixture_path("riff_bomb_1000.wav")).unwrap();
+                assert!(matches!(
+                    riff_io.write_cai(&mut source, &mut output_stream, more_data),
+                    Err(Error::InvalidAsset(_))
+                ));
+            });
+
+            assert!(panic_result.is_ok());
+        }
     }
 
     #[test]

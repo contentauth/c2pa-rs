@@ -35,7 +35,7 @@ use crate::utils::io_utils::uri_to_path;
 use crate::{
     assertion::AssertionBase,
     claim::Claim,
-    context::Context,
+    context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
@@ -201,6 +201,9 @@ impl Reader {
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
         stream.rewind()?; // Ensure stream is at the start
+
+        self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
+
         let store = if _sync {
             Store::from_stream(format, stream, &mut validation_log, &self.context)
         } else {

@@ -603,6 +603,7 @@ version = "0.78.6"
 dependencies = [
  "c2pa",
  "cbindgen",
+ "libc",
  "scopeguard",
  "serde",
  "serde_json",

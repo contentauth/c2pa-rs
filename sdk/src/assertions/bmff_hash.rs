@@ -922,7 +922,7 @@ impl BmffHash {
     #[cfg(feature = "file_io")]
     pub fn gen_hash(&mut self, asset_path: &std::path::Path) -> crate::error::Result<()> {
         let mut file = std::fs::File::open(asset_path)?;
-        self.hash = Some(ByteBuf::from(self.hash_from_stream(&mut file)?));
+        self.hash = Some(ByteBuf::from(self.hash_from_stream(&mut file, None)?));
         Ok(())
     }
 
@@ -931,13 +931,34 @@ impl BmffHash {
     where
         R: Read + Seek + ?Sized,
     {
-        self.hash = Some(ByteBuf::from(self.hash_from_stream(asset_stream)?));
+        self.hash = Some(ByteBuf::from(self.hash_from_stream(asset_stream, None)?));
+        Ok(())
+    }
+
+    /// Like [`gen_hash_from_stream`] but fires `progress(step, total)` once per
+    /// hash range so callers with a [`Context`] can report `ProgressPhase::Hashing`
+    /// ticks and support cancellation.
+    pub(crate) fn gen_hash_from_stream_with_progress<R>(
+        &mut self,
+        asset_stream: &mut R,
+        progress: Option<&mut dyn FnMut(u32, u32) -> crate::error::Result<()>>,
+    ) -> crate::error::Result<()>
+    where
+        R: Read + Seek + ?Sized,
+    {
+        self.hash = Some(ByteBuf::from(
+            self.hash_from_stream(asset_stream, progress)?,
+        ));
         Ok(())
     }
 
     /// Generate the asset hash from a file asset using the constructed
     /// start and length values.
-    fn hash_from_stream<R>(&mut self, asset_stream: &mut R) -> crate::error::Result<Vec<u8>>
+    fn hash_from_stream<R>(
+        &mut self,
+        asset_stream: &mut R,
+        progress: Option<&mut dyn FnMut(u32, u32) -> crate::error::Result<()>>,
+    ) -> crate::error::Result<Vec<u8>>
     where
         R: Read + Seek + ?Sized,
     {
@@ -954,7 +975,13 @@ impl BmffHash {
         let exclusions =
             bmff_to_jumbf_exclusions(asset_stream, bmff_exclusions, self.bmff_version > 1)?;
 
-        let hash = hash_stream_by_alg(&alg, asset_stream, Some(exclusions), true)?;
+        let hash = crate::utils::hash_utils::hash_stream_by_alg_with_progress(
+            &alg,
+            asset_stream,
+            Some(exclusions),
+            true,
+            progress,
+        )?;
 
         if hash.is_empty() {
             Err(Error::BadParam("could not generate data hash".to_string()))
