@@ -998,7 +998,7 @@ fn build_jxl_with_brob_xmp(xmp_data: &str) -> Result<Vec<u8>> {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use std::io::{Read, Seek};
+    use std::io::Seek;
 
     use byteorder::WriteBytesExt;
 
