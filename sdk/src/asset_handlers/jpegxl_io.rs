@@ -461,33 +461,14 @@ fn remove_c2pa_jumb_box(reader: &mut dyn CAIRead, writer: &mut dyn CAIReadWrite)
 
     let boxes = parse_all_boxes(reader)?;
 
-    writer.rewind()?;
+    let Some((c2pa_offset, c2pa_len)) = find_c2pa_jumb_location(reader, &boxes, file_len)? else {
+        // No C2PA box present — stream the file unchanged.
+        patch_stream(reader, writer, file_len, 0, &[])?;
+        return Ok(());
+    };
 
-    for b in &boxes {
-        // Only skip the C2PA jumb box; other jumb boxes (e.g. EXIF) are preserved.
-        // brob-wrapped jumb is always kept as opaque data since compressed manifests
-        // are not supported (see module-level doc comment).
-        let should_skip = if b.box_type == BOX_JUMB {
-            let ds = b.data_size(file_len);
-            reader.seek(SeekFrom::Start(b.data_offset()))?;
-            let mut data = safe_vec(ds, Some(0u8))?;
-            reader.read_exact(&mut data).map_err(Error::IoError)?;
-            // Reset so the copy below can read from the box start
-            reader.seek(SeekFrom::Start(b.offset))?;
-            jumb_data_has_c2pa_label(&data)
-        } else {
-            false
-        };
-
-        if !should_skip {
-            let box_end = b.end(file_len);
-            let box_len = box_end.saturating_sub(b.offset);
-            reader.seek(SeekFrom::Start(b.offset))?;
-            let mut box_data = safe_vec(box_len, Some(0u8))?;
-            reader.read_exact(&mut box_data).map_err(Error::IoError)?;
-            writer.write_all(&box_data).map_err(Error::IoError)?;
-        }
-    }
+    // Write bytes before the C2PA box, skip it, then write the rest.
+    patch_stream(reader, writer, c2pa_offset, c2pa_len, &[])?;
 
     Ok(())
 }
