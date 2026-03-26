@@ -89,25 +89,54 @@ mod cbindgen_fix {
     #[repr(C)]
     #[allow(dead_code)]
     pub struct C2paSettings;
+
+    #[repr(C)]
+    #[allow(dead_code)]
+    pub struct C2paHttpResolver;
 }
 
 type C2paContextBuilder = Context;
 type C2paContext = Arc<Context>;
 
-/// Wraps a `*const c_void` (C `void*`) so it can be moved into a `Send + Sync` closure.
-///
-/// Accessing through [`as_ptr()`](SendPtr::as_ptr) rather than the raw `.0` field
-/// ensures the Rust 2021 disjoint-capture analysis captures the whole `SendPtr`
-/// (which is `Send + Sync`) rather than the inner `*const c_void` (which is not).
-///
-/// # Safety
-/// The caller must guarantee the pointer is valid for the closure's lifetime.
-struct SendPtr(*const c_void);
-unsafe impl Send for SendPtr {}
-unsafe impl Sync for SendPtr {}
-impl SendPtr {
-    fn as_ptr(&self) -> *const c_void {
-        self.0
+/// Progress phase constants passed to C progress callbacks.
+/// These mirror [`c2pa::ProgressPhase`] variants.
+#[repr(C)]
+pub enum C2paProgressPhase {
+    Reading = 0,
+    VerifyingManifest = 1,
+    VerifyingSignature = 2,
+    VerifyingIngredient = 3,
+    VerifyingAssetHash = 4,
+    AddingIngredient = 5,
+    Thumbnail = 6,
+    Hashing = 7,
+    Signing = 8,
+    Embedding = 9,
+    FetchingRemoteManifest = 10,
+    Writing = 11,
+    FetchingOCSP = 12,
+    FetchingTimestamp = 13,
+}
+
+impl From<ProgressPhase> for C2paProgressPhase {
+    fn from(phase: ProgressPhase) -> Self {
+        match phase {
+            ProgressPhase::Reading => Self::Reading,
+            ProgressPhase::VerifyingManifest => Self::VerifyingManifest,
+            ProgressPhase::VerifyingSignature => Self::VerifyingSignature,
+            ProgressPhase::VerifyingIngredient => Self::VerifyingIngredient,
+            ProgressPhase::VerifyingAssetHash => Self::VerifyingAssetHash,
+            ProgressPhase::AddingIngredient => Self::AddingIngredient,
+            ProgressPhase::Thumbnail => Self::Thumbnail,
+            ProgressPhase::Hashing => Self::Hashing,
+            ProgressPhase::Signing => Self::Signing,
+            ProgressPhase::Embedding => Self::Embedding,
+            ProgressPhase::FetchingRemoteManifest => Self::FetchingRemoteManifest,
+            ProgressPhase::Writing => Self::Writing,
+            ProgressPhase::FetchingOCSP => Self::FetchingOCSP,
+            ProgressPhase::FetchingTimestamp => Self::FetchingTimestamp,
+            _ => Self::Reading, // fallback for #[non_exhaustive]
+        }
     }
 }
 
@@ -234,6 +263,188 @@ pub type SignerCallback = unsafe extern "C" fn(
     signed_bytes: *mut c_uchar,
     signed_len: usize,
 ) -> isize;
+
+/// HTTP request passed to the resolver callback.
+///
+/// All string fields are NULL-terminated UTF-8. The struct and all
+/// pointed-to data remain valid for the duration of the callback.
+#[repr(C)]
+pub struct C2paHttpRequest {
+    /// URL (e.g. `https://example.com/manifest`)
+    pub url: *const c_char,
+    /// HTTP method (e.g. "GET", "POST")
+    pub method: *const c_char,
+    /// Newline-delimited "Name: Value\n" pairs, or NULL if none
+    pub headers: *const c_char,
+    /// Request body bytes, or NULL if none
+    pub body: *const c_uchar,
+    /// Length of `body` in bytes
+    pub body_len: usize,
+}
+
+/// HTTP response filled in by the resolver callback.
+///
+/// The callback must set `status`, `body`, and `body_len`.
+/// `body` must be allocated with `malloc()`. Rust will call `free()` on it
+/// after copying the data.
+#[repr(C)]
+pub struct C2paHttpResponse {
+    /// HTTP status code (e.g. 200, 404)
+    pub status: i32,
+    /// Response body bytes, allocated by the callback with `malloc()`.
+    /// Rust takes ownership and will call `free()`.
+    pub body: *mut c_uchar,
+    /// Length of `body` in bytes
+    pub body_len: usize,
+}
+
+/// Owns the backing storage for a [`C2paHttpRequest`].
+///
+/// Use [`as_ffi`](OwnedC2paHttpRequest::as_ffi) to obtain the `#[repr(C)]` view
+/// whose pointers borrow from this struct.
+struct OwnedC2paHttpRequest {
+    url: std::ffi::CString,
+    method: std::ffi::CString,
+    headers: std::ffi::CString,
+    body: Vec<u8>,
+}
+
+impl TryFrom<c2pa::http::http::Request<Vec<u8>>> for OwnedC2paHttpRequest {
+    type Error = c2pa::http::HttpResolverError;
+
+    fn try_from(request: c2pa::http::http::Request<Vec<u8>>) -> Result<Self, Self::Error> {
+        use std::ffi::CString;
+
+        use c2pa::http::HttpResolverError;
+
+        let url = CString::new(request.uri().to_string())
+            .map_err(|e| HttpResolverError::Other(Box::new(e)))?;
+        let method = CString::new(request.method().as_str())
+            .map_err(|e| HttpResolverError::Other(Box::new(e)))?;
+        let headers_str: String = request
+            .headers()
+            .iter()
+            .filter_map(|(k, v)| v.to_str().ok().map(|v| format!("{k}: {v}\n")))
+            .collect();
+        let headers =
+            CString::new(headers_str).map_err(|e| HttpResolverError::Other(Box::new(e)))?;
+        let body = request.into_body();
+
+        Ok(Self {
+            url,
+            method,
+            headers,
+            body,
+        })
+    }
+}
+
+impl OwnedC2paHttpRequest {
+    /// Returns the `#[repr(C)]` view. The returned struct borrows from `self`
+    /// and must not outlive it.
+    fn as_ffi(&self) -> C2paHttpRequest {
+        let (body, body_len) = if self.body.is_empty() {
+            (std::ptr::null(), 0)
+        } else {
+            (self.body.as_ptr(), self.body.len())
+        };
+        C2paHttpRequest {
+            url: self.url.as_ptr(),
+            method: self.method.as_ptr(),
+            headers: self.headers.as_ptr(),
+            body,
+            body_len,
+        }
+    }
+}
+
+/// Converts a [`C2paHttpResponse`] into an `http::Response`.
+///
+/// Copies the body, then calls `free()` on the C-allocated `body` pointer.
+///
+/// # Safety
+/// `body` must have been allocated with `malloc()` (or be null).
+/// This impl is intentionally *not* marked `unsafe` because `TryFrom`
+/// does not support it; callers must uphold the `malloc` invariant.
+impl TryFrom<C2paHttpResponse> for c2pa::http::http::Response<Box<dyn std::io::Read>> {
+    type Error = c2pa::http::HttpResolverError;
+
+    fn try_from(resp: C2paHttpResponse) -> Result<Self, Self::Error> {
+        let body_vec = if resp.body.is_null() || resp.body_len == 0 {
+            Vec::new()
+        } else {
+            let v = unsafe { std::slice::from_raw_parts(resp.body, resp.body_len) }.to_vec();
+            unsafe { libc::free(resp.body as *mut c_void) };
+            v
+        };
+
+        c2pa::http::http::Response::builder()
+            .status(resp.status as u16)
+            .body(Box::new(std::io::Cursor::new(body_vec)) as Box<dyn std::io::Read>)
+            .map_err(c2pa::http::HttpResolverError::Http)
+    }
+}
+
+/// Callback type for custom HTTP request resolution.
+///
+/// Called synchronously by Rust when an HTTP request is needed
+/// (remote manifest fetch, OCSP, timestamp, etc.).
+///
+/// Returns 0 on success, non-zero on error. On error, call
+/// `c2pa_error_set_last()` before returning.
+pub type C2paHttpResolverCallback = unsafe extern "C" fn(
+    context: *mut c_void,
+    request: *const C2paHttpRequest,
+    response: *mut C2paHttpResponse,
+) -> c_int;
+
+/// Opaque handle for a C-callback-based HTTP resolver.
+/// Created by `c2pa_http_resolver_create()`. Either consumed by
+/// `c2pa_context_builder_set_http_resolver()` or freed via `c2pa_free()`.
+pub struct C2paHttpResolver {
+    context: *const c_void,
+    callback: C2paHttpResolverCallback,
+}
+
+// Safety: the caller guarantees that `context` is safe to use from any thread.
+// On wasm32, MaybeSend/MaybeSync are blanket-implemented so these are not needed,
+// but they are harmless and keep the code uniform.
+unsafe impl Send for C2paHttpResolver {}
+unsafe impl Sync for C2paHttpResolver {}
+
+impl c2pa::http::SyncHttpResolver for C2paHttpResolver {
+    fn http_resolve(
+        &self,
+        request: c2pa::http::http::Request<Vec<u8>>,
+    ) -> Result<c2pa::http::http::Response<Box<dyn std::io::Read>>, c2pa::http::HttpResolverError>
+    {
+        use c2pa::http::HttpResolverError;
+
+        let owned = OwnedC2paHttpRequest::try_from(request)?;
+        let c_request = owned.as_ffi();
+
+        let mut c_response = C2paHttpResponse {
+            status: 0,
+            body: std::ptr::null_mut(),
+            body_len: 0,
+        };
+
+        let rc =
+            unsafe { (self.callback)(self.context as *mut c_void, &c_request, &mut c_response) };
+
+        if rc != 0 {
+            // Free any body the callback may have allocated before the error.
+            if !c_response.body.is_null() {
+                unsafe { libc::free(c_response.body as *mut c_void) };
+            }
+            let msg = CimplError::last_message()
+                .unwrap_or_else(|| "HTTP callback returned error".to_string());
+            return Err(HttpResolverError::Other(msg.into()));
+        }
+
+        c_response.try_into()
+    }
+}
 
 // // Internal routine to return a rust String reference to C as *mut c_char.
 // // The returned value MUST be released by calling release_string
@@ -518,7 +729,7 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
 /// # Parameters
 /// * `context` – the opaque `user_data` pointer passed to
 ///   `c2pa_context_builder_set_progress_callback`.
-/// * `phase`   – numeric value of the [`ProgressPhase`] (see SDK header for constants).
+/// * `phase`   – a [`C2paProgressPhase`] value identifying the current operation.
 ///   Callers should derive any user-visible text from this value in the appropriate language.
 /// * `step`    – monotonically increasing counter within the current phase, starting at
 ///   `1`.  Resets to `1` at the start of each new phase.  Use as a liveness heartbeat:
@@ -530,8 +741,12 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
 ///
 /// # Return value
 /// Return non-zero to continue the operation, zero to cancel.
-pub type ProgressCCallback =
-    unsafe extern "C" fn(context: *const c_void, phase: u8, step: u32, total: u32) -> c_int;
+pub type ProgressCCallback = unsafe extern "C" fn(
+    context: *const c_void,
+    phase: C2paProgressPhase,
+    step: u32,
+    total: u32,
+) -> c_int;
 
 /// Attaches a C progress callback to a context builder.
 ///
@@ -558,16 +773,62 @@ pub unsafe extern "C" fn c2pa_context_builder_set_progress_callback(
     callback: ProgressCCallback,
 ) -> c_int {
     let builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
-    // Wrap user_data so the closure can be Send + Sync.
-    // SAFETY: caller guarantees `user_data` outlives the context.
-    let ud = SendPtr(user_data);
-    // Both the C function pointer and user_data are captured in the closure, so
-    // no separate context-pointer field is needed on Context.
-    let c_callback = move |phase: ProgressPhase, step: u32, total: u32| {
-        // SAFETY: caller guarantees `callback` and `ud` are valid.
-        unsafe { (callback)(ud.as_ptr(), phase as u8, step, total) != 0 }
+    let ud = user_data as usize;
+    let c_callback = move |phase: ProgressPhase, step: u32, total: u32| unsafe {
+        (callback)(ud as *const c_void, phase.into(), step, total) != 0
     };
     builder.set_progress_callback(c_callback);
+    0
+}
+
+/// Creates a new HTTP resolver backed by a C callback.
+///
+/// The `context` pointer is passed unmodified to every callback invocation and
+/// must remain valid for the lifetime of the resolver and any context built from it.
+///
+/// # Safety
+///
+/// * `callback` must be a valid function pointer that remains valid for the
+///   lifetime of the resolver.
+/// * `context` must remain valid for the lifetime of the resolver and any
+///   context that uses it.
+/// * `context` must be safe to use from any thread (i.e. the caller upholds
+///   `Send + Sync` semantics for the pointed-to data).
+///
+/// # Returns
+///
+/// A new `C2paHttpResolver*`, or NULL on error. Must be freed with `c2pa_free()`
+/// OR consumed by `c2pa_context_builder_set_http_resolver()`.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_http_resolver_create(
+    context: *const c_void,
+    callback: C2paHttpResolverCallback,
+) -> *mut C2paHttpResolver {
+    box_tracked!(C2paHttpResolver { context, callback })
+}
+
+/// Sets a custom HTTP resolver on the context builder.
+///
+/// The builder takes ownership of the resolver; the caller must NOT free it afterward.
+///
+/// # Safety
+///
+/// * `builder` must be a valid C2paContextBuilder pointer (not yet built).
+/// * `resolver_ptr` is consumed and must not be used or freed afterward.
+///
+/// # Returns
+///
+/// 0 on success, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_builder_set_http_resolver(
+    builder: *mut C2paContextBuilder,
+    resolver_ptr: *mut C2paHttpResolver,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
+    untrack_or_return_int!(resolver_ptr, C2paHttpResolver);
+    let c2pa_resolver = Box::from_raw(resolver_ptr);
+    let result = builder.set_resolver(*c2pa_resolver);
+    ok_or_return_int!(result);
     0
 }
 
@@ -4623,7 +4884,7 @@ verify_after_sign = true
 
         unsafe extern "C" fn progress_cb(
             context: *const c_void,
-            _phase: u8,
+            _phase: C2paProgressPhase,
             _step: u32,
             _total: u32,
         ) -> c_int {
@@ -4650,7 +4911,7 @@ verify_after_sign = true
     fn test_c2pa_context_builder_set_progress_callback_null_user_data() {
         unsafe extern "C" fn progress_cb(
             _context: *const c_void,
-            _phase: u8,
+            _phase: C2paProgressPhase,
             _step: u32,
             _total: u32,
         ) -> c_int {
@@ -4675,7 +4936,7 @@ verify_after_sign = true
     fn test_c2pa_context_builder_set_progress_callback_null_builder() {
         unsafe extern "C" fn progress_cb(
             _context: *const c_void,
-            _phase: u8,
+            _phase: C2paProgressPhase,
             _step: u32,
             _total: u32,
         ) -> c_int {
@@ -4690,6 +4951,30 @@ verify_after_sign = true
             )
         };
         assert_eq!(result, -1, "NULL builder should return error");
+    }
+
+    #[test]
+    fn test_progress_phase_to_c2pa_progress_phase() {
+        let cases: &[(ProgressPhase, i32)] = &[
+            (ProgressPhase::Reading, 0),
+            (ProgressPhase::VerifyingManifest, 1),
+            (ProgressPhase::VerifyingSignature, 2),
+            (ProgressPhase::VerifyingIngredient, 3),
+            (ProgressPhase::VerifyingAssetHash, 4),
+            (ProgressPhase::AddingIngredient, 5),
+            (ProgressPhase::Thumbnail, 6),
+            (ProgressPhase::Hashing, 7),
+            (ProgressPhase::Signing, 8),
+            (ProgressPhase::Embedding, 9),
+            (ProgressPhase::FetchingRemoteManifest, 10),
+            (ProgressPhase::Writing, 11),
+            (ProgressPhase::FetchingOCSP, 12),
+            (ProgressPhase::FetchingTimestamp, 13),
+        ];
+        for (sdk_phase, expected) in cases {
+            let c_phase = C2paProgressPhase::from(sdk_phase.clone());
+            assert_eq!(c_phase as i32, *expected, "mismatch for {sdk_phase:?}");
+        }
     }
 
     #[test]
