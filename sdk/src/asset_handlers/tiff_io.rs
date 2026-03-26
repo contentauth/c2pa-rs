@@ -1460,12 +1460,22 @@ where
 {
     let (tiff_tree, page_tokens, e, big_tiff) = map_tiff(asset_reader)?;
 
+    let first_page = page_tokens
+        .first()
+        .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
     let last_page = page_tokens
         .last()
         .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
     let last_ifd = tiff_tree[*last_page].get();
 
-    let cai_ifd_entry = last_ifd.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?;
+    let cai_ifd_entry = match last_ifd.get_tag(C2PA_TAG) {
+        Some(entry) => entry,
+        None => {
+            // if the last page doesn't have the C2PA tag, check the first page for backwards compatibility with older TIFFs
+            let first_ifd = &tiff_tree[*first_page].data;
+            first_ifd.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?
+        }
+    };
 
     // make sure data type is for unstructured data
     if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
