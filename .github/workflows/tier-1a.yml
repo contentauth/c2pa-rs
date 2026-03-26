@@ -481,6 +481,9 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    env:
+      CODSPEED_MODE: simulation,memory
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -498,19 +501,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build the benchmark target(s)
-        run: cargo codspeed build -p c2pa --no-default-features --features rust_native_crypto
+        run: cargo codspeed build -m $CODSPEED_MODE -p c2pa --no-default-features --features rust_native_crypto
 
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4
         with:
-          mode: instrumentation
-          run: cargo codspeed run
-          token: ${{ secrets.CODSPEED_TOKEN }}
-
-      - name: Run the memory benchmarks
-        uses: CodSpeedHQ/action@v4
-        with:
-          mode: memory
+          mode: ${{ env.CODSPEED_MODE }}
           run: cargo codspeed run
           token: ${{ secrets.CODSPEED_TOKEN }}
 
