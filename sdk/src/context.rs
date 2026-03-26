@@ -31,47 +31,44 @@ use crate::{
 ///
 /// Passed to the progress callback registered on [`Context`] so callers can
 /// display progress indicators or make phase-specific cancellation decisions.
-///
-/// `#[repr(u8)]` ensures stable integer values for FFI and WASM consumers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-#[repr(u8)]
 pub enum ProgressPhase {
     /// Parsing and extracting JUMBF manifest data from an asset stream (I/O phase).
-    Reading = 0,
+    Reading,
     /// Verifying the structure and integrity of a manifest store entry.
-    VerifyingManifest = 1,
+    VerifyingManifest,
     /// Verifying a COSE cryptographic signature and certificate chain for a claim.
     /// Fires twice per claim: once before COSE parse (`step=1`) and once after
     /// OCSP and full signature verification (`step=2`).
-    VerifyingSignature = 2,
+    VerifyingSignature,
     /// Verifying one ingredient's embedded manifest.  Fires once per ingredient
     /// (`step` = ingredient index, `total` = total ingredient count).
-    VerifyingIngredient = 3,
+    VerifyingIngredient,
     /// Re-hashing the asset bytes to verify the `c2pa.hash.data` or `c2pa.hash.bmff`
     /// assertion (the most time-consuming part of reading for large assets).
-    VerifyingAssetHash = 4,
+    VerifyingAssetHash,
     /// Adding an ingredient to the manifest.
-    AddingIngredient = 5,
+    AddingIngredient,
     /// Generating a thumbnail for the asset (during signing).
-    Thumbnail = 6,
+    Thumbnail,
     /// Hashing asset data to build the hash binding assertion (during signing).
-    Hashing = 7,
+    Hashing,
     /// Signing the claim with COSE, including any remote TSA timestamp fetch.
-    Signing = 8,
+    Signing,
     /// Embedding the signed JUMBF manifest store into the output asset.
-    Embedding = 9,
+    Embedding,
     /// Fetching a remote manifest over the network.
-    FetchingRemoteManifest = 10,
+    FetchingRemoteManifest,
     /// Writing the asset with the placeholder JUMBF to the output stream
     /// (the full-file streaming copy that precedes the hash-readback pass).
     /// Fires once between the write pass and the hash computation pass so
     /// callers can distinguish I/O time from CPU hashing time.
-    Writing = 11,
+    Writing,
     /// Fetching an OCSP response over the network.
-    FetchingOCSP = 12,
+    FetchingOCSP,
     /// Fetching a timestamp from a remote TSA over the network.
-    FetchingTimestamp = 13,
+    FetchingTimestamp,
 }
 
 /// Progress callback function type.
