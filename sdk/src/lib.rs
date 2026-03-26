@@ -246,7 +246,7 @@ pub use builder::{Builder, BuilderIntent, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 #[doc(inline)]
-pub use context::Context;
+pub use context::{Context, ProgressCallbackFunc, ProgressPhase};
 pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
 #[doc(hidden)]

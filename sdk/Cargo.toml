@@ -87,6 +87,9 @@ name = "api"
 name = "fragmented_bmff"
 required-features = ["file_io"]
 
+[[example]]
+name = "progress"
+
 [lib]
 crate-type = ["lib"]
 
