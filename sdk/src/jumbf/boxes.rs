@@ -1931,6 +1931,16 @@ impl BoxReader {
         reader: &mut R,
         size: u64,
     ) -> JumbfParseResult<JUMBFDescriptionBox> {
+        // Per ISO/IEC 19566-5 (JUMBF), a jumd box must contain at minimum:
+        //   16 bytes (UUID) + 1 byte (toggles) + 1 byte (null label terminator) = 18 bytes content.
+        // The size parameter is the raw BMFF size field, which includes the 8-byte BMFF header,
+        // so the minimum total declared size is HEADER_SIZE + 16 + 1 + 1 = 26.
+        // Reject undersized boxes to prevent integer underflow during field parsing.
+        const JUMD_MIN_SIZE: u64 = HEADER_SIZE + 16 + 1 + 1;
+        if size < JUMD_MIN_SIZE {
+            return Err(JumbfParseError::InvalidDescriptionBox);
+        }
+
         let mut bytes_left = size;
         let mut uuid = [0u8; 16]; // 16 bytes for the UUID
         let bytes_read = reader.read(&mut uuid)?;
@@ -1949,6 +1959,12 @@ impl BoxReader {
             // must be requestable and labeled
             // read label
             loop {
+                // Guard: bytes_left tracks the declared box size including the already-consumed
+                // BMFF header. Once bytes_left reaches HEADER_SIZE, all content bytes are
+                // exhausted; reading further would underflow and cross the box boundary.
+                if bytes_left <= HEADER_SIZE {
+                    return Err(JumbfParseError::InvalidDescriptionBox);
+                }
                 let mut buf = [0; 1];
                 reader.read_exact(&mut buf)?;
                 bytes_left -= 1;
@@ -2769,6 +2785,39 @@ pub mod tests {
         let desc_box = BoxReader::read_desc_box(&mut buf_reader, jumd_header.size).unwrap();
         assert_eq!(desc_box.label(), labels::MANIFEST_STORE);
         assert_eq!(desc_box.uuid(), "6332706100110010800000AA00389B71");
+    }
+
+    // Verify that read_desc_box rejects jumd boxes whose declared BMFF size is below the
+    // spec minimum, preventing integer underflow (u64 wrap in release / panic in debug).
+    // Minimum valid size: 8 (BMFF header) + 16 (UUID) + 1 (toggles) + 1 (null label) = 26.
+    // The stream is padded with 0x03 bytes (non-null, toggles-like) so reader.read() never
+    // returns EOF early, simulating a crafted file where the box header declares a small size
+    // but the underlying stream contains data from the following box.
+    #[test]
+    fn desc_box_reader_rejects_undersized_jumd() {
+        let stream = vec![0x03u8; 64];
+
+        // size=25: the exact reported case — payload is 17 bytes (16-byte UUID + 1-byte
+        // toggles=0x03)
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 25),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+
+        // size=0: BMFF "extends to EOF" semantics — invalid for a bounded jumd inner box.
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 0),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+
+        // size=17: even more severely undersized (payload=9 bytes, UUID alone needs 16).
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 17),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
     }
 
     // ANCHOR: JSON Content Box Reader
