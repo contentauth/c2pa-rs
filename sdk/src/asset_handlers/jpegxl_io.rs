@@ -35,7 +35,7 @@
 
 use std::{
     fs::File,
-    io::{Cursor, Seek, SeekFrom},
+    io::{Cursor, Read, SeekFrom},
     path::Path,
 };
 
@@ -51,7 +51,7 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::{patch_stream, safe_vec, tempfile_builder},
+        io_utils::{patch_stream, safe_vec, stream_len, tempfile_builder},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -184,7 +184,7 @@ fn read_box_header(reader: &mut dyn CAIRead) -> Result<Option<JxlBoxInfo>> {
 /// Parses all top-level boxes in a JPEG XL container.
 /// The reader must be positioned at the start of the file.
 fn parse_all_boxes(reader: &mut dyn CAIRead) -> Result<Vec<JxlBoxInfo>> {
-    let file_len = reader.seek(SeekFrom::End(0))?;
+    let file_len = stream_len(reader)?;
     reader.rewind()?;
 
     let mut boxes = Vec::new();
@@ -230,11 +230,10 @@ fn decompress_brob(reader: &mut dyn CAIRead, data_size: u64) -> Result<([u8; 4],
         .map_err(Error::IoError)?;
 
     let compressed_size = data_size.saturating_sub(4);
-    let mut compressed = safe_vec(compressed_size, Some(0u8))?;
-    reader.read_exact(&mut compressed).map_err(Error::IoError)?;
+    let mut constrained_reader = reader.take(compressed_size);
 
     let mut decompressed = Vec::new();
-    brotli::BrotliDecompress(&mut Cursor::new(compressed), &mut decompressed)
+    brotli::BrotliDecompress(&mut constrained_reader, &mut decompressed)
         .map_err(|_| Error::InvalidAsset("Failed to decompress brob box".to_string()))?;
 
     Ok((original_type, decompressed))
@@ -340,7 +339,7 @@ fn find_c2pa_jumb_location(
 }
 
 fn find_jumb_data(reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-    let file_len = reader.seek(SeekFrom::End(0))?;
+    let file_len = stream_len(reader)?;
 
     if !is_jxl_container(reader)? {
         if is_naked_codestream(reader)? {
@@ -371,7 +370,7 @@ fn find_jumb_data(reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
 
 /// Reads XMP data from the JPEG XL container (from `xml ` or `brob`-wrapped `xml ` boxes).
 fn find_xmp_data(reader: &mut dyn CAIRead) -> Option<String> {
-    let file_len = reader.seek(SeekFrom::End(0)).ok()?;
+    let file_len = stream_len(reader).ok()?;
 
     if !is_jxl_container(reader).ok()? {
         return None;
@@ -451,7 +450,7 @@ fn build_box(box_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
 /// Rewrites the container, omitting only the C2PA manifest store `jumb` box.
 /// Other `jumb` boxes (e.g. EXIF) and all non-`jumb` boxes are preserved.
 fn remove_c2pa_jumb_box(reader: &mut dyn CAIRead, writer: &mut dyn CAIReadWrite) -> Result<()> {
-    let file_len = reader.seek(SeekFrom::End(0))?;
+    let file_len = stream_len(reader)?;
 
     if !is_jxl_container(reader)? {
         return Err(Error::InvalidAsset(
@@ -522,7 +521,7 @@ impl CAIWriter for JpegXlIO {
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()> {
-        let file_len = input_stream.seek(SeekFrom::End(0))?;
+        let file_len = stream_len(input_stream)?;
 
         if !is_jxl_container(input_stream)? {
             return Err(Error::InvalidAsset(
@@ -569,9 +568,7 @@ impl CAIWriter for JpegXlIO {
         let mut output_stream = Cursor::new(Vec::<u8>::new());
         add_required_jumb_to_stream(input_stream, &mut output_stream)?;
 
-        let file_len = output_stream
-            .seek(SeekFrom::End(0))
-            .map_err(Error::IoError)?;
+        let file_len = stream_len(&mut output_stream)?;
 
         let boxes = parse_all_boxes(&mut output_stream)?;
 
@@ -646,7 +643,7 @@ fn add_required_jumb_to_stream(
     input_stream: &mut dyn CAIRead,
     output_stream: &mut dyn CAIReadWrite,
 ) -> Result<()> {
-    let file_len = input_stream.seek(SeekFrom::End(0))?;
+    let file_len = stream_len(input_stream)?;
 
     if !is_jxl_container(input_stream)? {
         return Err(Error::InvalidAsset(
@@ -775,7 +772,7 @@ impl RemoteRefEmbed for JpegXlIO {
     ) -> Result<()> {
         match embed_ref {
             RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let file_len = source_stream.seek(SeekFrom::End(0))?;
+                let file_len = stream_len(source_stream)?;
 
                 if !is_jxl_container(source_stream)? {
                     return Err(Error::InvalidAsset(
@@ -815,7 +812,7 @@ impl RemoteRefEmbed for JpegXlIO {
 
 impl AssetBoxHash for JpegXlIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
-        let file_len = input_stream.seek(SeekFrom::End(0))?;
+        let file_len = stream_len(input_stream)?;
 
         if !is_jxl_container(input_stream)? {
             return Err(Error::InvalidAsset(
