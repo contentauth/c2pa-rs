@@ -1884,7 +1884,7 @@ impl BmffHash {
         // generate leaves in the Merkle tree based on the box length and fixed or variable block sizes
         let mut leaves = Vec::new();
         if let Some(fixed_block_size) = merkle_map.fixed_block_size {
-            let mut block_start = box_info.start() + MDAT_EXCLUSION_SIZE;
+            let mut block_start = box_info.start().saturating_add(MDAT_EXCLUSION_SIZE);
             let mut bytes_left = box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE);
 
             // sanity check that fixed_block_size is greater than 0
@@ -1902,7 +1902,7 @@ impl BmffHash {
                 block_start += leaf_length;
             }
         } else if let Some(variable_block_sizes) = &merkle_map.variable_block_sizes {
-            let mut block_start = box_info.start() + MDAT_EXCLUSION_SIZE;
+            let mut block_start = box_info.start().saturating_add(MDAT_EXCLUSION_SIZE);
 
             // make sure variable_block_sizes == length of the box
             if box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE)
@@ -1923,7 +1923,7 @@ impl BmffHash {
         } else {
             // only one leaf, so just hash the entire box
             let hash_range = vec![HashRange::new(
-                box_info.start() + MDAT_EXCLUSION_SIZE,
+                box_info.start().saturating_add(MDAT_EXCLUSION_SIZE),
                 box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE),
             )];
             let leaf_hash = hash_stream_by_alg(alg, reader, Some(hash_range), false)?;
@@ -2066,7 +2066,7 @@ impl BmffHash {
         // find the hash ranges for each mdat
         for (index, (box_info, merkle_map)) in mdats.into_iter().zip(mm_vec).enumerate() {
             if let Some(fixed_block_size) = merkle_map.fixed_block_size {
-                let mut block_start = box_info.start() + MDAT_EXCLUSION_SIZE;
+                let mut block_start = box_info.start().saturating_add(MDAT_EXCLUSION_SIZE);
                 let mut bytes_left = box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE);
 
                 // sanity check that fixed_block_size is greater than 0
@@ -2086,7 +2086,7 @@ impl BmffHash {
                 }
                 mdat_ranges.insert(index, hash_ranges);
             } else if let Some(variable_block_sizes) = &merkle_map.variable_block_sizes {
-                let mut block_start = box_info.start() + MDAT_EXCLUSION_SIZE;
+                let mut block_start = box_info.start().saturating_add(MDAT_EXCLUSION_SIZE);
 
                 // make sure variable_block_sizes == length of the box
                 if box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE)
@@ -2108,7 +2108,7 @@ impl BmffHash {
                 mdat_ranges.insert(
                     index,
                     vec![HashRange::new(
-                        box_info.start() + MDAT_EXCLUSION_SIZE,
+                        box_info.start().saturating_add(MDAT_EXCLUSION_SIZE),
                         box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE),
                     )],
                 );
