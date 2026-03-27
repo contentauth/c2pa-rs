@@ -27,14 +27,10 @@ use crate::{
     assertion::AssertionJson,
     assertions::{labels::BOX_HASH, BoxHash, DataHash},
     asset_io::HashBlockObjectType,
-    hashed_uri::HashedUri,
     jumbf_io::{get_assetio_handler_from_path, load_jumbf_from_file, save_jumbf_to_file},
     utils::{
-        hash_utils::Hasher,
-        io_utils::tempdirectory,
-        test::write_jpeg_placeholder_file,
-        test::{temp_dir_path, TEST_USER_ASSERTION},
-        test_signer::test_cawg_signer,
+        hash_utils::Hasher, io_utils::tempdirectory, test::temp_dir_path,
+        test::write_jpeg_placeholder_file, test_signer::test_cawg_signer,
     },
 };
 use crate::{
@@ -42,11 +38,12 @@ use crate::{
     asset_io::CAIReadWrite,
     claim::{AssertionStoreJsonFormat, ClaimAssetData},
     crypto::raw_signature::SigningAlg,
+    hashed_uri::HashedUri,
     jumbf_io::load_jumbf_from_stream,
     status_tracker::{LogItem, StatusTracker},
     utils::{
         patch::patch_bytes,
-        test::{create_test_claim, create_test_streams, fixture_path},
+        test::{create_test_claim, create_test_streams, fixture_path, TEST_USER_ASSERTION},
         test_signer::{async_test_signer, test_signer},
     },
     ClaimGeneratorInfo, DigitalSourceType,
@@ -337,7 +334,6 @@ fn test_unknown_asset_type_generation() {
 }
 
 #[test]
-#[cfg(feature = "file_io")]
 fn test_detects_unverifiable_signature() {
     let context = crate::context::Context::new();
 
@@ -660,7 +656,6 @@ fn test_png_jumbf_generation() {
 }
 
 #[test]
-#[cfg(feature = "file_io")]
 fn test_get_data_boxes() {
     // Create a new claim.
     use crate::jumbf::labels::to_relative_uri;
@@ -1721,7 +1716,6 @@ fn test_update_manifest_v2() {
 }
 
 #[test]
-#[cfg(feature = "file_io")]
 fn test_update_manifest_v2_bmff() {
     use crate::{
         hashed_uri::HashedUri, jumbf::labels::to_signature_uri, ClaimGeneratorInfo,
@@ -2228,7 +2222,6 @@ fn test_ingredient_conflict_with_incoming_manifest() {
 }
 
 #[test]
-#[cfg(feature = "file_io")]
 fn test_ingredient_conflicting_redactions_to_same_manifest() {
     use crate::{
         hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store_v1,
@@ -3922,7 +3915,6 @@ fn test_fragmented_jumbf_generation() {
 }
 
 #[test]
-#[cfg(feature = "file_io")]
 fn test_bogus_cert() {
     use crate::builder::{Builder, BuilderIntent};
 
