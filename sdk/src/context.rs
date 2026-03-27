@@ -126,7 +126,6 @@ enum SignerState {
     /// User-provided custom signer.
     Custom(BoxedSigner),
     /// Signer created from context's settings with lazy initialization.
-    /// The Result is cached so we only attempt creation once.
     FromSettings(OnceLock<Result<BoxedSigner>>),
 }
 
@@ -135,7 +134,6 @@ enum AsyncSignerState {
     /// User-provided custom async signer.
     Custom(BoxedAsyncSigner),
     /// Async signer created from context's settings with lazy initialization.
-    /// The Result is cached so we only attempt creation once.
     FromSettings(OnceLock<Result<BoxedAsyncSigner>>),
 }
 
@@ -551,10 +549,10 @@ impl Context {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MissingSignerSettings`] if:
-    /// - No signer was explicitly set with `with_signer()`
-    /// - No signer configuration is present in this Context's settings
-    /// - The signer configuration in settings is invalid
+    /// Returns [`Error::MissingSignerSettings`] if no signer was explicitly set
+    /// with `with_signer()` and no signer configuration is present in this
+    /// Context's settings. Returns other errors if signer creation fails (e.g.
+    /// invalid credentials, unsupported algorithm, or crypto library errors).
     ///
     /// # Examples
     ///
@@ -600,11 +598,9 @@ impl Context {
             SignerState::Custom(signer) => Ok(signer.as_ref()),
             SignerState::FromSettings(once_lock) => {
                 let result = once_lock.get_or_init(|| {
-                    // Create signer from this context's settings
                     if let Some(signer_settings) = &self.settings.signer {
                         let c2pa_signer = signer_settings.clone().c2pa_signer()?;
 
-                        // Check for CAWG x509 wrapper
                         if let Some(cawg_settings) = &self.settings.cawg_x509_signer {
                             cawg_settings.clone().cawg_signer(c2pa_signer)
                         } else {
@@ -617,7 +613,9 @@ impl Context {
                 match result {
                     Ok(boxed) => Ok(boxed.as_ref()),
                     Err(Error::MissingSignerSettings) => Err(Error::MissingSignerSettings),
-                    Err(_) => Err(Error::MissingSignerSettings), // Treat all errors as missing settings
+                    Err(e) => Err(Error::BadParam(format!(
+                        "failed to create signer from settings: {e}"
+                    ))),
                 }
             }
         }
@@ -656,12 +654,9 @@ impl Context {
                 });
                 match result {
                     Ok(boxed) => Ok(boxed.as_ref()),
-                    Err(Error::BadParam(_)) => Err(Error::BadParam(
-                        "Async signer not configured in settings".to_string(),
-                    )),
-                    Err(_) => Err(Error::BadParam(
-                        "Async signer not configured in settings".to_string(),
-                    )),
+                    Err(e) => Err(Error::BadParam(format!(
+                        "failed to create async signer from settings: {e}"
+                    ))),
                 }
             }
         }
