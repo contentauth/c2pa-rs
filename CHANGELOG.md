@@ -9,6 +9,23 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.78.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.6...c2pa-v0.78.7)
+_27 March 2026_
+
+### Added
+
+* Adds a progress/cancel feature to Context for the c2pa-rs sdk ([#1927](https://github.com/contentauth/c2pa-rs/pull/1927))
+
+### Fixed
+
+* Harden JUMB embed media description box parser against integer underflow attack ([#1950](https://github.com/contentauth/c2pa-rs/pull/1950))
+* Harden JUMB description box parser against integer underflow attack ([#1949](https://github.com/contentauth/c2pa-rs/pull/1949))
+* Harden JUMBF nested box parsing against stack overflow attack ([#1966](https://github.com/contentauth/c2pa-rs/pull/1966))
+* Harden BMFF Merkle tree hash processing code against integer underflow attack ([#1963](https://github.com/contentauth/c2pa-rs/pull/1963))
+* Updated crJSON Schema ([#1975](https://github.com/contentauth/c2pa-rs/pull/1975))
+* TIFF backcompatibility for RAW formats ([#1976](https://github.com/contentauth/c2pa-rs/pull/1976))
+* Check for malicious recursion ([#1979](https://github.com/contentauth/c2pa-rs/pull/1979))
+
 ## [0.78.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.5...c2pa-v0.78.6)
 _23 March 2026_
 
