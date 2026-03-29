@@ -1,0 +1,83 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "**/*.rs"
+      - "**/*.toml"
+
+jobs:
+  benchmarks:
+    name: Run benchmarks on signing and reading
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+      contains(github.event.pull_request.labels.*.name, 'check-release')
+
+    runs-on: ubuntu-latest
+
+    env:
+      CODSPEED_MODE: simulation,memory
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install cargo-codspeed
+        run: cargo binstall --no-confirm cargo-codspeed
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Get fixture ETag from S3
+        id: s3-etag
+        run: |
+          ETAG=$(aws s3api head-object --bucket adobe-cai-open-source-c2pa-sdk-test-assets-prod --key bench-fixtures.tar.gz --query ETag --output text)
+          echo "etag=$ETAG" >> $GITHUB_OUTPUT
+
+      - name: Cache bench fixtures
+        id: cache-fixtures
+        uses: actions/cache@v4
+        with:
+          path: sdk/benches/fixtures
+          key: bench-fixtures-${{ steps.s3-etag.outputs.etag }}
+
+      - name: Download and extract bench fixtures from S3
+        if: steps.cache-fixtures.outputs.cache-hit != 'true'
+        run: |
+          aws s3 cp s3://c2pa-rs-bench-fixtures/bench-fixtures.tar.gz bench-fixtures.tar.gz
+          mkdir -p sdk/benches/fixtures
+          tar -xzf bench-fixtures.tar.gz -C sdk/benches/fixtures
+          rm bench-fixtures.tar.gz
+
+      - name: Build the benchmark target(s)
+        run: cargo codspeed build -m $CODSPEED_MODE -p c2pa --no-default-features --features rust_native_crypto
+
+      - name: Run the benchmarks
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: ${{ env.CODSPEED_MODE }}
+          run: cargo codspeed run
+          token: ${{ secrets.CODSPEED_TOKEN }}

@@ -1,116 +1,135 @@
-use std::io::Cursor;
+use std::{fs, io::Cursor, path::Path};
 
 use c2pa::Reader;
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+
+const SIZES: &[&str] = &["small", "medium", "large"];
+
+fn load(label: &str, ext: &str) -> Vec<u8> {
+    let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/fixtures");
+    let path = fixtures_dir.join(format!("{label}-{ext}-signed.{ext}"));
+    assert!(path.exists(), "{label}-{ext}-signed.{ext} not found");
+    fs::read(&path).unwrap()
+}
 
 fn read_jpeg(c: &mut Criterion) {
-    let data = include_bytes!("fixtures/100kb-signed.jpg");
-    let format = "image/jpeg";
-
-    c.bench_function("read 100kb-signed.jpg (with manifest)", |b| {
-        b.iter(|| {
-            let mut stream = Cursor::new(data);
-            Reader::default().with_stream(format, &mut stream)
-        })
-    });
+    let mut group = c.benchmark_group("read jpeg");
+    for label in SIZES {
+        let data = load(label, "jpg");
+        group.throughput(Throughput::Bytes(data.len() as u64));
+        group.bench_with_input(*label, &data, |b, data| {
+            b.iter(|| {
+                let mut stream = Cursor::new(data);
+                Reader::from_stream("image/jpeg", &mut stream)
+            })
+        });
+    }
+    group.finish();
 }
 
 fn read_png(c: &mut Criterion) {
-    let data = include_bytes!("fixtures/100kb-signed.png");
-    let format = "image/png";
-
-    c.bench_function("read 100kb-signed.png (with manifest)", |b| {
-        b.iter(|| {
-            let mut stream = Cursor::new(data);
-            Reader::default().with_stream(format, &mut stream)
-        })
-    });
+    let mut group = c.benchmark_group("read png");
+    for label in SIZES {
+        let data = load(label, "png");
+        group.throughput(Throughput::Bytes(data.len() as u64));
+        group.bench_with_input(*label, &data, |b, data| {
+            b.iter(|| {
+                let mut stream = Cursor::new(data);
+                Reader::from_stream("image/png", &mut stream)
+            })
+        });
+    }
+    group.finish();
 }
 
 fn read_gif(c: &mut Criterion) {
-    let data = include_bytes!("fixtures/100kb-signed.gif");
-    let format = "image/gif";
-
-    c.bench_function("read 100kb-signed.gif (with manifest)", |b| {
-        b.iter(|| {
-            let mut stream = Cursor::new(data);
-            Reader::default().with_stream(format, &mut stream)
-        })
-    });
+    let mut group = c.benchmark_group("read gif");
+    for label in SIZES {
+        let data = load(label, "gif");
+        group.throughput(Throughput::Bytes(data.len() as u64));
+        group.bench_with_input(*label, &data, |b, data| {
+            b.iter(|| {
+                let mut stream = Cursor::new(data);
+                Reader::from_stream("image/gif", &mut stream)
+            })
+        });
+    }
+    group.finish();
 }
 
 fn read_tiff(c: &mut Criterion) {
-    let data = include_bytes!("fixtures/100kb-signed.tiff");
-    let format = "image/tiff";
-
-    c.bench_function("read 100kb-signed.tiff (with manifest)", |b| {
-        b.iter(|| {
-            let mut stream = Cursor::new(data);
-            Reader::default().with_stream(format, &mut stream)
-        })
-    });
+    let mut group = c.benchmark_group("read tiff");
+    for label in SIZES {
+        let data = load(label, "tiff");
+        group.throughput(Throughput::Bytes(data.len() as u64));
+        group.bench_with_input(*label, &data, |b, data| {
+            b.iter(|| {
+                let mut stream = Cursor::new(data);
+                Reader::from_stream("image/tiff", &mut stream)
+            })
+        });
+    }
+    group.finish();
 }
 
 fn read_svg(c: &mut Criterion) {
-    let data = include_bytes!("fixtures/100kb-signed.svg");
-    let format = "image/svg+xml";
-
-    c.bench_function("read 100kb-signed.svg (with manifest)", |b| {
-        b.iter(|| {
-            let mut stream = Cursor::new(data);
-            Reader::default().with_stream(format, &mut stream)
-        })
-    });
+    let mut group = c.benchmark_group("read svg");
+    for label in SIZES {
+        let data = load(label, "svg");
+        group.throughput(Throughput::Bytes(data.len() as u64));
+        group.bench_with_input(*label, &data, |b, data| {
+            b.iter(|| {
+                let mut stream = Cursor::new(data);
+                Reader::from_stream("image/svg+xml", &mut stream)
+            })
+        });
+    }
+    group.finish();
 }
 
-// TODO: Add back when we support pdf signing.
-// https://github.com/contentauth/c2pa-rs/issues/527
-// fn read_pdf(c: &mut Criterion) {
-//     let data = include_bytes!("fixtures/100kb-signed.pdf");
-//     let format = "application/pdf";
-
-//     c.bench_function("read 100kb-signed.pdf (with manifest)", |b| {
-//         b.iter(|| {
-//             let mut stream = Cursor::new(data);
-//             Reader::default().with_stream(format, &mut stream)
-//         })
-//     });
-// }
-
 fn read_mp3(c: &mut Criterion) {
-    let data = include_bytes!("fixtures/100kb-signed.mp3");
-    let format = "audio/mpeg";
-
-    c.bench_function("read 100kb-signed.mp3 (with manifest)", |b| {
-        b.iter(|| {
-            let mut stream = Cursor::new(data);
-            Reader::default().with_stream(format, &mut stream)
-        })
-    });
+    let mut group = c.benchmark_group("read mp3");
+    for label in SIZES {
+        let data = load(label, "mp3");
+        group.throughput(Throughput::Bytes(data.len() as u64));
+        group.bench_with_input(*label, &data, |b, data| {
+            b.iter(|| {
+                let mut stream = Cursor::new(data);
+                Reader::from_stream("audio/mpeg", &mut stream)
+            })
+        });
+    }
+    group.finish();
 }
 
 fn read_mp4(c: &mut Criterion) {
-    let data = include_bytes!("fixtures/100kb-signed.mp4");
-    let format = "video/mp4";
-
-    c.bench_function("read 100kb-signed.mp4 (with manifest)", |b| {
-        b.iter(|| {
-            let mut stream = Cursor::new(data);
-            Reader::default().with_stream(format, &mut stream)
-        })
-    });
+    let mut group = c.benchmark_group("read mp4");
+    for label in SIZES {
+        let data = load(label, "mp4");
+        group.throughput(Throughput::Bytes(data.len() as u64));
+        group.bench_with_input(*label, &data, |b, data| {
+            b.iter(|| {
+                let mut stream = Cursor::new(data);
+                Reader::from_stream("video/mp4", &mut stream)
+            })
+        });
+    }
+    group.finish();
 }
 
 fn read_wav(c: &mut Criterion) {
-    let data = include_bytes!("fixtures/100kb-signed.wav");
-    let format = "audio/wav";
-
-    c.bench_function("read 100kb-signed.wav (with manifest)", |b| {
-        b.iter(|| {
-            let mut stream = Cursor::new(data);
-            Reader::default().with_stream(format, &mut stream)
-        })
-    });
+    let mut group = c.benchmark_group("read wav");
+    for label in SIZES {
+        let data = load(label, "wav");
+        group.throughput(Throughput::Bytes(data.len() as u64));
+        group.bench_with_input(*label, &data, |b, data| {
+            b.iter(|| {
+                let mut stream = Cursor::new(data);
+                Reader::from_stream("audio/wav", &mut stream)
+            })
+        });
+    }
+    group.finish();
 }
 
 criterion_group!(
