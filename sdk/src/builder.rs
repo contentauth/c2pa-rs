@@ -4445,7 +4445,7 @@ mod tests {
     fn test_hash_type_with_existing_box_hash_assertion() -> Result<()> {
         let mut builder = Builder::from_json(&simple_manifest_json())?;
 
-        let bh = BoxHash::new(vec![]);
+        let bh = BoxHash::default();
         builder.add_assertion(BoxHash::LABEL, &bh)?;
 
         // A pre-existing BoxHash assertion forces BoxHash for any format.
