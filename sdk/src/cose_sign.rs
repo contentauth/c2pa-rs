@@ -96,6 +96,7 @@ pub fn sign_claim(
                 &passthrough_cap,
                 None,
                 &mut cose_log,
+                settings.verify.verify_timestamp_trust,
                 settings,
             ) {
                 Ok(r) => {

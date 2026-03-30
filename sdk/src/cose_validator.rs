@@ -55,6 +55,7 @@ pub(crate) fn verify_cose(
     ctp: &CertificateTrustPolicy,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    verify_timestamp_trust: bool,
     settings: &Settings,
 ) -> Result<CertificateInfo> {
     let verifier = if cert_check {
@@ -76,21 +77,15 @@ pub(crate) fn verify_cose(
         Some(tst_info) => Some(tst_info.clone()),
         None => {
             if _sync {
-                validate_cose_tst_info(
-                    &sign1,
-                    data,
-                    ctp,
-                    validation_log,
-                    settings.verify.verify_timestamp_trust,
-                )
-                .ok()
+                validate_cose_tst_info(&sign1, data, ctp, validation_log, verify_timestamp_trust)
+                    .ok()
             } else {
                 validate_cose_tst_info_async(
                     &sign1,
                     data,
                     ctp,
                     validation_log,
-                    settings.verify.verify_timestamp_trust,
+                    verify_timestamp_trust,
                 )
                 .await
                 .ok()

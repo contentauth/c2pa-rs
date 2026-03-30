@@ -292,6 +292,7 @@ mod tests {
             &ctp,
             None,
             &mut validation_log,
+            settings.verify.verify_timestamp_trust,
             &settings,
         );
 
@@ -334,6 +335,7 @@ mod tests {
             &ctp,
             None,
             &mut validation_log,
+            settings.verify.verify_timestamp_trust,
             &settings,
         );
 
