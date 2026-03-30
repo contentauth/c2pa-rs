@@ -25,8 +25,7 @@ use x509_parser::{error::PEMError, pem::Pem};
 
 use crate::crypto::{
     raw_signature::{
-        RawSigner, RawSignerError, SigningAlg,
-        rust_native::cert_chain::cert_chain_to_der
+        rust_native::cert_chain::cert_chain_to_der, RawSigner, RawSignerError, SigningAlg,
     },
     time_stamp::TimeStampProvider,
 };

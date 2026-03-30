@@ -18,10 +18,7 @@ use openssl::{
 
 use crate::crypto::{
     raw_signature::{
-        openssl::{
-            cert_chain::parse_and_check_chain_order,
-            OpenSslMutex,
-        },
+        openssl::{cert_chain::parse_and_check_chain_order, OpenSslMutex},
         RawSigner, RawSignerError, SigningAlg,
     },
     time_stamp::TimeStampProvider,
@@ -45,7 +42,6 @@ impl Ed25519Signer {
         private_key: &[u8],
         time_stamp_service_url: Option<String>,
     ) -> Result<Self, RawSignerError> {
-
         //get validly ordered certs in DER format
         let cert_chain = parse_and_check_chain_order(cert_chain)?;
 

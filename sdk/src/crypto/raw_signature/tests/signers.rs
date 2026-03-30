@@ -195,15 +195,12 @@ fn ps512() {
 }
 
 #[test]
-#[cfg(all(
-    feature = "remote_signing",
-    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
-))]
+#[cfg(all(feature = "remote_signing", not(target_arch = "wasm32")))]
 fn remote_signing() {
     use httpmock::MockServer;
 
     use crate::{
-        create_signer, crypto::raw_signature::openssl::signers::signer_from_cert_chain_and_url,
+        create_signer, crypto::raw_signature::remote::signer_from_cert_chain_and_url,
         utils::test_remote_signer, Signer,
     };
 

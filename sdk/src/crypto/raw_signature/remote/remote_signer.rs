@@ -17,14 +17,13 @@ use url::Url;
 use crate::{
     crypto::{
         raw_signature::{
-            RawSigner, RawSignerError,
+            remote::cert_chain::parse_and_check_chain_order, RawSigner, RawSignerError,
         },
         time_stamp::TimeStampProvider,
     },
     http::{SyncGenericResolver, SyncHttpResolver},
     Error, SigningAlg,
 };
-use crate::crypto::raw_signature::remote::cert_chain::parse_and_check_chain_order;
 // ============================================================================
 // Remote Raw Signer for CAWG Identity
 // ============================================================================
@@ -105,10 +104,10 @@ impl RawSigner for RemoteRawSigner {
             feature = "openssl",
             not(any(feature = "rust_native_crypto", target_arch = "wasm32"))
         ))]
-         {
+        {
             use crate::crypto::raw_signature::openssl::OpenSslMutex;
             let _openssl = OpenSslMutex::acquire()?;
-             Ok(self.cert_chain.clone())
+            Ok(self.cert_chain.clone())
         }
 
         #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]

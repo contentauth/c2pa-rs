@@ -12,6 +12,7 @@
 // each license.
 
 #![allow(clippy::unwrap_used)]
+#![cfg(not(target_arch = "wasm32"))]
 
 use httpmock::{HttpMockRequest, HttpMockResponse};
 

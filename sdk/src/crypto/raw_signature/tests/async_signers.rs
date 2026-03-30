@@ -202,7 +202,7 @@ async fn ps512() {
     validator.validate(&signature, data, pub_key).unwrap();
 }
 
-#[cfg(feature = "remote_signing")]
+#[cfg(all(feature = "remote_signing", not(target_arch = "wasm32")))]
 #[c2pa_test_async]
 async fn remote_signing() {
     use httpmock::MockServer;

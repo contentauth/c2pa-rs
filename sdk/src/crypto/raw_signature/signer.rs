@@ -223,13 +223,9 @@ pub fn signer_from_cert_chain_and_url(
 ) -> Result<Box<dyn RawSigner + Send + Sync>, RawSignerError> {
     let cert_chain = fix_json_pem(cert_chain);
 
-    #[cfg(all(
-        feature = "openssl",
-        feature = "remote_signing",
-        not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
-    ))]
+    #[cfg(feature = "remote_signing")]
     {
-        return crate::crypto::raw_signature::openssl::signers::signer_from_cert_chain_and_url(
+        return crate::crypto::raw_signature::remote::signer_from_cert_chain_and_url(
             &cert_chain,
             url,
             alg,

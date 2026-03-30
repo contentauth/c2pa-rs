@@ -11,7 +11,7 @@ use crate::crypto::raw_signature::RawSignerError;
 ///
 /// # Returns
 /// A Result containing a Vec of DER-encoded certificates or an error
-pub(crate) fn cert_chain_to_der(cert_chain: &[u8],) -> Result<Vec<Vec<u8>>, RawSignerError> {
+pub(crate) fn cert_chain_to_der(cert_chain: &[u8]) -> Result<Vec<Vec<u8>>, RawSignerError> {
     Pem::iter_from_buffer(cert_chain)
         .map(|r| match r {
             Ok(pem) => Ok(pem.contents),

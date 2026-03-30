@@ -24,15 +24,15 @@ pub(crate) mod openssl;
 #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
 pub(crate) mod rust_native;
 
+#[cfg(feature = "remote_signing")]
+pub(crate) mod remote;
+
 pub(crate) mod signer;
 pub use signer::{
     async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
     AsyncRawSigner, RawSigner, RawSignerError,
 };
-#[cfg(all(
-    feature = "remote_signing",
-    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
-))]
+#[cfg(feature = "remote_signing")]
 pub use signer::{async_signer_from_cert_chain_and_url, signer_from_cert_chain_and_url};
 
 mod signing_alg;

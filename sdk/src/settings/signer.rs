@@ -461,7 +461,6 @@ pub mod tests {
         assert!(signer.is_err());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_make_local_cawg_signer() {
         #[cfg(target_os = "wasi")]
@@ -504,8 +503,7 @@ pub mod tests {
         assert!(signer.sign(&[1, 2, 3]).is_ok());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    #[cfg(feature = "remote_signing")]
+    #[cfg(all(feature = "remote_signing", not(target_arch = "wasm32")))]
     #[c2pa_macros::c2pa_test_async]
     async fn test_make_cawg_c2pa_remote_signers() {
         use std::io::{Cursor, Seek};

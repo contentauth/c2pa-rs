@@ -21,10 +21,7 @@ use openssl::{
 use crate::crypto::{
     ec_utils::{der_to_p1363, ec_curve_from_private_key_der},
     raw_signature::{
-        openssl::{
-            cert_chain::parse_and_check_chain_order,
-            OpenSslMutex,
-        },
+        openssl::{cert_chain::parse_and_check_chain_order, OpenSslMutex},
         RawSigner, RawSignerError, SigningAlg,
     },
     time_stamp::TimeStampProvider,

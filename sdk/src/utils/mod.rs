@@ -38,7 +38,8 @@ pub mod test;
 #[cfg(test)]
 pub(crate) mod test_signer;
 
-#[cfg(all(test, feature = "remote_signing", not(target_arch = "wasm32")))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[allow(dead_code)] // for wasm build
 pub(crate) mod test_remote_signer;
 
 // fast 0 vector test using byte alignment to perform faster native byte align comparison

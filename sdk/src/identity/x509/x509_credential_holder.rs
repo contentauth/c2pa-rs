@@ -181,7 +181,7 @@ mod tests {
     }
 
     #[allow(clippy::expect_used, clippy::unwrap_used)]
-    #[cfg(feature = "remote_signing")]
+    #[cfg(all(feature = "remote_signing", not(target_arch = "wasm32")))]
     #[c2pa_test_async]
     async fn remote_signing_case() {
         use httpmock::MockServer;

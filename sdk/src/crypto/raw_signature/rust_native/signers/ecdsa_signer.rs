@@ -25,11 +25,11 @@ use x509_parser::{error::PEMError, pem::Pem};
 use crate::crypto::{
     raw_signature::{
         oids::{EC_PUBLICKEY_OID, SECP521R1_OID},
+        rust_native::cert_chain::cert_chain_to_der,
         RawSigner, RawSignerError, SigningAlg,
     },
     time_stamp::TimeStampProvider,
 };
-use crate::crypto::raw_signature::rust_native::cert_chain::cert_chain_to_der;
 
 enum EcdsaSigningAlg {
     Es256,
