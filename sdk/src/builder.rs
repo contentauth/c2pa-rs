@@ -57,11 +57,13 @@ use crate::{
 /// The hash binding type that a [`Builder`] will use for embeddable signing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HashType {
-    /// Requires placeholder, exclusions, hash, then sign (JPEG, PNG, etc.).
+    /// Requires placeholder, exclusions, hash, then sign.
     DataHash,
-    /// Requires placeholder, hash, then sign (MP4, AVIF, HEIF/HEIC).
+
+    /// Requires placeholder, hash, then sign.
     /// Exclusions are derived automatically from the BMFF structure.
     BmffHash,
+    
     /// Requires hash then sign only, no placeholder (when `prefer_box_hash` is enabled).
     BoxHash,
 }
