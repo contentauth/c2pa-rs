@@ -2004,25 +2004,29 @@ impl Builder {
     /// opted into the box-hash path.
     ///
     /// # Arguments
-    /// * `format` - MIME type or file extension of the target asset.
+    /// * `format` — MIME type or file extension of the target asset.
     pub fn needs_placeholder(&self, format: &str) -> bool {
         self.hash_type(format) != HashType::BoxHash
     }
 
     /// Returns the hash binding type that will be used for the given format.
+    /// This is a helper function to help know which paths a Builder may
+    /// need to follow, e.g. in embeddable workflows.
     ///
     /// # Arguments
-    /// * `format` - MIME type or file extension of the target asset.
+    /// * `format` — MIME type or file extension of the target asset.
     pub fn hash_type(&self, format: &str) -> HashType {
         // A pre-existing BoxHash assertion means the caller has explicitly
         // opted into the box-hash path.
         if self.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok() {
             return HashType::BoxHash;
         }
-        // BMFF formats always use BmffHash (MP4, AVIF, HEIF/HEIC, etc.).
+
+        // BMFF formats always use BmffHash.
         if jumbf_io::is_bmff_format(format) {
             return HashType::BmffHash;
         }
+
         // When prefer_box_hash is enabled and the format handler supports it,
         // use BoxHash (no placeholder needed).
         if self.context.settings().builder.prefer_box_hash {
@@ -2032,6 +2036,7 @@ impl Builder {
                 }
             }
         }
+
         HashType::DataHash
     }
 
