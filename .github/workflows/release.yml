@@ -122,12 +122,14 @@ jobs:
           sed -i.bak "s/\(c2pa = { path = \"..\/sdk\", version = \"\)[^\"]*\"/\1$NEW_VERSION\"/" c2pa_c_ffi/Cargo.toml
           rm c2pa_c_ffi/Cargo.toml.bak
 
-          # Configure git and commit the changes
+          # Configure git and commit the changes only if there are changes
           git config user.name "CAI Open Source Builds"
           git config user.email "caiopensrc@adobe.com"
           git add c2pa_c_ffi/Cargo.toml
-          git commit -m "fix: Update c2pa dependency to $NEW_VERSION"
-          git push origin main
+          if ! git diff --staged --quiet; then
+            git commit -m "fix: Update c2pa dependency to $NEW_VERSION"
+            git push origin main
+          fi
 
       - name: Force update of c2patool if only c2pa-rs is updated
         if: ${{ contains(steps.release-plz.outputs.pr, '"c2pa"') && !contains(steps.release-plz.outputs.pr, 'c2patool') }}
@@ -145,12 +147,14 @@ jobs:
           sed -i.bak "s/\(c2pa = { path = \"..\/sdk\", version = \"\)[^\"]*\"/\1$NEW_VERSION\"/" cli/Cargo.toml
           rm cli/Cargo.toml.bak
 
-          # Configure git and commit the changes
+          # Configure git and commit the changes only if there are changes
           git config user.name "CAI Open Source Builds"
           git config user.email "caiopensrc@adobe.com"
           git add cli/Cargo.toml
-          git commit -m "fix: Update c2pa dependency to $NEW_VERSION"
-          git push origin main
+          if ! git diff --staged --quiet; then
+            git commit -m "fix: Update c2pa dependency to $NEW_VERSION"
+            git push origin main
+          fi
 
       - name: Clean up stale release-plz branches
         run: |
@@ -224,7 +228,7 @@ jobs:
 
       - name: Upload binary to GitHub
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: svenstaro/upload-release-action@2.11.3
+        uses: svenstaro/upload-release-action@2.11.4
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/${{ matrix.artifact_name }}
@@ -238,7 +242,7 @@ jobs:
 
       - name: Upload SBOM to Github
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: svenstaro/upload-release-action@2.11.3
+        uses: svenstaro/upload-release-action@2.11.4
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: cli/c2patool-sbom.json

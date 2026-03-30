@@ -13,17 +13,30 @@ else
 	endif
 endif
 
+# Use cargo-nextest if installed (faster), otherwise fall back to cargo test.
+# Install nextest with: cargo install --locked cargo-nextest
+CARGO_TEST := $(shell cargo nextest --version > /dev/null 2>&1 && echo "cargo nextest run" || echo "cargo test")
+
+# Common feature set used by check-docs, clippy, and test-local so that all
+# three share the same incremental build cache and avoid redundant recompilation.
+FEATURES := file_io,fetch_remote_manifests,add_thumbnails
+
 check-format:
 	cargo +nightly fmt -- --check
 
 check-docs:
-	cargo doc --no-deps --workspace --features="file_io"
+	cargo doc --no-deps --workspace --features="$(FEATURES)"
 
 clippy:
-	cargo clippy --features="file_io" --all-targets -- -D warnings
+	cargo clippy --features="$(FEATURES)" --all-targets -- -D warnings
 
 test-local:
-	cargo test --features="file_io, fetch_remote_manifests, add_thumbnails" --all-targets
+	$(CARGO_TEST) --features="$(FEATURES)" --all-targets
+
+# Quick SDK-only test pass: unit tests + integration tests, no examples, benches,
+# WASM, or doc checks. Use this during active development for a fast feedback loop.
+test-sdk: check-format check-docs clippy
+	$(CARGO_TEST) -p c2pa --features="$(FEATURES)" --lib --tests
 
 test-wasm:
 	cd sdk && wasm-pack test --node -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests, http_reqwest"

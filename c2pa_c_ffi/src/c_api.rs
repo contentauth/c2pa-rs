@@ -16,14 +16,15 @@ use std::{
     sync::Arc,
 };
 
-// C has no namespace so we prefix things with C2PA to make them unique
+// C has no namespace so we prefix things with C2PA to make them unique (as namespace)
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 use c2pa::{
     assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
-    CallbackSigner, Context, Reader as C2paReader, Settings as C2paSettings, SigningAlg,
+    CallbackSigner, Context, ProgressPhase, Reader as C2paReader, Settings as C2paSettings,
+    SigningAlg,
 };
-use tokio::runtime::Runtime; // cawg validator requires async
+use tokio::runtime::Builder;
 
 #[cfg(feature = "file_io")]
 use crate::json_api::{read_file, sign_file};
@@ -88,10 +89,56 @@ mod cbindgen_fix {
     #[repr(C)]
     #[allow(dead_code)]
     pub struct C2paSettings;
+
+    #[repr(C)]
+    #[allow(dead_code)]
+    pub struct C2paHttpResolver;
 }
 
 type C2paContextBuilder = Context;
 type C2paContext = Arc<Context>;
+
+/// Progress phase constants passed to C progress callbacks.
+/// These mirror [`c2pa::ProgressPhase`] variants.
+#[repr(C)]
+pub enum C2paProgressPhase {
+    Reading = 0,
+    VerifyingManifest = 1,
+    VerifyingSignature = 2,
+    VerifyingIngredient = 3,
+    VerifyingAssetHash = 4,
+    AddingIngredient = 5,
+    Thumbnail = 6,
+    Hashing = 7,
+    Signing = 8,
+    Embedding = 9,
+    FetchingRemoteManifest = 10,
+    Writing = 11,
+    FetchingOCSP = 12,
+    FetchingTimestamp = 13,
+}
+
+impl From<ProgressPhase> for C2paProgressPhase {
+    fn from(phase: ProgressPhase) -> Self {
+        match phase {
+            ProgressPhase::Reading => Self::Reading,
+            ProgressPhase::VerifyingManifest => Self::VerifyingManifest,
+            ProgressPhase::VerifyingSignature => Self::VerifyingSignature,
+            ProgressPhase::VerifyingIngredient => Self::VerifyingIngredient,
+            ProgressPhase::VerifyingAssetHash => Self::VerifyingAssetHash,
+            ProgressPhase::AddingIngredient => Self::AddingIngredient,
+            ProgressPhase::Thumbnail => Self::Thumbnail,
+            ProgressPhase::Hashing => Self::Hashing,
+            ProgressPhase::Signing => Self::Signing,
+            ProgressPhase::Embedding => Self::Embedding,
+            ProgressPhase::FetchingRemoteManifest => Self::FetchingRemoteManifest,
+            ProgressPhase::Writing => Self::Writing,
+            ProgressPhase::FetchingOCSP => Self::FetchingOCSP,
+            ProgressPhase::FetchingTimestamp => Self::FetchingTimestamp,
+            _ => Self::Reading, // fallback for #[non_exhaustive]
+        }
+    }
+}
 
 /// List of supported signing algorithms.
 #[repr(C)]
@@ -202,7 +249,7 @@ pub enum C2paBuilderIntent {
 
 #[repr(C)]
 pub struct C2paSigner {
-    pub signer: Box<dyn c2pa::Signer + Send + Sync>,
+    pub signer: Box<dyn crate::maybe_send_sync::C2paSignerObject>,
 }
 
 /// Defines a callback to read from a stream.
@@ -216,6 +263,188 @@ pub type SignerCallback = unsafe extern "C" fn(
     signed_bytes: *mut c_uchar,
     signed_len: usize,
 ) -> isize;
+
+/// HTTP request passed to the resolver callback.
+///
+/// All string fields are NULL-terminated UTF-8. The struct and all
+/// pointed-to data remain valid for the duration of the callback.
+#[repr(C)]
+pub struct C2paHttpRequest {
+    /// URL (e.g. `https://example.com/manifest`)
+    pub url: *const c_char,
+    /// HTTP method (e.g. "GET", "POST")
+    pub method: *const c_char,
+    /// Newline-delimited "Name: Value\n" pairs, or NULL if none
+    pub headers: *const c_char,
+    /// Request body bytes, or NULL if none
+    pub body: *const c_uchar,
+    /// Length of `body` in bytes
+    pub body_len: usize,
+}
+
+/// HTTP response filled in by the resolver callback.
+///
+/// The callback must set `status`, `body`, and `body_len`.
+/// `body` must be allocated with `malloc()`. Rust will call `free()` on it
+/// after copying the data.
+#[repr(C)]
+pub struct C2paHttpResponse {
+    /// HTTP status code (e.g. 200, 404)
+    pub status: i32,
+    /// Response body bytes, allocated by the callback with `malloc()`.
+    /// Rust takes ownership and will call `free()`.
+    pub body: *mut c_uchar,
+    /// Length of `body` in bytes
+    pub body_len: usize,
+}
+
+/// Owns the backing storage for a [`C2paHttpRequest`].
+///
+/// Use [`as_ffi`](OwnedC2paHttpRequest::as_ffi) to obtain the `#[repr(C)]` view
+/// whose pointers borrow from this struct.
+struct OwnedC2paHttpRequest {
+    url: std::ffi::CString,
+    method: std::ffi::CString,
+    headers: std::ffi::CString,
+    body: Vec<u8>,
+}
+
+impl TryFrom<c2pa::http::http::Request<Vec<u8>>> for OwnedC2paHttpRequest {
+    type Error = c2pa::http::HttpResolverError;
+
+    fn try_from(request: c2pa::http::http::Request<Vec<u8>>) -> Result<Self, Self::Error> {
+        use std::ffi::CString;
+
+        use c2pa::http::HttpResolverError;
+
+        let url = CString::new(request.uri().to_string())
+            .map_err(|e| HttpResolverError::Other(Box::new(e)))?;
+        let method = CString::new(request.method().as_str())
+            .map_err(|e| HttpResolverError::Other(Box::new(e)))?;
+        let headers_str: String = request
+            .headers()
+            .iter()
+            .filter_map(|(k, v)| v.to_str().ok().map(|v| format!("{k}: {v}\n")))
+            .collect();
+        let headers =
+            CString::new(headers_str).map_err(|e| HttpResolverError::Other(Box::new(e)))?;
+        let body = request.into_body();
+
+        Ok(Self {
+            url,
+            method,
+            headers,
+            body,
+        })
+    }
+}
+
+impl OwnedC2paHttpRequest {
+    /// Returns the `#[repr(C)]` view. The returned struct borrows from `self`
+    /// and must not outlive it.
+    fn as_ffi(&self) -> C2paHttpRequest {
+        let (body, body_len) = if self.body.is_empty() {
+            (std::ptr::null(), 0)
+        } else {
+            (self.body.as_ptr(), self.body.len())
+        };
+        C2paHttpRequest {
+            url: self.url.as_ptr(),
+            method: self.method.as_ptr(),
+            headers: self.headers.as_ptr(),
+            body,
+            body_len,
+        }
+    }
+}
+
+/// Converts a [`C2paHttpResponse`] into an `http::Response`.
+///
+/// Copies the body, then calls `free()` on the C-allocated `body` pointer.
+///
+/// # Safety
+/// `body` must have been allocated with `malloc()` (or be null).
+/// This impl is intentionally *not* marked `unsafe` because `TryFrom`
+/// does not support it; callers must uphold the `malloc` invariant.
+impl TryFrom<C2paHttpResponse> for c2pa::http::http::Response<Box<dyn std::io::Read>> {
+    type Error = c2pa::http::HttpResolverError;
+
+    fn try_from(resp: C2paHttpResponse) -> Result<Self, Self::Error> {
+        let body_vec = if resp.body.is_null() || resp.body_len == 0 {
+            Vec::new()
+        } else {
+            let v = unsafe { std::slice::from_raw_parts(resp.body, resp.body_len) }.to_vec();
+            unsafe { libc::free(resp.body as *mut c_void) };
+            v
+        };
+
+        c2pa::http::http::Response::builder()
+            .status(resp.status as u16)
+            .body(Box::new(std::io::Cursor::new(body_vec)) as Box<dyn std::io::Read>)
+            .map_err(c2pa::http::HttpResolverError::Http)
+    }
+}
+
+/// Callback type for custom HTTP request resolution.
+///
+/// Called synchronously by Rust when an HTTP request is needed
+/// (remote manifest fetch, OCSP, timestamp, etc.).
+///
+/// Returns 0 on success, non-zero on error. On error, call
+/// `c2pa_error_set_last()` before returning.
+pub type C2paHttpResolverCallback = unsafe extern "C" fn(
+    context: *mut c_void,
+    request: *const C2paHttpRequest,
+    response: *mut C2paHttpResponse,
+) -> c_int;
+
+/// Opaque handle for a C-callback-based HTTP resolver.
+/// Created by `c2pa_http_resolver_create()`. Either consumed by
+/// `c2pa_context_builder_set_http_resolver()` or freed via `c2pa_free()`.
+pub struct C2paHttpResolver {
+    context: *const c_void,
+    callback: C2paHttpResolverCallback,
+}
+
+// Safety: the caller guarantees that `context` is safe to use from any thread.
+// On wasm32, MaybeSend/MaybeSync are blanket-implemented so these are not needed,
+// but they are harmless and keep the code uniform.
+unsafe impl Send for C2paHttpResolver {}
+unsafe impl Sync for C2paHttpResolver {}
+
+impl c2pa::http::SyncHttpResolver for C2paHttpResolver {
+    fn http_resolve(
+        &self,
+        request: c2pa::http::http::Request<Vec<u8>>,
+    ) -> Result<c2pa::http::http::Response<Box<dyn std::io::Read>>, c2pa::http::HttpResolverError>
+    {
+        use c2pa::http::HttpResolverError;
+
+        let owned = OwnedC2paHttpRequest::try_from(request)?;
+        let c_request = owned.as_ffi();
+
+        let mut c_response = C2paHttpResponse {
+            status: 0,
+            body: std::ptr::null_mut(),
+            body_len: 0,
+        };
+
+        let rc =
+            unsafe { (self.callback)(self.context as *mut c_void, &c_request, &mut c_response) };
+
+        if rc != 0 {
+            // Free any body the callback may have allocated before the error.
+            if !c_response.body.is_null() {
+                unsafe { libc::free(c_response.body as *mut c_void) };
+            }
+            let msg = CimplError::last_message()
+                .unwrap_or_else(|| "HTTP callback returned error".to_string());
+            return Err(HttpResolverError::Other(msg.into()));
+        }
+
+        c_response.try_into()
+    }
+}
 
 // // Internal routine to return a rust String reference to C as *mut c_char.
 // // The returned value MUST be released by calling release_string
@@ -288,7 +517,7 @@ pub unsafe extern "C" fn c2pa_load_settings(
     let format = cstr_or_return_int!(format);
     // we use the legacy from_string function to set thread-local settings for backward compatibility
     let result = C2paSettings::from_string(&settings, &format);
-    ok_or_return_zero!(result);
+    ok_or_return_int!(result);
     0 // returns 0 on success
 }
 
@@ -495,6 +724,114 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
     0
 }
 
+/// C-callable progress callback function type.
+///
+/// # Parameters
+/// * `context` – the opaque `user_data` pointer passed to
+///   `c2pa_context_builder_set_progress_callback`.
+/// * `phase`   – a [`C2paProgressPhase`] value identifying the current operation.
+///   Callers should derive any user-visible text from this value in the appropriate language.
+/// * `step`    – monotonically increasing counter within the current phase, starting at
+///   `1`.  Resets to `1` at the start of each new phase.  Use as a liveness heartbeat:
+///   a rising `step` means the SDK is making forward progress.  The unit is
+///   phase-specific and should otherwise be treated as opaque.
+/// * `total`   – `0` = indeterminate (show a spinner, use `step` as liveness signal);
+///   `1` = single-shot phase (the callback itself is the notification);
+///   `> 1` = determinate (`step / total` gives a completion fraction for a progress bar).
+///
+/// # Return value
+/// Return non-zero to continue the operation, zero to cancel.
+pub type ProgressCCallback = unsafe extern "C" fn(
+    context: *const c_void,
+    phase: C2paProgressPhase,
+    step: u32,
+    total: u32,
+) -> c_int;
+
+/// Attaches a C progress callback to a context builder.
+///
+/// The `callback` is invoked at key checkpoints during signing and reading
+/// operations.  Returning `0` from the callback requests cancellation; the SDK
+/// will return an error at the next safe stopping point.
+///
+/// # Parameters
+/// * `builder`  – a valid `C2paContextBuilder` pointer.
+/// * `user_data` – opaque `void*` captured by the closure and passed as the first argument
+///   of every `callback` invocation.  Pass `NULL` if the callback does not need user data.
+/// * `callback` – C function pointer matching [`ProgressCCallback`].
+///
+/// # Returns
+/// `0` on success, non-zero on error (check `c2pa_error()`).
+///
+/// # Safety
+/// * `builder` must be valid and not yet built.
+/// * `user_data` must remain valid for the entire lifetime of the built context.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_builder_set_progress_callback(
+    builder: *mut C2paContextBuilder,
+    user_data: *const c_void,
+    callback: ProgressCCallback,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
+    let ud = user_data as usize;
+    let c_callback = move |phase: ProgressPhase, step: u32, total: u32| unsafe {
+        (callback)(ud as *const c_void, phase.into(), step, total) != 0
+    };
+    builder.set_progress_callback(c_callback);
+    0
+}
+
+/// Creates a new HTTP resolver backed by a C callback.
+///
+/// The `context` pointer is passed unmodified to every callback invocation and
+/// must remain valid for the lifetime of the resolver and any context built from it.
+///
+/// # Safety
+///
+/// * `callback` must be a valid function pointer that remains valid for the
+///   lifetime of the resolver.
+/// * `context` must remain valid for the lifetime of the resolver and any
+///   context that uses it.
+/// * `context` must be safe to use from any thread (i.e. the caller upholds
+///   `Send + Sync` semantics for the pointed-to data).
+///
+/// # Returns
+///
+/// A new `C2paHttpResolver*`, or NULL on error. Must be freed with `c2pa_free()`
+/// OR consumed by `c2pa_context_builder_set_http_resolver()`.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_http_resolver_create(
+    context: *const c_void,
+    callback: C2paHttpResolverCallback,
+) -> *mut C2paHttpResolver {
+    box_tracked!(C2paHttpResolver { context, callback })
+}
+
+/// Sets a custom HTTP resolver on the context builder.
+///
+/// The builder takes ownership of the resolver; the caller must NOT free it afterward.
+///
+/// # Safety
+///
+/// * `builder` must be a valid C2paContextBuilder pointer (not yet built).
+/// * `resolver_ptr` is consumed and must not be used or freed afterward.
+///
+/// # Returns
+///
+/// 0 on success, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_builder_set_http_resolver(
+    builder: *mut C2paContextBuilder,
+    resolver_ptr: *mut C2paHttpResolver,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
+    untrack_or_return_int!(resolver_ptr, C2paHttpResolver);
+    let c2pa_resolver = Box::from_raw(resolver_ptr);
+    let result = builder.set_resolver(*c2pa_resolver);
+    ok_or_return_int!(result);
+    0
+}
+
 /// Builds an immutable, shareable context from the builder.
 ///
 /// The builder is consumed by this operation and becomes invalid.
@@ -540,6 +877,28 @@ pub unsafe extern "C" fn c2pa_context_builder_build(
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_context_new() -> *mut C2paContext {
     box_tracked!(Context::new().into_shared())
+}
+
+/// Requests cancellation of any in-progress operation on this context.
+///
+/// Thread-safe — may be called from any thread that holds a valid `C2paContext`
+/// pointer.  The SDK will return an `OperationCancelled` error at the next safe
+/// checkpoint inside the running operation.
+///
+/// # Parameters
+/// * `ctx` – a valid, non-null `C2paContext` pointer obtained from
+///   `c2pa_context_builder_build()` or `c2pa_context_new()`.
+///
+/// # Returns
+/// `0` on success, non-zero if `ctx` is null or invalid.
+///
+/// # Safety
+/// `ctx` must be a valid pointer and must not be freed concurrently with this call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_context_cancel(ctx: *mut C2paContext) -> c_int {
+    let ctx = deref_or_return_int!(ctx, C2paContext);
+    ctx.cancel();
+    0
 }
 
 ///
@@ -757,10 +1116,17 @@ pub unsafe extern "C" fn c2pa_free_string_array(ptr: *const *const c_char, count
 fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, c2pa::Error> {
     match result {
         Ok(mut reader) => {
-            let runtime = match Runtime::new() {
+            #[cfg(target_arch = "wasm32")]
+            let runtime = Builder::new_current_thread().enable_all().build();
+
+            #[cfg(not(target_arch = "wasm32"))]
+            let runtime = Builder::new_multi_thread().enable_all().build();
+
+            let runtime = match runtime {
                 Ok(runtime) => runtime,
                 Err(err) => return Err(c2pa::Error::OtherError(Box::new(err))),
             };
+
             match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
                 Ok(_) => Ok(reader),
                 Err(err) => Err(err),
@@ -858,6 +1224,47 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     let reader = Box::from_raw(reader);
     let result = (*reader).with_stream(&format, stream);
     let result = ok_or_return_null!(post_validate(result));
+    box_tracked!(result)
+}
+
+/// Configures an existing passed in Reader with manifest data and a stream.
+/// This covers the case when a Reader needs to be able to re-read signed
+/// manifest bytes. This method consumes the original Reader and returns a
+/// new configured Reader. The original Reader pointer becomes invalid after
+/// this call and should not be reused.
+///
+/// # Safety
+///
+/// * `reader` must be a valid pointer to a configured C2paReader
+///   (usually with a Context).
+/// * `format` must be a valid null-terminated string with the MIME type.
+/// * `stream` must be a valid pointer to a C2paStream.
+/// * `manifest_data` must be a valid pointer to manifest bytes.
+/// * `manifest_size` must be the length of the manifest_data buffer.
+/// * After calling this function, the `reader` pointer becomes invalid.
+///
+/// # Returns
+///
+/// A pointer to a newly configured C2paReader, or NULL on error.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
+    reader: *mut C2paReader,
+    format: *const c_char,
+    stream: *mut C2paStream,
+    manifest_data: *const c_uchar,
+    manifest_size: usize,
+) -> *mut C2paReader {
+    let format = cstr_or_return_null!(format);
+    let stream = deref_mut_or_return_null!(stream, C2paStream);
+    let manifest_bytes = bytes_or_return_null!(manifest_data, manifest_size, "manifest_data");
+
+    // Take ownership of the Reader (needs to remove it from tracking to take it)
+    untrack_or_return_null!(reader, C2paReader);
+    let reader = Box::from_raw(reader);
+    let result = (*reader).with_manifest_data_and_stream(manifest_bytes, &format, stream);
+    let result = ok_or_return_null!(post_validate(result));
+
+    // New reader, will be tracked now too
     box_tracked!(result)
 }
 
@@ -1906,6 +2313,78 @@ pub unsafe extern "C" fn c2pa_builder_set_data_hash_exclusions(
     0
 }
 
+/// If set the hasher will hash fixed size chunks of data, padding the final block as needed.
+/// This will produce a Merkle tree for each mdat with fixed size leaves, which can be used
+/// for efficient hashing of large assets.
+///
+/// #Parameters
+/// * builder_ptr: pointer to a Builder (must have called [`c2pa_builder_placeholder`] first).
+/// * fixed_size_kb: length of fixed size blocks. The units are KB.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// builder_ptr must not be NULL.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_set_fixed_size_merkle(
+    builder_ptr: *mut C2paBuilder,
+    fixed_size_kb: usize,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+
+    builder.set_bmff_hash_fixed_leaf_size(fixed_size_kb);
+
+    0
+}
+
+/// Generate the mdat leaf hashes for the asset, the C2paHasher will accumulate the hash values for
+/// each mdat_id.  The data_ptr should be supplied in the order the chunks are written to the mdat.
+/// The mdat_id should be begin with 0 and increment for each mdat in the asset.  For assets with a s
+/// ingle mdat, the mdat_id should be 0.  If fixed size Merkle is enabled, the data will be accumulated
+/// and hashed in fixed size chunks and the final chunk will be padded.  Otherwise the data will be hashed
+/// as a single leaf for each mdat chunk supplied to this call.
+///
+/// #Parameters
+/// * builder_ptr: pointer to the C2paBuilder.
+/// * mdat_id:  specifies which mdat this hash leaf belongs.
+/// * data_ptr: pointer to data to hash.
+/// * data_len: length of data to hash.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// builder_ptr must not be NULL..
+///
+/// # Example
+/// ```c
+///  auto data = std::vector<std::uint8_t> buffer(1024);
+///  
+///  c2pa_builder_hash_mdat_bytes(builder, 1, (const uint8_t*)data.data(), 1024, true);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_hash_mdat_bytes(
+    builder_ptr: *mut C2paBuilder,
+    mdat_id: usize,
+    data_ptr: *const c_uchar,
+    data_len: usize,
+    large_size: bool,
+) -> c_int {
+    ptr_or_return_int!(data_ptr);
+    ptr_or_return_int!(builder_ptr);
+
+    let data = bytes_or_return_int!(data_ptr, data_len, "mdat_data");
+
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+
+    // save to hasher to build Merkle trees during final save
+    ok_or_return_int!(builder.hash_bmff_mdat_bytes(mdat_id, data, large_size));
+    0
+}
+
 /// Updates the hard binding assertion in a Builder by hashing an asset stream.
 ///
 /// Automatically detects the type of hard binding on the Builder:
@@ -1947,74 +2426,6 @@ pub unsafe extern "C" fn c2pa_builder_update_hash_from_stream(
     let format = cstr_or_return_int!(format);
     let stream = deref_mut_or_return_int!(stream, C2paStream);
     ok_or_return_int!(builder.update_hash_from_stream(&format, &mut *stream));
-    0
-}
-
-/// Provides pre-computed mdat chunk hashes to the Builder for Merkle tree construction.
-///
-/// This is part of the large-file external hashing workflow: the caller reads and hashes
-/// mdat content in fixed-size chunks (without the SDK loading it into memory) and passes
-/// those hashes here.  Only the Merkle root is stored in the manifest; no UUID proof
-/// boxes are generated.
-///
-/// The chunk size is read from `core.merkle_tree_chunk_size_in_kb` in the Builder's
-/// Context settings, which must be set before calling [`c2pa_builder_placeholder`].
-///
-/// The hashes are laid out as a flat array: all chunks of mdat\[0\] followed by all chunks
-/// of mdat\[1\], and so on.  `chunk_counts[i]` specifies how many chunks belong to mdat box i.
-///
-/// # Parameters
-/// * builder_ptr: pointer to a Builder.
-/// * hashes_ptr: flat array of hash bytes (mdat0_chunk0 | mdat0_chunk1 | … | mdatN_chunkM).
-/// * hash_size: byte length of each individual hash (e.g. 32 for sha256).
-/// * chunk_counts: array of chunk counts, one per mdat box.
-/// * mdat_count: number of mdat boxes (length of chunk_counts).
-///
-/// # Errors
-/// Returns 0 on success, -1 on error (call c2pa_error() for the message).
-/// Fails if `core.merkle_tree_chunk_size_in_kb` is not set or if no BmffHash assertion exists.
-///
-/// # Safety
-/// All pointers must remain valid for the duration of the call.
-#[no_mangle]
-pub unsafe extern "C" fn c2pa_builder_set_bmff_mdat_hashes(
-    builder_ptr: *mut C2paBuilder,
-    hashes_ptr: *const c_uchar,
-    hash_size: usize,
-    chunk_counts: *const usize,
-    mdat_count: usize,
-) -> c_int {
-    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
-    ptr_or_return_int!(hashes_ptr);
-    ptr_or_return_int!(chunk_counts);
-
-    let chunk_counts_slice = std::slice::from_raw_parts(chunk_counts, mdat_count);
-    let total_chunks: usize = chunk_counts_slice.iter().sum();
-
-    if hash_size == 0 || total_chunks == 0 {
-        CimplError::null_parameter("hash_size or total chunk count is zero").set_last();
-        return -1;
-    }
-
-    let total_hash_bytes = some_or_return_int!(
-        total_chunks.checked_mul(hash_size),
-        CimplError::other("total_chunks * hash_size overflow".to_string())
-    );
-
-    let all_hashes = std::slice::from_raw_parts(hashes_ptr, total_hash_bytes);
-
-    let mut leaf_hashes: Vec<Vec<Vec<u8>>> = Vec::with_capacity(mdat_count);
-    let mut offset = 0usize;
-    for &count in chunk_counts_slice {
-        let mut mdat_hashes: Vec<Vec<u8>> = Vec::with_capacity(count);
-        for _ in 0..count {
-            mdat_hashes.push(all_hashes[offset..offset + hash_size].to_vec());
-            offset += hash_size;
-        }
-        leaf_hashes.push(mdat_hashes);
-    }
-
-    ok_or_return_int!(builder.set_bmff_mdat_hashes(leaf_hashes));
     0
 }
 
@@ -2931,6 +3342,76 @@ mod tests {
             c2pa_free(context as *mut c_void);
             c2pa_free(configured_reader as *mut c_void);
         };
+    }
+
+    #[test]
+    fn test_c2pa_reader_with_manifest_data_and_stream() {
+        // Sign an image to get manifest bytes
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let mut dest_stream = TestStream::new(Vec::new());
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert!(result > 0, "Signing should succeed");
+        assert!(
+            !manifest_bytes_ptr.is_null(),
+            "Manifest bytes should be returned"
+        );
+        let manifest_size = result as usize;
+
+        // Create a context and reader from it
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        let reader = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader.is_null());
+
+        // Consume the reader with manifest data and stream
+        let mut validation_stream = TestStream::new(source_image.to_vec());
+        let configured_reader = unsafe {
+            c2pa_reader_with_manifest_data_and_stream(
+                reader,
+                format.as_ptr(),
+                validation_stream.as_ptr(),
+                manifest_bytes_ptr,
+                manifest_size,
+            )
+        };
+        assert!(
+            !configured_reader.is_null(),
+            "Reader should be configured with manifest data and stream"
+        );
+
+        // Verify the original reader was consumed
+        let free_result = unsafe { c2pa_free(reader as *const c_void) };
+        assert_eq!(free_result, -1);
+
+        // Verify we can read the manifest
+        let json = unsafe { c2pa_reader_json(configured_reader) };
+        assert!(!json.is_null(), "Should be able to get JSON from reader");
+
+        unsafe {
+            c2pa_free(json as *const c_void);
+            c2pa_free(configured_reader as *const c_void);
+            c2pa_free(manifest_bytes_ptr as *const c_void);
+            c2pa_free(builder as *const c_void);
+            c2pa_free(signer as *const c_void);
+            c2pa_free(context as *const c_void);
+        }
     }
 
     #[test]
@@ -4265,12 +4746,6 @@ verify_after_sign = true
             unsafe { c2pa_settings_update_from_string(settings, json_str.as_ptr(), fmt.as_ptr()) };
         assert_eq!(result, 0);
 
-        // Enable Merkle-tree mdat hashing.
-        let path = CString::new("core.merkle_tree_chunk_size_in_kb").unwrap();
-        let value = CString::new("1").unwrap();
-        let result = unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) };
-        assert_eq!(result, 0);
-
         let ctx_builder = unsafe { c2pa_context_builder_new() };
         assert!(!ctx_builder.is_null());
         let result = unsafe { c2pa_context_builder_set_settings(ctx_builder, settings) };
@@ -4312,19 +4787,17 @@ verify_after_sign = true
         );
         assert!(!placeholder_ptr.is_null());
 
+        // break the mdat in fixed sized chunks (1kb) in this example
+        unsafe {
+            c2pa_builder_set_fixed_size_merkle(builder, 1);
+        }
+
         // Supply a single dummy SHA-256 leaf hash for one mdat box (1 chunk).
-        // The Merkle root is derived from these; the video will not validate but
+        // The Merkle leaves is derived from these; the video will not validate but
         // this exercises the full C API call path.
-        let dummy_hash: [u8; 32] = [0xab; 32];
-        let chunk_counts: [usize; 1] = [1];
+        let leaf_data: [u8; 4096] = [0xab; 4096];
         let result = unsafe {
-            c2pa_builder_set_bmff_mdat_hashes(
-                builder,
-                dummy_hash.as_ptr(),
-                32,
-                chunk_counts.as_ptr(),
-                1,
-            )
+            c2pa_builder_hash_mdat_bytes(builder, 0, leaf_data.as_ptr(), leaf_data.len(), true)
         };
         assert_eq!(result, 0, "set_bmff_mdat_hashes failed");
 
@@ -4400,5 +4873,138 @@ verify_after_sign = true
         assert_eq!(result, -1, "Null signer should be rejected");
 
         unsafe { c2pa_free(builder as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_context_builder_set_progress_callback() {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let call_count = Arc::new(AtomicU32::new(0));
+        let raw_ptr = Arc::as_ptr(&call_count) as *const c_void;
+
+        unsafe extern "C" fn progress_cb(
+            context: *const c_void,
+            _phase: C2paProgressPhase,
+            _step: u32,
+            _total: u32,
+        ) -> c_int {
+            let counter = &*(context as *const AtomicU32);
+            counter.fetch_add(1, Ordering::SeqCst);
+            1
+        }
+
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let result =
+            unsafe { c2pa_context_builder_set_progress_callback(builder, raw_ptr, progress_cb) };
+        assert_eq!(result, 0, "set_progress_callback should succeed");
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+
+        unsafe { c2pa_free(context as *mut c_void) };
+        // Arc still alive here so the AtomicU32 is valid throughout.
+    }
+
+    #[test]
+    fn test_c2pa_context_builder_set_progress_callback_null_user_data() {
+        unsafe extern "C" fn progress_cb(
+            _context: *const c_void,
+            _phase: C2paProgressPhase,
+            _step: u32,
+            _total: u32,
+        ) -> c_int {
+            1
+        }
+
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let result = unsafe {
+            c2pa_context_builder_set_progress_callback(builder, std::ptr::null(), progress_cb)
+        };
+        assert_eq!(result, 0, "NULL user_data should be accepted");
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+
+        unsafe { c2pa_free(context as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_context_builder_set_progress_callback_null_builder() {
+        unsafe extern "C" fn progress_cb(
+            _context: *const c_void,
+            _phase: C2paProgressPhase,
+            _step: u32,
+            _total: u32,
+        ) -> c_int {
+            1
+        }
+
+        let result = unsafe {
+            c2pa_context_builder_set_progress_callback(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                progress_cb,
+            )
+        };
+        assert_eq!(result, -1, "NULL builder should return error");
+    }
+
+    #[test]
+    fn test_progress_phase_to_c2pa_progress_phase() {
+        let cases: &[(ProgressPhase, i32)] = &[
+            (ProgressPhase::Reading, 0),
+            (ProgressPhase::VerifyingManifest, 1),
+            (ProgressPhase::VerifyingSignature, 2),
+            (ProgressPhase::VerifyingIngredient, 3),
+            (ProgressPhase::VerifyingAssetHash, 4),
+            (ProgressPhase::AddingIngredient, 5),
+            (ProgressPhase::Thumbnail, 6),
+            (ProgressPhase::Hashing, 7),
+            (ProgressPhase::Signing, 8),
+            (ProgressPhase::Embedding, 9),
+            (ProgressPhase::FetchingRemoteManifest, 10),
+            (ProgressPhase::Writing, 11),
+            (ProgressPhase::FetchingOCSP, 12),
+            (ProgressPhase::FetchingTimestamp, 13),
+        ];
+        for (sdk_phase, expected) in cases {
+            let c_phase = C2paProgressPhase::from(sdk_phase.clone());
+            assert_eq!(c_phase as i32, *expected, "mismatch for {sdk_phase:?}");
+        }
+    }
+
+    #[test]
+    fn test_c2pa_context_cancel() {
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        let result = unsafe { c2pa_context_cancel(context) };
+        assert_eq!(result, 0, "cancel should succeed on a valid context");
+
+        unsafe { c2pa_free(context as *mut c_void) };
+    }
+
+    #[test]
+    fn test_c2pa_context_cancel_null() {
+        let result = unsafe { c2pa_context_cancel(std::ptr::null_mut()) };
+        assert_eq!(result, -1, "NULL context should return error");
+    }
+
+    #[test]
+    fn test_c2pa_context_cancel_via_builder() {
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+
+        let result = unsafe { c2pa_context_cancel(context) };
+        assert_eq!(result, 0, "cancel should work on a built context");
+
+        unsafe { c2pa_free(context as *mut c_void) };
     }
 }

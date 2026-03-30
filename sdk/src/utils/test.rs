@@ -128,6 +128,7 @@ define_fixtures!(
     SAMPLE_PSD => ("Purple Square.psd", "image/vnd.adobe.photoshop"),
     TEST_TEXT_PLAIN => ("unsupported_type.txt", "text/plain"),
     PRE_RELEASE => ("prerelease.jpg", "image/jpeg"),
+    C_MOV => ("c.mov", "video/quicktime"),
 
     // Add more as needed
 );
@@ -688,7 +689,9 @@ where
     Ok(box_len)
 }
 
-/// Utility to create a BMFF (MP4) test asset with a placeholder for a manifest.
+/// Utility to create a BMFF (MP4) test asset with a placeholder for a manifest. Note
+/// that is not real.  Inserting a box this way will break the MP4 structure, but it
+/// is sufficient for testing.
 ///
 /// Inserts `placeholder` (a composed C2PA UUID box, as returned by
 /// `Builder::composed_manifest` for BMFF formats) immediately after the `ftyp`

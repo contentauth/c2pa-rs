@@ -33,8 +33,9 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
+    assertion::AssertionBase,
     claim::Claim,
-    context::Context,
+    context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
@@ -200,6 +201,9 @@ impl Reader {
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
         stream.rewind()?; // Ensure stream is at the start
+
+        self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
+
         let store = if _sync {
             Store::from_stream(format, stream, &mut validation_log, &self.context)
         } else {
@@ -569,7 +573,9 @@ impl Reader {
         path: P,
         fragments: &Vec<std::path::PathBuf>,
     ) -> Result<Reader> {
-        Reader::from_context(Context::new()).with_fragmented_files(path, fragments)
+        let settings = crate::settings::get_thread_local_settings();
+        let context = Context::new().with_settings(settings)?;
+        Reader::from_context(context).with_fragmented_files(path, fragments)
     }
 
     /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
@@ -652,6 +658,30 @@ impl Reader {
     /// This just calls to_json_formatted
     pub fn json(&self) -> String {
         self.json_checked().unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Get the manifest store as a crJSON [`Value`](serde_json::Value).
+    ///
+    /// crJSON is a standardized JSON format for C2PA manifest data.
+    /// Returns an error if conversion fails.
+    pub fn to_crjson_value(&self) -> Result<Value> {
+        crate::crjson::from_reader(self)
+    }
+
+    /// Get the manifest store as a pretty-printed crJSON string.
+    ///
+    /// crJSON is a standardized JSON format for C2PA manifest data.
+    /// Returns `"{}"` if conversion or formatting fails.
+    pub fn crjson(&self) -> String {
+        self.crjson_checked().unwrap_or_else(|_| "{}".to_string())
+    }
+
+    /// Get the manifest store as a pretty-printed crJSON string, returning an error if it fails.
+    ///
+    /// crJSON is a standardized JSON format for C2PA manifest data.
+    pub fn crjson_checked(&self) -> Result<String> {
+        self.to_crjson_value()
+            .and_then(|v| serde_json::to_string_pretty(&v).map_err(Error::JsonError))
     }
 
     /// Get the Reader as a JSON string, returning an error if formatting fails
@@ -804,10 +834,12 @@ impl Reader {
     /// ```no_run
     /// use std::io::Cursor;
     ///
-    /// use c2pa::Reader;
+    /// use c2pa::{Context, Reader};
     /// // Create a Reader from an in-memory stream (placeholder bytes shown here).
     /// let input = Cursor::new(Vec::new());
-    /// let reader = Reader::from_stream("image/jpeg", input).unwrap();
+    /// let reader = Reader::from_context(Context::new())
+    ///     .with_stream("image/jpeg", input)
+    ///     .unwrap();
     ///
     /// // Get a resource identifier from the active manifest (e.g., a thumbnail).
     /// let manifest = reader.active_manifest().unwrap();
@@ -935,8 +967,16 @@ impl Reader {
 
             match result {
                 Ok(mut manifest) => {
-                    // Generate manifest_data for ingredients
-                    Self::populate_ingredient_manifest_data(&store, &mut manifest)?;
+                    // Populate manifest_data for ingredients using efficient flat store builder
+                    for ingredient in manifest.ingredients_mut() {
+                        if let Some(active_label) = ingredient.active_manifest() {
+                            if let Some(claim) = store.get_claim(active_label) {
+                                let ingredient_store = Self::build_ingredient_store(&store, claim)?;
+                                let jumbf = ingredient_store.to_jumbf_internal(0)?;
+                                ingredient.set_manifest_data(jumbf)?;
+                            }
+                        }
+                    }
                     manifests.insert(manifest_label.to_owned(), manifest);
                 }
                 Err(e) => {
@@ -985,126 +1025,6 @@ impl Reader {
         self.validation_state = Some(validation_state);
         self.store = store;
         Ok(self)
-    }
-
-    /// Populate manifest_data references for all ingredients in a manifest
-    fn populate_ingredient_manifest_data(store: &Store, manifest: &mut Manifest) -> Result<()> {
-        for ingredient in manifest.ingredients_mut() {
-            if let Some(active_label) = ingredient.active_manifest() {
-                if let Some(claim) = store.get_claim(active_label) {
-                    // Generate the ingredient store with all referenced claims
-                    let ingredient_store = {
-                        let mut ingredient_store = Store::new();
-                        let mut active_claim = claim.clone();
-
-                        // Recursively collect all ingredient claims
-                        Self::collect_ingredient_claims_for_store(store, claim, &mut active_claim)?;
-
-                        // Add the main claim
-                        ingredient_store.commit_claim(active_claim)?;
-                        ingredient_store
-                    };
-
-                    let c2pa_data = ingredient_store.to_jumbf_internal(0)?;
-
-                    // Create a unique resource name based on the ingredient's active manifest label
-                    // This ensures each ingredient has a uniquely identifiable manifest_data resource
-                    let resource_name = format!("{}/manifest_data", active_label.replace('/', "_"));
-
-                    let manifest_data_ref = ingredient.resources_mut().add_with(
-                        &resource_name,
-                        "application/c2pa",
-                        c2pa_data,
-                    )?;
-
-                    ingredient.set_manifest_data_ref(manifest_data_ref)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Helper method to recursively collect ingredient claims for a store
-    fn collect_ingredient_claims_for_store(
-        store: &Store,
-        claim: &Claim,
-        active_claim: &mut Claim,
-    ) -> Result<()> {
-        let mut visited = std::collections::HashSet::new();
-        let mut path = Vec::new();
-        Self::collect_ingredient_claims_for_store_impl(
-            store,
-            claim,
-            active_claim,
-            &mut visited,
-            &mut path,
-        )
-    }
-
-    /// Uses the similar cycle detection strategy as Store::get_claim_referenced_manifests_impl
-    fn collect_ingredient_claims_for_store_impl(
-        store: &Store,
-        claim: &Claim,
-        active_claim: &mut Claim,
-        visited: &mut std::collections::HashSet<String>,
-        path: &mut Vec<String>,
-    ) -> Result<()> {
-        Self::collect_ingredient_claims_impl(store, claim, active_claim, visited, path)
-    }
-
-    /// Shared implementation for recursively collecting ingredient claims.
-    ///
-    /// Uses path-based cycle detection similar to Store::get_claim_referenced_manifests_impl:
-    /// - `visited`: Claims that have been fully processed (allows DAG convergence)
-    /// - `path`: Current traversal path to detect and skip cycles
-    fn collect_ingredient_claims_impl(
-        store: &Store,
-        claim: &Claim,
-        active_claim: &mut Claim,
-        visited: &mut std::collections::HashSet<String>,
-        path: &mut Vec<String>,
-    ) -> Result<()> {
-        let claim_label = claim.label();
-
-        if visited.contains(claim_label) {
-            return Ok(());
-        }
-
-        // Check for cycle: is this claim already in our current path?
-        // If so, skip it silently (validation should have already caught this when enabled)
-        if path.iter().any(|p| p == claim_label) {
-            return Ok(());
-        }
-
-        path.push(claim_label.to_string());
-
-        for ingredient in claim.claim_ingredients() {
-            let ingredient_label = ingredient.label();
-
-            if let Some(ingredient_claim) = store.get_claim(ingredient_label) {
-                Self::collect_ingredient_claims_impl(
-                    store,
-                    ingredient_claim,
-                    active_claim,
-                    visited,
-                    path,
-                )?;
-
-                // Then add this ingredient claim to the primary claim
-                active_claim.replace_ingredient_or_insert(
-                    ingredient_claim.label().to_string(),
-                    ingredient_claim.clone(),
-                );
-            }
-        }
-
-        // Mark as fully processed
-        visited.insert(claim_label.to_string());
-
-        // Remove from current path
-        path.pop();
-
-        Ok(())
     }
 
     /// Post-validate the reader. This function is called after the reader is created.
@@ -1228,6 +1148,61 @@ impl Reader {
         Ok(assertion_values)
     }
 
+    /// Build a flat ingredient store for a claim by walking ingredient assertions.
+    fn build_ingredient_store(store: &Store, claim: &Claim) -> Result<Store> {
+        let mut ingredient_store = Store::new();
+        let mut visited = HashSet::new();
+        let mut path = Vec::new();
+
+        fn collect_flat(
+            store: &Store,
+            claim: &Claim,
+            ingredient_store: &mut Store,
+            visited: &mut HashSet<String>,
+            path: &mut Vec<String>,
+        ) -> Result<()> {
+            use crate::assertions::Ingredient as IngredientAssertion;
+
+            let claim_label = claim.label().to_string();
+
+            if visited.contains(&claim_label) {
+                return Ok(());
+            }
+
+            // Cycle detection
+            if path.iter().any(|p| p == &claim_label) {
+                return Ok(());
+            }
+
+            path.push(claim_label.clone());
+
+            for ing_assertion in claim.ingredient_assertions() {
+                let ingredient = IngredientAssertion::from_assertion(ing_assertion.assertion())?;
+                let manifest_uri = ingredient
+                    .active_manifest
+                    .as_ref()
+                    .or(ingredient.c2pa_manifest.as_ref());
+                if let Some(manifest_uri) = manifest_uri {
+                    let ingredient_label = Store::manifest_label_from_path(&manifest_uri.url());
+                    if let Some(ingredient_claim) = store.get_claim(&ingredient_label) {
+                        collect_flat(store, ingredient_claim, ingredient_store, visited, path)?;
+                    }
+                }
+            }
+
+            // Post-order: add after all children
+            ingredient_store.insert_restored_claim(claim_label.clone(), claim.clone());
+            visited.insert(claim_label);
+            path.pop();
+
+            Ok(())
+        }
+
+        collect_flat(store, claim, &mut ingredient_store, &mut visited, &mut path)?;
+
+        Ok(ingredient_store)
+    }
+
     /// Convert the Reader back into a Builder.
     /// This can be used to modify an existing manifest store.
     /// # Errors
@@ -1255,33 +1230,13 @@ impl Reader {
                 let ingredients = std::mem::take(&mut manifest.ingredients);
                 for mut ingredient in ingredients {
                     if let Some(active_manifest) = ingredient.active_manifest() {
-                        let ingredient_claim = self.store.get_claim(active_manifest);
-                        if let Some(claim) = ingredient_claim {
-                            // recreate an ingredient store to get the jumbf data
-                            // ... recursively collect all nested ingredient claims
-                            let ingredient_store = {
-                                let mut ingredient_store = Store::new();
-                                let mut active_claim = claim.clone();
-
-                                // Recursion happens here for claims collection - re-embed nested claims from store
-                                Self::collect_ingredient_claims_for_store(
-                                    &self.store,
-                                    claim,
-                                    &mut active_claim,
-                                )?;
-
-                                // Add the main claim with all nested ingredients
-                                ingredient_store.commit_claim(active_claim)?;
-                                ingredient_store
-                            };
-                            let jumbf = ingredient_store.to_jumbf_internal(0)?;
-                            // Add manifest_data to the ingredient's own resources
-                            let manifest_data_ref = ingredient.resources_mut().add_with(
-                                "manifest_data",
-                                "application/c2pa",
-                                jumbf,
-                            )?;
-                            ingredient.set_manifest_data_ref(manifest_data_ref)?;
+                        if ingredient.manifest_data_ref().is_none() {
+                            if let Some(claim) = self.store.get_claim(active_manifest) {
+                                let ingredient_store =
+                                    Self::build_ingredient_store(&self.store, claim)?;
+                                let jumbf = ingredient_store.to_jumbf_internal(0)?;
+                                ingredient.set_manifest_data(jumbf)?;
+                            }
                         }
                     }
                     builder.add_ingredient(ingredient);
@@ -1301,12 +1256,22 @@ impl Reader {
     /// # Errors
     /// Returns an [`Error`] if there is no parent ingredient.
     pub(crate) fn to_ingredient(&self) -> Result<Ingredient> {
-        // make a copy of the parent ingredient (or return an error if not found)
-        let ingredient = self
+        let mut ingredient = self
             .active_manifest()
             .and_then(|m| m.ingredients().first())
             .ok_or_else(|| Error::IngredientNotFound)?
             .to_owned();
+
+        // populate manifest_data on demand for ingredients with an active manifest
+        if let Some(active_manifest) = ingredient.active_manifest() {
+            if ingredient.manifest_data_ref().is_none() {
+                if let Some(claim) = self.store.get_claim(active_manifest) {
+                    let ingredient_store = Self::build_ingredient_store(&self.store, claim)?;
+                    let jumbf = ingredient_store.to_jumbf_internal(0)?;
+                    ingredient.set_manifest_data(jumbf)?;
+                }
+            }
+        }
 
         Ok(ingredient)
     }
@@ -1510,20 +1475,12 @@ pub mod tests {
         )?;
         assert_eq!(reader.validation_status(), None);
 
-        // Test that ingredients have manifest_data populated
+        // Verify that ingredients have manifest_data populated
         if let Some(manifest) = reader.active_manifest() {
             for ingredient in manifest.ingredients() {
-                // Verify that each ingredient has manifest_data
                 assert!(
                     ingredient.manifest_data().is_some(),
                     "Ingredient should have manifest_data populated"
-                );
-
-                // Verify the manifest_data is not empty
-                let manifest_data = ingredient.manifest_data().unwrap();
-                assert!(
-                    !manifest_data.is_empty(),
-                    "Ingredient manifest_data should not be empty"
                 );
             }
         }
