@@ -252,8 +252,10 @@ pub enum C2paBuilderIntent {
 pub enum C2paHashType {
     /// Placeholder + exclusions + hash + sign (JPEG, PNG, etc.).
     DataHash = 0,
+
     /// Placeholder + hash + sign (MP4, AVIF, HEIF/HEIC).
     BmffHash = 1,
+
     /// Hash + sign, no placeholder needed.
     BoxHash = 2,
 }
