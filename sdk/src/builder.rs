@@ -63,7 +63,7 @@ pub enum HashType {
     /// Requires placeholder, hash, then sign.
     /// Exclusions are derived automatically from the BMFF structure.
     BmffHash,
-    
+
     /// Requires hash then sign only, no placeholder (when `prefer_box_hash` is enabled).
     BoxHash,
 }
@@ -4425,9 +4425,8 @@ mod tests {
 
     #[test]
     fn test_hash_type_with_prefer_box_hash() -> Result<()> {
-        let context = Context::new().with_settings(
-            serde_json::json!({"builder": {"prefer_box_hash": true}}).to_string(),
-        )?;
+        let context = Context::new()
+            .with_settings(serde_json::json!({"builder": {"prefer_box_hash": true}}).to_string())?;
         let builder =
             Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
 
