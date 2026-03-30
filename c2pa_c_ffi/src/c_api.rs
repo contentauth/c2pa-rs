@@ -247,6 +247,17 @@ pub enum C2paBuilderIntent {
     Update,
 }
 
+/// Hash binding type for embeddable signing workflows.
+#[repr(C)]
+pub enum C2paHashType {
+    /// Placeholder + exclusions + hash + sign (JPEG, PNG, etc.).
+    DataHash = 0,
+    /// Placeholder + hash + sign (MP4, AVIF, HEIF/HEIC).
+    BmffHash = 1,
+    /// Hash + sign, no placeholder needed.
+    BoxHash = 2,
+}
+
 #[repr(C)]
 pub struct C2paSigner {
     pub signer: Box<dyn crate::maybe_send_sync::C2paSignerObject>,
@@ -2175,6 +2186,31 @@ pub unsafe extern "C" fn c2pa_builder_needs_placeholder(
         1
     } else {
         0
+    }
+}
+
+/// Returns the hash binding type that the builder will use for the given format.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * format: pointer to a C string with the MIME type or extension.
+///
+/// # Returns
+/// 0 for DataHash, 1 for BmffHash, 2 for BoxHash, or -1 on error.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_hash_type(
+    builder_ptr: *mut C2paBuilder,
+    format: *const c_char,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let format = cstr_or_return_int!(format);
+    match builder.hash_type(&format) {
+        c2pa::HashType::DataHash => C2paHashType::DataHash as c_int,
+        c2pa::HashType::BmffHash => C2paHashType::BmffHash as c_int,
+        c2pa::HashType::BoxHash => C2paHashType::BoxHash as c_int,
     }
 }
 
