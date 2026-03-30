@@ -2,7 +2,7 @@
 
 ## Overview
 
-During multi-step long-running operations (such as signing, reading, and verification) the SDK reports progress via an optional callback registered on a `Context`. The primary purposes of the callback are:
+During multi-step long-running operations (such as signing, reading, and verification), the SDK reports progress via an optional callback registered on a `Context`. The primary purposes of the callback are:
 
 - **Liveness** — confirming to the caller that the SDK is still making forward progress and is not hung.
 - **Cancellation** — giving the caller a safe opportunity to stop the operation at any phase boundary.
