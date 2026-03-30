@@ -12,11 +12,11 @@ The callback receives the current phase, a step counter, and an optional total. 
 You can also request cancellation externally (from a different thread) by calling `Context::cancel()` / `c2pa_context_cancel()` without going through the callback at all.
 
 > [!WARNING]
-> Do not use this API for time-remaining estimates; individual phases can take anywhere from microseconds to seconds depending on asset size and hardware, so a raw step count does not reliably translate into elapsed or remaining time.
+> Do not use this API for time-remaining estimates. A raw step count does not reliably translate into elapsed or remaining time.
 
 ## Phases
 
-The SDK reports progress as a sequence of named phases, each represented by the `ProgressPhase` enum (`#[repr(u8)]` for stable FFI values):
+The SDK reports progress as a sequence of named phases, each represented by the `ProgressPhase` enum:
 
 | Value | Rust variant | When it fires |
 |-------|-------------|---------------|
