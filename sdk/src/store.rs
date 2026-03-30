@@ -58,7 +58,7 @@ use crate::{
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
-    http::{AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
+    http::{AsyncHttpResolver, SyncHttpResolver},
     jumbf::{
         self,
         boxes::*,
@@ -547,16 +547,14 @@ impl Store {
         claim: &Claim,
         signer: &dyn AsyncSigner,
         box_size: usize,
-        settings: &Settings,
-        http_resolver: &impl AsyncHttpResolver,
+        context: &Context
     ))]
     pub fn sign_claim(
         &self,
         claim: &Claim,
         signer: &dyn Signer,
         box_size: usize,
-        settings: &Settings,
-        http_resolver: &impl SyncHttpResolver,
+        context: &Context,
     ) -> Result<Vec<u8>> {
         let claim_bytes = claim.data()?;
 
@@ -571,7 +569,7 @@ impl Store {
                 // Let the signer do all the COSE processing and return the structured COSE data.
                 return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
             } else {
-                cose_sign(signer, &claim_bytes, box_size, tss, settings, http_resolver)
+                cose_sign(signer, &claim_bytes, box_size, tss, context)
             }
         } else {
             if signer.direct_cose_handling() {
@@ -579,13 +577,13 @@ impl Store {
                 return signer.sign(claim_bytes.clone()).await;
             // do not verify remote signers (we never did)
             } else {
-                cose_sign_async(signer, &claim_bytes, box_size, tss, settings, http_resolver).await
+                cose_sign_async(signer, &claim_bytes, box_size, tss, context).await
             }
         };
         match result {
             Ok(sig) => {
                 // Sanity check: Ensure that this signature is valid.
-                let verify_after_sign = settings.verify.verify_after_sign;
+                let verify_after_sign = context.settings().verify.verify_after_sign;
 
                 if verify_after_sign {
                     let mut cose_log =
@@ -601,7 +599,7 @@ impl Store {
                             None,
                             &mut cose_log,
                             false,
-                            settings,
+                            context.settings(),
                         )
                     } else {
                         verify_cose_async(
@@ -613,7 +611,7 @@ impl Store {
                             None,
                             &mut cose_log,
                             false,
-                            settings,
+                            context.settings(),
                         )
                         .await
                     };
@@ -2378,7 +2376,7 @@ impl Store {
     /// * The signed manifest bytes.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be signed.
-    pub fn sign_manifest(&mut self, signer: &dyn Signer, settings: &Settings) -> Result<Vec<u8>> {
+    pub fn sign_manifest(&mut self, signer: &dyn Signer, context: &Context) -> Result<Vec<u8>> {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         // if user did not supply a hash
@@ -2416,13 +2414,7 @@ impl Store {
 
                 // Get pc again
                 let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                let sig = self.sign_claim(
-                    pc,
-                    signer,
-                    signer.reserve_size(),
-                    settings,
-                    &SyncGenericResolver::new(),
-                )?;
+                let sig = self.sign_claim(pc, signer, signer.reserve_size(), context)?;
                 let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
                 if sig_placeholder.len() != sig.len() {
@@ -2441,13 +2433,7 @@ impl Store {
         // Drop pc and get an immutable reference for signing
         let _ = pc;
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(
-            pc,
-            signer,
-            signer.reserve_size(),
-            settings,
-            &SyncGenericResolver::new(),
-        )?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context)?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -2570,13 +2556,7 @@ impl Store {
 
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(
-            pc,
-            signer,
-            signer.reserve_size(),
-            context.settings(),
-            &context.resolver(),
-        )?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context)?;
 
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
@@ -2641,13 +2621,7 @@ impl Store {
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self
-            .sign_claim_async(
-                pc,
-                signer,
-                signer.reserve_size(),
-                context.settings(),
-                &context.resolver_async(),
-            )
+            .sign_claim_async(pc, signer, signer.reserve_size(), context)
             .await?;
 
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
@@ -2679,13 +2653,7 @@ impl Store {
         let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         // sign contents
-        let sig = self.sign_claim(
-            pc,
-            signer,
-            signer.reserve_size(),
-            context.settings(),
-            &context.resolver(),
-        )?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context)?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -2723,13 +2691,7 @@ impl Store {
 
         // sign contents
         let sig = self
-            .sign_claim_async(
-                pc,
-                signer,
-                signer.reserve_size(),
-                context.settings(),
-                &context.resolver_async(),
-            )
+            .sign_claim_async(pc, signer, signer.reserve_size(), context)
             .await?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
@@ -2992,13 +2954,7 @@ impl Store {
 
         // sign the claim
         let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = temp_store.sign_claim(
-            pc,
-            signer,
-            signer.reserve_size(),
-            context.settings(),
-            &context.resolver(),
-        )?;
+        let sig = temp_store.sign_claim(pc, signer, signer.reserve_size(), context)?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         match temp_store.finish_save(jumbf_bytes, &dest_path, sig, &sig_placeholder) {
@@ -3105,22 +3061,10 @@ impl Store {
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
-            self.sign_claim(
-                pc,
-                signer,
-                signer.reserve_size(),
-                settings,
-                &context.resolver(),
-            )
+            self.sign_claim(pc, signer, signer.reserve_size(), context)
         } else {
-            self.sign_claim_async(
-                pc,
-                signer,
-                signer.reserve_size(),
-                settings,
-                &context.resolver_async(),
-            )
-            .await
+            self.sign_claim_async(pc, signer, signer.reserve_size(), context)
+                .await
         }?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 

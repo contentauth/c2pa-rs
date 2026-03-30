@@ -29,10 +29,9 @@ use crate::{
         raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
         time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     },
-    http::{AsyncHttpResolver, SyncHttpResolver},
     settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
-    AsyncSigner, Error, Result, Signer,
+    AsyncSigner, Context, Error, Result, Signer,
 };
 
 /// Generate a COSE signature for a block of bytes which must be a valid C2PA
@@ -56,15 +55,13 @@ use crate::{
     claim_bytes: &[u8],
     signer: &dyn AsyncSigner,
     box_size: usize,
-    settings: &Settings,
-    http_resolver: &impl AsyncHttpResolver,
+    context: &Context
 ))]
 pub fn sign_claim(
     claim_bytes: &[u8],
     signer: &dyn Signer,
     box_size: usize,
-    settings: &Settings,
-    http_resolver: &impl SyncHttpResolver,
+    context: &Context,
 ) -> Result<Vec<u8>> {
     // Must be a valid claim.
     let label = "dummy_label";
@@ -77,9 +74,9 @@ pub fn sign_claim(
     };
 
     let signed_bytes = if _sync {
-        cose_sign(signer, claim_bytes, box_size, tss, settings, http_resolver)
+        cose_sign(signer, claim_bytes, box_size, tss, context)
     } else {
-        cose_sign_async(signer, claim_bytes, box_size, tss, settings, http_resolver).await
+        cose_sign_async(signer, claim_bytes, box_size, tss, context).await
     };
 
     match signed_bytes {
@@ -96,8 +93,8 @@ pub fn sign_claim(
                 &passthrough_cap,
                 None,
                 &mut cose_log,
-                settings.verify.verify_timestamp_trust,
-                settings,
+                context.settings().verify.verify_timestamp_trust,
+                context.settings(),
             ) {
                 Ok(r) => {
                     if !r.validated {
@@ -120,21 +117,19 @@ pub fn sign_claim(
     data: &[u8],
     box_size: usize,
     time_stamp_storage: TimeStampStorage,
-    settings: &Settings,
-    http_resolver: &impl AsyncHttpResolver,
+    context: &Context,
 ))]
 pub(crate) fn cose_sign(
     signer: &dyn Signer,
     data: &[u8],
     box_size: usize,
     time_stamp_storage: TimeStampStorage,
-    settings: &Settings,
-    http_resolver: &impl SyncHttpResolver,
+    context: &Context,
 ) -> Result<Vec<u8>> {
     // Make sure the signing cert is valid.
     let certs = signer.certs()?;
     if let Some(signing_cert) = certs.first() {
-        signing_cert_valid(signing_cert, settings)?;
+        signing_cert_valid(signing_cert, context.settings())?;
     } else {
         return Err(Error::CoseNoCerts);
     }
@@ -146,7 +141,7 @@ pub(crate) fn cose_sign(
                 data,
                 Some(box_size),
                 time_stamp_storage,
-                http_resolver,
+                &context.resolver(),
             )?),
             None => {
                 let wrapper = SignerWrapper(signer);
@@ -155,7 +150,7 @@ pub(crate) fn cose_sign(
                     data,
                     Some(box_size),
                     time_stamp_storage,
-                    http_resolver,
+                    &context.resolver(),
                 )?)
             }
         }
@@ -166,7 +161,7 @@ pub(crate) fn cose_sign(
                 data,
                 Some(box_size),
                 time_stamp_storage,
-                http_resolver,
+                &context.resolver_async(),
             )
             .await?),
             None => {
@@ -176,7 +171,7 @@ pub(crate) fn cose_sign(
                     data,
                     Some(box_size),
                     time_stamp_storage,
-                    http_resolver,
+                    &context.resolver_async(),
                 )
                 .await?)
             }
@@ -324,10 +319,9 @@ mod tests {
     use crate::{
         claim::Claim,
         crypto::raw_signature::SigningAlg,
-        http::{AsyncGenericResolver, SyncGenericResolver},
         settings::Settings,
         utils::test_signer::{async_test_signer, test_signer},
-        Result, Signer,
+        Context, Result, Signer,
     };
 
     #[test]
@@ -339,6 +333,7 @@ mod tests {
         //configuration so the test trust list is not loaded
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
+        let context = Context::new().with_settings(settings).unwrap();
 
         let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
@@ -348,14 +343,7 @@ mod tests {
         let signer = test_signer(SigningAlg::Ps256);
         let box_size = Signer::reserve_size(signer.as_ref());
 
-        let cose_sign1 = sign_claim(
-            &claim_bytes,
-            signer.as_ref(),
-            box_size,
-            &settings,
-            &SyncGenericResolver::new(),
-        )
-        .unwrap();
+        let cose_sign1 = sign_claim(&claim_bytes, signer.as_ref(), box_size, &context).unwrap();
 
         assert_eq!(cose_sign1.len(), box_size);
     }
@@ -369,6 +357,7 @@ mod tests {
         //configuration so the test trust list is not loaded
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
+        let context = Context::new().with_settings(settings).unwrap();
 
         use crate::{cose_sign::sign_claim_async, crypto::raw_signature::SigningAlg, AsyncSigner};
 
@@ -380,15 +369,9 @@ mod tests {
         let signer = async_test_signer(SigningAlg::Ps256);
         let box_size = signer.reserve_size();
 
-        let cose_sign1 = sign_claim_async(
-            &claim_bytes,
-            &signer,
-            box_size,
-            &settings,
-            &AsyncGenericResolver::new(),
-        )
-        .await
-        .unwrap();
+        let cose_sign1 = sign_claim_async(&claim_bytes, &signer, box_size, &context)
+            .await
+            .unwrap();
 
         assert_eq!(cose_sign1.len(), box_size);
     }
@@ -428,7 +411,7 @@ mod tests {
 
     #[test]
     fn test_bogus_signer() {
-        let settings = Settings::default();
+        let context = Context::new();
 
         let mut claim = Claim::new("bogus_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
@@ -439,13 +422,7 @@ mod tests {
 
         let signer = BogusSigner::new();
 
-        let _cose_sign1 = sign_claim(
-            &claim_bytes,
-            &signer,
-            box_size,
-            &settings,
-            &SyncGenericResolver::new(),
-        );
+        let _cose_sign1 = sign_claim(&claim_bytes, &signer, box_size, &context);
 
         assert!(_cose_sign1.is_err());
     }

@@ -2462,7 +2462,7 @@ impl Builder {
             store.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
         }
 
-        let mut jumbf = store.sign_manifest(signer, self.context().settings())?;
+        let mut jumbf = store.sign_manifest(signer, self.context())?;
 
         // Mode 1 only: zero-pad the signed JUMBF to match the pre-committed placeholder
         // size so the composed result is byte-for-byte the same length as the composed

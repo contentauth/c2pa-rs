@@ -123,6 +123,7 @@ pub fn check_ocsp_status(
                         ctp,
                         tst_info,
                         validation_log,
+                        context.settings().verify.verify_timestamp_trust,
                         context,
                     )
                 } else {
@@ -132,6 +133,7 @@ pub fn check_ocsp_status(
                         ctp,
                         tst_info,
                         validation_log,
+                        context.settings().verify.verify_timestamp_trust,
                         context,
                     )
                     .await
