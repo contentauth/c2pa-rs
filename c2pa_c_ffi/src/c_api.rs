@@ -2196,24 +2196,31 @@ pub unsafe extern "C" fn c2pa_builder_needs_placeholder(
 /// # Parameters
 /// * builder_ptr: pointer to a Builder.
 /// * format: pointer to a C string with the MIME type or extension.
+/// * out_hash_type: pointer to a C2paHashType that receives the result on success.
 ///
 /// # Returns
-/// 0 for DataHash, 1 for BmffHash, 2 for BoxHash, or -1 on error.
+/// 0 on success, -1 on error (null pointer or invalid string).
 ///
 /// # Safety
-/// Reads from NULL-terminated C strings.
+/// Reads from NULL-terminated C strings. Writes to `out_hash_type` only on success.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_hash_type(
     builder_ptr: *mut C2paBuilder,
     format: *const c_char,
+    out_hash_type: *mut C2paHashType,
 ) -> c_int {
     let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
-    match builder.hash_type(&format) {
-        c2pa::HashType::DataHash => C2paHashType::DataHash as c_int,
-        c2pa::HashType::BmffHash => C2paHashType::BmffHash as c_int,
-        c2pa::HashType::BoxHash => C2paHashType::BoxHash as c_int,
+    if out_hash_type.is_null() {
+        return -1;
     }
+    let hash_type = match builder.hash_type(&format) {
+        c2pa::HashType::DataHash => C2paHashType::DataHash,
+        c2pa::HashType::BmffHash => C2paHashType::BmffHash,
+        c2pa::HashType::BoxHash => C2paHashType::BoxHash,
+    };
+    *out_hash_type = hash_type;
+    0
 }
 
 /// Creates a composed placeholder manifest from a Builder.
