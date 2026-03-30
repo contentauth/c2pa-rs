@@ -26,6 +26,10 @@ pub mod sync_impl {
         ureq::Agent::new_with_config(config)
     }
 
+    pub fn with_redirects() -> Option<Impl> {
+        Some(ureq::agent())
+    }
+
     impl SyncHttpResolver for ureq::Agent {
         fn http_resolve(
             &self,
@@ -54,7 +58,9 @@ pub mod sync_impl {
 
     #[cfg(test)]
     pub mod tests {
-        use crate::http::tests::{assert_http_resolver, assert_http_resolver_no_redirects};
+        #![allow(clippy::unwrap_used)]
+
+        use crate::http::tests::{assert_http_resolver, assert_http_resolver_with_redirects};
 
         #[test]
         fn test_http_ureq() {
@@ -62,8 +68,8 @@ pub mod sync_impl {
         }
 
         #[test]
-        fn test_http_ureq_no_redirects() {
-            assert_http_resolver_no_redirects(super::new());
+        fn test_http_ureq_with_redirects() {
+            assert_http_resolver_with_redirects(super::with_redirects().unwrap());
         }
     }
 }

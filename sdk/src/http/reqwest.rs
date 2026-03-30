@@ -35,6 +35,10 @@ pub mod sync_impl {
             .unwrap()
     }
 
+    pub fn with_redirects() -> Option<Impl> {
+        Some(reqwest::blocking::Client::new())
+    }
+
     impl SyncHttpResolver for reqwest::blocking::Client {
         fn http_resolve(
             &self,
@@ -58,7 +62,9 @@ pub mod sync_impl {
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg(test)]
     pub mod tests {
-        use crate::http::tests::{assert_http_resolver, assert_http_resolver_no_redirects};
+        #![allow(clippy::unwrap_used)]
+
+        use crate::http::tests::{assert_http_resolver, assert_http_resolver_with_redirects};
 
         #[test]
         fn test_http_reqwest() {
@@ -66,8 +72,8 @@ pub mod sync_impl {
         }
 
         #[test]
-        fn test_http_reqwest_no_redirects() {
-            assert_http_resolver_no_redirects(super::new());
+        fn test_http_reqwest_with_redirects() {
+            assert_http_resolver_with_redirects(super::with_redirects().unwrap());
         }
     }
 }
@@ -92,6 +98,10 @@ pub mod async_impl {
         // The behavior here is equivalent, except with a custom configuration.
         #[allow(clippy::unwrap_used)]
         builder.build().unwrap()
+    }
+
+    pub fn with_redirects() -> Option<Impl> {
+        Some(reqwest::Client::new())
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -121,8 +131,10 @@ pub mod async_impl {
     #[cfg(not(target_arch = "wasm32"))]
     #[cfg(test)]
     pub mod tests {
+        #![allow(clippy::unwrap_used)]
+
         use crate::http::tests::{
-            assert_http_resolver_async, assert_http_resolver_no_redirects_async,
+            assert_http_resolver_async, assert_http_resolver_with_redirects_async,
         };
 
         #[tokio::test]
@@ -131,8 +143,8 @@ pub mod async_impl {
         }
 
         #[tokio::test]
-        async fn test_http_reqwest_no_redirects() {
-            assert_http_resolver_no_redirects_async(super::new()).await;
+        async fn test_http_reqwest_with_redirects() {
+            assert_http_resolver_with_redirects_async(super::with_redirects().unwrap()).await;
         }
     }
 }

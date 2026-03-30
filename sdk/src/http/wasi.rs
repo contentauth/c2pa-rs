@@ -33,6 +33,10 @@ pub mod sync_impl {
         SyncWasiResolver::new()
     }
 
+    pub fn with_redirects() -> Option<Impl> {
+        None
+    }
+
     struct WasiStream {
         // Important that `stream` is above `body` so that it's dropped first.
         stream: InputStream,
@@ -198,6 +202,10 @@ pub mod async_impl {
 
     pub fn new() -> Impl {
         wstd::http::Client::new()
+    }
+
+    pub fn with_redirects() -> Option<Impl> {
+        None
     }
 
     #[async_trait(?Send)]

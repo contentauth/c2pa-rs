@@ -161,6 +161,14 @@ impl SyncGenericResolver {
             inner: sync_resolver::new(),
         }
     }
+
+    /// Create a new [`SyncGenericResolver`] with an auto-specified [`SyncHttpResolver`] that has
+    /// redirects enabled. Returns `None` if unsupported for the enabled HTTP resolver features.
+    ///
+    /// For more information, see [`SyncGenericResolver::new`].
+    pub fn with_redirects() -> Option<Self> {
+        sync_resolver::with_redirects().map(|inner| Self { inner })
+    }
 }
 
 impl Default for SyncGenericResolver {
@@ -204,6 +212,14 @@ impl AsyncGenericResolver {
         Self {
             inner: async_resolver::new(),
         }
+    }
+
+    /// Create a new [`AsyncGenericResolver`] with an auto-specified [`AsyncHttpResolver`] that has
+    /// redirects enabled. Returns `None` if unsupported for the enabled HTTP resolver features.
+    ///
+    /// For more information, see [`AsyncGenericResolver::new`].
+    pub fn with_redirects() -> Option<Self> {
+        async_resolver::with_redirects().map(|inner| Self { inner })
     }
 }
 
@@ -269,17 +285,17 @@ pub enum HttpResolverError {
     not(feature = "http_ureq")
 ))]
 mod sync_resolver {
-    pub use crate::http::reqwest::sync_impl::{new, Impl};
+    pub use crate::http::reqwest::sync_impl::{new, with_redirects, Impl};
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "http_ureq"))]
 mod sync_resolver {
-    pub use crate::http::ureq::sync_impl::{new, Impl};
+    pub use crate::http::ureq::sync_impl::{new, with_redirects, Impl};
 }
 
 #[cfg(all(target_os = "wasi", feature = "http_wasi"))]
 mod sync_resolver {
-    pub use crate::http::wasi::sync_impl::{new, Impl};
+    pub use crate::http::wasi::sync_impl::{new, with_redirects, Impl};
 }
 
 #[cfg(not(any(
@@ -296,6 +312,9 @@ mod sync_resolver {
     pub fn new() -> Impl {
         SyncNoopResolver
     }
+    pub fn with_redirects() -> Option<Impl> {
+        Some(SyncNoopResolver)
+    }
 
     pub struct SyncNoopResolver;
 
@@ -311,12 +330,12 @@ mod sync_resolver {
 
 #[cfg(all(not(target_os = "wasi"), feature = "http_reqwest"))]
 mod async_resolver {
-    pub use crate::http::reqwest::async_impl::{new, Impl};
+    pub use crate::http::reqwest::async_impl::{new, with_redirects, Impl};
 }
 
 #[cfg(all(target_os = "wasi", feature = "http_wstd"))]
 mod async_resolver {
-    pub use crate::http::wasi::async_impl::{new, Impl};
+    pub use crate::http::wasi::async_impl::{new, with_redirects, Impl};
 }
 
 #[cfg(not(any(
@@ -329,6 +348,9 @@ mod async_resolver {
     pub type Impl = AsyncNoopResolver;
     pub fn new() -> Impl {
         AsyncNoopResolver
+    }
+    pub fn with_redirects() -> Option<Impl> {
+        Some(AsyncNoopResolver)
     }
 
     pub struct AsyncNoopResolver;
@@ -396,7 +418,7 @@ pub mod tests {
     }
 
     #[async_generic(async_signature(resolver: impl AsyncHttpResolver))]
-    pub fn assert_http_resolver_no_redirects(resolver: impl SyncHttpResolver) {
+    pub fn assert_http_resolver_with_redirects(resolver: impl SyncHttpResolver) {
         use httpmock::MockServer;
 
         let server = MockServer::start();
@@ -413,8 +435,8 @@ pub mod tests {
             resolver.http_resolve_async(request).await.unwrap()
         };
 
-        assert_eq!(response.status(), 302);
+        assert_eq!(response.status(), 200);
         redirect.assert_calls(1);
-        target.assert_calls(0);
+        target.assert_calls(1);
     }
 }
