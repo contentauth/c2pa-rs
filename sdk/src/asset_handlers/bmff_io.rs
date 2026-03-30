@@ -1406,7 +1406,9 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                 };
 
                 let new_token = bmff_tree.new_node(b);
-                current_node.append(new_token, bmff_tree);
+                current_node
+                    .checked_append(new_token, bmff_tree)
+                    .map_err(|_err| Error::InvalidAsset("Bad BMFF Graph".to_string()))?;
 
                 let path = path_from_token(bmff_tree, &new_token)?;
                 add_token_to_cache(bmff_path_map, path, new_token);

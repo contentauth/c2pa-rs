@@ -461,7 +461,11 @@ where
                     )?;
                     let subfile_token = tiff_tree.new_node(subfile_ifd);
 
-                    current_token.append(subfile_token, &mut tiff_tree);
+                    current_token
+                        .checked_append(subfile_token, &mut tiff_tree)
+                        .map_err(|_err| {
+                            Error::InvalidAsset("Bad TIFF Structure".to_string())
+                        })?;
                 }
             }
 
@@ -477,7 +481,9 @@ where
                     TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Exif)?;
                 let exif_token = tiff_tree.new_node(exif_ifd);
 
-                current_token.append(exif_token, &mut tiff_tree);
+                current_token
+                    .checked_append(exif_token, &mut tiff_tree)
+                    .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
             }
 
             // grab GPS IFD for page (DNG)
@@ -492,7 +498,9 @@ where
                     TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Gps)?;
                 let gps_token = tiff_tree.new_node(gps_ifd);
 
-                current_token.append(gps_token, &mut tiff_tree);
+                current_token
+                    .checked_append(gps_token, &mut tiff_tree)
+                    .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
             }
 
             // move to next page
@@ -1472,7 +1480,7 @@ where
         Some(entry) => entry,
         None => {
             // if the last page doesn't have the C2PA tag, check the first page for backwards compatibility with older TIFFs
-            let first_ifd = &tiff_tree[*first_page].data;
+            let first_ifd = tiff_tree[*first_page].get();
             first_ifd.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?
         }
     };

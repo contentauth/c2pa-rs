@@ -84,11 +84,11 @@ pub fn tree<P: AsRef<Path>>(path: P) -> Result<String> {
     // walk through the manifests and show the contents
     Ok(if let Some(manifest_label) = reader.active_label() {
         let data = format!("Asset:{asset_name}, Manifest:{manifest_label}");
-        let tree = &mut Arena::new();
+        let mut tree = Arena::new();
         let root_token = tree.new_node(data);
-        populate_node(tree, &reader, manifest_label, root_token, false)?;
+        populate_node(&mut tree, &reader, manifest_label, root_token, false)?;
         // print tree
-        format!("Tree View:\n {}", walk_tree(tree, root_token))
+        format!("Tree View:\n {}", walk_tree(&tree, root_token))
     } else {
         format!("Tree View:\n Asset:{asset_name}")
     })

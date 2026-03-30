@@ -27,8 +27,8 @@ networking = [
 
 [dependencies]
 anyhow = "1.0"
-indextree = "4"
-c2pa = { path = "../sdk", version = "0.78.6", features = [
+indextree = "4.8.0"
+c2pa = { path = "../sdk", version = "0.78.7", features = [
     "fetch_remote_manifests",
     "file_io",
     "add_thumbnails",
