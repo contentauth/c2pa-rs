@@ -186,7 +186,9 @@ release-android-x86_64:
 
 release-emscripten:
 	rustup target add --toolchain nightly wasm32-unknown-emscripten
-	cargo +nightly build -Z build-std=std,panic_unwind --target=wasm32-unknown-emscripten $(CARGO_BUILD_FLAGS_EMSCRIPTEN)
+	EMCC_CFLAGS="-fwasm-exceptions -pthread" \
+	RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals" \
+		cargo +nightly build -Z build-std=std,panic_abort --target=wasm32-unknown-emscripten $(CARGO_BUILD_FLAGS_EMSCRIPTEN)
 	@$(call make_zip_emscripten,$(TARGET_DIR)/wasm32-unknown-emscripten/release,wasm32-unknown-emscripten)
 
 # make release
