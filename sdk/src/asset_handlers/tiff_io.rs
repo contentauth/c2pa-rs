@@ -19,9 +19,9 @@ use std::{
     vec,
 };
 
-use indextree::{Arena, NodeId};
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use byteordered::{with_order, ByteOrdered, Endianness};
+use indextree::{Arena, NodeId};
 
 use crate::{
     asset_io::{
@@ -463,9 +463,7 @@ where
 
                     current_token
                         .checked_append(subfile_token, &mut tiff_tree)
-                        .map_err(|_err| {
-                            Error::InvalidAsset("Bad TIFF Structure".to_string())
-                        })?;
+                        .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
                 }
             }
 
@@ -1791,7 +1789,12 @@ impl CAIWriter for TiffIO {
             .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
 
         // we remove tag if found and rewrite the file
-        if ifds[*last_page].get_mut().entries.remove(&C2PA_TAG).is_some() {
+        if ifds[*last_page]
+            .get_mut()
+            .entries
+            .remove(&C2PA_TAG)
+            .is_some()
+        {
             let mut bo = ByteOrdered::new(output_stream, e);
             let mut tc = TiffCloner::new(e, big_tiff, &mut bo)?;
 

@@ -19,8 +19,8 @@ use std::{
     path::Path,
 };
 
-use indextree::{Arena, NodeId};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use indextree::{Arena, NodeId};
 
 use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
@@ -489,7 +489,11 @@ fn write_free_box<W: Write>(w: &mut W, size: usize) -> Result<()> {
     Ok(())
 }
 
-fn add_token_to_cache(bmff_path_map: &mut HashMap<String, Vec<NodeId>>, path: String, token: NodeId) {
+fn add_token_to_cache(
+    bmff_path_map: &mut HashMap<String, Vec<NodeId>>,
+    path: String,
+    token: NodeId,
+) {
     if let Some(token_list) = bmff_path_map.get_mut(&path) {
         token_list.push(token);
     } else {
