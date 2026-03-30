@@ -250,8 +250,8 @@ impl<'a> CrJsonExporter<'a> {
 
         Ok(CrJsonDocument {
             context: json!({
-                "@vocab": "https://contentcredentials.org/crjson",
-                "extras": "https://contentcredentials.org/crjson/extras"
+                "@vocab": "https://c2pa.org/crjson",
+                "extras": "https://c2pa.org/crjson/extras"
             }),
             manifests: indexed.into_iter().map(|(_, m)| m).collect(),
             json_generator: JsonGenerator {
