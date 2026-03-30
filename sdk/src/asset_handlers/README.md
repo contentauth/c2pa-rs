@@ -1,12 +1,13 @@
-# Asset Handler Architecture Guide
+# Asset handler architecture guide
 
-## How Asset Handlers Work in c2pa-rs
+> [!NOTE]
+> This documentation is primarily for SDK developers and contributors, not SDK users or consumers.
+
+## How asset handlers work
 
 The asset handler system follows a **trait-based plugin architecture** where each file format implements a set of traits defined in `asset_io.rs`, then gets registered in a central dispatch system in `jumbf_io.rs`.
 
----
-
-## 1. The Dispatch Layer (`jumbf_io.rs`)
+## Dispatch layer
 
 The system uses two `lazy_static` `HashMap`s that map file extension/MIME strings to handler instances:
 
@@ -15,7 +16,7 @@ The system uses two `lazy_static` `HashMap`s that map file extension/MIME string
 
 At startup, each handler is instantiated, asked for its `supported_types()` (e.g., `["jpg", "jpeg", "image/jpeg"]`), and entries are created in the map for each type. When the SDK needs to process a file, it looks up the extension/MIME in the map and gets the appropriate handler.
 
-### Lookup Functions
+### Lookup functions
 
 | Function | Returns | Purpose |
 |----------|---------|---------|
@@ -24,7 +25,7 @@ At startup, each handler is instantiated, asked for its `supported_types()` (e.g
 | `get_cailoader_handler(asset_type)` | `Option<&dyn CAIReader>` | Stream-based reader only |
 | `get_caiwriter_handler(asset_type)` | `Option<&dyn CAIWriter>` | Stream-based writer only |
 
-### Public Entry Points
+### Public entry points
 
 | Function | Description |
 |----------|-------------|
@@ -37,15 +38,22 @@ At startup, each handler is instantiated, asked for its `supported_types()` (e.g
 | `remove_jumbf_from_file()` | Remove C2PA manifest from a file |
 | `get_supported_types()` | List all supported extensions/MIME types |
 
----
 
-## 2. The Trait Hierarchy
+## Trait hierarchy
 
-There are **3 mandatory traits** and **4 optional traits** that a handler can implement.
+There are **three mandatory traits** and **four optional traits** that a handler can implement.
 
-### Mandatory Traits
+### Mandatory traits
 
-#### `CAIReader` — Stream-based reading
+The mandatory traits are:
+
+- [CAIReader](#caireader-) 
+- [CAIWriter](#caiwriter) 
+- [AssetIO](#assetio)
+
+#### CAIReader 
+
+Use `CAIReader` for stream-based reading:
 
 ```rust
 pub trait CAIReader: Sync + Send {
@@ -59,7 +67,9 @@ pub trait CAIReader: Sync + Send {
 | `read_cai` | Extract the raw C2PA JUMBF manifest store bytes from a stream. Return `Error::JumbfNotFound` if none exists. Return `Error::TooManyManifestStores` if more than one manifest is detected. |
 | `read_xmp` | Extract XMP metadata as a string. Return `None` if the format doesn't contain XMP or if no XMP is present. |
 
-#### `CAIWriter` — Stream-based writing
+#### CAIWriter
+
+Use `CAIWriter` for stream-based writing:
 
 ```rust
 pub trait CAIWriter: Sync + Send {
@@ -89,7 +99,9 @@ pub trait CAIWriter: Sync + Send {
 | `get_object_locations_from_stream` | Return the byte positions and lengths of key regions (CAI manifest, XMP, other) so the hashing system knows what to hash and what to exclude. If no manifest exists yet, insert a placeholder so the offset is known. |
 | `remove_cai_store_from_stream` | Rewrite the asset without any C2PA manifest data. The output must remain a valid file. |
 
-#### `AssetIO` — The master trait
+#### AssetIO — the master trait
+
+`AssetIO` is the master trait:
 
 ```rust
 pub trait AssetIO: Sync + Send {
@@ -130,9 +142,18 @@ fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
 }
 ```
 
-### Optional Traits
+### Optional traits
 
-#### `AssetPatch` — In-place binary patching
+The optional traits are:
+
+- [AssetPatch](#assetpatch) 
+- [RemoteRefEmbed](#remoterefembed-) 
+- [AssetBoxHash](#assetboxhash) 
+- [ComposedManifestRef](#composedmanifestref)
+
+#### AssetPatch
+
+Use `AssetPatch`for in-place binary patching:
 
 ```rust
 pub trait AssetPatch {
@@ -140,9 +161,11 @@ pub trait AssetPatch {
 }
 ```
 
-Optimizes manifest updates by patching bytes in-place without rewriting the whole file. Only works when the new store is the same size as the existing one. This is a performance optimization.
+It optimizes manifest updates by patching bytes in-place without rewriting the whole file. Only works when the new store is the same size as the existing one. This is a performance optimization.
 
-#### `RemoteRefEmbed` — Remote manifest reference embedding
+#### RemoteRefEmbed 
+
+Use `RemoteRefEmbed` for remote manifest reference embedding:
 
 ```rust
 pub trait RemoteRefEmbed {
@@ -156,9 +179,11 @@ pub trait RemoteRefEmbed {
 }
 ```
 
-Embeds a remote manifest reference URL into the asset's XMP metadata. The `RemoteRefEmbedType` enum supports `Xmp`, `StegoS`, `StegoB`, and `Watermark` variants, though most handlers only implement `Xmp`.
+It embeds a remote manifest reference URL into the asset's XMP metadata. The `RemoteRefEmbedType` enum supports `Xmp`, `StegoS`, `StegoB`, and `Watermark` variants, though most handlers only implement `Xmp`.
 
-#### `AssetBoxHash` — Box hash support
+#### AssetBoxHash
+
+Use `AssetBoxHash` for box hash support:
 
 ```rust
 pub trait AssetBoxHash {
@@ -166,7 +191,7 @@ pub trait AssetBoxHash {
 }
 ```
 
-Generates a `BoxMap` describing all hashable regions in the file for `c2pa.hash.boxes` assertions. Each `BoxMap` entry contains:
+It generates a `BoxMap` describing all hashable regions in the file for `c2pa.hash.boxes` assertions. Each `BoxMap` entry contains:
 
 ```rust
 pub struct BoxMap {
@@ -180,7 +205,9 @@ pub struct BoxMap {
 }
 ```
 
-#### `ComposedManifestRef` — Pre-composed manifest wrapping
+#### ComposedManifestRef 
+
+Use `ComposedManifestRef` pre-composed manifest wrapping
 
 ```rust
 pub trait ComposedManifestRef {
@@ -193,13 +220,12 @@ Wraps raw manifest store bytes into the format-specific container structure. For
 - **JPEG XL**: Wraps into a single ISOBMFF `jumb` superbox containing the C2PA manifest store
 - **PNG**: Wraps into a `caBX` chunk with CRC
 
-> **Note:** `ComposedManifestRef` is only used by the embeddable manifest API to provide a composed manifest ready for direct insertion into an asset. When composed manifests are used, the asset handler is **not** performing the manifest embedding.
+> [!NOTE] 
+> The embeddable manifest API uses `ComposedManifestRef` to provide a composed manifest ready for direct insertion into an asset. When composed manifests are used, the asset handler is **not** performing the manifest embedding.
 
----
+## Registration checklist
 
-## 3. Registration Checklist
-
-Adding a new handler requires touching exactly **4 files**:
+Adding a new handler requires touching exactly **four files**:
 
 | Step | File | What to do |
 |------|------|------------|
@@ -209,15 +235,14 @@ Adding a new handler requires touching exactly **4 files**:
 | 4 | `sdk/src/jumbf_io.rs` (tests) | Add handler to `test_get_assetio`, `test_get_reader`, `test_get_writer`; add extension to `test_get_supported_list`; add a `test_streams_yourformat` integration test |
 | 5 | `docs/supported-formats.md` | Add to the supported formats table |
 
----
 
-## 4. Key Behaviors and Rules
+## Key behaviors and rules
 
-### Format Validation
+### Format validation
 
 Every handler must validate that the input is actually the expected format before processing. Return `Error::InvalidAsset` with a descriptive message on invalid input. Never silently produce corrupted output.
 
-### Idempotent Writes
+### Idempotent writes
 
 `write_cai` must handle both:
 - **Fresh assets** (no existing manifest) — insert new manifest at the correct location
@@ -225,7 +250,7 @@ Every handler must validate that the input is actually the expected format befor
 
 The output must always be a valid file of the original format.
 
-### `HashObjectPositions` Contract
+### HashObjectPositions contract
 
 The locations returned by `get_object_locations_from_stream` must:
 
@@ -243,9 +268,9 @@ pub struct HashObjectPositions {
 }
 ```
 
-### `BoxMap` Contract (if implementing `AssetBoxHash`)
+### BoxMap contract
 
-The box map entries must:
+When implementing `AssetBoxHash`, the box map entries must:
 
 - **Cover the contents of all boxes present in the file** — all boxes must be represented in the list
 - **Be ordered by offset** — ascending `range_start`
@@ -253,18 +278,18 @@ The box map entries must:
 - **Label the C2PA manifest entry** with the constant name `C2PA_BOXHASH` (value: `"C2PA"`)
 - Only populate `names`, `range_start`, and `range_len` — the hashing system fills in `hash`, `alg`, and `pad`
 
-### Thread Safety
+### Thread safety
 
-All traits require `Sync + Send`. Handlers must be **stateless structs** with no mutable internal state. Configuration should come from the `asset_type` parameter passed to `new()`.
+All traits require `Sync + Send`. Handlers must be **stateless structs** with no mutable internal state. Pass configuration through the `asset_type` parameter to `new()`.
 
-### Stream Semantics
+### Stream semantics
 
 - All stream-based methods receive `&mut dyn CAIRead` (= `Read + Seek + Send`) for input
 - Output streams use `&mut dyn CAIReadWrite` (= `Read + Seek + Write + Send`)
 - Handlers should `rewind()` streams before reading
 - Never assume the stream position on entry
 
-### Error Conventions
+### Error conventions
 
 | Error | When to return |
 |-------|---------------|
@@ -275,11 +300,11 @@ All traits require `Sync + Send`. Handlers must be **stateless structs** with no
 | `Error::EmbeddingError` | Failed to embed manifest into the asset |
 | `Error::IoError(io::Error)` | Underlying I/O failure |
 
-> **Note:** Handlers may also return format-specific errors to provide more detailed diagnostics.
+> [!NOTE] 
+> Handlers may also return format-specific errors to provide more detailed diagnostics.
 
----
 
-## 5. Trait Implementation Matrix
+## Trait implementation matrix
 
 | Handler | CAIReader | CAIWriter | AssetIO | RemoteRefEmbed | AssetBoxHash | ComposedManifestRef | AssetPatch |
 |---------|:---------:|:---------:|:-------:|:--------------:|:------------:|:-------------------:|:----------:|
@@ -295,20 +320,19 @@ All traits require `Sync + Send`. Handlers must be **stateless structs** with no
 | **C2paIO** (C2PA sidecar) | Y | Y | Y | -- | Y | Y | -- |
 | **PdfIO** (PDF) | Y | -- | Y | -- | -- | Y | -- |
 
-### Key Observations
+### Key observations
 
 - `CAIReader` + `AssetIO` are implemented by **every** handler (minimum requirement)
 - `CAIWriter` is implemented by everything except PDF (which is currently read-only)
 - `AssetPatch` is a performance optimization — formats that support it can update manifests in-place
-- All traits are independent; which ones to implement is determined by the format's capabilities as defined by the C2PA specification
+- All traits are independent; format capabilities, as defined by the C2PA specification, determine which ones to implement
 
----
 
-## 6. Integration Test Pattern
+## Integration test pattern
 
 Every handler should have a `test_streams_*` test in `jumbf_io.rs` that exercises two standard test harnesses:
 
-### `test_jumbf(asset_type, reader)`
+### test_jumbf
 
 Verifies the full round-trip:
 1. Create a test C2PA store and sign it
@@ -318,7 +342,7 @@ Verifies the full round-trip:
 5. Remove the C2PA store from the asset
 6. Verify the manifest is gone (`Error::JumbfNotFound`)
 
-### `test_remote_ref(asset_type, reader)`
+### test_remote_ref
 
 Verifies remote reference embedding (only applicable if the handler supports `RemoteRefEmbed`):
 1. Get the `RemoteRefEmbed` from the handler
@@ -341,50 +365,33 @@ fn test_streams_jxl() {
 }
 ```
 
----
+## Architectural diagram
 
-## 7. Architectural Diagram
+```mermaid
+flowchart TB
+    subgraph dispatch["jumbf_io.rs — Dispatch layer"]
+        readers["CAI_READERS:<br><pre>HashMap&lt;String, Box&lt;dyn AssetIO&gt;&gt;</pre>"]
+        writers["CAI_WRITERS:<br><pre>HashMap&lt;String, Box&tl;dyn CAIWriter&gt;&gt;</pre> "]
+        mappings["'jpg' → JpegIO <br> 'png' → PngIO <br> 'jxl' → JpegXlIO <br> 'mp4' → BmffIO  <br> ..."]
+    end
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                      jumbf_io.rs                        │
-│                   (Dispatch Layer)                       │
-│                                                         │
-│  CAI_READERS: HashMap<String, Box<dyn AssetIO>>         │
-│  CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>>       │
-│                                                         │
-│  "jpg" ──► JpegIO    "png" ──► PngIO                    │
-│  "jxl" ──► JpegXlIO  "mp4" ──► BmffIO   ...            │
-└────────────────────────┬────────────────────────────────┘
-                         │ looks up by extension/MIME
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│                     asset_io.rs                          │
-│                  (Trait Definitions)                     │
-│                                                         │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │ MANDATORY                                        │   │
-│  │  ● CAIReader    (read_cai, read_xmp)             │   │
-│  │  ● CAIWriter    (write_cai, get_object_locations,│   │
-│  │  │               remove_cai_store)               │   │
-│  │  ● AssetIO      (master trait, file-based ops,   │   │
-│  │                   supported_types, accessors)    │   │
-│  └──────────────────────────────────────────────────┘   │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │ OPTIONAL                                         │   │
-│  │  ○ AssetPatch       (in-place patching)          │   │
-│  │  ○ RemoteRefEmbed   (XMP remote references)      │   │
-│  │  ○ AssetBoxHash     (box map for c2pa.hash.boxes)│   │
-│  │  ○ ComposedManifestRef (pre-composed wrapping)   │   │
-│  └──────────────────────────────────────────────────┘   │
-└────────────────────────┬────────────────────────────────┘
-                         │ implemented by
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│              asset_handlers/<format>_io.rs               │
-│                                                         │
-│  jpeg_io.rs  │ jpegxl_io.rs │ png_io.rs  │ bmff_io.rs  │
-│  tiff_io.rs  │ riff_io.rs   │ svg_io.rs  │ mp3_io.rs   │
-│  gif_io.rs   │ c2pa_io.rs   │ pdf_io.rs  │             │
-└─────────────────────────────────────────────────────────┘
+    subgraph traits["asset_io.rs — Trait definitions"]
+        direction TB
+        subgraph mandatory["Mandatory"]
+            t1["<b>CAIReader</b>:<br>read_cai, read_xmp"]
+            t2["<b>CAIWriter</b>:<br>write_cai, get_object_locations, remove_cai_store"]
+            t3["<b>AssetIO</b>:<br>master trait: file-based ops, supported_types, accessors"]
+        end
+        subgraph optional["Optional"]
+            t4["<b>AssetPatch</b>:<br>In-place patching"]
+            t5["<b>RemoteRefEmbed</b>:<br>XMP remote references"]
+            t6["<b>AssetBoxHash</b>:<br>Box map for c2pa.hash.boxes"]
+            t7["<b>ComposedManifestRef</b>:<br>Pre-composed wrapping"]
+        end
+    end
+
+    handlers["jpeg_io.rs  jpegxl_io.rs  png_io.rs  bmff_io.rs  tiff_io.rs   riff_io.rs  svg_io.rs  mp3_io.rs  gif_io.rs  c2pa_io.rs  pdf_io.rs"]
+
+    dispatch -->|"Looks up by extension/MIME"| traits
+    traits -->|"Implemented by asset_handlers/&lt;format&gt;_io.rs"| handlers
 ```
