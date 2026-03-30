@@ -9,7 +9,7 @@ During multi-step long-running operations (such as signing, reading, and verific
 
 The callback receives the current phase, a step counter, and an optional total. Returning `false` (or `0` in C) from the callback requests cancellation; the SDK will stop at the next safe checkpoint and return `Error::OperationCancelled`.
 
-You can also request cancellation externally — from a different thread — by calling `Context::cancel()` / `c2pa_context_cancel()` without going through the callback at all.
+You can also request cancellation externally (from a different thread) by calling `Context::cancel()` / `c2pa_context_cancel()` without going through the callback at all.
 
 > [!WARNING]
 > Do not use this API for time-remaining estimates; individual phases can take anywhere from microseconds to seconds depending on asset size and hardware, so a raw step count does not reliably translate into elapsed or remaining time.
