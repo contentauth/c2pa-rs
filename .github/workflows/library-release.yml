@@ -101,13 +101,11 @@ jobs:
 
       - name: Build emscripten release
         if: matrix.target == 'wasm32-unknown-emscripten'
-        env:
-          RUSTFLAGS: -C target-feature=+atomics,+bulk-memory -C link-arg=-pthread -C link-arg=-sUSE_PTHREADS=1 -C link-arg=-sSIDE_MODULE=1 -C link-arg=-flto
         run: make release TARGET=${{ matrix.target }}
         working-directory: ./c2pa_c_ffi
 
       - name: Build release
-        if: matrix.os != 'windows-latest' && matrix.os != 'windows-11-arm' && matrix.os != 'wasm32-unknown-emscripten'
+        if: matrix.os != 'windows-latest' && matrix.os != 'windows-11-arm' && matrix.target != 'wasm32-unknown-emscripten'
         run: make release TARGET=${{ matrix.target }}
 
       - name: Upload build artifacts (Android)
