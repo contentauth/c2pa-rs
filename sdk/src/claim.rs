@@ -41,7 +41,7 @@ use crate::{
     },
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
-    context::Context,
+    context::{Context, ProgressPhase},
     cose_validator::{
         get_signing_cert_serial_num, get_signing_info, get_signing_info_async, verify_cose,
         verify_cose_async,
@@ -317,7 +317,7 @@ pub struct Claim {
 
     redacted_assertions: Option<Vec<String>>, // list of redacted assertions
 
-    alg: Option<String>, // hashing algorithm (default to Sha256)
+    pub(crate) alg: Option<String>, // hashing algorithm (default to Sha256)
 
     alg_soft: Option<String>, // hashing algorithm for soft bindings
 
@@ -1921,7 +1921,7 @@ impl Claim {
         .await;
 
         let result =
-            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, settings);
+            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, context);
         validation_log.pop_current_uri();
         result
     }
@@ -2007,6 +2007,7 @@ impl Claim {
             context,
         )?;
 
+        context.check_progress(ProgressPhase::VerifyingSignature, 1, 1)?;
         let verified = verify_cose(
             sig,
             data,
@@ -2018,14 +2019,8 @@ impl Claim {
             &adjusted_settings,
         );
 
-        let result = Claim::verify_internal(
-            claim,
-            asset_data,
-            svi,
-            verified,
-            validation_log,
-            &adjusted_settings,
-        );
+        let result =
+            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, context);
         validation_log.pop_current_uri();
         result
     }
@@ -2604,6 +2599,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         svi: &StoreValidationInfo,
         validation_log: &mut StatusTracker,
+        context: &Context,
     ) -> Result<()> {
         const UNNAMED: &str = "unnamed";
         let default_str = |s: &String| s.clone();
@@ -2696,17 +2692,33 @@ impl Claim {
                         }
 
                         // only verify local hashes here
+                        let mut cb = |step, total| {
+                            context.check_progress(ProgressPhase::VerifyingAssetHash, step, total)
+                        };
                         let hash_result = match asset_data {
                             #[cfg(feature = "file_io")]
                             ClaimAssetData::Path(asset_path) => {
-                                dh.verify_hash(asset_path, Some(claim.alg()))
+                                let mut file = std::fs::File::open(asset_path)?;
+                                dh.verify_stream_hash_with_progress(
+                                    &mut file,
+                                    Some(claim.alg()),
+                                    Some(&mut cb),
+                                )
                             }
                             ClaimAssetData::Bytes(asset_bytes, _) => {
-                                dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
+                                let mut cursor = std::io::Cursor::new(*asset_bytes);
+                                dh.verify_stream_hash_with_progress(
+                                    &mut cursor,
+                                    Some(claim.alg()),
+                                    Some(&mut cb),
+                                )
                             }
-                            ClaimAssetData::Stream(stream_data, _) => {
-                                dh.verify_stream_hash(*stream_data, Some(claim.alg()))
-                            }
+                            ClaimAssetData::Stream(stream_data, _) => dh
+                                .verify_stream_hash_with_progress(
+                                    *stream_data,
+                                    Some(claim.alg()),
+                                    Some(&mut cb),
+                                ),
                             _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
                         };
 
@@ -2758,6 +2770,7 @@ impl Claim {
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
 
+                    context.check_progress(ProgressPhase::VerifyingAssetHash, 1, 1)?;
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
@@ -2828,6 +2841,9 @@ impl Claim {
                     // handle BMFF data hashes
                     let bh = BoxHash::from_assertion(hash_binding_assertion.assertion())?;
 
+                    let mut cb = |step, total| {
+                        context.check_progress(ProgressPhase::VerifyingAssetHash, step, total)
+                    };
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
@@ -2839,7 +2855,13 @@ impl Claim {
                                         "Box hash not supported".to_string(),
                                     ))?;
 
-                            bh.verify_hash(asset_path, Some(claim.alg()), box_hash_processor)
+                            let mut file = std::fs::File::open(asset_path)?;
+                            bh.verify_stream_hash_with_progress(
+                                &mut file,
+                                Some(claim.alg()),
+                                box_hash_processor,
+                                Some(&mut cb),
+                            )
                         }
                         ClaimAssetData::Bytes(asset_bytes, asset_type) => {
                             let box_hash_processor = get_assetio_handler(asset_type)
@@ -2849,10 +2871,12 @@ impl Claim {
                                     "Box hash not supported for: {asset_type}"
                                 )))?;
 
-                            bh.verify_in_memory_hash(
-                                asset_bytes,
+                            let mut cursor = std::io::Cursor::new(*asset_bytes);
+                            bh.verify_stream_hash_with_progress(
+                                &mut cursor,
                                 Some(claim.alg()),
                                 box_hash_processor,
+                                Some(&mut cb),
                             )
                         }
                         ClaimAssetData::Stream(stream_data, asset_type) => {
@@ -2863,10 +2887,11 @@ impl Claim {
                                     "Box hash not supported for: {asset_type}"
                                 )))?;
 
-                            bh.verify_stream_hash(
+                            bh.verify_stream_hash_with_progress(
                                 *stream_data,
                                 Some(claim.alg()),
                                 box_hash_processor,
+                                Some(&mut cb),
                             )
                         }
                         _ => return Err(Error::UnsupportedType),
@@ -2921,7 +2946,7 @@ impl Claim {
         svi: &StoreValidationInfo,
         verified: Result<CertificateInfo>,
         validation_log: &mut StatusTracker,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<()> {
         // signature check
         match verified {
@@ -3242,10 +3267,10 @@ impl Claim {
         }
 
         // verify data hashes for provenance claims
-        Claim::verify_hash_binding(claim, asset_data, svi, validation_log)?;
+        Claim::verify_hash_binding(claim, asset_data, svi, validation_log, context)?;
 
         // check action rules
-        Claim::verify_actions(claim, svi, validation_log, settings)?;
+        Claim::verify_actions(claim, svi, validation_log, context.settings())?;
 
         // check metadata rules
         if claim.version() >= 2 {
@@ -3318,6 +3343,13 @@ impl Claim {
         let dummy_bmff_data = AssertionData::Cbor(Vec::new());
         let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
         self.assertions_by_type(&dummy_bmff_hash, None)
+    }
+
+    pub fn data_hash_assertions(&self) -> Vec<&ClaimAssertion> {
+        // add in an BMFF hashes
+        let dummy_hash_data = AssertionData::Cbor(Vec::new());
+        let dummy_data_hash = Assertion::new(assertions::labels::DATA_HASH, None, dummy_hash_data);
+        self.assertions_by_type(&dummy_data_hash, None)
     }
 
     pub fn box_hash_assertions(&self) -> Vec<&ClaimAssertion> {

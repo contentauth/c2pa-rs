@@ -32,20 +32,24 @@ use crate::assertions::CreativeWork;
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
-        c2pa_action, labels, Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash,
-        DataHash, DigitalSourceType, EmbeddedData, Exif, Metadata, SoftwareAgent, Thumbnail,
-        TimeStamp, User, UserCbor,
+        c2pa_action,
+        labels::{self, parse_label},
+        Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, DataHash,
+        DigitalSourceType, EmbeddedData, ExclusionsMap, Exif, MerkleMap, Metadata, SoftwareAgent,
+        SubsetMap, Thumbnail, TimeStamp, User, UserCbor,
     },
     claim::Claim,
-    context::Context,
+    context::{Context, ProgressPhase},
     crypto::cose,
     error::{Error, Result},
+    hash_utils::hash_by_alg,
     jumbf::labels::manifest_label_from_uri,
     jumbf_io,
+    maybe_send_sync::MaybeSend,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::builder::TimeStampFetchScope,
     store::Store,
-    utils::{hash_utils::hash_to_b64, mime::format_to_mime},
+    utils::{hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
 };
@@ -158,6 +162,20 @@ pub struct ManifestDefinition {
     /// Allows you to pre-define the manifest label, which must be unique.
     /// Not intended for general use.  If not set, it will be assigned automatically.
     pub label: Option<String>,
+
+    /// Hash algorithm used for asset hashing (DataHash, BmffHash) and assertion hashing
+    /// in the claim.  Defaults to `"sha256"` when not set.
+    ///
+    /// Valid values: `"sha256"`, `"sha384"`, `"sha512"`.
+    ///
+    /// This sets the claim-level `alg` field and is the default used by
+    /// [`Builder::update_hash_from_stream`].  It can be overridden on individual
+    /// hard binding assertions (e.g. a pre-constructed `DataHash`) by setting
+    /// the assertion's own `alg` field before adding it to the builder.
+    ///
+    /// Named `hash_alg` (rather than `alg`) to avoid collision with the signer's
+    /// signature algorithm, which uses the same key in some combined JSON configurations.
+    pub hash_alg: Option<String>,
 }
 
 fn default_instance_id() -> String {
@@ -417,6 +435,14 @@ pub struct Builder {
     // Contains the builder context
     #[serde(skip)]
     context: Arc<Context>,
+
+    // Raw JUMBF byte length stored by placeholder() for padding in sign_embeddable().
+    #[serde(skip)]
+    placeholder_jumbf_len: Option<usize>,
+
+    // Accumulator to assist with hashing mdat bytes for BmffHash assertions.
+    #[serde(skip)]
+    bmff_hasher: MerkleAccumulator,
 }
 
 impl AsRef<Builder> for Builder {
@@ -820,22 +846,23 @@ impl Builder {
 
         // if an actions assertion already exists, we will append to it
         // if not, we will create a new one
-        let actions = if let Some(pos) = self
+        let (actions, original_label) = if let Some(pos) = self
             .definition
             .assertions
             .iter()
-            .position(|a| a.label() == Actions::LABEL)
+            .position(|a| a.label().starts_with(Actions::LABEL))
         {
             // Remove and use the existing actions assertion
             let assertion_def = self.definition.assertions.remove(pos);
-            assertion_def.to_assertion()?
+            let original_label = assertion_def.label.clone();
+            (assertion_def.to_assertion()?, original_label)
         } else {
-            Actions::new()
+            (Actions::new(), Actions::LABEL_VERSIONED.to_string())
         };
 
         let actions = actions.add_action(action);
 
-        self.add_assertion(Actions::LABEL, &actions)?;
+        self.add_assertion(original_label, &actions)?;
         Ok(self)
     }
 
@@ -882,6 +909,9 @@ impl Builder {
         T: Into<String>,
         R: Read + Seek + Send,
     {
+        self.context
+            .check_progress(ProgressPhase::AddingIngredient, 1, 1)?;
+
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
         if format == "c2pa" || format == "application/c2pa" {
@@ -1310,6 +1340,9 @@ impl Builder {
         }
         claim.format = Some(definition.format.clone());
         definition.instance_id.clone_into(&mut claim.instance_id);
+        if let Some(alg) = definition.hash_alg.as_deref() {
+            claim.alg = Some(alg.to_string());
+        }
 
         if let Some(thumb_ref) = definition.thumbnail.as_ref() {
             // Setting the format to "none" will ensure that no claim thumbnail is added
@@ -1362,7 +1395,8 @@ impl Builder {
         let mut found_actions = false;
         // add any additional assertions
         for manifest_assertion in &definition.assertions {
-            match manifest_assertion.label() {
+            let (match_label, version, _instance) = parse_label(manifest_assertion.label());
+            match match_label {
                 l if l.starts_with(Actions::LABEL) => {
                     found_actions = true;
 
@@ -1469,7 +1503,8 @@ impl Builder {
                     claim.add_assertion(&data_hash)
                 }
                 BmffHash::LABEL => {
-                    let bmff_hash: BmffHash = manifest_assertion.to_assertion()?;
+                    let mut bmff_hash: BmffHash = manifest_assertion.to_assertion()?;
+                    bmff_hash.set_bmff_version(version);
                     claim.add_assertion(&bmff_hash)
                 }
                 Metadata::LABEL => {
@@ -1716,6 +1751,8 @@ impl Builder {
         let auto_thumbnail = self.context.settings().builder.thumbnail.enabled;
 
         if self.definition.thumbnail.is_none() && auto_thumbnail {
+            self.context
+                .check_progress(ProgressPhase::Thumbnail, 1, 1)?;
             stream.rewind()?;
 
             let mut stream = std::io::BufReader::new(stream);
@@ -1894,7 +1931,7 @@ impl Builder {
             .definition
             .assertions
             .iter()
-            .find(|a| a.label() == label)
+            .find(|a| a.label().contains(label))
         {
             manifest_assertion.to_assertion()
         } else {
@@ -1905,6 +1942,8 @@ impl Builder {
     /// Create a placeholder for a hashed data manifest.
     ///
     /// This is only used for applications doing their own data_hashed asset management.
+    /// This function does not support dynamic assertions (e.g., CAWG identity).
+    /// Use [`Builder::placeholder`] if you need dynamic assertion support.
     ///
     /// # Arguments
     /// * `reserve_size` - The size to reserve for the signature (taken from the signer).
@@ -1918,6 +1957,7 @@ impl Builder {
         reserve_size: usize,
         format: &str,
     ) -> Result<Vec<u8>> {
+        // Add DataHash to builder's definition if not present, so it persists for sign_data_hashed_embeddable
         let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
         if dh.is_err() {
             let mut ph = DataHash::new("jumbf manifest", "sha256");
@@ -1933,11 +1973,682 @@ impl Builder {
         Ok(placeholder)
     }
 
+    /// Returns whether a placeholder manifest is required for `format`.
+    ///
+    /// Most formats need a placeholder: the C2PA manifest is embedded inside the
+    /// asset (e.g. as a UUID box in BMFF or an APP11 segment in JPEG), so the exact
+    /// size of the final signed manifest must be reserved in advance.
+    ///
+    /// Formats whose handler implements `AssetBoxHash` can insert the manifest as a
+    /// new independent chunk/box without disturbing existing byte offsets.  When the
+    /// `prefer_box_hash` setting in `BuilderSettings` is enabled, those formats skip the
+    /// placeholder step entirely and use the direct-sign workflow
+    /// ([`Builder::sign_embeddable`] Mode 2) instead.
+    ///
+    /// The method also returns `false` when the builder already contains a [`BoxHash`]
+    /// assertion (regardless of `prefer_box_hash`), since the caller has explicitly
+    /// opted into the box-hash path.
+    ///
+    /// # Arguments
+    /// * `format` — MIME type or file extension of the target asset.
+    pub fn needs_placeholder(&self, format: &str) -> bool {
+        // If a BoxHash is already present, no placeholder is needed.
+        if self.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok() {
+            return false;
+        }
+        // BMFF formats always need a placeholder (BmffHash).
+        if jumbf_io::is_bmff_format(format) {
+            return true;
+        }
+        // For non-BMFF: if prefer_box_hash is enabled and the format supports BoxHash,
+        // a placeholder is not needed.
+        if self.context.settings().builder.prefer_box_hash {
+            if let Some(handler) = jumbf_io::get_assetio_handler(format) {
+                if handler.asset_box_hash_ref().is_some() {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Create a placeholder manifest with dynamic assertion support.
+    ///
+    /// Returns composed manifest bytes (ready to embed as a C2PA UUID/APP11 box)
+    /// for the placeholder manifest.  The placeholder JUMBF byte length is stored
+    /// internally so that [`Builder::sign_embeddable`] can zero-pad the signed JUMBF
+    /// to the same size — callers do not need to retain the placeholder bytes themselves.
+    ///
+    /// The signer is obtained from the Builder's context.
+    ///
+    /// This method automatically adds an appropriate hash assertion if none exists,
+    /// based on the asset format. For BMFF formats, it adds a BmffHash; otherwise,
+    /// it adds a DataHash. If a hash assertion already exists, it is used as-is.
+    ///
+    /// # Workflow
+    /// 1. (Optional) Add a pre-sized hash assertion to the Builder
+    /// 2. Call this method to get composed placeholder bytes
+    /// 3. Embed the composed placeholder into your asset
+    /// 4. Calculate the hash of the asset (excluding the placeholder)
+    /// 5. Update the hash assertion in the Builder
+    /// 6. Call [`Builder::sign_embeddable`] to sign the manifest
+    ///
+    /// # Note on using Merkle trees representation for mdat hashing
+    /// The placeholder manifest does not account for the size of the Merkles leaves.  This is completely
+    /// defined by the encoding or the fixed size specified by the user and cannot be known at compile time. The means that the caller must
+    /// estimate the addition size to reserve in addition to the placeholder manifest size.  The size of the
+    /// manifest will be the size of the placeholder + at least (number of leaves * size of hash).
+    /// For example, if the caller is using a fixed leaf size and sha256 hashes, then the caller
+    /// must reserve at least 32 bytes for each fixed leaf chunk of the asset's mdat in addition to the placeholder manifest size.
+    /// For sha384 hashes, the caller must reserve at least 48 bytes for each fixed leaf chunk, and for
+    /// sha512 hashes, the caller must reserve at least 64 bytes for each fixed leaf chunk.  For variable leaf sizes,
+    /// the caller must reserve at least (number of chunks * size of hash).  It is OK to over-reserve, but under-reserving
+    /// will lead to signing failures.  Any extra reserved space should be converted to a "free" box since they
+    /// will be automatically included in the hash calculation. Mekle tree use is optional and only applies to BMFF formats
+    /// and the caller chooses to use `hash_bmff_mdat_bytes`.
+    ///
+    /// # Returns
+    /// * The composed placeholder bytes ready for embedding (format-specific wrapping applied).
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if the placeholder cannot be created or if multiple hash assertions exist.
+    pub fn placeholder(&mut self, format: &str) -> Result<Vec<u8>> {
+        // Check existing hash assertions
+        let has_data_hash = self.find_assertion::<DataHash>(DataHash::LABEL).is_ok();
+        let has_bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL).is_ok();
+        let has_box_hash = self.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok();
+
+        let hash_count = [has_data_hash, has_bmff_hash, has_box_hash]
+            .iter()
+            .filter(|&&x| x)
+            .count();
+
+        // Error if more than one hash binding exists
+        if hash_count > 1 {
+            return Err(Error::BadParam(
+                "Builder cannot have multiple hash binding assertions (DataHash, BmffHash, or BoxHash)".to_string()
+            ));
+        }
+
+        // If no hash exists, add an appropriate placeholder based on format
+        if hash_count == 0 {
+            if crate::jumbf_io::is_bmff_format(format) {
+                // For BMFF formats, add a placeholder BmffHash.
+                let ph_alg = self.definition.hash_alg.as_deref().unwrap_or("sha256");
+
+                // update the mdat hasher with the desired alg
+                self.bmff_hasher.alg = ph_alg.to_string();
+
+                let mut placeholder_bmff = BmffHash::new("jumbf manifest", ph_alg, None);
+                placeholder_bmff.set_default_exclusions();
+                placeholder_bmff.add_place_holder_hash()?;
+                let assertion_label = placeholder_bmff.to_assertion()?.label();
+                self.add_assertion(&assertion_label, &placeholder_bmff)?;
+            } else if self.needs_placeholder(format) {
+                // For non-BMFF formats that still require a placeholder (no prefer_box_hash
+                // or format does not support BoxHash), add a placeholder DataHash large
+                // enough for 10 exclusions.
+                let ph_alg = self.definition.hash_alg.as_deref().unwrap_or("sha256");
+                let mut ph = DataHash::new("jumbf manifest", ph_alg);
+                for _ in 0..10 {
+                    ph.add_exclusion(HashRange::new(0u64, 2u64));
+                }
+                let data = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+                let mut stream = std::io::Cursor::new(data);
+                ph.gen_hash_from_stream(&mut stream)?;
+
+                self.add_assertion(DataHash::LABEL, &ph)?;
+            }
+            // else: prefer_box_hash is set and format supports BoxHash — no placeholder
+            // hash assertion is needed; the caller will use update_hash_from_stream() which
+            // will auto-create the BoxHash, then call sign_embeddable() directly.
+            //
+            // Return empty bytes so the caller knows no placeholder needs to be embedded,
+            // and skip the get_placeholder() call below (which requires a hard binding).
+            if !self.needs_placeholder(format) {
+                return Ok(Vec::new());
+            }
+        }
+
+        let mut store = self.to_store()?;
+        let jumbf = store.get_placeholder(format, self.context())?;
+        // Store the raw JUMBF length so sign_embeddable() can zero-pad the signed
+        // JUMBF to the same size, keeping the composed byte count identical.
+        self.placeholder_jumbf_len = Some(jumbf.len());
+        // Return composed bytes ready for the caller to embed into the asset.
+        Store::get_composed_manifest(&jumbf, format)
+    }
+
+    /// Sets the exclusion object for the [`BmffHash`] assertion in the Builder.
+    ///
+    /// Call this before [`Builder::placeholder`] to register the list of boxes to exclude from the BMFF hash calculation.
+    /// This is necessary when a composed placeholder was embedded in the asset.  This information is needed
+    /// upfront because BMFF exclusion, e.g.
+    /// [
+    ///     {
+    ///         "data": [
+    ///         {
+    ///             "value": b64'2P7D1hsOSDySl1goh37EgQ==',
+    ///             "offset": 8
+    ///         }
+    ///         ],
+    ///         "xpath": "/uuid"
+    ///     }
+    /// ] as specified in:
+    /// <https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_hash_assertion>
+    /// and must be included in the placeholder manifest.
+    ///
+    /// This preserves the existing [`BmffHash`]'s name and algorithm; only the
+    /// exclusions list is updated.  Call [`Builder::update_hash_from_stream`]
+    /// afterwards to compute and store the actual asset hash just before signing.
+    ///
+    /// # Arguments
+    /// * `exclusions` - JSON string representing the list of boxes to exclude from the BMFF hash calculation.
+    ///
+    /// # Returns
+    /// * A mutable reference to the [`Builder`] for method chaining
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if no [`BmffHash`] assertion exists on the Builder
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use c2pa::{Builder, HashRange, Result};
+    /// # use std::io::Cursor;
+    /// # fn example() -> Result<()> {
+    /// # let mut builder = Builder::default();
+    /// # let composed_placeholder = builder.placeholder("image/avif")?;
+    ///
+    /// // set a BMFF hash excluion show how to exclude a UUID box where the value at offset 8 is '2P7D1hsOSDySl1goh37EgQ=='
+    /// builder.add_bmff_hash_exclusions(r#"[
+    ///     {
+    ///         "data": [
+    ///             {
+    ///                 "value": "2P7D1hsOSDySl1goh37EgQ==",
+    ///                 "offset": 8
+    ///             }
+    ///         ],
+    ///         "xpath": "/uuid"
+    ///     }
+    /// ]"#)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn add_bmff_hash_exclusions(&mut self, exclusions: &str) -> Result<&mut Self> {
+        let mut existing = self
+            .find_assertion::<BmffHash>(BmffHash::LABEL)
+            .map_err(|_| {
+                Error::BadParam(
+                    "No BmffHash assertion found. Call placeholder() before \
+                     add_bmff_hash_exclusions()."
+                        .to_string(),
+                )
+            })?;
+
+        let mut bmff_exclusions: Vec<ExclusionsMap> =
+            serde_json::from_str(exclusions).map_err(|_| {
+                Error::BadParam(
+                "Invalid exclusions format. Must be a JSON string representing an ExclusionsMap."
+                    .to_string(),
+            )
+            })?;
+
+        // add user defined exclusions
+        existing.add_exclusions(&mut bmff_exclusions);
+
+        let stored_label = self
+            .definition
+            .assertions
+            .iter()
+            .find(|a| a.label().contains(BmffHash::LABEL))
+            .map(|a| a.label().to_owned())
+            .ok_or(Error::NotFound)?;
+        let (_, stored_version, _) = parse_label(&stored_label);
+
+        // save the version
+        existing.set_bmff_version(stored_version);
+
+        self.definition
+            .assertions
+            .retain(|a| !a.label.starts_with(BmffHash::LABEL));
+        self.add_assertion(stored_label, &existing)
+    }
+
+    /// Sets a fixed Merkle leaf size for the BMFF hash calculation in the Builder.
+    /// This is an optional setting that affects how the BMFF hash is calculated when
+    /// hashing mdat bytes as they are written (see `hash_bmff_mdat_bytes`).  By default,
+    /// the Merkle tree is generated with variable length leaves based on the chunk sizes
+    /// passed in by the client.  When a fixed leaf size is set, the SDK will generate Merkle
+    /// leaves of the specified size (in KB) regardless of the chunk sizes passed in. This
+    /// can be useful for clients that want to have more control over the Merkle tree structure
+    /// or want to optimize for certain chunk sizes.  This setting should be configured before
+    /// calling `hash_bmff_mdat_bytes` and will affect all subsequent BMFF hash calculations
+    /// for mdat bytes.
+    ///
+    /// # Arguments
+    /// * `leaf_size_in_kb` - The fixed leaf size in KB.  If not set, the leaf size will be variable based on chunk sizes.
+    ///
+    /// # Returns
+    /// * A mutable reference to the [`Builder`] for method chaining
+    pub fn set_bmff_hash_fixed_leaf_size(&mut self, leaf_size_in_kb: usize) -> &mut Self {
+        self.bmff_hasher.set_fixed_size(leaf_size_in_kb);
+        self
+    }
+
+    /// Support hashing mdat bytes as the client writes the mdat box. This is an alternative to
+    /// letting the SDK read and hash the mdat content after the fact, which can be costly for large assets.
+    /// With this method, the client can pass chunks of data for each mdat, and the SDK will compute the Merkle
+    /// leaves and store it in the BmffHash assertion.  This requires that the placeholder manifest was created with
+    /// a BmffHash assertion that has a reserved placeholder hash (call [`Builder::placeholder`] first to set this up).
+    ///
+    /// This is typically called as chunk data is presented from the rendering engine and writing the output. The
+    /// Merkle leaf will be the size of the chunk by default generating a Merkle tree with varible length
+    /// leaves, but the leaf size can be configured by `set_bmff_hash_fixed_leaf_size` if the client prefers a fixed
+    /// leaf size.  The leaf chunking is handled by the SDK.
+    ///
+    /// The Merkle tree spans a single mdat box. There is one tree per mdat. The mdat_id specifies which mdat box the chunk belongs to,
+    /// and the SDK will maintain a separate Merkle tree for each mdat. The mdat_id should start from 0 and increment
+    /// for each mdat box in the asset.  The final Merkle tree for each mdat will be stored in the BmffHash assertion,
+    /// and the client can call `hash_bmff_mdat_bytes` multiple times as each mdat box is written.
+    ///
+    /// Only the Merkle **leaves** are stored (one leaf per chunk (fixed or variable)), no UUID proof
+    /// boxes are generated and nothing extra needs to be appended to the asset.
+    ///
+    /// # Arguments
+    /// * `mdat_id` - The index of the mdat box (starting from 0) that the chunk belongs to.
+    /// * `data` - Slice of the chunk of mdat bytes to hash.
+    /// * `large_size` - Whether the mdat box is a large size box (greater than 4GB), which affects the generation rules.
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if no BmffHash assertion exists (call [`Builder::placeholder`] first)
+    pub fn hash_bmff_mdat_bytes(
+        &mut self,
+        mdat_id: usize,
+        data: &[u8],
+        large_size: bool,
+    ) -> Result<&mut Self> {
+        self.bmff_hasher
+            .add_merkle_leaf(mdat_id, large_size, data)?;
+        Ok(self)
+    }
+
+    /// Sets the exclusion ranges on the [`DataHash`] assertion in the Builder.
+    ///
+    /// Call this after [`Builder::placeholder`] to register the byte region where the
+    /// composed placeholder was embedded in the asset.  This information is deferred
+    /// because the exact offset is only known after the caller writes the placeholder
+    /// into the file.
+    ///
+    /// This preserves the existing [`DataHash`]'s name and algorithm; only the
+    /// exclusion list is replaced.  Call [`Builder::update_hash_from_stream`]
+    /// afterwards to compute and store the actual asset hash.
+    ///
+    /// # Arguments
+    /// * `exclusions` - Byte ranges to skip when hashing (typically the embedded manifest region)
+    ///
+    /// # Returns
+    /// * A mutable reference to the [`Builder`] for method chaining
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if no [`DataHash`] assertion exists on the Builder
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use c2pa::{Builder, HashRange, Result};
+    /// # use std::io::Cursor;
+    /// # fn example() -> Result<()> {
+    /// # let mut builder = Builder::default();
+    /// # let composed_placeholder = builder.placeholder("image/jpeg")?;
+    /// # let offset: usize = 0;
+    /// // After embedding the composed placeholder at `offset` in the asset:
+    /// builder.set_data_hash_exclusions(vec![HashRange::new(
+    ///     offset as u64,
+    ///     composed_placeholder.len() as u64,
+    /// )])?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn set_data_hash_exclusions(&mut self, exclusions: Vec<HashRange>) -> Result<&mut Self> {
+        let existing = self
+            .find_assertion::<DataHash>(DataHash::LABEL)
+            .map_err(|_| {
+                Error::BadParam(
+                    "No DataHash assertion found. Call placeholder() before \
+                     set_data_hash_exclusions()."
+                        .to_string(),
+                )
+            })?;
+
+        // Preserve the existing assertion's name and algorithm.
+        let alg = existing
+            .alg
+            .as_deref()
+            .or(self.definition.hash_alg.as_deref())
+            .unwrap_or("sha256");
+        let name = existing.name.as_deref().unwrap_or("jumbf manifest");
+        let mut dh = DataHash::new(name, alg);
+        for exclusion in exclusions {
+            dh.add_exclusion(exclusion);
+        }
+
+        self.definition
+            .assertions
+            .retain(|a| !a.label.starts_with(DataHash::LABEL));
+        self.add_assertion(DataHash::LABEL, &dh)
+    }
+
+    /// Update the hard binding assertion in the Builder by hashing an asset stream.
+    ///
+    /// Automatically detects the type of hard binding on the Builder and updates it:
+    ///
+    /// - **BmffHash** (BMFF/MP4 assets): uses the assertion's own path-based exclusions
+    ///   (the C2PA UUID box, and mdat boxes when Merkle hashing is enabled).  The
+    ///   algorithm is read from the BmffHash assertion itself.
+    ///
+    /// - **BoxHash** (JPEG, PNG, GIF and other chunk-based formats): uses
+    ///   `AssetBoxHash::get_box_map` to enumerate the asset's structural chunks,
+    ///   hashes each chunk individually, and stores the result.  If `prefer_box_hash`
+    ///   is enabled in `BuilderSettings` and the format's handler exposes
+    ///   `AssetBoxHash`, a `BoxHash` assertion is auto-created when none is present.
+    ///   If a `BoxHash` assertion already exists on the builder it is updated in-place.
+    ///
+    /// - **DataHash** (JPEG, PNG, and other segment-based formats): reads exclusion
+    ///   ranges and the hash algorithm from the existing assertion (if any), hashes
+    ///   the stream excluding those ranges, and stores the result.  If no DataHash
+    ///   exists yet the method creates one with no exclusions (hashing the entire
+    ///   stream), which is appropriate for sidecar/remote workflows.
+    ///
+    /// The hash algorithm is resolved in this order:
+    /// 1. The `alg` field of the existing hard binding assertion (if a pre-built
+    ///    [`DataHash`] or [`BmffHash`] was added with a specific algorithm)
+    /// 2. [`ManifestDefinition::hash_alg`] — set this to use a non-default algorithm
+    ///    for all signing operations
+    /// 3. `"sha256"` (the C2PA default)
+    ///
+    /// If you need custom exclusion ranges (e.g. the exact byte region where you
+    /// embedded a composed manifest), call [`Builder::set_data_hash_exclusions`]
+    /// **before** calling this method:
+    ///
+    /// ```no_run
+    /// # use c2pa::{Builder, HashRange, Result};
+    /// # use std::io::Cursor;
+    /// # fn example() -> Result<()> {
+    /// # let mut builder = Builder::default();
+    /// # let composed_placeholder = builder.placeholder("image/jpeg")?;
+    /// # let offset: usize = 2;
+    /// # let mut stream = Cursor::new(vec![0u8; 1000]);
+    /// // Caller embedded the composed placeholder at `offset` in the asset.
+    /// builder.set_data_hash_exclusions(vec![HashRange::new(
+    ///     offset as u64,
+    ///     composed_placeholder.len() as u64,
+    /// )])?;
+    /// builder.update_hash_from_stream("image/jpeg", &mut stream)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Arguments
+    /// * `format` - MIME type or file extension of the asset (e.g. `"image/jpeg"`,
+    ///   `"video/mp4"`).  Required when `prefer_box_hash` is enabled so the method can
+    ///   look up the format's `AssetBoxHash` handler.
+    /// * `stream` - The asset stream to hash
+    ///
+    /// # Returns
+    /// * A mutable reference to the [`Builder`] for method chaining
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if hashing fails
+    pub fn update_hash_from_stream<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
+    where
+        R: Read + Seek + MaybeSend,
+    {
+        // Algorithm resolution: assertion alg → definition.hash_alg → "sha256".
+        let definition_alg = self.definition.hash_alg.as_deref().unwrap_or("sha256");
+
+        let has_bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL).is_ok();
+        let has_box_hash = self.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok();
+
+        // Determine whether to use BoxHash path:
+        // - an existing BoxHash assertion, OR
+        // - prefer_box_hash is enabled and the format supports it (auto-create).
+        let use_box_hash = has_box_hash
+            || (!has_bmff_hash && {
+                self.context.settings().builder.prefer_box_hash
+                    && jumbf_io::get_assetio_handler(format)
+                        .and_then(|h| h.asset_box_hash_ref().map(|_| ()))
+                        .is_some()
+            });
+
+        if has_bmff_hash {
+            // Find the stored assertion label (e.g. "c2pa.hash.bmff.v3") and extract
+            // the version, since bmff_version is #[serde(skip)] and resets to 0 on
+            // CBOR round-trip via find_assertion.
+            let stored_label = self
+                .definition
+                .assertions
+                .iter()
+                .find(|a| a.label().contains(BmffHash::LABEL))
+                .map(|a| a.label().to_owned())
+                .ok_or(Error::NotFound)?;
+            let (_, stored_version, _) = parse_label(&stored_label);
+
+            let mut bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL)?;
+            bmff_hash.set_bmff_version(stored_version);
+
+            // Add in the Merkle leaf hashes that were collected via hash_bmff_mdat_bytes().
+            // We add any remainders (partially filled fixed-size leaves that are unhashed) as the last leaf of the Merkle leaves for that mdat_id.
+            for (mdat_id, remainder) in &self.bmff_hasher.fixed_size_remainder {
+                let fragment_hash = hash_by_alg(self.bmff_hasher.alg.as_str(), remainder, None);
+
+                self.bmff_hasher
+                    .merkle_leaves
+                    .entry(*mdat_id)
+                    .and_modify(|leaves| {
+                        leaves.push((remainder.len() as u64, fragment_hash.clone()))
+                    })
+                    .or_insert(vec![(remainder.len() as u64, fragment_hash)]);
+            }
+
+            // If there are Merkle hashes we need to create a MerkleMap and add it to the BmffHash
+            if !self.bmff_hasher.merkle_leaves.is_empty() {
+                // generate MerkleMaps for the mdat leaves stored in C2paHasher
+                let merkle_maps = MerkleMap::create_mms_from_mdat_leaves(
+                    &self.bmff_hasher.alg,
+                    &self.bmff_hasher.merkle_leaves,
+                    self.bmff_hasher.fixed_size,
+                )?;
+
+                // add required mdat exclusion
+                let mut mdat = ExclusionsMap::new("/mdat".to_owned());
+                let subset_mdat = SubsetMap {
+                    offset: 16,
+                    length: 0,
+                };
+                let subset_mdat_vec = vec![subset_mdat];
+                mdat.subset = Some(subset_mdat_vec);
+
+                bmff_hash.add_exclusions(&mut vec![mdat]);
+
+                // add the MerkleMaps
+                bmff_hash.set_merkle(merkle_maps);
+            }
+
+            // gen_hash_from_stream uses the BmffHash's own path-based exclusion list
+            // and its own alg field (set when the assertion was created).
+            let ctx = &self.context;
+            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
+            bmff_hash.gen_hash_from_stream_with_progress(stream, Some(&mut cb))?;
+
+            self.definition
+                .assertions
+                .retain(|a| !a.label().contains(BmffHash::LABEL));
+            let assertion_label = bmff_hash.to_assertion()?.label();
+            self.add_assertion(&assertion_label, &bmff_hash)?;
+        } else if use_box_hash {
+            // BoxHash path: get the format's AssetBoxHash handler and compute box hashes.
+            let handler = jumbf_io::get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
+            let bhp = handler.asset_box_hash_ref().ok_or_else(|| {
+                Error::BadParam(format!("Format '{format}' does not support BoxHash"))
+            })?;
+
+            let mut bh = BoxHash { boxes: Vec::new() };
+            // Use minimal_form=false so that each structural box is hashed
+            // independently.  minimal_form=true accumulates ranges by summing
+            // individual segment range_len values; for JPEGs that contain RST
+            // (restart) markers, those 2-byte markers are enumerated as
+            // separate BoxMap entries by jfifdump while also being counted
+            // inside the preceding SOS entropy range, which causes the sum to
+            // exceed the file length and triggers a range-validation error.
+            let ctx = &self.context;
+            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
+            bh.generate_box_hash_from_stream_with_progress(
+                stream,
+                definition_alg,
+                bhp,
+                false,
+                Some(&mut cb),
+            )?;
+            self.definition
+                .assertions
+                .retain(|a| !a.label.starts_with(BoxHash::LABEL));
+            self.add_assertion(BoxHash::LABEL, &bh)?;
+        } else {
+            // DataHash path: read exclusions and alg from any existing assertion.
+            // If none exists, create a fresh one (hashes the entire stream — sidecar case).
+            let existing = self.find_assertion::<DataHash>(DataHash::LABEL).ok();
+
+            // Assertion alg takes priority; fall back to definition.hash_alg or "sha256".
+            let alg = existing
+                .as_ref()
+                .and_then(|dh| dh.alg.as_deref())
+                .unwrap_or(definition_alg)
+                .to_string();
+
+            let exclusions: Vec<HashRange> = existing
+                .as_ref()
+                .and_then(|dh| dh.exclusions.clone())
+                .unwrap_or_default();
+
+            let exclusion_arg = if exclusions.is_empty() {
+                None
+            } else {
+                Some(exclusions.clone())
+            };
+            let ctx = &self.context;
+            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
+            let hash = crate::utils::hash_utils::hash_stream_by_alg_with_progress(
+                &alg,
+                stream,
+                exclusion_arg,
+                true,
+                Some(&mut cb),
+            )?;
+
+            // Preserve the existing assertion's name or use the default.
+            let name = existing
+                .as_ref()
+                .and_then(|dh| dh.name.clone())
+                .unwrap_or_else(|| "jumbf manifest".to_string());
+            let mut dh = DataHash::new(&name, &alg);
+            for exclusion in exclusions {
+                dh.add_exclusion(exclusion);
+            }
+            dh.set_hash(hash);
+
+            self.definition
+                .assertions
+                .retain(|a| !a.label.starts_with(DataHash::LABEL));
+            self.add_assertion(DataHash::LABEL, &dh)?;
+        }
+
+        Ok(self)
+    }
+
+    /// Sign the manifest and return composed bytes ready for embedding.
+    ///
+    /// This is the final step in the caller-owned I/O workflow. It operates in
+    /// two modes depending on whether [`Builder::placeholder`] was called:
+    ///
+    /// ## Mode 1 — placeholder workflow (BMFF streaming, pre-allocated space)
+    ///
+    /// When [`Builder::placeholder`] has been called, the Builder knows the exact
+    /// size of the composed placeholder that was embedded in the asset.  This method
+    /// builds the manifest fresh from Builder state, signs it, and zero-pads the raw
+    /// JUMBF so the returned composed bytes are **exactly the same size** as the
+    /// composed placeholder.  The caller can patch them in-place without shifting any
+    /// data.
+    ///
+    /// Typical steps before calling this method:
+    /// 1. [`Builder::placeholder`] → embed composed bytes into asset at offset O
+    /// 2. (BMFF + Merkle) [`Builder::hash_bmff_mdat_bytes`] with leaf hashes
+    /// 3. [`Builder::update_hash_from_stream`] to compute the asset hash
+    /// 4. This method → returns composed bytes of identical size; patch asset at offset O
+    ///
+    /// ## Mode 2 — direct workflow (BoxHash, sidecar, pre-computed bindings)
+    ///
+    /// When no placeholder was generated, the Builder must already contain a valid
+    /// hard binding assertion (DataHash, BmffHash, or BoxHash with a real hash value)
+    /// set either by [`Builder::update_hash_from_stream`] or directly via
+    /// [`Builder::add_assertion`].  This method signs the manifest as-is and returns
+    /// composed bytes whose size is determined by the actual manifest content.
+    ///
+    /// # Arguments
+    /// * `format` - MIME type of the target asset (e.g. `"video/mp4"`, `"image/jpeg"`)
+    ///
+    /// # Returns
+    /// * Composed signed manifest bytes.  In Mode 1 these are the same byte length as
+    ///   the composed placeholder returned by [`Builder::placeholder`].
+    ///
+    /// # Errors
+    /// * In Mode 2, returns an [`Error`] if no valid hard binding assertion exists.
+    /// * Returns an [`Error`] if signing fails.
+    pub fn sign_embeddable(&mut self, format: &str) -> Result<Vec<u8>> {
+        let placeholder_jumbf_len = self.placeholder_jumbf_len;
+
+        // Check that a valid hard binding exists in Mode 2 (no placeholder).
+        if placeholder_jumbf_len.is_none() {
+            let has_binding = self.find_assertion::<DataHash>(DataHash::LABEL).is_ok()
+                || self.find_assertion::<BmffHash>(BmffHash::LABEL).is_ok()
+                || self.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok();
+            if !has_binding {
+                return Err(Error::BadParam(
+                    "No hard binding assertion found. Call update_hash_from_stream() or \
+                     add a DataHash/BmffHash/BoxHash assertion before sign_embeddable()."
+                        .to_string(),
+                ));
+            }
+        }
+
+        // Build a fresh store from Builder state (contains the real hash assertions).
+        let mut store = self.to_store()?;
+
+        // Add dynamic assertion placeholder slots so sign_manifest() will write them.
+        let signer = self.context().signer()?;
+        let dynamic_assertions = signer.dynamic_assertions();
+        if !dynamic_assertions.is_empty() {
+            store.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+        }
+
+        let mut jumbf = store.sign_manifest(signer, self.context())?;
+
+        // Mode 1 only: zero-pad the signed JUMBF to match the pre-committed placeholder
+        // size so the composed result is byte-for-byte the same length as the composed
+        // placeholder the caller already embedded.  The JUMBF parser honours its own
+        // internal length field and ignores trailing padding bytes.
+        if let Some(len) = placeholder_jumbf_len {
+            if jumbf.len() < len {
+                jumbf.resize(len, 0u8);
+            }
+        }
+
+        Store::get_composed_manifest(&jumbf, format)
+    }
+
     /// Create a signed data hashed embeddable manifest using a supplied signer.
     ///
     /// This is used to create a manifest that can be embedded into a stream.
     /// It allows the caller to do the embedding.
-    /// You must call `data_hashed` placeholder first to create the placeholder.
+    /// You must call `data_hashed_placeholder` first to create the placeholder.
     /// The placeholder is then injected into the asset before calculating hashes
     /// You must either pass a source stream to generate the hashes or provide the hashes.
     ///
@@ -2468,6 +3179,7 @@ mod tests {
     };
 
     use c2pa_macros::c2pa_test_async;
+    use rand::Rng;
     use serde_json::json;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
@@ -2477,12 +3189,16 @@ mod tests {
     use crate::utils::test::fixture_path;
     use crate::{
         assertions::{c2pa_action, BoxHash, DigitalSourceType},
+        asset_handlers::bmff_io::{
+            inject_manifest_into_free_box, inject_placeholder, read_bmff_c2pa_boxes,
+        },
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         maybe_send_sync::MaybeSend,
         settings::Settings,
         utils::{
-            test::{test_context, write_jpeg_placeholder_stream},
+            hash_utils::HashRange,
+            test::{test_context, write_bmff_placeholder_stream, write_jpeg_placeholder_stream},
             test_signer::{async_test_signer, test_signer},
         },
         validation_results::ValidationState,
@@ -2583,6 +3299,7 @@ mod tests {
 
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
     const TEST_IMAGE_CLOUD: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
+    const TEST_VIDEO_MP4: &[u8] = include_bytes!("../tests/fixtures/video1_no_manifest.mp4");
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const TEST_IMAGE_TIFF: &[u8] = include_bytes!("../tests/fixtures/test.tiff");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
@@ -3424,6 +4141,465 @@ mod tests {
         let reader = crate::Reader::from_stream("application/c2pa", output_stream).unwrap();
         println!("{reader}");
         assert_eq!(reader.validation_status(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_placeholder_auto_adds_data_hash() -> Result<()> {
+        // Create a builder without any hash assertions
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+
+        // Verify no DataHash exists initially
+        assert!(builder.find_assertion::<DataHash>(DataHash::LABEL).is_err());
+
+        // Call placeholder which should automatically add DataHash for non-BMFF format
+        let placeholder = builder.placeholder("image/jpeg")?;
+
+        // Verify DataHash was added
+        let data_hash: DataHash = builder.find_assertion(DataHash::LABEL)?;
+        assert_eq!(data_hash.name, Some("jumbf manifest".to_string()));
+        assert_eq!(data_hash.alg, Some("sha256".to_string()));
+
+        // Verify placeholder is valid JUMBF
+        assert!(!placeholder.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_placeholder_auto_adds_bmff_hash() -> Result<()> {
+        // Create a builder without any hash assertions
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+
+        // Verify no BmffHash exists initially
+        assert!(builder.find_assertion::<BmffHash>(BmffHash::LABEL).is_err());
+
+        // Call placeholder with BMFF format
+        let placeholder = builder.placeholder("video/mp4").unwrap();
+
+        // Verify BmffHash was added
+        let bmff_hash: BmffHash = builder.find_assertion::<BmffHash>(BmffHash::LABEL).unwrap();
+        assert_eq!(bmff_hash.alg(), Some(&"sha256".to_string()));
+
+        // Verify placeholder is valid JUMBF
+        assert!(!placeholder.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_placeholder_respects_existing_hash() -> Result<()> {
+        // Create a builder with a custom DataHash
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut custom_dh = DataHash::new("my_custom_hash", "sha512");
+        custom_dh.add_exclusion(HashRange::new(100, 200));
+        builder.add_assertion(DataHash::LABEL, &custom_dh)?;
+
+        // Call placeholder
+        let _placeholder = builder.placeholder("image/jpeg")?;
+
+        // Verify the custom DataHash is preserved (not replaced)
+        let data_hash: DataHash = builder.find_assertion(DataHash::LABEL)?;
+        assert_eq!(data_hash.name, Some("my_custom_hash".to_string()));
+        assert_eq!(data_hash.alg, Some("sha512".to_string()));
+        assert_eq!(data_hash.exclusions.as_ref().unwrap().len(), 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_placeholder_rejects_multiple_hashes() -> Result<()> {
+        // Create a builder with both DataHash and BmffHash
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+
+        let dh = DataHash::new("data_hash", "sha256");
+        builder.add_assertion(DataHash::LABEL, &dh)?;
+
+        let bh = BmffHash::new("bmff_hash", "sha256", None);
+        builder.add_assertion(BmffHash::LABEL, &bh)?;
+
+        // Calling placeholder should fail with BadParam error
+        let result = builder.placeholder("image/jpeg");
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("multiple hash binding assertions"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_placeholder_with_box_hash() -> Result<()> {
+        // Create a builder with BoxHash
+        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+
+        let mut reader = Cursor::new("");
+        let c2pa_io = jumbf_io::get_assetio_handler("application/c2pa").unwrap();
+        let box_mapper = c2pa_io.asset_box_hash_ref().unwrap();
+        let boxes = box_mapper.get_box_map(&mut reader).unwrap();
+        let bh = BoxHash { boxes };
+
+        builder.add_assertion(labels::BOX_HASH, &bh)?;
+
+        // Call placeholder - should not add another hash assertion
+        let placeholder = builder.placeholder("application/c2pa")?;
+
+        // Verify only BoxHash exists (no DataHash was added)
+        assert!(builder.find_assertion::<DataHash>(DataHash::LABEL).is_err());
+        assert!(builder.find_assertion::<BmffHash>(BmffHash::LABEL).is_err());
+        assert!(builder.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok());
+
+        // Verify placeholder is valid
+        assert!(!placeholder.is_empty());
+
+        Ok(())
+    }
+
+    /// Tests the `prefer_box_hash` setting end-to-end including a full
+    /// embed + verify round-trip on a clean JPEG:
+    ///
+    /// - `needs_placeholder` returns `false` for BoxHash-capable formats (JPEG)
+    ///   and `true` for BMFF formats regardless of the setting.
+    /// - `placeholder()` does **not** auto-create a `DataHash` when
+    ///   `prefer_box_hash = true` and the format supports `BoxHash`.
+    /// - `update_hash_from_stream` auto-creates a `BoxHash` assertion with real
+    ///   hashes when no hard binding is present.
+    /// - `sign_embeddable` Mode 2 (no prior placeholder) succeeds and returns
+    ///   JPEG-composed manifest bytes.
+    /// - Splicing those bytes into the clean JPEG and validating with `Reader`
+    ///   yields a trusted result (BoxHash verification re-derives positions from
+    ///   the current file, so segment content hashes remain valid after embedding).
+    #[test]
+    fn test_prefer_box_hash_workflow() -> Result<()> {
+        // Helper to build a fresh context with prefer_box_hash enabled.
+        let pbh_context = || {
+            Context::new().with_settings(
+                serde_json::json!({"builder": {"prefer_box_hash": true}}).to_string(),
+            )
+        };
+
+        let mut builder = Builder::from_context(pbh_context()?)
+            .with_definition(simple_manifest_json().as_str())?;
+
+        // needs_placeholder returns false for JPEG (BoxHash-capable) …
+        assert!(
+            !builder.needs_placeholder("image/jpeg"),
+            "JPEG with prefer_box_hash=true should not need a placeholder"
+        );
+        // … and true for BMFF regardless of the setting.
+        assert!(
+            builder.needs_placeholder("video/mp4"),
+            "BMFF always requires a placeholder"
+        );
+
+        // update_hash_from_stream auto-creates BoxHash from the format handler.
+        // (Mode 2: no prior placeholder() call, so placeholder_jumbf_len is None.)
+        let mut stream = Cursor::new(TEST_IMAGE_CLEAN);
+        builder.update_hash_from_stream("image/jpeg", &mut stream)?;
+
+        let box_hash: BoxHash = builder.find_assertion(BoxHash::LABEL)?;
+        assert!(
+            !box_hash.boxes.is_empty(),
+            "BoxHash must have at least one box"
+        );
+        for bm in &box_hash.boxes {
+            let is_c2pa = bm.names.first().is_some_and(|n| n == "C2PA");
+            if !bm.excluded.unwrap_or(false) && !is_c2pa {
+                assert!(
+                    !bm.hash.is_empty(),
+                    "Non-excluded box '{}' must have a computed hash",
+                    bm.names.first().unwrap_or(&String::new())
+                );
+            }
+        }
+
+        // sign_embeddable Mode 2 — returns JPEG-composed manifest (APP11 segments).
+        let manifest_bytes = builder.sign_embeddable("image/jpeg")?;
+        assert!(
+            !manifest_bytes.is_empty(),
+            "sign_embeddable must return non-empty bytes"
+        );
+
+        let mut embedded = Vec::with_capacity(TEST_IMAGE_CLEAN.len() + manifest_bytes.len());
+        embedded.extend_from_slice(&TEST_IMAGE_CLEAN[..2]); // SOI (FF D8)
+        embedded.extend_from_slice(&manifest_bytes); // C2PA APP11 segments
+        embedded.extend_from_slice(&TEST_IMAGE_CLEAN[2..]); // rest of JPEG
+
+        let mut embedded_stream = Cursor::new(embedded);
+        let reader = Reader::from_stream("image/jpeg", &mut embedded_stream)?;
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "BoxHash round-trip validation must pass for a clean JPEG"
+        );
+
+        // --- placeholder() returns empty bytes (no embedding needed) when prefer_box_hash=true ---
+        // For BoxHash-capable formats with prefer_box_hash enabled, the caller should call
+        // update_hash_from_stream() directly and then sign_embeddable() — no placeholder is embedded.
+        let mut builder2 = Builder::from_context(pbh_context()?)
+            .with_definition(simple_manifest_json().as_str())?;
+        let placeholder_bytes = builder2.placeholder("image/jpeg")?;
+        assert!(
+            placeholder_bytes.is_empty(),
+            "placeholder() must return empty bytes for BoxHash-capable formats when prefer_box_hash=true"
+        );
+        // No hash assertion should have been auto-created
+        assert!(
+            builder2
+                .find_assertion::<DataHash>(DataHash::LABEL)
+                .is_err(),
+            "DataHash must NOT be auto-created when prefer_box_hash=true"
+        );
+        assert!(
+            builder2
+                .find_assertion::<BmffHash>(BmffHash::LABEL)
+                .is_err(),
+            "BmffHash must NOT be created for a non-BMFF format"
+        );
+        assert!(
+            builder2.find_assertion::<BoxHash>(BoxHash::LABEL).is_err(),
+            "BoxHash must NOT be auto-created by placeholder() — caller creates it via update_hash_from_stream()"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_data_hashed_placeholder_workflow_complete() -> Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+
+        // 1. Setup - Create builder with simple manifest
+        let mut builder = Builder::from_json(&simple_manifest_json())?;
+
+        // 2. Create placeholder (adds DataHash to builder).
+        //    placeholder() now returns composed bytes directly (no separate composed_manifest call needed).
+        let composed_placeholder = builder.placeholder("image/jpeg")?;
+        assert!(builder.find_assertion::<DataHash>(DataHash::LABEL).is_ok());
+        assert!(!composed_placeholder.is_empty());
+
+        // 3. Embed composed placeholder into a real JPEG.
+        let mut input_stream = Cursor::new(TEST_IMAGE_CLOUD);
+        let mut output_stream = Cursor::new(Vec::new());
+        let offset = write_jpeg_placeholder_stream(
+            &composed_placeholder,
+            "image/jpeg",
+            &mut input_stream,
+            &mut output_stream,
+            None,
+        )?;
+
+        // 4. Register where the placeholder was embedded, then hash the asset.
+        builder.set_data_hash_exclusions(vec![HashRange::new(
+            offset as u64,
+            composed_placeholder.len() as u64,
+        )])?;
+        output_stream.rewind()?;
+        builder.update_hash_from_stream("image/jpeg", &mut output_stream)?;
+
+        // Verify the DataHash was updated with the actual hash
+        let data_hash: DataHash = builder.find_assertion(DataHash::LABEL)?;
+        assert!(data_hash.exclusions.is_some());
+        assert_eq!(data_hash.exclusions.as_ref().unwrap().len(), 1);
+        assert!(!data_hash.hash.is_empty());
+
+        // 5. Sign — returns composed bytes of the same size as the composed placeholder.
+        let signed_manifest = builder.sign_embeddable("image/jpeg")?;
+
+        assert!(
+            signed_manifest.len() <= composed_placeholder.len(),
+            "Signed manifest ({} bytes) must fit in placeholder ({} bytes)",
+            signed_manifest.len(),
+            composed_placeholder.len()
+        );
+
+        // 6. Replace the placeholder with the signed manifest in the asset
+        output_stream.seek(SeekFrom::Start(offset as u64))?;
+        output_stream.write_all(&signed_manifest)?;
+
+        output_stream.rewind()?;
+        let reader =
+            Reader::from_context(Context::new()).with_stream("image/jpeg", output_stream)?;
+        println!("{reader}");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        // 7. Workflow complete. Reader::from_stream loads the asset but the manifest assertion
+        // list may not expose DataHash the same way; the full embed-then-read flow is covered
+        // by test_builder_data_hashed_embeddable which uses write_jpeg_placeholder_stream the same way.
+        assert!(!signed_manifest.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bmff_hashed_placeholder_workflow_complete() -> Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+
+        // 1. Build a simple manifest for an MP4 asset.
+        let mut builder = Builder::from_json(&simple_manifest_json())?;
+
+        // 2. Call placeholder() for a BMFF format.
+        //    Returns composed bytes (C2PA UUID box) ready to embed; raw JUMBF is
+        //    stored internally for sign_embeddable().
+        let composed_placeholder = builder.placeholder("video/mp4")?;
+        assert!(builder.find_assertion::<BmffHash>(BmffHash::LABEL).is_ok());
+        assert!(!composed_placeholder.is_empty());
+
+        // 3. Inject the composed placeholder after the ftyp box.
+        let mut input_stream = Cursor::new(TEST_VIDEO_MP4);
+        let mut output_stream = Cursor::new(Vec::new());
+        let offset = write_bmff_placeholder_stream(
+            &composed_placeholder,
+            &mut input_stream,
+            &mut output_stream,
+        )?;
+
+        // 4. Hash the asset — BmffHash uses its own path-based exclusions internally
+        //    (the C2PA UUID box is automatically excluded).
+        output_stream.rewind()?;
+        builder.update_hash_from_stream("video/mp4", &mut output_stream)?;
+
+        // Verify hash was set.
+        let bmff_hash: BmffHash = builder.find_assertion(BmffHash::LABEL)?;
+        assert!(bmff_hash.hash().is_some());
+
+        // 5. Sign — returns composed bytes of the same size as the composed placeholder.
+        let signed_manifest = builder.sign_embeddable("video/mp4")?;
+
+        // The signed manifest must fit within the space reserved for the placeholder.
+        assert!(
+            signed_manifest.len() <= composed_placeholder.len(),
+            "signed ({} bytes) must fit in placeholder ({} bytes)",
+            signed_manifest.len(),
+            composed_placeholder.len()
+        );
+
+        // 6. Patch the output stream: overwrite the placeholder with the signed manifest.
+        output_stream.seek(SeekFrom::Start(offset as u64))?;
+        output_stream.write_all(&signed_manifest)?;
+
+        // 8. Validate the final asset.
+        output_stream.rewind()?;
+        let reader = Reader::from_stream("video/mp4", &mut output_stream)?;
+        println!("{reader}");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        Ok(())
+    }
+
+    /// Simulates a client that hashes mdat chunks while writing, then hands those
+    /// hashes to the SDK so it can construct the Merkle tree without re-reading the
+    /// (potentially multi-gigabyte) mdat content.
+    ///
+    /// The placeholder pre-allocates Merkle BMFF Hash. The demo first inserts a free
+    /// box to simulte an app holding space for the manifest place holder.  This then writes
+    /// out the file as an app would.  To simulate the rendering the mdat will be writting in
+    /// random chunks.  Then each of those chunks will be sent hashed using 'hash_bmff_mdat_bytes'.
+    /// One the file is written, the file is hashed using 'update_hash_from_stream' which will use the
+    /// pre-computed mdat hashes to calculate the Merkle root and hash the remaining content. We then sign
+    /// the manifest and patch the file with the signed manifest by overridding the placeholder free box.
+    #[test]
+    fn test_bmff_mdat_hashed_placeholder_workflow_complete() -> Result<()> {
+        use std::io::{Seek, SeekFrom};
+
+        // 1. Create a Builder w
+        let context = Context::new();
+        let mut builder =
+            Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+
+        // 2. Generate the placeholder.  Because merkle_tree_chunk_size_in_kb is set,
+        //    placeholder() adds a BmffHash with pre-allocated Merkle map slots.
+        //    Returns composed bytes directly; raw JUMBF stored internally.
+        let composed_placeholder = builder.placeholder("video/mp4")?;
+        assert!(builder.find_assertion::<BmffHash>(BmffHash::LABEL).is_ok());
+
+        // 3. The placholder does not include the size of the Merkle leaf hashes.  So pad the size
+        // of the placeholder with estimate. We will guess 20 chunks for this demo so we need to
+        // account for possibly 20 leafs.  Since this is "sha256" the size of each leaf hash is 32 bytes.
+        // In a real implementation you have to account for every mdat in the file.
+        let placeholder_size = composed_placeholder.len() + (20 * 32) + 1024; // add some extra padding just in case
+
+        // 4. Inject free box based on the placeholder size. This would typially be
+        // written as the app writing the file, leaving space for the manifest to be written later.
+        // The offset of the free box is recorded so we know where to patch in the signed manifest later.
+        let mut input_stream = Cursor::new(TEST_VIDEO_MP4);
+        let mut output_stream = Cursor::new(Vec::new());
+
+        let offset = inject_placeholder(&mut input_stream, &mut output_stream, placeholder_size)?;
+
+        // 5. Compute mdat leaf hashes "externally" — simulating a client that hashes
+        //    each variable-size chunk as it writes mdat data (no second read needed).
+        output_stream.rewind()?;
+        let boxes = read_bmff_c2pa_boxes(&mut output_stream)?;
+        let mut mdat_boxes = boxes.box_infos;
+        mdat_boxes.retain(|b| b.path == "mdat");
+        assert!(
+            !mdat_boxes.is_empty(),
+            "Test MP4 must contain at least one mdat box"
+        );
+
+        // This part simulates when the client is writing the mdat boxes. Playback the existing mdata to
+        // simulate the writing new mdat content.  As clinets are writting
+        // each chunk for each mdat they are sending those bytes to the SDK to be hashed using 'hash_bmff_mdat_bytes'.
+        // The SDK is storing those hashes internally so when we call 'update_hash_from_stream'
+        // it can use those pre-computed hashes to calculate the Merkle leaves without needing
+        // to re-read and re-hash the mdat content.
+        for (mdat_id, mdat_box) in mdat_boxes.iter().enumerate() {
+            // break the mdat into 7 random chunks and hash each chunks
+            let mut remaining = mdat_box.size - 8; // subtract 8 bytes to get to actual content size for non-largesize box.  For largesize we will account for the larger header below.
+            let offset = mdat_box.offset;
+            let mut rng = rand::thread_rng();
+
+            // for a non largesize box the actual mdat data starts after the 8 byte header, for a largesize box it starts
+            // after 16 bytes.  So we need to account for that when seeking to the start of the mdat content.
+            // For this test file we only have non-largesize boxes but in a real implementation you would be starting with
+            // actual mdat content.
+            output_stream.seek(SeekFrom::Start(offset + 8))?;
+
+            while remaining > 0 {
+                // Generate a random size between 10% and the remaining length
+                let mut chunk_size = rng.gen_range((remaining / 10)..=remaining);
+
+                // eat up rest of mdat if 0 is generated for some reason so we don't have random 0 leaves
+                if chunk_size == 0 {
+                    chunk_size = remaining;
+                }
+
+                let mut chunk = vec![0u8; chunk_size as usize];
+                output_stream.read_exact(&mut chunk)?;
+
+                // hash the random leaf chunk — this updates the internal state of the builder's
+                // BmffHash assertion so it can calculate the Merkle root later without re-reading
+                //the mdat content.
+                builder.hash_bmff_mdat_bytes(mdat_id, &chunk, false)?;
+
+                remaining -= chunk_size;
+            }
+        }
+
+        // 6. Hash the asset — mdat content is excluded automatically when hash_bmff_mdat_bytes is called.  (mdat hashes are covered by the Merkle tree).
+        output_stream.rewind()?;
+        builder.update_hash_from_stream("video/mp4", &mut output_stream)?;
+
+        let bmff_hash: BmffHash = builder.find_assertion(BmffHash::LABEL)?;
+        assert!(bmff_hash.hash().is_some(), "BmffHash must have a flat hash");
+        assert!(bmff_hash.merkle.is_some(), "BmffHash must have Merkle maps");
+
+        // 8. Sign — returns composed bytes of the same size as the composed placeholder.
+        //    Any gap is zero-padded so BMFF box offsets stay intact.
+        let signed_manifest = builder.sign_embeddable("video/mp4")?;
+
+        // 9. Patch the output stream: overwrite the placeholder with the signed manifest.
+        // Over write the free box we originally inserted to reserve space for the manifest.
+        // This simulates how an app would patch in the manifest after writing the file.
+        output_stream.rewind()?;
+        inject_manifest_into_free_box(&mut output_stream, &signed_manifest, offset)?;
+
+        // 10. Validate the final asset.
+        output_stream.rewind()?;
+        let reader = Reader::from_stream("video/mp4", &mut output_stream)?;
+        println!("{reader}");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
         Ok(())
     }
 
@@ -4429,6 +5605,143 @@ mod tests {
 
         assert!(builder.context().settings().verify.verify_after_sign);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_progress_callback_invoked_during_sign() -> Result<()> {
+        use std::sync::Mutex;
+
+        let received: std::sync::Arc<Mutex<Vec<(ProgressPhase, u32, u32)>>> =
+            std::sync::Arc::new(Mutex::new(Vec::new()));
+        let received_clone = received.clone();
+        let ctx = test_context()
+            .with_progress_callback(move |phase, step, total| {
+                received_clone.lock().unwrap().push((phase, step, total));
+                true
+            })
+            .into_shared();
+
+        let mut builder = Builder::from_shared_context(&ctx);
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+
+        let r = received.lock().unwrap();
+        assert!(!r.is_empty(), "progress callback should be invoked");
+        let phases: Vec<ProgressPhase> = r.iter().map(|(p, _, _)| p.clone()).collect();
+        assert!(
+            phases.contains(&ProgressPhase::VerifyingIngredient),
+            "expected VerifyingIngredient phase, got {:?}",
+            phases
+        );
+        assert!(
+            phases.contains(&ProgressPhase::Hashing),
+            "expected Hashing phase, got {:?}",
+            phases
+        );
+        assert!(
+            phases.contains(&ProgressPhase::VerifyingManifest),
+            "expected VerifyingManifest phase (verify_after_sign), got {:?}",
+            phases
+        );
+        // All checkpoints must have a valid step/total relationship:
+        // step >= 1, total >= 1 (or total == 0 for indeterminate), step <= total.
+        for (phase, step, total) in r.iter() {
+            assert!(*step >= 1, "phase {phase:?} step must be >= 1, got {step}");
+            if *total > 0 {
+                assert!(
+                    *step <= *total,
+                    "phase {phase:?} step {step} must be <= total {total}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_progress_callback_cancel_during_sign() -> Result<()> {
+        let ctx = test_context()
+            .with_progress_callback(|_, _, _| false)
+            .into_shared();
+
+        let mut builder =
+            Builder::from_shared_context(&ctx).with_definition(simple_manifest_json())?;
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        let result = builder.save_to_stream("image/jpeg", &mut source, &mut dest);
+        assert!(
+            matches!(result, Err(crate::Error::OperationCancelled)),
+            "expected OperationCancelled, got {:?}",
+            result
+        );
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))] // WASM doesn't support threads
+    #[test]
+    fn test_context_cancel_during_sign() -> Result<()> {
+        use std::{
+            sync::{Arc, Condvar, Mutex},
+            thread,
+        };
+
+        // A Condvar-based one-shot rendezvous:
+        // 1. Callback signals "checkpoint reached" and blocks.
+        // 2. Main thread cancels, then signals "you may return".
+        // 3. Callback unblocks and returns `true`; check_progress sees the
+        //    cancel flag and returns OperationCancelled.
+        //
+        // Using a Condvar (instead of mpsc) avoids the !Sync bound on
+        // mpsc::Receiver, allowing the closure to satisfy Send + Sync.
+        let pair = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        //                               ^^^^  ^^^^
+        //                              fired  proceed
+        let pair_cb = pair.clone();
+
+        let ctx = test_context()
+            .with_progress_callback(move |_, _, _| {
+                let (lock, cvar) = &*pair_cb;
+                let mut state = lock.lock().unwrap();
+                if !state.0 {
+                    // First checkpoint: signal fired, wait for proceed.
+                    state.0 = true;
+                    cvar.notify_all();
+                    state = cvar.wait_while(state, |s| !s.1).unwrap();
+                }
+                drop(state);
+                true
+            })
+            .into_shared();
+
+        let ctx_clone = ctx.clone();
+        let handle = thread::spawn(move || {
+            let mut src = Cursor::new(TEST_IMAGE);
+            let mut dst = Cursor::new(Vec::new());
+            let mut b = Builder::from_shared_context(&ctx_clone)
+                .with_definition(r#"{"title": "Thread Cancel Test"}"#)
+                .unwrap();
+            b.set_intent(BuilderIntent::Edit);
+            b.save_to_stream("image/jpeg", &mut src, &mut dst)
+        });
+
+        // Wait until the first checkpoint fires, then cancel and release.
+        let (lock, cvar) = &*pair;
+        let mut state = lock.lock().unwrap();
+        state = cvar.wait_while(state, |s| !s.0).unwrap();
+        ctx.cancel();
+        state.1 = true;
+        cvar.notify_all();
+        drop(state);
+
+        let result = handle.join().expect("thread should join");
+        assert!(
+            matches!(result, Err(crate::Error::OperationCancelled)),
+            "expected OperationCancelled, got {:?}",
+            result
+        );
         Ok(())
     }
 

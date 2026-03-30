@@ -86,11 +86,17 @@ pub fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
        .all(|(a,b)| a == b)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Hasher {
     SHA256(Sha256),
     SHA384(Sha384),
     SHA512(Sha512),
+}
+
+impl Default for Hasher {
+    fn default() -> Self {
+        Hasher::SHA256(Sha256::new())
+    }
 }
 
 impl Hasher {
@@ -113,6 +119,26 @@ impl Hasher {
             SHA256(d) => d.finalize().to_vec(),
             SHA384(d) => d.finalize().to_vec(),
             SHA512(d) => d.finalize().to_vec(),
+        }
+    }
+
+    pub fn finalize_reset(&mut self) -> Vec<u8> {
+        use Hasher::*;
+
+        // return the hash and leave the Hasher open and reset
+        match self {
+            SHA256(ref mut d) => d.finalize_reset().to_vec(),
+            SHA384(ref mut d) => d.finalize_reset().to_vec(),
+            SHA512(ref mut d) => d.finalize_reset().to_vec(),
+        }
+    }
+
+    pub fn new(alg: &str) -> Result<Hasher> {
+        match alg {
+            "sha256" => Ok(Hasher::SHA256(Sha256::new())),
+            "sha384" => Ok(Hasher::SHA384(Sha384::new())),
+            "sha512" => Ok(Hasher::SHA512(Sha512::new())),
+            _ => Err(Error::UnsupportedType),
         }
     }
 }
@@ -189,12 +215,16 @@ pub fn hash_asset_by_alg_with_inclusions(
 
     The data is again split into range sets breaking at the exclusion points and now also the markers.
 */
-/// May be used to generate hashes in combination with embeddable APIs.
-pub fn hash_stream_by_alg<R>(
+/// Internal implementation of [`hash_stream_by_alg`] with an optional per-range
+/// progress/cancellation callback.  SDK internals that have a [`Context`] available
+/// pass a closure that calls [`Context::check_progress`]; the public wrapper supplies
+/// `None` so external callers are unaffected.
+pub(crate) fn hash_stream_by_alg_with_progress<R>(
     alg: &str,
     data: &mut R,
     hash_range: Option<Vec<HashRange>>,
     is_exclusion: bool,
+    mut progress: Option<&mut dyn FnMut(u32, u32) -> Result<()>>,
 ) -> Result<Vec<u8>>
 where
     R: Read + Seek + ?Sized,
@@ -349,9 +379,17 @@ where
         }
     };
 
+    let total = ranges.len() as u32;
+    let mut step: u32 = 0;
+
     if cfg!(target_arch = "wasm32") {
         // hash the data for ranges
         for r in ranges {
+            step += 1;
+            if let Some(cb) = progress.as_mut() {
+                cb(step, total)?;
+            }
+
             let start = r.start();
             let end = r.end();
             let mut chunk_left = end - start + 1;
@@ -381,6 +419,11 @@ where
     } else {
         // hash the data for ranges
         for r in ranges {
+            step += 1;
+            if let Some(cb) = progress.as_mut() {
+                cb(step, total)?;
+            }
+
             let start = r.start();
             let end = r.end();
             let mut chunk_left = end - start + 1;
@@ -432,6 +475,19 @@ where
 
     // return the hash
     Ok(Hasher::finalize(hasher_enum))
+}
+
+/// May be used to generate hashes in combination with embeddable APIs.
+pub fn hash_stream_by_alg<R>(
+    alg: &str,
+    data: &mut R,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+) -> Result<Vec<u8>>
+where
+    R: Read + Seek + ?Sized,
+{
+    hash_stream_by_alg_with_progress(alg, data, hash_range, is_exclusion, None)
 }
 
 // verify the hash using the specified algorithm
@@ -525,4 +581,39 @@ pub fn hash_to_b64(mut value: Value) -> Value {
         }
     }
     value
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::io::Cursor;
+
+    use super::*;
+
+    #[test]
+    fn progress_callback_is_called() {
+        let data = vec![0u8; 64];
+        let mut called = false;
+        let mut reader = Cursor::new(&data);
+        let mut cb = |_step, _total| {
+            called = true;
+            Ok(())
+        };
+        hash_stream_by_alg_with_progress("sha256", &mut reader, None, true, Some(&mut cb)).unwrap();
+        assert!(called, "progress callback should have been invoked");
+    }
+
+    #[test]
+    fn progress_callback_can_cancel() {
+        let data = vec![0u8; 64];
+        let mut reader = Cursor::new(&data);
+        let mut cb = |_step, _total| Err(Error::OperationCancelled);
+        let result =
+            hash_stream_by_alg_with_progress("sha256", &mut reader, None, true, Some(&mut cb));
+        assert!(
+            matches!(result, Err(Error::OperationCancelled)),
+            "expected OperationCancelled, got {result:?}"
+        );
+    }
 }

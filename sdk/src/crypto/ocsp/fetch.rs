@@ -23,7 +23,10 @@ use x509_parser::{
     prelude::*,
 };
 
-use crate::{context::Context, crypto::base64};
+use crate::{
+    context::{Context, ProgressPhase},
+    crypto::base64,
+};
 
 const AD_OCSP_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .48 .1);
 const AUTHORITY_INFO_ACCESS_OID: Oid<'static> = oid!(1.3.6 .1 .5 .5 .7 .1 .1);
@@ -145,7 +148,13 @@ fn process_ocsp_responders(certs: &[Vec<u8>]) -> Option<Vec<OcspRequestData>> {
 #[async_generic]
 pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>], context: &Context) -> Option<Vec<u8>> {
     let requests = process_ocsp_responders(certs)?;
+    let mut step = 1;
+    let requests_len = requests.len() as u32;
     for request_data in requests {
+        context
+            .check_progress(ProgressPhase::FetchingOCSP, step, requests_len)
+            .ok()?;
+        step += 1;
         let req_url = request_data.url.join(&request_data.request_str).ok()?;
 
         let mut request = http::Request::get(req_url.to_string());

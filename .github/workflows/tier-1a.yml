@@ -399,6 +399,28 @@ jobs:
       - name: "`cargo check` with default features"
         run: cargo check
 
+  cargo-lock:
+    name: Cargo.lock is up to date
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+      contains(github.event.pull_request.labels.*.name, 'check-release')
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check that Cargo.lock is up to date
+        run: cargo check --locked
+
   tests-wasm:
     name: Unit tests (Wasm)
     needs: get-features
@@ -422,7 +444,7 @@ jobs:
       - name: Set up Chrome
         uses: browser-actions/setup-chrome@v2
         with:
-          chrome-version: 144
+          chrome-version: 146
           install-chromedriver: true
 
       - name: Add wasm web target
@@ -434,7 +456,7 @@ jobs:
       - name: Extract wasm-bindgen version from Cargo.lock
         id: wasm-bindgen-version
         run: |
-          VERSION=$(cargo metadata --format-version 1 --locked | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
+          VERSION=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Using wasm-bindgen version: $VERSION"
 
@@ -459,6 +481,9 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    env:
+      CODSPEED_MODE: simulation,memory
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -476,12 +501,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build the benchmark target(s)
-        run: cargo codspeed build -p c2pa --no-default-features --features rust_native_crypto
+        run: cargo codspeed build -m $CODSPEED_MODE -p c2pa --no-default-features --features rust_native_crypto
 
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4
         with:
-          mode: instrumentation
+          mode: ${{ env.CODSPEED_MODE }}
           run: cargo codspeed run
           token: ${{ secrets.CODSPEED_TOKEN }}
 

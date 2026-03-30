@@ -9,6 +9,108 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.78.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.6...c2pa-v0.78.7)
+_27 March 2026_
+
+### Added
+
+* Adds a progress/cancel feature to Context for the c2pa-rs sdk ([#1927](https://github.com/contentauth/c2pa-rs/pull/1927))
+
+### Fixed
+
+* Harden JUMB embed media description box parser against integer underflow attack ([#1950](https://github.com/contentauth/c2pa-rs/pull/1950))
+* Harden JUMB description box parser against integer underflow attack ([#1949](https://github.com/contentauth/c2pa-rs/pull/1949))
+* Harden JUMBF nested box parsing against stack overflow attack ([#1966](https://github.com/contentauth/c2pa-rs/pull/1966))
+* Harden BMFF Merkle tree hash processing code against integer underflow attack ([#1963](https://github.com/contentauth/c2pa-rs/pull/1963))
+* Updated crJSON Schema ([#1975](https://github.com/contentauth/c2pa-rs/pull/1975))
+* TIFF backcompatibility for RAW formats ([#1976](https://github.com/contentauth/c2pa-rs/pull/1976))
+* Check for malicious recursion ([#1979](https://github.com/contentauth/c2pa-rs/pull/1979))
+
+## [0.78.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.5...c2pa-v0.78.6)
+_23 March 2026_
+
+### Added
+
+* Add FLAC format support ([#1912](https://github.com/contentauth/c2pa-rs/pull/1912))
+
+## [0.78.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.4...c2pa-v0.78.5)
+_23 March 2026_
+
+### Added
+
+* Add `cr_json()` and `cr_json_value()` to `Reader`; remove separate `CrJsonReader` ([#1919](https://github.com/contentauth/c2pa-rs/pull/1919))
+
+### Fixed
+
+* Add compatibility for source assets that report mdat box sizes that e… ([#1956](https://github.com/contentauth/c2pa-rs/pull/1956))
+* Change `Builder::add_action` to add original actions or v2 actions ([#1946](https://github.com/contentauth/c2pa-rs/pull/1946))
+
+## [0.78.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.3...c2pa-v0.78.4)
+_16 March 2026_
+
+### Fixed
+
+* Pin `atree` to 0.5.2 ([#1940](https://github.com/contentauth/c2pa-rs/pull/1940))
+* Remove exponential memory growth from nested claim reconstruction ([#1885](https://github.com/contentauth/c2pa-rs/pull/1885)) ([#1887](https://github.com/contentauth/c2pa-rs/pull/1887))
+
+## [0.78.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.2...c2pa-v0.78.3)
+_13 March 2026_
+
+### Added
+
+* Impl `Send + Sync` on `EphemeralSigner` ([#1934](https://github.com/contentauth/c2pa-rs/pull/1934))
+
+### Fixed
+
+* Apply same restrictions on ingredient deltas as active manifest for validation state ([#1624](https://github.com/contentauth/c2pa-rs/pull/1624))
+
+## [0.78.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.1...c2pa-v0.78.2)
+_12 March 2026_
+
+### Fixed
+
+* Windows Build flags ([#1930](https://github.com/contentauth/c2pa-rs/pull/1930))
+
+## [0.78.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.0...c2pa-v0.78.1)
+_12 March 2026_
+
+### Fixed
+
+* Fragmented video verification ([#1925](https://github.com/contentauth/c2pa-rs/pull/1925))
+
+## [0.78.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.77.1...c2pa-v0.78.0)
+_11 March 2026_
+
+### Added
+
+* Emscripten ([#1886](https://github.com/contentauth/c2pa-rs/pull/1886))
+
+### Fixed
+
+* Correct validation of OCSP signature ([#1863](https://github.com/contentauth/c2pa-rs/pull/1863))
+* Merkle api integration ([#1902](https://github.com/contentauth/c2pa-rs/pull/1902))
+
+## [0.77.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.77.0...c2pa-v0.77.1)
+_10 March 2026_
+
+### Documented
+
+* Combine docs on Context and Settings to reduce duplication ([#1899](https://github.com/contentauth/c2pa-rs/pull/1899))
+
+## [0.77.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.76.2...c2pa-v0.77.0)
+_04 March 2026_
+
+### Added
+
+* Embeddable manifest API with Context/Settings, CAWG and BMFF.v3 support. ([#1847](https://github.com/contentauth/c2pa-rs/pull/1847))
+
+## [0.76.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.76.1...c2pa-v0.76.2)
+_03 March 2026_
+
+### Fixed
+
+* Panic when validating boxes hash with no names ([#1897](https://github.com/contentauth/c2pa-rs/pull/1897))
+
 ## [0.76.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.76.0...c2pa-v0.76.1)
 _02 March 2026_
 
