@@ -39,7 +39,7 @@ use crate::{
         check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssertion, ClaimAssetData,
         RemoteManifest,
     },
-    context::Context,
+    context::{Context, ProgressPhase},
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
     crypto::{
@@ -1479,63 +1479,6 @@ impl Store {
             store.insert_restored_claim(cai_store_desc_box.label(), claim);
         }
 
-        // Reconstruct nested claim relationships after all claims are loaded
-        // When claims are serialized, nested ingredients are extracted as top-level claims
-        // We need to restore them back into the parent claims' ingredient stores
-        use crate::assertions::Ingredient as IngredientAssertion;
-        let claim_labels: Vec<String> = store
-            .claims()
-            .iter()
-            .map(|c| c.label().to_string())
-            .collect();
-        for label in &claim_labels {
-            if let Some(claim) = store.get_claim(label) {
-                // Find ingredient assertions in this claim
-                let ingredient_refs: Vec<String> = claim
-                    .ingredient_assertions()
-                    .iter()
-                    .filter_map(|ing_assertion| {
-                        // Parse the ingredient assertion to get active_manifest or c2pa_manifest
-                        match IngredientAssertion::from_assertion(ing_assertion.assertion()) {
-                            Ok(ingredient) => {
-                                // Check both active_manifest (v3) and c2pa_manifest (v2)
-                                let hashed_uri = ingredient
-                                    .active_manifest
-                                    .as_ref()
-                                    .or(ingredient.c2pa_manifest.as_ref());
-
-                                if let Some(hashed_uri) = hashed_uri {
-                                    let url = hashed_uri.url();
-                                    // Extract the manifest label from the JUMBF URI
-                                    jumbf::labels::manifest_label_from_uri(&url)
-                                        .map(|l| l.to_string())
-                                } else {
-                                    None
-                                }
-                            }
-                            Err(_) => None,
-                        }
-                    })
-                    .collect();
-
-                if !ingredient_refs.is_empty() {
-                    // Clone the claim for modification
-                    let mut claim_mut = claim.clone();
-                    for ing_ref in &ingredient_refs {
-                        // Check if this referenced claim exists in the store
-                        if let Some(nested_claim) = store.get_claim(ing_ref) {
-                            claim_mut.replace_ingredient_or_insert(
-                                ing_ref.to_string(),
-                                nested_claim.clone(),
-                            );
-                        }
-                    }
-                    // Replace the claim in the store with the updated version
-                    store.claims_map.insert(label.to_string(), claim_mut);
-                }
-            }
-        }
-
         Ok(store)
     }
 
@@ -1558,8 +1501,20 @@ impl Store {
         context: &Context,
     ) -> Result<()> {
         let settings = context.settings();
+
+        // Pre-count verifiable ingredients so we can emit accurate step/total values.
+        let total_ingredients = claim.ingredient_assertions().len() as u32;
+        let mut ingredient_step = 0u32;
+
         // walk the ingredients
         for i in claim.ingredient_assertions() {
+            ingredient_step += 1;
+            context.check_progress(
+                ProgressPhase::VerifyingIngredient,
+                ingredient_step,
+                total_ingredients,
+            )?;
+
             // allow for zero out ingredient assertions
             if is_zero(i.assertion().data()) {
                 continue;
@@ -1774,6 +1729,14 @@ impl Store {
         context: &Context,
     ) -> Result<()> {
         let settings = context.settings();
+
+        let total_ingredients = claim
+            .ingredient_assertions()
+            .iter()
+            .filter(|i| !is_zero(i.assertion().data()))
+            .count() as u32;
+        let mut ingredient_step = 0u32;
+
         // walk the ingredients
         for i in claim.ingredient_assertions() {
             // allow for zero out ingredient assertions
@@ -1795,6 +1758,13 @@ impl Store {
             if ingredient_assertion.relationship == Relationship::InputTo {
                 continue;
             }
+
+            ingredient_step += 1;
+            context.check_progress(
+                ProgressPhase::VerifyingIngredient,
+                ingredient_step,
+                total_ingredients,
+            )?;
 
             validation_log
                 .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
@@ -2132,6 +2102,7 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<()> {
+        context.check_progress(ProgressPhase::VerifyingManifest, 1, 1)?;
         let claim = match store.provenance_claim() {
             Some(c) => c,
             None => {
@@ -2184,6 +2155,7 @@ impl Store {
         alg: &str,
         block_locations: &mut Vec<HashObjectPositions>,
         calc_hashes: bool,
+        progress: Option<&mut dyn FnMut(u32, u32) -> Result<()>>,
     ) -> Result<Vec<DataHash>>
     where
         R: Read + Seek + ?Sized,
@@ -2255,7 +2227,7 @@ impl Store {
         // Generate or set placeholder hash
         if calc_hashes {
             // Second signing pass: calcultate the actual real hash
-            dh.gen_hash_from_stream(stream)?;
+            dh.gen_hash_from_stream_with_progress(stream, progress)?;
         } else {
             // First signing pass: zero-filled placeholder hash (to get to end size)
             match alg {
@@ -2382,7 +2354,8 @@ impl Store {
     /// * The signed manifest bytes.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be signed.
-    pub fn sign_manifest(&mut self, signer: &dyn Signer, settings: &Settings) -> Result<Vec<u8>> {
+    pub fn sign_manifest(&mut self, signer: &dyn Signer, context: &Context) -> Result<Vec<u8>> {
+        let settings = context.settings();
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         // if user did not supply a hash
@@ -2435,6 +2408,8 @@ impl Store {
             }
         }
 
+        context.check_progress(ProgressPhase::Signing, 1, 1)?;
+
         // No dynamic assertions - sign directly
         // Drop pc and get an immutable reference for signing
         let _ = pc;
@@ -2458,6 +2433,7 @@ impl Store {
         reserve_size: usize,
         dh: &DataHash,
         asset_reader: Option<&mut dyn CAIRead>,
+        context: &Context,
     ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
@@ -2481,7 +2457,8 @@ impl Store {
 
         if let Some(reader) = asset_reader {
             // calc hashes
-            adjusted_dh.gen_hash_from_stream(reader)?;
+            let mut cb = |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
+            adjusted_dh.gen_hash_from_stream_with_progress(reader, Some(&mut cb))?;
         }
 
         // update the placeholder hash
@@ -2526,7 +2503,7 @@ impl Store {
         context: &Context,
     ) -> Result<Vec<u8>> {
         let mut jumbf_bytes =
-            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
+            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader, context)?;
 
         // Write dynamic assertions only if placeholders were added during placeholder generation.
         // We check if the dynamic assertion labels exist in the claim - if not, placeholders
@@ -2560,6 +2537,8 @@ impl Store {
             }
         }
 
+        context.check_progress(ProgressPhase::Signing, 1, 1)?;
+
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
@@ -2589,7 +2568,7 @@ impl Store {
         context: &Context,
     ) -> Result<Vec<u8>> {
         let mut jumbf_bytes =
-            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader)?;
+            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader, context)?;
 
         // Write dynamic assertions only if placeholders were added during placeholder generation.
         // We check if the dynamic assertion labels exist in the claim - if not, placeholders
@@ -2624,6 +2603,8 @@ impl Store {
             }
         }
 
+        context.check_progress(ProgressPhase::Signing, 1, 1)?;
+
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self
@@ -2657,6 +2638,8 @@ impl Store {
         }
 
         let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        context.check_progress(ProgressPhase::Signing, 1, 1)?;
 
         // sign contents
         let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
@@ -3018,6 +3001,7 @@ impl Store {
             &mut intermediate_stream,
             signer.reserve_size(),
             settings,
+            context,
         )?;
 
         let mut preliminary_claim = PartialClaim::default();
@@ -3065,6 +3049,8 @@ impl Store {
             output_stream.rewind()?;
         }
 
+        context.check_progress(ProgressPhase::Signing, 1, 1)?;
+
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
             self.sign_claim(pc, signer, signer.reserve_size(), settings)
@@ -3091,6 +3077,8 @@ impl Store {
 
                 output_stream.flush()?;
                 output_stream.rewind()?;
+
+                context.check_progress(ProgressPhase::Embedding, 1, 1)?;
 
                 let verify_after_sign = settings.verify.verify_after_sign;
                 // Also catch the case where we may have written to io::empty() or similar
@@ -3130,6 +3118,7 @@ impl Store {
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
         settings: &Settings,
+        context: &Context,
     ) -> Result<Vec<u8>> {
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
@@ -3248,6 +3237,9 @@ impl Store {
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }
 
+            // Signal that the write pass is done; hash readback begins next.
+            context.check_progress(ProgressPhase::Writing, 1, 1)?;
+
             // generate actual hash values
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
 
@@ -3258,7 +3250,9 @@ impl Store {
                     let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0].assertion())?;
 
                     output_stream.rewind()?;
-                    bmff_hash.gen_hash_from_stream(output_stream)?;
+                    let mut cb =
+                        |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
+                    bmff_hash.gen_hash_from_stream_with_progress(output_stream, Some(&mut cb))?;
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }
@@ -3277,6 +3271,7 @@ impl Store {
                         pc.alg(),
                         &mut hash_ranges,
                         false,
+                        None,
                     )?
                 };
 
@@ -3305,6 +3300,12 @@ impl Store {
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }
 
+            // Signal that the asset write pass is complete, before the hash
+            // readback pass begins.  This separates "Writing" (streaming
+            // input → output with placeholder JUMBF) from "Hashing" (reading
+            // output to compute the final content-hash binding).
+            context.check_progress(ProgressPhase::Writing, 1, 1)?;
+
             // 4)  determine final object locations and patch the asset hashes with correct offset
             // replace the source with correct asset hashes so that the claim hash will be correct
             if needs_hashing {
@@ -3326,11 +3327,14 @@ impl Store {
                         });
                     }
 
+                    let mut cb =
+                        |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
                     let updated_hashes = Store::generate_data_hashes_for_stream(
                         output_stream,
                         pc.alg(),
                         &mut new_hash_ranges,
                         true,
+                        Some(&mut cb),
                     )?;
 
                     // patch existing claim hash with updated data
@@ -3426,6 +3430,8 @@ impl Store {
     #[async_generic]
     fn fetch_remote_manifest(url: &str, context: &Context) -> Result<Vec<u8>> {
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
+
+        context.check_progress(ProgressPhase::FetchingRemoteManifest, 1, 1)?;
 
         let request = http::Request::get(url).body(Vec::new())?;
         let response = if _sync {

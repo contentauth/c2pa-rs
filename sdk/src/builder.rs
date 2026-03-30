@@ -39,7 +39,7 @@ use crate::{
         SubsetMap, Thumbnail, TimeStamp, User, UserCbor,
     },
     claim::Claim,
-    context::Context,
+    context::{Context, ProgressPhase},
     crypto::cose,
     error::{Error, Result},
     hash_utils::hash_by_alg,
@@ -846,22 +846,23 @@ impl Builder {
 
         // if an actions assertion already exists, we will append to it
         // if not, we will create a new one
-        let actions = if let Some(pos) = self
+        let (actions, original_label) = if let Some(pos) = self
             .definition
             .assertions
             .iter()
-            .position(|a| a.label() == Actions::LABEL)
+            .position(|a| a.label().starts_with(Actions::LABEL))
         {
             // Remove and use the existing actions assertion
             let assertion_def = self.definition.assertions.remove(pos);
-            assertion_def.to_assertion()?
+            let original_label = assertion_def.label.clone();
+            (assertion_def.to_assertion()?, original_label)
         } else {
-            Actions::new()
+            (Actions::new(), Actions::LABEL_VERSIONED.to_string())
         };
 
         let actions = actions.add_action(action);
 
-        self.add_assertion(Actions::LABEL, &actions)?;
+        self.add_assertion(original_label, &actions)?;
         Ok(self)
     }
 
@@ -908,6 +909,9 @@ impl Builder {
         T: Into<String>,
         R: Read + Seek + Send,
     {
+        self.context
+            .check_progress(ProgressPhase::AddingIngredient, 1, 1)?;
+
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
         if format == "c2pa" || format == "application/c2pa" {
@@ -1747,6 +1751,8 @@ impl Builder {
         let auto_thumbnail = self.context.settings().builder.thumbnail.enabled;
 
         if self.definition.thumbnail.is_none() && auto_thumbnail {
+            self.context
+                .check_progress(ProgressPhase::Thumbnail, 1, 1)?;
             stream.rewind()?;
 
             let mut stream = std::io::BufReader::new(stream);
@@ -2031,7 +2037,7 @@ impl Builder {
     /// The placeholder manifest does not account for the size of the Merkles leaves.  This is completely
     /// defined by the encoding or the fixed size specified by the user and cannot be known at compile time. The means that the caller must
     /// estimate the addition size to reserve in addition to the placeholder manifest size.  The size of the
-    /// manifest will be the size of the placeholder + at least (number of leaves * size of hash).  
+    /// manifest will be the size of the placeholder + at least (number of leaves * size of hash).
     /// For example, if the caller is using a fixed leaf size and sha256 hashes, then the caller
     /// must reserve at least 32 bytes for each fixed leaf chunk of the asset's mdat in addition to the placeholder manifest size.
     /// For sha384 hashes, the caller must reserve at least 48 bytes for each fixed leaf chunk, and for
@@ -2115,7 +2121,7 @@ impl Builder {
 
     /// Sets the exclusion object for the [`BmffHash`] assertion in the Builder.
     ///
-    /// Call this before [`Builder::placeholder`] to register the list of boxes to exclude from the BMFF hash calculation.  
+    /// Call this before [`Builder::placeholder`] to register the list of boxes to exclude from the BMFF hash calculation.
     /// This is necessary when a composed placeholder was embedded in the asset.  This information is needed
     /// upfront because BMFF exclusion, e.g.
     /// [
@@ -2230,7 +2236,7 @@ impl Builder {
     }
 
     /// Support hashing mdat bytes as the client writes the mdat box. This is an alternative to
-    /// letting the SDK read and hash the mdat content after the fact, which can be costly for large assets.  
+    /// letting the SDK read and hash the mdat content after the fact, which can be costly for large assets.
     /// With this method, the client can pass chunks of data for each mdat, and the SDK will compute the Merkle
     /// leaves and store it in the BmffHash assertion.  This requires that the placeholder manifest was created with
     /// a BmffHash assertion that has a reserved placeholder hash (call [`Builder::placeholder`] first to set this up).
@@ -2238,7 +2244,7 @@ impl Builder {
     /// This is typically called as chunk data is presented from the rendering engine and writing the output. The
     /// Merkle leaf will be the size of the chunk by default generating a Merkle tree with varible length
     /// leaves, but the leaf size can be configured by `set_bmff_hash_fixed_leaf_size` if the client prefers a fixed
-    /// leaf size.  The leaf chunking is handled by the SDK.  
+    /// leaf size.  The leaf chunking is handled by the SDK.
     ///
     /// The Merkle tree spans a single mdat box. There is one tree per mdat. The mdat_id specifies which mdat box the chunk belongs to,
     /// and the SDK will maintain a separate Merkle tree for each mdat. The mdat_id should start from 0 and increment
@@ -2469,7 +2475,9 @@ impl Builder {
 
             // gen_hash_from_stream uses the BmffHash's own path-based exclusion list
             // and its own alg field (set when the assertion was created).
-            bmff_hash.gen_hash_from_stream(stream)?;
+            let ctx = &self.context;
+            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
+            bmff_hash.gen_hash_from_stream_with_progress(stream, Some(&mut cb))?;
 
             self.definition
                 .assertions
@@ -2491,7 +2499,15 @@ impl Builder {
             // separate BoxMap entries by jfifdump while also being counted
             // inside the preceding SOS entropy range, which causes the sum to
             // exceed the file length and triggers a range-validation error.
-            bh.generate_box_hash_from_stream(stream, definition_alg, bhp, false)?;
+            let ctx = &self.context;
+            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
+            bh.generate_box_hash_from_stream_with_progress(
+                stream,
+                definition_alg,
+                bhp,
+                false,
+                Some(&mut cb),
+            )?;
             self.definition
                 .assertions
                 .retain(|a| !a.label.starts_with(BoxHash::LABEL));
@@ -2518,7 +2534,15 @@ impl Builder {
             } else {
                 Some(exclusions.clone())
             };
-            let hash = crate::hash_stream_by_alg(&alg, stream, exclusion_arg, true)?;
+            let ctx = &self.context;
+            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
+            let hash = crate::utils::hash_utils::hash_stream_by_alg_with_progress(
+                &alg,
+                stream,
+                exclusion_arg,
+                true,
+                Some(&mut cb),
+            )?;
 
             // Preserve the existing assertion's name or use the default.
             let name = existing
@@ -2605,7 +2629,7 @@ impl Builder {
             store.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
         }
 
-        let mut jumbf = store.sign_manifest(signer, self.context().settings())?;
+        let mut jumbf = store.sign_manifest(signer, self.context())?;
 
         // Mode 1 only: zero-pad the signed JUMBF to match the pre-committed placeholder
         // size so the composed result is byte-for-byte the same length as the composed
@@ -4472,7 +4496,7 @@ mod tests {
     /// random chunks.  Then each of those chunks will be sent hashed using 'hash_bmff_mdat_bytes'.
     /// One the file is written, the file is hashed using 'update_hash_from_stream' which will use the
     /// pre-computed mdat hashes to calculate the Merkle root and hash the remaining content. We then sign
-    /// the manifest and patch the file with the signed manifest by overridding the placeholder free box.  
+    /// the manifest and patch the file with the signed manifest by overridding the placeholder free box.
     #[test]
     fn test_bmff_mdat_hashed_placeholder_workflow_complete() -> Result<()> {
         use std::io::{Seek, SeekFrom};
@@ -5581,6 +5605,143 @@ mod tests {
 
         assert!(builder.context().settings().verify.verify_after_sign);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_progress_callback_invoked_during_sign() -> Result<()> {
+        use std::sync::Mutex;
+
+        let received: std::sync::Arc<Mutex<Vec<(ProgressPhase, u32, u32)>>> =
+            std::sync::Arc::new(Mutex::new(Vec::new()));
+        let received_clone = received.clone();
+        let ctx = test_context()
+            .with_progress_callback(move |phase, step, total| {
+                received_clone.lock().unwrap().push((phase, step, total));
+                true
+            })
+            .into_shared();
+
+        let mut builder = Builder::from_shared_context(&ctx);
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+
+        let r = received.lock().unwrap();
+        assert!(!r.is_empty(), "progress callback should be invoked");
+        let phases: Vec<ProgressPhase> = r.iter().map(|(p, _, _)| p.clone()).collect();
+        assert!(
+            phases.contains(&ProgressPhase::VerifyingIngredient),
+            "expected VerifyingIngredient phase, got {:?}",
+            phases
+        );
+        assert!(
+            phases.contains(&ProgressPhase::Hashing),
+            "expected Hashing phase, got {:?}",
+            phases
+        );
+        assert!(
+            phases.contains(&ProgressPhase::VerifyingManifest),
+            "expected VerifyingManifest phase (verify_after_sign), got {:?}",
+            phases
+        );
+        // All checkpoints must have a valid step/total relationship:
+        // step >= 1, total >= 1 (or total == 0 for indeterminate), step <= total.
+        for (phase, step, total) in r.iter() {
+            assert!(*step >= 1, "phase {phase:?} step must be >= 1, got {step}");
+            if *total > 0 {
+                assert!(
+                    *step <= *total,
+                    "phase {phase:?} step {step} must be <= total {total}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_progress_callback_cancel_during_sign() -> Result<()> {
+        let ctx = test_context()
+            .with_progress_callback(|_, _, _| false)
+            .into_shared();
+
+        let mut builder =
+            Builder::from_shared_context(&ctx).with_definition(simple_manifest_json())?;
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        let result = builder.save_to_stream("image/jpeg", &mut source, &mut dest);
+        assert!(
+            matches!(result, Err(crate::Error::OperationCancelled)),
+            "expected OperationCancelled, got {:?}",
+            result
+        );
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))] // WASM doesn't support threads
+    #[test]
+    fn test_context_cancel_during_sign() -> Result<()> {
+        use std::{
+            sync::{Arc, Condvar, Mutex},
+            thread,
+        };
+
+        // A Condvar-based one-shot rendezvous:
+        // 1. Callback signals "checkpoint reached" and blocks.
+        // 2. Main thread cancels, then signals "you may return".
+        // 3. Callback unblocks and returns `true`; check_progress sees the
+        //    cancel flag and returns OperationCancelled.
+        //
+        // Using a Condvar (instead of mpsc) avoids the !Sync bound on
+        // mpsc::Receiver, allowing the closure to satisfy Send + Sync.
+        let pair = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        //                               ^^^^  ^^^^
+        //                              fired  proceed
+        let pair_cb = pair.clone();
+
+        let ctx = test_context()
+            .with_progress_callback(move |_, _, _| {
+                let (lock, cvar) = &*pair_cb;
+                let mut state = lock.lock().unwrap();
+                if !state.0 {
+                    // First checkpoint: signal fired, wait for proceed.
+                    state.0 = true;
+                    cvar.notify_all();
+                    state = cvar.wait_while(state, |s| !s.1).unwrap();
+                }
+                drop(state);
+                true
+            })
+            .into_shared();
+
+        let ctx_clone = ctx.clone();
+        let handle = thread::spawn(move || {
+            let mut src = Cursor::new(TEST_IMAGE);
+            let mut dst = Cursor::new(Vec::new());
+            let mut b = Builder::from_shared_context(&ctx_clone)
+                .with_definition(r#"{"title": "Thread Cancel Test"}"#)
+                .unwrap();
+            b.set_intent(BuilderIntent::Edit);
+            b.save_to_stream("image/jpeg", &mut src, &mut dst)
+        });
+
+        // Wait until the first checkpoint fires, then cancel and release.
+        let (lock, cvar) = &*pair;
+        let mut state = lock.lock().unwrap();
+        state = cvar.wait_while(state, |s| !s.0).unwrap();
+        ctx.cancel();
+        state.1 = true;
+        cvar.notify_all();
+        drop(state);
+
+        let result = handle.join().expect("thread should join");
+        assert!(
+            matches!(result, Err(crate::Error::OperationCancelled)),
+            "expected OperationCancelled, got {:?}",
+            result
+        );
         Ok(())
     }
 

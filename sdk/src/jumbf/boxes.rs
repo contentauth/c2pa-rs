@@ -94,6 +94,9 @@ pub enum JumbfParseError {
 
     #[error("invalid JUMD box")]
     InvalidDescriptionBox,
+
+    #[error("JUMB box nesting depth exceeds the maximum allowed depth")]
+    BoxNestingTooDeep,
 }
 
 /// A specialized `JumbfParseResult` type for JUMBF parsing operations.
@@ -1880,6 +1883,10 @@ impl BoxHeader {
 pub struct BoxReader {}
 
 impl BoxReader {
+    /// Maximum allowed nesting depth for JUMB superboxes.
+    /// Prevents stack overflow from crafted files with arbitrarily deep nesting.
+    const MAX_JUMB_DEPTH: usize = 32;
+
     pub fn read_header<R: Read>(reader: &mut R) -> JumbfParseResult<BoxHeader> {
         // Create and read to buf.
         let mut buf = [0u8; 8]; // 8 bytes for box header.
@@ -1924,6 +1931,16 @@ impl BoxReader {
         reader: &mut R,
         size: u64,
     ) -> JumbfParseResult<JUMBFDescriptionBox> {
+        // Per ISO/IEC 19566-5 (JUMBF), a jumd box must contain at minimum:
+        //   16 bytes (UUID) + 1 byte (toggles) + 1 byte (null label terminator) = 18 bytes content.
+        // The size parameter is the raw BMFF size field, which includes the 8-byte BMFF header,
+        // so the minimum total declared size is HEADER_SIZE + 16 + 1 + 1 = 26.
+        // Reject undersized boxes to prevent integer underflow during field parsing.
+        const JUMD_MIN_SIZE: u64 = HEADER_SIZE + 16 + 1 + 1;
+        if size < JUMD_MIN_SIZE {
+            return Err(JumbfParseError::InvalidDescriptionBox);
+        }
+
         let mut bytes_left = size;
         let mut uuid = [0u8; 16]; // 16 bytes for the UUID
         let bytes_read = reader.read(&mut uuid)?;
@@ -1942,6 +1959,12 @@ impl BoxReader {
             // must be requestable and labeled
             // read label
             loop {
+                // Guard: bytes_left tracks the declared box size including the already-consumed
+                // BMFF header. Once bytes_left reaches HEADER_SIZE, all content bytes are
+                // exhausted; reading further would underflow and cross the box boundary.
+                if bytes_left <= HEADER_SIZE {
+                    return Err(JumbfParseError::InvalidDescriptionBox);
+                }
                 let mut buf = [0; 1];
                 reader.read_exact(&mut buf)?;
                 bytes_left -= 1;
@@ -2132,6 +2155,15 @@ impl BoxReader {
         reader: &mut R,
         size: u64,
     ) -> JumbfParseResult<JUMBFEmbeddedFileDescriptionBox> {
+        // A bfdb box must contain at minimum 1 byte (toggles); media type is optional.
+        // Minimum total BMFF size = HEADER_SIZE + TOGGLE_SIZE = 9.
+        // Reject boxes below this threshold to prevent u64 underflow in the data_len
+        // computation (size - HEADER_SIZE - TOGGLE_SIZE) for size < 9.
+        const BFDB_MIN_SIZE: u64 = HEADER_SIZE + TOGGLE_SIZE;
+        if size < BFDB_MIN_SIZE {
+            return Err(JumbfParseError::InvalidDescriptionBox);
+        }
+
         let header =
             BoxReader::read_header(reader).map_err(|_| JumbfParseError::InvalidBoxHeader)?;
         if header.size == 0 {
@@ -2173,7 +2205,7 @@ impl BoxReader {
             }
             _ => {
                 // we do not store the trailing 0 on load
-                if buf[buf.len() - 1] == 0 {
+                if buf.last() == Some(&0) {
                     buf.pop();
                 }
 
@@ -2210,6 +2242,17 @@ impl BoxReader {
     }
 
     pub fn read_super_box<R: Read + Seek>(reader: &mut R) -> JumbfParseResult<JUMBFSuperBox> {
+        BoxReader::read_super_box_impl(reader, 0)
+    }
+
+    fn read_super_box_impl<R: Read + Seek>(
+        reader: &mut R,
+        depth: usize,
+    ) -> JumbfParseResult<JUMBFSuperBox> {
+        if depth >= BoxReader::MAX_JUMB_DEPTH {
+            return Err(JumbfParseError::BoxNestingTooDeep);
+        }
+
         // find out where we're starting...
         let start_pos = current_pos(reader).map_err(|_| JumbfParseError::InvalidBoxRange)?;
 
@@ -2255,9 +2298,7 @@ impl BoxReader {
             } else {
                 unread_bytes(reader, HEADER_SIZE)?; // seek back to the beginning of the box
                 let next_box: Box<dyn BMFFBox> = match box_header.name {
-                    BoxType::Jumb => Box::new(
-                        BoxReader::read_super_box(reader)?, //.map_err(|_| JumbfParseError::InvalidJumbBox)?,
-                    ),
+                    BoxType::Jumb => Box::new(BoxReader::read_super_box_impl(reader, depth + 1)?),
                     BoxType::Json => Box::new(
                         BoxReader::read_json_box(reader, box_header.size)
                             .map_err(|_| JumbfParseError::InvalidJsonBox)?,
@@ -2755,6 +2796,80 @@ pub mod tests {
         assert_eq!(desc_box.uuid(), "6332706100110010800000AA00389B71");
     }
 
+    // Verify the two aspects of the bfdb vulnerability fix:
+    //
+    // 1. size=9 (exact reported case): payload is 1-byte toggles, empty media type buffer.
+    //    The writer legitimately produces 9-byte bfdb boxes for empty media types, so this
+    //    must parse successfully. Without the buf.last() fix, buf[buf.len()-1] panics when
+    //    togs != 1 and buf is empty.
+    //
+    // 2. size < 9: data_len = size - HEADER_SIZE - TOGGLE_SIZE underflows on u64.
+    //    The minimum size guard (BFDB_MIN_SIZE = 9) must reject these before any reads.
+    #[test]
+    fn embedded_media_desc_box_handles_empty_media_type_and_rejects_undersized() {
+        // Craft a valid 9-byte bfdb BMFF box: 4-byte big-endian size=9, 4-byte type "bfdb",
+        // then 1-byte toggles=0x00 (hits the `_` arm). Without the buf.last() fix, the
+        // empty buf causes buf[buf.len()-1] = buf[usize::MAX] → index-out-of-bounds panic.
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&[0x00, 0x00, 0x00, 0x09]); // BMFF size = 9
+        stream.extend_from_slice(b"bfdb"); // box type
+        stream.push(0x00); // toggles = 0x00 (non-1, hits `_` arm)
+        stream.extend_from_slice(&[0x00u8; 32]); // padding
+
+        let mut reader = Cursor::new(&stream);
+        assert!(
+            BoxReader::read_embedded_media_desc_box(&mut reader, 9).is_ok(),
+            "size=9 with empty media type should parse successfully"
+        );
+
+        // size=8: minimum size guard rejects before any reads — data_len would underflow.
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_embedded_media_desc_box(&mut reader, 8),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+
+        // size=0: BMFF "extends to EOF" sentinel — invalid for a bounded inner box.
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_embedded_media_desc_box(&mut reader, 0),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+    }
+
+    // Verify that read_desc_box rejects jumd boxes whose declared BMFF size is below the
+    // spec minimum, preventing integer underflow (u64 wrap in release / panic in debug).
+    // Minimum valid size: 8 (BMFF header) + 16 (UUID) + 1 (toggles) + 1 (null label) = 26.
+    // The stream is padded with 0x03 bytes (non-null, toggles-like) so reader.read() never
+    // returns EOF early, simulating a crafted file where the box header declares a small size
+    // but the underlying stream contains data from the following box.
+    #[test]
+    fn desc_box_reader_rejects_undersized_jumd() {
+        let stream = vec![0x03u8; 64];
+
+        // size=25: the exact reported case — payload is 17 bytes (16-byte UUID + 1-byte
+        // toggles=0x03)
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 25),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+
+        // size=0: BMFF "extends to EOF" semantics — invalid for a bounded jumd inner box.
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 0),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+
+        // size=17: even more severely undersized (payload=9 bytes, UUID alone needs 16).
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 17),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+    }
+
     // ANCHOR: JSON Content Box Reader
     #[test]
     fn json_box_reader() {
@@ -2887,6 +3002,47 @@ pub mod tests {
         }
     }
     */
+
+    /// Builds a JUMBF buffer with `levels` of nested `jumb` superboxes.
+    /// The outermost box wraps the next, and so on down to a single innermost box.
+    fn build_nested_jumb(levels: usize) -> Vec<u8> {
+        assert!(levels >= 1);
+        let mut sbox = JUMBFSuperBox::new("t", None);
+        for _ in 1..levels {
+            let mut wrapper = JUMBFSuperBox::new("t", None);
+            wrapper.add_data_box(Box::new(sbox));
+            sbox = wrapper;
+        }
+        let mut buf = Vec::new();
+        sbox.write_box(&mut buf).expect("write failed");
+        buf
+    }
+
+    #[test]
+    fn test_read_super_box_at_max_depth() {
+        // MAX_JUMB_DEPTH levels should parse successfully (innermost reads at depth MAX-1).
+        let buf = build_nested_jumb(BoxReader::MAX_JUMB_DEPTH);
+        let mut reader = Cursor::new(buf);
+        assert!(
+            BoxReader::read_super_box(&mut reader).is_ok(),
+            "expected Ok for exactly MAX_JUMB_DEPTH nested boxes"
+        );
+    }
+
+    #[test]
+    fn test_read_super_box_exceeds_max_depth() {
+        // One level beyond the limit must return BoxNestingTooDeep, not stack-overflow.
+        let buf = build_nested_jumb(BoxReader::MAX_JUMB_DEPTH + 1);
+        let mut reader = Cursor::new(buf);
+        assert!(
+            matches!(
+                BoxReader::read_super_box(&mut reader),
+                Err(JumbfParseError::BoxNestingTooDeep)
+            ),
+            "expected BoxNestingTooDeep for {} nested boxes",
+            BoxReader::MAX_JUMB_DEPTH + 1
+        );
+    }
 }
 
 // !SECTION

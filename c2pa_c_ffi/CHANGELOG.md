@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.78.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.6...c2pa-c-ffi-v0.78.7)
+_27 March 2026_
+
+### Added
+
+* Allow emscripten users to define HTTP handler ([#1936](https://github.com/contentauth/c2pa-rs/pull/1936))
+* Adds a progress/cancel feature to Context for the c2pa-rs sdk ([#1927](https://github.com/contentauth/c2pa-rs/pull/1927))
+
+## [0.78.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.5...c2pa-c-ffi-v0.78.6)
+_23 March 2026_
+
+## [0.78.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.4...c2pa-c-ffi-v0.78.5)
+_23 March 2026_
+
+## [0.78.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.3...c2pa-c-ffi-v0.78.4)
+_16 March 2026_
+
+## [0.78.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.2...c2pa-c-ffi-v0.78.3)
+_13 March 2026_
+
 ## [0.78.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.1...c2pa-c-ffi-v0.78.2)
 _12 March 2026_
 
