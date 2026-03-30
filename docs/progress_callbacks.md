@@ -323,7 +323,7 @@ void *worker_thread(void *arg) {
 
 #### Tracking per-ingredient verification progress
 
-`VerifyingIngredient` is a multi-step phase: `step` is the 1-based ingredient index and `total` is the number of ingredients. This lets you show a determinate progress bar during deep verification.
+`VerifyingIngredient` is a multi-step phase: `step` is the 1-based ingredient index and `total` is the number of ingredients. This lets you show a determinate progress bar during verification.
 
 ```c
 static int ingredient_progress_cb(const void *user_data,
