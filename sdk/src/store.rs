@@ -1499,6 +1499,7 @@ impl Store {
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
         context: &Context,
+        visited: &mut HashSet<String>,
     ) -> Result<()> {
         let settings = context.settings();
 
@@ -1562,6 +1563,12 @@ impl Store {
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
                 if let Some(ingredient) = store.get_claim(&label) {
+                    // Skip if we've already validated this ingredient (O(2^N) → O(N))
+                    if !visited.insert(label.clone()) {
+                        validation_log.pop_ingredient_uri();
+                        continue;
+                    }
+
                     let alg = match c2pa_manifest.alg() {
                         Some(a) => a,
                         None => ingredient.alg().to_owned(),
@@ -1693,6 +1700,7 @@ impl Store {
                         asset_data,
                         validation_log,
                         context,
+                        visited,
                     )?;
                 } else {
                     log_item!(label.clone(), "ingredient not found", "ingredient_checks")
@@ -1727,6 +1735,7 @@ impl Store {
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
         context: &Context,
+        visited: &mut HashSet<String>,
     ) -> Result<()> {
         let settings = context.settings();
 
@@ -1793,6 +1802,12 @@ impl Store {
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
                 if let Some(ingredient) = store.get_claim(&label) {
+                    // Skip if we've already validated this ingredient (O(2^N) → O(N))
+                    if !visited.insert(label.clone()) {
+                        validation_log.pop_ingredient_uri();
+                        continue;
+                    }
+
                     let alg = match c2pa_manifest.alg() {
                         Some(a) => a,
                         None => ingredient.alg().to_owned(),
@@ -1925,6 +1940,7 @@ impl Store {
                         asset_data,
                         validation_log,
                         context,
+                        visited,
                     ))
                     .await?;
                 } else {
@@ -2129,7 +2145,7 @@ impl Store {
                 context,
             )?;
 
-            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log, context)?;
+            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log, context, &mut HashSet::new())?;
         } else {
             Claim::verify_claim_async(
                 claim,
@@ -2142,7 +2158,7 @@ impl Store {
             )
             .await?;
 
-            Store::ingredient_checks_async(store, claim, &svi, asset_data, validation_log, context)
+            Store::ingredient_checks_async(store, claim, &svi, asset_data, validation_log, context, &mut HashSet::new())
                 .await?;
         }
 
@@ -3940,6 +3956,10 @@ impl Store {
 
                 // recurse nested ingredients
                 if recurse {
+                    // Skip if already visited (prevents O(2^N) diamond DAG explosion)
+                    if svi.manifest_map.contains_key(&ingredient_label) {
+                        continue;
+                    }
                     Store::get_claim_referenced_manifests_impl(
                         ingredient,
                         store,
