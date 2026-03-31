@@ -194,6 +194,11 @@ jobs:
             artifact_name: c2patool_linux_intel.tar.gz
             uploaded_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-unknown-linux-gnu.tar.gz
             sbom_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-unknown-linux-gnu-sbom.json
+          - os: ubuntu-latest
+            artifact_name: c2patool_linux_aarch64.tar.gz
+            uploaded_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-aarch64-unknown-linux-gnu.tar.gz
+            sbom_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-aarch64-unknown-linux-gnu-sbom.json
+            target: aarch64-unknown-linux-gnu
           - os: windows-latest
             artifact_name: c2patool_win_intel.zip
             uploaded_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-pc-windows-msvc.zip
@@ -222,9 +227,18 @@ jobs:
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
         uses: Swatinem/rust-cache@v2
 
+      - name: Install ARM64 toolchain (Linux)
+        if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Run make release
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        run: cd cli && make release
+        run: |
+          if [ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]; then
+            cd cli && make release ARCH=aarch64
+          else
+            cd cli && make release
+          fi
 
       - name: Upload binary to GitHub
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
