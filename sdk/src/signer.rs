@@ -97,7 +97,7 @@ pub trait Signer {
                         headers,
                         &body,
                         message,
-                        &SyncGenericResolver::new(),
+                        &SyncGenericResolver::with_redirects().unwrap_or_default(),
                     )
                     .map_err(|e| e.into()),
                 );
@@ -228,7 +228,7 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
                         headers,
                         &body,
                         message,
-                        &AsyncGenericResolver::new(),
+                        &AsyncGenericResolver::with_redirects().unwrap_or_default(),
                     )
                     .await
                     .map_err(|e| e.into()),
