@@ -55,7 +55,14 @@ build-release-mac-universal: build-release-mac-arm build-release-mac-x86
 	lipo -create -output ../target/release/c2patool ../target/aarch64-apple-darwin/release/c2patool ../target/x86_64-apple-darwin/release/c2patool
 
 build-release-linux:
+ifeq ($(ARCH), aarch64)
+	rustup target add aarch64-unknown-linux-gnu
+	CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cargo build --target=aarch64-unknown-linux-gnu --release
+	mkdir -p ../target/release
+	cp ../target/aarch64-unknown-linux-gnu/release/c2patool ../target/release/c2patool
+else
 	cargo build --release
+endif
 
 # make release
 # Builds and packages a zip for c2patool for each platform
@@ -69,5 +76,9 @@ release: build-release-win c2patool-package
 endif
 ifeq ($(PLATFORM), linux)
 release: build-release-linux c2patool-package
+ifeq ($(ARCH), aarch64)
+	cd ../target && tar -czvf c2patool_linux_aarch64.tar.gz c2patool && cd ..
+else
 	cd ../target && tar -czvf c2patool_linux_intel.tar.gz c2patool && cd ..
+endif
 endif

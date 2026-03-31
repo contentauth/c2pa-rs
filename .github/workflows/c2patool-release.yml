@@ -37,6 +37,11 @@ jobs:
             artifact_name: c2patool_linux_intel.tar.gz
             asset_name: ${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
             sbom_asset_name: ${{ github.ref_name }}-x86_64-unknown-linux-gnu-sbom.json
+          - os: ubuntu-latest
+            artifact_name: c2patool_linux_aarch64.tar.gz
+            asset_name: ${{ github.ref_name }}-aarch64-unknown-linux-gnu.tar.gz
+            sbom_asset_name: ${{ github.ref_name }}-aarch64-unknown-linux-gnu-sbom.json
+            target: aarch64-unknown-linux-gnu
           - os: windows-latest
             artifact_name: c2patool_win_intel.zip
             asset_name: ${{ github.ref_name }}-x86_64-pc-windows-msvc.zip
@@ -61,8 +66,17 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
+      - name: Install ARM64 toolchain (Linux)
+        if: ${{ matrix.target == 'aarch64-unknown-linux-gnu' }}
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Run make release
-        run: cd cli && make release
+        run: |
+          if [ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]; then
+            cd cli && make release ARCH=aarch64
+          else
+            cd cli && make release
+          fi
 
       - name: Generate SBOM
         run: cd cli && cargo sbom > c2patool-sbom.json
