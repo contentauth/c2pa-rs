@@ -242,7 +242,7 @@ pub mod validation_status;
 pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
-pub use builder::{Builder, BuilderIntent, ManifestDefinition};
+pub use builder::{Builder, BuilderIntent, HashType, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 #[doc(inline)]
