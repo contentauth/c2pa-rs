@@ -2215,9 +2215,9 @@ pub unsafe extern "C" fn c2pa_builder_hash_type(
         return -1;
     }
     let hash_type = match builder.hash_type(&format) {
-        c2pa::HashType::DataHash => C2paHashType::DataHash,
-        c2pa::HashType::BmffHash => C2paHashType::BmffHash,
-        c2pa::HashType::BoxHash => C2paHashType::BoxHash,
+        c2pa::HashType::Data => C2paHashType::DataHash,
+        c2pa::HashType::Bmff => C2paHashType::BmffHash,
+        c2pa::HashType::Box => C2paHashType::BoxHash,
     };
     *out_hash_type = hash_type;
     0

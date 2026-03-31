@@ -58,14 +58,14 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HashType {
     /// Requires placeholder, exclusions, hash, then sign.
-    DataHash,
+    Data,
 
     /// Requires placeholder, hash, then sign.
     /// Exclusions are derived automatically from the BMFF structure.
-    BmffHash,
+    Bmff,
 
     /// Requires hash then sign only, no placeholder (when `prefer_box_hash` is enabled).
-    BoxHash,
+    Box,
 }
 
 /// Version of the Builder Archive file
@@ -2006,7 +2006,7 @@ impl Builder {
     /// # Arguments
     /// * `format` — MIME type or file extension of the target asset.
     pub fn needs_placeholder(&self, format: &str) -> bool {
-        self.hash_type(format) != HashType::BoxHash
+        self.hash_type(format) != HashType::Box
     }
 
     /// Returns the hash binding type that will be used for the given format.
@@ -2019,12 +2019,12 @@ impl Builder {
         // A pre-existing BoxHash assertion means the caller has explicitly
         // opted into the box-hash path.
         if self.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok() {
-            return HashType::BoxHash;
+            return HashType::Box;
         }
 
         // BMFF formats always use BmffHash.
         if jumbf_io::is_bmff_format(format) {
-            return HashType::BmffHash;
+            return HashType::Bmff;
         }
 
         // When prefer_box_hash is enabled and the format handler supports it,
@@ -2032,12 +2032,12 @@ impl Builder {
         if self.context.settings().builder.prefer_box_hash {
             if let Some(handler) = jumbf_io::get_assetio_handler(format) {
                 if handler.asset_box_hash_ref().is_some() {
-                    return HashType::BoxHash;
+                    return HashType::Box;
                 }
             }
         }
 
-        HashType::DataHash
+        HashType::Data
     }
 
     /// Create a placeholder manifest with dynamic assertion support.
@@ -4398,26 +4398,26 @@ mod tests {
         let builder = Builder::from_json(&simple_manifest_json())?;
 
         // Non-BMFF formats default to DataHash.
-        assert_eq!(builder.hash_type("image/jpeg"), HashType::DataHash);
-        assert_eq!(builder.hash_type("image/png"), HashType::DataHash);
+        assert_eq!(builder.hash_type("image/jpeg"), HashType::Data);
+        assert_eq!(builder.hash_type("image/png"), HashType::Data);
 
         // BMFF MIME types produce BmffHash.
-        assert_eq!(builder.hash_type("video/mp4"), HashType::BmffHash);
-        assert_eq!(builder.hash_type("image/avif"), HashType::BmffHash);
-        assert_eq!(builder.hash_type("image/heif"), HashType::BmffHash);
-        assert_eq!(builder.hash_type("image/heic"), HashType::BmffHash);
-        assert_eq!(builder.hash_type("video/quicktime"), HashType::BmffHash);
+        assert_eq!(builder.hash_type("video/mp4"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/avif"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/heif"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/heic"), HashType::Bmff);
+        assert_eq!(builder.hash_type("video/quicktime"), HashType::Bmff);
 
         // BMFF file extensions also produce BmffHash.
-        assert_eq!(builder.hash_type("mp4"), HashType::BmffHash);
-        assert_eq!(builder.hash_type("avif"), HashType::BmffHash);
-        assert_eq!(builder.hash_type("mov"), HashType::BmffHash);
-        assert_eq!(builder.hash_type("m4a"), HashType::BmffHash);
+        assert_eq!(builder.hash_type("mp4"), HashType::Bmff);
+        assert_eq!(builder.hash_type("avif"), HashType::Bmff);
+        assert_eq!(builder.hash_type("mov"), HashType::Bmff);
+        assert_eq!(builder.hash_type("m4a"), HashType::Bmff);
 
         // Unknown format falls back to DataHash.
         assert_eq!(
             builder.hash_type("application/octet-stream"),
-            HashType::DataHash
+            HashType::Data
         );
 
         Ok(())
@@ -4431,11 +4431,11 @@ mod tests {
             Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
 
         // BoxHash-capable formats produce BoxHash when prefer_box_hash is on.
-        assert_eq!(builder.hash_type("image/jpeg"), HashType::BoxHash);
+        assert_eq!(builder.hash_type("image/jpeg"), HashType::Box);
 
         // BMFF formats still produce BmffHash regardless of prefer_box_hash.
-        assert_eq!(builder.hash_type("video/mp4"), HashType::BmffHash);
-        assert_eq!(builder.hash_type("image/avif"), HashType::BmffHash);
+        assert_eq!(builder.hash_type("video/mp4"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/avif"), HashType::Bmff);
 
         Ok(())
     }
@@ -4448,8 +4448,8 @@ mod tests {
         builder.add_assertion(BoxHash::LABEL, &bh)?;
 
         // A pre-existing BoxHash assertion forces BoxHash for any format.
-        assert_eq!(builder.hash_type("image/jpeg"), HashType::BoxHash);
-        assert_eq!(builder.hash_type("video/mp4"), HashType::BoxHash);
+        assert_eq!(builder.hash_type("image/jpeg"), HashType::Box);
+        assert_eq!(builder.hash_type("video/mp4"), HashType::Box);
 
         Ok(())
     }
@@ -4465,13 +4465,13 @@ mod tests {
             if needs {
                 assert_ne!(
                     ht,
-                    HashType::BoxHash,
+                    HashType::Box,
                     "{format}: needs_placeholder=true but hash_type=BoxHash"
                 );
             } else {
                 assert_eq!(
                     ht,
-                    HashType::BoxHash,
+                    HashType::Box,
                     "{format}: needs_placeholder=false but hash_type!=BoxHash"
                 );
             }
