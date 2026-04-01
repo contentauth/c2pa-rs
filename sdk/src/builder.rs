@@ -49,7 +49,11 @@ use crate::{
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::builder::TimeStampFetchScope,
     store::Store,
-    utils::{hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime},
+    utils::{
+        hash_utils::hash_to_b64,
+        merkle::MerkleAccumulator,
+        mime::{format_to_mime, INGREDIENT_ARCHIVE_MIME},
+    },
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
 };
@@ -66,6 +70,27 @@ pub enum HashType {
 
     /// Requires hash then sign only, no placeholder (when `prefer_box_hash` is enabled).
     Box,
+}
+
+/// How a JUMBF working-store archive is built and tagged (`org.contentauth.archive.metadata` / `archive:type`).
+#[derive(Debug, Clone)]
+pub(crate) enum ArchiveKind {
+    /// Full manifest store for [`Builder::to_archive`].
+    Builder,
+    /// Single-ingredient slice for [`Builder::write_ingredient_archive`].
+    Ingredient {
+        /// Ingredient [`label`](Ingredient::label) if set, otherwise [`instance_id`](Ingredient::instance_id).
+        ingredient_id: String,
+    },
+}
+
+impl ArchiveKind {
+    fn archive_type_str(&self) -> &'static str {
+        match self {
+            ArchiveKind::Builder => labels::ARCHIVE_TYPE_BUILDER,
+            ArchiveKind::Ingredient { .. } => labels::ARCHIVE_TYPE_INGREDIENT,
+        }
+    }
 }
 
 /// Version of the Builder Archive file
@@ -1160,13 +1185,10 @@ impl Builder {
         Ok(builder)
     }
 
-    /// Convert the Builder into a .c2pa asset.
+    /// Creates a builder archive from the builder and writes it to a stream.
     ///
     /// This will be stored in the standard application/c2pa .c2pa JUMBF format
-    /// unless the settings flag `builder.generate_c2pa_archive` is overridden
-    /// from its default value and set to `false` in which case a legacy format,
-    /// based on ZIP file, will be written instead.
-    ///
+    /// The legacy zip format will be written if `builder.generate_c2pa_archive` is set to `false`
     /// See docs/working-stores.md for more information.
     ///
     /// # Arguments
@@ -1176,12 +1198,56 @@ impl Builder {
     /// * Returns an [`Error`] if the archive cannot be written.
     pub fn to_archive(&mut self, mut stream: impl Write + Seek) -> Result<()> {
         if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
-            let c2pa_data = self.working_store_sign()?;
+            let c2pa_data = self.working_store_sign(ArchiveKind::Builder)?;
             stream.write_all(&c2pa_data)?;
             return Ok(());
         }
 
         self.old_to_archive(stream)
+    }
+
+    /// Writes a JUMBF working-store archive that contains a single ingredient from this builder.
+    ///
+    /// The archive is tagged with `org.contentauth.archive.metadata` and
+    /// [`labels::ARCHIVE_TYPE_INGREDIENT`](crate::assertions::labels::ARCHIVE_TYPE_INGREDIENT) so it can be
+    /// distinguished from a full builder archive when reading with [`Self::add_ingredient_from_archive`].
+    ///
+    /// The exported manifest is **not** a lossless slice of the parent: it uses one cloned ingredient
+    /// and a fresh claim instance id; other ingredients are omitted.
+    ///
+    /// # Arguments
+    /// * `ingredient_id` - Ingredient [`label`](Ingredient::label) if set, otherwise [`instance_id`](Ingredient::instance_id).
+    /// * `stream` - Destination for the `application/c2pa` bytes.
+    ///
+    /// # Errors
+    /// * Returns [`Error::BadParam`] if the ingredient is not found, or JUMBF archives are disabled in settings.
+    pub fn write_ingredient_archive(
+        &mut self,
+        ingredient_id: &str,
+        mut stream: impl Write + Seek,
+    ) -> Result<()> {
+        if self.context.settings().builder.generate_c2pa_archive != Some(true) {
+            return Err(Error::BadParam(
+                "write_ingredient_archive requires Settings.builder.generate_c2pa_archive == true (JUMBF working-store format)"
+                    .to_string(),
+            ));
+        }
+        let c2pa_data = self.working_store_sign(ArchiveKind::Ingredient {
+            ingredient_id: ingredient_id.to_string(),
+        })?;
+        stream.write_all(&c2pa_data)?;
+        Ok(())
+    }
+
+    /// Copies binary resources from `store` into this builder when the id is not already present.
+    fn merge_resources_from_store(&mut self, store: &ResourceStore) -> Result<()> {
+        for (id, data) in store.resources() {
+            let _sanitized_id = sanitize_archive_path(id)?;
+            if !self.resources.exists(id) {
+                self.resources.add(id, data.clone())?;
+            }
+        }
+        Ok(())
     }
 
     /// Add manifest store from an archive stream to the [`Builder`].
@@ -3151,6 +3217,67 @@ impl Builder {
             .ok_or(Error::IngredientNotFound)
     }
 
+    /// Adds an ingredient from a JUMBF working-store stream produced by [`Self::write_ingredient_archive`].
+    ///
+    /// The stream must carry `org.contentauth.archive.metadata` with `archive:type` set to
+    /// [`labels::ARCHIVE_TYPE_INGREDIENT`](crate::assertions::labels::ARCHIVE_TYPE_INGREDIENT).
+    ///
+    /// Resource entries from the archive manifest (claim-level and per-ingredient) are merged into
+    /// this builder when their ids are not already present, so thumbnails and similar assertions
+    /// can resolve when signing.
+    ///
+    /// For other `application/c2pa` stores, use [`Self::add_ingredient_from_reader`] or
+    /// [`Self::add_ingredient_from_stream`].
+    #[async_generic]
+    pub fn add_ingredient_from_archive<'a, R>(
+        &'a mut self,
+        stream: &mut R,
+    ) -> Result<&'a mut Ingredient>
+    where
+        R: Read + Seek + Send,
+    {
+        self.context
+            .check_progress(ProgressPhase::AddingIngredient, 1, 1)?;
+
+        let reader = if _sync {
+            Reader::from_shared_context(&self.context).with_stream("application/c2pa", stream)?
+        } else {
+            Reader::from_shared_context(&self.context)
+                .with_stream_async("application/c2pa", stream)
+                .await?
+        };
+
+        match reader.active_archive_type().as_deref() {
+            Some(t) if t == labels::ARCHIVE_TYPE_INGREDIENT => {}
+            Some(other) => {
+                return Err(Error::BadParam(format!(
+                    "expected an ingredient archive (archive:type {:?}), found {other:?}",
+                    labels::ARCHIVE_TYPE_INGREDIENT
+                )));
+            }
+            None => {
+                return Err(Error::BadParam(format!(
+                    "expected a C2PA ingredient archive (org.contentauth.archive.metadata with archive:type {:?}); use add_ingredient_from_reader or add_ingredient_from_stream for other stores",
+                    labels::ARCHIVE_TYPE_INGREDIENT
+                )));
+            }
+        }
+
+        if let Some(m) = reader.active_manifest() {
+            self.merge_resources_from_store(m.resources())?;
+            for ing in m.ingredients() {
+                self.merge_resources_from_store(ing.resources())?;
+            }
+        }
+
+        let ingredient = reader.to_ingredient()?;
+        self.add_ingredient(ingredient);
+        self.definition
+            .ingredients
+            .last_mut()
+            .ok_or(Error::IngredientNotFound)
+    }
+
     /// Creates a working store from the builder.
     ///
     /// The working store is signed with a `BoxHash` over an empty string and is
@@ -3163,7 +3290,7 @@ impl Builder {
     ///
     /// IMPORTANT: This certificate is useful only in a private context and will
     /// not be considered trusted in the C2PA conformance sense.
-    fn working_store_sign(&self) -> Result<Vec<u8>> {
+    fn working_store_sign(&self, kind: ArchiveKind) -> Result<Vec<u8>> {
         // First we need to generate a `BoxHash` over an empty string.
         let mut empty_asset = std::io::Cursor::new("");
 
@@ -3175,8 +3302,19 @@ impl Builder {
 
         let box_hash = BoxHash { boxes };
 
-        // ... then convert the `Builder` to a claim and add the box hash assertion.
-        let mut claim = self.to_claim()?;
+        let mut claim = match &kind {
+            ArchiveKind::Builder => self.to_claim()?,
+            ArchiveKind::Ingredient { ingredient_id } => self
+                .scoped_for_ingredient_archive(ingredient_id.as_str())?
+                .to_claim()?,
+        };
+
+        let archive_type = kind.archive_type_str();
+        let json = format!(
+            r#"{{"@context":{{"archive":"https://contentauth.org/ns/archive#"}},"archive:type":"{archive_type}"}}"#
+        );
+        let archive_metadata = Metadata::new(labels::ARCHIVE_METADATA, &json)?;
+        claim.add_created_assertion(&archive_metadata)?;
         claim.add_assertion(&box_hash)?;
 
         // Now commit and sign it. The signing will allow us to detect tampering.
@@ -3185,6 +3323,38 @@ impl Builder {
 
         let signer = EphemeralSigner::new("c2pa-archive.local")?;
         store.get_box_hashed_embeddable_manifest(&signer, &self.context)
+    }
+
+    /// One-ingredient [`Builder`] for [`ArchiveKind::Ingredient`] working-store signing.
+    fn scoped_for_ingredient_archive(&self, ingredient_id: &str) -> Result<Builder> {
+        let ingredient = self
+            .definition
+            .ingredients
+            .iter()
+            .find(|i| i.label() == Some(ingredient_id) || i.instance_id() == ingredient_id)
+            .ok_or_else(|| Error::BadParam(format!("ingredient {ingredient_id} not found")))?;
+
+        let mut scoped = Builder::from_shared_context(&self.context);
+        scoped.definition.label = self.definition.label.clone();
+        scoped.definition.vendor = self.definition.vendor.clone();
+        scoped.definition.claim_version = self.definition.claim_version;
+        scoped.definition.title = self.definition.title.clone();
+        scoped.definition.instance_id = Uuid::new_v4().to_string();
+        scoped.definition.thumbnail = self.definition.thumbnail.clone();
+        scoped.definition.assertions = self
+            .definition
+            .assertions
+            .iter()
+            .filter(|a| {
+                let (base, _, _) = parse_label(a.label());
+                base != labels::ARCHIVE_METADATA && base != labels::BOX_HASH
+            })
+            .cloned()
+            .collect();
+        scoped.definition.ingredients = vec![ingredient.clone()];
+        scoped.resources = self.resources.clone();
+        scoped.definition.format = INGREDIENT_ARCHIVE_MIME.to_string();
+        Ok(scoped)
     }
 }
 
@@ -5487,6 +5657,65 @@ mod tests {
         assert_eq!(
             loaded_builder.definition.title,
             Some("Test Image".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_ingredient_archive_and_add_ingredient_from_archive() -> Result<()> {
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context = Context::new().with_settings(settings)?.into_shared();
+
+        let mut builder = Builder::from_shared_context(&context)
+            .with_definition(r#"{"title": "Parent manifest"}"#)?;
+
+        let mut thumb_stream = Cursor::new(TEST_THUMBNAIL);
+        builder.set_thumbnail("image/jpeg", &mut thumb_stream)?;
+
+        let mut jpeg = Cursor::new(TEST_IMAGE);
+        builder.add_ingredient_from_stream(
+            r#"{"title": "Exported ingredient"}"#,
+            "image/jpeg",
+            &mut jpeg,
+        )?;
+
+        let mut ingredient_archive = Cursor::new(Vec::new());
+        let ingredient_id = {
+            let ing = &builder.definition.ingredients[0];
+            ing.label()
+                .map(String::from)
+                .unwrap_or_else(|| ing.instance_id().to_string())
+        };
+        builder.write_ingredient_archive(&ingredient_id, &mut ingredient_archive)?;
+
+        let archive_bytes = ingredient_archive.into_inner();
+        let mut check = Cursor::new(&archive_bytes);
+        let thumb_reader =
+            Reader::from_shared_context(&context).with_stream("application/c2pa", &mut check)?;
+        assert!(
+            thumb_reader
+                .active_manifest()
+                .and_then(|m| m.thumbnail())
+                .is_some(),
+            "ingredient archive should preserve claim-level thumbnail"
+        );
+
+        let mut builder2 = Builder::from_shared_context(&context);
+        builder2.add_ingredient_from_archive(&mut Cursor::new(archive_bytes))?;
+
+        assert_eq!(builder2.definition.ingredients.len(), 1);
+        assert_eq!(
+            builder2.definition.ingredients[0].title(),
+            Some("Exported ingredient")
+        );
+        assert!(
+            builder2
+                .resources
+                .resources()
+                .values()
+                .any(|v| v.as_slice() == TEST_THUMBNAIL),
+            "merged resources should include claim thumbnail bytes"
         );
 
         Ok(())

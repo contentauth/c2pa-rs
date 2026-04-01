@@ -212,6 +212,18 @@ pub const METADATA: &str = "c2pa.metadata";
 /// and may contain metadata from any documented schema.
 pub const CAWG_METADATA: &str = "cawg.metadata";
 
+/// Label for working-store archive metadata (JSON-LD), including `archive:type`.
+///
+/// Used by [`Builder::to_archive`](crate::Builder::to_archive),
+/// [`Builder::write_ingredient_archive`](crate::Builder::write_ingredient_archive), and related APIs.
+pub const ARCHIVE_METADATA: &str = "org.contentauth.archive.metadata";
+
+/// `archive:type` value for a full manifest [`Builder`](crate::Builder) working-store archive (JUMBF).
+pub const ARCHIVE_TYPE_BUILDER: &str = "builder";
+
+/// `archive:type` value for a single-ingredient working-store archive from [`Builder::write_ingredient_archive`](crate::Builder::write_ingredient_archive).
+pub const ARCHIVE_TYPE_INGREDIENT: &str = "ingredient";
+
 /// Array of all hash labels because they have special treatment
 pub const HASH_LABELS: [&str; 4] = [DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
 

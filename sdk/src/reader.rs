@@ -34,6 +34,7 @@ use serde_with::skip_serializing_none;
 use crate::utils::io_utils::uri_to_path;
 use crate::{
     assertion::AssertionBase,
+    assertions::Metadata,
     claim::Claim,
     context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
@@ -1250,6 +1251,18 @@ impl Reader {
             }
         }
         Ok(builder)
+    }
+
+    /// Returns `archive:type` from the active manifest's `org.contentauth.archive.metadata` assertion, if present.
+    pub(crate) fn active_archive_type(&self) -> Option<String> {
+        let manifest = self.active_manifest()?;
+        let metadata: Metadata = manifest
+            .find_assertion(crate::assertions::labels::ARCHIVE_METADATA)
+            .ok()?;
+        metadata
+            .value
+            .get("archive:type")
+            .and_then(|v: &Value| v.as_str().map(str::to_owned))
     }
 
     /// Convert a Reader into an [`Ingredient`] using the parent ingredient from the active manifest.
