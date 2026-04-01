@@ -270,6 +270,7 @@ impl Reader {
     ///
     /// # Note
     /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
+    ///
     /// [`Verify::remote_manifest_fetch`]: crate::settings::Verify::remote_manifest_fetch
     #[async_generic]
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
