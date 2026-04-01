@@ -1047,6 +1047,33 @@ impl AssetBoxHash for JpegIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
         let mut box_maps = make_box_maps(input_stream)?;
 
+        // If no C2PA APP11 segment exists in the source, synthesize a placeholder
+        // entry at the standard insertion point (immediately after the 2-byte SOI
+        // marker at offset 0).  This is needed on the signing path so that the box
+        // list covers the full file layout after embedding: verification re-derives
+        // byte positions from the current (embedded) file, and the C2PA entry must
+        // be present so the name-matching loop in `verify_stream_hash` can skip it.
+        // When a real C2PA segment is already present (e.g. during verification or
+        // re-signing) this block is skipped and the real entry is used as-is.
+        let has_c2pa = box_maps
+            .iter()
+            .any(|bm| bm.names.first().is_some_and(|n| n == C2PA_BOXHASH));
+        if !has_c2pa {
+            // SOI is always FF D8 (2 bytes) at position 0.  C2PA is inserted
+            // right after it, so range_start = 2, range_len = 0 (synthetic).
+            let synthetic = BoxMap {
+                names: vec![C2PA_BOXHASH.to_string()],
+                alg: None,
+                hash: ByteBuf::from(Vec::new()),
+                excluded: Some(true),
+                pad: ByteBuf::from(Vec::new()),
+                range_start: 2,
+                range_len: 0,
+            };
+            // SOI is always first; insert the synthetic C2PA right after it.
+            box_maps.insert(1, synthetic);
+        }
+
         for bm in box_maps.iter_mut() {
             if let Some(name) = bm.names.first() {
                 if name == C2PA_BOXHASH {

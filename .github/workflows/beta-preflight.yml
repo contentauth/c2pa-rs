@@ -199,12 +199,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@beta
 
-      - name: Set up Chrome
-        uses: browser-actions/setup-chrome@v2
-        with:
-          chrome-version: 142
-          install-chromedriver: true
-
       - name: Add wasm web target
         run: rustup target add wasm32-unknown-unknown
 
@@ -225,6 +219,7 @@ jobs:
         run: cargo test -p c2pa --no-default-features --features rust_native_crypto, --target wasm32-unknown-unknown
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+          GECKODRIVER: geckodriver
           WASM_BINDGEN_TEST_TIMEOUT: 60
 
   clippy_check:

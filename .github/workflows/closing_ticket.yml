@@ -1,3 +1,6 @@
+# This ensures that when a user manually closes a ticket in Jira,
+# it will update the workflow labels appropriately.
+
 name: Closing ticket
 on:
   issues:

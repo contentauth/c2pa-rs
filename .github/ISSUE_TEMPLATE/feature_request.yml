@@ -1,6 +1,5 @@
 name: 💡 Feature request
 description: Suggest an idea for improvement
-labels: [feature]
 body:
   - type: textarea
     id: idea

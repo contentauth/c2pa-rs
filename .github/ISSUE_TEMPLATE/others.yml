@@ -1,6 +1,5 @@
 name: 💬 Other
 description: General inquiries, questions, or discussions
-labels: [question]
 body:
   - type: textarea
     id: details

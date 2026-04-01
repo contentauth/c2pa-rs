@@ -9,4 +9,6 @@ The certificates are organized by supported C2PA signing algorithm.  For each su
 
 ## More info
 
-For more information on digital signatures and the C2PA trust model see  [https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_digital_signatures] and [https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_credential_types]
+For more information, see the C2PA technical specification:
+-  [Digital signatures](https://c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_digital_signatures)
+- [Trust model](https://c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_trust_model)

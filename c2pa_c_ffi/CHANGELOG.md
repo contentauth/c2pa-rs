@@ -7,6 +7,171 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.78.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.6...c2pa-c-ffi-v0.78.7)
+_27 March 2026_
+
+### Added
+
+* Allow emscripten users to define HTTP handler ([#1936](https://github.com/contentauth/c2pa-rs/pull/1936))
+* Adds a progress/cancel feature to Context for the c2pa-rs sdk ([#1927](https://github.com/contentauth/c2pa-rs/pull/1927))
+
+## [0.78.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.5...c2pa-c-ffi-v0.78.6)
+_23 March 2026_
+
+## [0.78.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.4...c2pa-c-ffi-v0.78.5)
+_23 March 2026_
+
+## [0.78.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.3...c2pa-c-ffi-v0.78.4)
+_16 March 2026_
+
+## [0.78.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.2...c2pa-c-ffi-v0.78.3)
+_13 March 2026_
+
+## [0.78.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.1...c2pa-c-ffi-v0.78.2)
+_12 March 2026_
+
+### Fixed
+
+* Windows Build flags ([#1930](https://github.com/contentauth/c2pa-rs/pull/1930))
+
+## [0.78.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.0...c2pa-c-ffi-v0.78.1)
+_12 March 2026_
+
+## [0.78.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.77.1...c2pa-c-ffi-v0.78.0)
+_11 March 2026_
+
+### Added
+
+* Emscripten ([#1886](https://github.com/contentauth/c2pa-rs/pull/1886))
+
+### Fixed
+
+* Merkle api integration ([#1902](https://github.com/contentauth/c2pa-rs/pull/1902))
+* X86_64 Linux CI build failure ([#1906](https://github.com/contentauth/c2pa-rs/pull/1906))
+
+## [0.77.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.77.0...c2pa-c-ffi-v0.77.1)
+_10 March 2026_
+
+### Fixed
+
+* Add API to read manifest bytes using reader+context ([#1904](https://github.com/contentauth/c2pa-rs/pull/1904))
+* Return -1 on settings failure ([#1905](https://github.com/contentauth/c2pa-rs/pull/1905))
+
+## [0.77.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.76.2...c2pa-c-ffi-v0.77.0)
+_04 March 2026_
+
+### Added
+
+* Embeddable manifest API with Context/Settings, CAWG and BMFF.v3 support. ([#1847](https://github.com/contentauth/c2pa-rs/pull/1847))
+
+## [0.76.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.76.1...c2pa-c-ffi-v0.76.2)
+_03 March 2026_
+
+### Added
+
+* Signer programatically configured on Context (C FFI APIs) ([#1893](https://github.com/contentauth/c2pa-rs/pull/1893))
+
+## [0.76.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.76.0...c2pa-c-ffi-v0.76.1)
+_02 March 2026_
+
+## [0.75.22](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.21...c2pa-c-ffi-v0.75.22)
+_23 February 2026_
+
+## [0.75.21](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.20...c2pa-c-ffi-v0.75.21)
+_12 February 2026_
+
+## [0.75.20](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.19...c2pa-c-ffi-v0.75.20)
+_12 February 2026_
+
+## [0.75.19](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.18...c2pa-c-ffi-v0.75.19)
+_09 February 2026_
+
+### Fixed
+
+* Vec_to_tracked_ptr macro merged with to_c_bytes ([#1834](https://github.com/contentauth/c2pa-rs/pull/1834))
+
+## [0.75.18](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.17...c2pa-c-ffi-v0.75.18)
+_06 February 2026_
+
+## [0.75.17](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.16...c2pa-c-ffi-v0.75.17)
+_06 February 2026_
+
+### Fixed
+
+* Bump max settings string limit to 1MB ([#1833](https://github.com/contentauth/c2pa-rs/pull/1833))
+
+## [0.75.16](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.15...c2pa-c-ffi-v0.75.16)
+_05 February 2026_
+
+### Fixed
+
+* Add additional conversions for C FFI Errors ([#1829](https://github.com/contentauth/c2pa-rs/pull/1829))
+
+## [0.75.15](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.14...c2pa-c-ffi-v0.75.15)
+_05 February 2026_
+
+### Fixed
+
+* C_ffi bindings were not returning C2paErrors correctly ([#1825](https://github.com/contentauth/c2pa-rs/pull/1825))
+
+## [0.75.14](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.13...c2pa-c-ffi-v0.75.14)
+_05 February 2026_
+
+### Fixed
+
+* Restores empty string return on c2pa_sign_file, and c2pa_release_string ([#1821](https://github.com/contentauth/c2pa-rs/pull/1821))
+
+## [0.75.13](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.12...c2pa-c-ffi-v0.75.13)
+_03 February 2026_
+
+## [0.75.12](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.11...c2pa-c-ffi-v0.75.12)
+_03 February 2026_
+
+## [0.75.11](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.10...c2pa-c-ffi-v0.75.11)
+_03 February 2026_
+
+### Added
+
+* Adds thread safe Settings and Context support to c_ffi_api ([#1783](https://github.com/contentauth/c2pa-rs/pull/1783))
+
+### Other
+
+* Only use `reqwest` for `c2pa-c-ffi` networking ([#1807](https://github.com/contentauth/c2pa-rs/pull/1807))
+
+## [0.75.10](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.9...c2pa-c-ffi-v0.75.10)
+_02 February 2026_
+
+## [0.75.9](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.8...c2pa-c-ffi-v0.75.9)
+_30 January 2026_
+
+## [0.75.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.7...c2pa-c-ffi-v0.75.8)
+_28 January 2026_
+
+## [0.75.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.6...c2pa-c-ffi-v0.75.7)
+_27 January 2026_
+
+## [0.75.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.5...c2pa-c-ffi-v0.75.6)
+_22 January 2026_
+
+## [0.75.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.4...c2pa-c-ffi-v0.75.5)
+_21 January 2026_
+
+## [0.75.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.3...c2pa-c-ffi-v0.75.4)
+_16 January 2026_
+
+## [0.75.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.2...c2pa-c-ffi-v0.75.3)
+_16 January 2026_
+
+## [0.75.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.1...c2pa-c-ffi-v0.75.2)
+_15 January 2026_
+
+## [0.75.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.75.0...c2pa-c-ffi-v0.75.1)
+_15 January 2026_
+
+### Fixed
+
+* Verify after sign not executing ([#1638](https://github.com/contentauth/c2pa-rs/pull/1638))
+
 ## [0.75.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.74.0...c2pa-c-ffi-v0.75.0)
 _14 January 2026_
 

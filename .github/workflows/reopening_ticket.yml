@@ -1,3 +1,6 @@
+# This ensures that when a ticket is reopened in Jira, it will update the
+# workflow labels in GitHub appropriately.
+
 name: Reopening ticket
 on:
   issues:

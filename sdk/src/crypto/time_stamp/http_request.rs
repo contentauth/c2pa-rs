@@ -40,14 +40,14 @@ use crate::{
     headers: Option<Vec<(String, String)>>,
     data: &[u8],
     message: &[u8],
-    http_resolver: &impl AsyncHttpResolver,
+    http_resolver: &(impl AsyncHttpResolver + ?Sized),
 ))]
 pub fn default_rfc3161_request(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     data: &[u8],
     message: &[u8],
-    http_resolver: &impl SyncHttpResolver,
+    http_resolver: &(impl SyncHttpResolver + ?Sized),
 ) -> Result<Vec<u8>, TimeStampError> {
     let request = Constructed::decode(
         bcder::decode::SliceSource::new(data),
@@ -81,13 +81,13 @@ pub fn default_rfc3161_request(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     timestamp_request: &TimeStampReq,
-    http_resolver: &impl AsyncHttpResolver,
+    http_resolver: &(impl AsyncHttpResolver + ?Sized),
 ))]
 fn time_stamp_request_http(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     timestamp_request: &TimeStampReq,
-    http_resolver: &impl SyncHttpResolver,
+    http_resolver: &(impl SyncHttpResolver + ?Sized),
 ) -> Result<Vec<u8>, TimeStampError> {
     // This function exists to work around a bug in serialization of
     // TimeStampResp so we just return the data directly.

@@ -213,7 +213,7 @@ impl C2paPdf for Pdf {
     ///
     /// A `Vec<&[u8]>` is returned because it's possible for a PDF's manifests to be stored
     /// separately, due to PDF's "Incremental Update" feature. See the spec for more details:
-    /// <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_embedding_manifests_into_pdfs>
+    /// [embedding_manifests_into_pdfs - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_embedding_manifests_into_pdfs)
     fn read_manifest_bytes(&self) -> Result<Option<Vec<&[u8]>>, Error> {
         let Some(id) = self.c2pa_file_spec_object_id() else {
             return Ok(None);

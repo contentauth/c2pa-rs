@@ -26,6 +26,7 @@ pub enum HashBlockObjectType {
     Cai,
     Xmp,
     Other,
+    OtherExclusion,
 }
 
 impl fmt::Display for HashBlockObjectType {

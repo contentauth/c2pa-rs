@@ -650,3 +650,16 @@ fn tool_sign_image_with_cawg_data() -> Result<(), Box<dyn Error>> {
     // ^^ Enable this when #1356 lands.
     Ok(())
 }
+
+#[test]
+// c2patool --crjson C.jpg
+fn tool_read_image_crjson() -> Result<(), Box<dyn Error>> {
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg("--crjson")
+        .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
+        .assert()
+        .success()
+        .stdout(str::contains("\"jsonGenerator\""))
+        .stdout(str::contains("https://c2pa.org/crjson"));
+    Ok(())
+}

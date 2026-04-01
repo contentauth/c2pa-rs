@@ -33,7 +33,7 @@ use crate::{
 /// Verify that an end-entity X.509 certificate meets the requirements stated in
 /// [§14.5. X.509 Certificates].
 ///
-/// [§14.5. X.509 Certificates]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#x509_certificates
+/// [§14.5. X.509 Certificates]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#x509_certificates
 pub fn check_end_entity_certificate_profile(
     certificate_der: &[u8],
     ctp: &CertificateTrustPolicy,
@@ -75,7 +75,7 @@ pub fn check_end_entity_certificate_profile(
 /// Verify that an X.509 certificate meets the requirements stated in [§14.5.1,
 /// Certificate Profiles].
 ///
-/// [§14.5.1, Certificate Profiles]: https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_certificate_profiles
+/// [§14.5.1, Certificate Profiles]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_certificate_profiles
 pub fn check_certificate_profile(
     certificate_der: &[u8],
     ctp: &CertificateTrustPolicy,

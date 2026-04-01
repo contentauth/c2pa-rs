@@ -75,8 +75,12 @@ struct CliArgs {
     config: Option<String>,
 
     /// Display detailed C2PA-formatted manifest data.
-    #[clap(short, long)]
+    #[clap(short, long, conflicts_with = "crjson")]
     detailed: bool,
+
+    /// Output manifest data in crJSON format.
+    #[clap(long, conflicts_with = "detailed")]
+    crjson: bool,
 
     /// Force overwrite of output if it already exists.
     #[clap(short, long)]
@@ -611,6 +615,26 @@ fn reader_from_args(args: &CliArgs) -> Result<Reader> {
     }
 }
 
+// Utility to catch reader formatting errors and print the reader json or detailed json
+// formatting can fail if Reader CBOR is deeply nested or malformed
+fn print_reader(reader: &Reader, detailed: bool, crjson: bool) -> Result<()> {
+    let result = if crjson {
+        reader.crjson_checked()
+    } else if detailed {
+        reader.detailed_json_checked()
+    } else {
+        reader.json_checked()
+    }
+    .map_err(|e| anyhow!("Error formatting output: {}", e));
+    match result {
+        Ok(json) => {
+            println!("{json}");
+            Ok(())
+        }
+        Err(e) => bail!("Error formatting output: {}", e),
+    }
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -845,11 +869,7 @@ fn main() -> Result<()> {
                 // generate a report on the output file
                 let mut reader = Reader::from_file(&output).map_err(special_errs)?;
                 validate_cawg(&mut reader)?;
-                if args.detailed {
-                    println!("{reader:#?}");
-                } else {
-                    println!("{reader}")
-                }
+                print_reader(&reader, args.detailed, args.crjson)?;
             }
         } else {
             bail!("Output path required with manifest definition")
@@ -893,10 +913,6 @@ fn main() -> Result<()> {
             "{}",
             Ingredient::from_file(&args.path).map_err(special_errs)?
         )
-    } else if args.detailed {
-        let mut reader = reader_from_args(&args)?;
-        validate_cawg(&mut reader)?;
-        println!("{reader:#?}");
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
@@ -914,7 +930,7 @@ fn main() -> Result<()> {
     } else {
         let mut reader = reader_from_args(&args)?;
         validate_cawg(&mut reader)?;
-        println!("{reader}");
+        print_reader(&reader, args.detailed, args.crjson)?;
     }
 
     Ok(())
@@ -924,6 +940,7 @@ fn main() -> Result<()> {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use c2pa::{BuilderIntent, DigitalSourceType};
     use tempfile::TempDir;
 
     use super::*;
@@ -955,6 +972,7 @@ pub mod tests {
         let tempdir = tempdirectory().unwrap();
         let output_path = tempdir.path().join("unit_out.jpg");
         let mut builder = Builder::from_json(CONFIG).expect("from_json");
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
         let signer = SignConfig::from_json(CONFIG)
             .unwrap()

@@ -13,7 +13,7 @@
 
 //! Example App showing how to work archive and restore Builders and ingredients.
 use std::{
-    io::{Cursor, Read, Seek},
+    io::{self, Cursor, Read, Seek},
     sync::Arc,
 };
 
@@ -71,12 +71,15 @@ where
     ))?;
 
     // sign a c2pa only manifest store by using a null input stream and application/c2pa as the format.
-    let mut null_stream = Cursor::new([]);
-    let mut output = Cursor::new(Vec::new());
     let signer = context.signer()?;
-    builder.sign(signer, "application/c2pa", &mut null_stream, &mut output)?;
+    let output = builder.sign(
+        signer,
+        "application/c2pa",
+        &mut io::empty(),
+        &mut io::empty(),
+    )?;
 
-    Ok(output.into_inner())
+    Ok(output)
 }
 
 fn main() -> Result<()> {

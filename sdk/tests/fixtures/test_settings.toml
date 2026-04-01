@@ -412,7 +412,6 @@ tsa_url = "http://timestamp.digicert.com"
 [builder]
 # certificate_status_fetch = "all"
 # certificate_status_should_override = true
-generate_c2pa_archive = true
 intent = "edit"
 
 # Claim generator info list.

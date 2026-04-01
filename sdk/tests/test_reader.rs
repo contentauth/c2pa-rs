@@ -12,7 +12,7 @@
 // each license.
 
 mod common;
-use c2pa::{validation_status, Context, Error, Reader, Result, Settings};
+use c2pa::{validation_status, Builder, Context, Error, Reader, Result, Settings, ValidationState};
 use c2pa_macros::c2pa_test_async;
 use common::{assert_err, compare_to_known_good, fixture_stream};
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -58,15 +58,22 @@ fn test_reader_xca_jpg() -> Result<()> {
     let (format, mut stream) = fixture_stream("XCA.jpg")?;
     let reader = Reader::from_context(context).with_stream(&format, &mut stream)?;
     // validation_results should have the expected failure
-    assert_eq!(
-        reader
-            .validation_results()
-            .unwrap()
-            .active_manifest()
-            .unwrap()
-            .failure[0]
-            .code(),
-        validation_status::ASSERTION_DATAHASH_MISMATCH
+    let failures = &reader
+        .validation_results()
+        .unwrap()
+        .active_manifest()
+        .unwrap()
+        .failure;
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.code() == validation_status::ASSERTION_DATAHASH_MISMATCH),
+        "expected {expected} in failure codes: {actual:?}",
+        expected = validation_status::ASSERTION_DATAHASH_MISMATCH,
+        actual = failures
+            .iter()
+            .map(|failure| failure.code())
+            .collect::<Vec<_>>()
     );
     compare_to_known_good(&reader, "XCA.json")
 }
@@ -103,5 +110,44 @@ fn write_known_goods() -> Result<()> {
     for filename in &filenames {
         common::write_known_good(filename)?;
     }
+    Ok(())
+}
+
+/// Test that validation_state() uses the Reader's context settings also
+/// when calling with_manifest_data_and_stream.
+#[test]
+fn test_reader_validation_state_uses_context_settings() -> Result<()> {
+    use std::io::Cursor;
+
+    let settings = Settings::new().with_json(include_str!("fixtures/test_settings.json"))?;
+    let context = Context::new()
+        .with_settings(settings)?
+        .with_signer(common::test_signer())
+        .into_shared();
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.no_embed = true;
+
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+    let mut dest = Cursor::new(Vec::new());
+
+    let manifest_data = builder.save_to_stream(format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+
+    let reader = Reader::from_shared_context(&context).with_manifest_data_and_stream(
+        &manifest_data,
+        format,
+        &mut dest,
+    )?;
+
+    assert_eq!(
+        reader.validation_state(),
+        ValidationState::Trusted,
+        "Expected Trusted state when trust is configured in the Reader context"
+    );
+
     Ok(())
 }

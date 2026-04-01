@@ -16,7 +16,10 @@ use std::{
     slice,
 };
 
-use crate::Error;
+use crate::{
+    box_tracked, cimpl_free, deref_mut_or_return_int, error::C2paError, ok_or_return_int,
+    CimplError,
+};
 
 #[repr(C)]
 #[derive(Debug)]
@@ -136,7 +139,12 @@ impl Read for C2paStream {
 
         // Returns a negative number for errors.
         if bytes_read < 0 {
-            return Err(std::io::Error::last_os_error());
+            return Err(CimplError::last_message()
+                .map(|msg| {
+                    let _ = CimplError::take_last(); // Clear ONLY on error path
+                    std::io::Error::other(msg)
+                })
+                .unwrap_or_else(std::io::Error::last_os_error));
         }
 
         Ok(bytes_read as usize)
@@ -167,7 +175,12 @@ impl Seek for C2paStream {
 
         let new_pos = unsafe { (self.seeker)(&mut (*self.context), pos as isize, mode) };
         if new_pos < 0 {
-            return Err(std::io::Error::last_os_error());
+            return Err(CimplError::last_message()
+                .map(|msg| {
+                    let _ = CimplError::take_last(); // Clear ONLY on error path
+                    std::io::Error::other(msg)
+                })
+                .unwrap_or_else(std::io::Error::last_os_error));
         }
         Ok(new_pos as u64)
     }
@@ -196,7 +209,12 @@ impl Write for C2paStream {
         let bytes_written =
             unsafe { (self.writer)(&mut (*self.context), buf.as_ptr(), buf.len() as isize) };
         if bytes_written < 0 {
-            return Err(std::io::Error::last_os_error());
+            return Err(CimplError::last_message()
+                .map(|msg| {
+                    let _ = CimplError::take_last(); // Clear ONLY on error path
+                    std::io::Error::other(msg)
+                })
+                .unwrap_or_else(std::io::Error::last_os_error));
         }
         Ok(bytes_written as usize)
     }
@@ -221,6 +239,40 @@ impl Write for C2paStream {
 unsafe impl Send for C2paStream {}
 unsafe impl Sync for C2paStream {}
 
+#[cfg(test)]
+/// Test-only wrapper around a tracked C2paStream for cleaner test code.
+///
+/// This wrapper:
+/// - Manages the tracked pointer lifecycle
+/// - Provides convenient mutable access
+/// - Automatically cleans up on drop
+pub struct TestStream(*mut C2paStream);
+
+#[cfg(test)]
+impl TestStream {
+    /// Creates a new TestStream from a Vec<u8>
+    pub fn new(data: Vec<u8>) -> Self {
+        Self(TestC2paStream::new(data).into_c_stream())
+    }
+
+    /// Gets a mutable reference to the underlying C2paStream
+    pub fn stream_mut(&mut self) -> &mut C2paStream {
+        unsafe { &mut *self.0 }
+    }
+
+    /// Gets the raw pointer (for passing to C API functions)
+    pub fn as_ptr(&mut self) -> *mut C2paStream {
+        self.0
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestStream {
+    fn drop(&mut self) {
+        TestC2paStream::drop_c_stream(self.0);
+    }
+}
+
 /// Creates a new C2paStream from context with callbacks.
 ///
 /// This allows implementing streams in other languages.
@@ -243,9 +295,7 @@ pub unsafe extern "C" fn c2pa_create_stream(
     writer: WriteCallback,
     flusher: FlushCallback,
 ) -> *mut C2paStream {
-    Box::into_raw(Box::new(C2paStream::new(
-        context, reader, seeker, writer, flusher,
-    )))
+    box_tracked!(C2paStream::new(context, reader, seeker, writer, flusher,))
 }
 
 /// Releases a C2paStream allocated by Rust.
@@ -254,9 +304,7 @@ pub unsafe extern "C" fn c2pa_create_stream(
 /// Can only be released once and is invalid after this call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_release_stream(stream: *mut C2paStream) {
-    if !stream.is_null() {
-        drop(Box::from_raw(stream));
-    }
+    cimpl_free(stream as *mut std::ffi::c_void);
 }
 
 /// This struct is used to test the C2paStream implementation.
@@ -276,15 +324,9 @@ impl TestC2paStream {
     }
 
     unsafe extern "C" fn reader(context: *mut StreamContext, data: *mut u8, len: isize) -> isize {
-        let stream: &mut TestC2paStream = &mut *(context as *mut TestC2paStream);
+        let stream = deref_mut_or_return_int!(context as *mut TestC2paStream, TestC2paStream);
         let data: &mut [u8] = slice::from_raw_parts_mut(data, len as usize);
-        match stream.cursor.read(data) {
-            Ok(bytes) => bytes as isize,
-            Err(e) => {
-                crate::Error::set_last(Error::Io(e.to_string()));
-                -1
-            }
-        }
+        ok_or_return_int!(stream.cursor.read(data)) as isize
     }
 
     unsafe extern "C" fn seeker(
@@ -292,12 +334,14 @@ impl TestC2paStream {
         offset: isize,
         mode: C2paSeekMode,
     ) -> isize {
-        let stream: &mut TestC2paStream = &mut *(context as *mut TestC2paStream);
+        let stream = deref_mut_or_return_int!(context as *mut TestC2paStream, TestC2paStream);
 
         match mode {
             C2paSeekMode::Start => {
                 if offset < 0 {
-                    crate::Error::set_last(Error::Io("Offset out of bounds".to_string()));
+                    CimplError::set_last(CimplError::from(C2paError::Other(
+                        "Offset out of bounds".to_string(),
+                    )));
                     return -1;
                 }
                 stream.cursor.set_position(offset as u64);
@@ -306,7 +350,7 @@ impl TestC2paStream {
             C2paSeekMode::Current => match stream.cursor.seek(SeekFrom::Current(offset as i64)) {
                 Ok(_) => {}
                 Err(e) => {
-                    crate::Error::set_last(Error::Io(e.to_string()));
+                    CimplError::set_last(CimplError::from(C2paError::Io(e.to_string())));
                     return -1;
                 }
             },
@@ -314,7 +358,7 @@ impl TestC2paStream {
             C2paSeekMode::End => match stream.cursor.seek(SeekFrom::End(offset as i64)) {
                 Ok(_) => {}
                 Err(e) => {
-                    crate::Error::set_last(Error::Io(e.to_string()));
+                    CimplError::set_last(CimplError::from(C2paError::Io(e.to_string())));
                     return -1;
                 }
             },
@@ -333,36 +377,32 @@ impl TestC2paStream {
         match stream.cursor.write(data) {
             Ok(bytes) => bytes as isize,
             Err(e) => {
-                crate::Error::set_last(Error::Io(e.to_string()));
+                CimplError::set_last(CimplError::from(C2paError::Io(e.to_string())));
                 -1
             }
         }
     }
 
-    pub fn into_c_stream(self) -> C2paStream {
+    /// Creates a tracked C2paStream pointer (for use with C API functions)
+    pub fn into_c_stream(self) -> *mut C2paStream {
         unsafe {
-            C2paStream::new(
-                Box::into_raw(Box::new(self)) as *mut StreamContext,
+            box_tracked!(C2paStream::new(
+                box_tracked!(self) as *mut StreamContext,
                 Self::reader,
                 Self::seeker,
                 Self::writer,
                 Self::flusher,
-            )
+            ))
         }
     }
 
-    pub fn from_bytes(data: Vec<u8>) -> C2paStream {
+    pub fn from_bytes(data: Vec<u8>) -> *mut C2paStream {
         let test_stream = Self::new(data);
         test_stream.into_c_stream()
     }
 
-    pub fn from_c_stream(mut c_stream: C2paStream) -> Self {
-        let original_context = c_stream.extract_context();
-        unsafe { *Box::from_raw(Box::into_raw(original_context) as *mut TestC2paStream) }
-    }
-
-    pub fn drop_c_stream(c_stream: C2paStream) {
-        drop(Self::from_c_stream(c_stream));
+    pub fn drop_c_stream(c_stream: *mut C2paStream) {
+        cimpl_free(c_stream as *mut std::ffi::c_void);
     }
 }
 
@@ -373,163 +413,143 @@ mod tests {
     #[test]
     fn test_cstream_read() {
         let data = vec![1, 2, 3, 4, 5];
-        let mut c_stream = TestC2paStream::from_bytes(data);
+        let mut stream = TestStream::new(data);
 
         let mut buf = [0u8; 3];
-        assert_eq!(c_stream.read(&mut buf).unwrap(), 3);
+        assert_eq!(stream.stream_mut().read(&mut buf).unwrap(), 3);
         assert_eq!(buf, [1, 2, 3]);
 
         let mut buf = [0u8; 3];
-        assert_eq!(c_stream.read(&mut buf).unwrap(), 2);
+        assert_eq!(stream.stream_mut().read(&mut buf).unwrap(), 2);
         assert_eq!(buf, [4, 5, 0]);
-
-        let _test_stream = TestC2paStream::from_c_stream(c_stream);
     }
 
     #[test]
     fn test_cstream_seek() {
         let data = vec![1, 2, 3, 4, 5];
-        let mut c_stream = TestC2paStream::from_bytes(data);
+        let mut stream = TestStream::new(data);
 
-        c_stream.seek(SeekFrom::Start(2)).unwrap();
+        stream.stream_mut().seek(SeekFrom::Start(2)).unwrap();
         let mut buf = [0u8; 3];
-        assert_eq!(c_stream.read(&mut buf).unwrap(), 3);
+        assert_eq!(stream.stream_mut().read(&mut buf).unwrap(), 3);
         assert_eq!(buf, [3, 4, 5]);
 
-        c_stream.seek(SeekFrom::End(-2)).unwrap();
+        stream.stream_mut().seek(SeekFrom::End(-2)).unwrap();
         let mut buf = [0u8; 2];
-        assert_eq!(c_stream.read(&mut buf).unwrap(), 2);
+        assert_eq!(stream.stream_mut().read(&mut buf).unwrap(), 2);
         assert_eq!(buf, [4, 5]);
 
-        c_stream.seek(SeekFrom::Current(-4)).unwrap();
+        stream.stream_mut().seek(SeekFrom::Current(-4)).unwrap();
         let mut buf = [0u8; 3];
-        assert_eq!(c_stream.read(&mut buf).unwrap(), 3);
+        assert_eq!(stream.stream_mut().read(&mut buf).unwrap(), 3);
         assert_eq!(buf, [2, 3, 4]);
-
-        TestC2paStream::drop_c_stream(c_stream);
     }
 
     #[test]
     fn test_cstream_write() {
         let data = vec![1, 2, 3, 4, 5];
-        let mut c_stream = TestC2paStream::from_bytes(data);
-        c_stream.seek(SeekFrom::End(0)).unwrap();
+        let mut stream = TestStream::new(data);
+        stream.stream_mut().seek(SeekFrom::End(0)).unwrap();
         let buf = [6, 7, 8];
-        let bytes_written = c_stream.write(&buf).unwrap();
+        let bytes_written = stream.stream_mut().write(&buf).unwrap();
         assert_eq!(bytes_written, 3);
-        assert_eq!(c_stream.seek(SeekFrom::End(0)).unwrap(), 8);
-        TestC2paStream::drop_c_stream(c_stream);
+        assert_eq!(stream.stream_mut().seek(SeekFrom::End(0)).unwrap(), 8);
     }
 
     #[test]
     fn test_cstream_read_empty() {
         let data = vec![];
-        let mut c_stream = TestC2paStream::from_bytes(data);
+        let mut stream = TestStream::new(data);
 
         let mut buf = [0u8; 3];
-        assert_eq!(c_stream.read(&mut buf).unwrap(), 0);
+        assert_eq!(stream.stream_mut().read(&mut buf).unwrap(), 0);
         assert_eq!(buf, [0, 0, 0]);
-
-        TestC2paStream::drop_c_stream(c_stream);
     }
 
     #[test]
     fn test_cstream_seek_out_of_bounds() {
         let data = vec![1, 2, 3, 4, 5];
-        let mut c_stream = TestC2paStream::from_bytes(data);
+        let mut stream = TestStream::new(data);
 
         // Seek before the start of the stream
-        assert!(c_stream.seek(SeekFrom::Start(10)).is_ok());
+        assert!(stream.stream_mut().seek(SeekFrom::Start(10)).is_ok());
 
         // Seek to a negative position
-        assert!(c_stream.seek(SeekFrom::Current(-20)).is_err());
-
-        TestC2paStream::drop_c_stream(c_stream);
+        assert!(stream.stream_mut().seek(SeekFrom::Current(-20)).is_err());
     }
 
     #[test]
     fn test_cstream_write_overwrite() {
         let data = vec![1, 2, 3, 4, 5];
-        let mut c_stream = TestC2paStream::from_bytes(data);
+        let mut stream = TestStream::new(data);
 
-        c_stream.seek(SeekFrom::Start(2)).unwrap();
+        stream.stream_mut().seek(SeekFrom::Start(2)).unwrap();
         let buf = [9, 9];
-        let bytes_written = c_stream.write(&buf).unwrap();
+        let bytes_written = stream.stream_mut().write(&buf).unwrap();
         assert_eq!(bytes_written, 2);
 
-        c_stream.seek(SeekFrom::Start(0)).unwrap();
+        stream.stream_mut().seek(SeekFrom::Start(0)).unwrap();
         let mut buf = [0u8; 5];
-        assert_eq!(c_stream.read(&mut buf).unwrap(), 5);
+        assert_eq!(stream.stream_mut().read(&mut buf).unwrap(), 5);
         assert_eq!(buf, [1, 2, 9, 9, 5]);
-
-        TestC2paStream::drop_c_stream(c_stream);
     }
 
     #[test]
     fn test_cstream_flush() {
         let data = vec![1, 2, 3, 4, 5];
-        let mut c_stream = TestC2paStream::from_bytes(data);
+        let mut stream = TestStream::new(data);
 
         // Flush should succeed without errors
-        assert!(c_stream.flush().is_ok());
-
-        TestC2paStream::drop_c_stream(c_stream);
+        assert!(stream.stream_mut().flush().is_ok());
     }
 
     #[test]
     fn test_cstream_large_read() {
         let data = vec![1, 2, 3, 4, 5];
-        let mut c_stream = TestC2paStream::from_bytes(data);
+        let mut stream = TestStream::new(data);
 
         let mut buf = [0u8; 10];
-        assert_eq!(c_stream.read(&mut buf).unwrap(), 5);
+        assert_eq!(stream.stream_mut().read(&mut buf).unwrap(), 5);
         assert_eq!(buf[..5], [1, 2, 3, 4, 5]);
         assert_eq!(buf[5..], [0, 0, 0, 0, 0]);
-
-        TestC2paStream::drop_c_stream(c_stream);
     }
 
     #[test]
     fn test_cstream_large_write() {
         let data = vec![1, 2, 3];
-        let mut c_stream = TestC2paStream::from_bytes(data);
+        let mut stream = TestStream::new(data);
 
-        c_stream.seek(SeekFrom::End(0)).unwrap();
+        stream.stream_mut().seek(SeekFrom::End(0)).unwrap();
         let buf = [6, 7, 8, 9, 10];
-        let bytes_written = c_stream.write(&buf).unwrap();
+        let bytes_written = stream.stream_mut().write(&buf).unwrap();
         assert_eq!(bytes_written, 5);
 
-        c_stream.seek(SeekFrom::Start(0)).unwrap();
+        stream.stream_mut().seek(SeekFrom::Start(0)).unwrap();
         let mut buf = [0u8; 8];
-        assert_eq!(c_stream.read(&mut buf).unwrap(), 8);
+        assert_eq!(stream.stream_mut().read(&mut buf).unwrap(), 8);
         assert_eq!(buf, [1, 2, 3, 6, 7, 8, 9, 10]);
-
-        TestC2paStream::drop_c_stream(c_stream);
     }
 
     #[test]
     fn test_cstream_seek_to_end() {
         let data = vec![1, 2, 3, 4, 5];
-        let mut c_stream = TestC2paStream::from_bytes(data);
+        let mut stream = TestStream::new(data);
 
-        let end_pos = c_stream.seek(SeekFrom::End(0)).unwrap();
+        let end_pos = stream.stream_mut().seek(SeekFrom::End(0)).unwrap();
         assert_eq!(end_pos, 5);
 
         let mut buf = [0u8; 1];
-        assert_eq!(c_stream.read(&mut buf).unwrap(), 0); // No data to read at the end
-
-        TestC2paStream::drop_c_stream(c_stream);
+        assert_eq!(stream.stream_mut().read(&mut buf).unwrap(), 0); // No data to read at the end
     }
 
     #[test]
     fn test_create_stream() {
         let test_stream = TestC2paStream::new(vec![1, 2, 3, 4, 5]);
-        let context = Box::into_raw(Box::new(test_stream));
-        let context_ptr = context as *mut StreamContext;
+        let context = box_tracked!(test_stream) as *mut StreamContext;
 
         let c2pa_stream = unsafe {
             c2pa_create_stream(
-                context_ptr,
+                context,
                 TestC2paStream::reader,
                 TestC2paStream::seeker,
                 TestC2paStream::writer,

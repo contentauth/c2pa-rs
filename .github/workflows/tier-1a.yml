@@ -211,6 +211,66 @@ jobs:
           verbose: true
           files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
 
+  tests-windows-arm-openssl:
+    name: Unit tests (Windows ARM, OpenSSL)
+    needs: get-features
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+      contains(github.event.pull_request.labels.*.name, 'check-release')
+
+    runs-on: windows-11-arm
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        env:
+          RUST_BACKTRACE: "1"
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cargo test --features "$env:FEATURES"
+
+  tests-windows-arm-rust-native-crypto:
+    name: Unit tests (Windows ARM, Rust native crypto)
+    needs: get-features
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+      contains(github.event.pull_request.labels.*.name, 'check-release')
+
+    runs-on: windows-11-arm
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        env:
+          RUST_BACKTRACE: "1"
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
+        run: |
+          cargo test --no-default-features --features "$env:FEATURES"
+
   docs_rs:
     name: Preflight docs.rs build
     runs-on: ubuntu-latest
@@ -339,6 +399,28 @@ jobs:
       - name: "`cargo check` with default features"
         run: cargo check
 
+  cargo-lock:
+    name: Cargo.lock is up to date
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+      contains(github.event.pull_request.labels.*.name, 'check-release')
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check that Cargo.lock is up to date
+        run: cargo check --locked
+
   tests-wasm:
     name: Unit tests (Wasm)
     needs: get-features
@@ -359,12 +441,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up Chrome
-        uses: browser-actions/setup-chrome@v2
-        with:
-          chrome-version: 142
-          install-chromedriver: true
-
       - name: Add wasm web target
         run: rustup target add wasm32-unknown-unknown
 
@@ -374,7 +450,7 @@ jobs:
       - name: Extract wasm-bindgen version from Cargo.lock
         id: wasm-bindgen-version
         run: |
-          VERSION=$(cargo metadata --format-version 1 --locked | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
+          VERSION=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Using wasm-bindgen version: $VERSION"
 
@@ -385,6 +461,7 @@ jobs:
         run: cargo test -p c2pa --no-default-features --features rust_native_crypto,http_reqwest --target wasm32-unknown-unknown
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+          GECKODRIVER: geckodriver
           WASM_BINDGEN_TEST_TIMEOUT: 60
 
   benchmarks:
@@ -398,6 +475,9 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: ubuntu-latest
+
+    env:
+      CODSPEED_MODE: simulation,memory
 
     steps:
       - name: Checkout repository
@@ -416,12 +496,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build the benchmark target(s)
-        run: cargo codspeed build -p c2pa --no-default-features --features rust_native_crypto
+        run: cargo codspeed build -m $CODSPEED_MODE -p c2pa --no-default-features --features rust_native_crypto
 
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4
         with:
-          mode: instrumentation
+          mode: ${{ env.CODSPEED_MODE }}
           run: cargo codspeed run
           token: ${{ secrets.CODSPEED_TOKEN }}
 
@@ -442,12 +522,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-        # nightly required for testing until this issue is resolved:
+        # Nightly required for testing until this issue is resolved:
         # wasip2 target should not conditionally feature gate stdlib APIs rust-lang/rust#130323 https://github.com/rust-lang/rust/issues/130323
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-08-25
+          toolchain: nightly-2026-01-16
 
       - name: Install wasmtime
         run: |
@@ -460,7 +540,7 @@ jobs:
           sudo apt-get install -y clang
 
       - name: Add wasm32-wasip2 target
-        run: rustup target add --toolchain nightly-2025-08-25 wasm32-wasip2
+        run: rustup target add --toolchain nightly-2026-01-16 wasm32-wasip2
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -472,7 +552,7 @@ jobs:
           RUST_MIN_STACK: 16777216
           FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
-          cargo +nightly-2025-08-25 test --target wasm32-wasip2 -p c2pa --features "$FEATURES" --no-default-features -- --no-capture
+          cargo +nightly-2026-01-16 test --target wasm32-wasip2 -p c2pa --features "$FEATURES" --no-default-features -- --no-capture
 
   clippy_check:
     name: Clippy
@@ -524,11 +604,11 @@ jobs:
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-12-06
+          toolchain: nightly-2026-01-16
           components: rustfmt
 
       - name: Check format
-        run: cargo +nightly-2025-12-06 fmt --all -- --check
+        run: cargo +nightly-2026-01-16 fmt --all -- --check
 
   cargo-deny:
     name: License / vulnerability audit

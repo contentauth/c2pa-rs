@@ -48,7 +48,11 @@ pub(crate) trait SettingsValidate {
 }
 
 /// Settings to configure the trust list.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(default)
+)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Trust {
     /// Whether to verify certificates against the trust lists specified in [`Trust`]. This
@@ -188,7 +192,11 @@ impl SettingsValidate for Trust {
 }
 
 /// Settings to configure core features.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(default)
+)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Core {
     /// Size of the [`BmffHash`] merkle tree chunks in kilobytes.
@@ -196,7 +204,7 @@ pub struct Core {
     /// This option is associated with the [`MerkleMap::fixed_block_size`] field.
     ///
     /// See more information in the spec here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash>
+    /// [bmff_based_hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_based_hash)
     ///
     /// [`MerkleMap::fixed_block_size`]: crate::assertions::MerkleMap::fixed_block_size
     /// [`BmffHash`]: crate::assertions::BmffHash
@@ -206,7 +214,7 @@ pub struct Core {
     /// This option defaults to 5.
     ///
     /// See more information in the spec here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash>
+    /// [bmff_based_hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_based_hash)
     ///
     /// [`BmffHash`]: crate::assertions::BmffHash
     pub merkle_tree_max_proofs: usize,
@@ -224,7 +232,7 @@ pub struct Core {
     pub decode_identity_assertions: bool,
     /// <div class="warning">
     /// The CAWG identity assertion does not currently respect this setting.
-    /// See <a href="https://github.com/contentauth/c2pa-rs/issues/1645">issue #1645</a>.
+    /// See [Issue #1645](https://github.com/contentauth/c2pa-rs/issues/1645).
     /// </div>
     ///
     /// List of host patterns that are allowed for network requests.
@@ -288,7 +296,11 @@ impl SettingsValidate for Core {
 }
 
 /// Settings to configure the verification process.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(default)
+)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Verify {
     /// Whether to verify the manifest after reading in the [`Reader`].
@@ -304,7 +316,9 @@ pub struct Verify {
     pub verify_after_reading: bool,
     /// Whether to verify the manifest after signing in the [`Builder`].
     ///
-    /// The default value is true.
+    /// The default value is false.
+    /// There is a known bug related to this setting: [#1875](https://github.com/contentauth/c2pa-rs/issues/1875).
+    /// When the bug is fixed, the default value should be true.
     ///
     /// <div class="warning">
     /// Disabling validation can improve signing performance, BUT it carries the risk of signing an invalid
@@ -349,14 +363,13 @@ pub struct Verify {
     /// [`Ingredient`]: crate::Ingredient
     /// [`Builder`]: crate::Builder
     pub remote_manifest_fetch: bool,
-    ///
     /// Whether to skip ingredient conflict resolution when multiple ingredients have the same
     /// manifest identifier. This settings is only applicable for C2PA v2 validation.
     ///
     /// The default value is false.
     ///
     /// See more information in the spec here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_versioning_manifests_due_to_conflicts>
+    /// [versioning_manifests_due_to_conflicts - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_versioning_manifests_due_to_conflicts)
     pub(crate) skip_ingredient_conflict_resolution: bool,
     /// Whether to do strictly C2PA v1 validation or otherwise the latest validation.
     ///
@@ -368,7 +381,7 @@ impl Default for Verify {
     fn default() -> Self {
         Self {
             verify_after_reading: true,
-            verify_after_sign: true,
+            verify_after_sign: false, // TODO: Update docs when #1875 is fixed.
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
@@ -385,7 +398,11 @@ impl SettingsValidate for Verify {}
 ///
 /// [Settings::default] will be set thread-locally by default. Any settings set via
 /// [Settings::from_toml] or [Settings::from_file] will also be thread-local.
-#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(default)
+)]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Settings {
     /// Version of the configuration.
@@ -416,6 +433,7 @@ impl Settings {
     #[cfg(feature = "file_io")]
     /// Load thread-local [Settings] from a file.
     /// to be deprecated - use [Settings::with_file] instead
+    #[doc(hidden)]
     pub fn from_file<P: AsRef<Path>>(settings_path: P) -> Result<Self> {
         let ext = settings_path
             .as_ref()
@@ -430,6 +448,7 @@ impl Settings {
     /// Load thread-local [Settings] from string representation of the configuration.
     /// Format of configuration must be supplied (json or toml).
     /// to be deprecated - use [Settings::with_json] or [Settings::with_toml] instead
+    #[doc(hidden)]
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
@@ -749,12 +768,14 @@ impl Settings {
     }
 
     /// Serializes the thread-local [Settings] into a toml string.
+    #[doc(hidden)]
     pub fn to_toml() -> Result<String> {
         let settings = get_thread_local_settings();
         Ok(toml::to_string(&settings)?)
     }
 
     /// Serializes the thread-local [Settings] into a pretty (formatted) toml string.
+    #[doc(hidden)]
     pub fn to_pretty_toml() -> Result<String> {
         let settings = get_thread_local_settings();
         Ok(toml::to_string_pretty(&settings)?)
@@ -809,14 +830,14 @@ impl Settings {
         let updated_config = Config::builder()
             .add_source(config)
             .set_override(path, value)
-            .map_err(|e| Error::BadParam(format!("Invalid path '{}': {}", path, e)))?
+            .map_err(|e| Error::BadParam(format!("Invalid path '{path}': {e}")))?
             .build()
             .map_err(|e| Error::OtherError(Box::new(e)))?;
 
         // Deserialize back to Settings
         let updated_settings = updated_config
             .try_deserialize::<Settings>()
-            .map_err(|e| Error::BadParam(format!("Invalid value for '{}': {}", path, e)))?;
+            .map_err(|e| Error::BadParam(format!("Invalid value for '{path}': {e}")))?;
 
         // Validate the updated settings
         updated_settings.validate()?;
@@ -899,7 +920,7 @@ impl Settings {
 
         config
             .get::<T>(path)
-            .map_err(|e| Error::BadParam(format!("Failed to get value at '{}': {}", path, e)))
+            .map_err(|e| Error::BadParam(format!("Failed to get value at '{path}': {e}")))
     }
 }
 
@@ -1221,9 +1242,11 @@ pub mod tests {
             debug = false
             hash_alg = "sha256"
             salt_jumbf_boxes = true
-            prefer_box_hash = false
             prefer_bmff_merkle_tree = false
             compress_manifests = true
+
+            [Builder]
+            prefer_box_hash = false
 
             [Verify]
             verify_after_reading = true
@@ -1255,7 +1278,7 @@ pub mod tests {
         let mut settings = Settings::default();
 
         // Check defaults
-        assert!(settings.verify.verify_after_sign);
+        assert!(settings.verify.verify_after_reading);
         assert!(settings.verify.verify_trust);
 
         // Set both to false
@@ -1263,14 +1286,14 @@ pub mod tests {
             .update_from_str(
                 r#"
             [verify]
-            verify_after_sign = false
+            verify_after_reading = false
             verify_trust = false
         "#,
                 "toml",
             )
             .unwrap();
 
-        assert!(!settings.verify.verify_after_sign);
+        assert!(!settings.verify.verify_after_reading);
         assert!(!settings.verify.verify_trust);
 
         // Override: set one to true, keep other false
@@ -1278,13 +1301,13 @@ pub mod tests {
             .update_from_str(
                 r#"
             [verify]
-            verify_after_sign = true
+            verify_after_reading = true
         "#,
                 "toml",
             )
             .unwrap();
 
-        assert!(settings.verify.verify_after_sign);
+        assert!(settings.verify.verify_after_reading);
         assert!(!settings.verify.verify_trust);
     }
 
@@ -1293,7 +1316,7 @@ pub mod tests {
         let mut settings = Settings::default();
 
         // Check defaults
-        assert!(settings.verify.verify_after_sign);
+        assert!(settings.verify.verify_after_reading);
         assert!(settings.verify.verify_trust);
         assert!(settings.builder.created_assertion_labels.is_none());
 
@@ -1303,7 +1326,7 @@ pub mod tests {
                 r#"
             {
                 "verify": {
-                    "verify_after_sign": false,
+                    "verify_after_reading": false,
                     "verify_trust": false
                 },
                 "builder": {
@@ -1315,7 +1338,7 @@ pub mod tests {
             )
             .unwrap();
 
-        assert!(!settings.verify.verify_after_sign);
+        assert!(!settings.verify.verify_after_reading);
         assert!(!settings.verify.verify_trust);
         assert_eq!(
             settings.builder.created_assertion_labels,
@@ -1328,7 +1351,7 @@ pub mod tests {
                 r#"
             {
                 "verify": {
-                    "verify_after_sign": true
+                    "verify_after_reading": true
                 }
             }
         "#,
@@ -1336,7 +1359,7 @@ pub mod tests {
             )
             .unwrap();
 
-        assert!(settings.verify.verify_after_sign);
+        assert!(settings.verify.verify_after_reading);
         assert!(!settings.verify.verify_trust);
         assert_eq!(
             settings.builder.created_assertion_labels,
@@ -1357,7 +1380,7 @@ pub mod tests {
             )
             .unwrap();
 
-        assert!(settings.verify.verify_after_sign);
+        assert!(settings.verify.verify_after_reading);
         assert!(!settings.verify.verify_trust);
         assert!(settings.builder.created_assertion_labels.is_none());
     }

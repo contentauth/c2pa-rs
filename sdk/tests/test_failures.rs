@@ -2,8 +2,8 @@ mod common;
 use std::io::Cursor;
 
 use c2pa::{
-    assertions::DataHash, settings::Settings, validation_status, Builder, BuilderIntent, HashRange,
-    Reader, Result,
+    assertions::DataHash, settings::Settings, validation_status, Builder, BuilderIntent, Error,
+    HashRange, Reader, Result,
 };
 use common::fixture_stream;
 
@@ -65,21 +65,8 @@ fn test_bad_data_hash() -> Result<()> {
 
     let mut dest = Cursor::new(Vec::new());
 
-    builder.sign(&Settings::signer()?, format, &mut source, &mut dest)?;
-
-    dest.set_position(0);
-    let reader = Reader::from_stream(format, &mut dest)?;
-
-    assert_eq!(
-        reader
-            .validation_results()
-            .unwrap()
-            .active_manifest()
-            .unwrap()
-            .failure[0]
-            .code(),
-        validation_status::ASSERTION_DATAHASH_MISMATCH
-    );
+    let result = builder.sign(&Settings::signer()?, format, &mut source, &mut dest);
+    assert!(matches!(result, Err(Error::HashMismatch(..))));
 
     Ok(())
 }

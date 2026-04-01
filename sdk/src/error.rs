@@ -19,8 +19,9 @@ use thiserror::Error;
 use crate::asset_handlers::pdf_io::PdfError;
 use crate::{
     asset_handlers::{
-        bmff_io::BmffError, gif_io::GifError, jpeg_io::JpegError, mp3_io::Mp3Error,
-        png_io::PngError, riff_io::RiffError, svg_io::SvgError, tiff_io::TiffError,
+        bmff_io::BmffError, flac_io::FlacError, gif_io::GifError, jpeg_io::JpegError,
+        mp3_io::Mp3Error, png_io::PngError, riff_io::RiffError, svg_io::SvgError,
+        tiff_io::TiffError,
     },
     crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
     http::HttpResolverError,
@@ -61,6 +62,10 @@ pub enum Error {
 
     #[error("bad parameter: {0}")]
     BadParam(String),
+
+    /// The operation was cancelled by a progress callback or cancellation token.
+    #[error("operation cancelled")]
+    OperationCancelled,
 
     #[error("required feature missing")]
     MissingFeature(String),
@@ -200,6 +205,9 @@ pub enum Error {
     #[error("remote signers are not supported for WASM")]
     WasmNoRemoteSigner,
 
+    #[error("feature unsupported on Wasm")]
+    WasmFeatureUnsupported,
+
     /// Unable to generate valid JUMBF for a claim.
     #[error("could not create valid JUMBF for claim")]
     JumbfCreationError,
@@ -332,7 +340,7 @@ pub enum Error {
     ImageError(#[from] image::ImageError),
 
     #[error(transparent)]
-    CborError(#[from] serde_cbor::Error),
+    CborError(#[from] c2pa_cbor::Error),
 
     #[error(transparent)]
     TomlSerializationError(#[from] toml::ser::Error),
@@ -391,6 +399,9 @@ pub enum Error {
 
     #[error("error parsing MP3: {0}")]
     Mp3Error(#[from] Mp3Error),
+
+    #[error("error parsing FLAC: {0}")]
+    FlacError(#[from] FlacError),
 
     #[cfg(feature = "pdf")]
     #[error("error parsing PDF: {0}")]

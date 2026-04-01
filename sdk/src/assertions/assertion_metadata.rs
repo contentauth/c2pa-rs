@@ -17,6 +17,7 @@ use chrono::{SecondsFormat, Utc};
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
@@ -44,12 +45,16 @@ pub struct AssertionMetadata {
     localizations: Option<Vec<HashMap<String, HashMap<String, String>>>>, // not implemented
     #[serde(rename = "regionOfInterest", skip_serializing_if = "Option::is_none")]
     region_of_interest: Option<RegionOfInterest>,
+    /// Arbitrary key/value pairs as permitted by the C2PA spec.
+    /// Uses flatten to allow these fields to be serialized at the same level as known fields.
+    #[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
+    additional_fields: HashMap<String, Value>,
 }
 
 impl AssertionMetadata {
     /// Label prefix for an assertion metadata assertion.
     ///
-    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata_about_assertions>.
+    /// See [Metadata About Assertions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_metadata_about_assertions).
     pub const LABEL: &'static str = labels::ASSERTION_METADATA;
 
     pub fn new() -> Self {
@@ -63,6 +68,7 @@ impl AssertionMetadata {
             data_source: None,
             localizations: None,
             region_of_interest: None,
+            additional_fields: HashMap::new(),
         }
     }
 
@@ -139,6 +145,57 @@ impl AssertionMetadata {
         localizations: Vec<HashMap<String, HashMap<String, String>>>,
     ) -> Self {
         self.localizations = Some(localizations);
+        self
+    }
+
+    /// Sets an arbitrary key/value pair in the metadata.
+    ///
+    /// This allows adding custom fields that are not part of the standard schema,
+    /// as permitted by the C2PA specification.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key for the custom field
+    /// * `value` - The value as a serde_json::Value
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use c2pa::assertions::AssertionMetadata;
+    /// use serde_json::json;
+    ///
+    /// let metadata = AssertionMetadata::new()
+    ///     .set_field("customKey", json!("customValue"))
+    ///     .set_field("nestedObject", json!({"foo": "bar", "count": 42}));
+    /// ```
+    pub fn set_field<S: Into<String>>(mut self, key: S, value: Value) -> Self {
+        self.additional_fields.insert(key.into(), value);
+        self
+    }
+
+    /// Gets an arbitrary key/value pair from the metadata.
+    ///
+    /// Returns `None` if the key doesn't exist.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The key to look up
+    pub fn get_field(&self, key: &str) -> Option<&Value> {
+        self.additional_fields.get(key)
+    }
+
+    /// Returns a reference to all additional fields.
+    pub fn additional_fields(&self) -> &HashMap<String, Value> {
+        &self.additional_fields
+    }
+
+    /// Sets multiple arbitrary key/value pairs at once, replacing any existing ones.
+    ///
+    /// # Arguments
+    ///
+    /// * `fields` - A HashMap of key/value pairs to set
+    pub fn set_additional_fields(mut self, fields: HashMap<String, Value>) -> Self {
+        self.additional_fields = fields;
         self
     }
 }
@@ -273,7 +330,7 @@ pub enum ReviewCode {
 
 /// A rating on an Assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_review_ratings>.
+/// See [C2PA Specification - Review Ratings](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_review_ratings).
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ReviewRating {
@@ -382,5 +439,147 @@ pub mod tests {
 
         assert_eq!(original.localizations, result.localizations);
         assert_eq!(original.reviews.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_arbitrary_key_value_pairs() {
+        use serde_json::json;
+
+        // Create metadata with arbitrary key/value pairs
+        let original = AssertionMetadata::new()
+            .set_field("customString", json!("test value"))
+            .set_field("customNumber", json!(42))
+            .set_field("customBool", json!(true))
+            .set_field("customObject", json!({"nested": "value", "count": 123}))
+            .set_field("customArray", json!(["item1", "item2", "item3"]));
+
+        // Test getter methods
+        assert_eq!(
+            original.get_field("customString"),
+            Some(&json!("test value"))
+        );
+        assert_eq!(original.get_field("customNumber"), Some(&json!(42)));
+        assert_eq!(original.get_field("customBool"), Some(&json!(true)));
+        assert_eq!(
+            original.get_field("customObject"),
+            Some(&json!({"nested": "value", "count": 123}))
+        );
+        assert_eq!(original.get_field("nonexistent"), None);
+
+        // Test additional_fields getter
+        assert_eq!(original.additional_fields().len(), 5);
+        assert!(original.additional_fields().contains_key("customString"));
+
+        // Test serialization/deserialization round-trip
+        let assertion = original.to_assertion().expect("build_assertion");
+        let result = AssertionMetadata::from_assertion(&assertion).expect("extract_assertion");
+
+        // Verify all fields survived round-trip
+        assert_eq!(result.get_field("customString"), Some(&json!("test value")));
+        assert_eq!(result.get_field("customNumber"), Some(&json!(42)));
+        assert_eq!(result.get_field("customBool"), Some(&json!(true)));
+        assert_eq!(
+            result.get_field("customObject"),
+            Some(&json!({"nested": "value", "count": 123}))
+        );
+        assert_eq!(
+            result.get_field("customArray"),
+            Some(&json!(["item1", "item2", "item3"]))
+        );
+        assert_eq!(result.additional_fields().len(), 5);
+    }
+
+    #[test]
+    fn test_set_additional_fields() {
+        use serde_json::json;
+
+        let mut fields = HashMap::new();
+        fields.insert("field1".to_owned(), json!("value1"));
+        fields.insert("field2".to_owned(), json!(100));
+        fields.insert("field3".to_owned(), json!({"key": "val"}));
+
+        let metadata = AssertionMetadata::new().set_additional_fields(fields.clone());
+
+        assert_eq!(metadata.additional_fields(), &fields);
+        assert_eq!(metadata.get_field("field1"), Some(&json!("value1")));
+        assert_eq!(metadata.get_field("field2"), Some(&json!(100)));
+    }
+
+    #[test]
+    fn test_arbitrary_fields_with_standard_fields() {
+        use serde_json::json;
+
+        let review = ReviewRating::new("test review", Some("test.code".to_owned()), 3);
+
+        // Mix arbitrary fields with standard fields
+        let original = AssertionMetadata::new()
+            .add_review(review)
+            .set_date_time("2021-06-28T16:49:32.874Z".to_owned())
+            .set_field("customField1", json!("custom value 1"))
+            .set_field("customField2", json!({"nested": true}));
+
+        // Serialize and deserialize
+        let assertion = original.to_assertion().expect("build_assertion");
+        let result = AssertionMetadata::from_assertion(&assertion).expect("extract_assertion");
+
+        // Verify standard fields
+        assert!(result.reviews().is_some());
+        assert_eq!(result.reviews().unwrap().len(), 1);
+        assert_eq!(result.date_time(), Some("2021-06-28T16:49:32.874Z"));
+
+        // Verify custom fields
+        assert_eq!(
+            result.get_field("customField1"),
+            Some(&json!("custom value 1"))
+        );
+        assert_eq!(
+            result.get_field("customField2"),
+            Some(&json!({"nested": true}))
+        );
+    }
+
+    #[test]
+    fn test_empty_additional_fields() {
+        // Test that empty additional_fields are handled correctly
+        let original = AssertionMetadata::new();
+
+        assert_eq!(original.additional_fields().len(), 0);
+        assert_eq!(original.get_field("anything"), None);
+
+        // Serialize and deserialize
+        let assertion = original.to_assertion().expect("build_assertion");
+        let result = AssertionMetadata::from_assertion(&assertion).expect("extract_assertion");
+
+        assert_eq!(result.additional_fields().len(), 0);
+    }
+
+    #[test]
+    fn test_cbor_serialization_with_arbitrary_fields() {
+        use serde_json::json;
+
+        // Create metadata with various field types
+        let original = AssertionMetadata::new()
+            .set_field("stringField", json!("test"))
+            .set_field("numberField", json!(42.5))
+            .set_field("boolField", json!(false))
+            .set_field("nullField", json!(null))
+            .set_field("arrayField", json!([1, 2, 3]))
+            .set_field("objectField", json!({"a": 1, "b": "two"}));
+
+        // Convert to CBOR and back
+        let cbor_bytes = c2pa_cbor::to_vec(&original).expect("serialize to CBOR");
+        let result: AssertionMetadata =
+            c2pa_cbor::from_slice(&cbor_bytes).expect("deserialize from CBOR");
+
+        // Verify all fields
+        assert_eq!(result.get_field("stringField"), Some(&json!("test")));
+        assert_eq!(result.get_field("numberField"), Some(&json!(42.5)));
+        assert_eq!(result.get_field("boolField"), Some(&json!(false)));
+        assert_eq!(result.get_field("nullField"), Some(&json!(null)));
+        assert_eq!(result.get_field("arrayField"), Some(&json!([1, 2, 3])));
+        assert_eq!(
+            result.get_field("objectField"),
+            Some(&json!({"a": 1, "b": "two"}))
+        );
     }
 }
