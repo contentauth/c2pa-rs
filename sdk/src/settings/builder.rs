@@ -43,10 +43,13 @@ pub enum ThumbnailFormat {
     /// An image in JPEG format.
     Jpeg,
     /// An image in GIF format.
+    #[cfg(feature = "image_gif")]
     Gif,
     /// An image in WEBP format.
+    #[cfg(feature = "image_webp")]
     WebP,
     /// An image in TIFF format.
+    #[cfg(feature = "image_tiff")]
     Tiff,
 }
 /// Quality of the thumbnail.

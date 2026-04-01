@@ -50,8 +50,11 @@ impl TryFrom<ImageFormat> for ThumbnailFormat {
         match format {
             ImageFormat::Png => Ok(ThumbnailFormat::Png),
             ImageFormat::Jpeg => Ok(ThumbnailFormat::Jpeg),
+            #[cfg(feature = "image_gif")]
             ImageFormat::Gif => Ok(ThumbnailFormat::Gif),
+            #[cfg(feature = "image_webp")]
             ImageFormat::WebP => Ok(ThumbnailFormat::WebP),
+            #[cfg(feature = "image_tiff")]
             ImageFormat::Tiff => Ok(ThumbnailFormat::Tiff),
             _ => Err(Error::UnsupportedThumbnailFormat(
                 format.to_mime_type().to_owned(),
@@ -65,8 +68,11 @@ impl From<ThumbnailFormat> for ImageFormat {
         match format {
             ThumbnailFormat::Png => ImageFormat::Png,
             ThumbnailFormat::Jpeg => ImageFormat::Jpeg,
+            #[cfg(feature = "image_gif")]
             ThumbnailFormat::Gif => ImageFormat::Gif,
+            #[cfg(feature = "image_webp")]
             ThumbnailFormat::WebP => ImageFormat::WebP,
+            #[cfg(feature = "image_tiff")]
             ThumbnailFormat::Tiff => ImageFormat::Tiff,
         }
     }
@@ -77,8 +83,11 @@ impl From<ThumbnailFormat> for config::ValueKind {
         let variant = match value {
             ThumbnailFormat::Png => "png",
             ThumbnailFormat::Jpeg => "jpeg",
+            #[cfg(feature = "image_gif")]
             ThumbnailFormat::Gif => "gif",
+            #[cfg(feature = "image_webp")]
             ThumbnailFormat::WebP => "webp",
+            #[cfg(feature = "image_tiff")]
             ThumbnailFormat::Tiff => "tiff",
         };
         config::ValueKind::String(variant.to_owned())
@@ -158,9 +167,11 @@ where
                     match prefer_smallest_format {
                         true => match input_format {
                             // TODO: investigate more formats
-                            ThumbnailFormat::Png | ThumbnailFormat::Tiff
-                                if !image.color().has_alpha() =>
-                            {
+                            ThumbnailFormat::Png if !image.color().has_alpha() => {
+                                ThumbnailFormat::Jpeg
+                            }
+                            #[cfg(feature = "image_tiff")]
+                            ThumbnailFormat::Tiff if !image.color().has_alpha() => {
                                 ThumbnailFormat::Jpeg
                             }
                             _ => input_format,
@@ -206,6 +217,7 @@ where
                 FilterType::default(),
             ))?,
         },
+        #[cfg(any(feature = "image_gif", feature = "image_webp", feature = "image_tiff"))]
         _ => image.write_to(output, output_format.into())?,
     }
 
