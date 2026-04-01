@@ -54,6 +54,20 @@ use crate::{
     ManifestAssertionKind, Reader, Relationship, Signer,
 };
 
+/// The hash binding type that a [`Builder`] will use for embeddable signing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HashType {
+    /// Requires placeholder, exclusions, hash, then sign.
+    Data,
+
+    /// Requires placeholder, hash, then sign.
+    /// Exclusions are derived automatically from the BMFF structure.
+    Bmff,
+
+    /// Requires hash then sign only, no placeholder (when `prefer_box_hash` is enabled).
+    Box,
+}
+
 /// Version of the Builder Archive file
 const ARCHIVE_VERSION: &str = "1";
 
@@ -1992,24 +2006,38 @@ impl Builder {
     /// # Arguments
     /// * `format` — MIME type or file extension of the target asset.
     pub fn needs_placeholder(&self, format: &str) -> bool {
-        // If a BoxHash is already present, no placeholder is needed.
+        self.hash_type(format) != HashType::Box
+    }
+
+    /// Returns the hash binding type that will be used for the given format.
+    /// This is a helper function to help know which paths a Builder may
+    /// need to follow, e.g. in embeddable workflows.
+    ///
+    /// # Arguments
+    /// * `format` — MIME type or file extension of the target asset.
+    pub fn hash_type(&self, format: &str) -> HashType {
+        // A pre-existing BoxHash assertion means the caller has explicitly
+        // opted into the box-hash path.
         if self.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok() {
-            return false;
+            return HashType::Box;
         }
-        // BMFF formats always need a placeholder (BmffHash).
+
+        // BMFF formats always use BmffHash.
         if jumbf_io::is_bmff_format(format) {
-            return true;
+            return HashType::Bmff;
         }
-        // For non-BMFF: if prefer_box_hash is enabled and the format supports BoxHash,
-        // a placeholder is not needed.
+
+        // When prefer_box_hash is enabled and the format handler supports it,
+        // use BoxHash (no placeholder needed).
         if self.context.settings().builder.prefer_box_hash {
             if let Some(handler) = jumbf_io::get_assetio_handler(format) {
                 if handler.asset_box_hash_ref().is_some() {
-                    return false;
+                    return HashType::Box;
                 }
             }
         }
-        true
+
+        HashType::Data
     }
 
     /// Create a placeholder manifest with dynamic assertion support.
@@ -4361,6 +4389,93 @@ mod tests {
             builder2.find_assertion::<BoxHash>(BoxHash::LABEL).is_err(),
             "BoxHash must NOT be auto-created by placeholder() — caller creates it via update_hash_from_stream()"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_type() -> Result<()> {
+        let builder = Builder::from_json(&simple_manifest_json())?;
+
+        // Non-BMFF formats default to DataHash.
+        assert_eq!(builder.hash_type("image/jpeg"), HashType::Data);
+        assert_eq!(builder.hash_type("image/png"), HashType::Data);
+
+        // BMFF MIME types produce BmffHash.
+        assert_eq!(builder.hash_type("video/mp4"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/avif"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/heif"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/heic"), HashType::Bmff);
+        assert_eq!(builder.hash_type("video/quicktime"), HashType::Bmff);
+
+        // BMFF file extensions also produce BmffHash.
+        assert_eq!(builder.hash_type("mp4"), HashType::Bmff);
+        assert_eq!(builder.hash_type("avif"), HashType::Bmff);
+        assert_eq!(builder.hash_type("mov"), HashType::Bmff);
+        assert_eq!(builder.hash_type("m4a"), HashType::Bmff);
+
+        // Unknown format falls back to DataHash.
+        assert_eq!(
+            builder.hash_type("application/octet-stream"),
+            HashType::Data
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_type_with_prefer_box_hash() -> Result<()> {
+        let context = Context::new()
+            .with_settings(serde_json::json!({"builder": {"prefer_box_hash": true}}).to_string())?;
+        let builder =
+            Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+
+        // BoxHash-capable formats produce BoxHash when prefer_box_hash is on.
+        assert_eq!(builder.hash_type("image/jpeg"), HashType::Box);
+
+        // BMFF formats still produce BmffHash regardless of prefer_box_hash.
+        assert_eq!(builder.hash_type("video/mp4"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/avif"), HashType::Bmff);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_type_with_existing_box_hash_assertion() -> Result<()> {
+        let mut builder = Builder::from_json(&simple_manifest_json())?;
+
+        let bh = BoxHash::default();
+        builder.add_assertion(BoxHash::LABEL, &bh)?;
+
+        // A pre-existing BoxHash assertion forces BoxHash for any format.
+        assert_eq!(builder.hash_type("image/jpeg"), HashType::Box);
+        assert_eq!(builder.hash_type("video/mp4"), HashType::Box);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_type_consistent_with_needs_placeholder() -> Result<()> {
+        // When needs_placeholder returns false, hash_type must be BoxHash.
+        // When needs_placeholder returns true, hash_type must be DataHash or BmffHash.
+        let builder = Builder::from_json(&simple_manifest_json())?;
+        for format in &["image/jpeg", "image/png", "video/mp4", "image/avif"] {
+            let needs = builder.needs_placeholder(format);
+            let ht = builder.hash_type(format);
+            if needs {
+                assert_ne!(
+                    ht,
+                    HashType::Box,
+                    "{format}: needs_placeholder=true but hash_type=BoxHash"
+                );
+            } else {
+                assert_eq!(
+                    ht,
+                    HashType::Box,
+                    "{format}: needs_placeholder=false but hash_type!=BoxHash"
+                );
+            }
+        }
 
         Ok(())
     }
