@@ -3138,6 +3138,8 @@ impl Store {
 
         let io_handler = get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
 
+        context.check_progress(ProgressPhase::Writing, 1, 2)?;
+
         // Do not assume the handler supports XMP or removing manifests unless we need it to
         if let Some(url) = url {
             let external_ref_writer = io_handler
@@ -3239,7 +3241,7 @@ impl Store {
             }
 
             // Signal that the write pass is done; hash readback begins next.
-            context.check_progress(ProgressPhase::Writing, 1, 1)?;
+            context.check_progress(ProgressPhase::Writing, 2, 2)?;
 
             // generate actual hash values
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
@@ -3305,7 +3307,7 @@ impl Store {
             // readback pass begins.  This separates "Writing" (streaming
             // input → output with placeholder JUMBF) from "Hashing" (reading
             // output to compute the final content-hash binding).
-            context.check_progress(ProgressPhase::Writing, 1, 1)?;
+            context.check_progress(ProgressPhase::Writing, 2, 2)?;
 
             // 4)  determine final object locations and patch the asset hashes with correct offset
             // replace the source with correct asset hashes so that the claim hash will be correct
