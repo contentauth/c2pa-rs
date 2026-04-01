@@ -2505,7 +2505,7 @@ impl Builder {
             // and its own alg field (set when the assertion was created).
             let ctx = &self.context;
             let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
-            bmff_hash.gen_hash_from_stream_with_progress(stream, Some(&mut cb))?;
+            bmff_hash.gen_hash_from_stream_with_progress(stream, &mut cb)?;
 
             self.definition
                 .assertions
@@ -2528,14 +2528,9 @@ impl Builder {
             // inside the preceding SOS entropy range, which causes the sum to
             // exceed the file length and triggers a range-validation error.
             let ctx = &self.context;
-            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
-            bh.generate_box_hash_from_stream_with_progress(
-                stream,
-                definition_alg,
-                bhp,
-                false,
-                Some(&mut cb),
-            )?;
+            let cb: Box<dyn FnMut(u32, u32) -> Result<()>> =
+                Box::new(|step, total| ctx.check_progress(ProgressPhase::Hashing, step, total));
+            bh.generate_box_hash_from_stream_with_progress(stream, definition_alg, bhp, false, cb)?;
             self.definition
                 .assertions
                 .retain(|a| !a.label.starts_with(BoxHash::LABEL));
@@ -2569,7 +2564,7 @@ impl Builder {
                 stream,
                 exclusion_arg,
                 true,
-                Some(&mut cb),
+                &mut cb,
             )?;
 
             // Preserve the existing assertion's name or use the default.

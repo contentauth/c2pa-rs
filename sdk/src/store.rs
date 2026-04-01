@@ -2150,15 +2150,16 @@ impl Store {
     }
 
     // generate a list of AssetHashes based on the location of objects in the stream
-    fn generate_data_hashes_for_stream<R>(
+    fn generate_data_hashes_for_stream<R, F>(
         stream: &mut R,
         alg: &str,
         block_locations: &mut Vec<HashObjectPositions>,
         calc_hashes: bool,
-        progress: Option<&mut dyn FnMut(u32, u32) -> Result<()>>,
+        progress: &mut F,
     ) -> Result<Vec<DataHash>>
     where
         R: Read + Seek + ?Sized,
+        F: FnMut(u32, u32) -> Result<()>,
     {
         let stream_len = stream_len(stream)?;
         stream.rewind()?;
@@ -2458,7 +2459,7 @@ impl Store {
         if let Some(reader) = asset_reader {
             // calc hashes
             let mut cb = |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
-            adjusted_dh.gen_hash_from_stream_with_progress(reader, Some(&mut cb))?;
+            adjusted_dh.gen_hash_from_stream_with_progress(reader, &mut cb)?;
         }
 
         // update the placeholder hash
@@ -3252,7 +3253,7 @@ impl Store {
                     output_stream.rewind()?;
                     let mut cb =
                         |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
-                    bmff_hash.gen_hash_from_stream_with_progress(output_stream, Some(&mut cb))?;
+                    bmff_hash.gen_hash_from_stream_with_progress(output_stream, &mut cb)?;
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }
@@ -3271,7 +3272,7 @@ impl Store {
                         pc.alg(),
                         &mut hash_ranges,
                         false,
-                        None,
+                        &mut |_, _| Ok(()),
                     )?
                 };
 
@@ -3334,7 +3335,7 @@ impl Store {
                         pc.alg(),
                         &mut new_hash_ranges,
                         true,
-                        Some(&mut cb),
+                        &mut cb,
                     )?;
 
                     // patch existing claim hash with updated data
