@@ -29,7 +29,6 @@ add_thumbnails = ["c2pa/add_thumbnails"]
 
 [dependencies]
 c2pa = { path = "../sdk", version = "0.78.7", default-features = false, features = [
-    "fetch_remote_manifests",
     "file_io",
     "pdf",
 ] }

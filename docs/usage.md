@@ -53,7 +53,6 @@ These features are enabled by default:
 Other features:
 
 - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
-- **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
 - **file_io**: Enables APIs that use file system I/O.
 - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
 - **pdf**: Enables basic PDF read support.
@@ -73,6 +72,7 @@ WARNING: These features are for advanced users. Most people can ignore them. The
 
 The following features are no longer supported:
 
+* **fetch_remote_manifests**. Fetching remote manifests can now be enabled with the `verify.remote_manifest_fetch` setting.
 * **v1_api**. The old API that this enabled has been removed.
 * **serialize_thumbnails**. Thumbnails can be serialized by accessing resources directly.
 
@@ -123,4 +123,3 @@ The default operation of C2PA signing is to embed a C2PA manifest store into an 
 - If you don't embed, then the original asset is unmodified and there is no need to write one out.
 - The remote URL can be set with `builder.remote_url`.
 - If embedding is not needed, set the `builder.no_embed` flag to `true`.
-

@@ -2407,7 +2407,7 @@ pub unsafe extern "C" fn c2pa_builder_set_fixed_size_merkle(
 /// # Example
 /// ```c
 ///  auto data = std::vector<std::uint8_t> buffer(1024);
-///  
+///
 ///  c2pa_builder_hash_mdat_bytes(builder, 1, (const uint8_t*)data.data(), 1024, true);
 /// ```
 #[no_mangle]
@@ -3271,6 +3271,19 @@ mod tests {
 
     #[test]
     fn test_c2pa_reader_remote_url() {
+        let settings = serde_json::json!( {
+            "verify": {
+                "remote_manifest_fetch": true
+            }
+        });
+        let result = unsafe {
+            c2pa_load_settings(
+                CString::new(settings.to_string()).unwrap().as_ptr(),
+                c"json".as_ptr(),
+            )
+        };
+        assert_eq!(result, 0);
+
         let mut stream = TestStream::new(include_bytes!(fixture_path!("cloud.jpg")).to_vec());
 
         let format = CString::new("image/jpeg").unwrap();
@@ -4053,6 +4066,19 @@ verify_after_sign = true
 
     #[test]
     fn test_c2pa_reader_detailed_json() {
+        let settings = serde_json::json!( {
+            "verify": {
+                "remote_manifest_fetch": true
+            }
+        });
+        let result = unsafe {
+            c2pa_load_settings(
+                CString::new(settings.to_string()).unwrap().as_ptr(),
+                c"json".as_ptr(),
+            )
+        };
+        assert_eq!(result, 0);
+
         use std::ffi::CStr;
 
         let source_image = include_bytes!(fixture_path!("cloud.jpg"));
@@ -4082,6 +4108,19 @@ verify_after_sign = true
 
     #[test]
     fn test_c2pa_reader_is_embedded() {
+        let settings = serde_json::json!( {
+            "verify": {
+                "remote_manifest_fetch": true
+            }
+        });
+        let result = unsafe {
+            c2pa_load_settings(
+                CString::new(settings.to_string()).unwrap().as_ptr(),
+                c"json".as_ptr(),
+            )
+        };
+        assert_eq!(result, 0);
+
         // Test with embedded manifest
         let source_image = include_bytes!(fixture_path!("cloud.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
@@ -4144,6 +4183,19 @@ verify_after_sign = true
 
     #[test]
     fn test_c2pa_builder_add_ingredient_from_stream() {
+        let settings = serde_json::json!( {
+            "verify": {
+                "remote_manifest_fetch": true
+            }
+        });
+        let result = unsafe {
+            c2pa_load_settings(
+                CString::new(settings.to_string()).unwrap().as_ptr(),
+                c"json".as_ptr(),
+            )
+        };
+        assert_eq!(result, 0);
+
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
@@ -4213,6 +4265,19 @@ verify_after_sign = true
 
     #[test]
     fn test_c2pa_builder_with_archive() {
+        let settings = serde_json::json!( {
+            "verify": {
+                "remote_manifest_fetch": true
+            }
+        });
+        let result = unsafe {
+            c2pa_load_settings(
+                CString::new(settings.to_string()).unwrap().as_ptr(),
+                c"json".as_ptr(),
+            )
+        };
+        assert_eq!(result, 0);
+
         // Create initial builder
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
@@ -4257,6 +4322,19 @@ verify_after_sign = true
 
     #[test]
     fn test_c2pa_reader_with_fragment() {
+        let settings = serde_json::json!( {
+            "verify": {
+                "remote_manifest_fetch": true
+            }
+        });
+        let result = unsafe {
+            c2pa_load_settings(
+                CString::new(settings.to_string()).unwrap().as_ptr(),
+                c"json".as_ptr(),
+            )
+        };
+        assert_eq!(result, 0);
+
         // Create initial reader
         let source_image = include_bytes!(fixture_path!("cloud.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
@@ -4293,6 +4371,19 @@ verify_after_sign = true
 
     #[test]
     fn test_c2pa_reader_with_fragment_null_format() {
+        let settings = serde_json::json!( {
+            "verify": {
+                "remote_manifest_fetch": true
+            }
+        });
+        let result = unsafe {
+            c2pa_load_settings(
+                CString::new(settings.to_string()).unwrap().as_ptr(),
+                c"json".as_ptr(),
+            )
+        };
+        assert_eq!(result, 0);
+
         // Create initial reader
         let source_image = include_bytes!(fixture_path!("cloud.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
@@ -4502,6 +4593,19 @@ verify_after_sign = true
 
     #[test]
     fn test_c2pa_reader_json_better_coverage() {
+        let settings = serde_json::json!( {
+            "verify": {
+                "remote_manifest_fetch": true
+            }
+        });
+        let result = unsafe {
+            c2pa_load_settings(
+                CString::new(settings.to_string()).unwrap().as_ptr(),
+                c"json".as_ptr(),
+            )
+        };
+        assert_eq!(result, 0);
+
         // The existing test only tests null, let's test with valid reader
         let source_image = include_bytes!(fixture_path!("cloud.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
@@ -4621,6 +4725,19 @@ verify_after_sign = true
 
     #[test]
     fn test_c2pa_reader_from_manifest_data_and_stream_null_format() {
+        let settings = serde_json::json!( {
+            "verify": {
+                "remote_manifest_fetch": true
+            }
+        });
+        let result = unsafe {
+            c2pa_load_settings(
+                CString::new(settings.to_string()).unwrap().as_ptr(),
+                c"json".as_ptr(),
+            )
+        };
+        assert_eq!(result, 0);
+
         let source_image = include_bytes!(fixture_path!("cloud.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
         let manifest_data = [0u8; 100];
