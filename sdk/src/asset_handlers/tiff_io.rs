@@ -508,7 +508,9 @@ where
                 let next_ifd =
                     TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Page)?;
                 let next_token = tiff_tree.new_node(next_ifd);
-                current_token.insert_after(next_token, &mut tiff_tree);
+                current_token
+                    .checked_insert_after(next_token, &mut tiff_tree)
+                    .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
                 current_token = next_token;
             } else {
                 break;
