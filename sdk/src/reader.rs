@@ -1332,6 +1332,7 @@ pub mod tests {
     #[cfg(feature = "fetch_remote_manifests")]
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
     const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACA.jpg");
+    const SAMPLE1_HEIC: &[u8] = include_bytes!("../tests/fixtures/sample1.heic");
 
     #[test]
     // Verify that we can convert a Reader back into a Builder re-sign and the read it back again
@@ -1418,8 +1419,10 @@ pub mod tests {
 
     /// BMFF hash verification now fires at least one `VerifyingAssetHash` progress event per
     /// hash pass (file-level or per-chunk/track), matching the granularity of the data-hash path.
+    ///
+    /// Uses in-memory streams and an embedded fixture so this runs on targets without a usable
+    /// host filesystem (e.g. WASI without preopened paths).
     #[test]
-    #[cfg(feature = "file_io")]
     fn test_bmff_read_reports_verifying_asset_hash_progress() -> Result<()> {
         use std::sync::Mutex;
 
@@ -1434,20 +1437,17 @@ pub mod tests {
             })
             .into_shared();
 
-        let temp_dir = crate::utils::io_utils::tempdirectory()?;
-        let output_path = temp_dir.path().join("bmff_progress.heic");
-        let parent_path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample1.heic");
-
         let mut builder = Builder::from_shared_context(&ctx);
         let ctx_for_signer = builder.context().clone();
         let signer = ctx_for_signer.signer()?;
-        builder.sign_file(signer, &parent_path, &output_path)?;
+        let mut source = Cursor::new(SAMPLE1_HEIC);
+        let mut dest = Cursor::new(Vec::new());
+        builder.sign(signer, "heic", &mut source, &mut dest)?;
 
         received.lock().unwrap().clear();
 
-        let mut f = File::open(&output_path)?;
-        let _reader = Reader::from_shared_context(&ctx).with_stream("image/heic", &mut f)?;
+        dest.set_position(0);
+        let _reader = Reader::from_shared_context(&ctx).with_stream("image/heic", &mut dest)?;
 
         let asset_hash_events: Vec<_> = received
             .lock()
