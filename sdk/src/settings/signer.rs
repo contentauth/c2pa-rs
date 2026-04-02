@@ -279,7 +279,8 @@ impl Signer for RemoteSigner {
         use std::io::Read;
 
         let request = Request::post(&self.url).body(data.to_vec())?;
-        let response = SyncGenericResolver::new()
+        let response = SyncGenericResolver::with_redirects()
+            .unwrap_or_default()
             .http_resolve(request)
             .map_err(|_| Error::FailedToRemoteSign)?;
         let mut bytes: Vec<u8> = Vec::with_capacity(self.reserve_size);
