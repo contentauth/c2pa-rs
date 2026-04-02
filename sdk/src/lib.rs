@@ -245,11 +245,11 @@ pub mod validation_status;
 pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
-pub use builder::{Builder, BuilderIntent, ManifestDefinition};
+pub use builder::{Builder, BuilderIntent, HashType, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 #[doc(inline)]
-pub use context::Context;
+pub use context::{Context, ProgressCallbackFunc, ProgressPhase};
 pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
 #[doc(hidden)]
@@ -282,6 +282,7 @@ pub(crate) mod claim;
 pub(crate) mod claim_generator_info;
 pub(crate) mod context;
 pub(crate) mod cose_validator;
+pub(crate) mod crjson;
 pub(crate) mod error;
 pub(crate) mod external_manifest;
 pub(crate) mod hashed_uri;

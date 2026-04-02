@@ -39,7 +39,7 @@ use crate::{
         SubsetMap, Thumbnail, TimeStamp, User, UserCbor,
     },
     claim::Claim,
-    context::Context,
+    context::{Context, ProgressPhase},
     crypto::cose,
     error::{Error, Result},
     hash_utils::hash_by_alg,
@@ -53,6 +53,20 @@ use crate::{
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
 };
+
+/// The hash binding type that a [`Builder`] will use for embeddable signing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HashType {
+    /// Requires placeholder, exclusions, hash, then sign.
+    Data,
+
+    /// Requires placeholder, hash, then sign.
+    /// Exclusions are derived automatically from the BMFF structure.
+    Bmff,
+
+    /// Requires hash then sign only, no placeholder (when `prefer_box_hash` is enabled).
+    Box,
+}
 
 /// Version of the Builder Archive file
 const ARCHIVE_VERSION: &str = "1";
@@ -909,6 +923,9 @@ impl Builder {
         T: Into<String>,
         R: Read + Seek + Send,
     {
+        self.context
+            .check_progress(ProgressPhase::AddingIngredient, 1, 1)?;
+
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
         if format == "c2pa" || format == "application/c2pa" {
@@ -1748,6 +1765,8 @@ impl Builder {
         let auto_thumbnail = self.context.settings().builder.thumbnail.enabled;
 
         if self.definition.thumbnail.is_none() && auto_thumbnail {
+            self.context
+                .check_progress(ProgressPhase::Thumbnail, 1, 1)?;
             stream.rewind()?;
 
             let mut stream = std::io::BufReader::new(stream);
@@ -1987,24 +2006,38 @@ impl Builder {
     /// # Arguments
     /// * `format` — MIME type or file extension of the target asset.
     pub fn needs_placeholder(&self, format: &str) -> bool {
-        // If a BoxHash is already present, no placeholder is needed.
+        self.hash_type(format) != HashType::Box
+    }
+
+    /// Returns the hash binding type that will be used for the given format.
+    /// This is a helper function to help know which paths a Builder may
+    /// need to follow, e.g. in embeddable workflows.
+    ///
+    /// # Arguments
+    /// * `format` — MIME type or file extension of the target asset.
+    pub fn hash_type(&self, format: &str) -> HashType {
+        // A pre-existing BoxHash assertion means the caller has explicitly
+        // opted into the box-hash path.
         if self.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok() {
-            return false;
+            return HashType::Box;
         }
-        // BMFF formats always need a placeholder (BmffHash).
+
+        // BMFF formats always use BmffHash.
         if jumbf_io::is_bmff_format(format) {
-            return true;
+            return HashType::Bmff;
         }
-        // For non-BMFF: if prefer_box_hash is enabled and the format supports BoxHash,
-        // a placeholder is not needed.
+
+        // When prefer_box_hash is enabled and the format handler supports it,
+        // use BoxHash (no placeholder needed).
         if self.context.settings().builder.prefer_box_hash {
             if let Some(handler) = jumbf_io::get_assetio_handler(format) {
                 if handler.asset_box_hash_ref().is_some() {
-                    return false;
+                    return HashType::Box;
                 }
             }
         }
-        true
+
+        HashType::Data
     }
 
     /// Create a placeholder manifest with dynamic assertion support.
@@ -2470,7 +2503,9 @@ impl Builder {
 
             // gen_hash_from_stream uses the BmffHash's own path-based exclusion list
             // and its own alg field (set when the assertion was created).
-            bmff_hash.gen_hash_from_stream(stream)?;
+            let ctx = &self.context;
+            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
+            bmff_hash.gen_hash_from_stream_with_progress(stream, Some(&mut cb))?;
 
             self.definition
                 .assertions
@@ -2492,7 +2527,15 @@ impl Builder {
             // separate BoxMap entries by jfifdump while also being counted
             // inside the preceding SOS entropy range, which causes the sum to
             // exceed the file length and triggers a range-validation error.
-            bh.generate_box_hash_from_stream(stream, definition_alg, bhp, false)?;
+            let ctx = &self.context;
+            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
+            bh.generate_box_hash_from_stream_with_progress(
+                stream,
+                definition_alg,
+                bhp,
+                false,
+                Some(&mut cb),
+            )?;
             self.definition
                 .assertions
                 .retain(|a| !a.label.starts_with(BoxHash::LABEL));
@@ -2519,7 +2562,15 @@ impl Builder {
             } else {
                 Some(exclusions.clone())
             };
-            let hash = crate::hash_stream_by_alg(&alg, stream, exclusion_arg, true)?;
+            let ctx = &self.context;
+            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
+            let hash = crate::utils::hash_utils::hash_stream_by_alg_with_progress(
+                &alg,
+                stream,
+                exclusion_arg,
+                true,
+                Some(&mut cb),
+            )?;
 
             // Preserve the existing assertion's name or use the default.
             let name = existing
@@ -2606,7 +2657,7 @@ impl Builder {
             store.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
         }
 
-        let mut jumbf = store.sign_manifest(signer, self.context().settings())?;
+        let mut jumbf = store.sign_manifest(signer, self.context())?;
 
         // Mode 1 only: zero-pad the signed JUMBF to match the pre-committed placeholder
         // size so the composed result is byte-for-byte the same length as the composed
@@ -4343,6 +4394,93 @@ mod tests {
     }
 
     #[test]
+    fn test_hash_type() -> Result<()> {
+        let builder = Builder::from_json(&simple_manifest_json())?;
+
+        // Non-BMFF formats default to DataHash.
+        assert_eq!(builder.hash_type("image/jpeg"), HashType::Data);
+        assert_eq!(builder.hash_type("image/png"), HashType::Data);
+
+        // BMFF MIME types produce BmffHash.
+        assert_eq!(builder.hash_type("video/mp4"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/avif"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/heif"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/heic"), HashType::Bmff);
+        assert_eq!(builder.hash_type("video/quicktime"), HashType::Bmff);
+
+        // BMFF file extensions also produce BmffHash.
+        assert_eq!(builder.hash_type("mp4"), HashType::Bmff);
+        assert_eq!(builder.hash_type("avif"), HashType::Bmff);
+        assert_eq!(builder.hash_type("mov"), HashType::Bmff);
+        assert_eq!(builder.hash_type("m4a"), HashType::Bmff);
+
+        // Unknown format falls back to DataHash.
+        assert_eq!(
+            builder.hash_type("application/octet-stream"),
+            HashType::Data
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_type_with_prefer_box_hash() -> Result<()> {
+        let context = Context::new()
+            .with_settings(serde_json::json!({"builder": {"prefer_box_hash": true}}).to_string())?;
+        let builder =
+            Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+
+        // BoxHash-capable formats produce BoxHash when prefer_box_hash is on.
+        assert_eq!(builder.hash_type("image/jpeg"), HashType::Box);
+
+        // BMFF formats still produce BmffHash regardless of prefer_box_hash.
+        assert_eq!(builder.hash_type("video/mp4"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/avif"), HashType::Bmff);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_type_with_existing_box_hash_assertion() -> Result<()> {
+        let mut builder = Builder::from_json(&simple_manifest_json())?;
+
+        let bh = BoxHash::default();
+        builder.add_assertion(BoxHash::LABEL, &bh)?;
+
+        // A pre-existing BoxHash assertion forces BoxHash for any format.
+        assert_eq!(builder.hash_type("image/jpeg"), HashType::Box);
+        assert_eq!(builder.hash_type("video/mp4"), HashType::Box);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_type_consistent_with_needs_placeholder() -> Result<()> {
+        // When needs_placeholder returns false, hash_type must be BoxHash.
+        // When needs_placeholder returns true, hash_type must be DataHash or BmffHash.
+        let builder = Builder::from_json(&simple_manifest_json())?;
+        for format in &["image/jpeg", "image/png", "video/mp4", "image/avif"] {
+            let needs = builder.needs_placeholder(format);
+            let ht = builder.hash_type(format);
+            if needs {
+                assert_ne!(
+                    ht,
+                    HashType::Box,
+                    "{format}: needs_placeholder=true but hash_type=BoxHash"
+                );
+            } else {
+                assert_eq!(
+                    ht,
+                    HashType::Box,
+                    "{format}: needs_placeholder=false but hash_type!=BoxHash"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn test_data_hashed_placeholder_workflow_complete() -> Result<()> {
         use std::io::{Seek, SeekFrom, Write};
 
@@ -5582,6 +5720,143 @@ mod tests {
 
         assert!(builder.context().settings().verify.verify_after_sign);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_progress_callback_invoked_during_sign() -> Result<()> {
+        use std::sync::Mutex;
+
+        let received: std::sync::Arc<Mutex<Vec<(ProgressPhase, u32, u32)>>> =
+            std::sync::Arc::new(Mutex::new(Vec::new()));
+        let received_clone = received.clone();
+        let ctx = test_context()
+            .with_progress_callback(move |phase, step, total| {
+                received_clone.lock().unwrap().push((phase, step, total));
+                true
+            })
+            .into_shared();
+
+        let mut builder = Builder::from_shared_context(&ctx);
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+
+        let r = received.lock().unwrap();
+        assert!(!r.is_empty(), "progress callback should be invoked");
+        let phases: Vec<ProgressPhase> = r.iter().map(|(p, _, _)| p.clone()).collect();
+        assert!(
+            phases.contains(&ProgressPhase::VerifyingIngredient),
+            "expected VerifyingIngredient phase, got {:?}",
+            phases
+        );
+        assert!(
+            phases.contains(&ProgressPhase::Hashing),
+            "expected Hashing phase, got {:?}",
+            phases
+        );
+        assert!(
+            phases.contains(&ProgressPhase::VerifyingManifest),
+            "expected VerifyingManifest phase (verify_after_sign), got {:?}",
+            phases
+        );
+        // All checkpoints must have a valid step/total relationship:
+        // step >= 1, total >= 1 (or total == 0 for indeterminate), step <= total.
+        for (phase, step, total) in r.iter() {
+            assert!(*step >= 1, "phase {phase:?} step must be >= 1, got {step}");
+            if *total > 0 {
+                assert!(
+                    *step <= *total,
+                    "phase {phase:?} step {step} must be <= total {total}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_progress_callback_cancel_during_sign() -> Result<()> {
+        let ctx = test_context()
+            .with_progress_callback(|_, _, _| false)
+            .into_shared();
+
+        let mut builder =
+            Builder::from_shared_context(&ctx).with_definition(simple_manifest_json())?;
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        let result = builder.save_to_stream("image/jpeg", &mut source, &mut dest);
+        assert!(
+            matches!(result, Err(crate::Error::OperationCancelled)),
+            "expected OperationCancelled, got {:?}",
+            result
+        );
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))] // WASM doesn't support threads
+    #[test]
+    fn test_context_cancel_during_sign() -> Result<()> {
+        use std::{
+            sync::{Arc, Condvar, Mutex},
+            thread,
+        };
+
+        // A Condvar-based one-shot rendezvous:
+        // 1. Callback signals "checkpoint reached" and blocks.
+        // 2. Main thread cancels, then signals "you may return".
+        // 3. Callback unblocks and returns `true`; check_progress sees the
+        //    cancel flag and returns OperationCancelled.
+        //
+        // Using a Condvar (instead of mpsc) avoids the !Sync bound on
+        // mpsc::Receiver, allowing the closure to satisfy Send + Sync.
+        let pair = Arc::new((Mutex::new((false, false)), Condvar::new()));
+        //                               ^^^^  ^^^^
+        //                              fired  proceed
+        let pair_cb = pair.clone();
+
+        let ctx = test_context()
+            .with_progress_callback(move |_, _, _| {
+                let (lock, cvar) = &*pair_cb;
+                let mut state = lock.lock().unwrap();
+                if !state.0 {
+                    // First checkpoint: signal fired, wait for proceed.
+                    state.0 = true;
+                    cvar.notify_all();
+                    state = cvar.wait_while(state, |s| !s.1).unwrap();
+                }
+                drop(state);
+                true
+            })
+            .into_shared();
+
+        let ctx_clone = ctx.clone();
+        let handle = thread::spawn(move || {
+            let mut src = Cursor::new(TEST_IMAGE);
+            let mut dst = Cursor::new(Vec::new());
+            let mut b = Builder::from_shared_context(&ctx_clone)
+                .with_definition(r#"{"title": "Thread Cancel Test"}"#)
+                .unwrap();
+            b.set_intent(BuilderIntent::Edit);
+            b.save_to_stream("image/jpeg", &mut src, &mut dst)
+        });
+
+        // Wait until the first checkpoint fires, then cancel and release.
+        let (lock, cvar) = &*pair;
+        let mut state = lock.lock().unwrap();
+        state = cvar.wait_while(state, |s| !s.0).unwrap();
+        ctx.cancel();
+        state.1 = true;
+        cvar.notify_all();
+        drop(state);
+
+        let result = handle.join().expect("thread should join");
+        assert!(
+            matches!(result, Err(crate::Error::OperationCancelled)),
+            "expected OperationCancelled, got {:?}",
+            result
+        );
         Ok(())
     }
 

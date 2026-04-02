@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.43](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.42...c2patool-v0.26.43)
+_31 March 2026_
+
+## [0.26.42](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.41...c2patool-v0.26.42)
+_27 March 2026_
+
+### Fixed
+
+* Updated crJSON Schema ([#1975](https://github.com/contentauth/c2pa-rs/pull/1975))
+
+### Other
+
+* Update x_509.md ([#1942](https://github.com/contentauth/c2pa-rs/pull/1942))
+
+## [0.26.41](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.40...c2patool-v0.26.41)
+_23 March 2026_
+
+## [0.26.40](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.39...c2patool-v0.26.40)
+_23 March 2026_
+
+### Added
+
+* Add `cr_json()` and `cr_json_value()` to `Reader`; remove separate `CrJsonReader` ([#1919](https://github.com/contentauth/c2pa-rs/pull/1919))
+
 ## [0.26.39](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.38...c2patool-v0.26.39)
 _16 March 2026_
 

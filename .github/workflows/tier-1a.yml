@@ -441,12 +441,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up Chrome
-        uses: browser-actions/setup-chrome@v2
-        with:
-          chrome-version: 144
-          install-chromedriver: true
-
       - name: Add wasm web target
         run: rustup target add wasm32-unknown-unknown
 
@@ -467,6 +461,7 @@ jobs:
         run: cargo test -p c2pa --no-default-features --features rust_native_crypto,fetch_remote_manifests,http_reqwest --target wasm32-unknown-unknown
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+          GECKODRIVER: geckodriver
           WASM_BINDGEN_TEST_TIMEOUT: 60
 
   benchmarks:
@@ -480,6 +475,9 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: ubuntu-latest
+
+    env:
+      CODSPEED_MODE: simulation,memory
 
     steps:
       - name: Checkout repository
@@ -498,12 +496,12 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build the benchmark target(s)
-        run: cargo codspeed build -p c2pa --no-default-features --features rust_native_crypto
+        run: cargo codspeed build -m $CODSPEED_MODE -p c2pa --no-default-features --features rust_native_crypto
 
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4
         with:
-          mode: instrumentation
+          mode: ${{ env.CODSPEED_MODE }}
           run: cargo codspeed run
           token: ${{ secrets.CODSPEED_TOKEN }}
 
