@@ -3459,12 +3459,13 @@ impl Claim {
             )));
         }
 
-        // redact assertion from incoming ingredients
-        // Only apply redactions that match claims in the current ingredient batch;
-        // redactions targeting other ingredients will be applied when those are processed.
+        // Redact assertion from incoming ingredients
+        // Only apply redactions that match claims in the current ingredient batch,
+        // redactions targeting other ingredients will be applied when those are processed
+        // (otherwise can't find them).
         // TODO: per C2PA 2.4 spec, when redacting an ingredient assertion that references
-        // a C2PA Manifest, the associated manifest shall be removed from the Manifest Store
-        // if no other references to it remain. See _referenced_ingredients parameter.
+        // a C2PA Manifest, the associated manifest should be removed from the Manifest Store
+        // if no other references to it remain. This was also TODO'ed before...
         let mut applied_redactions = Vec::new();
         if let Some(redactions) = &redactions_opt {
             for redaction in redactions {
