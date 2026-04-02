@@ -82,7 +82,8 @@ async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
         .header(header::ACCEPT, "application/did+json")
         .body(Vec::new())
         .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))?;
-    let response = AsyncGenericResolver::new()
+    let response = AsyncGenericResolver::with_redirects()
+        .unwrap_or_default()
         .http_resolve_async(request)
         .await
         .map_err(|e| DidWebError::Request(url.to_owned(), e))?;
