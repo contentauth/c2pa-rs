@@ -5592,6 +5592,50 @@ mod tests {
     }
 
     #[test]
+    fn test_redact_actions_returns_invalid_redaction() {
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let parent = Reader::from_stream("image/jpeg", &mut input).expect("from_stream");
+        let parent_manifest_label = parent.active_label().unwrap();
+
+        // Try to redact the actions assertion, which is not allowed per the spec.
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(parent_manifest_label, "c2pa.actions");
+
+        let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri]);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
+        assert!(matches!(result, Err(Error::AssertionInvalidRedaction)));
+    }
+
+    #[test]
+    fn test_redact_nonexistent_assertion_returns_not_found() {
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let parent = Reader::from_stream("image/jpeg", &mut input).expect("from_stream");
+        let parent_manifest_label = parent.active_label().unwrap();
+
+        // Try to redact an assertion that doesn't exist in the parent manifest.
+        let redacted_uri = crate::jumbf::labels::to_assertion_uri(
+            parent_manifest_label,
+            "stds.schema-org.DoesNotExist",
+        );
+
+        let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri]);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
+        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+    }
+
+    #[test]
     fn test_supported_mime_types() {
         let mime_types = Builder::supported_mime_types();
         assert!(mime_types.contains(&"image/jpeg".to_string()));
