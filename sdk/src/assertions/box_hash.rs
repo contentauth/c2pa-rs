@@ -115,19 +115,22 @@ impl BoxHash {
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
     ) -> Result<()> {
-        self.verify_stream_hash_with_progress(reader, alg, bhp, None)
+        self.verify_stream_hash_with_progress(reader, alg, bhp, &mut |_, _| Ok(()))
     }
 
     /// Like [`verify_stream_hash`] but fires `progress(step, total)` once per hashed
     /// box so callers with a [`Context`] can report `ProgressPhase::VerifyingAssetHash`
     /// ticks and support cancellation.
-    pub(crate) fn verify_stream_hash_with_progress(
+    pub(crate) fn verify_stream_hash_with_progress<F>(
         &self,
         reader: &mut dyn CAIRead,
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
-        progress: Option<&mut dyn FnMut(u32, u32) -> Result<()>>,
-    ) -> Result<()> {
+        progress: &mut F,
+    ) -> Result<()>
+    where
+        F: FnMut(u32, u32) -> Result<()>,
+    {
         if self.boxes.is_empty() {
             return Err(Error::HashMismatch("No box hash found".to_string()));
         }
@@ -150,10 +153,6 @@ impl BoxHash {
         } else {
             return Err(Error::HashMismatch("No data boxes found".to_string()));
         };
-
-        let total = self.boxes.len() as u32;
-        let mut step: u32 = 0;
-        let mut progress = progress;
 
         for bm in &self.boxes {
             let mut inclusions = Vec::new();
@@ -209,13 +208,14 @@ impl BoxHash {
                 },
             };
 
-            step += 1;
-            if let Some(cb) = progress.as_mut() {
-                cb(step, total)?;
-            }
+            let computed = hash_stream_by_alg_with_progress(
+                &curr_alg,
+                reader,
+                Some(inclusions),
+                false,
+                progress,
+            )?;
 
-            let computed =
-                hash_stream_by_alg_with_progress(&curr_alg, reader, Some(inclusions), false, None)?;
             if !vec_compare(&bm.hash, &computed) {
                 return Err(Error::HashMismatch("Hashes do not match".to_owned()));
             }
@@ -234,22 +234,25 @@ impl BoxHash {
     where
         R: Read + Seek + MaybeSend,
     {
-        self.generate_box_hash_from_stream_with_progress(reader, alg, bhp, minimal_form, None)
+        self.generate_box_hash_from_stream_with_progress(reader, alg, bhp, minimal_form, |_, _| {
+            Ok(())
+        })
     }
 
     /// Like [`generate_box_hash_from_stream`] but fires `progress(step, total)` once
     /// per hashed box so callers with a [`Context`] can report `ProgressPhase::Hashing`
     /// ticks and support cancellation.
-    pub(crate) fn generate_box_hash_from_stream_with_progress<R>(
+    pub(crate) fn generate_box_hash_from_stream_with_progress<R, F>(
         &mut self,
         reader: &mut R,
         alg: &str,
         bhp: &dyn AssetBoxHash,
         minimal_form: bool,
-        mut progress: Option<&mut dyn FnMut(u32, u32) -> Result<()>>,
+        mut progress: F,
     ) -> Result<()>
     where
         R: Read + Seek + MaybeSend,
+        F: FnMut(u32, u32) -> Result<()>,
     {
         // get source box list
         let source_bms = bhp.get_box_map(reader)?;
@@ -336,13 +339,6 @@ impl BoxHash {
             }
             self.boxes = boxes;
 
-            let total = self
-                .boxes
-                .iter()
-                .filter(|bm| bm.names[0] != C2PA_BOXHASH)
-                .count() as u32;
-            let mut step: u32 = 0;
-
             // compute the hashes
             for bm in self.boxes.iter_mut() {
                 // skip c2pa box
@@ -356,18 +352,10 @@ impl BoxHash {
                     reader,
                     Some(inclusions),
                     false,
-                    None,
+                    &mut progress,
                 )?);
-
-                step += 1;
-                if let Some(cb) = progress.as_mut() {
-                    cb(step, total)?;
-                }
             }
         } else {
-            let total = source_bms.iter().filter(|bm| bm.names[0] != "C2PA").count() as u32;
-            let mut step: u32 = 0;
-
             for mut bm in source_bms {
                 if bm.names[0] == "C2PA" {
                     // there should only be 1 collapsed C2PA range
@@ -387,15 +375,10 @@ impl BoxHash {
                     reader,
                     Some(inclusions),
                     false,
-                    None,
+                    &mut progress,
                 )?);
                 bm.pad = ByteBuf::from(vec![]);
                 self.boxes.push(bm);
-
-                step += 1;
-                if let Some(cb) = progress.as_mut() {
-                    cb(step, total)?;
-                }
             }
         }
 

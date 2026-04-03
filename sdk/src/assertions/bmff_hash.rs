@@ -41,8 +41,8 @@ use crate::{
     cbor_types::UriT,
     utils::{
         hash_utils::{
-            concat_and_hash, hash_stream_by_alg, vec_compare, verify_stream_by_alg, HashRange,
-            Hasher,
+            concat_and_hash, hash_stream_by_alg, hash_stream_by_alg_with_progress, vec_compare,
+            verify_stream_by_alg, HashRange, Hasher,
         },
         io_utils::stream_len,
         merkle::{C2PAMerkleTree, MerkleNode},
@@ -922,7 +922,9 @@ impl BmffHash {
     #[cfg(feature = "file_io")]
     pub fn gen_hash(&mut self, asset_path: &std::path::Path) -> crate::error::Result<()> {
         let mut file = std::fs::File::open(asset_path)?;
-        self.hash = Some(ByteBuf::from(self.hash_from_stream(&mut file, None)?));
+        self.hash = Some(ByteBuf::from(
+            self.hash_from_stream(&mut file, &mut |_, _| Ok(()))?,
+        ));
         Ok(())
     }
 
@@ -931,20 +933,23 @@ impl BmffHash {
     where
         R: Read + Seek + ?Sized,
     {
-        self.hash = Some(ByteBuf::from(self.hash_from_stream(asset_stream, None)?));
+        self.hash = Some(ByteBuf::from(
+            self.hash_from_stream(asset_stream, &mut |_, _| Ok(()))?,
+        ));
         Ok(())
     }
 
     /// Like [`gen_hash_from_stream`] but fires `progress(step, total)` once per
     /// hash range so callers with a [`Context`] can report `ProgressPhase::Hashing`
     /// ticks and support cancellation.
-    pub(crate) fn gen_hash_from_stream_with_progress<R>(
+    pub(crate) fn gen_hash_from_stream_with_progress<R, F>(
         &mut self,
         asset_stream: &mut R,
-        progress: Option<&mut dyn FnMut(u32, u32) -> crate::error::Result<()>>,
+        progress: &mut F,
     ) -> crate::error::Result<()>
     where
         R: Read + Seek + ?Sized,
+        F: FnMut(u32, u32) -> crate::error::Result<()>,
     {
         self.hash = Some(ByteBuf::from(
             self.hash_from_stream(asset_stream, progress)?,
@@ -954,13 +959,14 @@ impl BmffHash {
 
     /// Generate the asset hash from a file asset using the constructed
     /// start and length values.
-    fn hash_from_stream<R>(
+    fn hash_from_stream<R, F>(
         &mut self,
         asset_stream: &mut R,
-        progress: Option<&mut dyn FnMut(u32, u32) -> crate::error::Result<()>>,
+        progress: &mut F,
     ) -> crate::error::Result<Vec<u8>>
     where
         R: Read + Seek + ?Sized,
+        F: FnMut(u32, u32) -> crate::error::Result<()>,
     {
         self.verify_self()?;
 
@@ -1029,9 +1035,20 @@ impl BmffHash {
         data: &[u8],
         alg: Option<&str>,
     ) -> crate::error::Result<()> {
-        let mut reader = Cursor::new(data);
+        self.verify_in_memory_hash_with_progress(data, alg, &mut |_, _| Ok(()))
+    }
 
-        self.verify_stream_hash(&mut reader, alg)
+    pub(crate) fn verify_in_memory_hash_with_progress<F>(
+        &self,
+        data: &[u8],
+        alg: Option<&str>,
+        progress: &mut F,
+    ) -> crate::error::Result<()>
+    where
+        F: FnMut(u32, u32) -> crate::error::Result<()>,
+    {
+        let mut reader = Cursor::new(data);
+        self.verify_stream_hash_with_progress(&mut reader, alg, progress)
     }
 
     // The BMFFMerklMaps are stored contiguous in the file.  Break this Vec into groups based on
@@ -1089,8 +1106,32 @@ impl BmffHash {
         asset_path: &std::path::Path,
         alg: Option<&str>,
     ) -> crate::error::Result<()> {
+        self.verify_hash_with_progress(asset_path, alg, &mut |_, _| Ok(()))
+    }
+
+    #[cfg(feature = "file_io")]
+    pub(crate) fn verify_hash_with_progress<F>(
+        &self,
+        asset_path: &std::path::Path,
+        alg: Option<&str>,
+        progress: &mut F,
+    ) -> crate::error::Result<()>
+    where
+        F: FnMut(u32, u32) -> crate::error::Result<()>,
+    {
         let mut data = std::fs::File::open(asset_path)?;
-        self.verify_stream_hash(&mut data, alg)
+        self.verify_stream_hash_with_progress(&mut data, alg, progress)
+    }
+
+    /// Advance `step` and fire `progress(step, 0)`.
+    /// Returns early with a cancellation error if the callback returns `Err`.
+    #[inline]
+    fn progress_tick<F>(step: &mut u32, progress: &mut F) -> crate::error::Result<()>
+    where
+        F: FnMut(u32, u32) -> crate::error::Result<()>,
+    {
+        *step += 1;
+        progress(*step, 0)
     }
 
     fn verify_self(&self) -> crate::error::Result<()> {
@@ -1147,6 +1188,27 @@ impl BmffHash {
         reader: &mut dyn CAIRead,
         alg: Option<&str>,
     ) -> crate::error::Result<()> {
+        self.verify_stream_hash_with_progress(reader, alg, &mut |_, _| Ok(()))
+    }
+
+    /// Like [`verify_stream_hash`] but fires `progress(step, total)` at each expensive hash
+    /// boundary so callers with a [`Context`] can report `ProgressPhase::VerifyingAssetHash`
+    /// ticks and support cancellation.
+    ///
+    /// For the file-level hash path the callback is forwarded into
+    /// [`hash_stream_by_alg_with_progress`] so it fires once per 256 MB range, giving
+    /// sub-pass granularity for large files.  For Merkle paths it fires once per hash operation.
+    /// `total` is always `0` (indeterminate) from this layer because the pass count is not
+    /// known until the file structure is parsed.
+    pub(crate) fn verify_stream_hash_with_progress<F>(
+        &self,
+        reader: &mut dyn CAIRead,
+        alg: Option<&str>,
+        progress: &mut F,
+    ) -> crate::error::Result<()>
+    where
+        F: FnMut(u32, u32) -> crate::error::Result<()>,
+    {
         self.verify_self()?;
 
         // start the verification
@@ -1163,9 +1225,19 @@ impl BmffHash {
         // convert BMFF exclusion map to flat exclusion list
         let exclusions = bmff_to_jumbf_exclusions(reader, &self.exclusions, self.bmff_version > 1)?;
 
-        // handle file level hashing
+        let mut step = 0u32;
+
+        // handle file level hashing — pass progress through so callers get per-range ticks
+        // (one tick per ≤256 MB read range) instead of a single pre-hash tick.
         if let Some(hash) = self.hash() {
-            if !verify_stream_by_alg(&curr_alg, hash, reader, Some(exclusions.clone()), true) {
+            let computed = hash_stream_by_alg_with_progress(
+                &curr_alg,
+                reader,
+                Some(exclusions.clone()),
+                true,
+                progress,
+            )?;
+            if !vec_compare(hash, &computed) {
                 return Err(Error::HashMismatch(
                     "BMFF file level hash mismatch".to_string(),
                 ));
@@ -1200,6 +1272,7 @@ impl BmffHash {
                         let mut mm_exclusions = exclusions.clone();
                         mm_exclusions.push(moof_exclusion);
 
+                        Self::progress_tick(&mut step, progress)?;
                         if !verify_stream_by_alg(alg, init_hash, reader, Some(mm_exclusions), true)
                         {
                             return Err(Error::HashMismatch(
@@ -1256,6 +1329,8 @@ impl BmffHash {
                         let after_box_exclusion = HashRange::new(after_box_start, after_box_len);
                         curr_exclusions.push(after_box_exclusion);
 
+                        Self::progress_tick(&mut step, progress)?;
+
                         // hash the specified range
                         let hash = hash_stream_by_alg(alg, reader, Some(curr_exclusions), true)?;
 
@@ -1272,6 +1347,7 @@ impl BmffHash {
                 .iter()
                 .all(|mm| mm.fixed_block_size.is_some() || mm.variable_block_sizes.is_some())
             {
+                Self::progress_tick(&mut step, progress)?;
                 self.validate_merkle_maps_mdat_boxes(reader, &c2pa_boxes)?;
             } else if box_infos.iter().any(|b| b.path == "moov") && !bmff_merkle.is_empty() {
                 // timed media case
@@ -1313,6 +1389,8 @@ impl BmffHash {
                         }
 
                         let track_id = track.track_id();
+
+                        Self::progress_tick(&mut step, progress)?;
 
                         // create sample to chunk mapping
                         // create the Merkle tree per samples in a chunk
@@ -1395,6 +1473,7 @@ impl BmffHash {
                 }
             } else {
                 // try the no boxes defined fallback
+                Self::progress_tick(&mut step, progress)?;
                 self.validate_merkle_maps_mdat_boxes(reader, &c2pa_boxes)?;
             }
         }
@@ -1409,6 +1488,22 @@ impl BmffHash {
         fragment_paths: &Vec<std::path::PathBuf>,
         alg: Option<&str>,
     ) -> crate::Result<()> {
+        self.verify_stream_segments_with_progress(init_stream, fragment_paths, alg, &mut |_, _| {
+            Ok(())
+        })
+    }
+
+    #[cfg(feature = "file_io")]
+    pub(crate) fn verify_stream_segments_with_progress<F>(
+        &self,
+        init_stream: &mut dyn CAIRead,
+        fragment_paths: &Vec<std::path::PathBuf>,
+        alg: Option<&str>,
+        progress: &mut F,
+    ) -> crate::Result<()>
+    where
+        F: FnMut(u32, u32) -> crate::Result<()>,
+    {
         self.verify_self()?;
 
         let curr_alg = match &self.alg {
@@ -1434,6 +1529,8 @@ impl BmffHash {
             if fragment_paths.is_empty() {
                 return Err(Error::HashMismatch("No fragment specified".to_string()));
             }
+
+            let mut step = 0u32;
 
             for fp in fragment_paths {
                 let mut fragment_stream = std::fs::File::open(fp)?;
@@ -1470,6 +1567,7 @@ impl BmffHash {
                                     self.bmff_version > 1,
                                 )?;
 
+                                Self::progress_tick(&mut step, progress)?;
                                 if !verify_stream_by_alg(
                                     alg,
                                     init_hash,
@@ -1492,6 +1590,8 @@ impl BmffHash {
                                 bmff_exclusions,
                                 self.bmff_version > 1,
                             )?;
+
+                            Self::progress_tick(&mut step, progress)?;
 
                             // hash the entire fragment minus exclusions
                             let hash = hash_stream_by_alg(
@@ -1528,6 +1628,21 @@ impl BmffHash {
         fragment_stream: &mut dyn CAIRead,
         alg: Option<&str>,
     ) -> crate::Result<()> {
+        self.verify_stream_segment_with_progress(init_stream, fragment_stream, alg, &mut |_, _| {
+            Ok(())
+        })
+    }
+
+    pub(crate) fn verify_stream_segment_with_progress<F>(
+        &self,
+        init_stream: &mut dyn CAIRead,
+        fragment_stream: &mut dyn CAIRead,
+        alg: Option<&str>,
+        progress: &mut F,
+    ) -> crate::Result<()>
+    where
+        F: FnMut(u32, u32) -> crate::Result<()>,
+    {
         self.verify_self()?;
 
         let curr_alg = match &self.alg {
@@ -1544,6 +1659,8 @@ impl BmffHash {
                 "Hash value should not be present for a fragmented BMFF asset".to_string(),
             ));
         }
+
+        let mut step = 0u32;
 
         // Merkle hashed BMFF
         if let Some(mm_vec) = self.merkle() {
@@ -1578,6 +1695,7 @@ impl BmffHash {
                             self.bmff_version > 1,
                         )?;
 
+                        Self::progress_tick(&mut step, progress)?;
                         if !verify_stream_by_alg(
                             alg,
                             init_hash,
@@ -1593,6 +1711,8 @@ impl BmffHash {
                             bmff_exclusions,
                             self.bmff_version > 1,
                         )?;
+
+                        Self::progress_tick(&mut step, progress)?;
 
                         // hash the entire fragment minus exclusions
                         let hash = hash_stream_by_alg(

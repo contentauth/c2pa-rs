@@ -1332,6 +1332,7 @@ pub mod tests {
     #[cfg(feature = "fetch_remote_manifests")]
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
     const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACA.jpg");
+    const SAMPLE1_HEIC: &[u8] = include_bytes!("../tests/fixtures/sample1.heic");
 
     #[test]
     // Verify that we can convert a Reader back into a Builder re-sign and the read it back again
@@ -1413,6 +1414,63 @@ pub mod tests {
             crate::validation_status::ASSERTION_DATAHASH_MISMATCH
         );
         assert_eq!(reader.validation_state(), ValidationState::Invalid);
+        Ok(())
+    }
+
+    /// BMFF hash verification now fires at least one `VerifyingAssetHash` progress event per
+    /// hash pass (file-level or per-chunk/track), matching the granularity of the data-hash path.
+    ///
+    /// Uses in-memory streams and an embedded fixture so this runs on targets without a usable
+    /// host filesystem (e.g. WASI without preopened paths).
+    #[test]
+    fn test_bmff_read_reports_verifying_asset_hash_progress() -> Result<()> {
+        use std::sync::Mutex;
+
+        use crate::Builder;
+
+        let received = Arc::new(Mutex::new(Vec::<(ProgressPhase, u32, u32)>::new()));
+        let received_cb = Arc::clone(&received);
+        let ctx = test_context()
+            .with_progress_callback(move |phase, step, total| {
+                received_cb.lock().unwrap().push((phase, step, total));
+                true
+            })
+            .into_shared();
+
+        let mut builder = Builder::from_shared_context(&ctx);
+        let ctx_for_signer = builder.context().clone();
+        let signer = ctx_for_signer.signer()?;
+        let mut source = Cursor::new(SAMPLE1_HEIC);
+        let mut dest = Cursor::new(Vec::new());
+        builder.sign(signer, "heic", &mut source, &mut dest)?;
+
+        received.lock().unwrap().clear();
+
+        dest.set_position(0);
+        let _reader = Reader::from_shared_context(&ctx).with_stream("image/heic", &mut dest)?;
+
+        let asset_hash_events: Vec<_> = received
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(p, _, _)| *p == ProgressPhase::VerifyingAssetHash)
+            .cloned()
+            .collect();
+
+        assert!(
+            !asset_hash_events.is_empty(),
+            "expected at least one VerifyingAssetHash event; got none"
+        );
+        // Steps should be monotonically increasing, starting from 1.
+        for (i, (_, step, _)) in asset_hash_events.iter().enumerate() {
+            assert_eq!(
+                *step,
+                (i + 1) as u32,
+                "expected step {} but got {step} at index {i}",
+                i + 1
+            );
+        }
+
         Ok(())
     }
 
