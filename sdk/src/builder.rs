@@ -5323,8 +5323,10 @@ mod tests {
 
     #[test]
     fn test_redaction_two_ingredients() {
-        use crate::assertions::{Actions, c2pa_action, Action};
-        use crate::utils::test::setup_logger;
+        use crate::{
+            assertions::{c2pa_action, Action, Actions},
+            utils::test::setup_logger,
+        };
 
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
@@ -5343,8 +5345,8 @@ mod tests {
             ..Default::default()
         };
 
-        let created_action = Action::new(c2pa_action::CREATED)
-            .set_source_type(DigitalSourceType::Empty);
+        let created_action =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         let actions = Actions::new().add_action(created_action);
         builder1.add_assertion(Actions::LABEL, &actions).unwrap();
         builder1
@@ -5375,8 +5377,8 @@ mod tests {
             ..Default::default()
         };
 
-        let created_action2 = Action::new(c2pa_action::CREATED)
-            .set_source_type(DigitalSourceType::Empty);
+        let created_action2 =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         let actions2 = Actions::new().add_action(created_action2);
         builder2.add_assertion(Actions::LABEL, &actions2).unwrap();
         builder2
@@ -5427,10 +5429,8 @@ mod tests {
         let ing2_label = ing2.active_manifest().unwrap().to_owned();
 
         // Build redaction URIs from the ingredient manifest labels
-        let redacted_uri1 =
-            crate::jumbf::labels::to_assertion_uri(&ing1_label, ASSERTION_LABEL);
-        let redacted_uri2 =
-            crate::jumbf::labels::to_assertion_uri(&ing2_label, ASSERTION_LABEL);
+        let redacted_uri1 = crate::jumbf::labels::to_assertion_uri(&ing1_label, ASSERTION_LABEL);
+        let redacted_uri2 = crate::jumbf::labels::to_assertion_uri(&ing2_label, ASSERTION_LABEL);
 
         combiner.definition.redactions = Some(vec![redacted_uri1.clone(), redacted_uri2.clone()]);
 

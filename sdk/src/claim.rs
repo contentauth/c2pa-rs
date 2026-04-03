@@ -1816,7 +1816,7 @@ impl Claim {
             }
         }
 
-        Err(Error::AssertionInvalidRedaction)
+        Err(Error::AssertionRedactionNotFound)
     }
 
     /// Return a hash of this claim.
