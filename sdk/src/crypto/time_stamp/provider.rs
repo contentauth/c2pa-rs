@@ -68,7 +68,7 @@ pub trait TimeStampProvider {
                     headers,
                     &body,
                     message,
-                    &SyncGenericResolver::new(),
+                    &SyncGenericResolver::with_redirects().unwrap_or_default(),
                 ));
             }
         }
@@ -128,7 +128,7 @@ pub trait AsyncTimeStampProvider: MaybeSync {
                         headers,
                         &body,
                         message,
-                        &AsyncGenericResolver::new(),
+                        &AsyncGenericResolver::with_redirects().unwrap_or_default(),
                     )
                     .await,
                 );

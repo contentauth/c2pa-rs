@@ -2718,7 +2718,7 @@ impl Claim {
                                 dh.verify_stream_hash_with_progress(
                                     &mut file,
                                     Some(claim.alg()),
-                                    Some(&mut cb),
+                                    &mut cb,
                                 )
                             }
                             ClaimAssetData::Bytes(asset_bytes, _) => {
@@ -2726,14 +2726,14 @@ impl Claim {
                                 dh.verify_stream_hash_with_progress(
                                     &mut cursor,
                                     Some(claim.alg()),
-                                    Some(&mut cb),
+                                    &mut cb,
                                 )
                             }
                             ClaimAssetData::Stream(stream_data, _) => dh
                                 .verify_stream_hash_with_progress(
                                     *stream_data,
                                     Some(claim.alg()),
-                                    Some(&mut cb),
+                                    &mut cb,
                                 ),
                             _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
                         };
@@ -2786,30 +2786,42 @@ impl Claim {
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
 
-                    context.check_progress(ProgressPhase::VerifyingAssetHash, 1, 1)?;
+                    let mut step = 0u32;
+                    let mut cb = |_s: u32, t: u32| {
+                        step += 1;
+                        context.check_progress(ProgressPhase::VerifyingAssetHash, step, t)
+                    };
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
-                            dh.verify_hash(asset_path, Some(claim.alg()))
+                            dh.verify_hash_with_progress(asset_path, Some(claim.alg()), &mut cb)
                         }
-                        ClaimAssetData::Bytes(asset_bytes, _) => {
-                            dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
-                        }
-                        ClaimAssetData::Stream(stream_data, _) => {
-                            dh.verify_stream_hash(*stream_data, Some(claim.alg()))
-                        }
+                        ClaimAssetData::Bytes(asset_bytes, _) => dh
+                            .verify_in_memory_hash_with_progress(
+                                asset_bytes,
+                                Some(claim.alg()),
+                                &mut cb,
+                            ),
+                        ClaimAssetData::Stream(stream_data, _) => dh
+                            .verify_stream_hash_with_progress(
+                                *stream_data,
+                                Some(claim.alg()),
+                                &mut cb,
+                            ),
                         ClaimAssetData::StreamFragment(initseg_data, fragment_data, _) => dh
-                            .verify_stream_segment(
+                            .verify_stream_segment_with_progress(
                                 *initseg_data,
                                 *fragment_data,
                                 Some(claim.alg()),
+                                &mut cb,
                             ),
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::StreamFragments(initseg_data, fragment_paths, _) => dh
-                            .verify_stream_segments(
+                            .verify_stream_segments_with_progress(
                                 *initseg_data,
                                 fragment_paths,
                                 Some(claim.alg()),
+                                &mut cb,
                             ),
                     };
 
@@ -2876,7 +2888,7 @@ impl Claim {
                                 &mut file,
                                 Some(claim.alg()),
                                 box_hash_processor,
-                                Some(&mut cb),
+                                &mut cb,
                             )
                         }
                         ClaimAssetData::Bytes(asset_bytes, asset_type) => {
@@ -2892,7 +2904,7 @@ impl Claim {
                                 &mut cursor,
                                 Some(claim.alg()),
                                 box_hash_processor,
-                                Some(&mut cb),
+                                &mut cb,
                             )
                         }
                         ClaimAssetData::Stream(stream_data, asset_type) => {
@@ -2907,7 +2919,7 @@ impl Claim {
                                 *stream_data,
                                 Some(claim.alg()),
                                 box_hash_processor,
-                                Some(&mut cb),
+                                &mut cb,
                             )
                         }
                         _ => return Err(Error::UnsupportedType),

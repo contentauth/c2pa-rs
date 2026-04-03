@@ -2162,15 +2162,16 @@ impl Store {
     }
 
     // generate a list of AssetHashes based on the location of objects in the stream
-    fn generate_data_hashes_for_stream<R>(
+    fn generate_data_hashes_for_stream<R, F>(
         stream: &mut R,
         alg: &str,
         block_locations: &mut Vec<HashObjectPositions>,
         calc_hashes: bool,
-        progress: Option<&mut dyn FnMut(u32, u32) -> Result<()>>,
+        progress: &mut F,
     ) -> Result<Vec<DataHash>>
     where
         R: Read + Seek + ?Sized,
+        F: FnMut(u32, u32) -> Result<()>,
     {
         let stream_len = stream_len(stream)?;
         stream.rewind()?;
@@ -2470,7 +2471,7 @@ impl Store {
         if let Some(reader) = asset_reader {
             // calc hashes
             let mut cb = |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
-            adjusted_dh.gen_hash_from_stream_with_progress(reader, Some(&mut cb))?;
+            adjusted_dh.gen_hash_from_stream_with_progress(reader, &mut cb)?;
         }
 
         // update the placeholder hash
@@ -3117,6 +3118,8 @@ impl Store {
 
         let io_handler = get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
 
+        context.check_progress(ProgressPhase::Writing, 1, 2)?;
+
         // Do not assume the handler supports XMP or removing manifests unless we need it to
         if let Some(url) = url {
             let external_ref_writer = io_handler
@@ -3242,7 +3245,7 @@ impl Store {
             }
 
             // Signal that the write pass is done; hash readback begins next.
-            context.check_progress(ProgressPhase::Writing, 1, 1)?;
+            context.check_progress(ProgressPhase::Writing, 2, 2)?;
 
             // generate actual hash values
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
@@ -3256,7 +3259,7 @@ impl Store {
                     output_stream.rewind()?;
                     let mut cb =
                         |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
-                    bmff_hash.gen_hash_from_stream_with_progress(output_stream, Some(&mut cb))?;
+                    bmff_hash.gen_hash_from_stream_with_progress(output_stream, &mut cb)?;
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }
@@ -3275,7 +3278,7 @@ impl Store {
                         pc.alg(),
                         &mut hash_ranges,
                         false,
-                        None,
+                        &mut |_, _| Ok(()),
                     )?
                 };
 
@@ -3308,7 +3311,7 @@ impl Store {
             // readback pass begins.  This separates "Writing" (streaming
             // input → output with placeholder JUMBF) from "Hashing" (reading
             // output to compute the final content-hash binding).
-            context.check_progress(ProgressPhase::Writing, 1, 1)?;
+            context.check_progress(ProgressPhase::Writing, 2, 2)?;
 
             // 4)  determine final object locations and patch the asset hashes with correct offset
             // replace the source with correct asset hashes so that the claim hash will be correct
@@ -3338,7 +3341,7 @@ impl Store {
                         pc.alg(),
                         &mut new_hash_ranges,
                         true,
-                        Some(&mut cb),
+                        &mut cb,
                     )?;
 
                     // patch existing claim hash with updated data
