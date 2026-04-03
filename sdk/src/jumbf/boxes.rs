@@ -26,7 +26,7 @@ use std::{
     any::Any,
     ffi::CString,
     fmt,
-    io::{Read, Result as IoResult, Seek, SeekFrom, Write},
+    io::{Cursor, Read, Result as IoResult, Seek, SeekFrom, Write},
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
@@ -354,6 +354,14 @@ impl JUMBFSuperBox {
                 .downcast_ref::<JUMBFEmbeddedFileDescriptionBox>()
         })
     }
+
+    pub fn data_box_as_brotli_box(&self, index: usize) -> Option<&JUMBFBrotliContentBox> {
+        let da_box = &self.data_boxes[index];
+        da_box
+            .as_ref()
+            .as_any()
+            .downcast_ref::<JUMBFBrotliContentBox>()
+    }
 }
 
 impl BMFFBox for JUMBFSuperBox {
@@ -515,6 +523,8 @@ pub const JUMBF_CBOR_UUID: &str = "63626F7200110010800000AA00389B71";
 pub const JUMBF_UUID_UUID: &str = "7575696400110010800000AA00389B71";
 pub const JUMBF_EMBEDDED_FILE_UUID: &str = "40CB0C32BB8A489DA70B2AD6F47F4369";
 pub const C2PA_REDACTION_UUID: &str = "CAA98EEE9D4DF80E86AD4DFFCA263973";
+pub const JUMBF_BROTLI_UUID: &str = "62726F6200110010800000AA00389B71";
+
 // ANCHOR JUMBF Content box
 /// JUMBF Content box (ISO 19566-5:2019, Annex B)
 #[derive(Debug, Default)]
@@ -724,6 +734,51 @@ impl JUMBFCodestreamContentBox {
     }
 }
 
+// ANCHOR JUMBF Brotli Content box
+#[derive(Debug, Default)]
+pub struct JUMBFBrotliContentBox {
+    data: Vec<u8>, // compressed Brotli data
+}
+
+impl BMFFBox for JUMBFBrotliContentBox {
+    fn box_type(&self) -> &'static [u8; 4] {
+        b"brob"
+    }
+
+    fn box_uuid(&self) -> &'static str {
+        &JUMBF_BROTLI_UUID
+    }
+
+    fn box_payload_size(&self) -> IoResult<u32> {
+        let size = self.data.len();
+        Ok(size as u32)
+    }
+
+    fn write_box_payload(&self, writer: &mut dyn Write) -> IoResult<()> {
+        if !self.data.is_empty() {
+            write_all!(writer, &self.data);
+        }
+        Ok(())
+    }
+
+    // Necessary method to enable conversion between types...
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl JUMBFBrotliContentBox {
+    // the content box takes ownership of the data!
+    pub fn new(data_in: Vec<u8>) -> Self {
+        JUMBFBrotliContentBox { data: data_in }
+    }
+
+    // getter
+    pub fn data(&self) -> &Vec<u8> {
+        &self.data
+    }
+}
+
 // ANCHOR JUMBF UUID Content box
 /// JUMBF UUID Content box (ISO 19566-5:2019, Annex B.5)
 #[derive(Debug, Default)]
@@ -789,7 +844,8 @@ impl JUMBFUUIDContentBox {
 // SECTION CAI
 //---------------
 pub const CAI_BLOCK_UUID: &str = "6332706100110010800000AA00389B71"; // c2pa
-pub const CAI_STORE_UUID: &str = "63326D6100110010800000AA00389B71"; // c2ma
+pub const CAI_MANIFEST_UUID: &str = "63326D6100110010800000AA00389B71"; // c2ma
+pub const CAI_COMPRESSED_STORE_UUID: &str = "6332636D00110010800000AA00389B71"; // c2cm
 pub const CAI_UPDATE_MANIFEST_UUID: &str = "6332756D00110010800000AA00389B71"; // c2um
 pub const CAI_ASSERTION_STORE_UUID: &str = "6332617300110010800000AA00389B71"; // c2as
 pub const CAI_INGREDIENT_STORE_UUID: &str = "6361697300110010800000AA00389B71"; //cais
@@ -805,6 +861,7 @@ pub const CAI_EMBEDDED_FILE_DATA_UUID: &str = "6269646200110010800000AA00389B71"
 pub const CAI_VERIFIABLE_CREDENTIALS_STORE_UUID: &str = "6332766300110010800000AA00389B71"; // c2vc
 pub const CAI_UUID_ASSERTION_UUID: &str = "7575696400110010800000AA00389B71"; // uuid
 pub const CAI_DATABOXES_STORE_UUID: &str = "6332646200110010800000AA00389B71"; // c2db
+pub const CAI_BROTLI_BOX_UUID: &str = "62726F6200110010800000AA00389B71"; // brob
 
 // ANCHOR Salt Content Box
 /// Salt Content Box
@@ -1376,24 +1433,30 @@ impl Default for CAIVerifiableCredentialStore {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ManifestType {
+    Manifest,
+    UpdateManifest,
+}
+
 // ANCHOR CAI Store
 /// CAI Store
 #[derive(Debug)]
-pub struct CAIStore {
-    is_update_manifest: bool,
+pub struct CAIManifest {
+    pub compressed_store: bool,
+    manifest_type: ManifestType,
     store: JUMBFSuperBox,
 }
 
-impl BMFFBox for CAIStore {
+impl BMFFBox for CAIManifest {
     fn box_type(&self) -> &'static [u8; 4] {
         b"    "
     }
 
     fn box_uuid(&self) -> &'static str {
-        if self.is_update_manifest {
-            CAI_UPDATE_MANIFEST_UUID
-        } else {
-            CAI_STORE_UUID
+        match self.manifest_type {
+            ManifestType::Manifest => CAI_MANIFEST_UUID,
+            ManifestType::UpdateManifest => CAI_UPDATE_MANIFEST_UUID,
         }
     }
 
@@ -1403,7 +1466,39 @@ impl BMFFBox for CAIStore {
     }
 
     fn write_box_payload(&self, writer: &mut dyn Write) -> IoResult<()> {
-        self.store.write_box(writer)
+        if self.compressed_store {
+            // get the complete uncompressed manifest box
+            let uncompressed_manifest = Vec::new();
+            let mut uncompressed_stream = Cursor::new(uncompressed_manifest);
+
+            self.store.write_box(&mut uncompressed_stream)?;
+            uncompressed_stream.rewind()?;
+
+            let mut compressed_manifest = Vec::new();
+            //let mut compressed_stream = Cursor::new(compressed_manifest);
+
+            // decompress brotli box
+            let params = brotli::enc::BrotliEncoderParams::default();
+            brotli::BrotliCompress(&mut uncompressed_stream, &mut compressed_manifest, &params)?;
+            //compressed_manifest = compressed_stream.into_inner();
+
+            // make brotli box
+            let brotli_box = JUMBFBrotliContentBox {
+                data: compressed_manifest,
+            };
+
+            // convert current box to a comoressed manifest box with same label
+            let mut sbox = JUMBFSuperBox::new(
+                &self.store.desc_box().label(),
+                Some(CAI_COMPRESSED_STORE_UUID),
+            );
+            sbox.add_data_box(Box::new(brotli_box));
+
+            // write out brotli super box
+            sbox.write_box(writer)
+        } else {
+            self.store.write_box(writer)
+        }
     }
 
     // Necessary method to enable conversion between types...
@@ -1412,26 +1507,59 @@ impl BMFFBox for CAIStore {
     }
 }
 
-impl CAIStore {
-    pub fn new(box_label: &str, update_manifest: bool) -> Self {
-        let id = if update_manifest {
-            Some(CAI_UPDATE_MANIFEST_UUID)
-        } else {
-            Some(CAI_STORE_UUID)
+impl CAIManifest {
+    pub fn new(box_label: &str, manifest_type: ManifestType, compressed_store: bool) -> Self {
+        let id = match manifest_type {
+            ManifestType::Manifest => Some(CAI_MANIFEST_UUID),
+            ManifestType::UpdateManifest => Some(CAI_UPDATE_MANIFEST_UUID),
         };
+
         let sbox = JUMBFSuperBox::new(box_label, id);
-        CAIStore {
-            is_update_manifest: update_manifest,
+
+        CAIManifest {
+            compressed_store,
+            manifest_type,
             store: sbox,
         }
     }
 
-    pub fn from(sbox: JUMBFSuperBox) -> Self {
-        let update_manifest = sbox.box_uuid() == CAI_UPDATE_MANIFEST_UUID;
+    pub fn from(sbox: &JUMBFSuperBox) -> JumbfParseResult<Self> {
+        let mut compressed_store = false;
 
-        CAIStore {
-            is_update_manifest: update_manifest,
-            store: sbox,
+        // decompress brotli box if available
+        let store_box = if let Some(compressed_manifest) = sbox.data_box_as_brotli_box(0) {
+            let decompressed_manifest = Vec::new();
+
+            let mut decompressed_stream = Cursor::new(decompressed_manifest);
+            let mut compressed_stream = Cursor::new(compressed_manifest.data());
+            brotli::BrotliDecompress(&mut compressed_stream, &mut decompressed_stream)?;
+
+            decompressed_stream.rewind()?;
+
+            compressed_store = true;
+            BoxReader::read_super_box(&mut decompressed_stream)?
+        } else {
+            // clone superbox
+            let box_as_data = Vec::new();
+            let mut stream = Cursor::new(box_as_data);
+            sbox.write_box(&mut stream)?;
+            stream.rewind()?;
+
+            BoxReader::read_super_box(&mut stream)?
+        };
+
+        if store_box.desc_box.box_uuid() == CAI_UPDATE_MANIFEST_UUID {
+            Ok(CAIManifest {
+                compressed_store,
+                manifest_type: ManifestType::UpdateManifest,
+                store: store_box,
+            })
+        } else {
+            Ok(CAIManifest {
+                compressed_store,
+                manifest_type: ManifestType::Manifest,
+                store: store_box,
+            })
         }
     }
 
@@ -1863,7 +1991,8 @@ boxtype! {
     Jp2c => 0x6A70_3263,
     Cbor => 0x6362_6F72,
     EmbedMediaDesc => 0x6266_6462,
-    EmbedContent => 0x6269_6462
+    EmbedContent => 0x6269_6462,
+    Brotli => 0x6272_6F62
 }
 
 // ANCHOR BlockHeader
@@ -2124,6 +2253,29 @@ impl BoxReader {
         Ok(JUMBFCodestreamContentBox::new(buf))
     }
 
+    pub fn read_brotli_box<R: Read + Seek>(
+        reader: &mut R,
+        size: u64,
+    ) -> JumbfParseResult<JUMBFBrotliContentBox> {
+        let header =
+            BoxReader::read_header(reader).map_err(|_| JumbfParseError::InvalidBoxHeader)?;
+        if header.size == 0 {
+            // bad read, return empty box...
+            return Ok(JUMBFBrotliContentBox::new(Vec::new()));
+        } else if header.size != size {
+            // this means that we started w/o the header...
+            unread_bytes(reader, HEADER_SIZE)?;
+        }
+
+        // read the data itself...
+        let data_len = size - HEADER_SIZE;
+        let buf = reader
+            .read_to_vec(data_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
+
+        Ok(JUMBFBrotliContentBox::new(buf))
+    }
+
     pub fn read_uuid_box<R: Read + Seek>(
         reader: &mut R,
         size: u64,
@@ -2315,7 +2467,10 @@ impl BoxReader {
                         BoxReader::read_jp2c_box(reader, box_header.size)
                             .map_err(|_| JumbfParseError::InvalidJp2cBox)?,
                     ),
-
+                    BoxType::Brotli => Box::new(
+                        BoxReader::read_brotli_box(reader, box_header.size)
+                            .map_err(|_| JumbfParseError::InvalidJp2cBox)?,
+                    ),
                     BoxType::Uuid => Box::new(
                         BoxReader::read_uuid_box(reader, box_header.size)
                             .map_err(|_| JumbfParseError::InvalidUuidBox)?,
@@ -2625,7 +2780,7 @@ pub mod tests {
     fn cai_store() {
         // create the CAI store
         let store_label = "cb.adobe_1";
-        let mut cai_store = CAIStore::new(store_label, false);
+        let mut cai_store = CAIManifest::new(store_label, ManifestType::Manifest, false);
 
         // create the assertion store
         let mut a_store = CAIAssertionStore::new();
@@ -2693,7 +2848,7 @@ pub mod tests {
 
         // create the CAI store
         let store_label = "cb.adobe_1";
-        let mut cai_store = CAIStore::new(store_label, false);
+        let mut cai_store = CAIManifest::new(store_label, ManifestType::Manifest, false);
 
         // create the assertion store
         let mut a_store = CAIAssertionStore::new();

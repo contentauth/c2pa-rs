@@ -268,6 +268,9 @@ pub struct Claim {
     // root of CAI store
     update_manifest: bool,
 
+    // manifest is or will be stored compressed
+    compressed: bool,
+
     pub title: Option<String>, // title for this claim, generally the name of the containing asset
 
     pub format: Option<String>, // mime format of document containing this claim
@@ -449,6 +452,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            compressed: false,
             data_boxes: Vec::new(),
             metadata: None,
             claim_version,
@@ -548,6 +552,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            compressed: false,
             data_boxes: Vec::new(),
             metadata: None,
             claim_version,
@@ -660,6 +665,7 @@ impl Claim {
             Ok(Claim {
                 remote_manifest: RemoteManifest::NoRemote,
                 update_manifest: false,
+                compressed: false,
                 title,
                 format: Some(format),
                 instance_id,
@@ -768,6 +774,7 @@ impl Claim {
             Ok(Claim {
                 remote_manifest: RemoteManifest::NoRemote,
                 update_manifest: false,
+                compressed: false,
                 title,
                 format: None,
                 instance_id,
@@ -1146,6 +1153,15 @@ impl Claim {
     // get version of the Claim
     pub fn version(&self) -> usize {
         self.claim_version
+    }
+
+    // manifests compression enabled
+    pub fn compressed(&self) -> bool {
+        self.compressed
+    }
+
+    pub(crate) fn set_compressed_manifest(&mut self, compressed: bool) {
+        self.compressed = compressed;
     }
 
     pub fn set_remote_manifest<S: Into<String> + AsRef<str>>(

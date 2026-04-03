@@ -29,8 +29,8 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
         labels::{self, CLAIM},
-        BmffHash, CertificateStatus, DataBox, DataHash, Ingredient, Relationship, TimeStamp, User,
-        UserCbor,
+        BmffHash, BoxHash, CertificateStatus, DataBox, DataHash, Ingredient, Relationship,
+        TimeStamp, User, UserCbor,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
@@ -982,11 +982,17 @@ impl Store {
         }
     }
 
-    fn build_manifest_box(claim: &Claim, min_reserve_size: usize) -> Result<CAIStore> {
+    fn build_manifest_box(claim: &Claim, min_reserve_size: usize) -> Result<CAIManifest> {
         // box label
         let label = claim.label();
 
-        let mut cai_store = CAIStore::new(label, claim.update_manifest());
+        let manifest_type = if claim.update_manifest() {
+            ManifestType::UpdateManifest
+        } else {
+            ManifestType::Manifest
+        };
+
+        let mut cai_store = CAIManifest::new(label, manifest_type, claim.compressed());
 
         for manifest_box in claim.get_box_order() {
             match *manifest_box {
@@ -1172,14 +1178,17 @@ impl Store {
 
         let num_stores = cai_block.data_box_count();
         for idx in 0..num_stores {
-            let cai_store_box = cai_block
-                .data_box_as_superbox(idx)
-                .ok_or(Error::JumbfBoxNotFound)?;
+            let store_box = CAIManifest::from(
+                cai_block
+                    .data_box_as_superbox(idx)
+                    .ok_or(Error::JumbfBoxNotFound)?,
+            )?;
+            let cai_store_box = store_box.super_box();
             let cai_store_desc_box = cai_store_box.desc_box();
 
             // ignore unknown boxes per the spec
             if cai_store_desc_box.uuid() != CAI_UPDATE_MANIFEST_UUID
-                && cai_store_desc_box.uuid() != CAI_STORE_UUID
+                && cai_store_desc_box.uuid() != CAI_MANIFEST_UUID
             {
                 continue;
             }
@@ -1366,6 +1375,9 @@ impl Store {
 
             // retrieve & set signature for each claim
             claim.set_signature_val(sig_data.cbor().clone()); // load the stored signature
+
+            // set the compression status
+            claim.set_compressed_manifest(store_box.compressed_store);
 
             // retrieve the assertion store
             let assertion_store_box = manifest_boxes
@@ -2995,7 +3007,7 @@ impl Store {
         let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
 
         #[allow(unused_mut)] // Not mutable in the non-async case.
-        let mut jumbf_bytes = self.start_save_stream(
+        self.start_save_stream(
             format,
             input_stream,
             &mut intermediate_stream,
@@ -3003,6 +3015,7 @@ impl Store {
             settings,
             context,
         )?;
+        intermediate_stream.rewind()?;
 
         let mut preliminary_claim = PartialClaim::default();
         {
@@ -3019,35 +3032,6 @@ impl Store {
             self.write_dynamic_assertions_async(&dynamic_assertions, &mut preliminary_claim)
                 .await
         }?;
-        // update the JUMBF if modified with dynamic assertions
-        if modified {
-            let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-            match pc.remote_manifest() {
-                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
-                    jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-
-                    intermediate_stream.rewind()?;
-                    save_jumbf_to_stream(
-                        format,
-                        &mut intermediate_stream,
-                        output_stream,
-                        &jumbf_bytes,
-                    )?;
-                }
-                RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
-                    // we are going to handle the JUMBF like we'd embed, but we won't
-                    // eventually we won't embed it, so this is a temporary hack to get the code to work
-
-                    // Update the JUMBF like it would normally be done
-                    jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-
-                    // Intermediate stream goes to output, but still no embedding
-                    intermediate_stream.rewind()?;
-                    //std::io::copy(&mut intermediate_stream, output_stream)?;
-                }
-            };
-            output_stream.rewind()?;
-        }
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
 
@@ -3058,23 +3042,19 @@ impl Store {
             self.sign_claim_async(pc, signer, signer.reserve_size(), settings)
                 .await
         }?;
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
-        intermediate_stream.rewind()?;
+        // update the signature
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        pc.set_signature_val(sig.clone());
+
+        // update the JUMBF with the signature
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
         output_stream.rewind()?;
-        match self.finish_save_stream(
-            jumbf_bytes,
-            format,
-            &mut intermediate_stream,
-            output_stream,
-            sig,
-            &sig_placeholder,
-        ) {
+        match self.finish_save_stream(jumbf_bytes, format, &mut intermediate_stream, output_stream)
+        {
             Ok((s, m)) => {
-                // save sig so store is up to date
-                let pc_mut = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-                pc_mut.set_signature_val(s);
-
                 output_stream.flush()?;
                 output_stream.rewind()?;
 
@@ -3182,6 +3162,30 @@ impl Store {
 
         let mut data;
         let jumbf_size;
+
+        // check to see if manifest compression is requested
+        if pc.compressed() {
+            // If compression is desired use BoxHashing for compatibile formats, otherwise fall back to regular hashing.
+            if let Some(box_hash_handler) = io_handler.asset_box_hash_ref() {
+                // yes it does, use box hashing
+                let mut bh = BoxHash { boxes: Vec::new() };
+
+                bh.generate_box_hash_from_stream(
+                    &mut intermediate_stream,
+                    pc.alg(),
+                    box_hash_handler,
+                    false,
+                )?;
+
+                // add the box hash assertion to the claim
+                pc.add_assertion(&bh)?;
+
+                intermediate_stream.rewind()?;
+            } else {
+                // clear the compression flag since we won't be able to do it without box hashing
+                pc.set_compressed_manifest(false);
+            }
+        }
 
         if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
@@ -3356,20 +3360,11 @@ impl Store {
 
     fn finish_save_stream(
         &self,
-        mut jumbf_bytes: Vec<u8>,
+        jumbf_bytes: Vec<u8>,
         format: &str,
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        sig: Vec<u8>,
-        sig_placeholder: &[u8],
     ) -> Result<(Vec<u8>, Vec<u8>)> {
-        if sig_placeholder.len() != sig.len() {
-            return Err(Error::CoseSigboxTooSmall);
-        }
-
-        patch_bytes(&mut jumbf_bytes, sig_placeholder, &sig)
-            .map_err(|_| Error::JumbfCreationError)?;
-
         // re-save to file
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         match pc.remote_manifest() {
@@ -3383,7 +3378,7 @@ impl Store {
         }
 
         output_stream.flush()?;
-        Ok((sig, jumbf_bytes))
+        Ok((pc.signature_val().to_vec(), jumbf_bytes))
     }
 
     #[cfg(feature = "file_io")]

@@ -1358,6 +1358,15 @@ impl Builder {
             claim.alg = Some(alg.to_string());
         }
 
+        // set compression override setting
+        if let Ok(Some(compress)) = self
+            .context()
+            .settings()
+            .get_value("core.may_compress_manifests")
+        {
+            claim.set_compressed_manifest(compress);
+        }
+
         if let Some(thumb_ref) = definition.thumbnail.as_ref() {
             // Setting the format to "none" will ensure that no claim thumbnail is added
             if thumb_ref.format != "none" {
