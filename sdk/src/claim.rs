@@ -1816,7 +1816,7 @@ impl Claim {
             }
         }
 
-        Err(Error::AssertionInvalidRedaction)
+        Err(Error::AssertionRedactionNotFound)
     }
 
     /// Return a hash of this claim.
@@ -3471,7 +3471,14 @@ impl Claim {
             )));
         }
 
-        // redact assertion from incoming ingredients
+        // Redact assertion from incoming ingredients
+        // Only apply redactions that match claims in the current ingredient batch,
+        // redactions targeting other ingredients will be applied when those are processed
+        // (otherwise can't find them).
+        // TODO: per C2PA 2.4 spec, when redacting an ingredient assertion that references
+        // a C2PA Manifest, the associated manifest should be removed from the Manifest Store
+        // if no other references to it remain. This was also TODO'ed before...
+        let mut applied_redactions = Vec::new();
         if let Some(redactions) = &redactions_opt {
             for redaction in redactions {
                 if let Some(claim) = ingredient
@@ -3479,16 +3486,19 @@ impl Claim {
                     .find(|x| redaction.contains(x.label()))
                 {
                     claim.redact_assertion(redaction)?;
-
-                    // if this is an ingredient we should remove the ingredient
-                } else {
-                    return Err(Error::AssertionRedactionNotFound);
+                    applied_redactions.push(redaction.clone());
                 }
             }
         }
 
-        // all have been removed (if necessary) so replace redaction list
-        self.redacted_assertions = redactions_opt;
+        // accumulate applied redactions across multiple ingredient batches
+        match &mut self.redacted_assertions {
+            Some(existing) => existing.extend(applied_redactions),
+            None if !applied_redactions.is_empty() => {
+                self.redacted_assertions = Some(applied_redactions);
+            }
+            _ => {}
+        }
 
         // just replace the ingredients with new once since conflicts are resolved by the caller
         for i in ingredient {
