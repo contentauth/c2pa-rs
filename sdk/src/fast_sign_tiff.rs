@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2026 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -283,7 +283,9 @@ fn compute_layout<R: Read + Seek>(
 
     // Align to DWORD (4-byte) boundary
     const DWORD_ALIGN: u64 = 4;
-    let padded_copy_len = (source_copy_len + DWORD_ALIGN - 1) & !(DWORD_ALIGN - 1);
+    let padded_copy_len = source_copy_len.checked_add(DWORD_ALIGN - 1)
+        .ok_or_else(|| Error::InvalidAsset("source too large for alignment".to_string()))?
+        & !(DWORD_ALIGN - 1);
 
     let c2pa_ifd_offset = padded_copy_len;
     let ifd_size = ifd_total_size(header.big_tiff, 1);
@@ -342,6 +344,7 @@ where
 
     let t_total = std::time::Instant::now();
     let settings = crate::settings::Settings::default();
+    let reserve_size = signer.reserve_size();
 
     // -- Prepare builder + store --
     builder.definition.format.clone_from(&mime_format);
@@ -379,7 +382,7 @@ where
         }
     }
 
-    let initial_jumbf = store.to_jumbf_internal(signer.reserve_size())?;
+    let initial_jumbf = store.to_jumbf_internal(reserve_size)?;
     let initial_jumbf_size = initial_jumbf.len() as u64;
 
     // -- Step 3: Compute output layout with initial JUMBF size --
@@ -400,7 +403,7 @@ where
     }
 
     // Regenerate JUMBF with real exclusion values
-    let placeholder_jumbf = store.to_jumbf_internal(signer.reserve_size())?;
+    let placeholder_jumbf = store.to_jumbf_internal(reserve_size)?;
     let jumbf_size = placeholder_jumbf.len() as u64;
 
     // If the size changed (different CBOR encoding width), recompute layout
@@ -416,7 +419,7 @@ where
             pc.update_data_hash(dh)?;
         }
 
-        let pj = store.to_jumbf_internal(signer.reserve_size())?;
+        let pj = store.to_jumbf_internal(reserve_size)?;
         let js = pj.len() as u64;
         if js != jumbf_size {
             log::error!(
@@ -493,7 +496,7 @@ where
     final_data_hash.set_hash(hash_value);
     pc.update_data_hash(final_data_hash)?;
 
-    let final_jumbf_unsigned = store.to_jumbf_internal(signer.reserve_size())?;
+    let final_jumbf_unsigned = store.to_jumbf_internal(reserve_size)?;
     if final_jumbf_unsigned.len() as u64 != jumbf_size {
         log::error!(
             "[c2pa-fast-sign-tiff] JUMBF size mismatch: expected {}, got {}",
@@ -507,8 +510,8 @@ where
     let t_sign = std::time::Instant::now();
     let (sig, sig_placeholder) = {
         let pc = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let s = store.sign_claim(pc, signer, signer.reserve_size(), &settings)?;
-        let sp = Store::sign_claim_placeholder(pc, signer.reserve_size());
+        let s = store.sign_claim(pc, signer, reserve_size, &settings)?;
+        let sp = Store::sign_claim_placeholder(pc, reserve_size);
         (s, sp)
     };
 
@@ -555,7 +558,7 @@ fn copy_bytes<R: Read, W: Write>(src: &mut R, dst: &mut W, len: u64) -> Result<(
     let mut remaining = len;
     let mut buf = vec![0u8; COPY_BUF_SIZE];
     while remaining > 0 {
-        let to_read = std::cmp::min(remaining as usize, buf.len());
+        let to_read = std::cmp::min(remaining, buf.len() as u64) as usize;
         src.read_exact(&mut buf[..to_read])?;
         dst.write_all(&buf[..to_read])?;
         remaining -= to_read as u64;

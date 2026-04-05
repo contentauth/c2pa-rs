@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2026 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -106,7 +106,8 @@ fn plan_output(
 ) -> Result<OutputPlan> {
     let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?;
     let ftyp_info = &bmff_tree[ftyp_token[0]].data;
-    let ftyp_end = ftyp_info.offset + ftyp_info.size;
+    let ftyp_end = ftyp_info.offset.checked_add(ftyp_info.size)
+        .ok_or_else(|| Error::InvalidAsset("ftyp box overflow".to_string()))?;
 
     let (insertion_point, existing_c2pa_size) =
         if let Some(c2pa_token) = get_uuid_token(bmff_tree, bmff_map, &C2PA_UUID) {
@@ -146,7 +147,8 @@ fn plan_output(
         });
     }
     segments.push(BmffOutputSegment::C2paBox);
-    let after_insertion = insertion_point + existing_size;
+    let after_insertion = insertion_point.checked_add(existing_size)
+        .ok_or_else(|| Error::InvalidAsset("insertion point overflow".to_string()))?;
     if after_insertion < source_size {
         segments.push(BmffOutputSegment::SourceRange {
             offset: after_insertion,
@@ -155,7 +157,9 @@ fn plan_output(
     }
 
     // JUMBF data is the last thing write_c2pa_box writes.
-    let jumbf_data_offset = insertion_point + c2pa_box_size - jumbf_bytes.len() as u64;
+    let jumbf_data_offset = insertion_point.checked_add(c2pa_box_size)
+        .and_then(|v| v.checked_sub(jumbf_bytes.len() as u64))
+        .ok_or_else(|| Error::InvalidAsset("jumbf offset overflow".to_string()))?;
 
     Ok(OutputPlan {
         segments,
@@ -180,11 +184,18 @@ fn compute_output_exclusions(
     let shift = plan.offset_adjust;
     let insertion_point = plan.insertion_point;
     let c2pa_box_size = plan.c2pa_box.len() as u64;
-    let source_after = insertion_point + plan.existing_c2pa_size;
+    let source_after = insertion_point.checked_add(plan.existing_c2pa_size)
+        .ok_or_else(|| Error::InvalidAsset("source_after overflow".to_string()))?;
 
     let source_to_output = |src_offset: u64| -> u64 {
         if src_offset >= source_after {
-            (src_offset as i64 + shift) as u64
+            let result = src_offset as i64 + shift;
+            if result < 0 {
+                log::error!("[c2pa-fast-sign] source_to_output produced negative offset: src={}, shift={}", src_offset, shift);
+                0u64  // defensive fallback — should be unreachable after v4 overflow checks
+            } else {
+                result as u64
+            }
         } else {
             src_offset
         }
@@ -257,6 +268,10 @@ fn collect_offset_patches<R: Read + Seek>(
     if let Some(stco_list) = bmff_map.get("/moov/trak/mdia/minf/stbl/stco") {
         for stco_token in stco_list {
             let box_info = &bmff_tree[*stco_token].data;
+            let min_box_size = HEADER_SIZE + FULLBOX_PREFIX_SIZE + 4; // +4 for entry_count
+            if box_info.size < min_box_size {
+                return Err(Error::InvalidAsset("stco box too small".to_string()));
+            }
             source.seek(SeekFrom::Start(box_info.offset + HEADER_SIZE + FULLBOX_PREFIX_SIZE))?;
             let entry_count = source.read_u32::<BigEndian>()?;
             let header_overhead = HEADER_SIZE + FULLBOX_PREFIX_SIZE + 4; // + entry_count field
@@ -278,6 +293,10 @@ fn collect_offset_patches<R: Read + Seek>(
     if let Some(co64_list) = bmff_map.get("/moov/trak/mdia/minf/stbl/co64") {
         for co64_token in co64_list {
             let box_info = &bmff_tree[*co64_token].data;
+            let min_box_size = HEADER_SIZE + FULLBOX_PREFIX_SIZE + 4; // +4 for entry_count
+            if box_info.size < min_box_size {
+                return Err(Error::InvalidAsset("co64 box too small".to_string()));
+            }
             source.seek(SeekFrom::Start(box_info.offset + HEADER_SIZE + FULLBOX_PREFIX_SIZE))?;
             let entry_count = source.read_u32::<BigEndian>()?;
             let header_overhead = HEADER_SIZE + FULLBOX_PREFIX_SIZE + 4;
@@ -299,6 +318,10 @@ fn collect_offset_patches<R: Read + Seek>(
     if let Some(iloc_list) = bmff_map.get("/meta/iloc") {
         for iloc_token in iloc_list {
             let box_info = &bmff_tree[*iloc_token].data;
+            let min_box_size = HEADER_SIZE + FULLBOX_PREFIX_SIZE + 2 + 2; // +2 for size nibbles, +2 for item_count (minimum)
+            if box_info.size < min_box_size {
+                return Err(Error::InvalidAsset("iloc box too small".to_string()));
+            }
             source.seek(SeekFrom::Start(box_info.offset + HEADER_SIZE))?;
             let version = source.read_u8()?;
             let _flags = {
@@ -384,14 +407,15 @@ fn collect_offset_patches<R: Read + Seek>(
                     let idx_sz: u64 = if (version == 1 || version == 2) && index_size > 0 { index_size as u64 } else { 0 };
                     let min_bytes_per_extent = idx_sz + offset_size as u64 + length_size as u64;
                     let pos_now = source.stream_position()?;
-                    let box_end = box_info.offset + box_info.size;
+                    let box_end = box_info.offset.checked_add(box_info.size)
+                        .ok_or_else(|| Error::InvalidAsset("iloc box overflow".to_string()))?;
                     if (extent_count as u64) * min_bytes_per_extent > box_end.saturating_sub(pos_now) {
                         return Err(Error::InvalidAsset("iloc extent_count exceeds box size".to_string()));
                     }
                 }
                 for _ in 0..extent_count {
                     // extent_index
-                    if version == 1 || (version == 2 && index_size > 0) {
+                    if (version == 1 || version == 2) && index_size > 0 {
                         match index_size {
                             4 => {
                                 source.read_u32::<BigEndian>()?;
@@ -399,7 +423,11 @@ fn collect_offset_patches<R: Read + Seek>(
                             8 => {
                                 source.read_u64::<BigEndian>()?;
                             }
-                            _ => {}
+                            _ => {
+                                return Err(Error::InvalidAsset(
+                                    "Bad BMFF iloc index size".to_string(),
+                                ))
+                            }
                         }
                     }
                     // extent_offset
@@ -424,7 +452,12 @@ fn collect_offset_patches<R: Read + Seek>(
                                     adjust,
                                 });
                             }
-                            _ => {}
+                            0 => {}
+                            _ => {
+                                return Err(Error::InvalidAsset(
+                                    "Bad BMFF iloc extent_offset size".to_string(),
+                                ))
+                            }
                         }
                     }
                     // extent_length
@@ -474,6 +507,10 @@ fn collect_offset_patches<R: Read + Seek>(
     if let Some(saio_list) = bmff_map.get("/moov/trak/mdia/minf/stbl/saio") {
         for saio_token in saio_list {
             let box_info = &bmff_tree[*saio_token].data;
+            let min_box_size = HEADER_SIZE + FULLBOX_PREFIX_SIZE + 4; // +4 for entry_count (minimum, flags=0)
+            if box_info.size < min_box_size {
+                return Err(Error::InvalidAsset("saio box too small".to_string()));
+            }
             source.seek(SeekFrom::Start(box_info.offset + HEADER_SIZE))?;
             let version = source.read_u8()?;
             let mut flag_buf = [0u8; 3];
@@ -506,6 +543,54 @@ fn collect_offset_patches<R: Read + Seek>(
                         adjust,
                     });
                 }
+            }
+        }
+    }
+
+    // tfra: track fragment random access moof_offset
+    if let Some(tfra_list) = bmff_map.get("/mfra/tfra") {
+        for tfra_token in tfra_list {
+            let box_info = &bmff_tree[*tfra_token].data;
+            let min_tfra_size = HEADER_SIZE + FULLBOX_PREFIX_SIZE + 4 + 4 + 4; // track_id + lengths + number_of_entry
+            if box_info.size < min_tfra_size {
+                return Err(Error::InvalidAsset("tfra box too small".to_string()));
+            }
+            source.seek(SeekFrom::Start(box_info.offset + HEADER_SIZE))?;
+            let version = source.read_u8()?;
+            let _flags = {
+                let mut buf = [0u8; 3];
+                source.read_exact(&mut buf)?;
+                u32::from_be_bytes([0, buf[0], buf[1], buf[2]])
+            };
+            let _track_id = source.read_u32::<BigEndian>()?;
+            let length_fields = source.read_u32::<BigEndian>()?;
+            let traf_num_len = ((length_fields >> 4) & 0x3) as u64 + 1;
+            let trun_num_len = ((length_fields >> 2) & 0x3) as u64 + 1;
+            let sample_num_len = (length_fields & 0x3) as u64 + 1;
+            let number_of_entry = source.read_u32::<BigEndian>()?;
+
+            let moof_offset_size: u64 = if version == 0 { 4 } else { 8 };
+            let time_size: u64 = if version == 0 { 4 } else { 8 };
+            let entry_size = time_size + moof_offset_size + traf_num_len + trun_num_len + sample_num_len;
+
+            // Validate
+            let entries_overhead = (number_of_entry as u64).saturating_mul(entry_size);
+            let pos_now = source.stream_position()?;
+            let box_end = box_info.offset.checked_add(box_info.size)
+                .ok_or_else(|| Error::InvalidAsset("tfra box overflow".to_string()))?;
+            if entries_overhead > box_end.saturating_sub(pos_now) {
+                return Err(Error::InvalidAsset("tfra entry count exceeds box size".to_string()));
+            }
+
+            let entries_start = pos_now;
+            for i in 0..number_of_entry {
+                // Skip time field
+                let moof_offset_pos = entries_start + (i as u64) * entry_size + time_size;
+                patches.push(SourcePatch {
+                    source_offset: moof_offset_pos,
+                    field_size: moof_offset_size as u8,
+                    adjust,
+                });
             }
         }
     }
@@ -546,6 +631,7 @@ where
 
     let t_total = std::time::Instant::now();
     let settings = crate::settings::Settings::default();
+    let reserve_size = signer.reserve_size();
 
     // -- Prepare builder + store --
     builder.definition.format.clone_from(&mime_format);
@@ -611,7 +697,7 @@ where
         pc.add_assertion(&bmff_hash)?;
     }
 
-    let placeholder_jumbf = store.to_jumbf_internal(signer.reserve_size())?;
+    let placeholder_jumbf = store.to_jumbf_internal(reserve_size)?;
     let jumbf_size = placeholder_jumbf.len();
     log::debug!(
         "[c2pa-fast-sign] build_placeholder_jumbf: {}ms (jumbf={}B)",
@@ -681,7 +767,7 @@ where
     real_bmff_hash.set_hash(hash_value);
     pc.update_bmff_hash(real_bmff_hash)?;
 
-    let final_jumbf_unsigned = store.to_jumbf_internal(signer.reserve_size())?;
+    let final_jumbf_unsigned = store.to_jumbf_internal(reserve_size)?;
     if final_jumbf_unsigned.len() != jumbf_size {
         log::error!(
             "[c2pa-fast-sign] JUMBF size mismatch: expected {}, got {}",
@@ -698,8 +784,8 @@ where
     // -- Step 6: Sign the claim --
     let t5 = std::time::Instant::now();
     let pc = store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-    let sig = store.sign_claim(pc, signer, signer.reserve_size(), &settings)?;
-    let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+    let sig = store.sign_claim(pc, signer, reserve_size, &settings)?;
+    let sig_placeholder = Store::sign_claim_placeholder(pc, reserve_size);
     log::debug!(
         "[c2pa-fast-sign] sign_claim: {}ms",
         t5.elapsed().as_millis()

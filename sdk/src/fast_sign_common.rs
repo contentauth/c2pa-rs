@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2026 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -133,7 +133,8 @@ impl StreamingHasher {
             if *exc_start > pos {
                 inclusions.push((pos, *exc_start - 1));
             }
-            pos = *exc_start + *exc_len;
+            pos = exc_start.checked_add(*exc_len)
+                .ok_or_else(|| Error::InvalidAsset("exclusion range overflow".to_string()))?;
         }
         if pos <= data_end {
             inclusions.push((pos, data_end));
@@ -216,7 +217,7 @@ impl StreamingHasher {
             return;
         }
         let data_start = self.output_offset;
-        let data_end = self.output_offset + data.len() as u64; // exclusive
+        let data_end = self.output_offset.saturating_add(data.len() as u64);
 
         while self.action_idx < self.actions.len() {
             let action = &self.actions[self.action_idx];
@@ -249,7 +250,7 @@ impl StreamingHasher {
                 }
             }
         }
-        self.output_offset += data.len() as u64;
+        self.output_offset = data_end;
     }
 
     /// Finalize the hash computation, returning the digest.
@@ -296,7 +297,7 @@ pub(crate) fn copy_with_patches<R: Read + Seek, W: Write>(
     let mut patch_start_idx: usize = 0;
 
     while remaining > 0 {
-        let to_read = std::cmp::min(remaining as usize, buf.len());
+        let to_read = std::cmp::min(remaining, buf.len() as u64) as usize;
         source.read_exact(&mut buf[..to_read])?;
 
         let chunk_start = current_src;

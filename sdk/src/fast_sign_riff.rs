@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2026 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -107,14 +107,9 @@ fn parse_chunk<R: Read + Seek>(
     }
 
     let mut id = [0u8; 4];
-    if reader.read_exact(&mut id).is_err() {
-        return Ok(None);
-    }
+    reader.read_exact(&mut id)?;
 
-    let data_size = match reader.read_u32::<LittleEndian>() {
-        Ok(s) => s,
-        Err(_) => return Ok(None),
-    };
+    let data_size = reader.read_u32::<LittleEndian>()?;
 
     let is_container = id == RIFF_ID || id == LIST_ID;
 
@@ -126,7 +121,10 @@ fn parse_chunk<R: Read + Seek>(
         reader.read_exact(&mut ft)?;
         form_type = Some(ft);
 
-        let container_end = offset + 8 + data_size as u64;
+        let raw_end = offset.checked_add(8)
+            .and_then(|v| v.checked_add(data_size as u64))
+            .ok_or_else(|| Error::InvalidAsset("RIFF chunk size overflow".to_string()))?;
+        let container_end = raw_end;
         let bounded_end = container_end.min(file_len);
 
         while reader.stream_position()? + 8 <= bounded_end {
@@ -137,20 +135,25 @@ fn parse_chunk<R: Read + Seek>(
             }
         }
 
-        let padded_end = if (offset + 8 + data_size as u64) % 2 != 0 {
-            offset + 8 + data_size as u64 + 1
+        let padded_end = if raw_end % 2 != 0 {
+            raw_end.checked_add(1)
+                .ok_or_else(|| Error::InvalidAsset("RIFF chunk size overflow".to_string()))?
         } else {
-            offset + 8 + data_size as u64
+            raw_end
         };
         let seek_to = padded_end.min(file_len);
         reader.seek(SeekFrom::Start(seek_to))?;
     } else {
-        let padded_size = if data_size % 2 != 0 {
-            data_size as u64 + 1
+        let raw_end = offset.checked_add(8)
+            .and_then(|v| v.checked_add(data_size as u64))
+            .ok_or_else(|| Error::InvalidAsset("RIFF chunk size overflow".to_string()))?;
+        let padded_end = if raw_end % 2 != 0 {
+            raw_end.checked_add(1)
+                .ok_or_else(|| Error::InvalidAsset("RIFF chunk size overflow".to_string()))?
         } else {
-            data_size as u64
+            raw_end
         };
-        let skip_to = (offset + 8 + padded_size).min(file_len);
+        let skip_to = padded_end.min(file_len);
         reader.seek(SeekFrom::Start(skip_to))?;
     }
 
