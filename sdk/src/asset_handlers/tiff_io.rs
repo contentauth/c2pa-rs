@@ -130,10 +130,10 @@ impl IFDEntryType {
 // TIFF IFD Entry (value_offset is in target endian)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IfdEntry {
-    entry_tag: u16,
-    entry_type: u16,
-    value_count: u64,
-    value_offset: u64,
+    pub(crate) entry_tag: u16,
+    pub(crate) entry_type: u16,
+    pub(crate) value_count: u64,
+    pub(crate) value_offset: u64,
 }
 
 // helper enum to know if the IFD requires special handling
@@ -148,12 +148,12 @@ pub enum IfdType {
 // TIFF IFD
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImageFileDirectory {
-    offset: u64,
-    entry_cnt: u64,
-    ifd_type: IfdType,
-    entries: HashMap<u16, IfdEntry>,
-    next_ifd_offset: Option<u64>,
-    next_idf_offset_location: u64,
+    pub(crate) offset: u64,
+    pub(crate) entry_cnt: u64,
+    pub(crate) ifd_type: IfdType,
+    pub(crate) entries: HashMap<u16, IfdEntry>,
+    pub(crate) next_ifd_offset: Option<u64>,
+    pub(crate) next_idf_offset_location: u64,
 }
 
 impl ImageFileDirectory {
@@ -366,7 +366,7 @@ impl TiffStructure {
 }
 
 // offset are stored in source endianness so to use offset value in Seek calls we must convert to native endianness
-fn decode_offset(offset_file_native: u64, endianness: Endianness, big_tiff: bool) -> Result<u64> {
+pub(crate) fn decode_offset(offset_file_native: u64, endianness: Endianness, big_tiff: bool) -> Result<u64> {
     let offset: u64;
     let offset_bytes = offset_file_native.to_ne_bytes();
     let offset_reader = Cursor::new(offset_bytes);

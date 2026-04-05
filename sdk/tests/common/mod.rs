@@ -1,4 +1,4 @@
-// Copyright 2024 Adobe. All rights reserved.
+// Copyright 2026 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -20,7 +20,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use c2pa::{format_from_path, Reader, Result};
+use c2pa::{format_from_path, Context, Reader, Result, Settings, ValidationState};
 pub use compare_readers::compare_readers;
 #[allow(unused)] // different code path for WASI
 use tempfile::{tempdir, TempDir};
@@ -38,6 +38,26 @@ macro_rules! assert_err {
 }
 #[allow(unused_imports)]
 pub(super) use assert_err;
+
+const TEST_SETTINGS: &str = include_str!("../fixtures/test_settings.toml");
+
+/// Create a shared Context with test settings.
+#[allow(unused)]
+pub fn make_context() -> std::sync::Arc<Context> {
+    let settings = Settings::new().with_toml(TEST_SETTINGS).unwrap();
+    Context::new().with_settings(settings).unwrap().into_shared()
+}
+
+/// Check that the validation state indicates the manifest is structurally valid.
+/// We accept both Valid (cert not in trust store) and Trusted (cert in trust store).
+#[allow(unused)]
+pub fn assert_valid(state: ValidationState) {
+    assert!(
+        matches!(state, ValidationState::Valid | ValidationState::Trusted),
+        "Expected Valid or Trusted, got {:?}",
+        state
+    );
+}
 
 pub fn fixtures_path<P: AsRef<Path>>(file_name: P) -> std::path::PathBuf {
     PathBuf::from("tests/fixtures").join(file_name)

@@ -1341,6 +1341,16 @@ impl Claim {
         self.add_assertion_impl(assertion_builder, &DefaultSalt::default(), false)
     }
 
+    /// Add an assertion to this claim with a specific salt generator.
+    /// This allows callers to control salting behavior, e.g. using NoSalt for deterministic output.
+    pub(crate) fn add_assertion_with_salt(
+        &mut self,
+        assertion_builder: &impl AssertionBase,
+        salt_generator: &impl SaltGenerator,
+    ) -> Result<C2PAAssertion> {
+        self.add_assertion_impl(assertion_builder, salt_generator, false)
+    }
+
     /// Same as add_assertion but forces addition to created_assertions for Claims V2
     pub fn add_created_assertion(
         &mut self,

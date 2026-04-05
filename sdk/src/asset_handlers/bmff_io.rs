@@ -49,7 +49,7 @@ const MAX_BOX_DEPTH: usize = 32; // reasonable BMFF box depth, to prevent stack 
 const HEADER_SIZE: u64 = 8; // 4 byte type + 4 byte size
 const HEADER_SIZE_LARGE: u64 = 16; // 4 byte type + 4 byte size + 8 byte large size
 
-const C2PA_UUID: [u8; 16] = [
+pub(crate) const C2PA_UUID: [u8; 16] = [
     0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c, 0x92, 0x97, 0x58, 0x28, 0x87, 0x7e, 0xc4, 0x81,
 ];
 const XMP_UUID: [u8; 16] = [
@@ -265,14 +265,14 @@ fn write_box_uuid_extension<W: Write>(w: &mut W, uuid: &[u8; 16]) -> Result<u64>
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BoxInfo {
-    path: String,
-    parent: Option<Token>,
+    pub(crate) path: String,
+    pub(crate) parent: Option<Token>,
     pub offset: u64,
     pub size: u64,
-    box_type: BoxType,
-    user_type: Option<Vec<u8>>,
-    version: Option<u8>,
-    flags: Option<u32>,
+    pub(crate) box_type: BoxType,
+    pub(crate) user_type: Option<Vec<u8>>,
+    pub(crate) version: Option<u8>,
+    pub(crate) flags: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -314,6 +314,10 @@ pub(crate) struct FileTypeBox {
     pub major_brand: FourCC,
     pub minor_version: u32,
     pub compatible_brands: Vec<FourCC>,
+}
+
+pub(crate) fn read_bmff_ftyp_box<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<FileTypeBox> {
+    read_ftyp_box(reader)
 }
 
 fn read_ftyp_box<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<FileTypeBox> {
@@ -1514,7 +1518,29 @@ fn get_uuid_box_purpose<R: Read + Seek + ?Sized>(
     ))
 }
 
-fn get_uuid_token(
+/// Find a UUID box token by matching the UUID only (no reader or purpose check).
+/// Used by the fast_sign module which only needs to locate the C2PA box by UUID.
+pub(crate) fn get_uuid_token(
+    bmff_tree: &Arena<BoxInfo>,
+    bmff_map: &HashMap<String, Vec<Token>>,
+    uuid: &[u8; 16],
+) -> Option<Token> {
+    if let Some(uuid_list) = bmff_map.get("/uuid") {
+        for uuid_token in uuid_list {
+            let box_info = &bmff_tree[*uuid_token];
+            if box_info.data.box_type == BoxType::UuidBox {
+                if let Some(found_uuid) = &box_info.data.user_type {
+                    if vec_compare(uuid, found_uuid) {
+                        return Some(*uuid_token);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn get_uuid_token_with_reader(
     reader: &mut dyn CAIRead,
     bmff_tree: &Arena<BoxInfo>,
     bmff_map: &HashMap<String, Vec<Token>>,
@@ -2022,7 +2048,7 @@ impl CAIWriter for BmffIO {
         let ftyp_size = ftyp_info.size;
 
         // get position to insert c2pa primary manifest store
-        let (c2pa_start, c2pa_length) = match get_uuid_token(
+        let (c2pa_start, c2pa_length) = match get_uuid_token_with_reader(
             input_stream,
             &bmff_tree,
             &bmff_map,
@@ -2184,7 +2210,7 @@ impl CAIWriter for BmffIO {
 
         // get position of c2pa manifest
         let (c2pa_start, c2pa_length) =
-            match get_uuid_token(input_stream, &bmff_tree, &bmff_map, &C2PA_UUID, None) {
+            match get_uuid_token_with_reader(input_stream, &bmff_tree, &bmff_map, &C2PA_UUID, None) {
                 Ok(c2pa_token) => {
                     let uuid_info = &bmff_tree[c2pa_token].data;
 
