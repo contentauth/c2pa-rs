@@ -4540,7 +4540,7 @@ mod tests {
         output_stream.rewind()?;
         let reader =
             Reader::from_context(Context::new()).with_stream("image/jpeg", output_stream)?;
-        //println!("{reader}");
+        println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         // 7. Workflow complete. Reader::from_stream loads the asset but the manifest assertion
         // list may not expose DataHash the same way; the full embed-then-read flow is covered
@@ -4600,7 +4600,7 @@ mod tests {
         // 8. Validate the final asset.
         output_stream.rewind()?;
         let reader = Reader::from_stream("video/mp4", &mut output_stream)?;
-        //println!("{reader}");
+        println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         Ok(())
@@ -4717,7 +4717,7 @@ mod tests {
         // 10. Validate the final asset.
         output_stream.rewind()?;
         let reader = Reader::from_stream("video/mp4", &mut output_stream)?;
-        //println!("{reader}");
+        println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         Ok(())
@@ -6466,7 +6466,7 @@ mod tests {
         let reader_json = Reader::from_stream("image/jpeg", &mut output)
             .unwrap()
             .json();
-        //println!("{reader_json}");
+        println!("{reader_json}");
         assert!(reader_json.contains("Test Ingredient"));
         assert!(reader_json.contains("thumbnail.ingredient"));
     }
