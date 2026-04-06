@@ -5691,16 +5691,13 @@ mod tests {
 
         // Discover all thumbnail assertion labels from the ingredient manifest in the archive
         archive_stream.set_position(0);
-        let archive_reader =
-            Reader::from_stream("application/c2pa", &mut archive_stream).unwrap();
+        let archive_reader = Reader::from_stream("application/c2pa", &mut archive_stream).unwrap();
 
         // Find all thumbnail assertion labels across all manifests in the archive
         let mut thumbnail_labels: Vec<String> = Vec::new();
         for manifest in archive_reader.iter_manifests() {
             for href in manifest.assertion_references() {
-                if let Some(label) =
-                    crate::jumbf::labels::assertion_label_from_uri(&href.url())
-                {
+                if let Some(label) = crate::jumbf::labels::assertion_label_from_uri(&href.url()) {
                     if label.starts_with("c2pa.thumbnail") {
                         thumbnail_labels.push(label);
                     }
@@ -5761,8 +5758,7 @@ mod tests {
         let manifests = reader_json["manifests"].as_object().unwrap();
         let parent_json = &manifests[&ing_label];
         assert!(
-            parent_json.get("thumbnail").is_none()
-                || parent_json["thumbnail"].is_null(),
+            parent_json.get("thumbnail").is_none() || parent_json["thumbnail"].is_null(),
             "ingredient manifest should have no thumbnail after redaction"
         );
 
@@ -5771,8 +5767,7 @@ mod tests {
         let ingredients_arr = active_json["ingredients"].as_array().unwrap();
         for ing_json in ingredients_arr {
             assert!(
-                ing_json.get("thumbnail").is_none()
-                    || ing_json["thumbnail"].is_null(),
+                ing_json.get("thumbnail").is_none() || ing_json["thumbnail"].is_null(),
                 "ingredient entry should have no thumbnail after redaction, got: {}",
                 ing_json["thumbnail"]
             );
@@ -5932,13 +5927,10 @@ mod tests {
             .unwrap();
         let ing2_label = ing2.active_manifest().unwrap().to_owned();
 
-        let redacted_uri1 =
-            crate::jumbf::labels::to_assertion_uri(&ing1_label, ASSERTION_LABEL);
-        let redacted_uri2 =
-            crate::jumbf::labels::to_assertion_uri(&ing2_label, ASSERTION_LABEL);
+        let redacted_uri1 = crate::jumbf::labels::to_assertion_uri(&ing1_label, ASSERTION_LABEL);
+        let redacted_uri2 = crate::jumbf::labels::to_assertion_uri(&ing2_label, ASSERTION_LABEL);
 
-        combiner.definition.redactions =
-            Some(vec![redacted_uri1.clone(), redacted_uri2.clone()]);
+        combiner.definition.redactions = Some(vec![redacted_uri1.clone(), redacted_uri2.clone()]);
 
         let redacted_action1 = Action::new("c2pa.redacted")
             .set_reason("testing redaction from archive parent 1".to_owned())
@@ -6115,8 +6107,7 @@ mod tests {
             .unwrap();
         let mut combiner = Builder::from_context(context);
         combiner.definition.claim_version = Some(2);
-        combiner.definition.title =
-            Some("Redacting thumbnails from two archives".to_string());
+        combiner.definition.title = Some("Redacting thumbnails from two archives".to_string());
         combiner.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
         archive1_stream.set_position(0);
@@ -6147,9 +6138,7 @@ mod tests {
         let mut thumbnail_labels1: Vec<String> = Vec::new();
         for manifest in archive1_reader.iter_manifests() {
             for href in manifest.assertion_references() {
-                if let Some(label) =
-                    crate::jumbf::labels::assertion_label_from_uri(&href.url())
-                {
+                if let Some(label) = crate::jumbf::labels::assertion_label_from_uri(&href.url()) {
                     if label.starts_with("c2pa.thumbnail") {
                         thumbnail_labels1.push(label);
                     }
@@ -6168,9 +6157,7 @@ mod tests {
         let mut thumbnail_labels2: Vec<String> = Vec::new();
         for manifest in archive2_reader.iter_manifests() {
             for href in manifest.assertion_references() {
-                if let Some(label) =
-                    crate::jumbf::labels::assertion_label_from_uri(&href.url())
-                {
+                if let Some(label) = crate::jumbf::labels::assertion_label_from_uri(&href.url()) {
                     if label.starts_with("c2pa.thumbnail") {
                         thumbnail_labels2.push(label);
                     }
@@ -6185,12 +6172,10 @@ mod tests {
         // Build redaction URIs for all thumbnails from both ingredients
         let mut all_redaction_uris: Vec<String> = Vec::new();
         for label in &thumbnail_labels1 {
-            all_redaction_uris
-                .push(crate::jumbf::labels::to_assertion_uri(&ing1_label, label));
+            all_redaction_uris.push(crate::jumbf::labels::to_assertion_uri(&ing1_label, label));
         }
         for label in &thumbnail_labels2 {
-            all_redaction_uris
-                .push(crate::jumbf::labels::to_assertion_uri(&ing2_label, label));
+            all_redaction_uris.push(crate::jumbf::labels::to_assertion_uri(&ing2_label, label));
         }
 
         combiner.definition.redactions = Some(all_redaction_uris.clone());
@@ -6244,15 +6229,13 @@ mod tests {
 
         let parent1_json = &manifests[&ing1_label];
         assert!(
-            parent1_json.get("thumbnail").is_none()
-                || parent1_json["thumbnail"].is_null(),
+            parent1_json.get("thumbnail").is_none() || parent1_json["thumbnail"].is_null(),
             "ingredient 1 should have no thumbnail after redaction"
         );
 
         let parent2_json = &manifests[&ing2_label];
         assert!(
-            parent2_json.get("thumbnail").is_none()
-                || parent2_json["thumbnail"].is_null(),
+            parent2_json.get("thumbnail").is_none() || parent2_json["thumbnail"].is_null(),
             "ingredient 2 should have no thumbnail after redaction"
         );
 
@@ -6261,8 +6244,7 @@ mod tests {
         let ingredients_arr = active_json["ingredients"].as_array().unwrap();
         for ing_json in ingredients_arr {
             assert!(
-                ing_json.get("thumbnail").is_none()
-                    || ing_json["thumbnail"].is_null(),
+                ing_json.get("thumbnail").is_none() || ing_json["thumbnail"].is_null(),
                 "ingredient entry should have no thumbnail after redaction, got: {}",
                 ing_json["thumbnail"]
             );
