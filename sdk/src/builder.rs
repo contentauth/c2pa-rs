@@ -5640,7 +5640,8 @@ mod tests {
         let context = test_context();
 
         // Step 1: Build a v1 manifest with an ingredient that has a thumbnail.
-        // In a v1 claim, the ingredient thumbnail is stored in a databox.
+        // In a v1 claim, the ingredient thumbnail is stored in a databox, and
+        // we need that to verify that redaction in this case.
         let mut parent_source = Cursor::new(TEST_IMAGE);
         let mut clean_source = Cursor::new(TEST_IMAGE_CLEAN);
 
@@ -5693,8 +5694,7 @@ mod tests {
 
         // Step 2: Use the v1 asset as a parent and redact the databox thumbnail.
         let parent_manifest_label = v1_reader.active_label().unwrap();
-        let redacted_uri =
-            crate::jumbf::labels::to_databox_uri(parent_manifest_label, "c2pa.data");
+        let redacted_uri = crate::jumbf::labels::to_databox_uri(parent_manifest_label, "c2pa.data");
 
         let mut builder = Builder::new();
         builder.set_intent(BuilderIntent::Edit);
