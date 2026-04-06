@@ -239,6 +239,9 @@ fn special_errs(e: c2pa::Error) -> anyhow::Error {
         Error::JumbfNotFound => anyhow!("No claim found"),
         Error::FileNotFound(name) => anyhow!("File not found: {name}"),
         Error::UnsupportedType => anyhow!("Unsupported file type"),
+        Error::XmpNotSupported => {
+            anyhow!("Format does not support XMP; cannot embed a remote URL reference")
+        }
         Error::PrereleaseError => anyhow!("Prerelease claim found"),
         _ => e.into(),
     }
@@ -823,7 +826,9 @@ fn main() -> Result<()> {
                         .context("embedding manifest")?
                 } else {
                     let mut file = NamedTempFile::new()?;
-                    let format = format_from_path(&args.path).unwrap();
+                    let format = format_from_path(&args.path)
+                        .ok_or(c2pa::Error::UnsupportedType)
+                        .context("unsupported file type")?;
                     let mut source = File::open(&args.path)?;
                     if builder.definition.title.is_none() {
                         if let Some(title) = output.file_name() {

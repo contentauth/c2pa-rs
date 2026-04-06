@@ -436,6 +436,9 @@ operating_system = "auto"
 # or if some are missing.
 #all_actions_included = true
 
+# Assertions with a base label included in this list will be automatically marked as a created assertion.
+created_assertion_labels = ["c2pa.created", "c2pa.opened", "c2pa.placed"]
+
 # A template to use as the base values for a particular action.
 #[[builder.actions.templates]]
 # The label of the action.
