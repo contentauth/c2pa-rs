@@ -5636,6 +5636,103 @@ mod tests {
     }
 
     #[test]
+    fn test_redact_databox_thumbnail() {
+        let context = test_context();
+
+        // Step 1: Build a v1 manifest with an ingredient that has a thumbnail.
+        // In a v1 claim, the ingredient thumbnail is stored in a databox.
+        let mut parent_source = Cursor::new(TEST_IMAGE);
+        let mut clean_source = Cursor::new(TEST_IMAGE_CLEAN);
+
+        let mut v1_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(1),
+                title: Some("V1 Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Add an ingredient with an explicit thumbnail so it ends up in a databox
+        let mut ingredient = Ingredient::from_json(&parent_json()).unwrap();
+        ingredient = ingredient
+            .with_stream("image/jpeg", &mut parent_source, &context)
+            .unwrap();
+        ingredient
+            .set_thumbnail("image/jpeg", TEST_THUMBNAIL.to_vec())
+            .unwrap();
+        v1_builder.add_ingredient(ingredient);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut v1_output = Cursor::new(Vec::new());
+        v1_builder
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut clean_source,
+                &mut v1_output,
+            )
+            .expect("v1 builder sign");
+
+        // Verify the v1 asset has a databox thumbnail in the ingredient
+        v1_output.set_position(0);
+        let v1_reader = Reader::from_context(test_context())
+            .with_stream("image/jpeg", &mut v1_output)
+            .expect("read v1");
+        let v1_manifest = v1_reader.active_manifest().unwrap();
+        assert_eq!(v1_manifest.claim_version(), Some(1));
+        let v1_ingredient = &v1_manifest.ingredients()[0];
+        assert!(
+            v1_ingredient
+                .thumbnail_ref()
+                .unwrap()
+                .identifier
+                .contains("c2pa.databoxes"),
+            "v1 ingredient thumbnail should be in a databox"
+        );
+
+        // Step 2: Use the v1 asset as a parent and redact the databox thumbnail.
+        let parent_manifest_label = v1_reader.active_label().unwrap();
+        let redacted_uri =
+            crate::jumbf::labels::to_databox_uri(parent_manifest_label, "c2pa.data");
+
+        let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason("redacting databox thumbnail".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+        builder.add_action(redacted_action).unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        v1_output.set_position(0);
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut v1_output, &mut output)
+            .expect("redaction builder sign");
+
+        output.set_position(0);
+        let reader = Reader::from_stream("image/jpeg", &mut output).expect("from_bytes");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        let m = reader.active_manifest().unwrap();
+        assert_eq!(m.ingredients().len(), 1);
+
+        // Verify the ingredient no longer has a thumbnail pointing to a databox
+        let ingredient = &m.ingredients()[0];
+        assert!(
+            ingredient.thumbnail_ref().is_none()
+                || !ingredient
+                    .thumbnail_ref()
+                    .unwrap()
+                    .identifier
+                    .contains("c2pa.databoxes"),
+            "ingredient thumbnail should not reference a databox after redaction"
+        );
+    }
+
+    #[test]
     fn test_supported_mime_types() {
         let mime_types = Builder::supported_mime_types();
         assert!(mime_types.contains(&"image/jpeg".to_string()));
