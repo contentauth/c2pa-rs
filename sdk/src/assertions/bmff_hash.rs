@@ -2533,12 +2533,11 @@ mod bmff_hash_tests {
 
         let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 128]));
         // Must return HashMismatch rather than panic with index-out-of-bounds.
-        match bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes) {
-            Err(Error::HashMismatch(_)) => {}
-            other => panic!(
-                "expected HashMismatch error when BmffMerkleMap count < number of hash ranges, got {other:?}"
-            ),
-        }
+        let result = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
+        assert!(
+            matches!(result, Err(Error::HashMismatch(_))),
+            "expected HashMismatch error when BmffMerkleMap count < number of hash ranges, got {result:?}"
+        );
     }
 }
 
