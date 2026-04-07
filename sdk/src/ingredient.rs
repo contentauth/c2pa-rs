@@ -1255,11 +1255,10 @@ impl Ingredient {
                 let signature_uri = jumbf::labels::to_signature_uri(manifest_label);
 
                 // Use the parent claim thumbnail if validation passed and it was not redacted.
-                let thumbnail_not_redacted =
-                    !thumbnail_redacted_manifests.contains(manifest_label);
-                let is_valid = self.validation_results().is_some_and(|v| {
-                    v.validation_state() != crate::ValidationState::Invalid
-                });
+                let thumbnail_not_redacted = !thumbnail_redacted_manifests.contains(manifest_label);
+                let is_valid = self
+                    .validation_results()
+                    .is_some_and(|v| v.validation_state() != crate::ValidationState::Invalid);
                 if thumbnail_not_redacted && is_valid {
                     thumbnail = ingredient_active_claim
                         .assertions()

@@ -6400,9 +6400,7 @@ mod tests {
         assert_eq!(parent_reader.validation_state(), ValidationState::Trusted);
         let parent_manifest_label = parent_reader.active_label().unwrap().to_string();
         let parent_manifest = parent_reader.active_manifest().unwrap();
-        assert!(
-            parent_manifest.thumbnail_ref().is_some(),
-        );
+        assert!(parent_manifest.thumbnail_ref().is_some(),);
 
         // Create an update manifest that redacts the parent's thumbnail.
         let mut builder2 = Builder {
@@ -6459,13 +6457,11 @@ mod tests {
         let ingredient = &active.ingredients()[0];
         assert!(ingredient.thumbnail_ref().is_none());
 
-        let has_assertion_missing = ingredient
-            .validation_status()
-            .is_some_and(|statuses| {
-                statuses
-                    .iter()
-                    .any(|s| s.code() == crate::validation_status::ASSERTION_MISSING)
-            });
+        let has_assertion_missing = ingredient.validation_status().is_some_and(|statuses| {
+            statuses
+                .iter()
+                .any(|s| s.code() == crate::validation_status::ASSERTION_MISSING)
+        });
         assert!(!has_assertion_missing);
     }
 
