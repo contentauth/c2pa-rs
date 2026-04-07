@@ -23,6 +23,7 @@ use async_generic::async_generic;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::json;
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
@@ -49,11 +50,7 @@ use crate::{
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::builder::TimeStampFetchScope,
     store::Store,
-    utils::{
-        hash_utils::hash_to_b64,
-        merkle::MerkleAccumulator,
-        mime::{format_to_mime, INGREDIENT_ARCHIVE_MIME},
-    },
+    utils::{hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
 };
@@ -1242,6 +1239,7 @@ impl Builder {
     /// Copies binary resources from `store` into this builder when the id is not already present.
     fn merge_resources_from_store(&mut self, store: &ResourceStore) -> Result<()> {
         for (id, data) in store.resources() {
+            dbg!(&id);
             let _sanitized_id = sanitize_archive_path(id)?;
             if !self.resources.exists(id) {
                 self.resources.add(id, data.clone())?;
@@ -3247,8 +3245,8 @@ impl Builder {
                 .await?
         };
 
-        match reader.active_archive_type().as_deref() {
-            Some(t) if t == labels::ARCHIVE_TYPE_INGREDIENT => {}
+        match reader.active_archive_type() {
+            Some(labels::ArchiveType::Ingredient) => {}
             Some(other) => {
                 return Err(Error::BadParam(format!(
                     "expected an ingredient archive (archive:type {:?}), found {other:?}",
@@ -3310,9 +3308,17 @@ impl Builder {
         };
 
         let archive_type = kind.archive_type_str();
-        let json = format!(
-            r#"{{"@context":{{"archive":"https://contentauth.org/ns/archive#"}},"archive:type":"{archive_type}"}}"#
-        );
+        let json = json!(
+            {
+                "@context":
+                {
+                    "archive": "https://contentauth.org/ns/archive#",
+                },
+                "archive:type": archive_type
+            }
+        )
+        .to_string();
+
         let archive_metadata = Metadata::new(labels::ARCHIVE_METADATA, &json)?;
         claim.add_created_assertion(&archive_metadata)?;
         claim.add_assertion(&box_hash)?;
@@ -3335,25 +3341,8 @@ impl Builder {
             .ok_or_else(|| Error::BadParam(format!("ingredient {ingredient_id} not found")))?;
 
         let mut scoped = Builder::from_shared_context(&self.context);
-        scoped.definition.label = self.definition.label.clone();
-        scoped.definition.vendor = self.definition.vendor.clone();
-        scoped.definition.claim_version = self.definition.claim_version;
-        scoped.definition.title = self.definition.title.clone();
-        scoped.definition.instance_id = Uuid::new_v4().to_string();
-        scoped.definition.thumbnail = self.definition.thumbnail.clone();
-        scoped.definition.assertions = self
-            .definition
-            .assertions
-            .iter()
-            .filter(|a| {
-                let (base, _, _) = parse_label(a.label());
-                base != labels::ARCHIVE_METADATA && base != labels::BOX_HASH
-            })
-            .cloned()
-            .collect();
         scoped.definition.ingredients = vec![ingredient.clone()];
         scoped.resources = self.resources.clone();
-        scoped.definition.format = INGREDIENT_ARCHIVE_MIME.to_string();
         Ok(scoped)
     }
 }
@@ -5670,12 +5659,24 @@ mod tests {
         let mut builder = Builder::from_shared_context(&context)
             .with_definition(r#"{"title": "Parent manifest"}"#)?;
 
+        // An ingredient may reference resource (a thumbnail) in the active manifest
+        // so test that these are preserved
         let mut thumb_stream = Cursor::new(TEST_THUMBNAIL);
-        builder.set_thumbnail("image/jpeg", &mut thumb_stream)?;
+        builder.add_resource("thumbnail.jpg", &mut thumb_stream)?;
 
         let mut jpeg = Cursor::new(TEST_IMAGE);
         builder.add_ingredient_from_stream(
-            r#"{"title": "Exported ingredient"}"#,
+            json!({
+            "title": "Exported ingredient",
+            "format": "image/jpeg",
+            "thumbnail": {
+                "format": "image/jpeg",
+                "identifier": "thumbnail.jpg"
+            },
+            "relationship": "componentOf",
+            "label": "ingredient_1"
+            })
+            .to_string(),
             "image/jpeg",
             &mut jpeg,
         )?;
@@ -5690,16 +5691,6 @@ mod tests {
         builder.write_ingredient_archive(&ingredient_id, &mut ingredient_archive)?;
 
         let archive_bytes = ingredient_archive.into_inner();
-        let mut check = Cursor::new(&archive_bytes);
-        let thumb_reader =
-            Reader::from_shared_context(&context).with_stream("application/c2pa", &mut check)?;
-        assert!(
-            thumb_reader
-                .active_manifest()
-                .and_then(|m| m.thumbnail())
-                .is_some(),
-            "ingredient archive should preserve claim-level thumbnail"
-        );
 
         let mut builder2 = Builder::from_shared_context(&context);
         builder2.add_ingredient_from_archive(&mut Cursor::new(archive_bytes))?;
@@ -5709,13 +5700,25 @@ mod tests {
             builder2.definition.ingredients[0].title(),
             Some("Exported ingredient")
         );
+        let thumb_ref = builder2.definition.ingredients[0]
+            .thumbnail_ref()
+            .expect("ingredient should have a thumbnail ref");
+        assert!(
+            thumb_ref.identifier.contains("c2pa.thumbnail.ingredient"),
+            "thumbnail should reference an ingredient thumbnail, not a claim thumbnail; got: {}",
+            thumb_ref.identifier
+        );
+        assert!(
+            builder2.resources.get(&thumb_ref.identifier).is_ok(),
+            "thumbnail resource '{}' should be present in builder resources",
+            thumb_ref.identifier
+        );
         assert!(
             builder2
                 .resources
-                .resources()
-                .values()
-                .any(|v| v.as_slice() == TEST_THUMBNAIL),
-            "merged resources should include claim thumbnail bytes"
+                .get(&thumb_ref.identifier)
+                .is_ok_and(|data| data.as_slice() == TEST_THUMBNAIL),
+            "thumbnail resource bytes should match the original TEST_THUMBNAIL"
         );
 
         Ok(())

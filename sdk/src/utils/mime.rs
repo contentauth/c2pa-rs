@@ -11,11 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-/// MIME type recorded on the top-level claim for ingredient working-store archives.
-///
-/// See [`Builder::write_ingredient_archive`](crate::Builder::write_ingredient_archive).
-pub const INGREDIENT_ARCHIVE_MIME: &str = "application/vnd.contentauth.c2pa.ingredient";
-
 /// Converts a file extension to a MIME type
 pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
     Some(match extension.to_lowercase().as_str() {

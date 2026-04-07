@@ -224,6 +224,27 @@ pub const ARCHIVE_TYPE_BUILDER: &str = "builder";
 /// `archive:type` value for a single-ingredient working-store archive from [`Builder::write_ingredient_archive`](crate::Builder::write_ingredient_archive).
 pub const ARCHIVE_TYPE_INGREDIENT: &str = "ingredient";
 
+/// Typed representation of the `archive:type` field from an [`ARCHIVE_METADATA`] assertion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ArchiveType {
+    /// Full manifest working-store archive produced by [`crate::Builder::to_archive`].
+    Builder,
+    /// Single-ingredient archive produced by [`crate::Builder::write_ingredient_archive`].
+    Ingredient,
+    /// Unrecognized value — preserved for forward-compatible error reporting.
+    Unknown(String),
+}
+
+impl ArchiveType {
+    pub(crate) fn from_str(s: &str) -> Self {
+        match s {
+            ARCHIVE_TYPE_BUILDER => Self::Builder,
+            ARCHIVE_TYPE_INGREDIENT => Self::Ingredient,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
 /// Array of all hash labels because they have special treatment
 pub const HASH_LABELS: [&str; 4] = [DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
 
