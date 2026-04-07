@@ -1405,6 +1405,12 @@ impl BmffHash {
                             let first_sample = stsc_entry.first_sample;
                             let samples_per_chunk = stsc_entry.samples_per_chunk;
 
+                            if samples_per_chunk == 0 {
+                                return Err(Error::InvalidAsset(
+                                    "stsc samples_per_chunk must be non-zero".to_string(),
+                                ));
+                            }
+
                             let chunk_id =
                                 first_chunk + (sample_id - first_sample) / samples_per_chunk;
 
