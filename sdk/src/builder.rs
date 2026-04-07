@@ -5491,7 +5491,7 @@ mod tests {
 
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
 
-        // Phase A: Sign the clean image with CreativeWork assertion
+        // Sign the clean image with CreativeWork assertion
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
 
@@ -5524,7 +5524,7 @@ mod tests {
             .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
             .unwrap();
 
-        // Phase B: Create a builder, add the signed image as ingredient, archive it
+        // Create a builder, add the signed image as ingredient, archive it
         let mut archive_builder = Builder {
             definition: ManifestDefinition {
                 claim_version: Some(2),
@@ -5546,7 +5546,7 @@ mod tests {
         let mut archive_stream = Cursor::new(Vec::new());
         archive_builder.to_archive(&mut archive_stream).unwrap();
 
-        // Phase C: Create a new builder, add the archive as ingredient, redact, sign
+        // Create a new builder, add the archive as ingredient, redact, sign
         let mut combiner = Builder {
             definition: ManifestDefinition {
                 claim_version: Some(2),
@@ -5614,7 +5614,7 @@ mod tests {
 
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
 
-        // Phase A: Sign the clean image with CreativeWork assertion (auto-generates thumbnail)
+        // Sign the clean image with CreativeWork assertion (auto-generates thumbnail)
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
 
@@ -5647,7 +5647,7 @@ mod tests {
             .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
             .unwrap();
 
-        // Phase B: Create a builder, add the signed image as ingredient, archive it
+        // Create a builder, add the signed image as ingredient, archive it
         let mut archive_builder = Builder {
             definition: ManifestDefinition {
                 claim_version: Some(2),
@@ -5669,7 +5669,7 @@ mod tests {
         let mut archive_stream = Cursor::new(Vec::new());
         archive_builder.to_archive(&mut archive_stream).unwrap();
 
-        // Phase C: Create a new builder with thumbnail auto-generation disabled,
+        // Create a new builder with thumbnail auto-generation disabled,
         // add the archive as ingredient, redact all thumbnails, sign
         let context = Context::new()
             .with_settings(r#"{"builder": {"thumbnail": {"enabled": false}}}"#)
@@ -5786,7 +5786,7 @@ mod tests {
 
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
 
-        // Phase A1: Sign the clean image with CreativeWork assertion
+        // Sign the clean image with CreativeWork assertion
         let mut source1 = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest1 = Cursor::new(Vec::new());
 
@@ -5819,7 +5819,7 @@ mod tests {
             .sign(signer.as_ref(), "image/jpeg", &mut source1, &mut dest1)
             .unwrap();
 
-        // Phase B1: Archive dest1 as ingredient
+        // Archive dest1 as ingredient
         let mut archive_builder1 = Builder {
             definition: ManifestDefinition {
                 claim_version: Some(2),
@@ -5841,7 +5841,7 @@ mod tests {
         let mut archive1_stream = Cursor::new(Vec::new());
         archive_builder1.to_archive(&mut archive1_stream).unwrap();
 
-        // Phase A2: Sign the clean image again with CreativeWork assertion
+        // Sign the clean image again with CreativeWork assertion
         let mut source2 = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest2 = Cursor::new(Vec::new());
 
@@ -5874,7 +5874,7 @@ mod tests {
             .sign(signer.as_ref(), "image/jpeg", &mut source2, &mut dest2)
             .unwrap();
 
-        // Phase B2: Archive dest2 as ingredient
+        // Archive dest2 as ingredient
         let mut archive_builder2 = Builder {
             definition: ManifestDefinition {
                 claim_version: Some(2),
@@ -5896,7 +5896,7 @@ mod tests {
         let mut archive2_stream = Cursor::new(Vec::new());
         archive_builder2.to_archive(&mut archive2_stream).unwrap();
 
-        // Phase C: New builder, add both archives as ingredients, redact CreativeWork from both
+        // New builder, add both archives as ingredients, redact CreativeWork from both
         let mut combiner = Builder {
             definition: ManifestDefinition {
                 claim_version: Some(2),
@@ -5990,7 +5990,7 @@ mod tests {
 
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
 
-        // Phase A1: Sign the clean image with CreativeWork (auto-generates thumbnail)
+        // Sign the clean image with CreativeWork (auto-generates thumbnail)
         let mut source1 = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest1 = Cursor::new(Vec::new());
 
@@ -6023,7 +6023,7 @@ mod tests {
             .sign(signer.as_ref(), "image/jpeg", &mut source1, &mut dest1)
             .unwrap();
 
-        // Phase B1: Archive dest1 as ingredient
+        // Archive dest1 as ingredient
         let mut archive_builder1 = Builder {
             definition: ManifestDefinition {
                 claim_version: Some(2),
@@ -6045,7 +6045,7 @@ mod tests {
         let mut archive1_stream = Cursor::new(Vec::new());
         archive_builder1.to_archive(&mut archive1_stream).unwrap();
 
-        // Phase A2: Sign the clean image again with CreativeWork (auto-generates thumbnail)
+        // Sign the clean image again with CreativeWork (auto-generates thumbnail)
         let mut source2 = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest2 = Cursor::new(Vec::new());
 
@@ -6078,7 +6078,7 @@ mod tests {
             .sign(signer.as_ref(), "image/jpeg", &mut source2, &mut dest2)
             .unwrap();
 
-        // Phase B2: Archive dest2 as ingredient
+        // Archive dest2 as ingredient
         let mut archive_builder2 = Builder {
             definition: ManifestDefinition {
                 claim_version: Some(2),
@@ -6100,7 +6100,7 @@ mod tests {
         let mut archive2_stream = Cursor::new(Vec::new());
         archive_builder2.to_archive(&mut archive2_stream).unwrap();
 
-        // Phase C: New builder with thumbnail auto-generation disabled,
+        // New builder with thumbnail auto-generation disabled,
         // add both archives as ingredients, redact all thumbnails from both
         let context = Context::new()
             .with_settings(r#"{"builder": {"thumbnail": {"enabled": false}}}"#)
