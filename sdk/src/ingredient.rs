@@ -1255,18 +1255,25 @@ impl Ingredient {
                 let signature_uri = jumbf::labels::to_signature_uri(manifest_label);
 
                 // if there are validations and they have all passed, then use the parent claim thumbnail if available
-                if let Some(validation_results) = self.validation_results() {
-                    if validation_results.validation_state() != crate::ValidationState::Invalid {
-                        thumbnail = ingredient_active_claim
-                            .assertions()
-                            .iter()
-                            .find(|hashed_uri| hashed_uri.url().contains(labels::CLAIM_THUMBNAIL))
-                            .map(|t| {
-                                // convert ingredient uris to absolute when adding them
-                                // since this uri references a different manifest
-                                let url = jumbf::labels::to_absolute_uri(manifest_label, &t.url());
-                                HashedUri::new(url, t.alg(), &t.hash())
-                            });
+                // but skip it if the thumbnail was redacted
+                if !thumbnail_redacted_manifests.contains(manifest_label) {
+                    if let Some(validation_results) = self.validation_results() {
+                        if validation_results.validation_state() != crate::ValidationState::Invalid
+                        {
+                            thumbnail = ingredient_active_claim
+                                .assertions()
+                                .iter()
+                                .find(|hashed_uri| {
+                                    hashed_uri.url().contains(labels::CLAIM_THUMBNAIL)
+                                })
+                                .map(|t| {
+                                    // convert ingredient uris to absolute when adding them
+                                    // since this uri references a different manifest
+                                    let url =
+                                        jumbf::labels::to_absolute_uri(manifest_label, &t.url());
+                                    HashedUri::new(url, t.alg(), &t.hash())
+                                });
+                        }
                     }
                 }
                 // generate c2pa_manifest hashed_uris

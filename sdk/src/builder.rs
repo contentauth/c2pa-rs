@@ -6363,6 +6363,124 @@ mod tests {
         assert_eq!(parent.assertions().len(), 1);
     }
 
+    /// Redacting a parent's claim thumbnail (without dangling assertions or leftovers).
+    #[cfg(feature = "add_thumbnails")]
+    #[test]
+    fn test_redact_claim_thumbnail_via_update() {
+        use crate::{assertions::Action, utils::test::setup_logger};
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        setup_logger();
+
+        // Sign a clean image, will have a thumbnail.
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent with thumbnail".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let created_action = crate::assertions::Action::new(c2pa_action::CREATED)
+            .set_source_type(DigitalSourceType::Empty);
+        let actions = crate::assertions::Actions::new().add_action(created_action);
+        builder.add_assertion(Actions::LABEL, &actions).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+
+        // Confirm the parent has a claim thumbnail.
+        dest.set_position(0);
+        let parent_reader = Reader::from_stream("jpeg", &mut dest).expect("read parent");
+        assert_eq!(parent_reader.validation_state(), ValidationState::Trusted);
+        let parent_manifest_label = parent_reader.active_label().unwrap().to_string();
+        let parent_manifest = parent_reader.active_manifest().unwrap();
+        assert!(
+            parent_manifest.thumbnail_ref().is_some(),
+            "parent must have a claim thumbnail for this test to be meaningful"
+        );
+
+        // Create an update manifest that redacts the parent's thumbnail.
+        let mut builder2 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Redacting parent thumbnail".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        builder2.set_intent(BuilderIntent::Update);
+
+        // Build the redaction URI for the parent's claim thumbnail.
+        let thumbnail_label = parent_manifest
+            .assertion_references()
+            .find(|href| href.url().contains("c2pa.thumbnail"))
+            .expect("parent should have a thumbnail assertion")
+            .url();
+        let thumbnail_assertion_label =
+            crate::jumbf::labels::assertion_label_from_uri(&thumbnail_label)
+                .expect("should extract assertion label");
+        let redacted_uri = crate::jumbf::labels::to_assertion_uri(
+            &parent_manifest_label,
+            &thumbnail_assertion_label,
+        );
+
+        builder2.definition.redactions = Some(vec![redacted_uri.clone()]);
+
+        let redacted_action = Action::new("c2pa.redacted")
+            .set_reason("thumbnail contains sensitive content".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri)
+            .unwrap();
+        let actions = Actions::new().add_action(redacted_action);
+        builder2.add_assertion(Actions::LABEL, &actions).unwrap();
+
+        dest.set_position(0);
+        let mut output = Cursor::new(Vec::new());
+        builder2
+            .sign(signer.as_ref(), "jpeg", &mut dest, &mut output)
+            .expect("redaction sign");
+
+        // Verify the redactions worked, no leftovers, no dangling references.
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("read result");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        // The parent manifest's claim thumbnail should be gone (redacted).
+        let parent = reader.get_manifest(&parent_manifest_label).unwrap();
+        assert!(
+            parent.thumbnail_ref().is_none(),
+            "parent's claim thumbnail should have been redacted"
+        );
+
+        let active = reader.active_manifest().unwrap();
+        assert_eq!(active.ingredients().len(), 1);
+        let ingredient = &active.ingredients()[0];
+
+        // The ingredient must not reference the redacted thumbnail.
+        assert!(
+            ingredient.thumbnail_ref().is_none(),
+            "ingredient must not reference the redacted thumbnail"
+        );
+
+        // The ingredient assertion does not contain a dangling HashedUri to
+        // the redacted thumbnail. Redaction can't produce broken references,
+        // or the Reader would fail and report that something is off.
+        let has_assertion_missing = ingredient
+            .validation_status()
+            .map(|statuses| {
+                statuses
+                    .iter()
+                    .any(|s| s.code() == crate::validation_status::ASSERTION_MISSING)
+            })
+            .unwrap_or(false);
+        assert!(!has_assertion_missing);
+    }
+
     #[test]
     fn test_redact_actions_returns_invalid_redaction() {
         let mut input = Cursor::new(TEST_IMAGE);
