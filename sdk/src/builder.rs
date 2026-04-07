@@ -54,6 +54,20 @@ use crate::{
     ManifestAssertionKind, Reader, Relationship, Signer,
 };
 
+/// The hash binding type that a [`Builder`] will use for embeddable signing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HashType {
+    /// Requires placeholder, exclusions, hash, then sign.
+    Data,
+
+    /// Requires placeholder, hash, then sign.
+    /// Exclusions are derived automatically from the BMFF structure.
+    Bmff,
+
+    /// Requires hash then sign only, no placeholder (when `prefer_box_hash` is enabled).
+    Box,
+}
+
 /// Version of the Builder Archive file
 const ARCHIVE_VERSION: &str = "1";
 
@@ -1392,6 +1406,16 @@ impl Builder {
             }
         }
 
+        // Verify all requested redactions were applied to some ingredient
+        if let Some(redactions) = &definition.redactions {
+            let applied = claim.redactions().map(|r| r.as_slice()).unwrap_or_default();
+            for redaction in redactions {
+                if !applied.contains(redaction) {
+                    return Err(Error::AssertionRedactionNotFound);
+                }
+            }
+        }
+
         let mut found_actions = false;
         // add any additional assertions
         for manifest_assertion in &definition.assertions {
@@ -1992,24 +2016,38 @@ impl Builder {
     /// # Arguments
     /// * `format` — MIME type or file extension of the target asset.
     pub fn needs_placeholder(&self, format: &str) -> bool {
-        // If a BoxHash is already present, no placeholder is needed.
+        self.hash_type(format) != HashType::Box
+    }
+
+    /// Returns the hash binding type that will be used for the given format.
+    /// This is a helper function to help know which paths a Builder may
+    /// need to follow, e.g. in embeddable workflows.
+    ///
+    /// # Arguments
+    /// * `format` — MIME type or file extension of the target asset.
+    pub fn hash_type(&self, format: &str) -> HashType {
+        // A pre-existing BoxHash assertion means the caller has explicitly
+        // opted into the box-hash path.
         if self.find_assertion::<BoxHash>(BoxHash::LABEL).is_ok() {
-            return false;
+            return HashType::Box;
         }
-        // BMFF formats always need a placeholder (BmffHash).
+
+        // BMFF formats always use BmffHash.
         if jumbf_io::is_bmff_format(format) {
-            return true;
+            return HashType::Bmff;
         }
-        // For non-BMFF: if prefer_box_hash is enabled and the format supports BoxHash,
-        // a placeholder is not needed.
+
+        // When prefer_box_hash is enabled and the format handler supports it,
+        // use BoxHash (no placeholder needed).
         if self.context.settings().builder.prefer_box_hash {
             if let Some(handler) = jumbf_io::get_assetio_handler(format) {
                 if handler.asset_box_hash_ref().is_some() {
-                    return false;
+                    return HashType::Box;
                 }
             }
         }
-        true
+
+        HashType::Data
     }
 
     /// Create a placeholder manifest with dynamic assertion support.
@@ -2477,7 +2515,7 @@ impl Builder {
             // and its own alg field (set when the assertion was created).
             let ctx = &self.context;
             let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
-            bmff_hash.gen_hash_from_stream_with_progress(stream, Some(&mut cb))?;
+            bmff_hash.gen_hash_from_stream_with_progress(stream, &mut cb)?;
 
             self.definition
                 .assertions
@@ -2500,14 +2538,9 @@ impl Builder {
             // inside the preceding SOS entropy range, which causes the sum to
             // exceed the file length and triggers a range-validation error.
             let ctx = &self.context;
-            let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
-            bh.generate_box_hash_from_stream_with_progress(
-                stream,
-                definition_alg,
-                bhp,
-                false,
-                Some(&mut cb),
-            )?;
+            let cb: Box<dyn FnMut(u32, u32) -> Result<()>> =
+                Box::new(|step, total| ctx.check_progress(ProgressPhase::Hashing, step, total));
+            bh.generate_box_hash_from_stream_with_progress(stream, definition_alg, bhp, false, cb)?;
             self.definition
                 .assertions
                 .retain(|a| !a.label.starts_with(BoxHash::LABEL));
@@ -2541,7 +2574,7 @@ impl Builder {
                 stream,
                 exclusion_arg,
                 true,
-                Some(&mut cb),
+                &mut cb,
             )?;
 
             // Preserve the existing assertion's name or use the default.
@@ -4366,6 +4399,93 @@ mod tests {
     }
 
     #[test]
+    fn test_hash_type() -> Result<()> {
+        let builder = Builder::from_json(&simple_manifest_json())?;
+
+        // Non-BMFF formats default to DataHash.
+        assert_eq!(builder.hash_type("image/jpeg"), HashType::Data);
+        assert_eq!(builder.hash_type("image/png"), HashType::Data);
+
+        // BMFF MIME types produce BmffHash.
+        assert_eq!(builder.hash_type("video/mp4"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/avif"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/heif"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/heic"), HashType::Bmff);
+        assert_eq!(builder.hash_type("video/quicktime"), HashType::Bmff);
+
+        // BMFF file extensions also produce BmffHash.
+        assert_eq!(builder.hash_type("mp4"), HashType::Bmff);
+        assert_eq!(builder.hash_type("avif"), HashType::Bmff);
+        assert_eq!(builder.hash_type("mov"), HashType::Bmff);
+        assert_eq!(builder.hash_type("m4a"), HashType::Bmff);
+
+        // Unknown format falls back to DataHash.
+        assert_eq!(
+            builder.hash_type("application/octet-stream"),
+            HashType::Data
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_type_with_prefer_box_hash() -> Result<()> {
+        let context = Context::new()
+            .with_settings(serde_json::json!({"builder": {"prefer_box_hash": true}}).to_string())?;
+        let builder =
+            Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+
+        // BoxHash-capable formats produce BoxHash when prefer_box_hash is on.
+        assert_eq!(builder.hash_type("image/jpeg"), HashType::Box);
+
+        // BMFF formats still produce BmffHash regardless of prefer_box_hash.
+        assert_eq!(builder.hash_type("video/mp4"), HashType::Bmff);
+        assert_eq!(builder.hash_type("image/avif"), HashType::Bmff);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_type_with_existing_box_hash_assertion() -> Result<()> {
+        let mut builder = Builder::from_json(&simple_manifest_json())?;
+
+        let bh = BoxHash::default();
+        builder.add_assertion(BoxHash::LABEL, &bh)?;
+
+        // A pre-existing BoxHash assertion forces BoxHash for any format.
+        assert_eq!(builder.hash_type("image/jpeg"), HashType::Box);
+        assert_eq!(builder.hash_type("video/mp4"), HashType::Box);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_hash_type_consistent_with_needs_placeholder() -> Result<()> {
+        // When needs_placeholder returns false, hash_type must be BoxHash.
+        // When needs_placeholder returns true, hash_type must be DataHash or BmffHash.
+        let builder = Builder::from_json(&simple_manifest_json())?;
+        for format in &["image/jpeg", "image/png", "video/mp4", "image/avif"] {
+            let needs = builder.needs_placeholder(format);
+            let ht = builder.hash_type(format);
+            if needs {
+                assert_ne!(
+                    ht,
+                    HashType::Box,
+                    "{format}: needs_placeholder=true but hash_type=BoxHash"
+                );
+            } else {
+                assert_eq!(
+                    ht,
+                    HashType::Box,
+                    "{format}: needs_placeholder=false but hash_type!=BoxHash"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn test_data_hashed_placeholder_workflow_complete() -> Result<()> {
         use std::io::{Seek, SeekFrom, Write};
 
@@ -5197,6 +5317,169 @@ mod tests {
     }
 
     #[test]
+    fn test_redaction_two_ingredients() {
+        use crate::{
+            assertions::{c2pa_action, Action, Actions},
+            utils::test::setup_logger,
+        };
+
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        setup_logger();
+
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        let mut source1 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest1 = Cursor::new(Vec::new());
+
+        let mut builder1 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent 1".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let created_action =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
+        let actions = Actions::new().add_action(created_action);
+        builder1.add_assertion(Actions::LABEL, &actions).unwrap();
+        builder1
+            .add_assertion(
+                ASSERTION_LABEL,
+                &json!({
+                    "@context": "https://schema.org",
+                    "@type": "CreativeWork",
+                    "author": [{ "@type": "Person", "name": "Alice" }]
+                }),
+            )
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder1
+            .sign(signer.as_ref(), "image/jpeg", &mut source1, &mut dest1)
+            .unwrap();
+
+        let mut source2 = Cursor::new(TEST_IMAGE_CLOUD);
+        let mut dest2 = Cursor::new(Vec::new());
+
+        let mut builder2 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent 2".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let created_action2 =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
+        let actions2 = Actions::new().add_action(created_action2);
+        builder2.add_assertion(Actions::LABEL, &actions2).unwrap();
+        builder2
+            .add_assertion(
+                ASSERTION_LABEL,
+                &json!({
+                    "@context": "https://schema.org",
+                    "@type": "CreativeWork",
+                    "author": [{ "@type": "Person", "name": "Bob" }]
+                }),
+            )
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder2
+            .sign(signer.as_ref(), "image/jpeg", &mut source2, &mut dest2)
+            .unwrap();
+
+        let mut combiner = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Redacting from two parents".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        combiner.set_intent(BuilderIntent::Edit);
+
+        // Add both as ingredients and read their manifest labels
+        dest1.set_position(0);
+        let ing1 = combiner
+            .add_ingredient_from_stream(
+                json!({ "title": "Parent 1", "relationship": "parentOf" }).to_string(),
+                "image/jpeg",
+                &mut dest1,
+            )
+            .unwrap();
+        let ing1_label = ing1.active_manifest().unwrap().to_owned();
+
+        dest2.set_position(0);
+        let ing2 = combiner
+            .add_ingredient_from_stream(
+                json!({ "title": "Parent 2", "relationship": "componentOf" }).to_string(),
+                "image/jpeg",
+                &mut dest2,
+            )
+            .unwrap();
+        let ing2_label = ing2.active_manifest().unwrap().to_owned();
+
+        // Build redaction URIs from the ingredient manifest labels
+        let redacted_uri1 = crate::jumbf::labels::to_assertion_uri(&ing1_label, ASSERTION_LABEL);
+        let redacted_uri2 = crate::jumbf::labels::to_assertion_uri(&ing2_label, ASSERTION_LABEL);
+
+        combiner.definition.redactions = Some(vec![redacted_uri1.clone(), redacted_uri2.clone()]);
+
+        // Add redacted actions for both
+        let redacted_action1 = Action::new("c2pa.redacted")
+            .set_reason("testing redaction from parent 1".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri1)
+            .unwrap();
+        let redacted_action2 = Action::new("c2pa.redacted")
+            .set_reason("testing redaction from parent 2".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri2)
+            .unwrap();
+
+        let actions = Actions::new()
+            .add_action(redacted_action1)
+            .add_action(redacted_action2);
+        combiner.add_assertion(Actions::LABEL, &actions).unwrap();
+
+        // Sign
+        let signer = test_signer(SigningAlg::Ps256);
+        dest1.set_position(0);
+        let mut output = Cursor::new(Vec::new());
+        combiner
+            .sign(signer.as_ref(), "image/jpeg", &mut dest1, &mut output)
+            .expect("combiner sign");
+
+        // Verify
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        println!("{reader}");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        let active = reader.active_manifest().unwrap();
+        assert_eq!(active.ingredients().len(), 2);
+
+        // CreativeWork assertion should be redacted in each,
+        // and since we know what assertions are in there, we can count
+        // and check only one is left.
+        let parent1 = reader.get_manifest(&ing1_label).unwrap();
+        assert_eq!(
+            parent1.assertions().len(),
+            1,
+            "ingredient 1 should have CreativeWork redacted"
+        );
+
+        let parent2 = reader.get_manifest(&ing2_label).unwrap();
+        assert_eq!(
+            parent2.assertions().len(),
+            1,
+            "ingredient 2 should have CreativeWork redacted"
+        );
+    }
+
+    #[test]
     /// this first creates a manifest with an assertion we will later redact
     /// then creates an update manifest that redacts the assertion
     fn test_redaction2() {
@@ -5306,6 +5589,147 @@ mod tests {
         assert_eq!(m.ingredients().len(), 1);
         let parent = reader.get_manifest(parent_manifest_label).unwrap();
         assert_eq!(parent.assertions().len(), 1);
+    }
+
+    #[test]
+    fn test_redact_actions_returns_invalid_redaction() {
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let parent = Reader::from_stream("image/jpeg", &mut input).expect("from_stream");
+        let parent_manifest_label = parent.active_label().unwrap();
+
+        // Try to redact the actions assertion, which is not allowed per the spec.
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(parent_manifest_label, "c2pa.actions");
+
+        let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri]);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
+        assert!(matches!(result, Err(Error::AssertionInvalidRedaction)));
+    }
+
+    #[test]
+    fn test_redact_nonexistent_assertion_returns_not_found() {
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let parent = Reader::from_stream("image/jpeg", &mut input).expect("from_stream");
+        let parent_manifest_label = parent.active_label().unwrap();
+
+        // Try to redact an assertion that doesn't exist in the parent manifest.
+        let redacted_uri = crate::jumbf::labels::to_assertion_uri(
+            parent_manifest_label,
+            "stds.schema-org.DoesNotExist",
+        );
+
+        let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri]);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
+        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+    }
+
+    #[test]
+    fn test_redact_databox_thumbnail() {
+        let context = test_context();
+
+        // Step 1: Build a v1 manifest with an ingredient that has a thumbnail.
+        // In a v1 claim, the ingredient thumbnail is stored in a databox, and
+        // we need that to verify that redaction in this case.
+        let mut parent_source = Cursor::new(TEST_IMAGE);
+        let mut clean_source = Cursor::new(TEST_IMAGE_CLEAN);
+
+        let mut v1_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(1),
+                title: Some("V1 Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Add an ingredient with an explicit thumbnail so it ends up in a databox
+        let mut ingredient = Ingredient::from_json(&parent_json()).unwrap();
+        ingredient = ingredient
+            .with_stream("image/jpeg", &mut parent_source, &context)
+            .unwrap();
+        ingredient
+            .set_thumbnail("image/jpeg", TEST_THUMBNAIL.to_vec())
+            .unwrap();
+        v1_builder.add_ingredient(ingredient);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut v1_output = Cursor::new(Vec::new());
+        v1_builder
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut clean_source,
+                &mut v1_output,
+            )
+            .expect("v1 builder sign");
+
+        // Verify the v1 asset has a databox thumbnail in the ingredient
+        v1_output.set_position(0);
+        let v1_reader = Reader::from_context(test_context())
+            .with_stream("image/jpeg", &mut v1_output)
+            .expect("read v1");
+        let v1_manifest = v1_reader.active_manifest().unwrap();
+        assert_eq!(v1_manifest.claim_version(), Some(1));
+        let v1_ingredient = &v1_manifest.ingredients()[0];
+        assert!(
+            v1_ingredient
+                .thumbnail_ref()
+                .unwrap()
+                .identifier
+                .contains("c2pa.databoxes"),
+            "v1 ingredient thumbnail should be in a databox"
+        );
+
+        // Step 2: Use the v1 asset as a parent and redact the databox thumbnail.
+        let parent_manifest_label = v1_reader.active_label().unwrap();
+        let redacted_uri = crate::jumbf::labels::to_databox_uri(parent_manifest_label, "c2pa.data");
+
+        let mut builder = Builder::new();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason("redacting databox thumbnail".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+        builder.add_action(redacted_action).unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        v1_output.set_position(0);
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut v1_output, &mut output)
+            .expect("redaction builder sign");
+
+        output.set_position(0);
+        let reader = Reader::from_stream("image/jpeg", &mut output).expect("from_bytes");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        let m = reader.active_manifest().unwrap();
+        assert_eq!(m.ingredients().len(), 1);
+
+        // Verify the ingredient no longer has a thumbnail pointing to a databox
+        let ingredient = &m.ingredients()[0];
+        assert!(
+            ingredient.thumbnail_ref().is_none()
+                || !ingredient
+                    .thumbnail_ref()
+                    .unwrap()
+                    .identifier
+                    .contains("c2pa.databoxes"),
+            "ingredient thumbnail should not reference a databox after redaction"
+        );
     }
 
     #[test]

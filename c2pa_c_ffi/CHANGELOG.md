@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.78.9](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.8...c2pa-c-ffi-v0.78.9)
+_03 April 2026_
+
+## [0.78.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.7...c2pa-c-ffi-v0.78.8)
+_31 March 2026_
+
+### Added
+
+* Expose a C FFI API to help determine the hashtype a Builder uses with embeddable APIs ([#1992](https://github.com/contentauth/c2pa-rs/pull/1992))
+
+### Fixed
+
+* Set release flags for emscripten to default use case ([#1993](https://github.com/contentauth/c2pa-rs/pull/1993))
+
+## [0.78.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.6...c2pa-c-ffi-v0.78.7)
+_27 March 2026_
+
+### Added
+
+* Allow emscripten users to define HTTP handler ([#1936](https://github.com/contentauth/c2pa-rs/pull/1936))
+* Adds a progress/cancel feature to Context for the c2pa-rs sdk ([#1927](https://github.com/contentauth/c2pa-rs/pull/1927))
+
 ## [0.78.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.5...c2pa-c-ffi-v0.78.6)
 _23 March 2026_
 
