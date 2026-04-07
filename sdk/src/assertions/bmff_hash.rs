@@ -1457,6 +1457,11 @@ impl BmffHash {
                         }
 
                         for chunk_bmff_mm in &track_to_bmff_merkle_map[&(track_id as usize)] {
+                            if chunk_bmff_mm.location >= leaf_hashes.len() {
+                                return Err(Error::HashMismatch(
+                                    "BmffMerkleMap location exceeds leaf hash count".to_string(),
+                                ));
+                            }
                             let hash = &leaf_hashes[chunk_bmff_mm.location];
 
                             // check MerkleMap for the hash
