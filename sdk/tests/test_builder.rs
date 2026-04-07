@@ -200,14 +200,14 @@ fn test_builder_sidecar_only() -> Result<()> {
 
 #[test]
 #[cfg(feature = "file_io")]
-#[ignore = "generates a hash error, needs investigation"]
 fn test_builder_fragmented() -> Result<()> {
     use common::tempdirectory;
     let settings = Settings::new().with_toml(TEST_SETTINGS)?;
     let context = Context::new().with_settings(settings)?.into_shared();
 
     let mut builder = Builder::from_shared_context(&context);
-    builder.set_intent(BuilderIntent::Edit);
+    builder.set_intent(BuilderIntent::Create(c2pa::DigitalSourceType::Empty));
+
     let tempdir = tempdirectory().expect("temp dir");
     let output_path = tempdir.path();
     let mut init_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -236,7 +236,7 @@ fn test_builder_fragmented() -> Result<()> {
 
                 builder
                     .sign_fragmented_files(
-                        &Settings::signer()?,
+                        context.signer()?,
                         p.as_path(),
                         &fragments,
                         new_output_path.as_path(),
@@ -249,14 +249,19 @@ fn test_builder_fragmented() -> Result<()> {
                     .into_iter()
                     .map(|f| new_output_path.join(f.file_name().unwrap()))
                     .collect();
-                let reader = Reader::from_fragmented_files(&output_init, &output_fragments)?;
+                let reader = Reader::from_shared_context(&context)
+                    .with_fragmented_files(&output_init, &output_fragments)?;
                 //println!("reader: {}", reader);
                 assert_eq!(reader.validation_status(), None);
 
                 // test a single fragment
                 let init_segment = std::fs::File::open(output_init)?;
                 let fragment = std::fs::File::open(output_fragments[0].as_path())?;
-                let reader = Reader::from_fragment("video/mp4", init_segment, fragment)?;
+                let reader = Reader::from_shared_context(&context).with_fragment(
+                    "video/mp4",
+                    init_segment,
+                    fragment,
+                )?;
                 assert_eq!(reader.validation_status(), None);
             }
             Err(e) => panic!("error = {e:?}"),

@@ -2369,7 +2369,7 @@ impl Store {
     /// * Returns an [`Error`] if the placeholder cannot be signed.
     pub fn sign_manifest(&mut self, signer: &dyn Signer, context: &Context) -> Result<Vec<u8>> {
         let settings = context.settings();
-        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
         // if user did not supply a hash
         if pc.hash_assertions().is_empty() {
@@ -2407,47 +2407,30 @@ impl Store {
                 // Get pc again
                 let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
                 let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
-                let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
-                if sig_placeholder.len() != sig.len() {
-                    return Err(Error::CoseSigboxTooSmall);
-                }
+                let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+                pc.set_signature_val(sig);
 
-                let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-                patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
-                    .map_err(|_| Error::JumbfCreationError)?;
-
-                return Ok(jumbf_bytes);
+                return self.to_jumbf_internal(signer.reserve_size());
             }
         }
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
 
         // No dynamic assertions - sign directly
-        // Drop pc and get an immutable reference for signing
-        let _ = pc;
-        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        pc.set_signature_val(sig);
 
-        if sig_placeholder.len() != sig.len() {
-            return Err(Error::CoseSigboxTooSmall);
-        }
-
-        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
-            .map_err(|_| Error::JumbfCreationError)?;
-
-        Ok(jumbf_bytes)
+        self.to_jumbf_internal(signer.reserve_size())
     }
 
     fn prep_embeddable_store(
         &mut self,
-        reserve_size: usize,
         dh: &DataHash,
         asset_reader: Option<&mut dyn CAIRead>,
         context: &Context,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<()> {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         // make sure there are data hashes present before generating
@@ -2477,22 +2460,10 @@ impl Store {
         // update the placeholder hash
         pc.update_data_hash(adjusted_dh)?;
 
-        self.to_jumbf_internal(reserve_size)
+        Ok(())
     }
 
-    fn finish_embeddable_store(
-        &mut self,
-        sig: &[u8],
-        sig_placeholder: &[u8],
-        jumbf_bytes: &mut Vec<u8>,
-        format: &str,
-    ) -> Result<Vec<u8>> {
-        if sig_placeholder.len() != sig.len() {
-            return Err(Error::CoseSigboxTooSmall);
-        }
-
-        patch_bytes(jumbf_bytes, sig_placeholder, sig).map_err(|_| Error::JumbfCreationError)?;
-
+    fn finish_embeddable_store(&mut self, jumbf_bytes: &Vec<u8>, format: &str) -> Result<Vec<u8>> {
         Self::get_composed_manifest(jumbf_bytes, format)
     }
 
@@ -2515,8 +2486,7 @@ impl Store {
         asset_reader: Option<&mut dyn CAIRead>,
         context: &Context,
     ) -> Result<Vec<u8>> {
-        let mut jumbf_bytes =
-            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader, context)?;
+        self.prep_embeddable_store(dh, asset_reader, context)?;
 
         // Write dynamic assertions only if placeholders were added during placeholder generation.
         // We check if the dynamic assertion labels exist in the claim - if not, placeholders
@@ -2539,14 +2509,7 @@ impl Store {
                         preliminary_claim.add_assertion(assertion);
                     }
                 }
-
-                let modified =
-                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-
-                // Regenerate JUMBF if dynamic assertions were written
-                if modified {
-                    jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-                }
+                self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
             }
         }
 
@@ -2556,9 +2519,12 @@ impl Store {
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
 
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        pc.set_signature_val(sig);
 
-        self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
+        let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        self.finish_embeddable_store(&jumbf_bytes, format)
     }
 
     /// Returns a finalized, signed manifest.  The manifest are only supported
@@ -2580,8 +2546,7 @@ impl Store {
         asset_reader: Option<&mut dyn CAIRead>,
         context: &Context,
     ) -> Result<Vec<u8>> {
-        let mut jumbf_bytes =
-            self.prep_embeddable_store(signer.reserve_size(), dh, asset_reader, context)?;
+        self.prep_embeddable_store(dh, asset_reader, context)?;
 
         // Write dynamic assertions only if placeholders were added during placeholder generation.
         // We check if the dynamic assertion labels exist in the claim - if not, placeholders
@@ -2605,14 +2570,8 @@ impl Store {
                     }
                 }
 
-                let modified = self
-                    .write_dynamic_assertions_async(&dynamic_assertions, &mut preliminary_claim)
+                self.write_dynamic_assertions_async(&dynamic_assertions, &mut preliminary_claim)
                     .await?;
-
-                // Regenerate JUMBF if dynamic assertions were written
-                if modified {
-                    jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-                }
             }
         }
 
@@ -2624,9 +2583,12 @@ impl Store {
             .sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
             .await?;
 
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        pc.set_signature_val(sig);
 
-        self.finish_embeddable_store(&sig, &sig_placeholder, &mut jumbf_bytes, format)
+        let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        self.finish_embeddable_store(&jumbf_bytes, format)
     }
 
     /// Returns a finalized, signed manifest.  The client is required to have
@@ -2650,22 +2612,16 @@ impl Store {
             return Err(Error::BadParam("Missing box hash assertion".to_string()));
         }
 
-        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
 
         // sign contents
         let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
-        if sig_placeholder.len() != sig.len() {
-            return Err(Error::CoseSigboxTooSmall);
-        }
+        // save the signature back to the provenance claim so it gets included in the manifest
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        pc.set_signature_val(sig);
 
-        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
-            .map_err(|_| Error::JumbfCreationError)?;
-
-        Ok(jumbf_bytes)
+        self.to_jumbf_internal(signer.reserve_size())
     }
 
     /// Returns a finalized, signed manifest.  The client is required to have
@@ -2689,22 +2645,18 @@ impl Store {
             return Err(Error::BadParam("Missing box hash assertion".to_string()));
         }
 
-        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+        context.check_progress(ProgressPhase::Signing, 1, 1)?;
 
         // sign contents
         let sig = self
             .sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
             .await?;
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
-        if sig_placeholder.len() != sig.len() {
-            return Err(Error::CoseSigboxTooSmall);
-        }
+        // save the signature back to the provenance claim so it gets included in the manifest
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        pc.set_signature_val(sig);
 
-        patch_bytes(&mut jumbf_bytes, &sig_placeholder, &sig)
-            .map_err(|_| Error::JumbfCreationError)?;
-
-        Ok(jumbf_bytes)
+        self.to_jumbf_internal(signer.reserve_size())
     }
 
     /// Returns the supplied manifest composed to be directly compatible with the desired format.
@@ -2898,6 +2850,10 @@ impl Store {
         // add dynamic assertions to the store
         let dynamic_assertions = signer.dynamic_assertions();
         let _ = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+
+        // make sure there is no compression enabled since we do not support it for BMFF manifests
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        pc.set_compressed_manifest(false);
 
         // get temp store as JUMBF
         let jumbf = self.to_jumbf(signer)?;
@@ -3166,28 +3122,45 @@ impl Store {
         let mut data;
         let jumbf_size;
 
-        // check to see if manifest compression is requested
+        // Check to see if manifest compression is requested, BMFF is not supported for compression since the manifest
+        // needs to be in a specific location and compression would change the size of the manifest which
+        // would break the offsets
         if pc.compressed() {
             // If compression is desired use BoxHashing for compatibile formats, otherwise fall back to regular hashing.
-            if let Some(box_hash_handler) = io_handler.asset_box_hash_ref() {
-                // yes it does, use box hashing
-                let mut bh = BoxHash { boxes: Vec::new() };
+            match io_handler.asset_box_hash_ref() {
+                Some(box_hash_handler) if !is_bmff => {
+                    // if the user already has a box hash assertion we use that and ignore the compression setting
+                    if !pc.box_hash_assertions().is_empty() {
+                        // yes it does, use box hashing
+                        let mut bh = BoxHash { boxes: Vec::new() };
 
-                bh.generate_box_hash_from_stream(
-                    &mut intermediate_stream,
-                    pc.alg(),
-                    box_hash_handler,
-                    false,
-                )?;
+                        let mut cb = |step, total| {
+                            context.check_progress(ProgressPhase::Hashing, step, total)
+                        };
+                        bh.generate_box_hash_from_stream_with_progress(
+                            &mut intermediate_stream,
+                            pc.alg(),
+                            box_hash_handler,
+                            false,
+                            &mut cb,
+                        )?;
 
-                // add the box hash assertion to the claim
-                pc.add_assertion(&bh)?;
+                        // add the box hash assertion to the claim
+                        pc.add_assertion(&bh)?;
 
-                intermediate_stream.rewind()?;
-            } else {
-                // clear the compression flag since we won't be able to do it without box hashing
-                pc.set_compressed_manifest(false);
+                        intermediate_stream.rewind()?;
+                    } else {
+                        pc.set_compressed_manifest(false);
+                    }
+                }
+                _ => {
+                    // already have a box hash assertion so no compression will be performed
+                    pc.set_compressed_manifest(false);
+                }
             }
+        } else {
+            // clear the compression flag since we won't be able to do it without box hashing
+            pc.set_compressed_manifest(false);
         }
 
         if is_bmff {

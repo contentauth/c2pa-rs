@@ -746,7 +746,7 @@ impl BMFFBox for JUMBFBrotliContentBox {
     }
 
     fn box_uuid(&self) -> &'static str {
-        &JUMBF_BROTLI_UUID
+        JUMBF_BROTLI_UUID
     }
 
     fn box_payload_size(&self) -> IoResult<u32> {

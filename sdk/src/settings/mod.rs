@@ -281,7 +281,7 @@ pub struct Core {
     /// are not always possbile and will default back to uncompressed if the manifest contains features
     /// that are not compatible with compression.
     ///
-    //  The default value is false.
+    ///  The default value is false.
     ///
     /// See more information in the spec here:
     /// [Compressed manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_compressed_boxes)
