@@ -108,7 +108,7 @@ The following items are not enforced, but we ask that you observe the following 
 
 The "body" of the commit message (everything after the PR title) is not subject to any restrictions and may be empty. GitHub, by default, will create a bullet list of the commits that went into the PR. It is _recommended,_ but not enforced, that you delete this list (because it typically contains a lot of signal noise) and either replace it with additional context of why you made the change or leave it empty.
 
-MAINTENANCE NOTE: If this list of rules is changed, please keep in sync with [`.github/workflows/pr_title.yml`](../.github/workflows/pr_title.yml) and [`.commitlintrc`](../.commitlintrc).
+MAINTENANCE NOTE: If this list of rules is changed, please keep in sync with [`.github/workflows/pr_title.yml`](../.github/workflows/pr_title.yml) and [`.commitlintrc.yml`](../.commitlintrc.yml).
 
 ## Known issues
 

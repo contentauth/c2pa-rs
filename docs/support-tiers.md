@@ -30,7 +30,7 @@ A pull request will be blocked if the tests do not pass.
 * Tier 1A configurations _may_ also have built artifacts generated for each versioned release.
 The location where these artifacts are published will be documented.
 
-These requirements are enforced in the [Tier 1A workflow](/.github/workflows/tier-1a.yml).
+These requirements are enforced in the [Tier 1A workflow](../.github/workflows/tier-1a.yml).
 
 ### Tier 1A for c2pa-rs
 
@@ -61,7 +61,7 @@ The location where these artifacts are published will be documented.
 
 A decision to place a configuration in Tier 1B is typically made because the CI test suite for this configuration adds significantly to the time required to complete a PR validation and the likelihood of finding issues that are specific to this configuration is deemed low.
 
-These requirements are enforced in the [Tier 1B workflow](/.github/workflows/tier-1b.yml).
+These requirements are enforced in the [Tier 1B workflow](../.github/workflows/tier-1b.yml).
 
 ### Tier 1B for c2pa-rs
 
@@ -97,7 +97,7 @@ If it exists, a release will be blocked if the test suite fails.
 (As an example, we can run iOS code in a _simulator,_ but we do not currently pay for hosted iPhone test machines that we can use from GitHub, so iOS native builds can not be in Tier 1.)
 * If built artifacts are generated for this build configuration, they should be built for every versioned release and the location should be documented.
 
-These requirements are enforced in the [Tier 2 workflow](/.github/workflows/tier-2.yml).
+These requirements are enforced in the [Tier 2 workflow](../.github/workflows/tier-2.yml).
 
 ### Tier 2 for c2pa-rs
 
