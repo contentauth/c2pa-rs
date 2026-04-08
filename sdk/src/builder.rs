@@ -7231,6 +7231,257 @@ mod tests {
         assert!(reader.active_manifest().is_some());
     }
 
+    // Test that uses instance_id to link an ingredient archive to an action
+    #[test]
+    fn test_ingredientids_instance_id_links_archive_ingredient_to_action() {
+        let format = "image/jpeg";
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Step 1: Create an archive from a builder with an unsigned ingredient.
+        let mut archive = Cursor::new(Vec::new());
+        {
+            let mut builder = Builder::from_json(&json!({
+                "claim_generator_info": [{"name": "test", "version": "1.0"}],
+                "title": "archive.jpg",
+            }).to_string()).unwrap();
+            builder
+                .add_ingredient_from_stream(
+                    json!({
+                        "title": "source.jpg",
+                        "relationship": "parentOf",
+                    }).to_string(),
+                    format,
+                    &mut Cursor::new(TEST_IMAGE),
+                )
+                .unwrap();
+            builder.to_archive(&mut archive).unwrap();
+        }
+
+        // Step 2: Link the archive ingredient using instance_id in ingredientIds.
+        let my_instance_id = "xmp:iid:test-instance-id-12345";
+        let mut builder = Builder::from_json(&json!({
+            "claim_generator_info": [{"name": "test", "version": "1.0"}],
+            "title": "final.jpg",
+            "assertions": [{
+                "label": "c2pa.actions.v2",
+                "data": {
+                    "actions": [{
+                        "action": "c2pa.placed",
+                        "parameters": {
+                            "ingredientIds": [my_instance_id]
+                        }
+                    }]
+                }
+            }]
+        }).to_string()).unwrap();
+
+        archive.rewind().unwrap();
+        builder
+            .add_ingredient_from_stream(
+                json!({
+                    "title": "archive.jpg",
+                    "relationship": "componentOf",
+                    "instance_id": my_instance_id,
+                }).to_string(),
+                "application/c2pa",
+                &mut archive,
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), format, &mut Cursor::new(TEST_IMAGE), &mut output)
+            .expect("Signing with instance_id-based ingredientIds should succeed for archive ingredients");
+
+        // Check linking
+        output.rewind().unwrap();
+        let reader = Reader::from_stream(format, output).unwrap();
+        let manifest = reader.active_manifest().unwrap();
+
+        let actions: Actions = manifest.find_assertion(Actions::LABEL).unwrap();
+        let action = actions.actions().first().unwrap();
+        assert_eq!(action.action(), "c2pa.placed");
+
+        let ingredient_uris = action
+            .parameters
+            .as_ref()
+            .unwrap()
+            .ingredients
+            .as_ref()
+            .expect("Action should have resolved ingredient links");
+        assert_eq!(ingredient_uris.len(), 1, "Should have exactly one linked ingredient");
+    }
+
+    // Set instance_id in json of archived builder, test if it links
+    #[test]
+    fn test_ingredientids_instance_id_from_archived_builder_json_links_to_action() {
+        let format = "image/jpeg";
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let my_instance_id = "xmp:iid:test-instance-id-12345";
+        let mut archive = Cursor::new(Vec::new());
+        {
+            let mut builder = Builder::from_json(&json!({
+                "claim_generator_info": [{"name": "test", "version": "1.0"}],
+                "title": "archive.jpg",
+                "instance_id": my_instance_id,
+            }).to_string()).unwrap();
+            builder
+                .add_ingredient_from_stream(
+                    json!({
+                        "title": "source.jpg",
+                        "relationship": "parentOf",
+                    }).to_string(),
+                    format,
+                    &mut Cursor::new(TEST_IMAGE),
+                )
+                .unwrap();
+            builder.to_archive(&mut archive).unwrap();
+        }
+
+        let mut builder = Builder::from_json(&json!({
+            "claim_generator_info": [{"name": "test", "version": "1.0"}],
+            "title": "final.jpg",
+            "assertions": [{
+                "label": "c2pa.actions.v2",
+                "data": {
+                    "actions": [{
+                        "action": "c2pa.placed",
+                        "parameters": {
+                            "ingredientIds": [my_instance_id]
+                        }
+                    }]
+                }
+            }]
+        }).to_string()).unwrap();
+
+        archive.rewind().unwrap();
+        builder
+            .add_ingredient_from_stream(
+                json!({
+                    "title": "archive.jpg",
+                    "relationship": "componentOf",
+                }).to_string(),
+                "application/c2pa",
+                &mut archive,
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), format, &mut Cursor::new(TEST_IMAGE), &mut output)
+            .expect("Signing with archived builder's instance_id in ingredientIds should succeed");
+
+        // Check linking
+        output.rewind().unwrap();
+        let reader = Reader::from_stream(format, output).unwrap();
+        let manifest = reader.active_manifest().unwrap();
+
+        let actions: Actions = manifest.find_assertion(Actions::LABEL).unwrap();
+        let action = actions.actions().first().unwrap();
+        assert_eq!(action.action(), "c2pa.placed");
+
+        let ingredient_uris = action
+            .parameters
+            .as_ref()
+            .unwrap()
+            .ingredients
+            .as_ref()
+            .expect("Action should have resolved ingredient links");
+        assert_eq!(ingredient_uris.len(), 1, "Should have exactly one linked ingredient");
+    }
+
+    // Test linking archived ingredients to actions using labels
+    #[test]
+    fn test_label_links_archived_ingredient_to_action() {
+        let format = "image/jpeg";
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut signed_asset = Cursor::new(Vec::new());
+        {
+            let mut builder = Builder::from_json(&json!({
+                "claim_generator_info": [{"name": "test", "version": "1.0"}],
+                "title": "source.jpg",
+            }).to_string()).unwrap();
+            builder
+                .sign(signer.as_ref(), format, &mut Cursor::new(TEST_IMAGE), &mut signed_asset)
+                .unwrap();
+        }
+
+        let mut archive = Cursor::new(Vec::new());
+        {
+            let mut builder = Builder::from_json(&json!({
+                "claim_generator_info": [{"name": "test", "version": "1.0"}],
+                "title": "archive.jpg",
+            }).to_string()).unwrap();
+            signed_asset.rewind().unwrap();
+            builder
+                .add_ingredient_from_stream(
+                    json!({
+                        "title": "source.jpg",
+                        "relationship": "parentOf",
+                    }).to_string(),
+                    format,
+                    &mut signed_asset,
+                )
+                .unwrap();
+            builder.to_archive(&mut archive).unwrap();
+        }
+
+        let my_label = "my-ingredient";
+        let mut builder = Builder::from_json(&json!({
+            "claim_generator_info": [{"name": "test", "version": "1.0"}],
+            "title": "final.jpg",
+            "assertions": [{
+                "label": "c2pa.actions.v2",
+                "data": {
+                    "actions": [{
+                        "action": "c2pa.placed",
+                        "parameters": {
+                            "ingredientIds": [my_label]
+                        }
+                    }]
+                }
+            }]
+        }).to_string()).unwrap();
+
+        archive.rewind().unwrap();
+        builder
+            .add_ingredient_from_stream(
+                json!({
+                    "title": "source.jpg",
+                    "relationship": "componentOf",
+                    "label": my_label,
+                }).to_string(),
+                "application/c2pa",
+                &mut archive,
+            )
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), format, &mut Cursor::new(TEST_IMAGE), &mut output)
+            .expect("Signing with label-based ingredientIds should succeed");
+
+        // Verify linking
+        output.rewind().unwrap();
+        let reader = Reader::from_stream(format, output).unwrap();
+        let manifest = reader.active_manifest().unwrap();
+
+        let actions: Actions = manifest.find_assertion(Actions::LABEL).unwrap();
+        let action = actions.actions().first().unwrap();
+        assert_eq!(action.action(), "c2pa.placed");
+
+        let ingredient_uris = action
+            .parameters
+            .as_ref()
+            .unwrap()
+            .ingredients
+            .as_ref()
+            .expect("Action should have resolved ingredient links");
+        assert_eq!(ingredient_uris.len(), 1, "Should have exactly one linked ingredient");
+    }
+
     // Ensures that the future returned by `Builder::sign_async` implements `Send`, thus making it
     // possible to spawn on a Tokio runtime.
     #[test]
