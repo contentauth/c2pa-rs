@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.46](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.45...c2patool-v0.26.46)
+_08 April 2026_
+
+### Fixed
+
+* Allow any file type to be signed with a sidecar ([#2014](https://github.com/contentauth/c2pa-rs/pull/2014))
+
 ## [0.26.45](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.44...c2patool-v0.26.45)
 _07 April 2026_
 

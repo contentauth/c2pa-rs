@@ -299,8 +299,21 @@ pub fn parse_label(label: &str) -> (&str, usize, usize) {
     if let Some(last) = components.last() {
         if VERSION_RE.is_match(last) {
             if let Ok(version) = last[1..].parse::<usize>() {
-                let base_end = without_instance.len() - last.len() - 1;
-                return (&without_instance[..base_end], version, instance);
+                // A version suffix is only strippable when a base label exists before
+                // it, i.e. there is a '.' separator. That requires
+                // without_instance.len() > last.len() (at minimum one byte for the
+                // separator plus one byte for the base). When they are equal the
+                // entire string is the version token with no base (e.g. "v1"), so
+                // subtracting last.len() + 1 would underflow usize — panicking in
+                // debug builds and wrapping in release builds.
+                //
+                // When no base exists we fall through to the default return below,
+                // yielding (without_instance, 1, instance): the full string is
+                // treated as the label name and the version defaults to 1.
+                if without_instance.len() > last.len() {
+                    let base_end = without_instance.len() - last.len() - 1;
+                    return (&without_instance[..base_end], version, instance);
+                }
             }
         }
     }
@@ -408,5 +421,61 @@ pub fn add_thumbnail_format(label: &str, format: &str) -> String {
                 format!("{label}/{format}")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression tests for usize underflow in `parse_label` when the input
+    /// is a bare version token with no base label (e.g. "v1").
+    ///
+    /// Before the fix, `without_instance.len() - last.len() - 1` underflowed
+    /// when `without_instance == last` (no '.' separator exists), panicking in
+    /// debug builds (exit code 101) and wrapping to `usize::MAX` in release
+    /// builds.  The fix guards on `without_instance.len() > last.len()` and
+    /// falls through to the default return when no base exists.
+    #[test]
+    fn test_parse_label_bare_version_does_not_panic() {
+        // "v1": entire string is the version token; no base, no instance.
+        // Expected: the string is returned as-is (label name), version = 1 (default).
+        assert_eq!(parse_label("v1"), ("v1", 1, 0));
+
+        // "v2": same pattern with a different digit.
+        assert_eq!(parse_label("v2"), ("v2", 1, 0));
+
+        // "v999": large version number, still bare.
+        assert_eq!(parse_label("v999"), ("v999", 1, 0));
+
+        // "v1__2": bare version with an instance suffix.
+        // without_instance = "v1", instance = 2 — still no base label.
+        assert_eq!(parse_label("v1__2"), ("v1", 1, 2));
+    }
+
+    /// Verify that the normal versioned-label code path still works correctly
+    /// after the guard was added.
+    #[test]
+    fn test_parse_label_normal_cases_unaffected() {
+        // No version, no instance.
+        assert_eq!(parse_label("c2pa.ingredient"), ("c2pa.ingredient", 1, 0));
+
+        // Version suffix stripped correctly.
+        assert_eq!(parse_label("c2pa.ingredient.v3"), ("c2pa.ingredient", 3, 0));
+
+        // Instance suffix only.
+        assert_eq!(parse_label("c2pa.actions__2"), ("c2pa.actions", 1, 2));
+
+        // Both version and instance.
+        assert_eq!(
+            parse_label("c2pa.ingredient.v3__2"),
+            ("c2pa.ingredient", 3, 2)
+        );
+
+        // Upper-case 'V' is not matched by the regex — returned as-is.
+        assert_eq!(
+            parse_label("c2pa.ingredient.V2"),
+            ("c2pa.ingredient.V2", 1, 0)
+        );
     }
 }
