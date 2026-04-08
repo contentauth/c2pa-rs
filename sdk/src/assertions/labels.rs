@@ -212,6 +212,25 @@ pub const METADATA: &str = "c2pa.metadata";
 /// and may contain metadata from any documented schema.
 pub const CAWG_METADATA: &str = "cawg.metadata";
 
+/// Label for a live video segment assertion.
+///
+/// Used in the per-segment C2PA Manifest Box method to link adjacent segments.
+///
+/// See [Live Video - C2PA Technical Specification section 19.3](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#using_c2pa_manifest_box).
+pub const LIVE_VIDEO_SEGMENT: &str = "c2pa.livevideo.segment";
+
+/// Label for a session keys assertion used in the Verifiable Segment Info live video method.
+///
+/// See [Session Keys - C2PA Technical Specification section 18.25](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_session_keys).
+pub const SESSION_KEYS: &str = "c2pa.session-keys";
+
+/// Continuity method identifier for manifest-ID-based segment linking.
+///
+/// When a `LiveVideoSegment` uses this method, it must include a `previous_manifest_id` field.
+///
+/// See [Live Video - C2PA Technical Specification section 19.3.2](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#using_c2pa_manifest_box).
+pub const CONTINUITY_METHOD_MANIFEST_ID: &str = "c2pa.manifestId";
+
 /// Array of all hash labels because they have special treatment
 pub const HASH_LABELS: [&str; 4] = [DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
 
