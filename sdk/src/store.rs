@@ -3142,7 +3142,7 @@ impl Store {
         // would break the offsets
         if pc.compressed() {
             // If compression is desired use BoxHashing for compatibile formats, otherwise fall back to regular hashing.
-            match io_handler.asset_box_hash_ref() {
+            match io_handler.and_then(|h| h.asset_box_hash_ref()) {
                 Some(box_hash_handler) if !is_bmff => {
                     // if the user already has a box hash assertion we use that and ignore the compression setting
                     if !pc.box_hash_assertions().is_empty() {
