@@ -2463,7 +2463,7 @@ impl Store {
         Ok(())
     }
 
-    fn finish_embeddable_store(&mut self, jumbf_bytes: &Vec<u8>, format: &str) -> Result<Vec<u8>> {
+    fn finish_embeddable_store(&mut self, jumbf_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         Self::get_composed_manifest(jumbf_bytes, format)
     }
 

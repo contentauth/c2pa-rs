@@ -1128,7 +1128,7 @@ impl AssetBoxHash for JpegIO {
 impl ComposedManifestRef for JpegIO {
     fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
         let mut seg_chucks = manifest_data.chunks(MAX_JPEG_MARKER_SIZE);
-        let num_segments = seg_chucks.len() as u32; // recalculate based on actual chunks
+        let num_segments = seg_chucks.len(); // recalculate based on actual chunks
 
         let mut segments = Vec::new();
 
