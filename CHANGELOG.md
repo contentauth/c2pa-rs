@@ -9,6 +9,21 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.79.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.1...c2pa-v0.79.2)
+_08 April 2026_
+
+### Fixed
+
+* Harden against integer overflow panic in big tiff processing ([#2012](https://github.com/contentauth/c2pa-rs/pull/2012))
+* Harden against integer underflow panic in assertion label parsing ([#2013](https://github.com/contentauth/c2pa-rs/pull/2013))
+* Harden assertion label URI parsing logic to fix index out of bounds access ([#2018](https://github.com/contentauth/c2pa-rs/pull/2018))
+* Harden BMFF hash merkle validation via count/range mismatch ([#2019](https://github.com/contentauth/c2pa-rs/pull/2019))
+* Harden BmffHash timed media chunk verification against out of bounds access issue ([#2020](https://github.com/contentauth/c2pa-rs/pull/2020))
+* Harden BMFF Merkle maps processing logic to avoid panic ([#2021](https://github.com/contentauth/c2pa-rs/pull/2021))
+* Harden against invalid MP4 files during BmffHash timed-media chunk mapping ([#2022](https://github.com/contentauth/c2pa-rs/pull/2022))
+* Redact thumbnails when ingredient with thumbnails added through add_ingredient is being thumbnail-redacted too ([#2016](https://github.com/contentauth/c2pa-rs/pull/2016))
+* Allow any file type to be signed with a sidecar ([#2014](https://github.com/contentauth/c2pa-rs/pull/2014))
+
 ## [0.79.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.0...c2pa-v0.79.1)
 _07 April 2026_
 

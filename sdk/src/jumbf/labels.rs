@@ -168,7 +168,10 @@ pub(crate) fn assertion_label_from_uri(uri: &str) -> Option<String> {
         && (parts[3] == ASSERTIONS || parts[3] == DATABOXES)
     {
         Some(parts[4].to_string())
-    } else if parts[0] == ASSERTIONS {
+    } else if parts.len() > 1 && parts[0] == ASSERTIONS {
+        // Guard: require at least 2 parts so parts[1] (the assertion label) exists.
+        // A bare "c2pa.assertions" with no slash yields parts.len() == 1, causing
+        // parts[1] to panic. Consistent with the len > 4 guard on the first branch.
         Some(parts[1].to_string())
     } else {
         None
@@ -400,6 +403,34 @@ pub mod tests {
         assert_eq!(
             Some(assertion.to_string()),
             assertion_label_from_uri(&assertion_relative)
+        );
+    }
+
+    /// Regression test: `assertion_label_from_uri` must not panic when the URI is a bare
+    /// `"c2pa.assertions"` segment with no trailing slash or assertion name.
+    ///
+    /// Before the fix, `parts[1]` was accessed without a length guard. Splitting
+    /// `"c2pa.assertions"` on '/' yields `["c2pa.assertions"]` (len == 1), so
+    /// `parts[1]` caused an index-out-of-bounds panic (exit code 101).
+    /// The function must return `None` for all such incomplete URIs.
+    #[test]
+    fn test_assertion_label_from_uri_bare_assertions_segment_does_not_panic() {
+        // Bare segment — no slash, no assertion name.
+        assert_eq!(assertion_label_from_uri(ASSERTIONS), None);
+
+        // With jumbf prefix but still no assertion name after the segment.
+        assert_eq!(
+            assertion_label_from_uri(&format!("{JUMBF_PREFIX}={ASSERTIONS}")),
+            None
+        );
+
+        // Empty string must not panic either.
+        assert_eq!(assertion_label_from_uri(""), None);
+
+        // Normal relative URI (one slash, assertion label present) still works.
+        assert_eq!(
+            assertion_label_from_uri(&format!("{ASSERTIONS}/c2pa.actions")),
+            Some("c2pa.actions".to_string())
         );
     }
 
