@@ -845,7 +845,7 @@ impl JUMBFUUIDContentBox {
 //---------------
 pub const CAI_BLOCK_UUID: &str = "6332706100110010800000AA00389B71"; // c2pa
 pub const CAI_MANIFEST_UUID: &str = "63326D6100110010800000AA00389B71"; // c2ma
-pub const CAI_COMPRESSED_STORE_UUID: &str = "6332636D00110010800000AA00389B71"; // c2cm
+pub const CAI_COMPRESSED_MANIFEST_UUID: &str = "6332636D00110010800000AA00389B71"; // c2cm
 pub const CAI_UPDATE_MANIFEST_UUID: &str = "6332756D00110010800000AA00389B71"; // c2um
 pub const CAI_ASSERTION_STORE_UUID: &str = "6332617300110010800000AA00389B71"; // c2as
 pub const CAI_INGREDIENT_STORE_UUID: &str = "6361697300110010800000AA00389B71"; //cais
@@ -1490,7 +1490,7 @@ impl BMFFBox for CAIManifest {
             // convert current box to a comoressed manifest box with same label
             let mut sbox = JUMBFSuperBox::new(
                 &self.store.desc_box().label(),
-                Some(CAI_COMPRESSED_STORE_UUID),
+                Some(CAI_COMPRESSED_MANIFEST_UUID),
             );
             sbox.add_data_box(Box::new(brotli_box));
 
