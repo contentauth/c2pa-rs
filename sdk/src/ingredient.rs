@@ -1289,8 +1289,8 @@ impl Ingredient {
         };
 
         // If the ingredient defines a thumbnail, add it to the claim,
-        // unless the source claim thumbnail was redacted
-        // (that is why we kept thumbnail_redacted_manifests around)
+        // unless the source claim thumbnail was redacted...
+        // (that is why we kept thumbnail_redacted_manifests around).
         if let Some(thumb_ref) = self.thumbnail_ref() {
             let thumbnail_is_redacted =
                 jumbf::labels::manifest_label_from_uri(&thumb_ref.identifier)
