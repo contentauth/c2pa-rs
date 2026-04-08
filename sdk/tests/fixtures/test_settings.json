@@ -22,6 +22,7 @@
       "version": "1.0.0",
       "operating_system": "auto"
     },
+    "created_assertion_labels": ["c2pa.created", "c2pa.opened", "c2pa.placed"],
     "actions": {
       "auto_created_action": {
         "enabled": true,
