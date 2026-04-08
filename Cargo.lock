@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa"
-version = "0.79.1"
+version = "0.79.2"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.79.1"
+version = "0.79.2"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.79.1"
+version = "0.79.2"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -633,7 +633,7 @@ dependencies = [
 
 [[package]]
 name = "c2patool"
-version = "0.26.45"
+version = "0.26.46"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1385,7 +1385,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.79.1"
+version = "0.79.2"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2496,7 +2496,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.79.1"
+version = "0.79.2"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -4499,9 +4499,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.51.0"
+version = "1.51.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bd1c4c0fc4a7ab90fc15ef6daaa3ec3b893f004f915f2392557ed23237820cd"
+checksum = "f66bf9585cda4b724d3e78ab34b73fb2bbaba9011b9bfdf69dc836382ea13b8c"
 dependencies = [
  "bytes",
  "libc",
