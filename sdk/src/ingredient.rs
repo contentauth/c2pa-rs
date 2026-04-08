@@ -1291,13 +1291,12 @@ impl Ingredient {
         // If the ingredient defines a thumbnail, add it to the claim,
         // unless the source claim thumbnail was redacted
         // (that is why we kept thumbnail_redacted_manifests around)
-        let thumbnail_is_redacted = self.thumbnail_ref().is_some_and(|thumb_ref| {
-            jumbf::labels::manifest_label_from_uri(&thumb_ref.identifier)
-                .is_some_and(|label| thumbnail_redacted_manifests.contains(&label))
-        });
+        if let Some(thumb_ref) = self.thumbnail_ref() {
+            let thumbnail_is_redacted =
+                jumbf::labels::manifest_label_from_uri(&thumb_ref.identifier)
+                    .is_some_and(|label| thumbnail_redacted_manifests.contains(&label));
 
-        if !thumbnail_is_redacted {
-            if let Some(thumb_ref) = self.thumbnail_ref() {
+            if !thumbnail_is_redacted {
                 // if we have a hash, just build the hashed uri
                 let hash_url = match thumb_ref.hash.as_ref() {
                     Some(h) => {
