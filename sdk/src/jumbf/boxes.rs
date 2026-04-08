@@ -1475,12 +1475,10 @@ impl BMFFBox for CAIManifest {
             uncompressed_stream.rewind()?;
 
             let mut compressed_manifest = Vec::new();
-            //let mut compressed_stream = Cursor::new(compressed_manifest);
 
             // decompress brotli box
             let params = brotli::enc::BrotliEncoderParams::default();
             brotli::BrotliCompress(&mut uncompressed_stream, &mut compressed_manifest, &params)?;
-            //compressed_manifest = compressed_stream.into_inner();
 
             // make brotli box
             let brotli_box = JUMBFBrotliContentBox {

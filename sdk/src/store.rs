@@ -3701,10 +3701,11 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
-        let verify = context.settings().verify.verify_after_reading;
-        let store = Self::from_stream(asset_type, &mut *init_segment, validation_log, context)?;
+        let manifest_bytes = Store::load_jumbf_from_stream(asset_type, init_segment, context)?.0;
 
-        // verify the store
+        let store = Store::from_jumbf_with_context(&manifest_bytes, validation_log, context)?;
+        let verify = context.settings().verify.verify_after_reading;
+
         if verify {
             init_segment.rewind()?;
             // verify store and claims
