@@ -772,6 +772,77 @@ fn test_ingredient_arbitrary_metadata_fields() -> Result<()> {
 }
 
 #[test]
+fn test_builder_unsupported_format() -> Result<()> {
+    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    builder.set_no_embed(true);
+
+    let mut source = Cursor::new(include_bytes!("fixtures/prompt.txt"));
+    let format = "application/unknown";
+
+    let mut dest = Cursor::new(Vec::new());
+    let manifest_data = builder.save_to_stream(format, &mut source, &mut dest)?;
+    source.rewind()?;
+    let reader = Reader::from_shared_context(&context).with_manifest_data_and_stream(
+        &manifest_data,
+        format,
+        &mut source,
+    )?;
+    println!("reader: {reader:#?}");
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+    assert_eq!(reader.active_manifest().unwrap().ingredients().len(), 1);
+    assert_eq!(reader.active_manifest().unwrap().assertions().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn test_builder_unsupported_format_no_embed_required() -> Result<()> {
+    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    // no_embed is NOT set — signing should fail for an unsupported format
+    // because the JUMBF cannot be embedded without a format handler.
+
+    let mut source = Cursor::new(include_bytes!("fixtures/prompt.txt"));
+    let format = "application/unknown";
+
+    let mut dest = Cursor::new(Vec::new());
+    let result = builder.save_to_stream(format, &mut source, &mut dest);
+    assert!(
+        matches!(result, Err(Error::UnsupportedType)),
+        "expected UnsupportedType, got {result:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
+    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let context = Context::new().with_settings(settings)?.into_shared();
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    builder.set_remote_url("https://example.com/manifest.c2pa");
+    builder.set_no_embed(true);
+
+    let mut source = Cursor::new(include_bytes!("fixtures/prompt.txt"));
+    let format = "application/unknown";
+
+    let mut dest = Cursor::new(Vec::new());
+    let result = builder.save_to_stream(format, &mut source, &mut dest);
+    assert!(
+        matches!(result, Err(Error::XmpNotSupported)),
+        "expected XmpNotSupported, got {result:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = Settings::new().with_toml(TEST_SETTINGS)?;
     settings.core.may_compress_manifests = true;
@@ -794,5 +865,6 @@ fn test_builder_compressed_manifests() -> Result<()> {
         reader.validation_status().is_none(),
         "Validation should succeed for compressed manifest"
     );
+
     Ok(())
 }

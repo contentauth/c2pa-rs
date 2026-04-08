@@ -163,7 +163,10 @@ pub(crate) fn manifest_label_from_uri(uri: &str) -> Option<String> {
 pub(crate) fn assertion_label_from_uri(uri: &str) -> Option<String> {
     let raw_uri = to_normalized_uri(uri);
     let parts: Vec<&str> = raw_uri.split('/').collect();
-    if parts.len() > 4 && parts[1] == MANIFEST_STORE && parts[3] == ASSERTIONS {
+    if parts.len() > 4
+        && parts[1] == MANIFEST_STORE
+        && (parts[3] == ASSERTIONS || parts[3] == DATABOXES)
+    {
         Some(parts[4].to_string())
     } else if parts[0] == ASSERTIONS {
         Some(parts[1].to_string())
