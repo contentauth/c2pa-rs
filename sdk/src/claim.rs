@@ -1816,7 +1816,7 @@ impl Claim {
             }
         }
 
-        Err(Error::AssertionInvalidRedaction)
+        Err(Error::AssertionRedactionNotFound)
     }
 
     /// Return a hash of this claim.
@@ -2492,13 +2492,18 @@ impl Claim {
                                     {
                                         // The assertion may or may not be in the assertion store.
                                         // It can exist and be zeroed or be removed entirely
-                                        // but it must be in the claim's assertions HashUri list
-                                        parent_tested = Some(
-                                            ingredient_claim
-                                                .assertions()
-                                                .iter()
-                                                .any(|a| a.url().contains(&redaction_label)),
-                                        );
+                                        // but it must be in the claim's assertions HashUri list.
+                                        // For databox items, check the claim's redacted_assertions
+                                        // since databox refs are not in the assertions list.
+                                        let in_assertions = ingredient_claim
+                                            .assertions()
+                                            .iter()
+                                            .any(|a| a.url().contains(&redaction_label));
+                                        let in_redacted = redacted_uri.contains(DATABOX_STORE)
+                                            && claim
+                                                .redactions()
+                                                .is_some_and(|r| r.contains(redacted_uri));
+                                        parent_tested = Some(in_assertions || in_redacted);
                                     } else {
                                         dbg!("failed here");
                                         parent_tested = Some(false);
@@ -2702,7 +2707,7 @@ impl Claim {
                                 dh.verify_stream_hash_with_progress(
                                     &mut file,
                                     Some(claim.alg()),
-                                    Some(&mut cb),
+                                    &mut cb,
                                 )
                             }
                             ClaimAssetData::Bytes(asset_bytes, _) => {
@@ -2710,14 +2715,14 @@ impl Claim {
                                 dh.verify_stream_hash_with_progress(
                                     &mut cursor,
                                     Some(claim.alg()),
-                                    Some(&mut cb),
+                                    &mut cb,
                                 )
                             }
                             ClaimAssetData::Stream(stream_data, _) => dh
                                 .verify_stream_hash_with_progress(
                                     *stream_data,
                                     Some(claim.alg()),
-                                    Some(&mut cb),
+                                    &mut cb,
                                 ),
                             _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
                         };
@@ -2770,30 +2775,42 @@ impl Claim {
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
 
-                    context.check_progress(ProgressPhase::VerifyingAssetHash, 1, 1)?;
+                    let mut step = 0u32;
+                    let mut cb = |_s: u32, t: u32| {
+                        step += 1;
+                        context.check_progress(ProgressPhase::VerifyingAssetHash, step, t)
+                    };
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
-                            dh.verify_hash(asset_path, Some(claim.alg()))
+                            dh.verify_hash_with_progress(asset_path, Some(claim.alg()), &mut cb)
                         }
-                        ClaimAssetData::Bytes(asset_bytes, _) => {
-                            dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
-                        }
-                        ClaimAssetData::Stream(stream_data, _) => {
-                            dh.verify_stream_hash(*stream_data, Some(claim.alg()))
-                        }
+                        ClaimAssetData::Bytes(asset_bytes, _) => dh
+                            .verify_in_memory_hash_with_progress(
+                                asset_bytes,
+                                Some(claim.alg()),
+                                &mut cb,
+                            ),
+                        ClaimAssetData::Stream(stream_data, _) => dh
+                            .verify_stream_hash_with_progress(
+                                *stream_data,
+                                Some(claim.alg()),
+                                &mut cb,
+                            ),
                         ClaimAssetData::StreamFragment(initseg_data, fragment_data, _) => dh
-                            .verify_stream_segment(
+                            .verify_stream_segment_with_progress(
                                 *initseg_data,
                                 *fragment_data,
                                 Some(claim.alg()),
+                                &mut cb,
                             ),
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::StreamFragments(initseg_data, fragment_paths, _) => dh
-                            .verify_stream_segments(
+                            .verify_stream_segments_with_progress(
                                 *initseg_data,
                                 fragment_paths,
                                 Some(claim.alg()),
+                                &mut cb,
                             ),
                     };
 
@@ -2860,7 +2877,7 @@ impl Claim {
                                 &mut file,
                                 Some(claim.alg()),
                                 box_hash_processor,
-                                Some(&mut cb),
+                                &mut cb,
                             )
                         }
                         ClaimAssetData::Bytes(asset_bytes, asset_type) => {
@@ -2876,7 +2893,7 @@ impl Claim {
                                 &mut cursor,
                                 Some(claim.alg()),
                                 box_hash_processor,
-                                Some(&mut cb),
+                                &mut cb,
                             )
                         }
                         ClaimAssetData::Stream(stream_data, asset_type) => {
@@ -2891,7 +2908,7 @@ impl Claim {
                                 *stream_data,
                                 Some(claim.alg()),
                                 box_hash_processor,
-                                Some(&mut cb),
+                                &mut cb,
                             )
                         }
                         _ => return Err(Error::UnsupportedType),
@@ -3459,7 +3476,14 @@ impl Claim {
             )));
         }
 
-        // redact assertion from incoming ingredients
+        // Redact assertion from incoming ingredients
+        // Only apply redactions that match claims in the current ingredient batch,
+        // redactions targeting other ingredients will be applied when those are processed
+        // (otherwise can't find them).
+        // TODO: per C2PA 2.4 spec, when redacting an ingredient assertion that references
+        // a C2PA Manifest, the associated manifest should be removed from the Manifest Store
+        // if no other references to it remain. This was also TODO'ed before...
+        let mut applied_redactions = Vec::new();
         if let Some(redactions) = &redactions_opt {
             for redaction in redactions {
                 if let Some(claim) = ingredient
@@ -3467,16 +3491,19 @@ impl Claim {
                     .find(|x| redaction.contains(x.label()))
                 {
                     claim.redact_assertion(redaction)?;
-
-                    // if this is an ingredient we should remove the ingredient
-                } else {
-                    return Err(Error::AssertionRedactionNotFound);
+                    applied_redactions.push(redaction.clone());
                 }
             }
         }
 
-        // all have been removed (if necessary) so replace redaction list
-        self.redacted_assertions = redactions_opt;
+        // accumulate applied redactions across multiple ingredient batches
+        match &mut self.redacted_assertions {
+            Some(existing) => existing.extend(applied_redactions),
+            None if !applied_redactions.is_empty() => {
+                self.redacted_assertions = Some(applied_redactions);
+            }
+            _ => {}
+        }
 
         // just replace the ingredients with new once since conflicts are resolved by the caller
         for i in ingredient {

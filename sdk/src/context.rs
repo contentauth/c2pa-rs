@@ -454,10 +454,16 @@ impl Context {
             SyncResolverState::Custom(resolver) => resolver.clone(),
             SyncResolverState::Default(once_lock) => once_lock
                 .get_or_init(|| {
-                    let inner = SyncGenericResolver::new();
-                    let mut resolver = RestrictedResolver::new(inner);
-                    resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                    Arc::new(resolver)
+                    if self.settings.core.allowed_network_hosts.is_some() {
+                        let mut resolver = RestrictedResolver::new(SyncGenericResolver::new());
+                        resolver
+                            .set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
+                        Arc::new(resolver)
+                    } else {
+                        // For backwards compatibility, we enable redirects in the default case.
+                        // Source: https://github.com/contentauth/c2pa-rs/pull/1907
+                        Arc::new(SyncGenericResolver::with_redirects().unwrap_or_default())
+                    }
                 })
                 .clone(),
         }
@@ -472,10 +478,16 @@ impl Context {
             AsyncResolverState::Custom(resolver) => resolver.clone(),
             AsyncResolverState::Default(once_lock) => once_lock
                 .get_or_init(|| {
-                    let inner = AsyncGenericResolver::new();
-                    let mut resolver = RestrictedResolver::new(inner);
-                    resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                    Arc::new(resolver)
+                    if self.settings.core.allowed_network_hosts.is_some() {
+                        let mut resolver = RestrictedResolver::new(AsyncGenericResolver::new());
+                        resolver
+                            .set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
+                        Arc::new(resolver)
+                    } else {
+                        // For backwards compatibility, we enable redirects in the default case.
+                        // Source: https://github.com/contentauth/c2pa-rs/pull/1907
+                        Arc::new(AsyncGenericResolver::with_redirects().unwrap_or_default())
+                    }
                 })
                 .clone(),
         }
