@@ -1061,13 +1061,11 @@ impl BmffHash {
         let mut output = HashMap::new();
         if let Some(mm) = self.merkle() {
             for m in mm {
-                let rest = current.split_off(m.count);
-
-                if current.len() == m.count {
-                    output.insert(m.local_id, current.to_owned());
-                } else {
+                if m.count > current.len() {
                     return Err(Error::HashMismatch("MerkleMap count incorrect".to_string()));
                 }
+                let rest = current.split_off(m.count);
+                output.insert(m.local_id, current.to_owned());
                 current = rest;
             }
         } else {
@@ -2452,6 +2450,75 @@ mod bmff_hash_tests {
             &box_info,
             &mut merkle_map,
         );
+    }
+
+    fn make_bmff_merkle_entries(count: usize) -> Vec<BmffMerkleMap> {
+        (0..count)
+            .map(|i| BmffMerkleMap {
+                unique_id: 0,
+                local_id: 0,
+                location: i,
+                hashes: None,
+            })
+            .collect()
+    }
+
+    fn make_bmff_hash_with_count(count: usize) -> BmffHash {
+        let mut merkle_map = minimal_merkle_map();
+        merkle_map.count = count;
+        let mut bmff_hash = BmffHash::new("test", "sha256", None);
+        bmff_hash.set_merkle(vec![merkle_map]);
+        bmff_hash
+    }
+
+    fn make_c2pa_boxes(bmff_merkle: Vec<BmffMerkleMap>) -> C2PABmffBoxes {
+        C2PABmffBoxes {
+            manifest_bytes: None,
+            original_bytes: None,
+            update_bytes: None,
+            manifest_box_bytes: None,
+            update_box_bytes: None,
+            bmff_merkle,
+            bmff_merkle_box_infos: Vec::new(),
+            box_infos: vec![small_mdat_box_info()],
+            xmp: None,
+            manifest_box_offset: None,
+            update_box_offset: None,
+            first_aux_uuid_offset: 0,
+            xmp_box_offset: 0,
+            xmp_box_size: 0,
+        }
+    }
+
+    /// Verifies that a MerkleMap whose `count` exceeds the number of BmffMerkleMap entries
+    /// returns a HashMismatch error instead of panicking via Vec::split_off.
+    #[test]
+    fn test_split_bmff_merkle_map_count_exceeds_entries_no_panic() {
+        let bmff_hash = make_bmff_hash_with_count(2);
+        let c2pa_boxes = make_c2pa_boxes(make_bmff_merkle_entries(1));
+        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        let result = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
+        assert!(matches!(result, Err(Error::HashMismatch(_))));
+    }
+
+    /// Sanity check: count == number of BmffMerkleMap entries does not panic.
+    #[test]
+    fn test_split_bmff_merkle_map_count_equals_entries_no_panic() {
+        let bmff_hash = make_bmff_hash_with_count(1);
+        let c2pa_boxes = make_c2pa_boxes(make_bmff_merkle_entries(1));
+        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        // Result may be an error (hash mismatch on fake data) but must not panic.
+        let _ = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
+    }
+
+    /// Sanity check: count < number of BmffMerkleMap entries does not panic.
+    #[test]
+    fn test_split_bmff_merkle_map_count_less_than_entries_no_panic() {
+        let bmff_hash = make_bmff_hash_with_count(1);
+        let c2pa_boxes = make_c2pa_boxes(make_bmff_merkle_entries(2));
+        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        // Result may be an error (hash mismatch on fake data) but must not panic.
+        let _ = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
     }
 
     /// Verifies that a small mdat box (size < 16) does not cause integer underflow
