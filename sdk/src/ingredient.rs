@@ -1146,8 +1146,7 @@ impl Ingredient {
                     // Only report assertion.missing if the thumbnail was not intentionally
                     // redacted by a parent manifest. Convert to the format also used
                     // in redaction lists.
-                    let abs_uri =
-                        jumbf::labels::to_absolute_uri(claim_label, &hashed_uri.url());
+                    let abs_uri = jumbf::labels::to_absolute_uri(claim_label, &hashed_uri.url());
                     let is_redacted = store.claims().iter().any(|c| {
                         c.redactions()
                             .map(|r| r.contains(&abs_uri))
@@ -1196,8 +1195,7 @@ impl Ingredient {
                     ingredient.data = Some(data_ref?);
                 }
                 None => {
-                    let abs_uri =
-                        jumbf::labels::to_absolute_uri(claim_label, &data_uri.url());
+                    let abs_uri = jumbf::labels::to_absolute_uri(claim_label, &data_uri.url());
                     let is_redacted = store.claims().iter().any(|c| {
                         c.redactions()
                             .map(|r| r.contains(&abs_uri))
