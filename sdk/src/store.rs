@@ -8321,7 +8321,9 @@ pub mod tests {
             .sign(&signer, "image/png", &mut Cursor::new(png), &mut dst)
             .unwrap();
 
-        let reader = crate::Reader::from_stream("image/png", &mut dst).unwrap();
+        let reader = crate::Reader::default()
+            .with_stream("image/png", &mut dst)
+            .unwrap();
 
         assert_eq!(reader.validation_state(), crate::ValidationState::Invalid);
     }

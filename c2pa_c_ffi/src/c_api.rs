@@ -522,13 +522,18 @@ pub unsafe extern "C" fn c2pa_error_set_last(error_str: *const c_char) -> c_int 
 /// # Safety
 /// Reads from NULL-terminated C strings.
 #[no_mangle]
+#[deprecated(
+    note = "Use c2pa_settings_new() and c2pa_context_builder_set_settings() to configure a context explicitly."
+)]
 pub unsafe extern "C" fn c2pa_load_settings(
     settings: *const c_char,
     format: *const c_char,
 ) -> c_int {
     let settings = cstr_or_return_int!(settings);
     let format = cstr_or_return_int!(format);
-    // we use the legacy from_string function to set thread-local settings for backward compatibility
+    // The C API is inherently stateful: callers invoke c2pa_load_settings once and subsequent
+    // C API calls inherit those settings via thread-local storage. This is by design.
+    #[allow(deprecated)]
     let result = C2paSettings::from_string(&settings, &format);
     ok_or_return_int!(result);
     0 // returns 0 on success
@@ -952,12 +957,14 @@ pub unsafe extern "C" fn c2pa_read_file(
 /// and it is no longer valid after that call.
 #[cfg(feature = "file_io")]
 #[no_mangle]
+#[allow(deprecated)]
 pub unsafe extern "C" fn c2pa_read_ingredient_file(
     path: *const c_char,
     data_dir: *const c_char,
 ) -> *mut c_char {
     let path = cstr_or_return_null!(path);
     let data_dir = cstr_or_return_null!(data_dir);
+    // Legacy C API: uses thread-local settings. Use c2pa_reader_from_context for new implementations.
     let result = Ingredient::from_file_with_folder(path, data_dir).map_err(Error::from_c2pa_error);
     let ingredient = ok_or_return_null!(result);
     let json = serde_json::to_string(&ingredient).unwrap_or_default();
@@ -1195,6 +1202,9 @@ pub unsafe extern "C" fn c2pa_reader_from_context(context: *mut C2paContext) -> 
 /// format must be a valid NULL-terminated C string pointer.
 /// stream must be a valid pointer to a C2paStream.
 #[no_mangle]
+#[deprecated(
+    note = "Use c2pa_reader_from_context() with an explicit context instead of relying on thread-local settings."
+)]
 pub unsafe extern "C" fn c2pa_reader_from_stream(
     format: *const c_char,
     stream: *mut C2paStream,
@@ -1202,6 +1212,9 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
     let format = cstr_or_return_null!(format);
     let stream = deref_mut_or_return_null!(stream, C2paStream);
 
+    // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
+    // Prefer c2pa_reader_from_context for new C API usage.
+    #[allow(deprecated)]
     let result = C2paReader::from_stream(&format, stream);
     let result = ok_or_return_null!(post_validate(result));
     box_tracked!(result)
@@ -1362,8 +1375,13 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
 /// ```
 #[cfg(feature = "file_io")]
 #[no_mangle]
+#[deprecated(
+    note = "Use c2pa_reader_from_context() with an explicit context instead of relying on thread-local settings."
+)]
+#[allow(deprecated)]
 pub unsafe fn c2pa_reader_from_file(path: *const c_char) -> *mut C2paReader {
     let path = cstr_or_return_null!(path);
+    // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
     let result = C2paReader::from_file(&path);
     box_tracked!(ok_or_return_null!(post_validate(result)))
 }
@@ -1385,6 +1403,9 @@ pub unsafe fn c2pa_reader_from_file(path: *const c_char) -> *mut C2paReader {
 /// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
+#[deprecated(
+    note = "Use c2pa_reader_from_context() then c2pa_reader_with_manifest_data_and_stream() instead."
+)]
 pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
     format: *const c_char,
     stream: *mut C2paStream,
@@ -1396,6 +1417,8 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
 
     let manifest_bytes = bytes_or_return_null!(manifest_data, manifest_size, "manifest_data");
 
+    // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
+    #[allow(deprecated)]
     let result = C2paReader::from_manifest_data_and_stream(manifest_bytes, &format, stream);
     box_tracked!(ok_or_return_null!(post_validate(result)))
 }
@@ -1537,8 +1560,12 @@ pub unsafe extern "C" fn c2pa_reader_supported_mime_types(
 /// }
 /// ```
 #[no_mangle]
+#[deprecated(note = "Use c2pa_builder_from_context() then c2pa_builder_set_definition() instead.")]
 pub unsafe extern "C" fn c2pa_builder_from_json(manifest_json: *const c_char) -> *mut C2paBuilder {
     let manifest_json = cstr_or_return_null!(manifest_json);
+    // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
+    // Prefer c2pa_builder_from_context for new C API usage.
+    #[allow(deprecated)]
     let result = C2paBuilder::from_json(&manifest_json);
     let result = ok_or_return_null!(result);
     box_tracked!(result)
@@ -1593,6 +1620,8 @@ pub unsafe extern "C" fn c2pa_builder_from_context(context: *mut C2paContext) ->
 /// }
 /// ```
 #[no_mangle]
+#[deprecated(note = "Use c2pa_builder_from_context() then c2pa_builder_with_archive() instead.")]
+#[allow(deprecated)]
 pub unsafe extern "C" fn c2pa_builder_from_archive(stream: *mut C2paStream) -> *mut C2paBuilder {
     let stream = deref_mut_or_return_null!(stream, C2paStream);
     box_tracked!(ok_or_return_null!(C2paBuilder::from_archive(
@@ -2646,7 +2675,12 @@ pub unsafe extern "C" fn c2pa_signer_from_info(signer_info: &C2paSignerInfo) -> 
 /// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
+#[deprecated(
+    note = "Use c2pa_context_builder_set_signer() to configure a signer on a context instead."
+)]
 pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
+    // Legacy C API: reads signer configuration from thread-local settings (set by c2pa_load_settings).
+    #[allow(deprecated)]
     let signer = ok_or_return_null!(C2paSettings::signer());
     box_tracked!(C2paSigner {
         signer: Box::new(signer),
@@ -2752,6 +2786,7 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use std::{ffi::CString, io::Seek, panic::catch_unwind};
 

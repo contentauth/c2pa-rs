@@ -11,16 +11,18 @@
 // specific language governing permissions and limitations under
 // each license.
 
+mod common;
+
 /// Complete functional integration test with acquisitions and ingredients.
 //  Isolate from wasm by wrapping in module.
 mod integration_v2 {
     use std::io::{Cursor, Seek};
 
     use anyhow::Result;
-    use c2pa::{
-        crypto::raw_signature::SigningAlg, settings::Settings, Builder, CallbackSigner, Reader,
-    };
+    use c2pa::{crypto::raw_signature::SigningAlg, Builder, CallbackSigner, Reader};
     use serde_json::json;
+
+    use super::common::test_context;
 
     const PARENT_JSON: &str = r#"
     {
@@ -155,9 +157,7 @@ mod integration_v2 {
 
         // don't try to verify on wasm since it doesn't support ed25519 yet
 
-        Settings::from_toml(include_str!("fixtures/test_settings.toml"))?;
-
-        let mut builder = Builder::from_json(&json)?;
+        let mut builder = Builder::from_context(test_context()).with_definition(&json)?;
         builder.add_ingredient_from_stream(PARENT_JSON, format, &mut source)?;
 
         // add a manifest thumbnail ( just reuse the image for now )
@@ -178,7 +178,7 @@ mod integration_v2 {
         let mut dest = {
             let ed_signer = |_context: *const _, data: &[u8]| ed_sign(data, PRIVATE_KEY);
             let signer = CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS);
-            let mut builder = Builder::from_archive(&mut zipped)?;
+            let mut builder = Builder::default().with_archive(&mut zipped)?;
             // sign the ManifestStoreBuilder and write it to the output stream
             let mut dest = Cursor::new(Vec::new());
             builder.sign(&signer, format, &mut source, &mut dest)?;
@@ -196,7 +196,7 @@ mod integration_v2 {
             dest.rewind()?;
         }
 
-        let reader = Reader::from_stream(format, &mut dest)?;
+        let reader = Reader::default().with_stream(format, &mut dest)?;
 
         // extract a thumbnail image from the ManifestStore
         let mut thumbnail = Cursor::new(Vec::new());

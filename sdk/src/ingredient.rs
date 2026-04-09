@@ -704,13 +704,25 @@ impl Ingredient {
     }
 
     #[cfg(feature = "file_io")]
-    /// Creates an `Ingredient` from a file path.
+    /// Creates an `Ingredient` from a file path using thread-local settings.
+    ///
+    /// Use [`Ingredient::from_file_with_options`] with an explicit context instead.
+    #[deprecated(
+        note = "Use `Ingredient::from_file_with_options` with an explicit `Context` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::from_file_with_options(path.as_ref(), &DefaultOptions { base: None })
     }
 
     #[cfg(feature = "file_io")]
-    /// Creates an `Ingredient` from a file path.
+    /// Creates an `Ingredient` from a file path using thread-local settings.
+    ///
+    /// Use [`Ingredient::from_file_with_options`] with an explicit context instead.
+    #[deprecated(
+        note = "Use `Ingredient::from_file_with_options` with an explicit `Context` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub fn from_file_with_folder<P: AsRef<Path>>(path: P, folder: P) -> Result<Self> {
         Self::from_file_with_options(
             path.as_ref(),
@@ -725,8 +737,15 @@ impl Ingredient {
         (assertion.content_type(), assertion.data())
     }
 
-    /// Creates an `Ingredient` from a file path and options.
+    /// Creates an `Ingredient` from a file path and options, using thread-local settings.
+    ///
+    /// Pass an explicit [`Context`](crate::Context) to `from_file_impl` directly, or use
+    /// the [`Builder`](crate::Builder) API with [`Builder::from_context`](crate::Builder::from_context)
+    /// to avoid relying on thread-local settings.
     #[cfg(feature = "file_io")]
+    #[deprecated(
+        note = "Rely on `Builder::from_context` with an explicit `Context` instead of using thread-local settings."
+    )]
     pub fn from_file_with_options<P: AsRef<Path>>(
         path: P,
         options: &dyn IngredientOptions,
@@ -816,19 +835,28 @@ impl Ingredient {
         Ok(ingredient)
     }
 
-    /// Creates an `Ingredient` from a memory buffer.
+    /// Creates an `Ingredient` from a memory buffer using thread-local settings.
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
+    ///
+    /// Use [`Ingredient::from_stream`] with an explicit [`Context`](crate::Context) instead.
+    #[deprecated(
+        note = "Use `Ingredient::from_stream` with an explicit `Context` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub fn from_memory(format: &str, buffer: &[u8]) -> Result<Self> {
         let mut stream = Cursor::new(buffer);
         Self::from_stream(format, &mut stream)
     }
 
-    /// Creates an `Ingredient` from a stream.
+    /// Creates an `Ingredient` from a stream using thread-local settings.
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
+    ///
+    /// Pass an explicit [`Context`](crate::Context) via `add_stream_internal` instead.
+    #[deprecated(note = "Pass an explicit `Context` instead of relying on thread-local settings.")]
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = crate::settings::get_thread_local_settings();
@@ -971,19 +999,30 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Creates an `Ingredient` from a memory buffer (async version).
+    /// Creates an `Ingredient` from a memory buffer (async version) using thread-local settings.
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
+    ///
+    /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
+    #[deprecated(
+        note = "Use `Builder::from_context(context)` with an explicit `Context` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub async fn from_memory_async(format: &str, buffer: &[u8]) -> Result<Self> {
         let mut stream = Cursor::new(buffer);
         Self::from_stream_async(format, &mut stream).await
     }
 
-    /// Creates an `Ingredient` from a stream (async version).
+    /// Creates an `Ingredient` from a stream (async version) using thread-local settings.
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
+    ///
+    /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
+    #[deprecated(
+        note = "Use `Builder::from_context(context)` with an explicit `Context` instead of relying on thread-local settings."
+    )]
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = crate::settings::get_thread_local_settings();
@@ -1408,7 +1447,11 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes.
+    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes,
+    /// using thread-local settings.
+    ///
+    /// Use [`Ingredient::from_manifest_and_asset_stream_async`] with an explicit
+    /// [`Context`](crate::Context) instead.
     ///
     /// # Example: Create an Ingredient from a binary manifest (.c2pa) and asset bytes
     /// ```
@@ -1429,6 +1472,10 @@ impl Ingredient {
     /// #    Ok(())
     /// }
     /// ```
+    #[deprecated(
+        note = "Pass an explicit `Context` via `from_manifest_and_asset_stream_async` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub async fn from_manifest_and_asset_bytes_async<M: Into<Vec<u8>>>(
         manifest_bytes: M,
         format: &str,
@@ -1438,7 +1485,11 @@ impl Ingredient {
         Self::from_manifest_and_asset_stream_async(manifest_bytes, format, &mut stream).await
     }
 
-    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset.
+    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset,
+    /// using thread-local settings.
+    ///
+    /// Pass an explicit [`Context`](crate::Context) instead of relying on thread-local settings.
+    #[deprecated(note = "Pass an explicit `Context` instead of relying on thread-local settings.")]
     pub async fn from_manifest_and_asset_stream_async<M: Into<Vec<u8>>>(
         manifest_bytes: M,
         format: &str,
@@ -1626,6 +1677,7 @@ impl IngredientOptions for DefaultOptions {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
 
     use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -1870,6 +1922,7 @@ mod tests {
 mod tests_file_io {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
 
     use super::*;
     use crate::{assertion::AssertionData, utils::test::fixture_path};

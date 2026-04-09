@@ -83,11 +83,11 @@ pub fn compare_image_manifests<P: AsRef<Path>, Q: AsRef<Path>>(
 ) -> Result<Vec<String>> {
     let manifest_store1 = match m1.as_ref().extension() {
         Some(ext) if ext == "json" => Reader::from_json(&fs::read_to_string(m1)?),
-        _ => Reader::from_file(m1.as_ref()),
+        _ => Reader::default().with_file(m1.as_ref()),
     };
     let manifest_store2 = match m2.as_ref().extension() {
         Some(ext) if ext == "json" => Reader::from_json(&fs::read_to_string(m2)?),
-        _ => Reader::from_file(m2.as_ref()),
+        _ => Reader::default().with_file(m2.as_ref()),
     };
 
     match (manifest_store1, manifest_store2) {

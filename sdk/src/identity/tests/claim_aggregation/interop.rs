@@ -38,7 +38,9 @@ async fn adobe_connected_identities() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::default()
+        .with_stream(format, &mut test_image)
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -124,7 +126,9 @@ async fn ims_multiple_manifests() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::default()
+        .with_stream(format, &mut test_image)
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     // Check the summary report for the entire manifest store.

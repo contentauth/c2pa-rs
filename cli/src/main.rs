@@ -24,12 +24,14 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::Arc,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
     format_from_path, identity::validator::CawgValidator, settings::Settings, Builder,
-    ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer,
+    ClaimGeneratorInfo, Context as C2paContext, Error, Ingredient, ManifestDefinition, Reader,
+    Signer,
 };
 use clap::{Parser, Subcommand};
 use etcetera::BaseStrategy;
@@ -277,7 +279,9 @@ fn load_ingredient(path: &Path) -> Result<Ingredient> {
         }
         Ok(ingredient)
     } else {
-        Ok(Ingredient::from_file(path)?)
+        #[allow(deprecated)]
+        let result = Ingredient::from_file(path)?;
+        Ok(result)
     }
 }
 
@@ -392,10 +396,12 @@ fn blocking_get(url: &str) -> Result<String> {
     }
 }
 
-fn configure_sdk(args: &CliArgs) -> Result<()> {
-    if args.settings.exists() {
-        Settings::from_file(&args.settings)?;
-    }
+fn configure_sdk(args: &CliArgs) -> Result<Settings> {
+    let mut settings = if args.settings.exists() {
+        Settings::new().with_file(&args.settings)?
+    } else {
+        Settings::default()
+    };
 
     let mut enable_trust_checks = false;
 
@@ -409,12 +415,13 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
             debug!("Using trust anchors from {trust_list:?}");
 
             let data = load_trust_resource(trust_list)?;
-            Settings::from_toml(
+            settings.update_from_str(
                 &toml::toml! {
                     [trust]
                     trust_anchors = data
                 }
                 .to_string(),
+                "toml",
             )?;
 
             enable_trust_checks = true;
@@ -424,12 +431,13 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
             debug!("Using allowed list from {allowed_list:?}");
 
             let data = load_trust_resource(allowed_list)?;
-            Settings::from_toml(
+            settings.update_from_str(
                 &toml::toml! {
                     [trust]
                     allowed_list = data
                 }
                 .to_string(),
+                "toml",
             )?;
 
             enable_trust_checks = true;
@@ -439,12 +447,13 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
             debug!("Using trust config from {trust_config:?}");
 
             let data = load_trust_resource(trust_config)?;
-            Settings::from_toml(
+            settings.update_from_str(
                 &toml::toml! {
                     [trust]
                     trust_config = data
                 }
                 .to_string(),
+                "toml",
             )?;
 
             enable_trust_checks = true;
@@ -454,27 +463,17 @@ fn configure_sdk(args: &CliArgs) -> Result<()> {
     // if any trust setting is provided enable the trust checks
     // there is no disabling of default setting only the ability to enable if they were internally disabled
     if enable_trust_checks {
-        Settings::from_toml(
+        settings.update_from_str(
             &toml::toml! {
                 [verify]
                 verify_trust = true
             }
             .to_string(),
+            "toml",
         )?;
     }
 
-    // enable or disable verification after signing
-    {
-        Settings::from_toml(
-            &toml::toml! {
-                [trust]
-                verify_after_sign = (!args.no_signing_verify)
-            }
-            .to_string(),
-        )?;
-    }
-
-    Ok(())
+    Ok(settings)
 }
 
 fn sign_fragmented(
@@ -523,7 +522,11 @@ fn sign_fragmented(
     Ok(())
 }
 
-fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Reader>> {
+fn verify_fragmented(
+    init_pattern: &Path,
+    frag_pattern: &Path,
+    context: &Arc<C2paContext>,
+) -> Result<Vec<Reader>> {
     let mut readers = Vec::new();
 
     let ip = init_pattern
@@ -551,7 +554,8 @@ fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Rea
                 }
 
                 println!("Verifying manifest: {p:?}");
-                let reader = Reader::from_fragmented_files(p, &fragments)?;
+                let reader =
+                    Reader::from_shared_context(context).with_fragmented_files(p, &fragments)?;
                 if let Some(vs) = reader.validation_status() {
                     if let Some(e) = vs.iter().find(|v| !v.passed()) {
                         eprintln!("Error validating segments: {e:?}");
@@ -588,7 +592,7 @@ fn validate_cawg(reader: &mut Reader) -> Result<()> {
     }
 }
 
-fn reader_from_args(args: &CliArgs) -> Result<Reader> {
+fn reader_from_args(args: &CliArgs, context: &Arc<C2paContext>) -> Result<Reader> {
     if let Some(external_manifest) = &args.external_manifest {
         let c2pa_data = fs::read(external_manifest)?;
         let format = match c2pa::format_from_path(&args.path) {
@@ -597,12 +601,13 @@ fn reader_from_args(args: &CliArgs) -> Result<Reader> {
                 bail!("Format for {:?} is unrecognized", args.path);
             }
         };
-        Ok(
-            Reader::from_manifest_data_and_stream(&c2pa_data, &format, File::open(&args.path)?)
-                .map_err(special_errs)?,
-        )
+        Ok(Reader::from_shared_context(context)
+            .with_manifest_data_and_stream(&c2pa_data, &format, File::open(&args.path)?)
+            .map_err(special_errs)?)
     } else {
-        Ok(Reader::from_file(&args.path).map_err(special_errs)?)
+        Ok(Reader::from_shared_context(context)
+            .with_file(&args.path)
+            .map_err(special_errs)?)
     }
 }
 
@@ -642,7 +647,9 @@ fn main() -> Result<()> {
     }
 
     if args.cert_chain {
-        let reader = Reader::from_file(path).map_err(special_errs)?;
+        let reader = Reader::from_context(C2paContext::new())
+            .with_file(path)
+            .map_err(special_errs)?;
         // todo: add cawg certs here??
         if let Some(manifest) = reader.active_manifest() {
             if let Some(si) = manifest.signature_info() {
@@ -665,7 +672,8 @@ fn main() -> Result<()> {
     );
 
     // configure the SDK
-    configure_sdk(&args).context("Could not configure c2pa-rs")?;
+    let mut settings = configure_sdk(&args).context("Could not configure c2pa-rs")?;
+    let context = Arc::new(C2paContext::new().with_settings(&settings)?);
 
     // Remove manifest needs to also remove XMP provenance
     // if args.remove_manifest {
@@ -707,7 +715,7 @@ fn main() -> Result<()> {
 
         // read the manifest information
         let manifest_def: ManifestDef = serde_json::from_slice(json.as_bytes())?;
-        let mut builder = Builder::from_json(&json)?;
+        let mut builder = Builder::from_shared_context(&context).with_definition(&json)?;
         let mut manifest = manifest_def.manifest;
 
         // add claim_tool generator so we know this was created using this tool
@@ -751,6 +759,7 @@ fn main() -> Result<()> {
         // note: This could be treated as an update manifest eventually since the image is the same
         let has_parent = builder.definition.ingredients.iter().any(|i| i.is_parent());
         if !has_parent && !is_fragment {
+            #[allow(deprecated)]
             let mut source_ingredient = Ingredient::from_file(&args.path)?;
             if source_ingredient.manifest_data().is_some() {
                 source_ingredient.set_is_parent();
@@ -779,12 +788,15 @@ fn main() -> Result<()> {
             let signer = CallbackSigner::new(process_runner, cb_config);
 
             Box::new(signer)
-        } else {
-            match Settings::signer() {
-                Ok(signer) => signer,
-                Err(Error::MissingSignerSettings) => sign_config.signer()?,
-                Err(err) => Err(err)?,
+        } else if let Some(signer_cfg) = settings.signer.take() {
+            let c2pa_signer = signer_cfg.c2pa_signer()?;
+            if let Some(cawg_cfg) = settings.cawg_x509_signer.take() {
+                cawg_cfg.cawg_signer(c2pa_signer)?
+            } else {
+                c2pa_signer
             }
+        } else {
+            sign_config.signer()?
         };
 
         if let Some(output) = args.output {
@@ -858,7 +870,9 @@ fn main() -> Result<()> {
                 }
 
                 // generate a report on the output file
-                let mut reader = Reader::from_file(&output).map_err(special_errs)?;
+                let mut reader = Reader::from_shared_context(&context)
+                    .with_file(&output)
+                    .map_err(special_errs)?;
                 validate_cawg(&mut reader)?;
                 print_reader(&reader, args.detailed, args.crjson)?;
             }
@@ -880,13 +894,16 @@ fn main() -> Result<()> {
         }
         create_dir_all(&output)?;
         if args.ingredient {
+            #[allow(deprecated)]
             let report = Ingredient::from_file_with_folder(&args.path, &output)
                 .map_err(special_errs)?
                 .to_string();
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
             println!("Ingredient report written to the directory {:?}", &output);
         } else {
-            let mut reader = Reader::from_file(&args.path).map_err(special_errs)?;
+            let mut reader = Reader::from_shared_context(&context)
+                .with_file(&args.path)
+                .map_err(special_errs)?;
             validate_cawg(&mut reader)?;
             reader.to_folder(&output)?;
             let report = reader.to_string();
@@ -900,15 +917,14 @@ fn main() -> Result<()> {
             println!("Manifest report written to the directory {:?}", &output);
         }
     } else if args.ingredient {
-        println!(
-            "{}",
-            Ingredient::from_file(&args.path).map_err(special_errs)?
-        )
+        #[allow(deprecated)]
+        let ingredient = Ingredient::from_file(&args.path).map_err(special_errs)?;
+        println!("{}", ingredient)
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
     {
-        let mut stores = verify_fragmented(&args.path, fg)?;
+        let mut stores = verify_fragmented(&args.path, fg, &context)?;
         if stores.len() == 1 {
             validate_cawg(&mut stores[0])?;
             println!("{}", stores[0]);
@@ -919,7 +935,7 @@ fn main() -> Result<()> {
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        let mut reader = reader_from_args(&args)?;
+        let mut reader = reader_from_args(&args, &context)?;
         validate_cawg(&mut reader)?;
         print_reader(&reader, args.detailed, args.crjson)?;
     }
@@ -957,6 +973,7 @@ pub mod tests {
         return tempfile::tempdir().map_err(Into::into);
     }
 
+    #[allow(deprecated)]
     #[test]
     fn test_manifest_config() {
         const SOURCE_PATH: &str = "tests/fixtures/earth_apollo17.jpg";

@@ -466,9 +466,16 @@ impl AsRef<Builder> for Builder {
 }
 
 impl Builder {
-    /// Creates a new [`Builder`] struct.
+    /// Creates a new [`Builder`] struct using thread-local settings.
+    ///
+    /// Use [`Builder::default()`](Builder::default) for a builder with default settings, or
+    /// [`Builder::from_context(context)`](Builder::from_context) to pass an explicit
+    /// [`Context`](crate::Context).
     /// # Returns
     /// * A new [`Builder`].
+    #[deprecated(
+        note = "Use `Builder::default()` for default settings, or `Builder::from_context(context)` to pass an explicit `Context`."
+    )]
     pub fn new() -> Self {
         // Legacy behavior: explicitly get global settings for backward compatibility
         // at some point we should remove this and require a Context to be passed in.
@@ -485,6 +492,9 @@ impl Builder {
     /// This method takes ownership of the Context and wraps it in an Arc internally.
     /// Use this for single-use contexts where you don't need to share the context.
     ///
+    /// Use [`Builder::default()`] when no special configuration is needed.
+    /// Use [`Builder::from_shared_context`] to share a context across multiple builders.
+    ///
     /// # Arguments
     /// * `context` - The [`Context`] to use for this [`Builder`].
     ///
@@ -495,6 +505,10 @@ impl Builder {
     /// ```
     /// # use c2pa::{Context, Builder, Result};
     /// # fn main() -> Result<()> {
+    /// // With default settings (no explicit context needed):
+    /// let builder = Builder::default();
+    ///
+    /// // With custom settings:
     /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
     /// let builder = Builder::from_context(context);
     /// # Ok(())
@@ -593,7 +607,10 @@ impl Builder {
         intent
     }
 
-    /// Creates a new [`Builder`] from a JSON [`ManifestDefinition`] string.
+    /// Creates a new [`Builder`] from a JSON [`ManifestDefinition`] string using thread-local settings.
+    ///
+    /// Use [`Builder::from_context(context).with_definition(json)`](Builder::with_definition) instead,
+    /// passing an explicit [`Context`](crate::Context) rather than relying on thread-local settings.
     ///
     /// # Arguments
     /// * `json` - A JSON string representing the [`ManifestDefinition`].
@@ -601,6 +618,9 @@ impl Builder {
     /// * A new [`Builder`].
     /// # Errors
     /// * Returns an [`Error`] if the JSON is malformed or incorrect.
+    #[deprecated(
+        note = "Use `Builder::from_context(context).with_definition(json)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+    )]
     pub fn from_json(json: &str) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = crate::settings::get_thread_local_settings();
@@ -929,7 +949,7 @@ impl Builder {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
         if format == "c2pa" || format == "application/c2pa" {
-            let reader = Reader::from_stream(format, stream)?;
+            let reader = Reader::from_shared_context(&self.context).with_stream(format, stream)?;
             let parent_ingredient = self.add_ingredient_from_reader(&reader)?;
             parent_ingredient.merge(&ingredient);
             return self
@@ -1235,16 +1255,19 @@ impl Builder {
         })
     }
 
-    /// Create a [`Builder`] from an archive stream.
+    /// Create a [`Builder`] from an archive stream using thread-local settings.
     ///
     /// Archives contain unsigned working stores (signed with BoxHash placeholder),
     /// so validation is skipped.
+    ///
+    /// Use [`Builder::from_context(context).with_archive(stream)`](Builder::with_archive) instead,
+    /// passing an explicit [`Context`](crate::Context) rather than relying on thread-local settings.
     ///
     /// # Arguments
     /// * `stream` - The stream to read the archive from.
     ///
     /// # Returns
-    /// A new Builder with default context.
+    /// A new Builder with thread-local context.
     ///
     /// # Errors
     /// Returns an [`Error`] if the archive cannot be read.
@@ -1260,6 +1283,10 @@ impl Builder {
     /// # Ok(())
     /// # }
     /// ```
+    #[deprecated(
+        note = "Use `Builder::from_context(context).with_archive(stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub fn from_archive(stream: impl Read + Seek + Send) -> Result<Self> {
         Builder::new().with_archive(stream)
     }
@@ -3231,7 +3258,10 @@ mod tests {
         settings::Settings,
         utils::{
             hash_utils::HashRange,
-            test::{test_context, write_bmff_placeholder_stream, write_jpeg_placeholder_stream},
+            test::{
+                setup_logger, test_context, write_bmff_placeholder_stream,
+                write_jpeg_placeholder_stream,
+            },
             test_signer::{async_test_signer, test_signer},
         },
         validation_results::ValidationState,
@@ -3400,7 +3430,7 @@ mod tests {
         // strip whitespace so we can compare later
         let mut stripped_json = manifest_json();
         stripped_json.retain(|c| !c.is_whitespace());
-        let mut builder = Builder::from_json(&stripped_json).unwrap();
+        let mut builder = Builder::default().with_definition(&stripped_json).unwrap();
         builder.resources.add("5678", "12345").unwrap();
         let definition = &builder.definition;
         assert_eq!(definition.vendor, Some("test".to_string()));
@@ -3433,7 +3463,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(parent_json().to_string(), format, &mut source)
             .unwrap();
@@ -3466,7 +3496,7 @@ mod tests {
 
         // unzip the manifest builder from the zipped stream
         zipped.rewind().unwrap();
-        let mut builder = Builder::from_archive(&mut zipped).unwrap();
+        let mut builder = Builder::default().with_archive(&mut zipped).unwrap();
 
         // sign and write to the output stream
         let signer = test_signer(SigningAlg::Ps256);
@@ -3476,7 +3506,9 @@ mod tests {
 
         // read and validate the signed manifest store
         dest.rewind().unwrap();
-        let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
+        let manifest_store = Reader::default()
+            .with_stream(format, &mut dest)
+            .expect("from_bytes");
 
         println!("{manifest_store}");
         assert_ne!(manifest_store.validation_state(), ValidationState::Invalid);
@@ -3494,67 +3526,67 @@ mod tests {
     // The second is not referenced and should get one.
     #[test]
     fn test_builder_one_placed_action_via_ingredient_id_ref() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
-        Settings::from_toml(
-            &toml::toml! {
-                [builder]
-                actions.auto_placed_action.enabled = true
-            }
-            .to_string(),
-        )
-        .unwrap();
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder]
+                    actions.auto_placed_action.enabled = true
+                }
+                .to_string(),
+            )
+            .unwrap();
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
 
         let mut output = Cursor::new(Vec::new());
-        let mut builder = Builder::from_json(
-            &json!({
-                "title": "Test Manifest",
-                "format": "image/jpeg",
-                "ingredients": [
-                    {
-                        "title": "First Ingredient",
-                        "format": "image/jpeg",
-                        "relationship": "componentOf",
-                        "instance_id": "123"
-                    },
-                    {
-                        "title": "Second Ingredient",
-                        "format": "image/png",
-                        "relationship": "componentOf",
-                        "instance_id": "456"
-                    }
-                ],
-                "assertions": [
-                    {
-                        "label": "c2pa.actions",
-                        "data": {
-                            "actions": [
-                                {
-                                    "action": "c2pa.placed",
-                                    "instanceId": "123"
-                                }
-                            ]
+        let mut builder = Builder::from_context(context)
+            .with_definition(
+                json!({
+                    "title": "Test Manifest",
+                    "format": "image/jpeg",
+                    "ingredients": [
+                        {
+                            "title": "First Ingredient",
+                            "format": "image/jpeg",
+                            "relationship": "componentOf",
+                            "instance_id": "123"
+                        },
+                        {
+                            "title": "Second Ingredient",
+                            "format": "image/png",
+                            "relationship": "componentOf",
+                            "instance_id": "456"
                         }
-                    },
-                ]
-            })
-            .to_string(),
-        )
-        .unwrap();
-
-        builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
-        builder
-            .sign(
-                &Settings::signer().unwrap(),
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE),
-                &mut output,
+                    ],
+                    "assertions": [
+                        {
+                            "label": "c2pa.actions",
+                            "data": {
+                                "actions": [
+                                    {
+                                        "action": "c2pa.placed",
+                                        "instanceId": "123"
+                                    }
+                                ]
+                            }
+                        },
+                    ]
+                })
+                .to_string(),
             )
             .unwrap();
 
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        builder
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
+            .unwrap();
+
         output.rewind().unwrap();
-        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
         let actions: Actions = reader
             .active_manifest()
             .unwrap()
@@ -3587,20 +3619,20 @@ mod tests {
             )
             .unwrap();
 
-        let context = Context::new().with_settings(settings).unwrap();
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
 
         let mut output = Cursor::new(Vec::new());
         Builder::from_context(context)
-            .sign(
-                &Settings::signer().unwrap(),
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE),
-                &mut output,
-            )
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
             .unwrap();
 
         output.rewind().unwrap();
-        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
 
         let actions: Actions = reader
             .active_manifest()
@@ -3627,7 +3659,10 @@ mod tests {
             )
             .unwrap();
 
-        let context = Context::new().with_settings(settings).unwrap();
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
 
         let mut builder = Builder::from_context(context);
         builder
@@ -3636,16 +3671,13 @@ mod tests {
 
         let mut output = Cursor::new(Vec::new());
         builder
-            .sign(
-                &Settings::signer().unwrap(),
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE),
-                &mut output,
-            )
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
             .unwrap();
 
         output.rewind().unwrap();
-        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
 
         let actions: Actions = reader
             .active_manifest()
@@ -3699,7 +3731,10 @@ mod tests {
             )
             .unwrap();
 
-        let context = Context::new().with_settings(settings).unwrap();
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
 
         let mut builder = Builder::from_context(context);
         builder
@@ -3729,16 +3764,13 @@ mod tests {
 
         let mut output = Cursor::new(Vec::new());
         builder
-            .sign(
-                &Settings::signer().unwrap(),
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE),
-                &mut output,
-            )
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
             .unwrap();
 
         output.rewind().unwrap();
-        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
 
         let actions: Actions = reader
             .active_manifest()
@@ -3798,20 +3830,20 @@ mod tests {
             )
             .unwrap();
 
-        let context = Context::new().with_settings(settings).unwrap();
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
 
         let mut output = Cursor::new(Vec::new());
         Builder::from_context(context)
-            .sign(
-                &Settings::signer().unwrap(),
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE),
-                &mut output,
-            )
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
             .unwrap();
 
         output.rewind().unwrap();
-        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
 
         let actions: Actions = reader
             .active_manifest()
@@ -3846,20 +3878,20 @@ mod tests {
             )
             .unwrap();
 
-        let context = Context::new().with_settings(settings).unwrap();
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
 
         let mut output = Cursor::new(Vec::new());
         Builder::from_context(context)
-            .sign(
-                &Settings::signer().unwrap(),
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE),
-                &mut output,
-            )
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
             .unwrap();
 
         output.rewind().unwrap();
-        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
 
         let actions: Actions = reader
             .active_manifest()
@@ -3910,20 +3942,20 @@ mod tests {
             )
             .unwrap();
 
-        let context = Context::new().with_settings(settings).unwrap();
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
 
         let mut output = Cursor::new(Vec::new());
         Builder::from_context(context)
-            .sign(
-                &Settings::signer().unwrap(),
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE),
-                &mut output,
-            )
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
             .unwrap();
 
         output.rewind().unwrap();
-        let reader = Reader::from_stream("image/jpeg", output).unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
 
         let actions: Actions = reader
             .active_manifest()
@@ -3953,14 +3985,14 @@ mod tests {
     #[cfg(feature = "file_io")]
     fn test_builder_sign_file() {
         use crate::utils::io_utils::tempdirectory;
-        crate::utils::test::setup_logger();
+        setup_logger();
 
         let source = "tests/fixtures/CA.jpg";
         let dir = tempdirectory().unwrap();
         let dest = dir.path().join("test_file.jpg");
         let mut parent = std::fs::File::open(source).unwrap();
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut parent)
             .unwrap();
@@ -3974,7 +4006,7 @@ mod tests {
         builder.sign_file(signer.as_ref(), source, &dest).unwrap();
 
         // read and validate the signed manifest store
-        let manifest_store = Reader::from_file(&dest).expect("from_bytes");
+        let manifest_store = Reader::default().with_file(&dest).expect("from_bytes");
 
         println!("{manifest_store}");
         assert_eq!(manifest_store.validation_state(), ValidationState::Trusted);
@@ -4013,7 +4045,7 @@ mod tests {
             let mut source = std::fs::File::open(path).unwrap();
             let mut dest = Cursor::new(Vec::new());
 
-            let mut builder = Builder::from_json(&manifest_json()).unwrap();
+            let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
             builder
                 .add_ingredient_from_stream(parent_json(), format, &mut source)
                 .unwrap();
@@ -4030,7 +4062,9 @@ mod tests {
 
             // read and validate the signed manifest store
             dest.rewind().unwrap();
-            let manifest_store = Reader::from_stream(format, &mut dest).expect("from_bytes");
+            let manifest_store = Reader::default()
+                .with_stream(format, &mut dest)
+                .expect("from_bytes");
 
             //println!("{}", manifest_store);
             if format != "c2pa" {
@@ -4059,7 +4093,9 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
         builder.remote_url = Some("http://my_remote_url".to_string());
         builder.no_embed = true;
 
@@ -4071,11 +4107,14 @@ mod tests {
 
         // check to make sure we have a remote url and no manifest data
         dest.set_position(0);
-        let _err = Reader::from_stream("image/jpeg", &mut dest).expect_err("from_bytes");
+        let _err = Reader::default()
+            .with_stream("image/jpeg", &mut dest)
+            .expect_err("from_bytes");
 
         // now validate the manifest against the written asset
         dest.set_position(0);
-        let reader = Reader::from_manifest_data_and_stream(&manifest_data, "image/jpeg", &mut dest)
+        let reader = Reader::default()
+            .with_manifest_data_and_stream(&manifest_data, "image/jpeg", &mut dest)
             .expect("from_bytes");
 
         println!("{}", reader.json());
@@ -4089,7 +4128,9 @@ mod tests {
 
         let signer = test_signer(SigningAlg::Ps256);
 
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
 
         // get a placeholder the manifest
         let placeholder = builder
@@ -4135,16 +4176,20 @@ mod tests {
 
         output_stream.rewind().unwrap();
 
-        let reader = crate::Reader::from_stream("image/jpeg", output_stream).unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", output_stream)
+            .unwrap();
         println!("{reader}");
         assert_eq!(reader.validation_status(), None);
     }
 
     #[test]
     fn test_builder_data_hashed_embeddable_min() -> Result<()> {
-        let signer = Settings::signer().unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
 
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
 
         // get a placeholder the manifest
         let placeholder = builder
@@ -4171,7 +4216,9 @@ mod tests {
 
         let output_stream = Cursor::new(signed_manifest);
 
-        let reader = crate::Reader::from_stream("application/c2pa", output_stream).unwrap();
+        let reader = Reader::default()
+            .with_stream("application/c2pa", output_stream)
+            .unwrap();
         println!("{reader}");
         assert_eq!(reader.validation_status(), None);
         Ok(())
@@ -4180,7 +4227,9 @@ mod tests {
     #[test]
     fn test_placeholder_auto_adds_data_hash() -> Result<()> {
         // Create a builder without any hash assertions
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
 
         // Verify no DataHash exists initially
         assert!(builder.find_assertion::<DataHash>(DataHash::LABEL).is_err());
@@ -4202,7 +4251,9 @@ mod tests {
     #[test]
     fn test_placeholder_auto_adds_bmff_hash() -> Result<()> {
         // Create a builder without any hash assertions
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
 
         // Verify no BmffHash exists initially
         assert!(builder.find_assertion::<BmffHash>(BmffHash::LABEL).is_err());
@@ -4223,7 +4274,9 @@ mod tests {
     #[test]
     fn test_placeholder_respects_existing_hash() -> Result<()> {
         // Create a builder with a custom DataHash
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
         let mut custom_dh = DataHash::new("my_custom_hash", "sha512");
         custom_dh.add_exclusion(HashRange::new(100, 200));
         builder.add_assertion(DataHash::LABEL, &custom_dh)?;
@@ -4243,7 +4296,9 @@ mod tests {
     #[test]
     fn test_placeholder_rejects_multiple_hashes() -> Result<()> {
         // Create a builder with both DataHash and BmffHash
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
 
         let dh = DataHash::new("data_hash", "sha256");
         builder.add_assertion(DataHash::LABEL, &dh)?;
@@ -4265,7 +4320,9 @@ mod tests {
     #[test]
     fn test_placeholder_with_box_hash() -> Result<()> {
         // Create a builder with BoxHash
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
 
         let mut reader = Cursor::new("");
         let c2pa_io = jumbf_io::get_assetio_handler("application/c2pa").unwrap();
@@ -4360,7 +4417,7 @@ mod tests {
         embedded.extend_from_slice(&TEST_IMAGE_CLEAN[2..]); // rest of JPEG
 
         let mut embedded_stream = Cursor::new(embedded);
-        let reader = Reader::from_stream("image/jpeg", &mut embedded_stream)?;
+        let reader = Reader::default().with_stream("image/jpeg", &mut embedded_stream)?;
         assert_eq!(
             reader.validation_state(),
             ValidationState::Trusted,
@@ -4400,7 +4457,7 @@ mod tests {
 
     #[test]
     fn test_hash_type() -> Result<()> {
-        let builder = Builder::from_json(&simple_manifest_json())?;
+        let builder = Builder::default().with_definition(simple_manifest_json())?;
 
         // Non-BMFF formats default to DataHash.
         assert_eq!(builder.hash_type("image/jpeg"), HashType::Data);
@@ -4447,7 +4504,7 @@ mod tests {
 
     #[test]
     fn test_hash_type_with_existing_box_hash_assertion() -> Result<()> {
-        let mut builder = Builder::from_json(&simple_manifest_json())?;
+        let mut builder = Builder::default().with_definition(simple_manifest_json())?;
 
         let bh = BoxHash::default();
         builder.add_assertion(BoxHash::LABEL, &bh)?;
@@ -4463,7 +4520,7 @@ mod tests {
     fn test_hash_type_consistent_with_needs_placeholder() -> Result<()> {
         // When needs_placeholder returns false, hash_type must be BoxHash.
         // When needs_placeholder returns true, hash_type must be DataHash or BmffHash.
-        let builder = Builder::from_json(&simple_manifest_json())?;
+        let builder = Builder::default().with_definition(simple_manifest_json())?;
         for format in &["image/jpeg", "image/png", "video/mp4", "image/avif"] {
             let needs = builder.needs_placeholder(format);
             let ht = builder.hash_type(format);
@@ -4490,7 +4547,7 @@ mod tests {
         use std::io::{Seek, SeekFrom, Write};
 
         // 1. Setup - Create builder with simple manifest
-        let mut builder = Builder::from_json(&simple_manifest_json())?;
+        let mut builder = Builder::default().with_definition(simple_manifest_json())?;
 
         // 2. Create placeholder (adds DataHash to builder).
         //    placeholder() now returns composed bytes directly (no separate composed_manifest call needed).
@@ -4538,8 +4595,7 @@ mod tests {
         output_stream.write_all(&signed_manifest)?;
 
         output_stream.rewind()?;
-        let reader =
-            Reader::from_context(Context::new()).with_stream("image/jpeg", output_stream)?;
+        let reader = Reader::default().with_stream("image/jpeg", output_stream)?;
         println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         // 7. Workflow complete. Reader::from_stream loads the asset but the manifest assertion
@@ -4555,7 +4611,7 @@ mod tests {
         use std::io::{Seek, SeekFrom, Write};
 
         // 1. Build a simple manifest for an MP4 asset.
-        let mut builder = Builder::from_json(&simple_manifest_json())?;
+        let mut builder = Builder::default().with_definition(simple_manifest_json())?;
 
         // 2. Call placeholder() for a BMFF format.
         //    Returns composed bytes (C2PA UUID box) ready to embed; raw JUMBF is
@@ -4599,7 +4655,7 @@ mod tests {
 
         // 8. Validate the final asset.
         output_stream.rewind()?;
-        let reader = Reader::from_stream("video/mp4", &mut output_stream)?;
+        let reader = Reader::default().with_stream("video/mp4", &mut output_stream)?;
         println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
@@ -4716,7 +4772,7 @@ mod tests {
 
         // 10. Validate the final asset.
         output_stream.rewind()?;
-        let reader = Reader::from_stream("video/mp4", &mut output_stream)?;
+        let reader = Reader::default().with_stream("video/mp4", &mut output_stream)?;
         println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
@@ -4734,10 +4790,12 @@ mod tests {
         // And generate the box hashes
         //bh.generate_box_hash_from_stream(&mut reader, "sha256", box_mapper, true).unwrap();
 
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
         builder.add_assertion(labels::BOX_HASH, &bh).unwrap();
 
-        let signer = Settings::signer().unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
 
         let manifest_bytes = builder
             .sign_box_hashed_embeddable(signer.as_ref(), "application/c2pa")
@@ -4745,7 +4803,9 @@ mod tests {
 
         let output_stream = Cursor::new(manifest_bytes);
 
-        let reader = crate::Reader::from_stream("application/c2pa", output_stream).unwrap();
+        let reader = Reader::default()
+            .with_stream("application/c2pa", output_stream)
+            .unwrap();
         println!("{reader}");
         assert_eq!(reader.validation_status(), None);
     }
@@ -4765,7 +4825,9 @@ mod tests {
         // get saved box hash settings
         let box_hash: BoxHash = serde_json::from_slice(BOX_HASH).unwrap();
 
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
 
         builder.add_assertion(labels::BOX_HASH, &box_hash).unwrap();
 
@@ -4807,7 +4869,8 @@ mod tests {
 
         out_stream.rewind().unwrap();
 
-        let _reader = crate::Reader::from_stream_async("image/jpeg", out_stream)
+        let _reader = Reader::default()
+            .with_stream_async("image/jpeg", out_stream)
             .await
             .unwrap();
         //println!("{reader}");
@@ -4829,7 +4892,9 @@ mod tests {
         // get saved box hash settings
         let box_hash: BoxHash = serde_json::from_slice(BOX_HASH).unwrap();
 
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
 
         builder.add_assertion(labels::BOX_HASH, &box_hash).unwrap();
 
@@ -4871,7 +4936,8 @@ mod tests {
 
         out_stream.rewind().unwrap();
 
-        let _reader = crate::Reader::from_stream_async("image/jpeg", out_stream)
+        let _reader = Reader::default()
+            .with_stream_async("image/jpeg", out_stream)
             .await
             .unwrap();
         //println!("{reader}");
@@ -4887,7 +4953,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
         builder.set_base_path("tests/fixtures");
         builder
             .add_ingredient_from_stream(parent_json().to_string(), "image/jpeg", &mut source)
@@ -4899,7 +4965,7 @@ mod tests {
 
         // unzip the manifest builder from the zipped stream
         zipped.rewind().unwrap();
-        let mut builder = Builder::from_archive(&mut zipped).unwrap();
+        let mut builder = Builder::default().with_archive(&mut zipped).unwrap();
 
         // sign the Builder and write it to the output stream
         let signer = test_signer(SigningAlg::Ps256);
@@ -4909,7 +4975,9 @@ mod tests {
 
         // read and validate the signed manifest store
         dest.rewind().unwrap();
-        let reader = Reader::from_stream("image/jpeg", &mut dest).expect("from_bytes");
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut dest)
+            .expect("from_bytes");
 
         //println!("{}", reader);
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
@@ -5052,11 +5120,10 @@ mod tests {
     #[test]
     /// tests and illustrates how to add assets to a non-file based manifest by using a stream
     fn from_json_with_stream_full_resources() {
-        use crate::utils::test::setup_logger;
         setup_logger();
         use crate::assertions::Relationship;
 
-        let mut builder = Builder::from_json(MANIFEST_JSON).unwrap();
+        let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
         // add binary resources to manifest and ingredients giving matching the identifiers given in JSON
         builder
             .add_resource("IMG_0003.jpg", Cursor::new(b"jpeg data"))
@@ -5082,7 +5149,9 @@ mod tests {
             .expect("builder sign");
 
         output.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
+        let reader = Reader::default()
+            .with_stream("jpeg", &mut output)
+            .expect("from_bytes");
         let m = reader.active_manifest().unwrap();
 
         //println!("after = {m}");
@@ -5209,7 +5278,8 @@ mod tests {
 
         output.set_position(0);
 
-        let reader = Reader::from_stream_async("jpeg", &mut output)
+        let reader = Reader::default()
+            .with_stream_async("jpeg", &mut output)
             .await
             .expect("from_bytes");
         let m = reader.active_manifest().unwrap();
@@ -5235,7 +5305,7 @@ mod tests {
         let redacted_uri =
             crate::jumbf::labels::to_assertion_uri(parent_manifest_label, ASSERTION_LABEL);
 
-        let mut builder = Builder::new();
+        let mut builder = Builder::default();
         builder.set_intent(BuilderIntent::Edit);
         builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
@@ -5255,7 +5325,9 @@ mod tests {
 
         output.set_position(0);
 
-        let reader = Reader::from_stream("image/jpeg", &mut output).expect("from_bytes");
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .expect("from_bytes");
         println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         let m = reader.active_manifest().unwrap();
@@ -5273,7 +5345,8 @@ mod tests {
 
         let mut input = Cursor::new(TEST_IMAGE);
 
-        let parent = Reader::from_stream_async("image/jpeg", &mut input)
+        let parent = Reader::default()
+            .with_stream_async("image/jpeg", &mut input)
             .await
             .expect("from_stream");
         let parent_manifest_label = parent.active_label().unwrap();
@@ -5302,7 +5375,8 @@ mod tests {
 
         output.set_position(0);
 
-        let reader = Reader::from_stream_async("image/jpeg", &mut output)
+        let reader = Reader::default()
+            .with_stream_async("image/jpeg", &mut output)
             .await
             .expect("from_bytes");
         //println!("{reader}");
@@ -5318,13 +5392,10 @@ mod tests {
 
     #[test]
     fn test_redaction_two_ingredients() {
-        use crate::{
-            assertions::{c2pa_action, Action, Actions},
-            utils::test::setup_logger,
-        };
+        use crate::assertions::{c2pa_action, Action, Actions};
 
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
+        let context = test_context().into_shared();
 
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
 
@@ -5454,7 +5525,9 @@ mod tests {
 
         // Verify
         output.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        let reader = Reader::from_shared_context(&context)
+            .with_stream("jpeg", &mut output)
+            .expect("read combined");
         println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
@@ -5483,10 +5556,9 @@ mod tests {
     /// this first creates a manifest with an assertion we will later redact
     /// then creates an update manifest that redacts the assertion
     fn test_redaction2() {
-        use crate::{assertions::Action, utils::test::setup_logger};
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
-
+        use crate::assertions::Action;
         setup_logger();
+        let context = test_context().into_shared();
         // the label of the assertion we are going to redact
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
 
@@ -5533,7 +5605,9 @@ mod tests {
             .unwrap();
 
         dest1.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut dest1).expect("from_bytes");
+        let reader = Reader::from_shared_context(&context)
+            .with_stream("jpeg", &mut dest1)
+            .expect("from_bytes");
         //println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         let parent_manifest_label = reader.active_label().unwrap();
@@ -5582,7 +5656,9 @@ mod tests {
         output.set_position(0);
         //std::fs::write("redaction2.jpg", output.get_ref()).unwrap();
 
-        let reader = Reader::from_stream("jpeg", &mut output).expect("from_bytes");
+        let reader = Reader::from_shared_context(&context)
+            .with_stream("jpeg", &mut output)
+            .expect("from_bytes");
         //println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         let m = reader.active_manifest().unwrap();
@@ -5595,14 +5671,16 @@ mod tests {
     fn test_redact_actions_returns_invalid_redaction() {
         let mut input = Cursor::new(TEST_IMAGE);
 
-        let parent = Reader::from_stream("image/jpeg", &mut input).expect("from_stream");
+        let parent = Reader::default()
+            .with_stream("image/jpeg", &mut input)
+            .expect("from_stream");
         let parent_manifest_label = parent.active_label().unwrap();
 
         // Try to redact the actions assertion, which is not allowed per the spec.
         let redacted_uri =
             crate::jumbf::labels::to_assertion_uri(parent_manifest_label, "c2pa.actions");
 
-        let mut builder = Builder::new();
+        let mut builder = Builder::default();
         builder.set_intent(BuilderIntent::Edit);
         builder.definition.redactions = Some(vec![redacted_uri]);
 
@@ -5616,7 +5694,9 @@ mod tests {
     fn test_redact_nonexistent_assertion_returns_not_found() {
         let mut input = Cursor::new(TEST_IMAGE);
 
-        let parent = Reader::from_stream("image/jpeg", &mut input).expect("from_stream");
+        let parent = Reader::default()
+            .with_stream("image/jpeg", &mut input)
+            .expect("from_stream");
         let parent_manifest_label = parent.active_label().unwrap();
 
         // Try to redact an assertion that doesn't exist in the parent manifest.
@@ -5625,7 +5705,7 @@ mod tests {
             "stds.schema-org.DoesNotExist",
         );
 
-        let mut builder = Builder::new();
+        let mut builder = Builder::default();
         builder.set_intent(BuilderIntent::Edit);
         builder.definition.redactions = Some(vec![redacted_uri]);
 
@@ -5696,7 +5776,7 @@ mod tests {
         let parent_manifest_label = v1_reader.active_label().unwrap();
         let redacted_uri = crate::jumbf::labels::to_databox_uri(parent_manifest_label, "c2pa.data");
 
-        let mut builder = Builder::new();
+        let mut builder = Builder::default();
         builder.set_intent(BuilderIntent::Edit);
         builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
@@ -5713,7 +5793,9 @@ mod tests {
             .expect("redaction builder sign");
 
         output.set_position(0);
-        let reader = Reader::from_stream("image/jpeg", &mut output).expect("from_bytes");
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .expect("from_bytes");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         let m = reader.active_manifest().unwrap();
@@ -5747,7 +5829,9 @@ mod tests {
     #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
     #[test]
     fn test_to_archive_and_from_archive_with_ingredient_thumbnail() {
-        let mut builder = Builder::from_json(&simple_manifest_json()).unwrap();
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
 
         let mut thumbnail = Cursor::new(TEST_THUMBNAIL);
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
@@ -5762,7 +5846,7 @@ mod tests {
         let mut archive = Cursor::new(Vec::new());
         assert!(builder.to_archive(&mut archive).is_ok());
 
-        let mut builder = Builder::from_archive(archive).unwrap();
+        let mut builder = Builder::default().with_archive(archive).unwrap();
 
         let mut output = Cursor::new(Vec::new());
 
@@ -5770,7 +5854,8 @@ mod tests {
             .sign(&signer, "image/jpeg", &mut source, &mut output)
             .is_ok());
 
-        let reader_json = Reader::from_stream("image/jpeg", &mut output)
+        let reader_json = Reader::default()
+            .with_stream("image/jpeg", &mut output)
             .unwrap()
             .json();
         println!("{reader_json}");
@@ -5780,8 +5865,7 @@ mod tests {
 
     #[test]
     fn test_with_archive() -> Result<()> {
-        let mut builder =
-            Builder::from_context(Context::new()).with_definition(r#"{"title": "Test Image"}"#)?;
+        let mut builder = Builder::default().with_definition(r#"{"title": "Test Image"}"#)?;
 
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive)?;
@@ -5844,14 +5928,14 @@ mod tests {
 
         // Test 3: Verify both can be read back
         archive_new.rewind()?;
-        let loaded_new = Builder::from_archive(archive_new)?;
+        let loaded_new = Builder::default().with_archive(archive_new)?;
         assert_eq!(
             loaded_new.definition.title,
             Some("Test New Format".to_string())
         );
 
         archive_old.rewind()?;
-        let loaded_old = Builder::from_archive(archive_old)?;
+        let loaded_old = Builder::default().with_archive(archive_old)?;
         assert_eq!(
             loaded_old.definition.title,
             Some("Test Old Format".to_string())
@@ -5892,7 +5976,7 @@ mod tests {
     /// Test Builder add_action with a serde_json::Value
     #[test]
     fn test_builder_add_action_with_value() {
-        let mut builder = Builder::new();
+        let mut builder = Builder::default();
         let action = json!({
             "action": "com.example.test-action",
             "parameters": {
@@ -5909,7 +5993,7 @@ mod tests {
     #[test]
     fn test_builder_add_action_with_struct() {
         use crate::assertions::Action;
-        let mut builder = Builder::new();
+        let mut builder = Builder::default();
         let action = Action::new("com.example.test-action")
             .set_parameter("key1", "value1")
             .unwrap()
@@ -5923,7 +6007,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn test_builder_set_base_path() {
-        let mut builder = Builder::new();
+        let mut builder = Builder::default();
         builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
         let ingredient_folder = fixture_path("ingredient");
@@ -5944,7 +6028,7 @@ mod tests {
             .sign(&signer, "image/jpeg", &mut source, &mut dest)
             .unwrap();
 
-        let reader = Reader::from_stream("jpeg", &mut dest).unwrap();
+        let reader = Reader::default().with_stream("jpeg", &mut dest).unwrap();
         let active_manifest = reader.active_manifest().unwrap();
         let ingredient = active_manifest.ingredients().first().unwrap();
         assert_eq!(ingredient.title(), Some("C.jpg"));
@@ -5965,16 +6049,15 @@ mod tests {
         // if one is not otherwise added.
         let mut builder = Builder::from_shared_context(&context);
         builder.set_intent(BuilderIntent::Edit);
-        let signer = &Settings::signer()?;
-        // We have a different options here. We can embed the manifest into a destination file
+        // We have different options here. We can embed the manifest into a destination file
         // or we can bypass the embedding and just get the manifest data back.
         // you can also output to null if you just want the manifest data.
         // Here we embed the manifest into a destination file.
-        let _c2pa_data = builder.sign(signer, format, &mut source, &mut dest)?;
+        let _c2pa_data = builder.save_to_stream(format, &mut source, &mut dest)?;
 
         dest.rewind()?;
         // use read_from_manifest_data_and_stream to validate if not embedded.
-        let reader = Reader::from_stream(format, &mut dest)?;
+        let reader = Reader::default().with_stream(format, &mut dest)?;
         println!("first: {reader}");
 
         // create a new builder and add our ingredient from the reader.
@@ -5984,9 +6067,9 @@ mod tests {
         println!("\nbuilder2:{builder2}");
         source.rewind()?;
         let dest2 = &mut Cursor::new(Vec::new());
-        builder2.sign(signer, format, &mut source, dest2)?;
+        builder2.save_to_stream(format, &mut source, dest2)?;
         dest2.rewind()?;
-        let reader2 = Reader::from_stream(format, dest2)?;
+        let reader2 = Reader::default().with_stream(format, dest2)?;
         println!("\nreader2:{reader2}");
         assert_eq!(reader2.active_manifest().unwrap().ingredients().len(), 1);
         Ok(())
@@ -6262,9 +6345,10 @@ mod tests {
     //         .expect("should load settings");
 
     //     // This should panic in debug mode
-    //     let _builder = Builder::new();
+    //     let _builder = Builder::default();
     // }
 
+    #[allow(deprecated)]
     #[test]
     fn test_builder_new_succeeds_without_global_settings() {
         // Clean slate
@@ -6283,7 +6367,7 @@ mod tests {
     #[test]
     fn actions_created_assertion() {
         let mut dest = Cursor::new(Vec::new());
-        Builder::new()
+        Builder::from_context(test_context())
             .with_definition(
                 json!({
                   "assertions": [
@@ -6304,17 +6388,14 @@ mod tests {
                 .to_string(),
             )
             .unwrap()
-            .sign(
-                &Settings::signer().unwrap(),
-                "image/jpeg",
-                &mut Cursor::new(TEST_IMAGE),
-                &mut dest,
-            )
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut dest)
             .unwrap();
 
         dest.rewind().unwrap();
 
-        let reader = Reader::from_stream("image/jpeg", &mut dest).unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut dest)
+            .unwrap();
         let active_manifest = reader.active_manifest().unwrap();
 
         let actions_assertion = active_manifest
@@ -6331,7 +6412,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE_TIFF);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::new();
+        let mut builder = Builder::default();
         builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
 
         let signer = test_signer(SigningAlg::Ps256);
@@ -6341,7 +6422,9 @@ mod tests {
 
         // read and validate the signed manifest store
         dest.rewind().unwrap();
-        let reader = Reader::from_stream(format, &mut dest).expect("from_stream");
+        let reader = Reader::default()
+            .with_stream(format, &mut dest)
+            .expect("from_stream");
 
         // Verify there is no data hash mismatch error in validation status
         if let Some(status) = reader.validation_status() {
@@ -6364,7 +6447,7 @@ mod tests {
         fn assert_send<T: MaybeSend>(_: T) {}
 
         let signer = async_test_signer(SigningAlg::Ps256);
-        let mut builder = Builder::new();
+        let mut builder = Builder::default();
         let mut src = io::empty();
         let mut dst = io::empty();
 
