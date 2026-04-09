@@ -396,6 +396,16 @@ impl Store {
         self.claims_map.get(label)
     }
 
+    /// Returns true if `uri` (absolute or relative to `claim_label`) appears in the
+    /// redaction list of any claim in the store — i.e. it was intentionally removed
+    /// by a parent manifest.
+    pub(crate) fn is_uri_redacted(&self, claim_label: &str, uri: &str) -> bool {
+        let abs_uri = jumbf::labels::to_absolute_uri(claim_label, uri);
+        self.claims_map
+            .values()
+            .any(|c| c.redactions().is_some_and(|r| r.contains(&abs_uri)))
+    }
+
     /// Get Claim by label
     // Returns Option<&Claim>
     pub fn get_claim_mut(&mut self, label: &str) -> Option<&mut Claim> {

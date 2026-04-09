@@ -5933,6 +5933,143 @@ mod tests {
         }
     }
 
+    /// Test for the case of assets where an ingredient thumbnail has a local resource ID
+    /// rather than a fully qualified JUMBF URI.
+    #[cfg(feature = "add_thumbnails")]
+    #[test]
+    fn test_redaction_thumbnails_local_resource_id() {
+        use crate::{
+            assertions::{c2pa_action, Action, Actions},
+            utils::test::setup_logger,
+        };
+
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        setup_logger();
+
+        // Sign the clean image so it carries a manifest with an auto-generated thumbnail.
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut signed = Cursor::new(Vec::new());
+
+        let mut parent_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let created_action =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
+        parent_builder
+            .add_assertion(Actions::LABEL, &Actions::new().add_action(created_action))
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        parent_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut signed)
+            .unwrap();
+
+        // Read the signed image to discover the manifest label and thumbnail URIs.
+        signed.set_position(0);
+        let parent_reader =
+            Reader::from_stream("image/jpeg", &mut signed).expect("read parent manifest");
+
+        let parent_label = parent_reader
+            .active_manifest()
+            .unwrap()
+            .label()
+            .unwrap()
+            .to_owned();
+
+        // Collect claim thumbnail assertion labels from the parent manifest.
+        let thumbnail_labels: Vec<String> = parent_reader
+            .active_manifest()
+            .unwrap()
+            .assertion_references()
+            .filter_map(|href| crate::jumbf::labels::assertion_label_from_uri(&href.url()))
+            .filter(|label| label.starts_with("c2pa.thumbnail"))
+            .collect();
+
+        assert!(
+            !thumbnail_labels.is_empty(),
+            "parent manifest should contain at least one thumbnail assertion"
+        );
+
+        // Build redaction URIs targeting the parent manifest's thumbnails.
+        let redaction_uris: Vec<String> = thumbnail_labels
+            .iter()
+            .map(|label| crate::jumbf::labels::to_assertion_uri(&parent_label, label))
+            .collect();
+
+        // Create a new manifest, add the signed JPEG directly as a `image/jpeg`
+        // ingredient (NOT via archive).  This is the path that calls `maybe_add_thumbnail`
+        // and stores a local resource ID (e.g. `xmp-iid-{uuid}.jpg`) as the thumb identifier.
+        let context = Context::new()
+            .with_settings(r#"{"builder": {"thumbnail": {"enabled": false}}}"#)
+            .unwrap();
+        let mut combiner = Builder::from_context(context);
+        combiner.definition.claim_version = Some(2);
+        combiner.definition.title = Some("Redacting thumbnails (local resource ID)".to_string());
+        combiner.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        signed.set_position(0);
+        combiner
+            .add_ingredient_from_stream(
+                json!({ "title": "Parent", "relationship": "componentOf" }).to_string(),
+                "image/jpeg",
+                &mut signed,
+            )
+            .unwrap();
+
+        combiner.definition.redactions = Some(redaction_uris.clone());
+
+        let mut redaction_actions = Actions::new();
+        for uri in &redaction_uris {
+            let action = Action::new("c2pa.redacted")
+                .set_reason("testing thumbnail redaction via local resource ID".to_owned())
+                .set_parameter("redacted".to_owned(), uri.clone())
+                .unwrap();
+            redaction_actions = redaction_actions.add_action(action);
+        }
+        combiner
+            .add_assertion(Actions::LABEL, &redaction_actions)
+            .unwrap();
+
+        // Sign and verify.
+        let signer = test_signer(SigningAlg::Ps256);
+        source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut output = Cursor::new(Vec::new());
+        combiner
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut output)
+            .expect("combiner sign");
+
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        // The ingredient manifest's thumbnail should be gone.
+        let reader_json: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let manifests = reader_json["manifests"].as_object().unwrap();
+        let parent_json = &manifests[&parent_label];
+        assert!(
+            parent_json.get("thumbnail").is_none() || parent_json["thumbnail"].is_null(),
+            "ingredient manifest should have no thumbnail after redaction, got: {}",
+            parent_json["thumbnail"]
+        );
+
+        // The ingredient entry in the active manifest should also have no thumbnail.
+        let active_label = reader_json["active_manifest"].as_str().unwrap();
+        let active_json = &manifests[active_label];
+        let ingredients_arr = active_json["ingredients"].as_array().unwrap();
+        for ing_json in ingredients_arr {
+            assert!(
+                ing_json.get("thumbnail").is_none() || ing_json["thumbnail"].is_null(),
+                "ingredient entry should have no thumbnail after redaction, got: {}",
+                ing_json["thumbnail"]
+            );
+        }
+    }
+
     #[test]
     fn test_redaction_assertion_two_ingredients_via_archive() {
         use crate::{

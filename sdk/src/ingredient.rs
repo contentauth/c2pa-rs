@@ -1143,13 +1143,15 @@ impl Ingredient {
                     ingredient.thumbnail = Some(data_ref?);
                 }
                 None => {
-                    error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
-                    validation_status.push(
-                        ValidationStatus::new_failure(
-                            validation_status::ASSERTION_MISSING.to_string(),
-                        )
-                        .set_url(hashed_uri.url()),
-                    );
+                    if !store.is_uri_redacted(claim_label, &hashed_uri.url()) {
+                        error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
+                        validation_status.push(
+                            ValidationStatus::new_failure(
+                                validation_status::ASSERTION_MISSING.to_string(),
+                            )
+                            .set_url(hashed_uri.url()),
+                        );
+                    }
                 }
             }
         };
@@ -1184,13 +1186,15 @@ impl Ingredient {
                     ingredient.data = Some(data_ref?);
                 }
                 None => {
-                    error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
-                    validation_status.push(
-                        ValidationStatus::new_failure(
-                            validation_status::ASSERTION_MISSING.to_string(),
-                        )
-                        .set_url(data_uri.url()),
-                    );
+                    if !store.is_uri_redacted(claim_label, &data_uri.url()) {
+                        error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
+                        validation_status.push(
+                            ValidationStatus::new_failure(
+                                validation_status::ASSERTION_MISSING.to_string(),
+                            )
+                            .set_url(data_uri.url()),
+                        );
+                    }
                 }
             }
         };
@@ -1294,9 +1298,18 @@ impl Ingredient {
         // unless the source claim thumbnail was redacted...
         // (that is why we kept thumbnail_redacted_manifests around).
         if let Some(thumb_ref) = self.thumbnail_ref() {
-            let thumbnail_is_redacted =
-                jumbf::labels::manifest_label_from_uri(&thumb_ref.identifier)
-                    .is_some_and(|label| thumbnail_redacted_manifests.contains(&label));
+            // Normalize the identifier to an absolute JUMBF URI using the ingredient's
+            // active manifest label as the base (a no-op for identifiers that are already
+            // absolute), then extract the manifest label from the result so we can check
+            // whether that manifest's thumbnails are being redacted.
+            let thumbnail_is_redacted = self
+                .active_manifest
+                .as_deref()
+                .map(|active_label| {
+                    jumbf::labels::to_absolute_uri(active_label, &thumb_ref.identifier)
+                })
+                .and_then(|abs_uri| jumbf::labels::manifest_label_from_uri(&abs_uri))
+                .is_some_and(|label| thumbnail_redacted_manifests.contains(&label));
 
             if !thumbnail_is_redacted {
                 // if we have a hash, just build the hashed uri
