@@ -1143,13 +1143,25 @@ impl Ingredient {
                     ingredient.thumbnail = Some(data_ref?);
                 }
                 None => {
-                    error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
-                    validation_status.push(
-                        ValidationStatus::new_failure(
-                            validation_status::ASSERTION_MISSING.to_string(),
-                        )
-                        .set_url(hashed_uri.url()),
-                    );
+                    // Only report assertion.missing if the thumbnail was not intentionally
+                    // redacted by a parent manifest. Convert to the format also used
+                    // in redaction lists.
+                    let abs_uri =
+                        jumbf::labels::to_absolute_uri(claim_label, &hashed_uri.url());
+                    let is_redacted = store.claims().iter().any(|c| {
+                        c.redactions()
+                            .map(|r| r.contains(&abs_uri))
+                            .unwrap_or(false)
+                    });
+                    if !is_redacted {
+                        error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
+                        validation_status.push(
+                            ValidationStatus::new_failure(
+                                validation_status::ASSERTION_MISSING.to_string(),
+                            )
+                            .set_url(hashed_uri.url()),
+                        );
+                    }
                 }
             }
         };
@@ -1184,13 +1196,22 @@ impl Ingredient {
                     ingredient.data = Some(data_ref?);
                 }
                 None => {
-                    error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
-                    validation_status.push(
-                        ValidationStatus::new_failure(
-                            validation_status::ASSERTION_MISSING.to_string(),
-                        )
-                        .set_url(data_uri.url()),
-                    );
+                    let abs_uri =
+                        jumbf::labels::to_absolute_uri(claim_label, &data_uri.url());
+                    let is_redacted = store.claims().iter().any(|c| {
+                        c.redactions()
+                            .map(|r| r.contains(&abs_uri))
+                            .unwrap_or(false)
+                    });
+                    if !is_redacted {
+                        error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
+                        validation_status.push(
+                            ValidationStatus::new_failure(
+                                validation_status::ASSERTION_MISSING.to_string(),
+                            )
+                            .set_url(data_uri.url()),
+                        );
+                    }
                 }
             }
         };
