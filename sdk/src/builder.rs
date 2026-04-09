@@ -4364,7 +4364,7 @@ mod tests {
             "sign_embeddable must return non-empty bytes"
         );
 
-        // Splice the manifest bytes into the clean JPEG and validate with Reader.  The
+        // Splice the manifest bytes into the clean JPEG and validate with Reader. The
         // manifest should be spliced in according to where it is specifed in the BoxHash
         // assertion.  The splice point should be where the C2PA box starts. It will not always
         // the first segmment after the SOI.
