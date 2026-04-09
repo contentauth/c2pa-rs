@@ -4965,11 +4965,11 @@ pub mod tests {
         }
     }
 
-     #[test]
+    #[test]
     fn test_png_compressed_jumbf_generation() {
         let mut context = Context::new();
         context.settings_mut().verify.verify_after_sign = false;
-       
+
         // test adding to actual image
         let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
 
