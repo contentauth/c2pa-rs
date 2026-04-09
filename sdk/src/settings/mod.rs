@@ -278,7 +278,7 @@ pub struct Core {
     /// validating credentials, timestamping, etc.).
     pub allowed_network_hosts: Option<Vec<HostPattern>>,
     /// Whether to compress manifests.  This can reduce the size of the manifest.  Compressed manifest
-    /// are not always possbile and will default back to uncompressed if the manifest contains features
+    /// are not always possible and will default back to uncompressed if the manifest contains features
     /// that are not compatible with compression.
     ///
     ///  The default value is false.
