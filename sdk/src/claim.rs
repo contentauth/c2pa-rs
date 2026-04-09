@@ -268,7 +268,7 @@ pub struct Claim {
     // root of CAI store
     update_manifest: bool,
 
-    // manifest is or will be stored compressed
+    // true if manifest is or will be stored compressed
     compressed: bool,
 
     pub title: Option<String>, // title for this claim, generally the name of the containing asset
