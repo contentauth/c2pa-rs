@@ -1145,7 +1145,7 @@ impl Ingredient {
                 None => {
                     // Only report assertion.missing if the thumbnail was not intentionally
                     // redacted by a parent manifest. Convert to the format also used
-                    // in redaction lists.
+                    // in redaction lists to verify that.
                     let abs_uri = jumbf::labels::to_absolute_uri(claim_label, &hashed_uri.url());
                     let is_redacted = store.claims().iter().any(|c| {
                         c.redactions()
