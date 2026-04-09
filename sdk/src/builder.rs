@@ -4366,7 +4366,7 @@ mod tests {
 
         // Splice the manifest bytes into the clean JPEG and validate with Reader. The
         // manifest should be spliced in according to where it is specifed in the BoxHash
-        // assertion.  The splice point should be where the C2PA box starts. It will not always
+        // assertion. The splice point should be where the C2PA box starts. It will not always
         // the first segmment after the SOI.
 
         // The box locations are not saved in the BoxHash assertion, so we need to get the box map again from the format handler to find the C2PA box location for splicing.
