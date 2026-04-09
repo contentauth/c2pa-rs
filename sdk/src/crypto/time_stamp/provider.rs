@@ -67,7 +67,8 @@ pub trait TimeStampProvider {
     /// requests. The default implementation returns `None`.
     ///
     /// If this method returns `None` and [`TimeStampProvider::time_stamp_service_url`] is
-    /// set, the SDK falls back to its built-in networking implementation.
+    /// set, the SDK falls back to its built-in networking implementation via
+    /// [`send_time_stamp_request_with_fallback`].
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     ///
@@ -123,7 +124,8 @@ pub trait AsyncTimeStampProvider: MaybeSync {
     /// requests. The default implementation returns `None`.
     ///
     /// If this method returns `None` and [`AsyncTimeStampProvider::time_stamp_service_url`] is
-    /// set, the SDK falls back to its built-in networking implementation.
+    /// set, the SDK falls back to its built-in networking implementation via
+    /// [`send_time_stamp_request_with_fallback`].
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     async fn send_time_stamp_request(
