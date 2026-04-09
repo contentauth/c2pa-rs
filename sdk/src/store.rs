@@ -3145,8 +3145,8 @@ impl Store {
             match io_handler.and_then(|h| h.asset_box_hash_ref()) {
                 Some(box_hash_handler) if !is_bmff => {
                     // if the user already has a box hash assertion we use that and ignore the compression setting
-                    if !pc.box_hash_assertions().is_empty() {
-                        // yes it does, use box hashing
+                    if pc.box_hash_assertions().is_empty() {
+                        // no user box hash assertion, so use box hashing
                         let mut bh = BoxHash { boxes: Vec::new() };
 
                         let mut cb = |step, total| {
@@ -3173,9 +3173,6 @@ impl Store {
                     pc.set_compressed_manifest(false);
                 }
             }
-        } else {
-            // clear the compression flag since we won't be able to do it without box hashing
-            pc.set_compressed_manifest(false);
         }
 
         if is_bmff {
@@ -4882,6 +4879,115 @@ pub mod tests {
         // Create a 3rd party claim
         let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
         create_capture_claim(&mut claim_capture).unwrap();
+
+        // Do we generate JUMBF?
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Move the claim to claims list. Note this is not real, the claims would have to be signed in between commits
+        store.commit_claim(claim1).unwrap();
+        store
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut output_stream,
+                &signer,
+                &context,
+            )
+            .unwrap();
+
+        store.commit_claim(claim_capture).unwrap();
+        output_stream.rewind().unwrap();
+        let mut temp_stream = Cursor::new(Vec::new());
+        store
+            .save_to_stream(
+                format,
+                &mut output_stream,
+                &mut temp_stream,
+                &signer,
+                &context,
+            )
+            .unwrap();
+
+        store.commit_claim(claim2).unwrap();
+        temp_stream.rewind().unwrap();
+        output_stream.rewind().unwrap();
+        store
+            .save_to_stream(
+                format,
+                &mut temp_stream,
+                &mut output_stream,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+
+        // write to new file
+        println!("Provenance: {}\n", store.provenance_path().unwrap());
+
+        let mut report = StatusTracker::default();
+
+        // read from new stream
+        output_stream.rewind().unwrap();
+        let new_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
+
+        // can  we get by the ingredient data back
+        let _some_binary_data: Vec<u8> = vec![
+            0x0d, 0x0e, 0x0a, 0x0d, 0x0b, 0x0e, 0x0e, 0x0f, 0x0a, 0x0d, 0x0b, 0x0e, 0x0a, 0x0d,
+            0x0b, 0x0e,
+        ];
+
+        // dump store and compare to original
+        for claim in new_store.claims() {
+            let _restored_json = claim
+                .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                .unwrap();
+            let _orig_json = store
+                .get_claim(claim.label())
+                .unwrap()
+                .to_json(AssertionStoreJsonFormat::OrderedList, false)
+                .unwrap();
+
+            // println!(
+            //     "Claim: {} \n{}",
+            //     claim.label(),
+            //     claim
+            //         .to_json(AssertionStoreJsonFormat::OrderedListNoBinary, true)
+            //         .expect("could not restore from json")
+            // );
+
+            for hashed_uri in claim.assertions() {
+                let (label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+                claim
+                    .get_claim_assertion(&label, instance)
+                    .expect("Should find assertion");
+            }
+        }
+    }
+
+     #[test]
+    fn test_png_compressed_jumbf_generation() {
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_after_sign = false;
+       
+        // test adding to actual image
+        let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
+
+        // Create claims store.
+        let mut store = Store::from_context(&context);
+
+        // Create a new claim.
+        let claim1 = create_test_claim().unwrap();
+
+        // Create a new claim.
+        let mut claim2 = Claim::new("Photoshop", Some("Adobe"), 1);
+        create_editing_claim(&mut claim2).unwrap();
+        claim2.set_compressed_manifest(true);
+
+        // Create a 3rd party claim
+        let mut claim_capture = Claim::new("capture", Some("claim_capture"), 1);
+        create_capture_claim(&mut claim_capture).unwrap();
+        claim_capture.set_compressed_manifest(true);
 
         // Do we generate JUMBF?
         let signer = test_signer(SigningAlg::Ps256);
