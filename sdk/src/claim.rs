@@ -74,7 +74,7 @@ use crate::{
     log_item,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator},
-    settings::Settings,
+    settings::{Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
@@ -251,8 +251,6 @@ const ALG_SOFT_F: &str = "alg_soft";
 const METADATA_F: &str = "metadata";
 const CREATED_ASSERTIONS_F: &str = "created_assertions";
 const GATHERED_ASSERTIONS_F: &str = "gathered_assertions";
-
-use crate::settings::max_assertions;
 
 /// A `Claim` gathers together all the `Assertion`s about an asset
 /// from an actor at a given time, and may also include one or more
@@ -1431,10 +1429,9 @@ impl Claim {
     ) -> Result<C2PAAssertion> {
         // Enforce the per-manifest assertion limit to prevent resource exhaustion
         // regardless of how the claim is constructed.
-        let max_assertions = max_assertions();
-        if self.assertion_store.len() >= max_assertions {
+        if self.assertion_store.len() >= MAX_ASSERTIONS {
             return Err(Error::TooManyAssertions {
-                max: max_assertions,
+                max: MAX_ASSERTIONS,
             });
         }
 
@@ -4107,12 +4104,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{
-        assertions::{Action, Actions},
-        resource_store::UriOrResource,
-        settings,
-        utils::test::create_test_claim,
-    };
+    use crate::{resource_store::UriOrResource, utils::test::create_test_claim};
 
     #[test]
     fn test_build_claim() {
@@ -4291,33 +4283,5 @@ pub mod tests {
         }
 
         Ok(())
-    }
-
-    #[test]
-    fn test_add_assertion_default_limit_in_claim() {
-        // Use a small limit so the test runs quickly regardless of the default.
-        const TEST_LIMIT: usize = 5;
-        settings::set_settings_value("verify.max_assertions", TEST_LIMIT as u64).unwrap();
-
-        let mut claim = Claim::new("test_default_assertion_limit", Some("test"), 2);
-        let actions = Actions::new().add_action(Action::new("c2pa.created"));
-
-        // TEST_LIMIT assertions must succeed within the configured limit.
-        for _ in 0..TEST_LIMIT {
-            claim
-                .add_assertion(&actions)
-                .expect("assertion should succeed within the configured limit");
-        }
-
-        // The next one must be rejected.
-        let err = claim
-            .add_assertion(&actions)
-            .expect_err("assertion beyond limit should fail with TooManyAssertions");
-        assert!(
-            matches!(err, Error::TooManyAssertions { max: TEST_LIMIT }),
-            "expected TooManyAssertions {{ max: {TEST_LIMIT} }}, got {err:?}"
-        );
-
-        settings::reset_default_settings().unwrap();
     }
 }

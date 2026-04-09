@@ -48,7 +48,7 @@ use crate::{
     jumbf_io,
     maybe_send_sync::MaybeSend,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
-    settings::builder::TimeStampFetchScope,
+    settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
     store::Store,
     utils::{hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
@@ -803,9 +803,10 @@ impl Builder {
     /// Adds a CBOR assertion to the manifest.
     /// In most cases, use this function instead of `add_assertion_json`, unless the assertion must be stored in JSON format.
     fn check_assertion_limit(&self) -> Result<()> {
-        let max = self.context.settings().builder.max_assertions;
-        if self.definition.assertions.len() >= max {
-            return Err(Error::TooManyAssertions { max });
+        if self.definition.assertions.len() >= MAX_ASSERTIONS {
+            return Err(Error::TooManyAssertions {
+                max: MAX_ASSERTIONS,
+            });
         }
         Ok(())
     }
@@ -3396,7 +3397,7 @@ mod tests {
         crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         maybe_send_sync::MaybeSend,
-        settings::{Settings, MAX_ASSERTIONS},
+        settings::Settings,
         utils::{
             hash_utils::HashRange,
             test::{test_context, write_bmff_placeholder_stream, write_jpeg_placeholder_stream},
@@ -7491,32 +7492,6 @@ mod tests {
                 max: MAX_ASSERTIONS
             }
         ));
-    }
-
-    #[test]
-    fn test_add_assertion_limit_is_configurable() {
-        let data = serde_json::json!({"value": 1});
-        let settings = Settings {
-            builder: crate::settings::builder::BuilderSettings {
-                max_assertions: 2,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let context = Context::new()
-            .with_settings(settings)
-            .expect("valid settings");
-        let mut builder = Builder::from_context(context);
-        builder
-            .add_assertion_json("org.test.a1", &data)
-            .expect("first assertion should succeed");
-        builder
-            .add_assertion_json("org.test.a2", &data)
-            .expect("second assertion should succeed");
-        let err = builder
-            .add_assertion_json("org.test.a3", &data)
-            .expect_err("third assertion should exceed limit of 2");
-        assert!(matches!(err, Error::TooManyAssertions { max: 2 }));
     }
 
     // Ensures that the future returned by `Builder::sign_async` implements `Send`, thus making it

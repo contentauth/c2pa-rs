@@ -73,7 +73,7 @@ use crate::{
     log_item,
     manifest_store_report::ManifestStoreReport,
     maybe_send_sync::MaybeSend,
-    settings::{builder::OcspFetchScope, Settings},
+    settings::{builder::OcspFetchScope, Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
@@ -109,8 +109,6 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub manifest_store_range: Option<HashRange>, // range of the manifest store in the asset for data hash exclusions
     pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
 }
-
-use crate::settings::max_assertions;
 
 /// A `Store` maintains a list of `Claim` structs.
 ///
@@ -1381,10 +1379,9 @@ impl Store {
 
             // Reject manifests that embed more assertions than the configured limit to
             // prevent unbounded memory and CPU consumption on untrusted input.
-            let max_assertions = max_assertions();
-            if num_assertions > max_assertions {
+            if num_assertions > MAX_ASSERTIONS {
                 return Err(Error::TooManyAssertions {
-                    max: max_assertions,
+                    max: MAX_ASSERTIONS,
                 });
             }
 

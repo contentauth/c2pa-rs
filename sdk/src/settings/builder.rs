@@ -583,18 +583,6 @@ pub struct BuilderSettings {
     ///
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     pub auto_timestamp_assertion: TimeStampSettings,
-    /// Maximum number of assertions that can be added to a single manifest.
-    ///
-    /// Limits resource consumption when processing untrusted manifests with a large number
-    /// of assertions. Calls to [`Builder::add_assertion`] or [`Builder::add_assertion_json`]
-    /// that would exceed this limit return [`Error::TooManyAssertions`].
-    ///
-    /// The default value is 100,000.
-    ///
-    /// [`Builder::add_assertion`]: crate::Builder::add_assertion
-    /// [`Builder::add_assertion_json`]: crate::Builder::add_assertion_json
-    /// [`Error::TooManyAssertions`]: crate::Error::TooManyAssertions
-    pub max_assertions: usize,
 }
 
 impl Default for BuilderSettings {
@@ -611,7 +599,6 @@ impl Default for BuilderSettings {
             prefer_box_hash: false,
             generate_c2pa_archive: Some(true),
             auto_timestamp_assertion: TimeStampSettings::default(),
-            max_assertions: crate::settings::MAX_ASSERTIONS,
         }
     }
 }

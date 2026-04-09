@@ -120,7 +120,7 @@ pub enum Error {
     #[error("more than one manifest store detected")]
     TooManyManifestStores,
 
-    #[error("assertion limit exceeded: maximum allowed is {max}; adjust verify.max_assertions in Settings to change this limit")]
+    #[error("assertion limit exceeded: maximum allowed is {max}")]
     TooManyAssertions { max: usize },
 
     #[error("manifest is not refernced by any ingredient")]
