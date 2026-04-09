@@ -614,9 +614,11 @@ impl Ingredient {
 
                 if let Some(claim) = store.provenance_claim() {
                     // if the parent claim is valid and has a thumbnail, use it
-                    if validation_results
-                        .active_manifest()
-                        .is_some_and(|m| m.failure().is_empty())
+                    // but only if the caller has not already supplied a thumbnail override
+                    if self.thumbnail.is_none()
+                        && validation_results
+                            .active_manifest()
+                            .is_some_and(|m| m.failure().is_empty())
                     {
                         if let Some(hashed_uri) = claim
                             .assertions()
