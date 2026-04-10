@@ -23,6 +23,7 @@ use async_generic::async_generic;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde_json::json;
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
 use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
@@ -47,7 +48,7 @@ use crate::{
     jumbf_io,
     maybe_send_sync::MaybeSend,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
-    settings::builder::TimeStampFetchScope,
+    settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
     store::Store,
     utils::{hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
@@ -66,6 +67,27 @@ pub enum HashType {
 
     /// Requires hash then sign only, no placeholder (when `prefer_box_hash` is enabled).
     Box,
+}
+
+/// How a JUMBF working-store archive is built and tagged (`org.contentauth.archive.metadata` / `archive:type`).
+#[derive(Debug, Clone)]
+pub(crate) enum ArchiveKind {
+    /// Full manifest store for [`Builder::to_archive`].
+    Builder,
+    /// Single-ingredient slice for [`Builder::write_ingredient_archive`].
+    Ingredient {
+        /// Ingredient [`label`](Ingredient::label) if set, otherwise [`instance_id`](Ingredient::instance_id).
+        ingredient_id: String,
+    },
+}
+
+impl ArchiveKind {
+    fn archive_type_str(&self) -> &'static str {
+        match self {
+            ArchiveKind::Builder => labels::ARCHIVE_TYPE_BUILDER,
+            ArchiveKind::Ingredient { .. } => labels::ARCHIVE_TYPE_INGREDIENT,
+        }
+    }
 }
 
 /// Version of the Builder Archive file
@@ -800,7 +822,15 @@ impl Builder {
 
     /// Adds a CBOR assertion to the manifest.
     /// In most cases, use this function instead of `add_assertion_json`, unless the assertion must be stored in JSON format.
-    ///
+    fn check_assertion_limit(&self) -> Result<()> {
+        if self.definition.assertions.len() >= MAX_ASSERTIONS {
+            return Err(Error::TooManyAssertions {
+                max: MAX_ASSERTIONS,
+            });
+        }
+        Ok(())
+    }
+
     /// # Arguments
     /// * `label` - A label for the assertion.
     /// * `data` - The data for the assertion. The data can be any Serde-serializable type or an AssertionDefinition.
@@ -813,6 +843,7 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
+        self.check_assertion_limit()?;
         let created = false;
         self.definition.assertions.push(AssertionDefinition {
             label: label.into(),
@@ -838,6 +869,7 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
+        self.check_assertion_limit()?;
         let created = false;
         self.definition.assertions.push(AssertionDefinition {
             label: label.into(),
@@ -1180,13 +1212,10 @@ impl Builder {
         Ok(builder)
     }
 
-    /// Convert the Builder into a .c2pa asset.
+    /// Creates a builder archive from the builder and writes it to a stream.
     ///
     /// This will be stored in the standard application/c2pa .c2pa JUMBF format
-    /// unless the settings flag `builder.generate_c2pa_archive` is overridden
-    /// from its default value and set to `false` in which case a legacy format,
-    /// based on ZIP file, will be written instead.
-    ///
+    /// The legacy zip format will be written if `builder.generate_c2pa_archive` is set to `false`
     /// See docs/working-stores.md for more information.
     ///
     /// # Arguments
@@ -1196,12 +1225,57 @@ impl Builder {
     /// * Returns an [`Error`] if the archive cannot be written.
     pub fn to_archive(&mut self, mut stream: impl Write + Seek) -> Result<()> {
         if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
-            let c2pa_data = self.working_store_sign()?;
+            let c2pa_data = self.working_store_sign(ArchiveKind::Builder)?;
             stream.write_all(&c2pa_data)?;
             return Ok(());
         }
 
         self.old_to_archive(stream)
+    }
+
+    /// Writes a JUMBF working-store archive that contains a single ingredient from this builder.
+    ///
+    /// The archive is tagged with `org.contentauth.archive.metadata` and
+    /// [`labels::ARCHIVE_TYPE_INGREDIENT`](crate::assertions::labels::ARCHIVE_TYPE_INGREDIENT) so it can be
+    /// distinguished from a full builder archive when reading with [`Self::add_ingredient_from_archive`].
+    ///
+    /// The exported manifest is **not** a lossless slice of the parent: it uses one cloned ingredient
+    /// and a fresh claim instance id; other ingredients are omitted.
+    ///
+    /// # Arguments
+    /// * `ingredient_id` - Ingredient [`label`](Ingredient::label) if set, otherwise [`instance_id`](Ingredient::instance_id).
+    /// * `stream` - Destination for the `application/c2pa` bytes.
+    ///
+    /// # Errors
+    /// * Returns [`Error::BadParam`] if the ingredient is not found, or JUMBF archives are disabled in settings.
+    pub fn write_ingredient_archive(
+        &mut self,
+        ingredient_id: &str,
+        mut stream: impl Write + Seek,
+    ) -> Result<()> {
+        if self.context.settings().builder.generate_c2pa_archive != Some(true) {
+            return Err(Error::BadParam(
+                "write_ingredient_archive requires Settings.builder.generate_c2pa_archive == true (JUMBF working-store format)"
+                    .to_string(),
+            ));
+        }
+        let c2pa_data = self.working_store_sign(ArchiveKind::Ingredient {
+            ingredient_id: ingredient_id.to_string(),
+        })?;
+        stream.write_all(&c2pa_data)?;
+        Ok(())
+    }
+
+    /// Copies binary resources from `store` into this builder when the id is not already present.
+    fn merge_resources_from_store(&mut self, store: &ResourceStore) -> Result<()> {
+        for (id, data) in store.resources() {
+            dbg!(&id);
+            let _sanitized_id = sanitize_archive_path(id)?;
+            if !self.resources.exists(id) {
+                self.resources.add(id, data.clone())?;
+            }
+        }
+        Ok(())
     }
 
     /// Add manifest store from an archive stream to the [`Builder`].
@@ -3183,6 +3257,67 @@ impl Builder {
             .ok_or(Error::IngredientNotFound)
     }
 
+    /// Adds an ingredient from a JUMBF working-store stream produced by [`Self::write_ingredient_archive`].
+    ///
+    /// The stream must carry `org.contentauth.archive.metadata` with `archive:type` set to
+    /// [`labels::ARCHIVE_TYPE_INGREDIENT`](crate::assertions::labels::ARCHIVE_TYPE_INGREDIENT).
+    ///
+    /// Resource entries from the archive manifest (claim-level and per-ingredient) are merged into
+    /// this builder when their ids are not already present, so thumbnails and similar assertions
+    /// can resolve when signing.
+    ///
+    /// For other `application/c2pa` stores, use [`Self::add_ingredient_from_reader`] or
+    /// [`Self::add_ingredient_from_stream`].
+    #[async_generic]
+    pub fn add_ingredient_from_archive<'a, R>(
+        &'a mut self,
+        stream: &mut R,
+    ) -> Result<&'a mut Ingredient>
+    where
+        R: Read + Seek + Send,
+    {
+        self.context
+            .check_progress(ProgressPhase::AddingIngredient, 1, 1)?;
+
+        let reader = if _sync {
+            Reader::from_shared_context(&self.context).with_stream("application/c2pa", stream)?
+        } else {
+            Reader::from_shared_context(&self.context)
+                .with_stream_async("application/c2pa", stream)
+                .await?
+        };
+
+        match reader.active_archive_type() {
+            Some(labels::ArchiveType::Ingredient) => {}
+            Some(other) => {
+                return Err(Error::BadParam(format!(
+                    "expected an ingredient archive (archive:type {:?}), found {other:?}",
+                    labels::ARCHIVE_TYPE_INGREDIENT
+                )));
+            }
+            None => {
+                return Err(Error::BadParam(format!(
+                    "expected a C2PA ingredient archive (org.contentauth.archive.metadata with archive:type {:?}); use add_ingredient_from_reader or add_ingredient_from_stream for other stores",
+                    labels::ARCHIVE_TYPE_INGREDIENT
+                )));
+            }
+        }
+
+        if let Some(m) = reader.active_manifest() {
+            self.merge_resources_from_store(m.resources())?;
+            for ing in m.ingredients() {
+                self.merge_resources_from_store(ing.resources())?;
+            }
+        }
+
+        let ingredient = reader.to_ingredient()?;
+        self.add_ingredient(ingredient);
+        self.definition
+            .ingredients
+            .last_mut()
+            .ok_or(Error::IngredientNotFound)
+    }
+
     /// Creates a working store from the builder.
     ///
     /// The working store is signed with a `BoxHash` over an empty string and is
@@ -3195,7 +3330,7 @@ impl Builder {
     ///
     /// IMPORTANT: This certificate is useful only in a private context and will
     /// not be considered trusted in the C2PA conformance sense.
-    fn working_store_sign(&self) -> Result<Vec<u8>> {
+    fn working_store_sign(&self, kind: ArchiveKind) -> Result<Vec<u8>> {
         // First we need to generate a `BoxHash` over an empty string.
         let mut empty_asset = std::io::Cursor::new("");
 
@@ -3207,8 +3342,27 @@ impl Builder {
 
         let box_hash = BoxHash { boxes };
 
-        // ... then convert the `Builder` to a claim and add the box hash assertion.
-        let mut claim = self.to_claim()?;
+        let mut claim = match &kind {
+            ArchiveKind::Builder => self.to_claim()?,
+            ArchiveKind::Ingredient { ingredient_id } => self
+                .scoped_for_ingredient_archive(ingredient_id.as_str())?
+                .to_claim()?,
+        };
+
+        let archive_type = kind.archive_type_str();
+        let json = json!(
+            {
+                "@context":
+                {
+                    "archive": "https://contentauth.org/ns/archive#",
+                },
+                "archive:type": archive_type
+            }
+        )
+        .to_string();
+
+        let archive_metadata = Metadata::new(labels::ARCHIVE_METADATA, &json)?;
+        claim.add_created_assertion(&archive_metadata)?;
         claim.add_assertion(&box_hash)?;
 
         // Now commit and sign it. The signing will allow us to detect tampering.
@@ -3217,6 +3371,21 @@ impl Builder {
 
         let signer = EphemeralSigner::new("c2pa-archive.local")?;
         store.get_box_hashed_embeddable_manifest(&signer, &self.context)
+    }
+
+    /// One-ingredient [`Builder`] for [`ArchiveKind::Ingredient`] working-store signing.
+    fn scoped_for_ingredient_archive(&self, ingredient_id: &str) -> Result<Builder> {
+        let ingredient = self
+            .definition
+            .ingredients
+            .iter()
+            .find(|i| i.label() == Some(ingredient_id) || i.instance_id() == ingredient_id)
+            .ok_or_else(|| Error::BadParam(format!("ingredient {ingredient_id} not found")))?;
+
+        let mut scoped = Builder::from_shared_context(&self.context);
+        scoped.definition.ingredients = vec![ingredient.clone()];
+        scoped.resources = self.resources.clone();
+        Ok(scoped)
     }
 }
 
@@ -5553,6 +5722,915 @@ mod tests {
     }
 
     #[test]
+    fn test_redaction_assertion_via_archive() {
+        use crate::{
+            assertions::{c2pa_action, Action, Actions},
+            utils::test::setup_logger,
+        };
+
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        setup_logger();
+
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        // Sign the clean image with CreativeWork assertion
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let created_action =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
+        let actions = Actions::new().add_action(created_action);
+        builder.add_assertion(Actions::LABEL, &actions).unwrap();
+        builder
+            .add_assertion(
+                ASSERTION_LABEL,
+                &json!({
+                    "@context": "https://schema.org",
+                    "@type": "CreativeWork",
+                    "author": [{ "@type": "Person", "name": "Alice" }]
+                }),
+            )
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+
+        // Create a builder, add the signed image as ingredient, archive it
+        let mut archive_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Archive container".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        dest.set_position(0);
+        archive_builder
+            .add_ingredient_from_stream(
+                json!({ "title": "Parent", "relationship": "parentOf" }).to_string(),
+                "image/jpeg",
+                &mut dest,
+            )
+            .unwrap();
+
+        let mut archive_stream = Cursor::new(Vec::new());
+        archive_builder.to_archive(&mut archive_stream).unwrap();
+
+        // Create a new builder, add the archive as ingredient, redact, sign
+        let mut combiner = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Redacting via archive".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        combiner.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        archive_stream.set_position(0);
+        let ing = combiner
+            .add_ingredient_from_stream(
+                json!({ "title": "Archived Parent", "relationship": "componentOf" }).to_string(),
+                "application/c2pa",
+                &mut archive_stream,
+            )
+            .unwrap();
+        let ing_label = ing.active_manifest().unwrap().to_owned();
+
+        let redacted_uri = crate::jumbf::labels::to_assertion_uri(&ing_label, ASSERTION_LABEL);
+        combiner.definition.redactions = Some(vec![redacted_uri.clone()]);
+
+        let redacted_action = Action::new("c2pa.redacted")
+            .set_reason("testing redaction via archive".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri)
+            .unwrap();
+        let actions = Actions::new().add_action(redacted_action);
+        combiner.add_assertion(Actions::LABEL, &actions).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        dest.set_position(0);
+        let mut output = Cursor::new(Vec::new());
+        combiner
+            .sign(signer.as_ref(), "image/jpeg", &mut dest, &mut output)
+            .expect("combiner sign");
+
+        // Verify
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        //println!("{reader}");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        let active = reader.active_manifest().unwrap();
+        assert_eq!(active.ingredients().len(), 1);
+
+        let parent = reader.get_manifest(&ing_label).unwrap();
+        assert_eq!(
+            parent.assertions().len(),
+            1,
+            "CreativeWork should be redacted, only Actions remains"
+        );
+    }
+
+    #[cfg(feature = "add_thumbnails")]
+    #[test]
+    fn test_redaction_thumbnails_via_archive() {
+        use crate::{
+            assertions::{c2pa_action, Action, Actions},
+            utils::test::setup_logger,
+        };
+
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        setup_logger();
+
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        // Sign the clean image with CreativeWork assertion (auto-generates thumbnail)
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let created_action =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
+        let actions = Actions::new().add_action(created_action);
+        builder.add_assertion(Actions::LABEL, &actions).unwrap();
+        builder
+            .add_assertion(
+                ASSERTION_LABEL,
+                &json!({
+                    "@context": "https://schema.org",
+                    "@type": "CreativeWork",
+                    "author": [{ "@type": "Person", "name": "Alice" }]
+                }),
+            )
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+
+        // Create a builder, add the signed image as ingredient, archive it
+        let mut archive_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Archive container".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        dest.set_position(0);
+        archive_builder
+            .add_ingredient_from_stream(
+                json!({ "title": "Parent", "relationship": "parentOf" }).to_string(),
+                "image/jpeg",
+                &mut dest,
+            )
+            .unwrap();
+
+        let mut archive_stream = Cursor::new(Vec::new());
+        archive_builder.to_archive(&mut archive_stream).unwrap();
+
+        // Create a new builder with thumbnail auto-generation disabled,
+        // add the archive as ingredient, redact all thumbnails, sign
+        let context = Context::new()
+            .with_settings(r#"{"builder": {"thumbnail": {"enabled": false}}}"#)
+            .unwrap();
+        let mut combiner = Builder::from_context(context);
+        combiner.definition.claim_version = Some(2);
+        combiner.definition.title = Some("Redacting thumbnails via archive".to_string());
+        combiner.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        archive_stream.set_position(0);
+        let ing = combiner
+            .add_ingredient_from_stream(
+                json!({ "title": "Archived Parent", "relationship": "componentOf" }).to_string(),
+                "application/c2pa",
+                &mut archive_stream,
+            )
+            .unwrap();
+        let ing_label = ing.active_manifest().unwrap().to_owned();
+
+        // Discover all thumbnail assertion labels from the ingredient manifest in the archive
+        archive_stream.set_position(0);
+        let archive_reader = Reader::from_stream("application/c2pa", &mut archive_stream).unwrap();
+
+        // Find all thumbnail assertion labels across all manifests in the archive
+        let mut thumbnail_labels: Vec<String> = Vec::new();
+        for manifest in archive_reader.iter_manifests() {
+            for href in manifest.assertion_references() {
+                if let Some(label) = crate::jumbf::labels::assertion_label_from_uri(&href.url()) {
+                    if label.starts_with("c2pa.thumbnail") {
+                        thumbnail_labels.push(label);
+                    }
+                }
+            }
+        }
+        assert!(
+            !thumbnail_labels.is_empty(),
+            "archive should contain at least one thumbnail"
+        );
+
+        // Build redaction URIs using the combiner's ingredient label
+        let redaction_uris: Vec<String> = thumbnail_labels
+            .iter()
+            .map(|label| crate::jumbf::labels::to_assertion_uri(&ing_label, label))
+            .collect();
+
+        combiner.definition.redactions = Some(redaction_uris.clone());
+
+        let mut redaction_actions = Actions::new();
+        for uri in &redaction_uris {
+            let redacted_action = Action::new("c2pa.redacted")
+                .set_reason("testing thumbnail redaction via archive".to_owned())
+                .set_parameter("redacted".to_owned(), uri.clone())
+                .unwrap();
+            redaction_actions = redaction_actions.add_action(redacted_action);
+        }
+        combiner
+            .add_assertion(Actions::LABEL, &redaction_actions)
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        dest.set_position(0);
+        let mut output = Cursor::new(Vec::new());
+        combiner
+            .sign(signer.as_ref(), "image/jpeg", &mut dest, &mut output)
+            .expect("combiner sign");
+
+        // Verify
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        //println!("{reader}");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        let active = reader.active_manifest().unwrap();
+        assert_eq!(active.ingredients().len(), 1);
+
+        // Actions + CreativeWork should survive (only thumbnails redacted)
+        let parent = reader.get_manifest(&ing_label).unwrap();
+        assert_eq!(
+            parent.assertions().len(),
+            2,
+            "Actions and CreativeWork should survive thumbnail redaction"
+        );
+
+        // Verify no thumbnail in the reader JSON for the ingredient manifest
+        let reader_json: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let manifests = reader_json["manifests"].as_object().unwrap();
+        let parent_json = &manifests[&ing_label];
+        assert!(
+            parent_json.get("thumbnail").is_none() || parent_json["thumbnail"].is_null(),
+            "ingredient manifest should have no thumbnail after redaction"
+        );
+
+        // Verify the ingredient entry in the active manifest also has no thumbnail
+        let active_json = &manifests[reader_json["active_manifest"].as_str().unwrap()];
+        let ingredients_arr = active_json["ingredients"].as_array().unwrap();
+        for ing_json in ingredients_arr {
+            assert!(
+                ing_json.get("thumbnail").is_none() || ing_json["thumbnail"].is_null(),
+                "ingredient entry should have no thumbnail after redaction, got: {}",
+                ing_json["thumbnail"]
+            );
+        }
+    }
+
+    /// Test for the case of assets where an ingredient thumbnail has a local resource ID
+    /// rather than a fully qualified JUMBF URI.
+    #[cfg(feature = "add_thumbnails")]
+    #[test]
+    fn test_redaction_thumbnails_local_resource_id() {
+        use crate::{
+            assertions::{c2pa_action, Action, Actions},
+            utils::test::setup_logger,
+        };
+
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        setup_logger();
+
+        // Sign the clean image so it carries a manifest with an auto-generated thumbnail.
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut signed = Cursor::new(Vec::new());
+
+        let mut parent_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let created_action =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
+        parent_builder
+            .add_assertion(Actions::LABEL, &Actions::new().add_action(created_action))
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        parent_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut signed)
+            .unwrap();
+
+        // Read the signed image to discover the manifest label and thumbnail URIs.
+        signed.set_position(0);
+        let parent_reader =
+            Reader::from_stream("image/jpeg", &mut signed).expect("read parent manifest");
+
+        let parent_label = parent_reader
+            .active_manifest()
+            .unwrap()
+            .label()
+            .unwrap()
+            .to_owned();
+
+        // Collect claim thumbnail assertion labels from the parent manifest.
+        let thumbnail_labels: Vec<String> = parent_reader
+            .active_manifest()
+            .unwrap()
+            .assertion_references()
+            .filter_map(|href| crate::jumbf::labels::assertion_label_from_uri(&href.url()))
+            .filter(|label| label.starts_with("c2pa.thumbnail"))
+            .collect();
+
+        assert!(
+            !thumbnail_labels.is_empty(),
+            "parent manifest should contain at least one thumbnail assertion"
+        );
+
+        // Build redaction URIs targeting the parent manifest's thumbnails.
+        let redaction_uris: Vec<String> = thumbnail_labels
+            .iter()
+            .map(|label| crate::jumbf::labels::to_assertion_uri(&parent_label, label))
+            .collect();
+
+        // Create a new manifest, add the signed JPEG directly as a `image/jpeg`
+        // ingredient (NOT via archive).  This is the path that calls `maybe_add_thumbnail`
+        // and stores a local resource ID (e.g. `xmp-iid-{uuid}.jpg`) as the thumb identifier.
+        let context = Context::new()
+            .with_settings(r#"{"builder": {"thumbnail": {"enabled": false}}}"#)
+            .unwrap();
+        let mut combiner = Builder::from_context(context);
+        combiner.definition.claim_version = Some(2);
+        combiner.definition.title = Some("Redacting thumbnails (local resource ID)".to_string());
+        combiner.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        signed.set_position(0);
+        combiner
+            .add_ingredient_from_stream(
+                json!({ "title": "Parent", "relationship": "componentOf" }).to_string(),
+                "image/jpeg",
+                &mut signed,
+            )
+            .unwrap();
+
+        combiner.definition.redactions = Some(redaction_uris.clone());
+
+        let mut redaction_actions = Actions::new();
+        for uri in &redaction_uris {
+            let action = Action::new("c2pa.redacted")
+                .set_reason("testing thumbnail redaction via local resource ID".to_owned())
+                .set_parameter("redacted".to_owned(), uri.clone())
+                .unwrap();
+            redaction_actions = redaction_actions.add_action(action);
+        }
+        combiner
+            .add_assertion(Actions::LABEL, &redaction_actions)
+            .unwrap();
+
+        // Sign and verify.
+        let signer = test_signer(SigningAlg::Ps256);
+        source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut output = Cursor::new(Vec::new());
+        combiner
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut output)
+            .expect("combiner sign");
+
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        // The ingredient manifest's thumbnail should be gone.
+        let reader_json: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let manifests = reader_json["manifests"].as_object().unwrap();
+        let parent_json = &manifests[&parent_label];
+        assert!(
+            parent_json.get("thumbnail").is_none() || parent_json["thumbnail"].is_null(),
+            "ingredient manifest should have no thumbnail after redaction, got: {}",
+            parent_json["thumbnail"]
+        );
+
+        // The ingredient entry in the active manifest should also have no thumbnail.
+        let active_label = reader_json["active_manifest"].as_str().unwrap();
+        let active_json = &manifests[active_label];
+        let ingredients_arr = active_json["ingredients"].as_array().unwrap();
+        for ing_json in ingredients_arr {
+            assert!(
+                ing_json.get("thumbnail").is_none() || ing_json["thumbnail"].is_null(),
+                "ingredient entry should have no thumbnail after redaction, got: {}",
+                ing_json["thumbnail"]
+            );
+        }
+    }
+
+    #[test]
+    fn test_redaction_assertion_two_ingredients_via_archive() {
+        use crate::{
+            assertions::{c2pa_action, Action, Actions},
+            utils::test::setup_logger,
+        };
+
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        setup_logger();
+
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        // Sign the clean image with CreativeWork assertion
+        let mut source1 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest1 = Cursor::new(Vec::new());
+
+        let mut builder1 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent 1".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let created_action =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
+        let actions = Actions::new().add_action(created_action);
+        builder1.add_assertion(Actions::LABEL, &actions).unwrap();
+        builder1
+            .add_assertion(
+                ASSERTION_LABEL,
+                &json!({
+                    "@context": "https://schema.org",
+                    "@type": "CreativeWork",
+                    "author": [{ "@type": "Person", "name": "Alice" }]
+                }),
+            )
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder1
+            .sign(signer.as_ref(), "image/jpeg", &mut source1, &mut dest1)
+            .unwrap();
+
+        // Archive dest1 as ingredient
+        let mut archive_builder1 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Archive container 1".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        dest1.set_position(0);
+        archive_builder1
+            .add_ingredient_from_stream(
+                json!({ "title": "Parent 1", "relationship": "parentOf" }).to_string(),
+                "image/jpeg",
+                &mut dest1,
+            )
+            .unwrap();
+
+        let mut archive1_stream = Cursor::new(Vec::new());
+        archive_builder1.to_archive(&mut archive1_stream).unwrap();
+
+        // Sign the clean image again with CreativeWork assertion
+        let mut source2 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest2 = Cursor::new(Vec::new());
+
+        let mut builder2 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent 2".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let created_action2 =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
+        let actions2 = Actions::new().add_action(created_action2);
+        builder2.add_assertion(Actions::LABEL, &actions2).unwrap();
+        builder2
+            .add_assertion(
+                ASSERTION_LABEL,
+                &json!({
+                    "@context": "https://schema.org",
+                    "@type": "CreativeWork",
+                    "author": [{ "@type": "Person", "name": "Bob" }]
+                }),
+            )
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder2
+            .sign(signer.as_ref(), "image/jpeg", &mut source2, &mut dest2)
+            .unwrap();
+
+        // Archive dest2 as ingredient
+        let mut archive_builder2 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Archive container 2".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        dest2.set_position(0);
+        archive_builder2
+            .add_ingredient_from_stream(
+                json!({ "title": "Parent 2", "relationship": "parentOf" }).to_string(),
+                "image/jpeg",
+                &mut dest2,
+            )
+            .unwrap();
+
+        let mut archive2_stream = Cursor::new(Vec::new());
+        archive_builder2.to_archive(&mut archive2_stream).unwrap();
+
+        // New builder, add both archives as ingredients, redact CreativeWork from both
+        let mut combiner = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Redacting from two archives".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        combiner.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        archive1_stream.set_position(0);
+        let ing1 = combiner
+            .add_ingredient_from_stream(
+                json!({ "title": "Archived Parent 1", "relationship": "componentOf" }).to_string(),
+                "application/c2pa",
+                &mut archive1_stream,
+            )
+            .unwrap();
+        let ing1_label = ing1.active_manifest().unwrap().to_owned();
+
+        archive2_stream.set_position(0);
+        let ing2 = combiner
+            .add_ingredient_from_stream(
+                json!({ "title": "Archived Parent 2", "relationship": "componentOf" }).to_string(),
+                "application/c2pa",
+                &mut archive2_stream,
+            )
+            .unwrap();
+        let ing2_label = ing2.active_manifest().unwrap().to_owned();
+
+        let redacted_uri1 = crate::jumbf::labels::to_assertion_uri(&ing1_label, ASSERTION_LABEL);
+        let redacted_uri2 = crate::jumbf::labels::to_assertion_uri(&ing2_label, ASSERTION_LABEL);
+
+        combiner.definition.redactions = Some(vec![redacted_uri1.clone(), redacted_uri2.clone()]);
+
+        let redacted_action1 = Action::new("c2pa.redacted")
+            .set_reason("testing redaction from archive parent 1".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri1)
+            .unwrap();
+        let redacted_action2 = Action::new("c2pa.redacted")
+            .set_reason("testing redaction from archive parent 2".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri2)
+            .unwrap();
+
+        let actions = Actions::new()
+            .add_action(redacted_action1)
+            .add_action(redacted_action2);
+        combiner.add_assertion(Actions::LABEL, &actions).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        dest1.set_position(0);
+        let mut output = Cursor::new(Vec::new());
+        combiner
+            .sign(signer.as_ref(), "image/jpeg", &mut dest1, &mut output)
+            .expect("combiner sign");
+
+        // Verify
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        //println!("{reader}");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        let active = reader.active_manifest().unwrap();
+        assert_eq!(active.ingredients().len(), 2);
+
+        let parent1 = reader.get_manifest(&ing1_label).unwrap();
+        assert_eq!(
+            parent1.assertions().len(),
+            1,
+            "ingredient 1 should have CreativeWork redacted"
+        );
+
+        let parent2 = reader.get_manifest(&ing2_label).unwrap();
+        assert_eq!(
+            parent2.assertions().len(),
+            1,
+            "ingredient 2 should have CreativeWork redacted"
+        );
+    }
+
+    #[cfg(feature = "add_thumbnails")]
+    #[test]
+    fn test_redaction_thumbnails_two_ingredients_via_archive() {
+        use crate::{
+            assertions::{c2pa_action, Action, Actions},
+            utils::test::setup_logger,
+        };
+
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        setup_logger();
+
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        // Sign the clean image with CreativeWork (auto-generates thumbnail)
+        let mut source1 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest1 = Cursor::new(Vec::new());
+
+        let mut builder1 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent 1".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let created_action =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
+        let actions = Actions::new().add_action(created_action);
+        builder1.add_assertion(Actions::LABEL, &actions).unwrap();
+        builder1
+            .add_assertion(
+                ASSERTION_LABEL,
+                &json!({
+                    "@context": "https://schema.org",
+                    "@type": "CreativeWork",
+                    "author": [{ "@type": "Person", "name": "Alice" }]
+                }),
+            )
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder1
+            .sign(signer.as_ref(), "image/jpeg", &mut source1, &mut dest1)
+            .unwrap();
+
+        // Archive dest1 as ingredient
+        let mut archive_builder1 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Archive container 1".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        dest1.set_position(0);
+        archive_builder1
+            .add_ingredient_from_stream(
+                json!({ "title": "Parent 1", "relationship": "parentOf" }).to_string(),
+                "image/jpeg",
+                &mut dest1,
+            )
+            .unwrap();
+
+        let mut archive1_stream = Cursor::new(Vec::new());
+        archive_builder1.to_archive(&mut archive1_stream).unwrap();
+
+        // Sign the clean image again with CreativeWork (auto-generates thumbnail)
+        let mut source2 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest2 = Cursor::new(Vec::new());
+
+        let mut builder2 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent 2".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let created_action2 =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
+        let actions2 = Actions::new().add_action(created_action2);
+        builder2.add_assertion(Actions::LABEL, &actions2).unwrap();
+        builder2
+            .add_assertion(
+                ASSERTION_LABEL,
+                &json!({
+                    "@context": "https://schema.org",
+                    "@type": "CreativeWork",
+                    "author": [{ "@type": "Person", "name": "Bob" }]
+                }),
+            )
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder2
+            .sign(signer.as_ref(), "image/jpeg", &mut source2, &mut dest2)
+            .unwrap();
+
+        // Archive dest2 as ingredient
+        let mut archive_builder2 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Archive container 2".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        dest2.set_position(0);
+        archive_builder2
+            .add_ingredient_from_stream(
+                json!({ "title": "Parent 2", "relationship": "parentOf" }).to_string(),
+                "image/jpeg",
+                &mut dest2,
+            )
+            .unwrap();
+
+        let mut archive2_stream = Cursor::new(Vec::new());
+        archive_builder2.to_archive(&mut archive2_stream).unwrap();
+
+        // New builder with thumbnail auto-generation disabled,
+        // add both archives as ingredients, redact all thumbnails from both
+        let context = Context::new()
+            .with_settings(r#"{"builder": {"thumbnail": {"enabled": false}}}"#)
+            .unwrap();
+        let mut combiner = Builder::from_context(context);
+        combiner.definition.claim_version = Some(2);
+        combiner.definition.title = Some("Redacting thumbnails from two archives".to_string());
+        combiner.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        archive1_stream.set_position(0);
+        let ing1 = combiner
+            .add_ingredient_from_stream(
+                json!({ "title": "Archived Parent 1", "relationship": "componentOf" }).to_string(),
+                "application/c2pa",
+                &mut archive1_stream,
+            )
+            .unwrap();
+        let ing1_label = ing1.active_manifest().unwrap().to_owned();
+
+        archive2_stream.set_position(0);
+        let ing2 = combiner
+            .add_ingredient_from_stream(
+                json!({ "title": "Archived Parent 2", "relationship": "componentOf" }).to_string(),
+                "application/c2pa",
+                &mut archive2_stream,
+            )
+            .unwrap();
+        let ing2_label = ing2.active_manifest().unwrap().to_owned();
+
+        // Discover all thumbnail assertion labels from both archives
+        archive1_stream.set_position(0);
+        let archive1_reader =
+            Reader::from_stream("application/c2pa", &mut archive1_stream).unwrap();
+
+        let mut thumbnail_labels1: Vec<String> = Vec::new();
+        for manifest in archive1_reader.iter_manifests() {
+            for href in manifest.assertion_references() {
+                if let Some(label) = crate::jumbf::labels::assertion_label_from_uri(&href.url()) {
+                    if label.starts_with("c2pa.thumbnail") {
+                        thumbnail_labels1.push(label);
+                    }
+                }
+            }
+        }
+        assert!(
+            !thumbnail_labels1.is_empty(),
+            "archive 1 should contain at least one thumbnail"
+        );
+
+        archive2_stream.set_position(0);
+        let archive2_reader =
+            Reader::from_stream("application/c2pa", &mut archive2_stream).unwrap();
+
+        let mut thumbnail_labels2: Vec<String> = Vec::new();
+        for manifest in archive2_reader.iter_manifests() {
+            for href in manifest.assertion_references() {
+                if let Some(label) = crate::jumbf::labels::assertion_label_from_uri(&href.url()) {
+                    if label.starts_with("c2pa.thumbnail") {
+                        thumbnail_labels2.push(label);
+                    }
+                }
+            }
+        }
+        assert!(
+            !thumbnail_labels2.is_empty(),
+            "archive 2 should contain at least one thumbnail"
+        );
+
+        // Build redaction URIs for all thumbnails from both ingredients
+        let mut all_redaction_uris: Vec<String> = Vec::new();
+        for label in &thumbnail_labels1 {
+            all_redaction_uris.push(crate::jumbf::labels::to_assertion_uri(&ing1_label, label));
+        }
+        for label in &thumbnail_labels2 {
+            all_redaction_uris.push(crate::jumbf::labels::to_assertion_uri(&ing2_label, label));
+        }
+
+        combiner.definition.redactions = Some(all_redaction_uris.clone());
+
+        let mut redaction_actions = Actions::new();
+        for uri in &all_redaction_uris {
+            let redacted_action = Action::new("c2pa.redacted")
+                .set_reason("testing thumbnail redaction from archives".to_owned())
+                .set_parameter("redacted".to_owned(), uri.clone())
+                .unwrap();
+            redaction_actions = redaction_actions.add_action(redacted_action);
+        }
+        combiner
+            .add_assertion(Actions::LABEL, &redaction_actions)
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        dest1.set_position(0);
+        let mut output = Cursor::new(Vec::new());
+        combiner
+            .sign(signer.as_ref(), "image/jpeg", &mut dest1, &mut output)
+            .expect("combiner sign");
+
+        // Verify
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        //println!("{reader}");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        let active = reader.active_manifest().unwrap();
+        assert_eq!(active.ingredients().len(), 2);
+
+        // Actions + CreativeWork should survive (only thumbnails redacted)
+        let parent1 = reader.get_manifest(&ing1_label).unwrap();
+        assert_eq!(
+            parent1.assertions().len(),
+            2,
+            "ingredient 1: Actions and CreativeWork should survive thumbnail redaction"
+        );
+
+        let parent2 = reader.get_manifest(&ing2_label).unwrap();
+        assert_eq!(
+            parent2.assertions().len(),
+            2,
+            "ingredient 2: Actions and CreativeWork should survive thumbnail redaction"
+        );
+
+        // Verify no thumbnails in the reader JSON for either ingredient manifest
+        let reader_json: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let manifests = reader_json["manifests"].as_object().unwrap();
+
+        let parent1_json = &manifests[&ing1_label];
+        assert!(
+            parent1_json.get("thumbnail").is_none() || parent1_json["thumbnail"].is_null(),
+            "ingredient 1 should have no thumbnail after redaction"
+        );
+
+        let parent2_json = &manifests[&ing2_label];
+        assert!(
+            parent2_json.get("thumbnail").is_none() || parent2_json["thumbnail"].is_null(),
+            "ingredient 2 should have no thumbnail after redaction"
+        );
+
+        // Verify the ingredient entries in the active manifest also have no thumbnails
+        let active_json = &manifests[reader_json["active_manifest"].as_str().unwrap()];
+        let ingredients_arr = active_json["ingredients"].as_array().unwrap();
+        for ing_json in ingredients_arr {
+            assert!(
+                ing_json.get("thumbnail").is_none() || ing_json["thumbnail"].is_null(),
+                "ingredient entry should have no thumbnail after redaction, got: {}",
+                ing_json["thumbnail"]
+            );
+        }
+    }
+
+    #[test]
     /// this first creates a manifest with an assertion we will later redact
     /// then creates an update manifest that redacts the assertion
     fn test_redaction2() {
@@ -5665,6 +6743,108 @@ mod tests {
         assert_eq!(m.ingredients().len(), 1);
         let parent = reader.get_manifest(parent_manifest_label).unwrap();
         assert_eq!(parent.assertions().len(), 1);
+    }
+
+    /// Redacting a parent's claim thumbnail can't leave a dangling
+    /// HashedUri in the ingredient assertion or produce assertion.missing errors.
+    #[cfg(feature = "add_thumbnails")]
+    #[test]
+    fn test_redact_claim_thumbnail_via_update() {
+        use crate::{assertions::Action, utils::test::setup_logger};
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        setup_logger();
+
+        // Start from an image and sign to prepare a test asset
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent with thumbnail".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let created_action = crate::assertions::Action::new(c2pa_action::CREATED)
+            .set_source_type(DigitalSourceType::Empty);
+        let actions = crate::assertions::Actions::new().add_action(created_action);
+        builder.add_assertion(Actions::LABEL, &actions).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+
+        dest.set_position(0);
+        let parent_reader = Reader::from_stream("jpeg", &mut dest).expect("read parent");
+        assert_eq!(parent_reader.validation_state(), ValidationState::Trusted);
+        let parent_manifest_label = parent_reader.active_label().unwrap().to_string();
+        let parent_manifest = parent_reader.active_manifest().unwrap();
+        assert!(parent_manifest.thumbnail_ref().is_some(),);
+
+        // Create an update manifest that redacts the parent's thumbnail.
+        let mut builder2 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Thumbnail redact".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        builder2.set_intent(BuilderIntent::Update);
+
+        let thumbnail_label = parent_manifest
+            .assertion_references()
+            .find(|href| href.url().contains("c2pa.thumbnail"))
+            .expect("parent should have a thumbnail assertion")
+            .url();
+        let thumbnail_assertion_label =
+            crate::jumbf::labels::assertion_label_from_uri(&thumbnail_label)
+                .expect("should extract assertion label");
+        let redacted_uri = crate::jumbf::labels::to_assertion_uri(
+            &parent_manifest_label,
+            &thumbnail_assertion_label,
+        );
+
+        builder2.definition.redactions = Some(vec![redacted_uri.clone()]);
+
+        let redacted_action = Action::new("c2pa.redacted")
+            .set_reason("thumbnail contains sensitive content".to_owned())
+            .set_parameter("redacted".to_owned(), redacted_uri)
+            .unwrap();
+        let actions = Actions::new().add_action(redacted_action);
+        builder2.add_assertion(Actions::LABEL, &actions).unwrap();
+
+        dest.set_position(0);
+        let mut output = Cursor::new(Vec::new());
+        builder2
+            .sign(signer.as_ref(), "jpeg", &mut dest, &mut output)
+            .expect("redaction sign");
+
+        // Verify: no dangling references, no validation errors.
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("read result");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        let parent = reader.get_manifest(&parent_manifest_label).unwrap();
+        assert!(
+            parent.thumbnail_ref().is_none(),
+            "parent's claim thumbnail should have been redacted"
+        );
+
+        let active = reader.active_manifest().unwrap();
+        assert_eq!(active.ingredients().len(), 1);
+        let ingredient = &active.ingredients()[0];
+        assert!(ingredient.thumbnail_ref().is_none());
+
+        let has_assertion_missing = ingredient.validation_status().is_some_and(|statuses| {
+            statuses
+                .iter()
+                .any(|s| s.code() == crate::validation_status::ASSERTION_MISSING)
+        });
+        assert!(!has_assertion_missing);
     }
 
     #[test]
@@ -5880,6 +7060,79 @@ mod tests {
         assert_eq!(
             loaded_builder.definition.title,
             Some("Test Image".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_write_ingredient_archive_and_add_ingredient_from_archive() -> Result<()> {
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context = Context::new().with_settings(settings)?.into_shared();
+
+        let mut builder = Builder::from_shared_context(&context)
+            .with_definition(r#"{"title": "Parent manifest"}"#)?;
+
+        // An ingredient may reference resource (a thumbnail) in the active manifest
+        // so test that these are preserved
+        let mut thumb_stream = Cursor::new(TEST_THUMBNAIL);
+        builder.add_resource("thumbnail.jpg", &mut thumb_stream)?;
+
+        let mut jpeg = Cursor::new(TEST_IMAGE);
+        builder.add_ingredient_from_stream(
+            json!({
+            "title": "Exported ingredient",
+            "format": "image/jpeg",
+            "thumbnail": {
+                "format": "image/jpeg",
+                "identifier": "thumbnail.jpg"
+            },
+            "relationship": "componentOf",
+            "label": "ingredient_1"
+            })
+            .to_string(),
+            "image/jpeg",
+            &mut jpeg,
+        )?;
+
+        let mut ingredient_archive = Cursor::new(Vec::new());
+        let ingredient_id = {
+            let ing = &builder.definition.ingredients[0];
+            ing.label()
+                .map(String::from)
+                .unwrap_or_else(|| ing.instance_id().to_string())
+        };
+        builder.write_ingredient_archive(&ingredient_id, &mut ingredient_archive)?;
+
+        let archive_bytes = ingredient_archive.into_inner();
+
+        let mut builder2 = Builder::from_shared_context(&context);
+        builder2.add_ingredient_from_archive(&mut Cursor::new(archive_bytes))?;
+
+        assert_eq!(builder2.definition.ingredients.len(), 1);
+        assert_eq!(
+            builder2.definition.ingredients[0].title(),
+            Some("Exported ingredient")
+        );
+        let thumb_ref = builder2.definition.ingredients[0]
+            .thumbnail_ref()
+            .expect("ingredient should have a thumbnail ref");
+        assert!(
+            thumb_ref.identifier.contains("c2pa.thumbnail.ingredient"),
+            "thumbnail should reference an ingredient thumbnail, not a claim thumbnail; got: {}",
+            thumb_ref.identifier
+        );
+        assert!(
+            builder2.resources.get(&thumb_ref.identifier).is_ok(),
+            "thumbnail resource '{}' should be present in builder resources",
+            thumb_ref.identifier
+        );
+        assert!(
+            builder2
+                .resources
+                .get(&thumb_ref.identifier)
+                .is_ok_and(|data| data.as_slice() == TEST_THUMBNAIL),
+            "thumbnail resource bytes should match the original TEST_THUMBNAIL"
         );
 
         Ok(())
@@ -6438,6 +7691,27 @@ mod tests {
         }
 
         assert!(reader.active_manifest().is_some());
+    }
+
+    #[test]
+    fn test_add_assertion_limit() {
+        // Verify all MAX_ASSERTIONS assertions succeed and the next one is rejected.
+        let mut builder = Builder::new();
+        let data = serde_json::json!({"value": 1});
+        for i in 0..MAX_ASSERTIONS {
+            builder
+                .add_assertion_json(format!("org.test.assertion.{i}"), &data)
+                .expect("should succeed within limit");
+        }
+        let err = builder
+            .add_assertion_json("org.test.assertion.overflow", &data)
+            .expect_err("assertion beyond limit should be rejected");
+        assert!(matches!(
+            err,
+            Error::TooManyAssertions {
+                max: MAX_ASSERTIONS
+            }
+        ));
     }
 
     // Ensures that the future returned by `Builder::sign_async` implements `Send`, thus making it
