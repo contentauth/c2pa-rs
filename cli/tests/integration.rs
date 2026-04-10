@@ -16,10 +16,10 @@ use std::{
     error::Error,
     fs::{self, create_dir_all},
     path::PathBuf,
+    process::Command,
 };
 
 use assert_cmd::prelude::*;
-use std::process::Command;
 use predicate::str;
 use predicates::prelude::*;
 use serde_json::Value;
@@ -44,7 +44,7 @@ fn temp_path(name: &str) -> PathBuf {
 
 // Helper functions for cleaner tests
 fn c2patool() -> Command {
-    Command::cargo_bin("c2patool").unwrap()
+    Command::new(assert_cmd::cargo::cargo_bin!("c2patool"))
 }
 
 fn show(input: &str) -> Command {
@@ -111,7 +111,9 @@ fn tool_info() -> Result<(), Box<dyn Error>> {
         .arg("--info")
         .assert()
         .success()
-        .stdout(str::contains("Provenance URI = self#jumbf=/c2pa/contentauth:urn:uuid:"))
+        .stdout(str::contains(
+            "Provenance URI = self#jumbf=/c2pa/contentauth:urn:uuid:",
+        ))
         .stdout(str::contains("Manifest store size = 51217"));
     Ok(())
 }
@@ -128,12 +130,15 @@ fn tool_embed_jpeg_report() -> Result<(), Box<dyn Error>> {
 fn tool_fs_output_report() -> Result<(), Box<dyn Error>> {
     let path = temp_path("output_dir");
     show("verify.jpeg")
-        .arg("-o").arg(&path)
+        .arg("-o")
+        .arg(&path)
         .arg("-f")
         .assert()
         .success()
-        .stdout(str::contains(format!("Manifest report written to the directory {path:?}")));
-    
+        .stdout(str::contains(format!(
+            "Manifest report written to the directory {path:?}"
+        )));
+
     let manifest_json = path.join("manifest_store.json");
     let json: Value = serde_json::from_str(&fs::read_to_string(manifest_json)?)?;
     assert_eq!(
@@ -149,8 +154,10 @@ fn tool_fs_output_report_supports_detailed_flag() -> Result<(), Box<dyn Error>> 
         .args(["-o", path.to_str().unwrap(), "-f", "-d"])
         .assert()
         .success()
-        .stdout(str::contains(format!("Manifest report written to the directory {path:?}")));
-    
+        .stdout(str::contains(format!(
+            "Manifest report written to the directory {path:?}"
+        )));
+
     let json: Value = serde_json::from_str(&fs::read_to_string(path.join("detailed.json"))?)?;
     assert!(json["validation_results"].is_object());
     Ok(())
@@ -159,12 +166,15 @@ fn tool_fs_output_report_supports_detailed_flag() -> Result<(), Box<dyn Error>> 
 fn tool_fs_output_fails_when_output_exists() -> Result<(), Box<dyn Error>> {
     let path = temp_path("./output_conflict");
     create_dir_all(&path)?;
-    
+
     show("C.jpg")
-        .arg("-o").arg(&path)
+        .arg("-o")
+        .arg(&path)
         .assert()
         .failure()
-        .stderr(str::contains("Error: Output already exists; use -f/force to force write"));
+        .stderr(str::contains(
+            "Error: Output already exists; use -f/force to force write",
+        ));
     Ok(())
 }
 #[test]
@@ -176,7 +186,7 @@ fn tool_test_manifest_folder() -> Result<(), Box<dyn std::error::Error>> {
         .assert()
         .success()
         .stdout(str::contains("Manifest report written"));
-    
+
     let json = fs::read_to_string(out_path.join("manifest_store.json"))?;
     assert!(json.contains("make_test_images"));
     Ok(())
@@ -192,7 +202,7 @@ fn tool_test_ingredient_folder() -> Result<(), Box<dyn std::error::Error>> {
         .assert()
         .success()
         .stdout(str::contains("Ingredient"));
-    
+
     let json = fs::read_to_string(out_path.join("ingredient.json"))?;
     assert!(json.contains("manifest_data"));
     Ok(())
@@ -228,13 +238,17 @@ fn tool_test_manifest_ingredient_json() -> Result<(), Box<dyn std::error::Error>
 #[test]
 // c2patool edit --parent tests/fixtures/earth_apollo17.jpg -m tests/fixtures/ingredient_test.json -o target/tmp/ingredients.jpg -f
 fn tool_embed_jpeg_with_ingredients_report() -> Result<(), Box<dyn Error>> {
-    edit(TEST_IMAGE, &fixture_path("ingredient_test.json").to_string_lossy(), "ingredients.jpg")
-        .assert()
-        .success()
-        .stdout(str::contains("ingredients.jpg"))
-        .stdout(str::contains("test ingredient"))
-        .stdout(str::contains("temporal"))
-        .stdout(str::contains("earth_apollo17.jpg"));
+    edit(
+        TEST_IMAGE,
+        &fixture_path("ingredient_test.json").to_string_lossy(),
+        "ingredients.jpg",
+    )
+    .assert()
+    .success()
+    .stdout(str::contains("ingredients.jpg"))
+    .stdout(str::contains("test ingredient"))
+    .stdout(str::contains("temporal"))
+    .stdout(str::contains("earth_apollo17.jpg"));
     Ok(())
 }
 #[test]

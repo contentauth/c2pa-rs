@@ -19,21 +19,18 @@
 /// in that file. If a manifest definition JSON file is specified,
 /// the claim will be added to any existing claims.
 use std::{
-    env,
     fs::{self, copy, create_dir_all, remove_dir_all, remove_file, File},
     io::Write,
     path::{Path, PathBuf},
-    str::FromStr,
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
-    format_from_path, identity::validator::CawgValidator, settings::Settings, Builder,
-    ClaimGeneratorInfo, Error, Ingredient, ManifestDefinition, Reader, Signer,
+    identity::validator::CawgValidator, settings::Settings, Builder, Error, Ingredient,
+    ManifestDefinition, Reader, Signer,
 };
 use clap::{Parser, Subcommand};
 use etcetera::BaseStrategy;
-use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
 use tempfile::NamedTempFile;
@@ -42,9 +39,7 @@ use tokio::runtime::Runtime;
 #[cfg(target_os = "wasi")]
 use wstd::runtime::block_on;
 
-use crate::{
-    info::info,
-};
+use crate::info::info;
 
 mod info;
 mod tree;
@@ -57,7 +52,7 @@ mod signer;
 #[command(author, version, about, long_about = None, arg_required_else_help(true))]
 struct CliArgs {
     /// Path to SDK settings file (JSON or TOML format)
-    /// 
+    ///
     /// Configure signing credentials, trust anchors, and SDK behavior.
     /// Default location: $XDG_CONFIG_HOME/c2pa/settings.json
     #[clap(
@@ -339,6 +334,7 @@ enum ConfigAction {
 #[derive(Debug, Default, Deserialize)]
 // Add fields that are not part of the standard Manifest
 struct ManifestDef {
+    #[allow(dead_code)]
     #[serde(flatten)]
     manifest: ManifestDefinition,
     // allows adding ingredients with file paths
@@ -446,6 +442,7 @@ fn sign_fragmented(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn verify_fragmented(init_pattern: &Path, frag_pattern: &Path) -> Result<Vec<Reader>> {
     let mut readers = Vec::new();
 
@@ -551,7 +548,10 @@ fn handle_config_command(args: &CliArgs, action: &ConfigAction) -> Result<()> {
             let settings_str = serde_json::to_string_pretty(&default_settings)?;
             std::fs::write(&args.settings, settings_str)?;
 
-            println!("Default settings file created at: {}", args.settings.display());
+            println!(
+                "Default settings file created at: {}",
+                args.settings.display()
+            );
             println!("\nEdit this file to configure your signing credentials and other settings.");
         }
         ConfigAction::Validate => {
@@ -597,7 +597,7 @@ fn handle_create_command(
     force: bool,
 ) -> Result<()> {
     // TODO: Add support for source_type (Intent::Create) when SDK supports it
-    
+
     // Read the json from file or string
     let (json, base_path) = match manifest {
         Some(manifest_path) => {
@@ -623,7 +623,7 @@ fn handle_create_command(
     }
 
     // Add ingredients from manifest definition
-    if let Some(paths) = manifest_def. {
+    if let Some(paths) = manifest_def.ingredient_paths {
         for mut path in paths {
             if let Some(base) = &base_path {
                 if !path.is_absolute() {
@@ -662,7 +662,7 @@ fn handle_create_command(
     } else {
         // Sign and save
         let signer = get_signer(&sign_config)?;
-        
+
         if ext_normal(output) != ext_normal(input) {
             bail!("Output type must match source type");
         }
@@ -776,7 +776,7 @@ fn handle_edit_command(
     } else {
         // Sign and save
         let signer = get_signer(&sign_config)?;
-        
+
         if ext_normal(output) != ext_normal(input_path) {
             bail!("Output type must match input type");
         }
@@ -894,7 +894,7 @@ fn handle_update_command(
     } else {
         // Sign and save
         let signer = get_signer(&sign_config)?;
-        
+
         if ext_normal(output) != ext_normal(input) {
             bail!("Output type must match input type");
         }
@@ -967,7 +967,7 @@ fn handle_resume_command(
             Ok(signer) => signer,
             Err(e) => bail!("No signer configured in settings: {}", e),
         };
-        
+
         if output.exists() && !force {
             bail!("Output already exists; use -f/force to force write");
         }
@@ -1026,7 +1026,13 @@ fn handle_fragment_command(
 
     let signer = get_signer(&sign_config)?;
 
-    sign_fragmented(&mut builder, signer.as_ref(), input, &fragments_glob.to_path_buf(), output)?;
+    sign_fragmented(
+        &mut builder,
+        signer.as_ref(),
+        input,
+        &fragments_glob.to_path_buf(),
+        output,
+    )?;
 
     Ok(())
 }
@@ -1090,7 +1096,9 @@ fn main() -> Result<()> {
 
             // Handle output to file or directory
             if let Some(output_path) = output {
-                if output_path.is_dir() || (!output_path.exists() && output_path.extension().is_none()) {
+                if output_path.is_dir()
+                    || (!output_path.exists() && output_path.extension().is_none())
+                {
                     // Directory output - write manifest_store.json and optionally detailed.json
                     if output_path.exists() {
                         if *force {
@@ -1164,12 +1172,14 @@ fn main() -> Result<()> {
                     let report = Ingredient::from_file_with_folder(input, output)
                         .map_err(special_errs)?
                         .to_string();
-                    File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
+                    File::create(output.join("ingredient.json"))?
+                        .write_all(&report.into_bytes())?;
                     println!("Ingredient report written to: {}", output.display());
                 } else {
                     let ingredient = Ingredient::from_file(input).map_err(special_errs)?;
                     let report = ingredient.to_string();
-                    File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
+                    File::create(output.join("ingredient.json"))?
+                        .write_all(&report.into_bytes())?;
                     println!("Ingredient saved to: {}", output.display());
                 }
             }

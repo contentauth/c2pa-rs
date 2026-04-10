@@ -10,6 +10,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![allow(dead_code)]
+
 use std::{
     io::Write,
     path::PathBuf,
