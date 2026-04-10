@@ -3402,6 +3402,7 @@ impl std::fmt::Display for Builder {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
     use std::{
         io::{self, Cursor},
         vec,

@@ -760,8 +760,7 @@ fn test_ingredient_arbitrary_metadata_fields() -> Result<()> {
 
 #[test]
 fn test_builder_unsupported_format() -> Result<()> {
-    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
-    let context = Context::new().with_settings(settings)?.into_shared();
+    let context = Context::new().with_settings(test_settings())?.into_shared();
 
     let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
@@ -787,8 +786,7 @@ fn test_builder_unsupported_format() -> Result<()> {
 
 #[test]
 fn test_builder_unsupported_format_no_embed_required() -> Result<()> {
-    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
-    let context = Context::new().with_settings(settings)?.into_shared();
+    let context = Context::new().with_settings(test_settings())?.into_shared();
 
     let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
@@ -809,8 +807,7 @@ fn test_builder_unsupported_format_no_embed_required() -> Result<()> {
 
 #[test]
 fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
-    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
-    let context = Context::new().with_settings(settings)?.into_shared();
+    let context = Context::new().with_settings(test_settings())?.into_shared();
 
     let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
