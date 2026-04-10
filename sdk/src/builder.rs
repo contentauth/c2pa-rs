@@ -464,6 +464,10 @@ pub struct Builder {
     /// - `urn:c2pa:fa479510-2a7d-c165-7b26-488a267f4c6a`
     pub timestamp_manifest_labels: HashSet<String>,
 
+    /// If true, use deterministic output (no random salts, preserve caller-set instance_id).
+    #[serde(default)]
+    pub deterministic: bool,
+
     /// Container for binary assets (like thumbnails).
     #[serde(skip)]
     pub(crate) resources: ResourceStore,
@@ -1815,7 +1819,7 @@ impl Builder {
     ///
     /// This functioin calls [`Builder::to_claim`] internally. Use [`Builder::to_store_with_claim`]
     /// if the [`Claim`] is constructed manually.
-    fn to_store(&self) -> Result<Store> {
+    pub(crate) fn to_store(&self) -> Result<Store> {
         let claim = self.to_claim()?;
         self.to_store_with_claim(claim)
     }

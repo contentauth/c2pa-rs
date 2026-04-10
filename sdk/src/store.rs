@@ -485,7 +485,7 @@ impl Store {
 
     // Returns placeholder that will be searched for and replaced
     // with actual signature data.
-    fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
+    pub(crate) fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
         let placeholder_str = format!("signature placeholder:{}", claim.label());
         let mut placeholder = sha256(placeholder_str.as_bytes());
 

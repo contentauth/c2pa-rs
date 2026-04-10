@@ -52,3 +52,14 @@ impl SaltGenerator for DefaultSalt {
         Some(salt)
     }
 }
+
+/// No-salt generator for deterministic output.
+/// Returns None, meaning no salt is used for assertion hashing.
+/// This is valid per the C2PA specification (salts are optional).
+pub struct NoSalt;
+
+impl SaltGenerator for NoSalt {
+    fn generate_salt(&self) -> Option<Vec<u8>> {
+        None
+    }
+}

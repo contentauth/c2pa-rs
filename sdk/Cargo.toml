@@ -317,3 +317,7 @@ harness = false
 [[bench]]
 name = "read"
 harness = false
+
+[[bench]]
+name = "fast_sign"
+harness = false

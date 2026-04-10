@@ -299,6 +299,20 @@ pub(crate) mod salt;
 pub(crate) mod signer;
 pub(crate) mod store;
 
+/// Fast single-pass BMFF signing.
+pub(crate) mod fast_sign;
+/// Fast single-pass RIFF signing.
+pub(crate) mod fast_sign_riff;
+/// Fast single-pass TIFF signing.
+pub(crate) mod fast_sign_tiff;
+/// Common types shared by fast sign modules.
+pub(crate) mod fast_sign_common;
+
+// Re-export the public sign entry points.
+pub use fast_sign::sign_bmff_fast;
+pub use fast_sign_riff::sign_riff_fast;
+pub use fast_sign_tiff::sign_tiff_fast;
+
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
 
