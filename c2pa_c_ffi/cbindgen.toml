@@ -52,19 +52,21 @@ after_includes = """
     #endif
 #endif
 
-/* Deprecation macros: produce compiler warnings when deprecated C2PA functions are called. */
-#if defined(__cplusplus) && __cplusplus >= 201402L
-    #define C2PA_DEPRECATED [[deprecated]]
-    #define C2PA_DEPRECATED_MSG(msg) [[deprecated(msg)]]
-#elif defined(__GNUC__) || defined(__clang__)
+/* Deprecation macros: produce compiler warnings when deprecated C2PA functions are called.
+   Note: we intentionally use the GCC/Clang __attribute__ form even in C++ mode rather than
+   C++14 [[deprecated]]. The latter is a standard attribute that may only appear in specific
+   declaration positions, which does not match where cbindgen emits these tokens (before
+   `extern`, before the return type, etc.). __attribute__((deprecated)) is accepted in all
+   those positions by both GCC and Clang. */
+#if defined(__GNUC__) || defined(__clang__)
     #define C2PA_DEPRECATED __attribute__((deprecated))
-    #define C2PA_DEPRECATED_MSG(msg) __attribute__((deprecated(msg)))
+    #define C2PA_DEPRECATED_MSG __attribute__((deprecated))
 #elif defined(_MSC_VER)
     #define C2PA_DEPRECATED __declspec(deprecated)
-    #define C2PA_DEPRECATED_MSG(msg) __declspec(deprecated(msg))
+    #define C2PA_DEPRECATED_MSG __declspec(deprecated)
 #else
     #define C2PA_DEPRECATED
-    #define C2PA_DEPRECATED_MSG(msg)
+    #define C2PA_DEPRECATED_MSG
 #endif
 
 
