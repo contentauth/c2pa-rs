@@ -716,8 +716,8 @@ fn main() -> Result<()> {
         // add claim_tool generator so we know this was created using this tool
         let mut tool_generator = ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME"));
         tool_generator.set_version(env!("CARGO_PKG_VERSION"));
-        if !manifest.claim_generator_info.is_empty()
-            || manifest.claim_generator_info[0].name == "c2pa-rs"
+        if manifest.claim_generator_info.is_empty()
+            || &*manifest.claim_generator_info[0].name == "c2pa-rs"
         {
             manifest.claim_generator_info = vec![tool_generator];
         } else {

@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
-use c2pa::{Builder, CallbackSigner, SigningAlg};
-use criterion::{criterion_group, criterion_main, Criterion};
+use c2pa::{Builder, CallbackSigner, ClaimGeneratorInfo, SigningAlg};
+use criterion::{criterion_group, criterion_main, black_box, Criterion};
 
 const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
 const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
@@ -172,7 +172,42 @@ fn sign_wav(c: &mut Criterion) {
     });
 }
 
+fn claim_generator_info_clone(c: &mut Criterion) {
+    let mut info = ClaimGeneratorInfo::new("benchmark_generator");
+    info.set_version("1.0.0").set_operating_system("linux-x86_64");
+
+    c.bench_function("claim_generator_info clone", |b| {
+        b.iter(|| {
+            black_box(info.clone());
+        })
+    });
+}
+
+fn claim_generator_info_vec_clone(c: &mut Criterion) {
+    let mut info = ClaimGeneratorInfo::new("benchmark_generator");
+    info.set_version("1.0.0").set_operating_system("linux-x86_64");
+    let vec = vec![info, ClaimGeneratorInfo::default()];
+
+    c.bench_function("claim_generator_info vec<2> clone", |b| {
+        b.iter(|| {
+            black_box(vec.clone());
+        })
+    });
+}
+
+fn claim_generator_info_deserialize(c: &mut Criterion) {
+    let json = r#"{"name":"benchmark_generator","version":"1.0.0","operating_system":"linux-x86_64"}"#;
+
+    c.bench_function("claim_generator_info deserialize json", |b| {
+        b.iter(|| {
+            let info: ClaimGeneratorInfo =
+                serde_json::from_str(black_box(json)).expect("deserialize");
+            black_box(info);
+        })
+    });
+}
+
 criterion_group!(
-    benches, sign_jpeg, sign_png, sign_gif, sign_tiff, sign_svg, sign_mp3, sign_mp4, sign_wav
+    benches, sign_jpeg, sign_png, sign_gif, sign_tiff, sign_svg, sign_mp3, sign_mp4, sign_wav, claim_generator_info_clone, claim_generator_info_vec_clone, claim_generator_info_deserialize
 );
 criterion_main!(benches);

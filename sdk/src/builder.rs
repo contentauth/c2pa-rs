@@ -5286,8 +5286,8 @@ mod tests {
 
         // validate the claim_generator_info
         let cgi = m.claim_generator_info.as_ref().unwrap();
-        assert_eq!(cgi[0].name, "test");
-        assert_eq!(cgi[0].version.as_ref().unwrap(), "1.0");
+        assert_eq!(&*cgi[0].name, "test");
+        assert_eq!(cgi[0].version.as_deref(), Some("1.0"));
         match cgi[0].icon().unwrap() {
             crate::resource_store::UriOrResource::ResourceRef(resource) => {
                 assert_eq!(resource.format, "image/svg+xml");

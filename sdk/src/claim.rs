@@ -4169,7 +4169,7 @@ pub mod tests {
         let mut claim = create_test_claim().expect("create test claim");
 
         let mut info = ClaimGeneratorInfo::new("test app");
-        info.version = Some("2.3.4".to_string());
+        info.set_version("2.3.4");
         info.icon = Some(UriOrResource::HashedUri(HashedUri::new(
             "self#jumbf=c2pa.databoxes.data_box".to_string(),
             None,
@@ -4181,7 +4181,7 @@ pub mod tests {
 
         let cgi = claim.claim_generator_info().unwrap();
 
-        assert_eq!(&cgi[0].name, "test app");
+        assert_eq!(&*cgi[0].name, "test app");
         assert_eq!(cgi[0].version.as_deref(), Some("2.3.4"));
         if let UriOrResource::HashedUri(r) = cgi[1].icon.as_ref().unwrap() {
             assert_eq!(r.hash(), b"hashed");

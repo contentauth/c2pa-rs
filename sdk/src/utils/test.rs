@@ -221,7 +221,7 @@ pub fn create_min_test_claim() -> Result<Claim> {
     let mut claim = Claim::new("contentauth unit test", Some("contentauth"), 2);
 
     let mut cg_info = ClaimGeneratorInfo::new("test app");
-    cg_info.version = Some("2.3.4".to_string());
+    cg_info.set_version("2.3.4");
     claim.add_claim_generator_info(cg_info);
 
     let created_action = Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty);
@@ -241,7 +241,7 @@ pub fn create_test_claim() -> Result<Claim> {
     let icon_ref = claim.add_assertion(&icon)?;
 
     let mut cg_info = ClaimGeneratorInfo::new("test app");
-    cg_info.version = Some("2.3.4".to_string());
+    cg_info.set_version("2.3.4");
     cg_info.icon = Some(UriOrResource::HashedUri(icon_ref));
     cg_info.insert("something", "else");
 

@@ -198,15 +198,15 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
 
     fn try_from(value: ClaimGeneratorInfoSettings) -> Result<Self> {
         Ok(ClaimGeneratorInfo {
-            name: value.name,
-            version: value.version,
+            name: value.name.into(),
+            version: value.version.map(Into::into),
             icon: value.icon.map(UriOrResource::ResourceRef),
             operating_system: {
                 value.operating_system.map(|os| match os {
                     ClaimGeneratorInfoOperatingSystem::Auto => {
-                        format!("{}-unknown-{}", consts::ARCH, consts::OS)
+                        format!("{}-unknown-{}", consts::ARCH, consts::OS).into()
                     }
-                    ClaimGeneratorInfoOperatingSystem::Other(name) => name,
+                    ClaimGeneratorInfoOperatingSystem::Other(name) => name.into(),
                 })
             },
             other: value
@@ -227,8 +227,8 @@ impl TryFrom<&ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
 
     fn try_from(value: &ClaimGeneratorInfoSettings) -> Result<Self> {
         Ok(ClaimGeneratorInfo {
-            name: value.name.clone(),
-            version: value.version.clone(),
+            name: value.name.as_str().into(),
+            version: value.version.as_deref().map(Into::into),
             icon: value
                 .icon
                 .as_ref()
@@ -236,9 +236,9 @@ impl TryFrom<&ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
             operating_system: {
                 value.operating_system.as_ref().map(|os| match os {
                     ClaimGeneratorInfoOperatingSystem::Auto => {
-                        format!("{}-unknown-{}", consts::ARCH, consts::OS)
+                        format!("{}-unknown-{}", consts::ARCH, consts::OS).into()
                     }
-                    ClaimGeneratorInfoOperatingSystem::Other(name) => name.clone(),
+                    ClaimGeneratorInfoOperatingSystem::Other(name) => name.as_str().into(),
                 })
             },
             other: value
@@ -665,8 +665,8 @@ pub mod tests {
             other: HashMap::new(),
         };
         let info = ClaimGeneratorInfo::try_from(settings).unwrap();
-        assert_eq!(info.name, "Test Generator");
-        assert_eq!(info.version, Some("1.0.0".to_string()));
+        assert_eq!(&*info.name, "Test Generator");
+        assert_eq!(info.version.as_deref(), Some("1.0.0"));
 
         // Test with auto OS detection
         let settings = ClaimGeneratorInfoSettings {
@@ -695,8 +695,8 @@ pub mod tests {
         };
         let info = ClaimGeneratorInfo::try_from(settings).unwrap();
         assert_eq!(
-            info.operating_system,
-            Some("x86_64-pc-windows-msvc".to_string())
+            info.operating_system.as_deref(),
+            Some("x86_64-pc-windows-msvc")
         );
         assert!(matches!(info.icon, Some(UriOrResource::ResourceRef(_))));
         assert_eq!(info.other.len(), 1);
@@ -710,7 +710,7 @@ pub mod tests {
             other: HashMap::new(),
         };
         let info = ClaimGeneratorInfo::try_from(&settings).unwrap();
-        assert_eq!(info.name, "Test Generator");
+        assert_eq!(&*info.name, "Test Generator");
         assert_eq!(settings.name, "Test Generator"); // Original still valid
     }
 
