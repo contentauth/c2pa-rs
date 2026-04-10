@@ -636,12 +636,15 @@ fn main() -> Result<()> {
     // malicious DLL alongside the executable. LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
     // restricts the search to: the application directory, System32, and
     // directories added via AddDllDirectory/SetDllDirectory — excluding the CWD.
-    #[cfg(windows)]
     // SAFETY: no invariants to uphold; the argument is a valid constant.
+    #[cfg(windows)]
     unsafe {
-        windows_sys::Win32::System::LibraryLoader::SetDefaultDllDirectories(
+        if windows_sys::Win32::System::LibraryLoader::SetDefaultDllDirectories(
             windows_sys::Win32::System::LibraryLoader::LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
-        );
+        ) == 0
+        {
+            bail!("Failed to set default DLL directories");
+        }
     }
 
     let args = CliArgs::parse();
