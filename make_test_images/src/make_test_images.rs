@@ -23,7 +23,6 @@ use anyhow::{Context, Result};
 use c2pa::{
     create_signer,
     jumbf_io::{load_jumbf_from_stream, save_jumbf_to_stream},
-    settings::Settings,
     Builder, Error, Ingredient, Reader, Relationship, Signer, SigningAlg,
 };
 use memchr::memmem;
@@ -226,6 +225,8 @@ impl MakeTestImages {
             .into_owned();
         let format = extension_to_mime(&extension).unwrap_or("image/jpeg");
 
+        // TODO: replace with a context-based Ingredient factory once one is available publicly
+        #[allow(deprecated)]
         let mut parent = Ingredient::from_stream(format, &mut source)?;
         parent.set_relationship(relationship);
         parent.set_title(name);
@@ -275,7 +276,7 @@ impl MakeTestImages {
         })
         .to_string();
 
-        let mut builder = Builder::from_json(&manifest_def)?;
+        let mut builder = Builder::default().with_definition(&manifest_def)?;
 
         // keep track of ingredient instances so we don't duplicate them
         let mut ingredient_table = HashMap::new();
@@ -499,7 +500,7 @@ impl MakeTestImages {
         let src_path = &self.make_path(src);
         let mut source = fs::File::open(src_path).context("opening ingredient")?;
 
-        let mut builder = Builder::from_json(&json)?;
+        let mut builder = Builder::default().with_definition(&json)?;
 
         let parent_name = file_name(&dst_path).ok_or(Error::BadParam("no filename".to_string()))?;
         builder.add_ingredient_from_stream(
@@ -618,16 +619,7 @@ impl MakeTestImages {
 
     /// Runs a list of recipes
     pub fn run(&self) -> Result<()> {
-        // Verify after sign is causing hash errors here, I don't know why yet.
-        // This is a temporary fix to allow the tests to run.
-        Settings::from_toml(
-            &toml::toml! {
-                [verify]
-                verify_after_sign = false
-            }
-            .to_string(),
-        )
-        .expect("failed to set verify settings");
+        // verify_after_sign defaults to false in Settings::default(), so no override needed.
 
         if !self.output_dir.exists() {
             std::fs::create_dir_all(&self.output_dir).context("Can't create output folder")?;
@@ -654,7 +646,7 @@ impl MakeTestImages {
                     .extension()
                     .and_then(|s| s.to_str())
                     .unwrap_or("jpg");
-                let reader = Reader::from_stream(format, &mut file)?;
+                let reader = Reader::default().with_stream(format, &mut file)?;
                 let json = reader.json();
 
                 let json_path = json_dir
@@ -691,6 +683,7 @@ pub mod tests {
         ]
     }"#;
 
+    #[allow(deprecated)]
     #[test]
     fn test_make_images() {
         use c2pa::settings::Settings;

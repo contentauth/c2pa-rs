@@ -981,7 +981,10 @@ pub mod tests {
     use byteorder::WriteBytesExt;
 
     use super::*;
-    use crate::utils::io_utils::tempdirectory;
+    use crate::{
+        utils::{io_utils::tempdirectory, test::test_context},
+        Builder, CallbackSigner, Reader, SigningAlg,
+    };
 
     /// Public test helper: builds a minimal JPEG XL container for use in integration tests.
     pub fn build_test_jxl_container() -> Vec<u8> {
@@ -2090,21 +2093,21 @@ pub mod tests {
     ///      `C2PA_BOXHASH` label; all non-excluded, non-CAI boxes carry a
     ///      non-empty hash.
     #[test]
-    fn test_e2e_jpegxl_sign_read_validate() -> crate::error::Result<()> {
+    fn test_e2e_jpegxl_sign_read_validate() -> Result<()> {
         // ── Test fixtures ────────────────────────────────────────────────────────
         static SAMPLE_JXL: &[u8] = include_bytes!("../../tests/fixtures/sample1.jxl");
         static CERTS: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
         static PRIVATE_KEY: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pem");
 
         // Ed25519 signing helper (same pattern used in v2_api_integration.rs)
-        fn ed_sign(data: &[u8], private_key: &[u8]) -> crate::error::Result<Vec<u8>> {
+        fn ed_sign(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>> {
             use ed25519_dalek::{Signature, Signer, SigningKey};
             use pem::parse;
-            let pem = parse(private_key).map_err(|e| crate::Error::OtherError(Box::new(e)))?;
+            let pem = parse(private_key).map_err(|e| Error::OtherError(Box::new(e)))?;
             // Ed25519 PKCS#8 private key: skip the 16-byte ASN.1 prefix.
             let key_bytes = &pem.contents()[16..];
-            let signing_key = SigningKey::try_from(key_bytes)
-                .map_err(|e| crate::Error::OtherError(Box::new(e)))?;
+            let signing_key =
+                SigningKey::try_from(key_bytes).map_err(|e| Error::OtherError(Box::new(e)))?;
             let signature: Signature = signing_key.sign(data);
             Ok(signature.to_bytes().to_vec())
         }
@@ -2113,10 +2116,10 @@ pub mod tests {
 
         // Load the test trust anchors and verification settings so that the
         // Ed25519 test certificate is trusted during read-back.
-        crate::Settings::from_toml(include_str!("../../tests/fixtures/test_settings.toml"))?;
+        let context = test_context().into_shared();
 
         let signer_fn = |_ctx: *const (), data: &[u8]| ed_sign(data, PRIVATE_KEY);
-        let signer = crate::CallbackSigner::new(signer_fn, crate::SigningAlg::Ed25519, CERTS);
+        let signer = CallbackSigner::new(signer_fn, SigningAlg::Ed25519, CERTS);
 
         let manifest_json = serde_json::json!({
             "title": "E2E JPEG XL Integration Test",
@@ -2155,7 +2158,8 @@ pub mod tests {
             ]
         });
 
-        let mut builder = crate::Builder::from_json(&manifest_json.to_string())?;
+        let mut builder =
+            Builder::from_shared_context(&context).with_definition(manifest_json.to_string())?;
 
         let mut source = Cursor::new(SAMPLE_JXL);
         let mut signed = Cursor::new(Vec::new());
@@ -2164,12 +2168,12 @@ pub mod tests {
         // ── Phase 2: Read back and validate manifest claims ──────────────────────
 
         signed.rewind().unwrap();
-        let reader = crate::Reader::from_stream("image/jxl", &mut signed)?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/jxl", &mut signed)?;
 
         // Active manifest must be present.
         let manifest = reader
             .active_manifest()
-            .ok_or_else(|| crate::Error::ClaimEncoding)?;
+            .ok_or_else(|| Error::ClaimEncoding)?;
 
         assert_eq!(
             manifest.title().unwrap_or_default(),

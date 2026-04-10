@@ -133,7 +133,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::builder::Builder;
+    use crate::Builder;
 
     const SPEC_EXAMPLE: &str = r#"{
         "@context" : {
@@ -170,7 +170,7 @@ pub mod tests {
 
     #[test]
     fn exif_new() {
-        let mut builder = Builder::new();
+        let mut builder = Builder::default();
 
         let original = Exif::new()
             .insert("exif:GPSLatitude", "39,21.102N")
@@ -185,7 +185,7 @@ pub mod tests {
 
     #[test]
     fn exif_from_json() {
-        let mut builder = Builder::new();
+        let mut builder = Builder::default();
         let original = Exif::from_json_str(SPEC_EXAMPLE).expect("from_json");
         builder
             .add_assertion(Exif::LABEL, &original)

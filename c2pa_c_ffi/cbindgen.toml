@@ -52,11 +52,32 @@ after_includes = """
     #endif
 #endif
 
+/* Deprecation macros: produce compiler warnings when deprecated C2PA functions are called.
+ * GCC/Clang __attribute__ is checked first because it is position-flexible
+ * (works after 'extern'), whereas C++ [[deprecated]] is only valid at the
+ * very start of a declaration and cbindgen emits the annotation after the
+ * 'extern' keyword. */
+#if defined(__GNUC__) || defined(__clang__)
+    #define C2PA_DEPRECATED __attribute__((deprecated))
+    #define C2PA_DEPRECATED_MSG(msg) __attribute__((deprecated(msg)))
+#elif defined(__cplusplus) && __cplusplus >= 201402L
+    #define C2PA_DEPRECATED [[deprecated]]
+    #define C2PA_DEPRECATED_MSG(msg) [[deprecated(msg)]]
+#elif defined(_MSC_VER)
+    #define C2PA_DEPRECATED __declspec(deprecated)
+    #define C2PA_DEPRECATED_MSG(msg) __declspec(deprecated(msg))
+#else
+    #define C2PA_DEPRECATED
+    #define C2PA_DEPRECATED_MSG(msg)
+#endif
+
 
 """
 
 [fn]
 prefix = "C2PA_API extern"
+deprecated = "C2PA_DEPRECATED"
+deprecated_with_note = "C2PA_DEPRECATED_MSG({})"
 
 [export]
 # Exclude internal functions from C API
