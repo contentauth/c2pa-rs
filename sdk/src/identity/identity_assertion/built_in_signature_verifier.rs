@@ -86,6 +86,13 @@ fn map_err_to_built_in<E: Into<BuiltInSignatureError>>(
         ValidationError::UnknownSignatureType(s) => ValidationError::UnknownSignatureType(s),
         ValidationError::SignatureMismatch => ValidationError::SignatureMismatch,
         ValidationError::InvalidPadding => ValidationError::InvalidPadding,
+        ValidationError::ExpectedPartialClaimMismatch => ValidationError::ExpectedPartialClaimMismatch,
+        ValidationError::ExpectedClaimGeneratorMismatch => {
+            ValidationError::ExpectedClaimGeneratorMismatch
+        }
+        ValidationError::ExpectedCountersignerMismatch(s) => {
+            ValidationError::ExpectedCountersignerMismatch(s)
+        }
         ValidationError::SignatureError(e) => ValidationError::SignatureError(e.into()),
         ValidationError::InternalError(s) => ValidationError::InternalError(s),
     }
@@ -333,6 +340,7 @@ mod tests {
                 )],
                 roles: vec!(),
                 sig_type: "cawg.identity_claims_aggregation".to_owned(),
+                ..Default::default()
             }
         );
 

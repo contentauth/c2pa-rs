@@ -19,10 +19,12 @@ use async_trait::async_trait;
 
 // Publish PostValidator trait from this module.
 pub use crate::reader::{AsyncPostValidator, PostValidator};
+use serde::Serialize;
+
 use crate::{
     hashed_uri::HashedUri,
     maybe_send_sync::{MaybeSend, MaybeSync},
-    Result,
+    ClaimGeneratorInfo, Result,
 };
 
 /// The type of content that can be returned by a [`DynamicAssertion`] content call.
@@ -132,9 +134,11 @@ pub trait AsyncDynamicAssertion: MaybeSync + MaybeSend {
 
 /// Describes information from the preliminary C2PA Claim that may
 /// be helpful in constructing the final content of a [`AsyncDynamicAssertion`].
-#[derive(Debug, Default, Eq, PartialEq)]
+#[derive(Debug, Default, Eq, PartialEq, Serialize)]
 pub struct PartialClaim {
     assertion_uris: Vec<HashedUri>,
+    claim_generator: Option<String>,
+    claim_generator_info: Option<Vec<ClaimGeneratorInfo>>,
 }
 
 impl PartialClaim {
@@ -145,5 +149,24 @@ impl PartialClaim {
 
     pub(crate) fn add_assertion(&mut self, assertion: &HashedUri) {
         self.assertion_uris.push(assertion.clone());
+    }
+
+    pub(crate) fn set_claim_generator(
+        &mut self,
+        claim_generator: Option<String>,
+        claim_generator_info: Option<Vec<ClaimGeneratorInfo>>,
+    ) {
+        self.claim_generator = claim_generator;
+        self.claim_generator_info = claim_generator_info;
+    }
+
+    /// Return the claim generator string.
+    pub fn claim_generator(&self) -> Option<&str> {
+        self.claim_generator.as_deref()
+    }
+
+    /// Return the claim generator info.
+    pub fn claim_generator_info(&self) -> Option<&[ClaimGeneratorInfo]> {
+        self.claim_generator_info.as_deref()
     }
 }

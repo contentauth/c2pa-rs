@@ -22,6 +22,7 @@ use crate::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
     identity::{builder::AsyncCredentialHolder, IdentityAssertion, SignerPayload},
+    HashedUri,
 };
 
 /// An `IdentityAssertionBuilder` gathers together the necessary components
@@ -40,6 +41,9 @@ pub struct IdentityAssertionBuilder {
     credential_holder: Box<dyn CredentialHolder + Sync + Send>,
     referenced_assertions: HashSet<String>,
     roles: Vec<String>,
+    expected_partial_claim: Option<HashedUri>,
+    expected_claim_generator: Option<HashedUri>,
+    expected_countersigners: Vec<HashedUri>,
 }
 
 impl IdentityAssertionBuilder {
@@ -52,6 +56,9 @@ impl IdentityAssertionBuilder {
             credential_holder: Box::new(credential_holder),
             referenced_assertions: HashSet::new(),
             roles: vec![],
+            expected_partial_claim: None,
+            expected_claim_generator: None,
+            expected_countersigners: vec![],
         }
     }
 
@@ -74,6 +81,23 @@ impl IdentityAssertionBuilder {
     pub fn add_roles(&mut self, roles: &[&str]) {
         for role in roles {
             self.roles.push(role.to_string());
+        }
+    }
+
+    /// Set the hash of the expected partial claim.
+    pub fn set_expected_partial_claim(&mut self, expected: HashedUri) {
+        self.expected_partial_claim = Some(expected);
+    }
+
+    /// Set the hash of the expected claim signer credential.
+    pub fn set_expected_claim_generator(&mut self, expected: HashedUri) {
+        self.expected_claim_generator = Some(expected);
+    }
+
+    /// Add descriptions of other expected identity assertions.
+    pub fn add_expected_countersigners(&mut self, expected: &[HashedUri]) {
+        for e in expected {
+            self.expected_countersigners.push(e.clone());
         }
     }
 }
@@ -120,6 +144,9 @@ impl DynamicAssertion for IdentityAssertionBuilder {
             referenced_assertions,
             sig_type: self.credential_holder.sig_type().to_owned(),
             roles: self.roles.clone(),
+            expected_partial_claim: self.expected_partial_claim.clone(),
+            expected_claim_generator: self.expected_claim_generator.clone(),
+            expected_countersigners: self.expected_countersigners.clone(),
         };
 
         let signature_result = self.credential_holder.sign(&signer_payload);
@@ -145,6 +172,9 @@ pub struct AsyncIdentityAssertionBuilder {
 
     referenced_assertions: HashSet<String>,
     roles: Vec<String>,
+    expected_partial_claim: Option<HashedUri>,
+    expected_claim_generator: Option<HashedUri>,
+    expected_countersigners: Vec<HashedUri>,
 }
 
 // SAFETY: On wasm32, there is no threading, so Send is trivially safe
@@ -161,6 +191,9 @@ impl AsyncIdentityAssertionBuilder {
             credential_holder: Box::new(credential_holder),
             referenced_assertions: HashSet::new(),
             roles: vec![],
+            expected_partial_claim: None,
+            expected_claim_generator: None,
+            expected_countersigners: vec![],
         }
     }
 
@@ -183,6 +216,23 @@ impl AsyncIdentityAssertionBuilder {
     pub fn add_roles(&mut self, roles: &[&str]) {
         for role in roles {
             self.roles.push(role.to_string());
+        }
+    }
+
+    /// Set the hash of the expected partial claim.
+    pub fn set_expected_partial_claim(&mut self, expected: HashedUri) {
+        self.expected_partial_claim = Some(expected);
+    }
+
+    /// Set the hash of the expected claim signer credential.
+    pub fn set_expected_claim_generator(&mut self, expected: HashedUri) {
+        self.expected_claim_generator = Some(expected);
+    }
+
+    /// Add descriptions of other expected identity assertions.
+    pub fn add_expected_countersigners(&mut self, expected: &[HashedUri]) {
+        for e in expected {
+            self.expected_countersigners.push(e.clone());
         }
     }
 }
@@ -231,6 +281,9 @@ impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
             referenced_assertions,
             sig_type: self.credential_holder.sig_type().to_owned(),
             roles: self.roles.clone(),
+            expected_partial_claim: self.expected_partial_claim.clone(),
+            expected_claim_generator: self.expected_claim_generator.clone(),
+            expected_countersigners: self.expected_countersigners.clone(),
         };
 
         let signature_result = self.credential_holder.sign(&signer_payload).await;

@@ -2925,6 +2925,10 @@ impl Store {
             for assertion in pc.assertions() {
                 preliminary_claim.add_assertion(assertion);
             }
+            preliminary_claim.set_claim_generator(
+                pc.claim_generator().map(|s| s.to_string()),
+                pc.claim_generator_info().map(|v| v.to_vec()),
+            );
         }
 
         // Now add the dynamic assertions and update the JUMBF.
@@ -3028,6 +3032,10 @@ impl Store {
             for assertion in pc.assertions() {
                 preliminary_claim.add_assertion(assertion);
             }
+            preliminary_claim.set_claim_generator(
+                pc.claim_generator().map(|s| s.to_string()),
+                pc.claim_generator_info().map(|v| v.to_vec()),
+            );
         }
 
         // Now add the dynamic assertions and update the JUMBF.
