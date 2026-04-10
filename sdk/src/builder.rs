@@ -496,7 +496,7 @@ impl Builder {
     /// # Returns
     /// * A new [`Builder`].
     #[deprecated(
-        note = "Use `Builder::default()` for default settings, or `Builder::from_context(context)` to pass an explicit `Context`."
+        note = "Use `Builder::default()` for default settings, or `Builder::from_context(context)` and pass settings in the `Context`."
     )]
     pub fn new() -> Self {
         // Legacy behavior: explicitly get global settings for backward compatibility
