@@ -73,7 +73,7 @@ use crate::{
     log_item,
     manifest_store_report::ManifestStoreReport,
     maybe_send_sync::MaybeSend,
-    settings::{builder::OcspFetchScope, Settings},
+    settings::{builder::OcspFetchScope, Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
@@ -1386,6 +1386,14 @@ impl Store {
                 .sbox;
 
             let num_assertions = assertion_store_box.data_box_count();
+
+            // Reject manifests that embed more assertions than the configured limit to
+            // prevent unbounded memory and CPU consumption on untrusted input.
+            if num_assertions > MAX_ASSERTIONS {
+                return Err(Error::TooManyAssertions {
+                    max: MAX_ASSERTIONS,
+                });
+            }
 
             // loop over all assertions in assertion store...
             let mut check_for_legacy_assertion = true;

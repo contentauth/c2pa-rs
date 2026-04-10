@@ -48,7 +48,7 @@ use crate::{
     jumbf_io,
     maybe_send_sync::MaybeSend,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
-    settings::builder::TimeStampFetchScope,
+    settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
     store::Store,
     utils::{hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime},
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
@@ -802,7 +802,15 @@ impl Builder {
 
     /// Adds a CBOR assertion to the manifest.
     /// In most cases, use this function instead of `add_assertion_json`, unless the assertion must be stored in JSON format.
-    ///
+    fn check_assertion_limit(&self) -> Result<()> {
+        if self.definition.assertions.len() >= MAX_ASSERTIONS {
+            return Err(Error::TooManyAssertions {
+                max: MAX_ASSERTIONS,
+            });
+        }
+        Ok(())
+    }
+
     /// # Arguments
     /// * `label` - A label for the assertion.
     /// * `data` - The data for the assertion. The data can be any Serde-serializable type or an AssertionDefinition.
@@ -815,6 +823,7 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
+        self.check_assertion_limit()?;
         let created = false;
         self.definition.assertions.push(AssertionDefinition {
             label: label.into(),
@@ -840,6 +849,7 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
+        self.check_assertion_limit()?;
         let created = false;
         self.definition.assertions.push(AssertionDefinition {
             label: label.into(),
@@ -7598,6 +7608,27 @@ mod tests {
         }
 
         assert!(reader.active_manifest().is_some());
+    }
+
+    #[test]
+    fn test_add_assertion_limit() {
+        // Verify all MAX_ASSERTIONS assertions succeed and the next one is rejected.
+        let mut builder = Builder::new();
+        let data = serde_json::json!({"value": 1});
+        for i in 0..MAX_ASSERTIONS {
+            builder
+                .add_assertion_json(format!("org.test.assertion.{i}"), &data)
+                .expect("should succeed within limit");
+        }
+        let err = builder
+            .add_assertion_json("org.test.assertion.overflow", &data)
+            .expect_err("assertion beyond limit should be rejected");
+        assert!(matches!(
+            err,
+            Error::TooManyAssertions {
+                max: MAX_ASSERTIONS
+            }
+        ));
     }
 
     // Ensures that the future returned by `Builder::sign_async` implements `Send`, thus making it
