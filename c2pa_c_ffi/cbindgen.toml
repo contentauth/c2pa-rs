@@ -73,7 +73,7 @@ after_includes = """
 [fn]
 prefix = "C2PA_API extern"
 deprecated = "C2PA_DEPRECATED"
-deprecated_with_note = "C2PA_DEPRECATED_MSG"
+deprecated_with_note = "C2PA_DEPRECATED_MSG({})"
 
 [export]
 # Exclude internal functions from C API
