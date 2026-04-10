@@ -15,9 +15,11 @@ use std::io::{self, Cursor, Seek};
 
 #[cfg(not(target_arch = "wasm32"))]
 use c2pa::identity::validator::CawgValidator;
+#[cfg(not(target_arch = "wasm32"))]
+use c2pa::Settings;
 use c2pa::{
     validation_status, Builder, BuilderIntent, Context, Error, ManifestAssertionKind, Reader,
-    Result, Settings, ValidationState,
+    Result, ValidationState,
 };
 
 mod common;

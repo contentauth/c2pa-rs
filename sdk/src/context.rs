@@ -802,11 +802,10 @@ impl Context {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::utils::test_signer::async_test_signer;
     use crate::{
-        utils::{
-            test::test_context,
-            test_signer::{async_test_signer, test_signer},
-        },
+        utils::{test::test_context, test_signer::test_signer},
         SigningAlg,
     };
 

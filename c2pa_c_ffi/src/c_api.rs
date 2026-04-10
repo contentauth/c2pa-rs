@@ -930,6 +930,10 @@ pub unsafe extern "C" fn c2pa_context_cancel(ctx: *mut C2paContext) -> c_int {
 /// and it is no longer valid after that call.
 #[cfg(feature = "file_io")]
 #[no_mangle]
+#[deprecated(
+    note = "Use c2pa_reader_from_context() with an explicit context for new implementations."
+)]
+#[allow(deprecated)]
 pub unsafe extern "C" fn c2pa_read_file(
     path: *const c_char,
     data_dir: *const c_char,
@@ -957,6 +961,9 @@ pub unsafe extern "C" fn c2pa_read_file(
 /// and it is no longer valid after that call.
 #[cfg(feature = "file_io")]
 #[no_mangle]
+#[deprecated(
+    note = "Use c2pa_builder_add_ingredient_from_stream() with an explicit context for new implementations."
+)]
 #[allow(deprecated)]
 pub unsafe extern "C" fn c2pa_read_ingredient_file(
     path: *const c_char,
@@ -998,6 +1005,10 @@ pub struct C2paSignerInfo {
 /// and it is no longer valid after that call.
 #[cfg(feature = "file_io")]
 #[no_mangle]
+#[deprecated(
+    note = "Use c2pa_builder_from_context() with c2pa_builder_sign_to_stream() for new implementations."
+)]
+#[allow(deprecated)]
 pub unsafe extern "C" fn c2pa_sign_file(
     source_path: *const c_char,
     dest_path: *const c_char,
@@ -1024,12 +1035,12 @@ pub unsafe extern "C" fn c2pa_sign_file(
 }
 
 /// Frees a string allocated by Rust.
-/// Deprecated, use c2pa_free instead
 ///
 /// # Safety
 /// The string must not have been modified in C.
 /// The string can only be freed once and is invalid after this call.
 #[no_mangle]
+#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
 pub unsafe extern "C" fn c2pa_release_string(s: *mut c_char) {
     cimpl_free!(s);
 }
@@ -1101,6 +1112,7 @@ pub unsafe extern "C" fn c2pa_free(ptr: *const c_void) -> c_int {
 /// The string must not have been modified in C.
 /// The string can only be freed once and is invalid after this call.
 #[no_mangle]
+#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
 pub unsafe extern "C" fn c2pa_string_free(s: *mut c_char) {
     cimpl_free!(s);
 }
@@ -1124,6 +1136,7 @@ pub unsafe extern "C" fn c2pa_free_string_array(ptr: *const *const c_char, count
 
     let mut_ptr = ptr as *mut *mut c_char;
     // Free each string directly using the pointer.
+    #[allow(deprecated)]
     for i in 0..count {
         c2pa_string_free(*mut_ptr.add(i));
     }
@@ -1431,6 +1444,7 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
 /// # Safety
 /// The C2paReader can only be freed once and is invalid after this call.
 #[no_mangle]
+#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
 pub unsafe extern "C" fn c2pa_reader_free(reader_ptr: *mut C2paReader) {
     cimpl_free!(reader_ptr);
 }
@@ -1653,6 +1667,7 @@ pub unsafe extern "C" fn c2pa_builder_supported_mime_types(
 /// # Safety
 /// The C2paBuilder can only be freed once and is invalid after this call.
 #[no_mangle]
+#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
 pub unsafe extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) {
     cimpl_free!(builder_ptr);
 }
@@ -2098,6 +2113,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_context(
 /// # Safety
 /// The bytes can only be freed once and are invalid after this call.
 #[no_mangle]
+#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
 pub unsafe extern "C" fn c2pa_manifest_bytes_free(manifest_bytes_ptr: *const c_uchar) {
     cimpl_free!(manifest_bytes_ptr);
 }
@@ -2712,6 +2728,7 @@ pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -
 /// # Safety
 /// The C2paSigner can only be freed once and is invalid after this call.
 #[no_mangle]
+#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
 pub unsafe extern "C" fn c2pa_signer_free(signer_ptr: *const C2paSigner) {
     cimpl_free!(signer_ptr);
 }
@@ -2744,6 +2761,7 @@ pub unsafe extern "C" fn c2pa_ed25519_sign(
 ///
 /// # Safety
 /// The signature can only be freed once and is invalid after this call.
+#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
 pub unsafe extern "C" fn c2pa_signature_free(signature_ptr: *const u8) {
     cimpl_free!(signature_ptr);
 }

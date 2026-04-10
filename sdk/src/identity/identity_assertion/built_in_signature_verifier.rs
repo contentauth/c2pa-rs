@@ -186,8 +186,9 @@ mod tests {
             x509::AsyncX509CredentialHolder,
             IdentityAssertion, SignerPayload, ValidationError,
         },
+        settings::Settings,
         status_tracker::StatusTracker,
-        Builder, HashedUri, Reader, SigningAlg,
+        Builder, Context, HashedUri, Reader, SigningAlg,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
@@ -266,7 +267,10 @@ mod tests {
 
     #[c2pa_test_async]
     async fn adobe_connected_identities() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        let settings = Settings::new()
+            .with_value("verify.verify_trust", false)
+            .unwrap();
+        let context = Context::new().with_settings(settings).unwrap();
 
         let format = "image/jpeg";
         let test_image =
@@ -274,7 +278,7 @@ mod tests {
 
         let mut test_image = Cursor::new(test_image);
 
-        let reader = Reader::default()
+        let reader = Reader::from_context(context)
             .with_stream(format, &mut test_image)
             .unwrap();
         assert_eq!(reader.validation_status(), None);

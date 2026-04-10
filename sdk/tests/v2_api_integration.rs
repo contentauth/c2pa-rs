@@ -196,7 +196,7 @@ mod integration_v2 {
             dest.rewind()?;
         }
 
-        let reader = Reader::default().with_stream(format, &mut dest)?;
+        let reader = Reader::from_context(test_context()).with_stream(format, &mut dest)?;
 
         // extract a thumbnail image from the ManifestStore
         let mut thumbnail = Cursor::new(Vec::new());
