@@ -466,7 +466,7 @@ mod tests {
             }]
         }"#;
 
-        let mut builder = Builder::from_json(json).expect("from json");
+        let mut builder = Builder::default().with_definition(json).expect("from json");
         builder
             .add_resource("abc123", Cursor::new(value))
             .expect("add_resource");
@@ -490,7 +490,9 @@ mod tests {
             .expect("sign");
 
         output_image.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output_image).expect("from_bytes");
+        let reader = Reader::default()
+            .with_stream("jpeg", &mut output_image)
+            .expect("from_bytes");
         let _json = reader.json();
         println!("{_json}");
     }

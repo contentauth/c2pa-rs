@@ -79,7 +79,7 @@ pub fn tree<P: AsRef<Path>>(path: P) -> Result<String> {
         .ok_or_else(|| crate::Error::BadParam("bad filename".to_string()))?;
     let asset_name = os_filename.to_string_lossy().into_owned();
 
-    let reader = Reader::from_file(path)?;
+    let reader = Reader::default().with_file(path)?;
 
     // walk through the manifests and show the contents
     Ok(if let Some(manifest_label) = reader.active_label() {

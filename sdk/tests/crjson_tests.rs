@@ -14,4 +14,5 @@
 //! CrJSON integration tests.
 //! Tests are organized in the crjson/ subfolder.
 
+mod common;
 mod crjson;

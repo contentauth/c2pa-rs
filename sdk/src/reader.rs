@@ -34,6 +34,7 @@ use serde_with::skip_serializing_none;
 use crate::utils::io_utils::uri_to_path;
 use crate::{
     assertion::AssertionBase,
+    assertions::Metadata,
     claim::Claim,
     context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
@@ -127,6 +128,9 @@ impl Reader {
     /// This method takes ownership of the [`Context`] and wraps it in an [`Arc`] internally.
     /// Use this for single-use contexts where you don't need to share the context.
     ///
+    /// Use [`Reader::default()`] when no special configuration is needed.
+    /// Use [`Reader::from_shared_context`] to share a context across multiple readers.
+    ///
     /// # Arguments
     /// * `context` - The [`Context`] to use for the Reader
     ///
@@ -138,6 +142,10 @@ impl Reader {
     /// ```
     /// # use c2pa::{Context, Reader, Result};
     /// # fn main() -> Result<()> {
+    /// // With default settings (no explicit context needed):
+    /// let reader = Reader::default();
+    ///
+    /// // With custom settings:
     /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
     /// let reader = Reader::from_context(context);
     /// # Ok(())
@@ -228,6 +236,9 @@ impl Reader {
     /// A [`Reader`] for the manifest store.
     /// # Note
     /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
+    #[deprecated(
+        note = "Use `Reader::from_context(context).with_stream(format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+    )]
     #[async_generic]
     pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -263,7 +274,7 @@ impl Reader {
     /// ```no_run
     /// use c2pa::{Context, Reader};
     /// # fn main() -> c2pa::Result<()> {
-    /// let reader = Reader::from_context(Context::new()).with_file("path/to/file.jpg")?;
+    /// let reader = Reader::default().with_file("path/to/file.jpg")?;
     /// # Ok(())
     /// # }
     /// ```
@@ -355,6 +366,9 @@ impl Reader {
     /// # Note
     /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[cfg(feature = "file_io")]
+    #[deprecated(
+        note = "Use `Reader::from_context(context).with_file(path)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+    )]
     #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
         // Legacy behavior: explicitly get thread-local settings for backward compatibility
@@ -436,6 +450,9 @@ impl Reader {
     /// # Errors
     /// This function returns an [`Error`] ef the c2pa_data is not valid, or severe errors occur in validation.
     /// You must check validation status for non-severe errors.
+    #[deprecated(
+        note = "Use `Reader::from_context(context).with_manifest_data_and_stream(c2pa_data, format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+    )]
     #[async_generic]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
@@ -519,9 +536,9 @@ impl Reader {
         fragment: impl Read + Seek + MaybeSend,
     ) -> Result<Self> {
         if _sync {
-            Reader::from_context(Context::new()).with_fragment(format, stream, fragment)
+            Reader::default().with_fragment(format, stream, fragment)
         } else {
-            Reader::from_context(Context::new())
+            Reader::default()
                 .with_fragment_async(format, stream, fragment)
                 .await
         }
@@ -569,6 +586,9 @@ impl Reader {
     /// would be used to load and validate fragmented MP4 files that span
     /// multiple separate asset files.
     #[cfg(feature = "file_io")]
+    #[deprecated(
+        note = "Use `Reader::from_context(context).with_fragmented_files(path, fragments)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+    )]
     pub fn from_fragmented_files<P: AsRef<std::path::Path>>(
         path: P,
         fragments: &Vec<std::path::PathBuf>,
@@ -837,9 +857,7 @@ impl Reader {
     /// use c2pa::{Context, Reader};
     /// // Create a Reader from an in-memory stream (placeholder bytes shown here).
     /// let input = Cursor::new(Vec::new());
-    /// let reader = Reader::from_context(Context::new())
-    ///     .with_stream("image/jpeg", input)
-    ///     .unwrap();
+    /// let reader = Reader::default().with_stream("image/jpeg", input).unwrap();
     ///
     /// // Get a resource identifier from the active manifest (e.g., a thumbnail).
     /// let manifest = reader.active_manifest().unwrap();
@@ -1252,6 +1270,19 @@ impl Reader {
         Ok(builder)
     }
 
+    /// Returns the [`ArchiveType`] from the active manifest's `org.contentauth.archive.metadata` assertion, if present.
+    pub(crate) fn active_archive_type(&self) -> Option<crate::assertions::labels::ArchiveType> {
+        let manifest = self.active_manifest()?;
+        let metadata: Metadata = manifest
+            .find_assertion(crate::assertions::labels::ARCHIVE_METADATA)
+            .ok()?;
+        metadata
+            .value
+            .get("archive:type")
+            .and_then(|v: &Value| v.as_str())
+            .map(crate::assertions::labels::ArchiveType::from_str)
+    }
+
     /// Convert a Reader into an [`Ingredient`] using the parent ingredient from the active manifest.
     /// # Errors
     /// Returns an [`Error`] if there is no parent ingredient.
@@ -1362,7 +1393,8 @@ pub mod tests {
 
     #[test]
     fn test_reader_embedded() -> Result<()> {
-        let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+        let reader =
+            Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
         assert_eq!(reader.remote_url(), None);
         assert!(reader.is_embedded());
 
@@ -1388,7 +1420,8 @@ pub mod tests {
     #[test]
     #[cfg(feature = "fetch_remote_manifests")]
     fn test_reader_remote_url() -> Result<()> {
-        let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?;
+        let reader =
+            Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?;
         let remote_url = reader.remote_url();
         assert_eq!(remote_url, Some("https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391"));
         assert!(!reader.is_embedded());
@@ -1399,7 +1432,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_reader_from_file_no_manifest() -> Result<()> {
-        let result = Reader::from_file("tests/fixtures/IMG_0003.jpg");
+        let result = Reader::default().with_file("tests/fixtures/IMG_0003.jpg");
         assert!(matches!(result, Err(Error::JumbfNotFound)));
         Ok(())
     }
@@ -1407,7 +1440,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_reader_from_file_validation_err() -> Result<()> {
-        let reader = Reader::from_file("tests/fixtures/XCA.jpg")?;
+        let reader = Reader::default().with_file("tests/fixtures/XCA.jpg")?;
         assert!(reader.validation_status().is_some());
         assert_eq!(
             reader.validation_status().unwrap()[0].code(),
@@ -1503,8 +1536,8 @@ pub mod tests {
     #[test]
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_nested_resource() -> Result<()> {
-        let reader =
-            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
+        let reader = Reader::default()
+            .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         assert_eq!(reader.validation_status(), None);
         assert_eq!(reader.manifests.len(), 3);
         let manifest = reader.active_manifest().unwrap();
@@ -1527,7 +1560,7 @@ pub mod tests {
         }
 
         use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
-        let reader = Reader::from_stream(
+        let reader = Reader::default().with_stream(
             "image/jpeg",
             std::io::Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST),
         )?;
@@ -1556,7 +1589,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_detailed_json() -> Result<()> {
-        let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+        let reader = Reader::default().with_file("tests/fixtures/CACAE-uri-CA.jpg")?;
         let json = reader.json();
         let detailed_json = reader.detailed_json();
         let parsed_json: Value = serde_json::from_str(json.as_str())?;
@@ -1587,8 +1620,8 @@ pub mod tests {
     fn test_reader_post_validate() -> Result<()> {
         use crate::{log_item, status_tracker::StatusTracker};
 
-        let mut reader =
-            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
+        let mut reader = Reader::default()
+            .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
 
         struct TestValidator;
         impl PostValidator for TestValidator {

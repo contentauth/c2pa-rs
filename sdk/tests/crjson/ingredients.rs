@@ -21,7 +21,7 @@ const IMAGE_WITH_INGREDIENT: &[u8] = include_bytes!("../fixtures/CA.jpg");
 
 #[test]
 fn test_ingredient_assertions_included() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
     let json_value = reader.to_crjson_value()?;
 
     // Get manifests array
@@ -82,7 +82,7 @@ fn test_ingredient_assertions_included() -> Result<()> {
 
 #[test]
 fn test_ingredient_count_matches() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
     let json_value = reader.to_crjson_value()?;
 
     // Get manifests array
@@ -114,7 +114,7 @@ fn test_ingredient_count_matches() -> Result<()> {
 
 #[test]
 fn test_ingredient_referenced_in_claim() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
     let json_value = reader.to_crjson_value()?;
 
     // Get manifests array
@@ -203,7 +203,7 @@ fn test_ingredient_referenced_in_claim() -> Result<()> {
 
 #[test]
 fn test_ingredient_in_actions_parameter() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
     let json_value = reader.to_crjson_value()?;
 
     // Get manifests array
@@ -247,7 +247,7 @@ fn test_multiple_ingredients_have_instances() -> Result<()> {
     // For files with multiple ingredients, they would be labeled:
     // c2pa.ingredient__1, c2pa.ingredient__2, etc.
 
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
     let json_value = reader.to_crjson_value()?;
 
     let manifests = json_value["manifests"]
@@ -278,7 +278,7 @@ fn test_multiple_ingredients_have_instances() -> Result<()> {
 
 #[test]
 fn test_ingredient_label_matches_version() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
     let json_value = reader.to_crjson_value()?;
 
     let manifests = json_value["manifests"]

@@ -14,7 +14,9 @@ fn create_signer() -> CallbackSigner {
 }
 
 fn create_builder() -> Builder {
-    Builder::from_json(MANIFEST_JSON).expect("failed to create builder from manifest JSON")
+    Builder::default()
+        .with_definition(MANIFEST_JSON)
+        .expect("failed to create builder from manifest JSON")
 }
 
 fn sign_jpeg(c: &mut Criterion) {
