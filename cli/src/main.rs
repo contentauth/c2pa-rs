@@ -339,16 +339,16 @@ fn main() -> Result<()> {
             external_manifest,
             output,
             force,
-        } => commands::show::run(
+        } => commands::show::run(&commands::show::ShowArgs {
             input,
-            *detailed,
-            *tree,
-            *certs,
-            *info,
-            external_manifest.as_ref(),
-            output.as_ref(),
-            *force,
-        ),
+            detailed: *detailed,
+            tree: *tree,
+            certs: *certs,
+            info: *info,
+            external_manifest: external_manifest.as_ref(),
+            output: output.as_ref(),
+            force: *force,
+        }),
 
         Commands::Ingredient {
             input,
@@ -370,14 +370,16 @@ fn main() -> Result<()> {
             force,
         } => commands::sign::run_create(
             input,
-            manifest.as_ref(),
-            manifest_json.as_ref(),
             ingredients,
-            output,
-            *archive,
-            *sidecar,
-            remote.as_ref(),
-            *force,
+            &commands::sign::SignArgs {
+                manifest: manifest.as_ref(),
+                manifest_json: manifest_json.as_ref(),
+                output,
+                archive: *archive,
+                sidecar: *sidecar,
+                remote: remote.as_ref(),
+                force: *force,
+            },
         ),
 
         Commands::Edit {
@@ -394,14 +396,16 @@ fn main() -> Result<()> {
         } => commands::sign::run_edit(
             parent,
             input.as_ref(),
-            manifest.as_ref(),
-            manifest_json.as_ref(),
             ingredients,
-            output,
-            *archive,
-            *sidecar,
-            remote.as_ref(),
-            *force,
+            &commands::sign::SignArgs {
+                manifest: manifest.as_ref(),
+                manifest_json: manifest_json.as_ref(),
+                output,
+                archive: *archive,
+                sidecar: *sidecar,
+                remote: remote.as_ref(),
+                force: *force,
+            },
         ),
 
         Commands::Update {
@@ -415,13 +419,15 @@ fn main() -> Result<()> {
             force,
         } => commands::sign::run_update(
             input,
-            manifest.as_ref(),
-            manifest_json.as_ref(),
-            output,
-            *archive,
-            *sidecar,
-            remote.as_ref(),
-            *force,
+            &commands::sign::SignArgs {
+                manifest: manifest.as_ref(),
+                manifest_json: manifest_json.as_ref(),
+                output,
+                archive: *archive,
+                sidecar: *sidecar,
+                remote: remote.as_ref(),
+                force: *force,
+            },
         ),
 
         Commands::Resume {

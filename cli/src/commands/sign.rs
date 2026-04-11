@@ -19,46 +19,48 @@ use super::{
     create_builder_from_json, load_ingredient, load_manifest_json, save_archive, sign_to_output,
 };
 
-pub fn run_create(
-    input: &Path,
-    manifest: Option<&PathBuf>,
-    manifest_json: Option<&String>,
-    ingredients: &[PathBuf],
-    output: &Path,
-    archive: bool,
-    sidecar: bool,
-    remote: Option<&String>,
-    force: bool,
-) -> Result<()> {
-    let (json, base_path) = load_manifest_json(manifest, manifest_json)?;
+/// Common signing options shared by create, edit, and update commands.
+pub struct SignArgs<'a> {
+    pub manifest: Option<&'a PathBuf>,
+    pub manifest_json: Option<&'a String>,
+    pub output: &'a Path,
+    pub archive: bool,
+    pub sidecar: bool,
+    pub remote: Option<&'a String>,
+    pub force: bool,
+}
+
+pub fn run_create(input: &Path, ingredients: &[PathBuf], args: &SignArgs) -> Result<()> {
+    let (json, base_path) = load_manifest_json(args.manifest, args.manifest_json)?;
     let (mut builder, sign_config) = create_builder_from_json(&json, base_path.as_ref())?;
 
     add_manifest_ingredients(&mut builder, &json, base_path.as_ref())?;
     add_cli_ingredients(&mut builder, ingredients)?;
-    configure_remote_sidecar(&mut builder, remote, sidecar);
+    configure_remote_sidecar(&mut builder, args.remote, args.sidecar);
 
-    if archive {
-        save_archive(&mut builder, output, force)
+    if args.archive {
+        save_archive(&mut builder, args.output, args.force)
     } else {
-        sign_to_output(&mut builder, &sign_config, input, output, sidecar, force)
+        sign_to_output(
+            &mut builder,
+            &sign_config,
+            input,
+            args.output,
+            args.sidecar,
+            args.force,
+        )
     }
 }
 
 pub fn run_edit(
     parent: &Path,
     input: Option<&PathBuf>,
-    manifest: Option<&PathBuf>,
-    manifest_json: Option<&String>,
     ingredients: &[PathBuf],
-    output: &Path,
-    archive: bool,
-    sidecar: bool,
-    remote: Option<&String>,
-    force: bool,
+    args: &SignArgs,
 ) -> Result<()> {
     let input_path = input.map(|p| p.as_path()).unwrap_or(parent);
 
-    let (json, base_path) = load_manifest_json(manifest, manifest_json)?;
+    let (json, base_path) = load_manifest_json(args.manifest, args.manifest_json)?;
     let (mut builder, sign_config) = create_builder_from_json(&json, base_path.as_ref())?;
 
     add_manifest_ingredients(&mut builder, &json, base_path.as_ref())?;
@@ -68,33 +70,24 @@ pub fn run_edit(
     builder.add_ingredient(parent_ingredient);
 
     add_cli_ingredients(&mut builder, ingredients)?;
-    configure_remote_sidecar(&mut builder, remote, sidecar);
+    configure_remote_sidecar(&mut builder, args.remote, args.sidecar);
 
-    if archive {
-        save_archive(&mut builder, output, force)
+    if args.archive {
+        save_archive(&mut builder, args.output, args.force)
     } else {
         sign_to_output(
             &mut builder,
             &sign_config,
             input_path,
-            output,
-            sidecar,
-            force,
+            args.output,
+            args.sidecar,
+            args.force,
         )
     }
 }
 
-pub fn run_update(
-    input: &Path,
-    manifest: Option<&PathBuf>,
-    manifest_json: Option<&String>,
-    output: &Path,
-    archive: bool,
-    sidecar: bool,
-    remote: Option<&String>,
-    force: bool,
-) -> Result<()> {
-    let (json, base_path) = load_manifest_json(manifest, manifest_json)?;
+pub fn run_update(input: &Path, args: &SignArgs) -> Result<()> {
+    let (json, base_path) = load_manifest_json(args.manifest, args.manifest_json)?;
     let (mut builder, sign_config) = create_builder_from_json(&json, base_path.as_ref())?;
 
     add_manifest_ingredients(&mut builder, &json, base_path.as_ref())?;
@@ -103,11 +96,18 @@ pub fn run_update(
     parent_ingredient.set_is_parent();
     builder.add_ingredient(parent_ingredient);
 
-    configure_remote_sidecar(&mut builder, remote, sidecar);
+    configure_remote_sidecar(&mut builder, args.remote, args.sidecar);
 
-    if archive {
-        save_archive(&mut builder, output, force)
+    if args.archive {
+        save_archive(&mut builder, args.output, args.force)
     } else {
-        sign_to_output(&mut builder, &sign_config, input, output, sidecar, force)
+        sign_to_output(
+            &mut builder,
+            &sign_config,
+            input,
+            args.output,
+            args.sidecar,
+            args.force,
+        )
     }
 }

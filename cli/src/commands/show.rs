@@ -22,22 +22,24 @@ use c2pa::Reader;
 use super::{special_errs, validate_cawg};
 use crate::info::info;
 
-pub fn run(
-    input: &Path,
-    detailed: bool,
-    tree: bool,
-    certs: bool,
-    show_info: bool,
-    external_manifest: Option<&PathBuf>,
-    output: Option<&PathBuf>,
-    force: bool,
-) -> Result<()> {
-    if show_info {
-        return info(input);
+pub struct ShowArgs<'a> {
+    pub input: &'a Path,
+    pub detailed: bool,
+    pub tree: bool,
+    pub certs: bool,
+    pub info: bool,
+    pub external_manifest: Option<&'a PathBuf>,
+    pub output: Option<&'a PathBuf>,
+    pub force: bool,
+}
+
+pub fn run(args: &ShowArgs) -> Result<()> {
+    if args.info {
+        return info(args.input);
     }
 
-    if certs {
-        let reader = Reader::from_file(input).map_err(special_errs)?;
+    if args.certs {
+        let reader = Reader::from_file(args.input).map_err(special_errs)?;
         if let Some(manifest) = reader.active_manifest() {
             if let Some(si) = manifest.signature_info() {
                 println!("{}", si.cert_chain());
@@ -47,29 +49,29 @@ pub fn run(
         bail!("No certificate chain found");
     }
 
-    if tree {
-        println!("{}", crate::tree::tree(input)?);
+    if args.tree {
+        println!("{}", crate::tree::tree(args.input)?);
         return Ok(());
     }
 
-    let mut reader = if let Some(external_manifest) = external_manifest {
+    let mut reader = if let Some(external_manifest) = args.external_manifest {
         let c2pa_data = fs::read(external_manifest)?;
-        let format = match c2pa::format_from_path(input) {
+        let format = match c2pa::format_from_path(args.input) {
             Some(format) => format,
-            None => bail!("Format for {:?} is unrecognized", input),
+            None => bail!("Format for {:?} is unrecognized", args.input),
         };
-        Reader::from_manifest_data_and_stream(&c2pa_data, &format, File::open(input)?)
+        Reader::from_manifest_data_and_stream(&c2pa_data, &format, File::open(args.input)?)
             .map_err(special_errs)?
     } else {
-        Reader::from_file(input).map_err(special_errs)?
+        Reader::from_file(args.input).map_err(special_errs)?
     };
 
     validate_cawg(&mut reader)?;
 
-    if let Some(output_path) = output {
-        write_report(&reader, output_path, detailed, force)?;
+    if let Some(output_path) = args.output {
+        write_report(&reader, output_path, args.detailed, args.force)?;
     } else {
-        print_report(&reader, detailed)?;
+        print_report(&reader, args.detailed)?;
     }
 
     Ok(())
