@@ -14,47 +14,28 @@
 
 /// Tool to display and create C2PA manifests.
 ///
-/// A file path to an asset must be provided. If only the path
-/// is given, this will generate a summary report of any claims
-/// in that file. If a manifest definition JSON file is specified,
-/// the claim will be added to any existing claims.
-use std::{
-    env,
-    fs::{self, copy, create_dir_all, remove_dir_all, remove_file, File},
-    io::Write,
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::Arc,
-};
+/// A file path to an asset must be provided. If only the path is given, a
+/// summary report of any C2PA claims in that file is displayed. If a manifest
+/// definition JSON file is specified with -m/--manifest, the claim is added to
+/// any existing claims in the asset.
+use std::{path::PathBuf, sync::Arc};
 
-use anyhow::{anyhow, bail, Context, Result};
-use c2pa::{
-    format_from_path, identity::validator::CawgValidator, settings::Settings, Builder,
-    ClaimGeneratorInfo, Context as C2paContext, Error, Ingredient, ManifestDefinition, Reader,
-    Signer,
-};
+use anyhow::{bail, Context, Result};
+use c2pa::{settings::Settings, Context as C2paContext};
 use clap::{Parser, Subcommand};
 use etcetera::BaseStrategy;
-use log::debug;
-use serde::Deserialize;
-use signer::SignConfig;
-use tempfile::NamedTempFile;
-#[cfg(not(target_os = "wasi"))]
-use tokio::runtime::Runtime;
-use url::Url;
-#[cfg(target_os = "wasi")]
-use wstd::runtime::block_on;
-
-use crate::{
-    callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
-    info::info,
-};
-
-mod info;
-mod tree;
 
 mod callback_signer;
+mod fragment;
+mod info;
+mod read;
+mod sign;
 mod signer;
+mod tree;
+mod trust;
+mod util;
+
+use trust::{apply_trust_settings, parse_resource_string, TrustResource};
 
 /// Tool for displaying and creating C2PA manifests.
 #[derive(Parser, Debug)]
@@ -101,7 +82,7 @@ struct CliArgs {
     #[clap(long)]
     external_manifest: Option<PathBuf>,
 
-    /// Generate a sidecar (.c2pa) manifest
+    /// Generate a sidecar (.c2pa) manifest.
     #[clap(short, long)]
     sidecar: bool,
 
@@ -132,29 +113,13 @@ struct CliArgs {
     #[clap(long)]
     signer_path: Option<PathBuf>,
 
-    /// To be used with the [callback_signer] argument. This value should at least: size of CoseSign1 CBOR +
-    /// the size of certificate chain provided in the manifest definition's `sign_cert` field + the size of the
-    /// signature of the Time Stamp Authority response. A typical size of CoseSign1 CBOR is in the 1-2K range. If
-    /// the reserve size is too small an error will be returned during signing.
-    /// For example:
+    /// Reserve size for the external signer's CoseSign1 CBOR output.
     ///
-    /// The reserve-size can be calculated like this if you aren't including a `tsa_url` key in
-    /// your manifest description:
-    ///
-    ///     1024 + sign_cert.len()
-    ///
-    /// Or, if you are including a `tsa_url` in your manifest definition, you will calculate the
-    /// reserve size like this:
-    ///
-    ///     1024 + sign_cert.len() + tsa_signature_response.len()
-    ///
-    /// Note:
-    /// We'll default the `reserve-size` to a value of 20_000, if no value is provided. This
-    /// will probably leave extra `0`s of unused space. Please specify a reserve-size if possible.
+    /// A typical value is: 1024 + sign_cert.len() (+ tsa_signature_response.len()
+    /// if using a TSA). Defaults to 20000 if not specified.
     #[clap(long, default_value("20000"))]
     reserve_size: usize,
 
-    // TODO: ideally this would be called config, not to be confused with the other config arg
     /// Path to the settings file in JSON or TOML.
     ///
     /// By default the settings file is read from `$XDG_CONFIG_HOME/c2pa/c2pa.toml`.
@@ -174,239 +139,45 @@ fn default_settings_path() -> PathBuf {
     path
 }
 
-#[derive(Clone, Debug)]
-enum TrustResource {
-    File(PathBuf),
-    Url(Url),
-}
-
-fn parse_resource_string(s: &str) -> Result<TrustResource> {
-    if let Ok(url) = s.parse::<Url>() {
-        Ok(TrustResource::Url(url))
-    } else {
-        let p = PathBuf::from_str(s)?;
-
-        Ok(TrustResource::File(p))
-    }
-}
-
 // We only construct one per invocation, not worth shrinking this.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Sub-command to configure trust store options, "trust --help for more details"
+    /// Configure trust store options — use `trust --help` for details.
     Trust {
-        /// URL or path to file containing list of trust anchors in PEM format
-        #[arg(long = "trust_anchors", env="C2PATOOL_TRUST_ANCHORS", value_parser = parse_resource_string)]
+        /// URL or path to file containing list of trust anchors in PEM format.
+        #[arg(long = "trust_anchors", env = "C2PATOOL_TRUST_ANCHORS", value_parser = parse_resource_string)]
         trust_anchors: Option<TrustResource>,
 
-        /// URL or path to file containing specific manifest signing certificates in PEM format to implicitly trust
-        #[arg(long = "allowed_list", env="C2PATOOL_ALLOWED_LIST", value_parser = parse_resource_string)]
+        /// URL or path to file containing specific manifest signing certificates to implicitly trust.
+        #[arg(long = "allowed_list", env = "C2PATOOL_ALLOWED_LIST", value_parser = parse_resource_string)]
         allowed_list: Option<TrustResource>,
 
-        /// URL or path to file containing configured EKUs in Oid dot notation
-        #[arg(long = "trust_config", env="C2PATOOL_TRUST_CONFIG", value_parser = parse_resource_string)]
+        /// URL or path to file containing configured EKUs in Oid dot notation.
+        #[arg(long = "trust_config", env = "C2PATOOL_TRUST_CONFIG", value_parser = parse_resource_string)]
         trust_config: Option<TrustResource>,
     },
-    /// Sub-command to add manifest to fragmented BMFF content
+    /// Add a C2PA manifest to fragmented BMFF content.
     ///
-    /// The init path can be a glob to process entire directories of content, for example:
+    /// The init path can be a glob to process entire directories of content:
     ///
-    /// c2patool -m test2.json -o /my_output_folder "/my_renditions/**/my_init.mp4" fragment --fragments_glob "myfile_abc*[0-9].m4s"
+    ///   c2patool -m test.json -o /output "/renditions/**/init.mp4" fragment \
+    ///       --fragments_glob "file_abc*[0-9].m4s"
     ///
-    /// NOTE: The glob patterns are quoted to prevent shell expansion.
+    /// NOTE: Quote glob patterns to prevent shell expansion.
     Fragment {
-        /// Glob pattern to find the fragments of the asset. The path is automatically set to be the same as
-        /// the init segment.
-        ///
-        /// The fragments_glob pattern should only match fragment file names not the full paths (e.g. "myfile_abc*[0-9].m4s"
-        /// to match [myfile_abc1.m4s, myfile_abc2180.m4s, ...] )
+        /// Glob pattern matching fragment file names (not full paths).
         #[arg(long = "fragments_glob", verbatim_doc_comment)]
         fragments_glob: Option<PathBuf>,
     },
 }
 
-#[derive(Debug, Default, Deserialize)]
-// Add fields that are not part of the standard Manifest
-struct ManifestDef {
-    #[serde(flatten)]
-    manifest: ManifestDefinition,
-    // allows adding ingredients with file paths
-    ingredient_paths: Option<Vec<PathBuf>>,
-}
-
-// Convert certain errors to output messages.
-fn special_errs(e: c2pa::Error) -> anyhow::Error {
-    match e {
-        Error::JumbfNotFound => anyhow!("No claim found"),
-        Error::FileNotFound(name) => anyhow!("File not found: {name}"),
-        Error::UnsupportedType => anyhow!("Unsupported file type"),
-        Error::XmpNotSupported => {
-            anyhow!("Format does not support XMP; cannot embed a remote URL reference")
-        }
-        Error::PrereleaseError => anyhow!("Prerelease claim found"),
-        _ => e.into(),
-    }
-}
-
-// Normalize extensions so we can compare them.
-fn ext_normal(path: &Path) -> String {
-    let ext = path
-        .extension()
-        .unwrap_or_default()
-        .to_str()
-        .unwrap_or_default()
-        .to_lowercase();
-    match ext.as_str() {
-        "jpeg" => "jpg".to_string(),
-        "tiff" => "tif".to_string(),
-        _ => ext,
-    }
-}
-
-// loads an ingredient, allowing for a folder or json ingredient
-fn load_ingredient(path: &Path) -> Result<Ingredient> {
-    // if the path is a folder, look for ingredient.json
-    let mut path_buf = PathBuf::from(path);
-    let path = if path.is_dir() {
-        path_buf = path_buf.join("ingredient.json");
-        path_buf.as_path()
-    } else {
-        path
-    };
-    if path.extension() == Some(std::ffi::OsStr::new("json")) {
-        let json = std::fs::read_to_string(path)?;
-        let mut ingredient: Ingredient = serde_json::from_slice(json.as_bytes())?;
-        if let Some(base) = path.parent() {
-            ingredient.resources_mut().set_base_path(base);
-        }
-        Ok(ingredient)
-    } else {
-        #[allow(deprecated)]
-        let result = Ingredient::from_file(path)?;
-        Ok(result)
-    }
-}
-
-fn load_trust_resource(resource: &TrustResource) -> Result<String> {
-    match resource {
-        TrustResource::File(path) => {
-            let data = std::fs::read_to_string(path)
-                .with_context(|| format!("Failed to read trust resource from path: {path:?}"))?;
-
-            Ok(data)
-        }
-        TrustResource::Url(url) => {
-            #[cfg(not(target_os = "wasi"))]
-            let data = reqwest::blocking::get(url.to_string())?
-                .text()
-                .with_context(|| format!("Failed to read trust resource from URL: {url}"))?;
-
-            #[cfg(target_os = "wasi")]
-            let data = blocking_get(&url.to_string())?;
-            Ok(data)
-        }
-    }
-}
-
-#[cfg(target_os = "wasi")]
-fn blocking_get(url: &str) -> Result<String> {
-    use std::io::Read;
-
-    use url::Url;
-    use wasi::http::{
-        outgoing_handler,
-        types::{Fields, OutgoingRequest, Scheme},
-    };
-
-    let parsed_url =
-        Url::parse(url).map_err(|e| Error::ResourceNotFound(format!("invalid URL: {}", e)))?;
-    let path_with_query = parsed_url[url::Position::BeforeHost..].to_string();
-    let request = OutgoingRequest::new(Fields::new());
-    request.set_path_with_query(Some(&path_with_query)).unwrap();
-
-    // Set the scheme based on the URL.
-    let scheme = match parsed_url.scheme() {
-        "http" => Scheme::Http,
-        "https" => Scheme::Https,
-        _ => return Err(anyhow!("unsupported URL scheme".to_string(),)),
-    };
-
-    request.set_scheme(Some(&scheme)).unwrap();
-
-    match outgoing_handler::handle(request, None) {
-        Ok(resp) => {
-            resp.subscribe().block();
-
-            let response = resp
-                .get()
-                .expect("HTTP request response missing")
-                .expect("HTTP request response requested more than once")
-                .expect("HTTP request failed");
-
-            if response.status() == 200 {
-                let raw_header = response.headers().get("Content-Length");
-                if raw_header.first().map(|val| val.is_empty()).unwrap_or(true) {
-                    return Err(anyhow!("url returned no content length".to_string()));
-                }
-
-                let str_parsed_header = match std::str::from_utf8(raw_header.first().unwrap()) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        return Err(anyhow!(format!(
-                            "error parsing content length header: {}",
-                            e
-                        )))
-                    }
-                };
-
-                let content_length: usize = match str_parsed_header.parse() {
-                    Ok(s) => s,
-                    Err(e) => {
-                        return Err(anyhow!(format!(
-                            "error parsing content length header: {}",
-                            e
-                        )))
-                    }
-                };
-
-                let body = {
-                    let mut buf = Vec::with_capacity(content_length);
-                    let response_body = response
-                        .consume()
-                        .expect("failed to get incoming request body");
-                    let mut stream = response_body
-                        .stream()
-                        .expect("failed to get response body stream");
-                    stream
-                        .read_to_end(&mut buf)
-                        .expect("failed to read response body");
-                    buf
-                };
-
-                let body_string = std::str::from_utf8(&body)
-                    .map_err(|e| anyhow!(format!("invalid UTF-8: {}", e)))?;
-                Ok(body_string.to_string())
-            } else {
-                Err(anyhow!(format!(
-                    "fetch failed: code: {}",
-                    response.status(),
-                )))
-            }
-        }
-
-        Err(e) => Err(anyhow!(e.to_string())),
-    }
-}
-
-fn configure_sdk(args: &CliArgs) -> Result<Settings> {
+fn configure_sdk(args: &CliArgs) -> Result<(Settings, Arc<C2paContext>)> {
     let mut settings = if args.settings.exists() {
         Settings::new().with_file(&args.settings)?
     } else {
         Settings::default()
     };
-
-    let mut enable_trust_checks = false;
 
     if let Some(Commands::Trust {
         trust_anchors,
@@ -414,230 +185,21 @@ fn configure_sdk(args: &CliArgs) -> Result<Settings> {
         trust_config,
     }) = &args.command
     {
-        if let Some(trust_list) = &trust_anchors {
-            debug!("Using trust anchors from {trust_list:?}");
-
-            let data = load_trust_resource(trust_list)?;
-            settings.update_from_str(
-                &toml::toml! {
-                    [trust]
-                    trust_anchors = data
-                }
-                .to_string(),
-                "toml",
-            )?;
-
-            enable_trust_checks = true;
-        }
-
-        if let Some(allowed_list) = &allowed_list {
-            debug!("Using allowed list from {allowed_list:?}");
-
-            let data = load_trust_resource(allowed_list)?;
-            settings.update_from_str(
-                &toml::toml! {
-                    [trust]
-                    allowed_list = data
-                }
-                .to_string(),
-                "toml",
-            )?;
-
-            enable_trust_checks = true;
-        }
-
-        if let Some(trust_config) = &trust_config {
-            debug!("Using trust config from {trust_config:?}");
-
-            let data = load_trust_resource(trust_config)?;
-            settings.update_from_str(
-                &toml::toml! {
-                    [trust]
-                    trust_config = data
-                }
-                .to_string(),
-                "toml",
-            )?;
-
-            enable_trust_checks = true;
-        }
-    }
-
-    // if any trust setting is provided enable the trust checks
-    // there is no disabling of default setting only the ability to enable if they were internally disabled
-    if enable_trust_checks {
-        settings.update_from_str(
-            &toml::toml! {
-                [verify]
-                verify_trust = true
-            }
-            .to_string(),
-            "toml",
+        apply_trust_settings(
+            &mut settings,
+            trust_anchors.as_ref(),
+            allowed_list.as_ref(),
+            trust_config.as_ref(),
         )?;
     }
 
-    Ok(settings)
-}
-
-fn sign_fragmented(
-    builder: &mut Builder,
-    signer: &dyn Signer,
-    init_pattern: &Path,
-    frag_pattern: &PathBuf,
-    output_path: &Path,
-) -> Result<()> {
-    // search folders for init segments
-    let ip = init_pattern.to_str().ok_or(c2pa::Error::OtherError(
-        "could not parse source pattern".into(),
-    ))?;
-    let inits = glob::glob(ip).context("could not process glob pattern")?;
-    let mut count = 0;
-    for init in inits {
-        match init {
-            Ok(p) => {
-                let mut fragments = Vec::new();
-                let init_dir = p.parent().context("init segment had no parent dir")?;
-                let seg_glob = init_dir.join(frag_pattern); // segment match pattern
-
-                // grab the fragments that go with this init segment
-                let seg_glob_str = seg_glob.to_str().context("fragment path not valid")?;
-                let seg_paths = glob::glob(seg_glob_str).context("fragment glob not valid")?;
-                for seg in seg_paths {
-                    match seg {
-                        Ok(f) => fragments.push(f),
-                        Err(_) => return Err(anyhow!("fragment path not valid")),
-                    }
-                }
-
-                println!("Adding manifest to: {p:?}");
-                let new_output_path =
-                    output_path.join(init_dir.file_name().context("invalid file name")?);
-                builder.sign_fragmented_files(signer, &p, &fragments, &new_output_path)?;
-
-                count += 1;
-            }
-            Err(_) => bail!("bad path to init segment"),
-        }
-    }
-    if count == 0 {
-        println!("No files matching pattern: {ip}");
-    }
-    Ok(())
-}
-
-fn verify_fragmented(
-    init_pattern: &Path,
-    frag_pattern: &Path,
-    context: &Arc<C2paContext>,
-) -> Result<Vec<Reader>> {
-    let mut readers = Vec::new();
-
-    let ip = init_pattern
-        .to_str()
-        .context("could not parse source pattern")?;
-    let inits = glob::glob(ip).context("could not process glob pattern")?;
-    let mut count = 0;
-
-    // search folders for init segments
-    for init in inits {
-        match init {
-            Ok(p) => {
-                let mut fragments = Vec::new();
-                let init_dir = p.parent().context("init segment had no parent dir")?;
-                let seg_glob = init_dir.join(frag_pattern); // segment match pattern
-
-                // grab the fragments that go with this init segment
-                let seg_glob_str = seg_glob.to_str().context("fragment path not valid")?;
-                let seg_paths = glob::glob(seg_glob_str).context("fragment glob not valid")?;
-                for seg in seg_paths {
-                    match seg {
-                        Ok(f) => fragments.push(f),
-                        Err(_) => return Err(anyhow!("fragment path not valid")),
-                    }
-                }
-
-                println!("Verifying manifest: {p:?}");
-                let reader =
-                    Reader::from_shared_context(context).with_fragmented_files(p, &fragments)?;
-                if let Some(vs) = reader.validation_status() {
-                    if let Some(e) = vs.iter().find(|v| !v.passed()) {
-                        eprintln!("Error validating segments: {e:?}");
-                        return Ok(readers);
-                    }
-                }
-
-                readers.push(reader);
-
-                count += 1;
-            }
-            Err(_) => bail!("bad path to init segment"),
-        }
-    }
-
-    if count == 0 {
-        println!("No files matching pattern: {ip}");
-    }
-
-    Ok(readers)
-}
-
-// run cawg validation if supported
-fn validate_cawg(reader: &mut Reader) -> Result<()> {
-    #[cfg(not(target_os = "wasi"))]
-    {
-        Runtime::new()?
-            .block_on(reader.post_validate_async(&CawgValidator {}))
-            .map_err(anyhow::Error::from)
-    }
-    #[cfg(target_os = "wasi")]
-    {
-        block_on(reader.post_validate_async(&CawgValidator {})).map_err(anyhow::Error::from)
-    }
-}
-
-fn reader_from_args(args: &CliArgs, context: &Arc<C2paContext>) -> Result<Reader> {
-    if let Some(external_manifest) = &args.external_manifest {
-        let c2pa_data = fs::read(external_manifest)?;
-        let format = match c2pa::format_from_path(&args.path) {
-            Some(format) => format,
-            None => {
-                bail!("Format for {:?} is unrecognized", args.path);
-            }
-        };
-        Ok(Reader::from_shared_context(context)
-            .with_manifest_data_and_stream(&c2pa_data, &format, File::open(&args.path)?)
-            .map_err(special_errs)?)
-    } else {
-        Ok(Reader::from_shared_context(context)
-            .with_file(&args.path)
-            .map_err(special_errs)?)
-    }
-}
-
-// Utility to catch reader formatting errors and print the reader json or detailed json
-// formatting can fail if Reader CBOR is deeply nested or malformed
-fn print_reader(reader: &Reader, detailed: bool, crjson: bool) -> Result<()> {
-    let result = if crjson {
-        reader.crjson_checked()
-    } else if detailed {
-        reader.detailed_json_checked()
-    } else {
-        reader.json_checked()
-    }
-    .map_err(|e| anyhow!("Error formatting output: {}", e));
-    match result {
-        Ok(json) => {
-            println!("{json}");
-            Ok(())
-        }
-        Err(e) => bail!("Error formatting output: {}", e),
-    }
+    let context = Arc::new(C2paContext::new().with_settings(&settings)?);
+    Ok((settings, context))
 }
 
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
-    // set RUST_LOG=debug to get detailed debug logging
     if std::env::var("RUST_LOG").is_err() {
         std::env::set_var("RUST_LOG", "error");
     }
@@ -646,18 +208,16 @@ fn main() -> Result<()> {
     let path = &args.path;
 
     if args.info {
-        return info(path);
+        return info::info(path);
     }
 
     if args.cert_chain {
-        let reader = Reader::from_context(C2paContext::new())
+        let reader = c2pa::Reader::from_context(C2paContext::new())
             .with_file(path)
-            .map_err(special_errs)?;
-        // todo: add cawg certs here??
+            .map_err(util::special_errs)?;
         if let Some(manifest) = reader.active_manifest() {
             if let Some(si) = manifest.signature_info() {
                 println!("{}", si.cert_chain());
-                // todo: add ocsp validation info
                 return Ok(());
             }
         }
@@ -674,32 +234,10 @@ fn main() -> Result<()> {
         Some(Commands::Fragment { fragments_glob: _ })
     );
 
-    // configure the SDK
-    let mut settings = configure_sdk(&args).context("Could not configure c2pa-rs")?;
-    let context = Arc::new(C2paContext::new().with_settings(&settings)?);
+    let (mut settings, context) = configure_sdk(&args).context("Could not configure c2pa-rs")?;
 
-    // Remove manifest needs to also remove XMP provenance
-    // if args.remove_manifest {
-    //     match args.output {
-    //         Some(output) => {
-    //             if output.exists() && !args.force {
-    //                 bail!("Output already exists; use -f/force to force write");
-    //             }
-    //             if path != &output {
-    //                 std::fs::copy(path, &output)?;
-    //             }
-    //             Manifest::remove_manifest(&output)?
-    //         },
-    //         None => {
-    //             bail!("The -o/--output argument is required for this operation");
-    //         }
-    //     }
-    //     return Ok(());
-    // }
-
-    // if we have a manifest config, process it
+    // --- Signing path: manifest JSON or inline config was provided ---
     if args.manifest.is_some() || args.config.is_some() {
-        // read the json from file or config, and get base path if from file
         let (json, base_path) = match args.manifest.as_deref() {
             Some(manifest_path) => {
                 let base_path = std::fs::canonicalize(manifest_path)?
@@ -713,236 +251,91 @@ fn main() -> Result<()> {
             ),
         };
 
-        // read the signing information from the manifest definition
-        let mut sign_config = SignConfig::from_json(&json)?;
+        let (mut builder, mut sign_config) =
+            sign::setup_builder(&json, base_path.as_ref(), &context)?;
 
-        // read the manifest information
-        let manifest_def: ManifestDef = serde_json::from_slice(json.as_bytes())?;
-        let mut builder = Builder::from_shared_context(&context).with_definition(&json)?;
-        let mut manifest = manifest_def.manifest;
-
-        // add claim_tool generator so we know this was created using this tool
-        let mut tool_generator = ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME"));
-        tool_generator.set_version(env!("CARGO_PKG_VERSION"));
-        if !manifest.claim_generator_info.is_empty()
-            || manifest.claim_generator_info[0].name == "c2pa-rs"
-        {
-            manifest.claim_generator_info = vec![tool_generator];
-        } else {
-            manifest.claim_generator_info.insert(1, tool_generator);
-        }
-
-        // set manifest base path before ingredients so ingredients can override it
-        if let Some(base) = base_path.as_ref() {
-            builder.set_base_path(base);
+        // sign_config also needs the base path for resolving key/cert files.
+        if let Some(base) = &base_path {
             sign_config.set_base_path(base);
         }
 
-        // Add any ingredients specified as file paths
-        if let Some(paths) = manifest_def.ingredient_paths {
-            for mut path in paths {
-                // ingredient paths are relative to the manifest path
-                if let Some(base) = &base_path {
-                    if !(path.is_absolute()) {
-                        path = base.join(&path)
-                    }
-                }
-                let ingredient = load_ingredient(&path)?;
-                builder.add_ingredient(ingredient);
-            }
-        }
-
         if let Some(parent_path) = args.parent {
-            let mut ingredient = load_ingredient(&parent_path)?;
+            let mut ingredient = util::load_ingredient(&parent_path)?;
             ingredient.set_is_parent();
             builder.add_ingredient(ingredient);
         }
 
-        // If the source file has a manifest store, and no parent is specified treat the source as a parent.
-        // note: This could be treated as an update manifest eventually since the image is the same
-        let has_parent = builder.definition.ingredients.iter().any(|i| i.is_parent());
-        if !has_parent && !is_fragment {
-            #[allow(deprecated)]
-            let mut source_ingredient = Ingredient::from_file(&args.path)?;
-            if source_ingredient.manifest_data().is_some() {
-                source_ingredient.set_is_parent();
-                builder.add_ingredient(source_ingredient);
+        sign::maybe_add_source_as_parent(&mut builder, path, is_fragment);
+        sign::configure_output_mode(&mut builder, args.remote.as_ref(), args.sidecar);
+
+        let signer = sign::select_signer(
+            &sign_config,
+            &mut settings,
+            args.signer_path,
+            args.reserve_size,
+        )?;
+
+        let output = args
+            .output
+            .as_ref()
+            .context("Output path required with manifest definition")?;
+
+        if let Some(Commands::Fragment { fragments_glob }) = &args.command {
+            if output.exists() && !output.is_dir() {
+                bail!("Output cannot point to existing file, must be a directory");
             }
+            let fg = fragments_glob
+                .as_ref()
+                .context("fragments_glob must be set")?;
+            return fragment::sign_fragmented(&mut builder, signer.as_ref(), path, fg, output);
         }
 
-        if let Some(remote) = args.remote {
-            if args.sidecar {
-                builder.set_no_embed(true);
-                builder.set_remote_url(remote);
-            } else {
-                builder.set_remote_url(remote);
-            }
-        } else if args.sidecar {
-            builder.set_no_embed(true);
-        }
-
-        let signer = if let Some(signer_process_name) = args.signer_path {
-            let cb_config = CallbackSignerConfig::new(&sign_config, args.reserve_size)?;
-
-            let process_runner = Box::new(ExternalProcessRunner::new(
-                cb_config.clone(),
-                signer_process_name,
-            ));
-            let signer = CallbackSigner::new(process_runner, cb_config);
-
-            Box::new(signer)
-        } else if let Some(signer_cfg) = settings.signer.take() {
-            let c2pa_signer = signer_cfg.c2pa_signer()?;
-            if let Some(cawg_cfg) = settings.cawg_x509_signer.take() {
-                cawg_cfg.cawg_signer(c2pa_signer)?
-            } else {
-                c2pa_signer
-            }
-        } else {
-            sign_config.signer()?
+        let opts = sign::OutputOptions {
+            output,
+            sidecar: args.sidecar,
+            force: args.force,
         };
+        sign::sign_to_output(&mut builder, signer.as_ref(), path, &opts)?;
 
-        if let Some(output) = args.output {
-            // fragmented embedding
-            if let Some(Commands::Fragment { fragments_glob }) = &args.command {
-                if output.exists() && !output.is_dir() {
-                    bail!("Output cannot point to existing file, must be a directory");
-                }
+        // Show a report on the signed output.
+        let mut reader = c2pa::Reader::from_shared_context(&context)
+            .with_file(output)
+            .map_err(util::special_errs)?;
+        util::validate_cawg(&mut reader)?;
+        read::print_reader(&reader, args.detailed, args.crjson)?;
 
-                if let Some(fg) = &fragments_glob {
-                    return sign_fragmented(&mut builder, signer.as_ref(), &args.path, fg, &output);
-                } else {
-                    bail!("fragments_glob must be set");
-                }
-            } else {
-                if ext_normal(&output) != ext_normal(&args.path) {
-                    bail!("Output type must match source type");
-                }
-                if output.exists() {
-                    if args.force && output != args.path {
-                        remove_file(&output)?;
-                    } else if !args.force {
-                        bail!("Output already exists; use -f/force to force write");
-                    }
-                }
-                if output.file_name().is_none() {
-                    bail!("Missing filename on output");
-                }
-                if output.extension().is_none() {
-                    bail!("Missing extension output");
-                }
-
-                let manifest_data = if args.path != output {
-                    builder
-                        .sign_file(signer.as_ref(), &args.path, &output)
-                        .context("embedding manifest")?
-                } else {
-                    let mut file = NamedTempFile::new()?;
-                    let format = format_from_path(&args.path)
-                        .ok_or(c2pa::Error::UnsupportedType)
-                        .context("unsupported file type")?;
-                    let mut source = File::open(&args.path)?;
-                    if builder.definition.title.is_none() {
-                        if let Some(title) = output.file_name() {
-                            builder.definition.title = Some(title.to_string_lossy().to_string());
-                        }
-                    }
-                    let manifest_data =
-                        builder.sign(signer.as_ref(), &format, &mut source, &mut file)?;
-
-                    if !output.exists() {
-                        // ensure the path to the file exists
-                        if let Some(output_dir) = &output.parent() {
-                            create_dir_all(output_dir)?;
-                        }
-                    }
-
-                    match file.persist(&output) {
-                        Ok(_) => {}
-                        Err(e) => {
-                            let file = e.file;
-                            copy(file, &output)?;
-                        }
-                    }
-
-                    manifest_data
-                };
-
-                if args.sidecar {
-                    let sidecar = output.with_extension("c2pa");
-                    let mut file = File::create(&sidecar)?;
-                    file.write_all(&manifest_data)?;
-                }
-
-                // generate a report on the output file
-                let mut reader = Reader::from_shared_context(&context)
-                    .with_file(&output)
-                    .map_err(special_errs)?;
-                validate_cawg(&mut reader)?;
-                print_reader(&reader, args.detailed, args.crjson)?;
-            }
-        } else {
-            bail!("Output path required with manifest definition")
-        }
+    // --- Read-only path: output folder requested without a manifest ---
     } else if args.parent.is_some() || args.sidecar || args.remote.is_some() {
         bail!("Manifest definition required with these options or flags")
     } else if let Some(output) = args.output {
         if output.is_file() || output.extension().is_some() {
             bail!("Output must be a folder for this option.")
         }
-        if output.exists() {
-            if args.force {
-                remove_dir_all(&output)?;
-            } else {
-                bail!("Output already exists; use -f/force to force write");
-            }
-        }
-        create_dir_all(&output)?;
         if args.ingredient {
-            #[allow(deprecated)]
-            let report = Ingredient::from_file_with_folder(&args.path, &output)
-                .map_err(special_errs)?
-                .to_string();
-            File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
-            println!("Ingredient report written to the directory {:?}", &output);
+            read::write_ingredient_to_folder(path, &output, args.force)?;
         } else {
-            let mut reader = Reader::from_shared_context(&context)
-                .with_file(&args.path)
-                .map_err(special_errs)?;
-            validate_cawg(&mut reader)?;
-            reader.to_folder(&output)?;
-            let report = reader.to_string();
-            if args.detailed {
-                // for a detailed report first call the above to generate the thumbnails
-                // then call this to add the detailed report
-                let detailed = format!("{reader:#?}");
-                File::create(output.join("detailed.json"))?.write_all(&detailed.into_bytes())?;
-            }
-            File::create(output.join("manifest_store.json"))?.write_all(&report.into_bytes())?;
-            println!("Manifest report written to the directory {:?}", &output);
+            read::write_reader_to_folder(path, &output, args.detailed, args.force, &context)?;
         }
+
+    // --- Ingredient report to stdout ---
     } else if args.ingredient {
         #[allow(deprecated)]
-        let ingredient = Ingredient::from_file(&args.path).map_err(special_errs)?;
-        println!("{}", ingredient)
+        let ingredient = c2pa::Ingredient::from_file(path).map_err(util::special_errs)?;
+        println!("{ingredient}");
+
+    // --- Fragmented read/verify ---
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
     }) = &args.command
     {
-        let mut stores = verify_fragmented(&args.path, fg, &context)?;
-        if stores.len() == 1 {
-            validate_cawg(&mut stores[0])?;
-            println!("{}", stores[0]);
-        } else {
-            for store in &mut stores {
-                validate_cawg(store)?;
-            }
-            println!("{} Init manifests validated", stores.len());
-        }
+        let mut stores = fragment::verify_fragmented(path, fg, &context)?;
+        fragment::print_verified(&mut stores)?;
+
+    // --- Default: read and display manifest ---
     } else {
-        let mut reader = reader_from_args(&args, &context)?;
-        validate_cawg(&mut reader)?;
-        print_reader(&reader, args.detailed, args.crjson)?;
+        let mut reader = read::open_reader(path, args.external_manifest.as_ref(), &context)?;
+        util::validate_cawg(&mut reader)?;
+        read::print_reader(&reader, args.detailed, args.crjson)?;
     }
 
     Ok(())
@@ -984,10 +377,10 @@ pub mod tests {
         const SOURCE_PATH: &str = "tests/fixtures/earth_apollo17.jpg";
         let tempdir = tempdirectory().unwrap();
         let output_path = tempdir.path().join("unit_out.jpg");
-        let mut builder = Builder::from_json(CONFIG).expect("from_json");
+        let mut builder = c2pa::Builder::from_json(CONFIG).expect("from_json");
         builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
-        let signer = SignConfig::from_json(CONFIG)
+        let signer = signer::SignConfig::from_json(CONFIG)
             .unwrap()
             .set_base_path("sample")
             .signer()
@@ -997,11 +390,10 @@ pub mod tests {
             .sign_file(signer.as_ref(), SOURCE_PATH, &output_path)
             .expect("embed");
 
-        let ms = Reader::from_file(output_path)
+        let ms = c2pa::Reader::from_file(output_path)
             .expect("from_file")
             .to_string();
         println!("{ms}");
-        //let ms = report_from_path(&OUTPUT_PATH, false).expect("report_from_path");
         assert!(ms.contains("my_key"));
     }
 }
