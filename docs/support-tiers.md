@@ -78,21 +78,21 @@ The [Tier 1B workflow](https://github.com/contentauth/c2pa-rs/blob/main/.github/
 ### Tier 1B for c2pa-rs
 
 * **Ubuntu:** `x86_64-unknown-linux-gnu`, Rust `MSRV`, `all` features, `openssl` | `rust_native_crypto`, `glibc`
-* **Ubuntu (ARM):** `aarch-unknown-linux-gnu`, Rust `stable` | `MSRV`, `all` features, `openssl` | `rust_native_crypto`, `glibc`
+* **Ubuntu (ARM):** `aarch64-unknown-linux-gnu`, Rust `stable` | `MSRV`, `all` features, `openssl` | `rust_native_crypto`, `glibc`
 * **MacOS:** `aarch64-apple-darwin`, Rust `stable` | `MSRV`, `all` features, `openssl` | `rust_native_crypto`
 * **Windows:** `x86_64-pc-windows-msvc`, Rust `stable` | `MSRV`, `all` features, `openssl` | `rust_native_crypto`
 
 ### Tier 1B for c2pa-c-ffi
 
 * **Ubuntu:** `x86_64-unknown-linux-gnu`, Rust `MSRV`, `all` features, `openssl` | `rust_native_crypto`, `glibc`
-* **Ubuntu (ARM):** `aarch-unknown-linux-gnu`, Rust `stable` | `MSRV`, `all` features, `openssl` | `rust_native_crypto`, `glibc`
+* **Ubuntu (ARM):** `aarch64-unknown-linux-gnu`, Rust `stable` | `MSRV`, `all` features, `openssl` | `rust_native_crypto`, `glibc`
 * **MacOS:** `aarch64-apple-darwin`, Rust `stable` | `MSRV`, `all` features, `openssl` | `rust_native_crypto`
 * **Windows:** `x86_64-pc-windows-msvc`, Rust `stable` | `MSRV`, `all` features, `openssl` | `rust_native_crypto`
 
 ### Tier 1B for c2patool
 
 * **Ubuntu:** `x86_64-unknown-linux-gnu`, Rust `MSRV`, `all` features, `openssl` | `rust_native_crypto`, `glibc`
-* **Ubuntu (ARM):** `aarch-unknown-linux-gnu`, Rust `stable` | `MSRV`, `all` features, `openssl` | `rust_native_crypto`, `glibc`
+* **Ubuntu (ARM):** `aarch64-unknown-linux-gnu`, Rust `stable` | `MSRV`, `all` features, `openssl` | `rust_native_crypto`, `glibc`
 * **MacOS:** `aarch64-apple-darwin`, Rust `stable` | `MSRV`, `all` features, `openssl` | `rust_native_crypto`
 * **Windows:** `x86_64-pc-windows-msvc`, Rust `stable` | `MSRV`, `all` features, `openssl` | `rust_native_crypto`
 
