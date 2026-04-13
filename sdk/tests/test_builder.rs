@@ -832,7 +832,7 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
 
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
-    let mut settings = Settings::new().with_toml(TEST_SETTINGS)?;
+    let mut settings = test_settings();
     settings.core.prefer_compress_manifests = true;
     let context = Context::new().with_settings(settings)?.into_shared();
     let mut source = Cursor::new(include_bytes!("fixtures/CA.jpg"));

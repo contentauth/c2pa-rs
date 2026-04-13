@@ -3956,7 +3956,7 @@ impl Store {
             } else {
                 log_item!(
                     ingredient_label.clone(),
-                    "ingredient missing missing",
+                    "ingredient manifest missing",
                     "get_claim_referenced_manifests"
                 )
                 .validation_status(validation_status::INGREDIENT_MANIFEST_MISSING)
@@ -6968,7 +6968,7 @@ pub mod tests {
         let report = patch_and_report("CIE-sig-CA.jpg", SEARCH_BYTES, REPLACE_BYTES);
 
         assert!(report.has_status(validation_status::ASSERTION_HASHEDURI_MISMATCH));
-        assert!(report.has_status(validation_status::CLAIM_MISSING));
+        assert!(report.has_status(validation_status::INGREDIENT_MANIFEST_MISSING));
     }
 
     #[test]
