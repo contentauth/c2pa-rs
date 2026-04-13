@@ -103,7 +103,7 @@ fn user_data_hash_with_placeholder_api() -> Result<()> {
     output_stream.write_all(&final_manifest)?;
 
     output_stream.rewind()?;
-    let reader = Reader::from_stream("image/jpeg", &mut output_stream)?;
+    let reader = Reader::default().with_stream("image/jpeg", &mut output_stream)?;
 
     println!("Manifest with placeholder API (supports dynamic assertions):");
     println!("{reader}\n");

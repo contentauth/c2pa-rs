@@ -73,7 +73,7 @@ use crate::{
     log_item,
     manifest_store_report::ManifestStoreReport,
     maybe_send_sync::MaybeSend,
-    settings::{builder::OcspFetchScope, Settings},
+    settings::{builder::OcspFetchScope, Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
@@ -394,6 +394,16 @@ impl Store {
     // Returns Option<&Claim>
     pub fn get_claim(&self, label: &str) -> Option<&Claim> {
         self.claims_map.get(label)
+    }
+
+    /// Returns true if `uri` (absolute or relative to `claim_label`) appears in the
+    /// redaction list of any claim in the store — i.e. it was intentionally removed
+    /// by a parent manifest.
+    pub(crate) fn is_uri_redacted(&self, claim_label: &str, uri: &str) -> bool {
+        let abs_uri = jumbf::labels::to_absolute_uri(claim_label, uri);
+        self.claims_map
+            .values()
+            .any(|c| c.redactions().is_some_and(|r| r.contains(&abs_uri)))
     }
 
     /// Get Claim by label
@@ -1377,6 +1387,14 @@ impl Store {
 
             let num_assertions = assertion_store_box.data_box_count();
 
+            // Reject manifests that embed more assertions than the configured limit to
+            // prevent unbounded memory and CPU consumption on untrusted input.
+            if num_assertions > MAX_ASSERTIONS {
+                return Err(Error::TooManyAssertions {
+                    max: MAX_ASSERTIONS,
+                });
+            }
+
             // loop over all assertions in assertion store...
             let mut check_for_legacy_assertion = true;
             for idx in 0..num_assertions {
@@ -2150,15 +2168,16 @@ impl Store {
     }
 
     // generate a list of AssetHashes based on the location of objects in the stream
-    fn generate_data_hashes_for_stream<R>(
+    fn generate_data_hashes_for_stream<R, F>(
         stream: &mut R,
         alg: &str,
         block_locations: &mut Vec<HashObjectPositions>,
         calc_hashes: bool,
-        progress: Option<&mut dyn FnMut(u32, u32) -> Result<()>>,
+        progress: &mut F,
     ) -> Result<Vec<DataHash>>
     where
         R: Read + Seek + ?Sized,
+        F: FnMut(u32, u32) -> Result<()>,
     {
         let stream_len = stream_len(stream)?;
         stream.rewind()?;
@@ -2458,7 +2477,7 @@ impl Store {
         if let Some(reader) = asset_reader {
             // calc hashes
             let mut cb = |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
-            adjusted_dh.gen_hash_from_stream_with_progress(reader, Some(&mut cb))?;
+            adjusted_dh.gen_hash_from_stream_with_progress(reader, &mut cb)?;
         }
 
         // update the placeholder hash
@@ -3000,7 +3019,6 @@ impl Store {
             input_stream,
             &mut intermediate_stream,
             signer.reserve_size(),
-            settings,
             context,
         )?;
 
@@ -3117,9 +3135,9 @@ impl Store {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         reserve_size: usize,
-        settings: &Settings,
         context: &Context,
     ) -> Result<Vec<u8>> {
+        let settings = context.settings();
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
         let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
@@ -3135,45 +3153,63 @@ impl Store {
             RemoteManifest::EmbedWithRemote(url) => (Some(url), false),
         };
 
-        let io_handler = get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
+        let io_handler = get_assetio_handler(format);
 
-        // Do not assume the handler supports XMP or removing manifests unless we need it to
-        if let Some(url) = url {
-            let external_ref_writer = io_handler
-                .remote_ref_writer_ref()
-                .ok_or(Error::XmpNotSupported)?;
+        context.check_progress(ProgressPhase::Writing, 1, 2)?;
 
-            if remove_manifests {
+        if let Some(io_handler) = &io_handler {
+            // Do not assume the handler supports XMP or removing manifests unless we need it to
+            if let Some(url) = url {
+                let external_ref_writer = io_handler
+                    .remote_ref_writer_ref()
+                    .ok_or(Error::XmpNotSupported)?;
+
+                if remove_manifests {
+                    let manifest_writer = io_handler
+                        .get_writer(format)
+                        .ok_or(Error::UnsupportedType)?;
+
+                    let mut tmp_stream = io_utils::stream_with_fs_fallback(threshold);
+                    manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
+
+                    // add external ref if possible
+                    tmp_stream.rewind()?;
+                    external_ref_writer.embed_reference_to_stream(
+                        &mut tmp_stream,
+                        &mut intermediate_stream,
+                        RemoteRefEmbedType::Xmp(url),
+                    )?;
+                } else {
+                    // add external ref if possible
+                    external_ref_writer.embed_reference_to_stream(
+                        input_stream,
+                        &mut intermediate_stream,
+                        RemoteRefEmbedType::Xmp(url),
+                    )?;
+                }
+            } else if remove_manifests {
                 let manifest_writer = io_handler
                     .get_writer(format)
                     .ok_or(Error::UnsupportedType)?;
 
-                let mut tmp_stream = io_utils::stream_with_fs_fallback(threshold);
-                manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
-
-                // add external ref if possible
-                tmp_stream.rewind()?;
-                external_ref_writer.embed_reference_to_stream(
-                    &mut tmp_stream,
-                    &mut intermediate_stream,
-                    RemoteRefEmbedType::Xmp(url),
-                )?;
+                manifest_writer
+                    .remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
             } else {
-                // add external ref if possible
-                external_ref_writer.embed_reference_to_stream(
-                    input_stream,
-                    &mut intermediate_stream,
-                    RemoteRefEmbedType::Xmp(url),
-                )?;
+                // just clone stream
+                input_stream.rewind()?;
+                std::io::copy(input_stream, &mut intermediate_stream)?;
             }
-        } else if remove_manifests {
-            let manifest_writer = io_handler
-                .get_writer(format)
-                .ok_or(Error::UnsupportedType)?;
-
-            manifest_writer.remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
         } else {
-            // just clone stream
+            // No format handler — only sidecar mode (no_embed=true, no remote URL) is allowed.
+            if url.is_some() {
+                return Err(Error::XmpNotSupported);
+            }
+            if !remove_manifests {
+                // The caller did not set no_embed=true, so they expected JUMBF to be embedded
+                // in the output stream, which is impossible without a format handler.
+                return Err(Error::UnsupportedType);
+            }
+            // Sidecar: output is a verbatim copy of the input; JUMBF is returned as sidecar data
             input_stream.rewind()?;
             std::io::copy(input_stream, &mut intermediate_stream)?;
         }
@@ -3238,7 +3274,7 @@ impl Store {
             }
 
             // Signal that the write pass is done; hash readback begins next.
-            context.check_progress(ProgressPhase::Writing, 1, 1)?;
+            context.check_progress(ProgressPhase::Writing, 2, 2)?;
 
             // generate actual hash values
             let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
@@ -3252,7 +3288,7 @@ impl Store {
                     output_stream.rewind()?;
                     let mut cb =
                         |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
-                    bmff_hash.gen_hash_from_stream_with_progress(output_stream, Some(&mut cb))?;
+                    bmff_hash.gen_hash_from_stream_with_progress(output_stream, &mut cb)?;
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }
@@ -3260,9 +3296,14 @@ impl Store {
             // we will not do automatic hashing if we detect a box hash present
             let mut needs_hashing = false;
             if pc.hash_assertions().is_empty() {
-                // 2) Get hash ranges if needed, do not generate for update manifests
-                let mut hash_ranges =
-                    object_locations_from_stream(format, &mut intermediate_stream)?;
+                // 2) Get hash ranges if needed, do not generate for update manifests.
+                // When there is no format handler the asset is opaque to us, so we hash
+                // the entire stream with no exclusions.
+                let mut hash_ranges = if io_handler.is_some() {
+                    object_locations_from_stream(format, &mut intermediate_stream)?
+                } else {
+                    Vec::new()
+                };
                 let hashes: Vec<DataHash> = if pc.update_manifest() {
                     Vec::new()
                 } else {
@@ -3271,7 +3312,7 @@ impl Store {
                         pc.alg(),
                         &mut hash_ranges,
                         false,
-                        None,
+                        &mut |_, _| Ok(()),
                     )?
                 };
 
@@ -3290,12 +3331,14 @@ impl Store {
             data = self.to_jumbf_internal(reserve_size)?;
             jumbf_size = data.len();
 
-            // write the jumbf to the output stream if we are embedding the manifest
-            if !remove_manifests {
+            // Embed the JUMBF only when we have a format handler that supports it.
+            // Without a handler the output is always a verbatim copy of the asset and
+            // the manifest is returned as sidecar data.
+            if !remove_manifests && io_handler.is_some() {
                 intermediate_stream.rewind()?;
                 save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
             } else {
-                // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
+                // just copy the asset to the output stream without an embedded manifest
                 intermediate_stream.rewind()?;
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }
@@ -3304,16 +3347,21 @@ impl Store {
             // readback pass begins.  This separates "Writing" (streaming
             // input → output with placeholder JUMBF) from "Hashing" (reading
             // output to compute the final content-hash binding).
-            context.check_progress(ProgressPhase::Writing, 1, 1)?;
+            context.check_progress(ProgressPhase::Writing, 2, 2)?;
 
             // 4)  determine final object locations and patch the asset hashes with correct offset
             // replace the source with correct asset hashes so that the claim hash will be correct
             if needs_hashing {
                 let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
-                // get the final hash ranges, but not for update manifests
+                // get the final hash ranges, but not for update manifests.
+                // When there is no handler use empty ranges so the whole stream is hashed.
                 output_stream.rewind()?;
-                let mut new_hash_ranges = object_locations_from_stream(format, output_stream)?;
+                let mut new_hash_ranges = if io_handler.is_some() {
+                    object_locations_from_stream(format, output_stream)?
+                } else {
+                    Vec::new()
+                };
                 if !pc.update_manifest() {
                     // if we removed the manifest fixup the hash range to be empty
                     if remove_manifests {
@@ -3334,7 +3382,7 @@ impl Store {
                         pc.alg(),
                         &mut new_hash_ranges,
                         true,
-                        Some(&mut cb),
+                        &mut cb,
                     )?;
 
                     // patch existing claim hash with updated data
@@ -3704,14 +3752,7 @@ impl Store {
         context: &Context,
     ) -> Result<Store> {
         let verify = context.settings().verify.verify_after_reading;
-        let (manifest_bytes, remote_url) =
-            Store::load_jumbf_from_stream(asset_type, &mut *init_segment, context)?;
-        let mut store = Store::from_jumbf_with_context(&manifest_bytes, validation_log, context)?;
-        if remote_url.is_none() {
-            store.embedded = true;
-        } else {
-            store.remote_url = remote_url;
-        }
+        let store = Self::from_stream(asset_type, &mut *init_segment, validation_log, context)?;
 
         // verify the store
         if verify {
@@ -8318,7 +8359,9 @@ pub mod tests {
             .sign(&signer, "image/png", &mut Cursor::new(png), &mut dst)
             .unwrap();
 
-        let reader = crate::Reader::from_stream("image/png", &mut dst).unwrap();
+        let reader = crate::Reader::default()
+            .with_stream("image/png", &mut dst)
+            .unwrap();
 
         assert_eq!(reader.validation_state(), crate::ValidationState::Invalid);
     }

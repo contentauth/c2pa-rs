@@ -40,7 +40,9 @@ async fn malformed_cbor() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::default()
+        .with_stream(format, &mut test_image)
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find malformed CBOR error.
@@ -80,7 +82,9 @@ async fn extra_fields() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::default()
+        .with_stream(format, &mut test_image)
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find malformed CBOR error.
@@ -135,7 +139,9 @@ async fn assertion_not_in_claim_v1() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::default()
+        .with_stream(format, &mut test_image)
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find extra assertion error.
@@ -221,7 +227,9 @@ async fn duplicate_assertion_reference() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::default()
+        .with_stream(format, &mut test_image)
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find extra assertion error.
@@ -297,7 +305,9 @@ async fn no_hard_binding() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::default()
+        .with_stream(format, &mut test_image)
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find extra assertion error.
@@ -384,7 +394,9 @@ mod invalid_sig_type {
         let mut test_image = Cursor::new(test_image);
 
         // Initial read with default `Reader` should pass without issues.
-        let reader = Reader::from_stream(format, &mut test_image).unwrap();
+        let reader = Reader::default()
+            .with_stream(format, &mut test_image)
+            .unwrap();
         assert_eq!(reader.validation_status(), None);
 
         // Re-parse with identity assertion code should find extra assertion error.
@@ -459,7 +471,9 @@ mod invalid_sig_type {
         let mut test_image = Cursor::new(test_image);
 
         // Initial read with default `Reader` should pass without issues.
-        let reader = Reader::from_stream(format, &mut test_image).unwrap();
+        let reader = Reader::default()
+            .with_stream(format, &mut test_image)
+            .unwrap();
         assert_eq!(reader.validation_status(), None);
 
         // Re-parse with identity assertion code should find extra assertion error.
@@ -537,7 +551,9 @@ async fn pad1_invalid() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::default()
+        .with_stream(format, &mut test_image)
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find invalid pad error.
@@ -601,7 +617,9 @@ async fn pad2_invalid() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::default()
+        .with_stream(format, &mut test_image)
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find invalid pad error.
