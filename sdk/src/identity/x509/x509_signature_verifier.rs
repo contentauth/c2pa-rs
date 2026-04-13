@@ -186,7 +186,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
@@ -219,7 +219,7 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
