@@ -3009,14 +3009,14 @@ impl Builder {
         Ok(())
     }
 
-    /// Sign a set of fragmented BMFF files.
+    /// Sign a set of fragmented BMFF files for a single rendition.
     ///
     /// Note: Currently this does not support files with existing C2PA manifest.
     ///
     /// # Arguments
     /// * `signer` - The signer to use.
     /// * `asset_path` - The path to the primary asset file.
-    /// * `fragment_paths` - The paths to the fragmented files.
+    /// * `fragment_glob` - The glob pattern to the fragmented files.
     /// * `output_path` - The path to the output file.
     ///
     /// # Errors
@@ -3026,41 +3026,55 @@ impl Builder {
         &mut self,
         signer: &dyn Signer,
         asset_path: P,
-        fragment_paths: &Vec<std::path::PathBuf>,
+        fragment_glob: P,
         output_path: P,
     ) -> Result<()> {
-        if !output_path.as_ref().exists() {
-            // ensure the path exists
-            std::fs::create_dir_all(output_path.as_ref())?;
-        } else {
-            // if the file exists, we need to remove it
-            if output_path.as_ref().is_file() {
-                return Err(crate::Error::BadParam(
-                    "output_path must be a folder".to_string(),
-                ));
-            } else {
-                let file_name = asset_path.as_ref().file_name().unwrap_or_default();
-                let mut output_file = output_path.as_ref().to_owned();
-                output_file = output_file.join(file_name);
-                if output_file.exists() {
-                    return Err(crate::Error::BadParam(
-                        "Destination file already exists".to_string(),
-                    ));
-                }
-            }
-        }
-
         // convert the manifest to a store
         let mut store = self.to_store()?;
 
         // sign and write our store to DASH content
         store.save_to_bmff_fragmented(
-            asset_path.as_ref(),
+            &[asset_path],
             fragment_paths,
             output_path.as_ref(),
             signer,
             &self.context,
-        )
+        )?;
+         Ok(())
+    }
+
+    /// Sign a set of renditions.
+    ///
+    /// Note: Currently this does not support files with existing C2PA manifest.
+    ///
+    /// # Arguments
+    /// * `signer` - The signer to use.
+    /// * `asset_paths` - The path to init segment for each rendition.
+    /// * `fragment_glob` - The glob pattern to the fragmented files.
+    /// * `output_path` - The path to the output file.
+    ///
+    /// # Errors
+    /// * Returns an [`Error`] if the manifest cannot be signed.
+    #[cfg(feature = "file_io")]
+    pub fn sign_renditions<P: AsRef<Path>>(
+        &mut self,
+        signer: &dyn Signer,
+        asset_paths: &[P],
+        fragment_glob: P,
+        output_path: P,
+    ) -> Result<()> {
+        // convert the manifest to a store
+        let mut store = self.to_store()?;
+
+        // sign and write our store to DASH content
+        store.save_to_bmff_fragmented(
+            asset_paths,
+            fragment_glob,
+            output_path.as_ref(),
+            signer,
+            &self.context,
+        )?;
+         Ok(())
     }
 
     #[cfg(feature = "file_io")]

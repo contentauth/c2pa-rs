@@ -999,11 +999,16 @@ impl BmffHash {
     #[cfg(feature = "file_io")]
     pub fn update_fragmented_inithash(
         &mut self,
+        unique_id: usize,
+        local_id: usize,
         asset_path: &std::path::Path,
     ) -> crate::error::Result<()> {
         if let Some(mm) = &mut self.merkle {
             let mut init_stream = std::fs::File::open(asset_path)?;
-            let mpd_mm = mm.get_mut(0).ok_or(Error::NotFound)?;
+            let mpd_mm = mm
+                .iter_mut()
+                .find(|m| m.unique_id == unique_id && m.local_id == local_id)
+                .ok_or(Error::NotFound)?;
 
             let curr_alg = match &mpd_mm.alg {
                 Some(a) => a.clone(),
@@ -1759,7 +1764,7 @@ impl BmffHash {
         fragment_paths: &Vec<std::path::PathBuf>,
         output_dir: &std::path::Path,
         local_id: usize,
-        unique_id: Option<usize>,
+        unique_id: usize,
     ) -> crate::Result<()> {
         if !output_dir.exists() {
             std::fs::create_dir_all(output_dir)?;
@@ -1770,38 +1775,13 @@ impl BmffHash {
             }
         }
 
-        let mut fragments = Vec::new();
-
-        let unique_id = match unique_id {
-            Some(id) => id,
-            None => local_id,
-        };
-
-        // copy to output folder saving paths to fragments and init segments
-        for file_path in fragment_paths {
-            fragments.push(file_path.as_path());
-
-            let output_path = output_dir.join(
-                file_path
-                    .file_name()
-                    .ok_or(Error::BadParam("file name not found".to_string()))?,
-            );
-            std::fs::copy(file_path, output_path)?;
-        }
-        let output_path = output_dir.join(
-            asset_path
-                .file_name()
-                .ok_or(Error::BadParam("file name not found".to_string()))?,
-        );
-        std::fs::copy(asset_path, output_path)?;
-
         // create dummy tree to figure out the layout and proof size
-        let dummy_tree = C2PAMerkleTree::dummy_tree(fragments.len(), alg);
+        let dummy_tree = C2PAMerkleTree::dummy_tree(fragment_paths.len(), alg);
 
         let mut location_to_fragment_map: HashMap<usize, std::path::PathBuf> = HashMap::new();
 
         // copy to destination and insert placeholder C2PA Merkle box
-        for (location, seg) in (0_usize..).zip(fragments.iter()) {
+        for (location, seg) in (0_usize..).zip(fragment_paths.iter()) {
             let mut seg_reader = std::fs::File::open(seg)?;
 
             let c2pa_boxes = read_bmff_c2pa_boxes(&mut seg_reader)?;
@@ -1864,7 +1844,10 @@ impl BmffHash {
                 .to_string_lossy()
                 .into_owned();
             let dest_path = output_dir.join(&output_filename);
-            let mut dest = std::fs::OpenOptions::new().write(true).open(&dest_path)?;
+            let mut dest = std::fs::OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&dest_path)?;
 
             // UUID to insert into output asset
             crate::utils::io_utils::insert_data_at(
@@ -1880,8 +1863,9 @@ impl BmffHash {
 
         // fill in actual hashes now that we have inserted the C2PA box.
         let bmff_exclusions = &self.exclusions;
-        let mut leaves: Vec<crate::utils::merkle::MerkleNode> = Vec::with_capacity(fragments.len());
-        for i in 0..fragments.len() {
+        let mut leaves: Vec<crate::utils::merkle::MerkleNode> =
+            Vec::with_capacity(fragment_paths.len());
+        for i in 0..fragment_paths.len() {
             if let Some(path) = location_to_fragment_map.get(&i) {
                 let mut fragment_stream = std::fs::File::open(path)?;
 
@@ -1902,7 +1886,7 @@ impl BmffHash {
 
         // gen final merkle tree
         let m_tree = C2PAMerkleTree::from_leaves(leaves, alg, false);
-        for i in 0..fragments.len() {
+        for i in 0..fragment_paths.len() {
             if let Some(dest_path) = location_to_fragment_map.get(&i) {
                 let mut fragment_stream = std::fs::OpenOptions::new()
                     .read(true)
@@ -1971,7 +1955,7 @@ impl BmffHash {
         let mm = MerkleMap {
             unique_id,
             local_id,
-            count: fragments.len(),
+            count: fragment_paths.len(),
             alg: Some(alg.to_owned()),
             init_hash: match alg {
                 // placeholder init hash to be filled once manifest is inserted
@@ -1984,7 +1968,13 @@ impl BmffHash {
             fixed_block_size: None,
             variable_block_sizes: None,
         };
-        self.merkle = Some(vec![mm]);
+
+        // add the MerkleMap to the merkle vector (create if needed)
+        if let Some(mm_vec) = self.merkle.as_mut() {
+            mm_vec.push(mm);
+        } else {
+            self.merkle = Some(vec![mm]);
+        }
 
         Ok(())
     }
