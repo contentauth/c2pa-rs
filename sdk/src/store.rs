@@ -3959,7 +3959,7 @@ impl Store {
                     "ingredient missing missing",
                     "get_claim_referenced_manifests"
                 )
-                .validation_status(validation_status::CLAIM_MISSING)
+                .validation_status(validation_status::INGREDIENT_MANIFEST_MISSING)
                 .failure(
                     validation_log,
                     Error::ClaimMissing {
