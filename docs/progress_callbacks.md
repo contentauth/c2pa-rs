@@ -7,9 +7,11 @@ During multi-step long-running operations (such as signing, reading, and verific
 - **Liveness** — confirming to the caller that the SDK is still making forward progress and is not hung.
 - **Cancellation** — giving the caller a safe opportunity to stop the operation at any phase boundary.
 
-The callback receives the current phase, a step counter, and an optional total. Returning `false` (or `0` in C) from the callback requests cancellation; the SDK will stop at the next safe checkpoint and return `Error::OperationCancelled`.
+The callback receives the current phase, a step counter, and an optional total. Returning `false` from the callback requests cancellation; the SDK will stop at the next safe checkpoint and return `Error::OperationCancelled`.
 
-You can also request cancellation externally (from a different thread) by calling `Context::cancel()` / `c2pa_context_cancel()` without going through the callback at all.
+You can also request cancellation externally (from a different thread) by calling `Context::cancel()` without going through the callback at all.
+
+For the C API version of this interface, see the [C2PA C API README](../c2pa_c_ffi/README.md#progress-and-cancellation).
 
 > [!WARNING]
 > Do not use this API for time-remaining estimates. A raw step count does not reliably translate into elapsed or remaining time.
@@ -46,8 +48,6 @@ The SDK reports progress as a sequence of named phases, each represented by the 
 
 ## Callback signature
 
-### Rust
-
 ```rust
 fn(phase: ProgressPhase, step: u32, total: u32) -> bool
 ```
@@ -61,19 +61,6 @@ fn(phase: ProgressPhase, step: u32, total: u32) -> bool
 - Return `true` to continue, `false` to cancel.
 
 The closure must be `Send + Sync` on non-WASM targets. On WASM (single-threaded) those bounds are not required.
-
-### C
-
-```c
-typedef int (*C2paProgressCallback)(
-    const void *user_data,   /* opaque pointer supplied by the caller          */
-    uint8_t     phase,       /* numeric ProgressPhase discriminant             */
-    uint32_t    step,        /* monotonically increasing step counter (1-based) */
-    uint32_t    total        /* 0=indeterminate, 1=single-shot, >1=determinate */
-);
-```
-
-Return non-zero to continue, zero to cancel.
 
 > [!NOTE]
 > Do not call SDK functions from inside the progress callback.
@@ -135,232 +122,14 @@ std::thread::spawn(move || {
 
 Both mechanisms can be combined: the callback can cancel based on phase or elapsed time, while the flag lets any thread cancel at any point.
 
-## C API
-
-### Functions
-
-```c
-/**
- * Attach a progress callback to a context builder.
- *
- * @param builder   A valid C2paContextBuilder pointer (not yet built).
- * @param user_data Opaque void* passed as the first argument on every callback
- *                  invocation. Pass NULL if the callback needs no user data.
- *                  Must remain valid for the entire lifetime of the built context.
- * @param callback  Function pointer matching C2paProgressCallback.
- * @return 0 on success, non-zero on error (call c2pa_error() for details).
- */
-int c2pa_context_builder_set_progress_callback(
-    C2paContextBuilder         *builder,
-    const void                 *user_data,
-    C2paProgressCallback        callback
-);
-
-/**
- * Request cancellation of any in-progress operation on this context.
- *
- * Thread-safe — may be called from any thread that holds a valid C2paContext
- * pointer. The SDK returns an OperationCancelled error at the next safe
- * checkpoint.
- *
- * @param ctx A valid, non-null C2paContext pointer.
- * @return 0 on success, non-zero if ctx is null or invalid.
- */
-int c2pa_context_cancel(C2paContext *ctx);
-```
-
-### Phase constants
-
-Define these in your application (or include the generated SDK header):
-
-```c
-#define C2PA_PHASE_READING                 0
-#define C2PA_PHASE_VERIFYING_MANIFEST      1
-#define C2PA_PHASE_VERIFYING_SIGNATURE     2
-#define C2PA_PHASE_VERIFYING_INGREDIENT    3
-#define C2PA_PHASE_VERIFYING_ASSET_HASH    4
-#define C2PA_PHASE_ADDING_INGREDIENT       5
-#define C2PA_PHASE_THUMBNAIL               6
-#define C2PA_PHASE_HASHING                 7
-#define C2PA_PHASE_SIGNING                 8
-#define C2PA_PHASE_EMBEDDING               9
-#define C2PA_PHASE_FETCHING_REMOTE_MANIFEST 10
-#define C2PA_PHASE_WRITING                 11
-```
-
-### Examples
-
-#### Simple progress display
-
-```c
-#include <stdio.h>
-#include "c2pa.h"
-
-static const char *phase_label(uint8_t phase) {
-    switch (phase) {
-        case C2PA_PHASE_READING:                  return "Reading";
-        case C2PA_PHASE_VERIFYING_MANIFEST:       return "Verifying manifest";
-        case C2PA_PHASE_VERIFYING_SIGNATURE:      return "Verifying signature";
-        case C2PA_PHASE_VERIFYING_INGREDIENT:     return "Verifying ingredient";
-        case C2PA_PHASE_VERIFYING_ASSET_HASH:     return "Verifying asset hash";
-        case C2PA_PHASE_ADDING_INGREDIENT:        return "Adding ingredient";
-        case C2PA_PHASE_THUMBNAIL:                return "Generating thumbnail";
-        case C2PA_PHASE_HASHING:                  return "Hashing";
-        case C2PA_PHASE_SIGNING:                  return "Signing";
-        case C2PA_PHASE_EMBEDDING:                return "Embedding";
-        case C2PA_PHASE_FETCHING_REMOTE_MANIFEST: return "Fetching remote manifest";
-        case C2PA_PHASE_WRITING:                  return "Writing";
-        default:                                  return "Unknown";
-    }
-}
-
-/* Return non-zero to continue; zero to cancel. */
-static int my_progress_cb(const void *user_data,
-                           uint8_t phase,
-                           uint32_t step,
-                           uint32_t total)
-{
-    (void)user_data; /* unused in this example */
-
-    if (total == 0) {
-        /* Indeterminate — show a spinner label */
-        printf("[...] %s\n", phase_label(phase));
-    } else if (total == 1) {
-        /* Single-shot phase */
-        printf("[---] %s\n", phase_label(phase));
-    } else {
-        /* Multi-step phase — render a simple bar */
-        int pct = (int)((double)step / (double)total * 100.0);
-        printf("[%3d%%] %s %u/%u\n", pct, phase_label(phase), step, total);
-    }
-    return 1; /* continue */
-}
-
-int main(void) {
-    C2paContextBuilder *builder = c2pa_context_builder_new();
-
-    if (c2pa_context_builder_set_progress_callback(builder, NULL, my_progress_cb) != 0) {
-        fprintf(stderr, "set_progress_callback: %s\n", c2pa_error());
-        c2pa_free(builder);
-        return 1;
-    }
-
-    C2paContext *ctx = c2pa_context_builder_build(builder);
-    /* builder is consumed — do not use it after this point */
-
-    /* Use ctx with c2pa_reader_new() / c2pa_builder_sign() … */
-
-    c2pa_free(ctx);
-    return 0;
-}
-```
-
-#### Cancellation from a GUI thread
-
-A common pattern is to sign or read on a background worker thread while letting the main/UI thread cancel the operation when the user clicks a "Cancel" button. The C API supports this by allowing `c2pa_context_cancel()` to be called from any thread.
-
-```c
-#include <pthread.h>
-#include <stdatomic.h>
-#include <stdio.h>
-#include "c2pa.h"
-
-/* Shared state visible to both the worker and the UI thread. */
-typedef struct {
-    C2paContext   *ctx;          /* protected by a mutex in real code    */
-    atomic_int     user_cancelled; /* set by the UI thread               */
-} WorkerState;
-
-/* Progress callback — checks the user_cancelled flag each phase. */
-static int cancel_aware_cb(const void *user_data,
-                            uint8_t phase,
-                            uint32_t step,
-                            uint32_t total)
-{
-    const WorkerState *state = (const WorkerState *)user_data;
-    (void)step; (void)total;
-
-    printf("Phase %u\n", (unsigned)phase);
-
-    if (atomic_load(&state->user_cancelled)) {
-        printf("User requested cancel — stopping at phase %u.\n", (unsigned)phase);
-        return 0; /* cancel */
-    }
-    return 1; /* continue */
-}
-
-/* Out-of-band cancel: the UI thread sets this when the user clicks Cancel. */
-void ui_thread_on_cancel(WorkerState *state) {
-    atomic_store(&state->user_cancelled, 1);
-
-    /* Belt-and-suspenders: also set the cancel flag on the context so that
-       cancellation fires even between callback checkpoints. */
-    c2pa_context_cancel(state->ctx);
-}
-
-void *worker_thread(void *arg) {
-    WorkerState *state = (WorkerState *)arg;
-
-    C2paContextBuilder *builder = c2pa_context_builder_new();
-    c2pa_context_builder_set_progress_callback(builder, state, cancel_aware_cb);
-
-    state->ctx = c2pa_context_builder_build(builder);
-    /* builder consumed */
-
-    /* Sign or read using state->ctx … */
-    /* If cancelled, the operation returns an OperationCancelled error. */
-
-    c2pa_free(state->ctx);
-    state->ctx = NULL;
-    return NULL;
-}
-```
-
-**Key points:**
-- `c2pa_context_cancel()` is thread-safe and may be called while a signing or reading operation is in progress.
-- The callback return value and the cancel flag are checked at the same checkpoint; either one is sufficient to stop the operation.
-- Using both (as in the example above) ensures the fastest possible response to a cancellation request.
-
-#### Tracking per-ingredient verification progress
-
-`VerifyingIngredient` is a multi-step phase: `step` is the 1-based ingredient index and `total` is the number of ingredients. This lets you show a determinate progress bar during verification.
-
-```c
-static int ingredient_progress_cb(const void *user_data,
-                                   uint8_t phase,
-                                   uint32_t step,
-                                   uint32_t total)
-{
-    if (phase == C2PA_PHASE_VERIFYING_INGREDIENT && total > 0) {
-        int pct = (int)((double)step / (double)total * 100.0);
-        /* Update a GUI progress bar to `pct`. */
-        update_progress_bar((int *)user_data, pct);
-    }
-    return 1;
-}
-```
-
-Similarly, `VerifyingSignature` fires with `total=2`: step one before COSE parsing and step two after full OCSP/signature verification.
-
 ## Error handling
 
-When either the callback returns zero (C) / `false` (Rust), or `cancel()` is called, the ongoing operation returns `Error::OperationCancelled` (Rust) or a corresponding C error string via `c2pa_error()`. Callers should check for this specific error and treat it as a normal, user-initiated termination rather than a failure.
+When the callback returns `false` or `cancel()` is called, the ongoing operation returns `Error::OperationCancelled`. Callers should check for this specific error and treat it as a normal, user-initiated termination rather than a failure.
 
 ```rust
 match builder.sign(ctx, format, input, output) {
     Ok(_) => { /* success */ }
     Err(c2pa::Error::OperationCancelled) => { /* user cancelled — clean up and continue */ }
     Err(e) => { /* real error */ }
-}
-```
-
-```c
-if (c2pa_builder_sign(builder, ctx, ...) != 0) {
-    const char *err = c2pa_error();
-    if (strstr(err, "OperationCancelled")) {
-        /* user cancelled */
-    } else {
-        fprintf(stderr, "Sign failed: %s\n", err);
-    }
 }
 ```
