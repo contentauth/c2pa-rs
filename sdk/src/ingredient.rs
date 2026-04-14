@@ -1263,11 +1263,15 @@ impl Ingredient {
         };
 
         // Needed so no thumbnails is generated if thumbnail got redacted.
+        // Both claim thumbnails (c2pa.thumbnail.claim) and ingredient thumbnails
+        // (c2pa.thumbnail.ingredient) stored in any manifest must be suppressible via redactions.
         let thumbnail_redacted_manifests: std::collections::HashSet<String> = redactions
             .as_deref()
             .unwrap_or_default()
             .iter()
-            .filter(|r| r.contains(labels::CLAIM_THUMBNAIL))
+            .filter(|r| {
+                r.contains(labels::CLAIM_THUMBNAIL) || r.contains(labels::INGREDIENT_THUMBNAIL)
+            })
             .filter_map(|r| jumbf::labels::manifest_label_from_uri(r))
             .collect();
 
@@ -1337,18 +1341,26 @@ impl Ingredient {
         // unless the source claim thumbnail was redacted...
         // (that is why we kept thumbnail_redacted_manifests around).
         if let Some(thumb_ref) = self.thumbnail_ref() {
+            // A relative self#jumbf URI (e.g. "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient",
+            // which starts with "self#jumbf=" but NOT "self#jumbf=/") points to an assertion in the
+            // outer manifest currently being rebuilt, not in any nested ingredient manifest.  Such
+            // thumbnails are stale once the manifest is re-signed and must always be suppressed.
+            let is_stale_outer_ref = thumb_ref.identifier.starts_with("self#jumbf=")
+                && !thumb_ref.identifier.starts_with("self#jumbf=/");
+
             // Normalize the identifier to an absolute JUMBF URI using the ingredient's
             // active manifest label as the base (a no-op for identifiers that are already
             // absolute), then extract the manifest label from the result so we can check
             // whether that manifest's thumbnails are being redacted.
-            let thumbnail_is_redacted = self
-                .active_manifest
-                .as_deref()
-                .map(|active_label| {
-                    jumbf::labels::to_absolute_uri(active_label, &thumb_ref.identifier)
-                })
-                .and_then(|abs_uri| jumbf::labels::manifest_label_from_uri(&abs_uri))
-                .is_some_and(|label| thumbnail_redacted_manifests.contains(&label));
+            let thumbnail_is_redacted = is_stale_outer_ref
+                || self
+                    .active_manifest
+                    .as_deref()
+                    .map(|active_label| {
+                        jumbf::labels::to_absolute_uri(active_label, &thumb_ref.identifier)
+                    })
+                    .and_then(|abs_uri| jumbf::labels::manifest_label_from_uri(&abs_uri))
+                    .is_some_and(|label| thumbnail_redacted_manifests.contains(&label));
 
             if !thumbnail_is_redacted {
                 // if we have a hash, just build the hashed uri
