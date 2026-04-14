@@ -1341,16 +1341,11 @@ impl Ingredient {
         // unless the source claim thumbnail was redacted...
         // (that is why we kept thumbnail_redacted_manifests around).
         if let Some(thumb_ref) = self.thumbnail_ref() {
-            // Resolve the thumbnail identifier to an absolute JUMBF URI using the outer
-            // claim's label as the base. Relative `self#jumbf=...` identifiers reference
-            // assertions in the outer manifest currently being built (i.e. `claim`), so
-            // that is the correct base. Absolute identifiers (`self#jumbf=/c2pa/...`)
-            // pass through `to_absolute_uri` unchanged and keep pointing at their own
-            // nested manifest. Either way, the extracted manifest label is compared
-            // against `thumbnail_redacted_manifests` to decide whether to drop it.
+            // The extracted manifest label is compared
+            // against `thumbnail_redacted_manifests` to decide if to be skipped.
             // A thumbnail whose resolved manifest label equals the claim being built is a
-            // self-reference to the outer archive manifest: it is always stale after re-signing
-            // and must be suppressed unconditionally.  Other thumbnails are suppressed only when
+            // self-reference to the outer archive manifest: it is stale after re-signing
+            // and must be suppressed. Other thumbnails are suppressed only when
             // the redaction list explicitly targets their source manifest.
             let thumbnail_is_redacted = jumbf::labels::manifest_label_from_uri(
                 &jumbf::labels::to_absolute_uri(claim.label(), &thumb_ref.identifier),
