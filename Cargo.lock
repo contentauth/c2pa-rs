@@ -555,7 +555,7 @@ dependencies = [
  "pkcs8",
  "png_pong",
  "quick-xml",
- "rand 0.8.5",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "range-set",
  "rasn",
