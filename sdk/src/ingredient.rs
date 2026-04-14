@@ -1262,8 +1262,7 @@ impl Ingredient {
             })
         };
 
-        // Collect the redacted thumbnail URIs (already in absolute JUMBF form).
-        // We compare thumbnail URIs directly rather than extracting and comparing manifest labels.
+        // Collect the redacted thumbnail URIs, use them for comparison.
         let redacted_thumbnail_uris: std::collections::HashSet<String> = redactions
             .as_deref()
             .unwrap_or_default()
@@ -1342,14 +1341,12 @@ impl Ingredient {
         // If the ingredient defines a thumbnail, add it to the claim,
         // unless the thumbnail URI is explicitly listed in the redactions.
         if let Some(thumb_ref) = self.thumbnail_ref() {
-            // A relative self#jumbf= URI (e.g. "self#jumbf=c2pa.assertions/c2pa.thumbnail.ingredient",
-            // starts with "self#jumbf=" but NOT "self#jumbf=/") on an ingredient that already
-            // has manifest_data is a stale reference from the outer archive manifest being
-            // rebuilt. That assertion no longer exists after re-signing and all references and
-            // resources related to it must be dropped.
+            // A relative self#jumbf= URI on an ingredient that already
+            // has manifest_data is a stale reference from the outer (archive) manifest being
+            // rebuilt. Due to staleness, resources might need to be removed if stale/redacted.
             // Ingredients without manifest_data may also carry relative self#jumbf= thumbnail
-            // identifiers (written by the archive format for freshly-generated thumbnails),
-            // those are valid resources in the builder's resource store and must NOT be suppressed.
+            // identifiers (e.g. written by the archive format for freshly-generated thumbnails),
+            // those are valid resources in the builder's resource store and must be kept.
             let is_stale_outer_ref = self.manifest_data_ref().is_some()
                 && thumb_ref.identifier.starts_with("self#jumbf=")
                 && !thumb_ref.identifier.starts_with("self#jumbf=/");
@@ -1364,8 +1361,23 @@ impl Ingredient {
                     jumbf::labels::to_absolute_uri(active_label, &thumb_ref.identifier)
                 })
                 .unwrap_or_else(|| thumb_ref.identifier.clone());
-            let thumbnail_is_redacted =
-                is_stale_outer_ref || redacted_thumbnail_uris.contains(abs_thumb_uri.as_str());
+
+            // For ingredients with embedded manifest data, a freshly-generated thumbnail
+            // (e.g. an XMP-IID filename from maybe_add_thumbnail) may exist even when the
+            // manifest's own claim thumbnail failed validation. If any thumbnail from
+            // this ingredient's manifest chain is being redacted, suppress the fresh
+            // thumbnail too, it represents the same provenance (edge case for thumbnails
+            // added from files).
+            let active_manifest_label = self.active_manifest.as_deref().unwrap_or("");
+            let fresh_thumb_is_suppressed = self.manifest_data_ref().is_some()
+                && !active_manifest_label.is_empty()
+                && redacted_thumbnail_uris
+                    .iter()
+                    .any(|uri| uri.contains(active_manifest_label));
+
+            let thumbnail_is_redacted = is_stale_outer_ref
+                || redacted_thumbnail_uris.contains(abs_thumb_uri.as_str())
+                || fresh_thumb_is_suppressed;
 
             if !thumbnail_is_redacted {
                 // if we have a hash, just build the hashed uri
