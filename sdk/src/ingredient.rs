@@ -1348,10 +1348,17 @@ impl Ingredient {
             // pass through `to_absolute_uri` unchanged and keep pointing at their own
             // nested manifest. Either way, the extracted manifest label is compared
             // against `thumbnail_redacted_manifests` to decide whether to drop it.
+            // A thumbnail whose resolved manifest label equals the claim being built is a
+            // self-reference to the outer archive manifest: it is always stale after re-signing
+            // and must be suppressed unconditionally.  Other thumbnails are suppressed only when
+            // the redaction list explicitly targets their source manifest.
             let thumbnail_is_redacted = jumbf::labels::manifest_label_from_uri(
                 &jumbf::labels::to_absolute_uri(claim.label(), &thumb_ref.identifier),
             )
-            .is_some_and(|label| thumbnail_redacted_manifests.contains(&label));
+            .is_some_and(|label| {
+                label == claim.label() || thumbnail_redacted_manifests.contains(&label)
+            });
+
 
             if !thumbnail_is_redacted {
                 // if we have a hash, just build the hashed uri
