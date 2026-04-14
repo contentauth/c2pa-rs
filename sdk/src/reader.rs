@@ -1260,7 +1260,20 @@ impl Reader {
                     builder.add_ingredient(ingredient);
                 }
                 for assertion in manifest.assertions.iter() {
-                    builder.add_assertion(assertion.label(), assertion.value()?)?;
+                    // Skip internal archive assertions that must never appear in a
+                    // builder's public manifest definition:
+                    // - ARCHIVE_METADATA: internal bookkeeping written by working_store_sign
+                    // - HASH_LABELS: hash-binding assertions computed over placeholder bytes;
+                    //   the signing process generates fresh, correct ones for the real asset
+                    let label = assertion.label();
+                    if label == crate::assertions::labels::ARCHIVE_METADATA
+                        || crate::assertions::labels::HASH_LABELS
+                            .iter()
+                            .any(|h| label.starts_with(h))
+                    {
+                        continue;
+                    }
+                    builder.add_assertion(label, assertion.value()?)?;
                 }
                 for (uri, data) in manifest.resources().resources() {
                     builder.add_resource(uri, std::io::Cursor::new(data))?;
@@ -1388,6 +1401,113 @@ pub mod tests {
 
         assert_eq!(reader2.validation_state(), ValidationState::Trusted);
         //std::fs::write("../target/CA-rebuilt.jpg", dest.get_ref())?;
+        Ok(())
+    }
+
+    /// Reproduces: when a Builder containing `application/c2pa` ingredients is round-tripped
+    /// through `to_archive` / `with_archive`, the rebuilt Builder must NOT carry internal
+    /// working-store assertions (`c2pa.hash.boxes`, `org.contentauth.archive.metadata`) into
+    /// its `definition.assertions`.
+    ///
+    /// If those assertions survive, `save_to_stream` sees a pre-existing hash assertion and
+    /// skips generating the correct DataHash for the signed asset, causing
+    /// `assertion.dataHash.mismatch` on the final signed output.
+    ///
+    /// This replicates the flow from the C++ integration test `TestArchivedIngredientsActionShape`:
+    /// 1. Create per-ingredient JUMBF archives from signed PNGs.
+    /// 2. Add them as `application/c2pa` ingredients to a main builder.
+    /// 3. Outer-archive the main builder (as `SignWorkflow::new` does).
+    /// 4. Restore via `with_archive` (as `from_redaction_configuration` does).
+    /// 5. Sign a JPEG — must not produce `assertion.dataHash.mismatch`.
+    #[test]
+    fn test_archive_roundtrip_with_c2pa_ingredients_does_not_cause_data_hash_mismatch(
+    ) -> Result<()> {
+        use crate::{assertions::labels, validation_status::ASSERTION_DATAHASH_MISMATCH};
+
+        const FORMAT: &str = "image/jpeg";
+
+        // Use test settings without `intent = "edit"` (which would require a ParentOf ingredient).
+        let mut settings = crate::utils::test::test_settings();
+        settings.builder.intent = None;
+        let context = crate::Context::new()
+            .with_settings(settings)?
+            .into_shared();
+
+        // 1. Build an ingredient archive from a signed JPEG (has a C2PA manifest store).
+        //    This mirrors `ingredient_builder.to_archive(archive_stream)` in the C++ test.
+        let mut ingredient_builder = crate::Builder::default();
+        ingredient_builder.add_ingredient_from_stream(
+            r#"{"relationship": "componentOf"}"#,
+            "image/jpeg",
+            &mut Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST),
+        )?;
+        let mut ingredient_archive = Cursor::new(Vec::new());
+        ingredient_builder.to_archive(&mut ingredient_archive)?;
+
+        // 2. Add the ingredient archive as an `application/c2pa` ingredient to the main builder.
+        //    Main builder has a `c2pa.created` action (like test_builder_json in C++ tests, but
+        //    adapted: C++ uses c2pa.edited but our fixture needs c2pa.created for validity).
+        let mut main_builder = crate::Builder::from_shared_context(&context);
+        main_builder.add_assertion(
+            "c2pa.actions.v2",
+            &serde_json::json!({"actions": [{"action": "c2pa.created"}]}),
+        )?;
+        ingredient_archive.set_position(0);
+        main_builder.add_ingredient_from_stream(
+            r#"{"title": "ingredient", "relationship": "componentOf"}"#,
+            "application/c2pa",
+            &mut ingredient_archive,
+        )?;
+
+        // 3. Outer-archive the main builder, as SignWorkflow::new does.
+        let mut outer_archive = Cursor::new(Vec::new());
+        main_builder.to_archive(&mut outer_archive)?;
+
+        // 4. Restore via with_archive, as from_redaction_configuration does.
+        let mut loaded = crate::Builder::from_shared_context(&context)
+            .with_archive(Cursor::new(outer_archive.into_inner()))?;
+
+        let labels_in_loaded: Vec<String> = loaded
+            .definition
+            .assertions
+            .iter()
+            .map(|a| a.label.clone())
+            .collect();
+
+        // 5. Sign a JPEG with the restored builder.
+        let signer = context.signer()?;
+        let mut dest = Cursor::new(Vec::new());
+        loaded.sign(signer, FORMAT, &mut Cursor::new(IMAGE_WITH_MANIFEST), &mut dest)?;
+
+        // 6. Validate the signed output — must not have assertion.dataHash.mismatch.
+        dest.set_position(0);
+        let reader = Reader::from_shared_context(&context).with_stream(FORMAT, &mut dest)?;
+
+        let has_hash_mismatch = reader
+            .validation_status()
+            .unwrap_or_default()
+            .iter()
+            .any(|s| s.code() == ASSERTION_DATAHASH_MISMATCH);
+
+        assert!(
+            !has_hash_mismatch,
+            "archive round-trip with application/c2pa ingredients must not introduce \
+             {ASSERTION_DATAHASH_MISMATCH}; builder assertions after with_archive: \
+             {labels_in_loaded:?}"
+        );
+
+        // Also assert that no archive-internal assertions leaked into the builder.
+        assert!(
+            !labels_in_loaded.iter().any(|l| l.starts_with("c2pa.hash.")),
+            "hash binding assertions must not appear in a rebuilt Builder; \
+             got: {labels_in_loaded:?}"
+        );
+        assert!(
+            !labels_in_loaded.iter().any(|l| l == labels::ARCHIVE_METADATA),
+            "archive.metadata must not appear in a rebuilt Builder; \
+             got: {labels_in_loaded:?}"
+        );
+
         Ok(())
     }
 
