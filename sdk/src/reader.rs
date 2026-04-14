@@ -1260,6 +1260,10 @@ impl Reader {
                     builder.add_ingredient(ingredient);
                 }
                 for assertion in manifest.assertions.iter() {
+                    // Skip internal archive metadata — it must not appear in final signed manifests.
+                    if assertion.label() == crate::assertions::labels::ARCHIVE_METADATA {
+                        continue;
+                    }
                     builder.add_assertion(assertion.label(), assertion.value()?)?;
                 }
                 for (uri, data) in manifest.resources().resources() {

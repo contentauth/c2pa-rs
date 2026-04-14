@@ -7067,6 +7067,42 @@ mod tests {
     }
 
     #[test]
+    // Verify that org.contentauth.archive.metadata does not appear in a final signed manifest
+    // after an archive round-trip. It is an internal implementation detail that must not be
+    // visible to consumers of the content credentials.
+    fn test_archive_metadata_assertion_not_in_signed_manifest() -> Result<()> {
+        let mut builder =
+            Builder::default().with_definition(r#"{"title": "Archive Leak Test"}"#)?;
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+
+        archive.rewind()?;
+        let mut restored = Builder::default().with_archive(archive)?;
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        restored.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
+
+        dest.rewind()?;
+        let reader = Reader::default().with_stream("image/jpeg", &mut dest)?;
+        let manifest = reader.active_manifest().expect("signed manifest present");
+
+        let has_archive_metadata = manifest
+            .assertions()
+            .iter()
+            .any(|a| a.label() == crate::assertions::labels::ARCHIVE_METADATA);
+
+        assert!(
+            !has_archive_metadata,
+            "org.contentauth.archive.metadata must not appear in a final signed manifest"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn test_write_ingredient_archive_and_add_ingredient_from_archive() -> Result<()> {
         let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
         let context = Context::new().with_settings(settings)?.into_shared();
