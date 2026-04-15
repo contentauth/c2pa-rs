@@ -58,6 +58,7 @@ use crate::{
     error::{Error, Result},
     hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
+    http::{AsyncHttpResolver, SyncHttpResolver},
     jumbf::{
         self,
         boxes::*,
@@ -556,20 +557,16 @@ impl Store {
         claim: &Claim,
         signer: &dyn AsyncSigner,
         box_size: usize,
-        settings: &Settings,
+        context: &Context
     ))]
     pub fn sign_claim(
         &self,
         claim: &Claim,
         signer: &dyn Signer,
         box_size: usize,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Vec<u8>> {
         let claim_bytes = claim.data()?;
-
-        // no verification of timestamp trust while signing
-        let mut adjusted_settings = settings.clone();
-        adjusted_settings.verify.verify_timestamp_trust = false;
 
         let tss = if claim.version() > 1 {
             TimeStampStorage::V2_sigTst2_CTT
@@ -582,7 +579,7 @@ impl Store {
                 // Let the signer do all the COSE processing and return the structured COSE data.
                 return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
             } else {
-                cose_sign(signer, &claim_bytes, box_size, tss, &adjusted_settings)
+                cose_sign(signer, &claim_bytes, box_size, tss, context)
             }
         } else {
             if signer.direct_cose_handling() {
@@ -590,13 +587,13 @@ impl Store {
                 return signer.sign(claim_bytes.clone()).await;
             // do not verify remote signers (we never did)
             } else {
-                cose_sign_async(signer, &claim_bytes, box_size, tss, settings).await
+                cose_sign_async(signer, &claim_bytes, box_size, tss, context).await
             }
         };
         match result {
             Ok(sig) => {
                 // Sanity check: Ensure that this signature is valid.
-                let verify_after_sign = settings.verify.verify_after_sign;
+                let verify_after_sign = context.settings().verify.verify_after_sign;
 
                 if verify_after_sign {
                     let mut cose_log =
@@ -611,7 +608,8 @@ impl Store {
                             &self.ctp,
                             None,
                             &mut cose_log,
-                            &adjusted_settings,
+                            false,
+                            context.settings(),
                         )
                     } else {
                         verify_cose_async(
@@ -622,7 +620,8 @@ impl Store {
                             &self.ctp,
                             None,
                             &mut cose_log,
-                            &adjusted_settings,
+                            false,
+                            context.settings(),
                         )
                         .await
                     };
@@ -2374,7 +2373,6 @@ impl Store {
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be signed.
     pub fn sign_manifest(&mut self, signer: &dyn Signer, context: &Context) -> Result<Vec<u8>> {
-        let settings = context.settings();
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
         // if user did not supply a hash
@@ -2412,7 +2410,7 @@ impl Store {
 
                 // Get pc again
                 let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+                let sig = self.sign_claim(pc, signer, signer.reserve_size(), context)?;
                 let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
                 if sig_placeholder.len() != sig.len() {
@@ -2433,7 +2431,7 @@ impl Store {
         // Drop pc and get an immutable reference for signing
         let _ = pc;
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context)?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -2560,7 +2558,7 @@ impl Store {
 
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context)?;
 
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
@@ -2627,7 +2625,7 @@ impl Store {
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = self
-            .sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
+            .sign_claim_async(pc, signer, signer.reserve_size(), context)
             .await?;
 
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
@@ -2661,7 +2659,7 @@ impl Store {
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
 
         // sign contents
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context)?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         if sig_placeholder.len() != sig.len() {
@@ -2699,7 +2697,7 @@ impl Store {
 
         // sign contents
         let sig = self
-            .sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
+            .sign_claim_async(pc, signer, signer.reserve_size(), context)
             .await?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
@@ -2962,7 +2960,7 @@ impl Store {
 
         // sign the claim
         let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = temp_store.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
+        let sig = temp_store.sign_claim(pc, signer, signer.reserve_size(), context)?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
 
         match temp_store.finish_save(jumbf_bytes, &dest_path, sig, &sig_placeholder) {
@@ -3071,9 +3069,9 @@ impl Store {
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
-            self.sign_claim(pc, signer, signer.reserve_size(), settings)
+            self.sign_claim(pc, signer, signer.reserve_size(), context)
         } else {
-            self.sign_claim_async(pc, signer, signer.reserve_size(), settings)
+            self.sign_claim_async(pc, signer, signer.reserve_size(), context)
                 .await
         }?;
         let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
@@ -4224,18 +4222,10 @@ impl Store {
     ) -> Result<Vec<(String, Vec<u8>)>> {
         let mut oscp_response_ders = Vec::new();
 
-        let mut adjusted_settings = context.settings().clone();
-        let original_trust_val = adjusted_settings.verify.verify_timestamp_trust;
-
         for manifest_label in manifest_labels {
             if let Some(claim) = self.claims_map.get(&manifest_label) {
                 let sig = claim.signature_val().clone();
                 let data = claim.data()?;
-
-                // no timestamp trust checks for 1.x manifests
-                if claim.version() == 1 {
-                    adjusted_settings.verify.verify_timestamp_trust = false;
-                }
 
                 let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
                 let ocsp_response_der = if _sync {
@@ -4245,6 +4235,7 @@ impl Store {
                         &self.ctp,
                         None,
                         validation_log,
+                        claim.version() != 1,
                         context,
                     )?
                     .ocsp_der
@@ -4255,6 +4246,7 @@ impl Store {
                         &self.ctp,
                         None,
                         validation_log,
+                        claim.version() != 1,
                         context,
                     )
                     .await?
@@ -4265,7 +4257,6 @@ impl Store {
                     oscp_response_ders.push((manifest_label, ocsp_response_der));
                 }
             }
-            adjusted_settings.verify.verify_timestamp_trust = original_trust_val;
         }
 
         Ok(oscp_response_ders)

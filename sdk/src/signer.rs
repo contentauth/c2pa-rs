@@ -16,12 +16,11 @@ use async_trait::async_trait;
 use crate::{
     crypto::{
         raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
-        time_stamp::{TimeStampError, TimeStampProvider},
+        time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     },
     dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
-    http::SyncGenericResolver,
     maybe_send_sync::{MaybeSend, MaybeSync},
-    Result,
+    Error, Result,
 };
 
 // Type aliases for boxed trait objects with conditional Send + Sync bounds
@@ -63,12 +62,18 @@ pub trait Signer {
     /// than this value.
     fn reserve_size(&self) -> usize;
 
-    /// URL for time authority to time stamp the signature
+    /// URL for the timestamp authority used to timestamp the signature.
+    ///
+    /// If this is set and [`Signer::send_timestamp_request`] returns
+    /// `None` (the default behavior), the SDK uses its built-in networking
+    /// implementation to submit the request.
     fn time_authority_url(&self) -> Option<String> {
         None
     }
 
     /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// The default implementation returns `None`.
     ///
     /// IMPORTANT: You should not include the "Content-type" header here.
     /// That is provided by default.
@@ -76,6 +81,9 @@ pub trait Signer {
         None
     }
 
+    /// Builds the RFC 3161 timestamp request body from a given piece of data.
+    ///
+    /// The default implementation builds a RFC 3161 timestmap request body from `message`.
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
         crate::crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
     }
@@ -83,28 +91,18 @@ pub trait Signer {
     /// Request RFC 3161 timestamp to be included in the manifest data
     /// structure.
     ///
-    /// `message` is a preliminary hash of the claim
+    /// `message` is a preliminary hash of the claim.
     ///
-    /// The default implementation will send the request to the URL
-    /// provided by [`Self::time_authority_url()`], if any.
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        if let Some(url) = self.time_authority_url() {
-            if let Ok(body) = self.timestamp_request_body(message) {
-                let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-                return Some(
-                    crate::crypto::time_stamp::default_rfc3161_request(
-                        &url,
-                        headers,
-                        &body,
-                        message,
-                        &SyncGenericResolver::with_redirects().unwrap_or_default(),
-                    )
-                    .map_err(|e| e.into()),
-                );
-            }
-        }
-
-        None
+    /// Implement this function to provide custom networking for timestamp
+    /// requests. The default implementation returns
+    /// `Some(Err(Error::TimestampNotImplemented))`.
+    ///
+    /// If this method returns `None`, timestamping is skipped entirely.
+    /// If this method returns `Some(Err(Error::TimestampNotImplemented))` and
+    /// [`Signer::time_authority_url`] is set, the SDK falls back to its
+    /// built-in networking implementation.
+    fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
+        Some(Err(Error::TimestampNotImplemented))
     }
 
     /// OCSP response for the signing cert if available
@@ -192,12 +190,18 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
     /// than this value.
     fn reserve_size(&self) -> usize;
 
-    /// URL for time authority to time stamp the signature
+    /// URL for the timestamp authority used to timestamp the signature.
+    ///
+    /// If this is set and [`AsyncSigner::send_timestamp_request`] returns
+    /// `None` (the default behavior), the SDK uses its built-in networking
+    /// implementation to submit the request.
     fn time_authority_url(&self) -> Option<String> {
         None
     }
 
     /// Additional request headers to pass to the time stamp authority.
+    ///
+    /// The default implementation returns `None`.
     ///
     /// IMPORTANT: You should not include the "Content-type" header here.
     /// That is provided by default.
@@ -205,6 +209,9 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
         None
     }
 
+    /// Builds the RFC 3161 timestamp request body from a given piece of data.
+    ///
+    /// The default implementation builds a RFC 3161 timestmap request body from `message`.
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
         crate::crypto::time_stamp::default_rfc3161_message(message).map_err(|e| e.into())
     }
@@ -212,31 +219,18 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
     /// Request RFC 3161 timestamp to be included in the manifest data
     /// structure.
     ///
-    /// `message` is a preliminary hash of the claim
+    /// `message` is a preliminary hash of the claim.
     ///
-    /// The default implementation will send the request to the URL
-    /// provided by [`Self::time_authority_url()`], if any.
-    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        if let Some(url) = self.time_authority_url() {
-            if let Ok(body) = self.timestamp_request_body(message) {
-                use crate::http::AsyncGenericResolver;
-
-                let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-                return Some(
-                    crate::crypto::time_stamp::default_rfc3161_request_async(
-                        &url,
-                        headers,
-                        &body,
-                        message,
-                        &AsyncGenericResolver::with_redirects().unwrap_or_default(),
-                    )
-                    .await
-                    .map_err(|e| e.into()),
-                );
-            }
-        }
-
-        None
+    /// Implement this function to provide custom networking for timestamp
+    /// requests. The default implementation returns
+    /// `Some(Err(Error::TimestampNotImplemented))`.
+    ///
+    /// If this method returns `None`, timestamping is skipped entirely.
+    /// If this method returns `Some(Err(Error::TimestampNotImplemented))` and
+    /// [`AsyncSigner::time_authority_url`] is set, the SDK falls back to its
+    /// built-in networking implementation.
+    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
+        Some(Err(Error::TimestampNotImplemented))
     }
 
     /// OCSP response for the signing cert if available
@@ -351,29 +345,27 @@ impl RawSigner for Box<dyn Signer> {
     }
 }
 
-impl TimeStampProvider for Box<dyn Signer> {
+impl<T: Signer + ?Sized> TimeStampProvider for T {
     fn time_stamp_service_url(&self) -> Option<String> {
-        self.as_ref().time_authority_url()
+        self.time_authority_url()
     }
 
     fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
-        self.as_ref().timestamp_request_headers()
+        self.timestamp_request_headers()
     }
 
     fn time_stamp_request_body(
         &self,
         message: &[u8],
     ) -> std::result::Result<Vec<u8>, TimeStampError> {
-        Ok(self.as_ref().sign(message)?)
+        Ok(self.timestamp_request_body(message)?)
     }
 
     fn send_time_stamp_request(
         &self,
         message: &[u8],
     ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
-        self.as_ref()
-            .send_timestamp_request(message)
-            .map(|r| Ok(r?))
+        self.send_timestamp_request(message).map(|r| Ok(r?))
     }
 }
 
@@ -428,6 +420,32 @@ impl<T: ?Sized + AsyncSigner> AsyncSigner for Box<T> {
 
     fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
         (**self).async_raw_signer()
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<T: AsyncSigner + ?Sized> AsyncTimeStampProvider for T {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.time_authority_url()
+    }
+
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.timestamp_request_headers()
+    }
+
+    fn time_stamp_request_body(
+        &self,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, TimeStampError> {
+        Ok(self.timestamp_request_body(message)?)
+    }
+
+    async fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<Result<Vec<u8>, TimeStampError>> {
+        self.send_timestamp_request(message).await.map(|r| Ok(r?))
     }
 }
 

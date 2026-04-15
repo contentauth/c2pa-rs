@@ -23,6 +23,9 @@ pub use http_request::{default_rfc3161_request, default_rfc3161_request_async};
 
 mod provider;
 pub use provider::{default_rfc3161_message, AsyncTimeStampProvider, TimeStampProvider};
+pub(crate) use provider::{
+    send_time_stamp_request_with_fallback, send_time_stamp_request_with_fallback_async,
+};
 
 mod response;
 pub(crate) use response::{ContentInfo, TimeStampResponse};

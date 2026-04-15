@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use async_generic::async_generic;
 use async_trait::async_trait;
 use bcder::{encode::Values, OctetString};
 use rand::{thread_rng, Rng};
@@ -22,7 +23,7 @@ use crate::{
         raw_signature::oids::{ans1_oid_bcder_oid, SHA256_OID},
         time_stamp::TimeStampError,
     },
-    http::SyncGenericResolver,
+    http::{AsyncHttpResolver, SyncHttpResolver},
     maybe_send_sync::MaybeSync,
 };
 
@@ -32,12 +33,18 @@ use crate::{
 ///
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 pub trait TimeStampProvider {
-    /// Return the URL for time stamp service.
+    /// URL for the timestamp authority used to timestamp the signature.
+    ///
+    /// If this is set and [`TimeStampProvider::send_time_stamp_request`] returns
+    /// `None` (the default behavior), the SDK uses its built-in networking
+    /// implementation to submit the request.
     fn time_stamp_service_url(&self) -> Option<String> {
         None
     }
 
     /// Additional request headers to pass to the time stamp service.
+    ///
+    /// The default implementation returns `None`.
     ///
     /// IMPORTANT: You should not include the "Content-type" header here.
     /// That is provided by default.
@@ -47,33 +54,29 @@ pub trait TimeStampProvider {
 
     /// Generate the request body for the HTTPS request to the time stamp
     /// service.
+    ///
+    /// The default implementation builds a RFC 3161 timestmap request body from `message`.
+    /// service.
     fn time_stamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>, TimeStampError> {
         default_rfc3161_message(message)
     }
 
     /// Request a [RFC 3161] time stamp over an arbitrary data packet.
     ///
-    /// The default implementation will send the request to the URL
-    /// provided by [`Self::time_stamp_service_url()`], if any.
+    /// Implement this function to provide custom networking for timestamp
+    /// requests. The default implementation returns
+    /// `Some(Err(TimeStampError::NotImplemented))`.
+    ///
+    /// If this method returns `None`, timestamping is skipped entirely.
+    /// If this method returns `Some(Err(TimeStampError::NotImplemented))` and
+    /// [`TimeStampProvider::time_stamp_service_url`] is set, the SDK falls back
+    /// to its built-in networking implementation.
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     ///
     /// todo: THIS CODE IS NOT COMPATIBLE WITH C2PA 2.x sigTst2
-    fn send_time_stamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>, TimeStampError>> {
-        if let Some(url) = self.time_stamp_service_url() {
-            if let Ok(body) = self.time_stamp_request_body(message) {
-                let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
-                return Some(super::http_request::default_rfc3161_request(
-                    &url,
-                    headers,
-                    &body,
-                    message,
-                    &SyncGenericResolver::with_redirects().unwrap_or_default(),
-                ));
-            }
-        }
-
-        None
+    fn send_time_stamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>, TimeStampError>> {
+        Some(Err(TimeStampError::NotImplemented))
     }
 }
 
@@ -88,12 +91,18 @@ pub trait TimeStampProvider {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait AsyncTimeStampProvider: MaybeSync {
-    /// Return the URL for time stamp service.
+    /// URL for the timestamp authority used to timestamp the signature.
+    ///
+    /// If this is set and [`AsyncTimeStampProvider::send_time_stamp_request`] returns
+    /// `None` (the default behavior), the SDK uses its built-in networking
+    /// implementation to submit the request.
     fn time_stamp_service_url(&self) -> Option<String> {
         None
     }
 
     /// Additional request headers to pass to the time stamp service.
+    ///
+    /// The default implementation returns `None`.
     ///
     /// IMPORTANT: You should not include the "Content-type" header here.
     /// That is provided by default.
@@ -103,39 +112,88 @@ pub trait AsyncTimeStampProvider: MaybeSync {
 
     /// Generate the request body for the HTTPS request to the time stamp
     /// service.
+    ///
+    /// The default implementation builds a RFC 3161 timestmap request body from `message`.
     fn time_stamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>, TimeStampError> {
         default_rfc3161_message(message)
     }
 
     /// Request a [RFC 3161] time stamp over an arbitrary data packet.
     ///
-    /// The default implementation will send the request to the URL
-    /// provided by [`Self::time_stamp_service_url()`], if any.
+    /// `message` is a preliminary hash of the claim.
+    ///
+    /// Implement this function to provide custom networking for timestamp
+    /// requests. The default implementation returns
+    /// `Some(Err(TimeStampError::NotImplemented))`.
+    ///
+    /// If this method returns `None`, timestamping is skipped entirely.
+    /// If this method returns `Some(Err(TimeStampError::NotImplemented))` and
+    /// [`AsyncTimeStampProvider::time_stamp_service_url`] is set, the SDK falls
+    /// back to its built-in networking implementation.
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     async fn send_time_stamp_request(
         &self,
-        message: &[u8],
+        _message: &[u8],
     ) -> Option<Result<Vec<u8>, TimeStampError>> {
-        if let Some(url) = self.time_stamp_service_url() {
-            if let Ok(body) = self.time_stamp_request_body(message) {
-                use crate::http::AsyncGenericResolver;
+        Some(Err(TimeStampError::NotImplemented))
+    }
+}
 
-                let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
-                return Some(
-                    super::http_request::default_rfc3161_request_async(
-                        &url,
-                        headers,
-                        &body,
-                        message,
-                        &AsyncGenericResolver::with_redirects().unwrap_or_default(),
-                    )
-                    .await,
-                );
+/// Request a timestamp from the provider, falling back to a built-in networking
+/// implementation if the provider returns [`TimeStampError::NotImplemented`].
+///
+/// If [`TimeStampProvider::send_time_stamp_request`] returns `None`, timestamping is
+/// skipped and [`TimeStampError::NotImplemented`] is returned. If it returns
+/// `Some(Err(TimeStampError::NotImplemented))` and
+/// [`TimeStampProvider::time_stamp_service_url`] is set, the SDK falls back to its
+/// built-in networking implementation. If no URL is configured either,
+/// [`TimeStampError::NotImplemented`] is returned.
+#[async_generic(async_signature(
+    ts_provider: &(impl AsyncTimeStampProvider + ?Sized),
+    message: &[u8],
+    http_resolver: &(impl AsyncHttpResolver + ?Sized),
+))]
+pub(crate) fn send_time_stamp_request_with_fallback(
+    ts_provider: &(impl TimeStampProvider + ?Sized),
+    message: &[u8],
+    http_resolver: &(impl SyncHttpResolver + ?Sized),
+) -> Result<Vec<u8>, TimeStampError> {
+    if _sync {
+        match ts_provider.send_time_stamp_request(message) {
+            None => Err(TimeStampError::NotImplemented),
+            Some(Err(TimeStampError::NotImplemented)) => {
+                let Some(url) = ts_provider.time_stamp_service_url() else {
+                    return Err(TimeStampError::NotImplemented);
+                };
+                super::default_rfc3161_request(
+                    &url,
+                    ts_provider.time_stamp_request_headers(),
+                    &ts_provider.time_stamp_request_body(message)?,
+                    message,
+                    http_resolver,
+                )
             }
+            Some(result) => result,
         }
-
-        None
+    } else {
+        match ts_provider.send_time_stamp_request(message).await {
+            None => Err(TimeStampError::NotImplemented),
+            Some(Err(TimeStampError::NotImplemented)) => {
+                let Some(url) = ts_provider.time_stamp_service_url() else {
+                    return Err(TimeStampError::NotImplemented);
+                };
+                super::default_rfc3161_request_async(
+                    &url,
+                    ts_provider.time_stamp_request_headers(),
+                    &ts_provider.time_stamp_request_body(message)?,
+                    message,
+                    http_resolver,
+                )
+                .await
+            }
+            Some(result) => result,
+        }
     }
 }
 

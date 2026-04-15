@@ -202,7 +202,7 @@ mod tests {
         },
         settings::Settings,
         status_tracker::StatusTracker,
-        Signer,
+        Context, Signer,
     };
 
     /// Diagnostic: produce COSE bytes with EphemeralSigner (no verify), then
@@ -218,10 +218,11 @@ mod tests {
 
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
+        let context = Context::new().with_settings(settings).unwrap();
 
         let tss = TimeStampStorage::V1_sigTst;
 
-        let cose_bytes = cose_sign(&signer, &claim_bytes, signer.reserve_size(), tss, &settings)
+        let cose_bytes = cose_sign(&signer, &claim_bytes, signer.reserve_size(), tss, &context)
             .expect("cose_sign with EphemeralSigner");
 
         let mut log = StatusTracker::default();
@@ -255,10 +256,11 @@ mod tests {
 
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
+        let context = Context::new().with_settings(settings).unwrap();
 
         let tss = TimeStampStorage::V1_sigTst;
 
-        let cose_bytes = cose_sign(&signer, &claim_bytes, signer.reserve_size(), tss, &settings)
+        let cose_bytes = cose_sign(&signer, &claim_bytes, signer.reserve_size(), tss, &context)
             .expect("cose_sign with EphemeralSigner");
 
         let mut log = StatusTracker::default();
@@ -277,7 +279,8 @@ mod tests {
             &ctp,
             None,
             &mut validation_log,
-            &settings,
+            context.settings().verify.verify_timestamp_trust,
+            context.settings(),
         );
 
         let info = result.expect("verify_cose on same bytes");
@@ -298,8 +301,9 @@ mod tests {
 
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
+        let context = Context::new().with_settings(settings).unwrap();
 
-        let cose_bytes = sign_claim(&claim_bytes, &signer, signer.reserve_size(), &settings)
+        let cose_bytes = sign_claim(&claim_bytes, &signer, signer.reserve_size(), &context)
             .expect("sign_claim with EphemeralSigner");
 
         let mut validation_log = StatusTracker::default();
@@ -313,7 +317,8 @@ mod tests {
             &ctp,
             None,
             &mut validation_log,
-            &settings,
+            context.settings().verify.verify_timestamp_trust,
+            context.settings(),
         );
 
         let info = result.expect("signature from EphemeralSigner must verify");
@@ -342,9 +347,10 @@ mod tests {
 
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
+        let context = Context::new().with_settings(settings).unwrap();
 
         let cose_bytes =
-            crate::cose_sign::sign_claim(&claim_bytes, &signer, signer.reserve_size(), &settings)
+            crate::cose_sign::sign_claim(&claim_bytes, &signer, signer.reserve_size(), &context)
                 .expect("sign_claim with EphemeralSigner");
 
         let mut validation_log = StatusTracker::default();

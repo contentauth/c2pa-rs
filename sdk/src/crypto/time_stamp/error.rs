@@ -54,6 +54,11 @@ pub enum TimeStampError {
     #[error("nonce mismatch")]
     NonceMismatch,
 
+    /// The provider has no custom timestamp implementation and no URL was configured,
+    /// or the provider returned `None` to explicitly skip timestamping.
+    #[error("timestamp provider has no custom implementation")]
+    NotImplemented,
+
     /// The time stamp service responded with an error condition.
     #[error("service responded with an HTTP error (status = {0}, content-type = {1:?})")]
     HttpErrorResponse(u16, Option<String>),

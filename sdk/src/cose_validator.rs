@@ -55,6 +55,7 @@ pub(crate) fn verify_cose(
     ctp: &CertificateTrustPolicy,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    verify_timestamp_trust: bool,
     settings: &Settings,
 ) -> Result<CertificateInfo> {
     let verifier = if cert_check {
@@ -76,21 +77,15 @@ pub(crate) fn verify_cose(
         Some(tst_info) => Some(tst_info.clone()),
         None => {
             if _sync {
-                validate_cose_tst_info(
-                    &sign1,
-                    data,
-                    ctp,
-                    validation_log,
-                    settings.verify.verify_timestamp_trust,
-                )
-                .ok()
+                validate_cose_tst_info(&sign1, data, ctp, validation_log, verify_timestamp_trust)
+                    .ok()
             } else {
                 validate_cose_tst_info_async(
                     &sign1,
                     data,
                     ctp,
                     validation_log,
-                    settings.verify.verify_timestamp_trust,
+                    verify_timestamp_trust,
                 )
                 .await
                 .ok()
@@ -263,14 +258,15 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        crypto::raw_signature::SigningAlg, settings::Settings, status_tracker::StatusTracker,
-        utils::test_signer::test_signer, Signer,
+        crypto::raw_signature::SigningAlg, http::SyncGenericResolver, settings::Settings,
+        status_tracker::StatusTracker, utils::test_signer::test_signer, Context, Signer,
     };
 
     #[test]
     fn test_no_timestamp() {
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
+        let context = Context::new().with_settings(settings).unwrap();
 
         let mut validation_log = StatusTracker::default();
 
@@ -284,7 +280,7 @@ pub mod tests {
         let signer = test_signer(SigningAlg::Ps256);
 
         let cose_bytes =
-            crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size, &settings)
+            crate::cose_sign::sign_claim(&claim_bytes, signer.as_ref(), box_size, &context)
                 .unwrap();
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
@@ -292,7 +288,7 @@ pub mod tests {
         let signing_time = signing_time_from_sign1(
             &cose_sign1,
             &claim_bytes,
-            settings.verify.verify_timestamp_trust,
+            context.settings().verify.verify_timestamp_trust,
         );
 
         assert_eq!(signing_time, None);
@@ -306,6 +302,7 @@ pub mod tests {
 
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
+        let context = Context::new().with_settings(settings).unwrap();
 
         let mut validation_log = StatusTracker::default();
 
@@ -360,7 +357,7 @@ pub mod tests {
             &claim_bytes,
             &ocsp_signer,
             ocsp_signer.reserve_size(),
-            &settings,
+            &context,
         )
         .unwrap();
 

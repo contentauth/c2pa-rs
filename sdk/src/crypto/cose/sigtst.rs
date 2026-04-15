@@ -26,10 +26,12 @@ use crate::{
         cose::{CertificateTrustPolicy, CoseError, TimeStampStorage},
         raw_signature::{AsyncRawSigner, RawSigner},
         time_stamp::{
+            send_time_stamp_request_with_fallback, send_time_stamp_request_with_fallback_async,
             verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampError,
             TimeStampResponse,
         },
     },
+    http::{AsyncHttpResolver, SyncHttpResolver},
     log_item,
     status_tracker::StatusTracker,
     validation_status, Result,
@@ -230,51 +232,55 @@ impl TstContainer {
         p_header: &ProtectedHeader,
         mut header_builder: HeaderBuilder,
         tss: TimeStampStorage,
-    ))]
+        http_resolver: &impl AsyncHttpResolver,
+    ))
+]
 pub(crate) fn add_sigtst_header(
     ts_provider: &dyn RawSigner,
     data: &[u8],
     p_header: &ProtectedHeader,
     mut header_builder: HeaderBuilder,
     tss: TimeStampStorage,
+    http_resolver: &impl SyncHttpResolver,
 ) -> Result<HeaderBuilder, CoseError> {
     let sd = cose_countersign_data(data, p_header);
 
-    let maybe_cts = if _sync {
-        ts_provider.send_time_stamp_request(&sd)
+    let cts = if _sync {
+        send_time_stamp_request_with_fallback(ts_provider, &sd, http_resolver)
     } else {
-        ts_provider.send_time_stamp_request(&sd).await
+        send_time_stamp_request_with_fallback_async(ts_provider, &sd, http_resolver).await
+    };
+    let mut cts = match cts {
+        Ok(cts) => cts,
+        Err(TimeStampError::NotImplemented) => return Ok(header_builder),
+        Err(err) => return Err(err.into()),
     };
 
-    if let Some(cts) = maybe_cts {
-        let mut cts = cts?;
+    if tss == TimeStampStorage::V2_sigTst2_CTT {
+        // In `sigTst2`, we use only the `TimeStampToken` and not `TimeStampRsp` for
+        // sigTst2
+        cts = timestamptoken_from_timestamprsp(&cts).map_err(|err| {
+            TimeStampError::DecodeError(format!(
+                "unable to parse time stamp token from timestamp response: {err:?}"
+            ))
+        })?;
+    }
 
-        if tss == TimeStampStorage::V2_sigTst2_CTT {
-            // In `sigTst2`, we use only the `TimeStampToken` and not `TimeStampRsp` for
-            // sigTst2
-            cts = timestamptoken_from_timestamprsp(&cts).map_err(|err| {
-                TimeStampError::DecodeError(format!(
-                    "unable to parse time stamp token from timestamp response: {err:?}"
-                ))
-            })?;
+    let cts = make_cose_timestamp(&cts);
+
+    let mut sigtst_vec: Vec<u8> = vec![];
+    coset::cbor::into_writer(&cts, &mut sigtst_vec)
+        .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
+
+    let sigtst_cbor: Value = coset::cbor::from_reader(sigtst_vec.as_slice())
+        .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
+
+    match tss {
+        TimeStampStorage::V1_sigTst => {
+            header_builder = header_builder.text_value("sigTst".to_string(), sigtst_cbor);
         }
-
-        let cts = make_cose_timestamp(&cts);
-
-        let mut sigtst_vec: Vec<u8> = vec![];
-        coset::cbor::into_writer(&cts, &mut sigtst_vec)
-            .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
-
-        let sigtst_cbor: Value = coset::cbor::from_reader(sigtst_vec.as_slice())
-            .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
-
-        match tss {
-            TimeStampStorage::V1_sigTst => {
-                header_builder = header_builder.text_value("sigTst".to_string(), sigtst_cbor);
-            }
-            TimeStampStorage::V2_sigTst2_CTT => {
-                header_builder = header_builder.text_value("sigTst2".to_string(), sigtst_cbor);
-            }
+        TimeStampStorage::V2_sigTst2_CTT => {
+            header_builder = header_builder.text_value("sigTst2".to_string(), sigtst_cbor);
         }
     }
 

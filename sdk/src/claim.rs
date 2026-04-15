@@ -1924,6 +1924,7 @@ impl Claim {
             ctp,
             svi.timestamps.get(claim.label()),
             validation_log,
+            settings.verify.verify_timestamp_trust,
             settings,
         )
         .await;
@@ -1950,11 +1951,6 @@ impl Claim {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val();
         let additional_bytes: Vec<u8> = Vec::new();
-
-        let mut adjusted_settings = context.settings().clone();
-        if claim.version() == 1 {
-            adjusted_settings.verify.verify_timestamp_trust = false;
-        }
 
         // use the signature uri as the current uri while validating the signature info
         validation_log.push_current_uri(to_signature_uri(claim.label()));
@@ -2024,7 +2020,8 @@ impl Claim {
             ctp,
             svi.timestamps.get(claim.label()),
             validation_log,
-            &adjusted_settings,
+            claim.version() != 1,
+            context.settings(),
         );
 
         let result =

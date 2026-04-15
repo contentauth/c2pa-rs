@@ -76,6 +76,19 @@ pub enum Error {
     #[error("feature implementation incomplete")]
     NotImplemented(String),
 
+    /// Returned from [`Signer::send_timestamp_request`] or
+    /// [`AsyncSigner::send_timestamp_request`] to indicate that no custom
+    /// timestamp implementation is provided.
+    ///
+    /// When this error is returned and [`Signer::time_authority_url`] is set,
+    /// the SDK falls back to its built-in networking implementation.
+    ///
+    /// [`Signer::send_timestamp_request`]: crate::Signer::send_timestamp_request
+    /// [`AsyncSigner::send_timestamp_request`]: crate::AsyncSigner::send_timestamp_request
+    /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
+    #[error("timestamp provider has no custom implementation")]
+    TimestampNotImplemented,
+
     /// The attempt to serialize the claim to CBOR failed.
     #[error("claim could not be converted to CBOR")]
     ClaimEncoding,
@@ -483,7 +496,10 @@ impl From<Error> for RawSignerError {
 
 impl From<Error> for TimeStampError {
     fn from(err: Error) -> Self {
-        // See if better mappings exist, but I doubt it.
-        Self::InternalError(err.to_string())
+        match err {
+            Error::TimestampNotImplemented => Self::NotImplemented,
+            Error::TimeStampError(e) => e,
+            _ => Self::InternalError(err.to_string()),
+        }
     }
 }
