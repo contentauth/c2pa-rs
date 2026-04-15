@@ -3009,7 +3009,7 @@ impl Builder {
         Ok(())
     }
 
-    /// Sign a set of fragmented BMFF files for a single rendition.
+    /// Sign rendition(s) containing fragmented BMFF files.
     ///
     /// Note: Currently this does not support files with existing C2PA manifest.
     ///

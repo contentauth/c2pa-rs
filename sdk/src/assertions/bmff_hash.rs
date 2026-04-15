@@ -1779,7 +1779,7 @@ impl BmffHash {
 
         let mut location_to_fragment_map: HashMap<usize, std::path::PathBuf> = HashMap::new();
 
-        // copy to destination and insert placeholder C2PA Merkle box
+        // copy fragment to destination and insert placeholder C2PA Merkle box
         for (location, seg) in (0_usize..).zip(fragment_paths.iter()) {
             let mut seg_reader = std::fs::File::open(seg)?;
 
@@ -1848,7 +1848,7 @@ impl BmffHash {
                 .write(true)
                 .open(&dest_path)?;
 
-            // UUID to insert into output asset
+            // UUID to insert into output fragment with placeholder proof (will be replaced with real proof after hashing)
             crate::utils::io_utils::insert_data_at(
                 &mut source,
                 &mut dest,
@@ -1860,7 +1860,7 @@ impl BmffHash {
             location_to_fragment_map.insert(location, dest_path);
         }
 
-        // fill in actual hashes now that we have inserted the C2PA box.
+        // fill in actual leaf hashes now that we have inserted the C2PA box.
         let bmff_exclusions = &self.exclusions;
         let mut leaves: Vec<crate::utils::merkle::MerkleNode> =
             Vec::with_capacity(fragment_paths.len());
@@ -1930,7 +1930,7 @@ impl BmffHash {
                     0,
                 )?;
 
-                // replace temp C2PA Merkle box
+                // replace temp C2PA Merkle box with final one containing the proof
                 if uuid_box_data.len() == bmff_mm_info.size() as usize {
                     fragment_stream.seek(std::io::SeekFrom::Start(bmff_mm_info.start()))?;
                     std::io::Write::write_all(&mut fragment_stream, &uuid_box_data)?;
@@ -1942,7 +1942,7 @@ impl BmffHash {
             }
         }
 
-        // save desired Merkle tree row (for now complete tree)
+        // save desired Merkle tree row
         let tree_row = std::cmp::min(max_proofs, m_tree.layers.len() - 1);
         let merkle_row = m_tree.layers[tree_row].clone();
         let mut hashes = Vec::new();
@@ -1957,7 +1957,7 @@ impl BmffHash {
             count: fragment_paths.len(),
             alg: Some(alg.to_owned()),
             init_hash: match alg {
-                // placeholder init hash to be filled once manifest is inserted
+                // placeholder init hash to be filled once manifest is inserted into init segment
                 "sha256" => Some(ByteBuf::from([0u8; 32].to_vec())),
                 "sha384" => Some(ByteBuf::from([0u8; 48].to_vec())),
                 "sha512" => Some(ByteBuf::from([0u8; 64].to_vec())),
