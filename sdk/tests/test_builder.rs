@@ -825,3 +825,30 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn test_builder_compressed_manifests() -> Result<()> {
+    let mut settings = test_settings();
+    settings.core.prefer_compress_manifests = true;
+    let context = Context::new().with_settings(settings)?.into_shared();
+    let mut source = Cursor::new(include_bytes!("fixtures/CA.jpg"));
+    let format = "image/jpeg";
+
+    let dest_buf = Vec::new();
+    let mut dest = Cursor::new(dest_buf);
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    builder.definition.claim_version = Some(2);
+    builder.save_to_stream(format, &mut source, &mut dest)?;
+
+    dest.rewind()?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+
+    assert!(
+        reader.validation_status().is_none(),
+        "Validation should succeed for compressed manifest"
+    );
+
+    Ok(())
+}

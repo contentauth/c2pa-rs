@@ -88,6 +88,10 @@ fn add_required_segs_to_stream(
         .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
 
     if let Some(DynImage::Jpeg(jpeg)) = dimg_opt {
+        if jpeg.segments().is_empty() {
+            return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
+        }
+
         // check for JUMBF Seg
         let cai_app11 = get_cai_segments(&jpeg)?; // make sure we only check for C2PA segments
 
@@ -206,6 +210,10 @@ impl CAIReader for JpegIO {
         if let Some(dimg) = dimg_opt {
             match dimg {
                 DynImage::Jpeg(jpeg) => {
+                    if jpeg.segments().is_empty() {
+                        return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
+                    }
+
                     let app11 = jpeg.segments_by_marker(markers::APP11);
                     let mut cai_en: Vec<u8> = Vec::new();
                     let mut cai_seg_cnt: u32 = 0;
@@ -293,15 +301,21 @@ impl CAIWriter for JpegIO {
 
         // remove existing CAI segments
         let insertion_point = match delete_cai_segments(&mut jpeg)? {
-            Some(i) if i > 0 => i - 1,
-            _ => 0,
+            Some(i) if i > 0 => i, // note the Jpeg::from_bytes Vec does not contain the SOI marker
+            _ => {
+                // insert after last APP0 if it exists (JFIF compatible), otherwise at the beginning (after SOI)
+                let app0_index = jpeg
+                    .segments()
+                    .iter()
+                    .rposition(|segment| segment.marker() == APP0);
+                app0_index.map_or(0, |i| i + 1)
+            }
         };
 
-        let jumbf_len = store_bytes.len();
-        let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
         let mut seg_chucks = store_bytes.chunks(MAX_JPEG_MARKER_SIZE);
+        let num_segments = seg_chucks.len();
 
-        for seg in 1..num_segments + 1 {
+        for seg in 0..num_segments {
             /*
                 If the size of the box payload is less than 2^32-8 bytes,
                 then all fields except the XLBox field, that is: Le, CI, En, Z, LBox and TBox,
@@ -316,14 +330,14 @@ impl CAIWriter for JpegIO {
             // Z: Packet sequence number - 0x00000001...
             let ci = vec![0x4a, 0x50];
             let en = vec![0x02, 0x11];
-            let z: u32 = u32::try_from(seg)
+            let z: u32 = u32::try_from(seg + 1)
                 .map_err(|_| Error::InvalidAsset("Too many JUMBF segments".to_string()))?; //seg.to_be_bytes();
 
             let mut seg_data = Vec::new();
             seg_data.extend(ci);
             seg_data.extend(en);
             seg_data.extend(z.to_be_bytes());
-            if seg > 1 {
+            if seg > 0 {
                 // the LBox and TBox are already in the JUMBF
                 // but we need to duplicate them in all other segments
                 let lbox_tbox = store_bytes
@@ -331,13 +345,10 @@ impl CAIWriter for JpegIO {
                     .ok_or(Error::InvalidAsset("Store bytes too short".to_string()))?;
                 seg_data.extend(lbox_tbox);
             }
-            if seg_chucks.len() > 0 {
-                // make sure we have some...
-                if let Some(next_seg) = seg_chucks.next() {
-                    seg_data.extend(next_seg);
-                }
-            } else {
-                seg_data.extend(store_bytes);
+
+            // make sure we have some...
+            if let Some(next_seg) = seg_chucks.next() {
+                seg_data.extend(next_seg);
             }
 
             let seg_bytes = Bytes::from(seg_data);
@@ -387,6 +398,9 @@ impl CAIWriter for JpegIO {
 
         match dimg {
             DynImage::Jpeg(jpeg) => {
+                if jpeg.segments().is_empty() {
+                    return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
+                }
                 for seg in jpeg.segments() {
                     match seg.marker() {
                         markers::APP11 => {
@@ -1058,20 +1072,40 @@ impl AssetBoxHash for JpegIO {
         let has_c2pa = box_maps
             .iter()
             .any(|bm| bm.names.first().is_some_and(|n| n == C2PA_BOXHASH));
+
         if !has_c2pa {
-            // SOI is always FF D8 (2 bytes) at position 0.  C2PA is inserted
-            // right after it, so range_start = 2, range_len = 0 (synthetic).
-            let synthetic = BoxMap {
+            let mut c2pa_box = BoxMap {
                 names: vec![C2PA_BOXHASH.to_string()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 excluded: Some(true),
                 pad: ByteBuf::from(Vec::new()),
-                range_start: 2,
+                range_start: 0,
                 range_len: 0,
             };
-            // SOI is always first; insert the synthetic C2PA right after it.
-            box_maps.insert(1, synthetic);
+            // SOI is always first; insert the C2PA box right after it or after APP0 if it exists.
+            let app0_index = box_maps
+                .iter()
+                .position(|bm| bm.names.first().is_some_and(|n| n == "APP0"));
+            match app0_index {
+                Some(i) => {
+                    let app0_box = &box_maps[i];
+                    input_stream.seek(std::io::SeekFrom::Start(app0_box.range_start))?;
+                    let size = get_seg_size(input_stream)?;
+
+                    c2pa_box.range_start = app0_box.range_start + size as u64;
+                    box_maps.insert(i + 1, c2pa_box)
+                }
+                None if box_maps.len() > 1 => {
+                    let box0 = &box_maps[0];
+                    input_stream.seek(std::io::SeekFrom::Start(box0.range_start))?;
+                    let size = get_seg_size(input_stream)?;
+
+                    c2pa_box.range_start = box0.range_start + size as u64;
+                    box_maps.insert(1, c2pa_box)
+                }
+                None => return Err(Error::InvalidAsset("JPEG file has no segments".to_string())),
+            };
         }
 
         for bm in box_maps.iter_mut() {
@@ -1104,13 +1138,12 @@ impl AssetBoxHash for JpegIO {
 
 impl ComposedManifestRef for JpegIO {
     fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
-        let jumbf_len = manifest_data.len();
-        let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
         let mut seg_chucks = manifest_data.chunks(MAX_JPEG_MARKER_SIZE);
+        let num_segments = seg_chucks.len(); // recalculate based on actual chunks
 
         let mut segments = Vec::new();
 
-        for seg in 1..num_segments + 1 {
+        for seg in 0..num_segments {
             /*
                 If the size of the box payload is less than 2^32-8 bytes,
                 then all fields except the XLBox field, that is: Le, CI, En, Z, LBox and TBox,
@@ -1125,14 +1158,14 @@ impl ComposedManifestRef for JpegIO {
             // Z: Packet sequence number - 0x00000001...
             let ci = vec![0x4a, 0x50];
             let en = vec![0x02, 0x11];
-            let z: u32 = u32::try_from(seg)
+            let z: u32 = u32::try_from(seg + 1)
                 .map_err(|_| Error::InvalidAsset("Too many JUMBF segments".to_string()))?; //seg.to_be_bytes();
 
             let mut seg_data = Vec::new();
             seg_data.extend(ci);
             seg_data.extend(en);
             seg_data.extend(z.to_be_bytes());
-            if seg > 1 {
+            if seg > 0 {
                 // the LBox and TBox are already in the JUMBF
                 // but we need to duplicate them in all other segments
                 let lbox_tbox = manifest_data
@@ -1140,13 +1173,10 @@ impl ComposedManifestRef for JpegIO {
                     .ok_or(Error::InvalidAsset("Manifest data too short".to_string()))?;
                 seg_data.extend(lbox_tbox);
             }
-            if seg_chucks.len() > 0 {
-                // make sure we have some...
-                if let Some(next_seg) = seg_chucks.next() {
-                    seg_data.extend(next_seg);
-                }
-            } else {
-                seg_data.extend(manifest_data);
+
+            // make sure we have some...
+            if let Some(next_seg) = seg_chucks.next() {
+                seg_data.extend(next_seg);
             }
 
             let seg_bytes = Bytes::from(seg_data);
@@ -1191,7 +1221,7 @@ pub mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::utils::io_utils::tempdirectory;
+    use crate::utils::io_utils::{safe_vec, tempdirectory};
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");
@@ -1468,5 +1498,18 @@ pub mod tests {
         let jpeg_io = JpegIO {};
 
         let _ = jpeg_io.get_object_locations_from_stream(&mut stream);
+    }
+
+    #[test]
+    fn test_crash_jpeg_segments_equal_chunk_multiple() {
+        let some_data = safe_vec(MAX_JPEG_MARKER_SIZE as u64 * 3, Some(1u8)).unwrap();
+        let source = crate::utils::test::fixture_path("CA.jpg");
+        let mut source_stream = std::fs::File::open(source).unwrap();
+
+        let jpeg_io = JpegIO {};
+        let output = Vec::new();
+        let mut output_stream = Cursor::new(output);
+
+        let _ = jpeg_io.write_cai(&mut source_stream, &mut output_stream, &some_data);
     }
 }
