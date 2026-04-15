@@ -843,8 +843,8 @@ fn test_builder_compressed_manifests() -> Result<()> {
 
     let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
-    builder.definition.claim_version = Some(1); // use v1 for this test
-    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+    builder.definition.claim_version = Some(2);
+    builder.save_to_stream(format, &mut source, &mut dest)?;
 
     dest.rewind()?;
     let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;

@@ -88,6 +88,10 @@ fn add_required_segs_to_stream(
         .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
 
     if let Some(DynImage::Jpeg(jpeg)) = dimg_opt {
+        if jpeg.segments().is_empty() {
+            return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
+        }
+
         // check for JUMBF Seg
         let cai_app11 = get_cai_segments(&jpeg)?; // make sure we only check for C2PA segments
 
@@ -206,6 +210,10 @@ impl CAIReader for JpegIO {
         if let Some(dimg) = dimg_opt {
             match dimg {
                 DynImage::Jpeg(jpeg) => {
+                    if jpeg.segments().is_empty() {
+                        return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
+                    }
+
                     let app11 = jpeg.segments_by_marker(markers::APP11);
                     let mut cai_en: Vec<u8> = Vec::new();
                     let mut cai_seg_cnt: u32 = 0;
@@ -390,6 +398,9 @@ impl CAIWriter for JpegIO {
 
         match dimg {
             DynImage::Jpeg(jpeg) => {
+                if jpeg.segments().is_empty() {
+                    return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
+                }
                 for seg in jpeg.segments() {
                     match seg.marker() {
                         markers::APP11 => {
@@ -1411,7 +1422,7 @@ pub mod tests {
         let jpeg_io = JpegIO {};
 
         let result = jpeg_io.get_object_locations_from_stream(&mut stream);
-        assert!(matches!(result, Err(Error::OtherError(_))));
+        assert!(matches!(result, Err(Error::InvalidAsset(_))));
     }
 
     #[test]
