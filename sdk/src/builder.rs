@@ -1938,9 +1938,14 @@ impl Builder {
     /// [`TimeStampSettings::enabled`]: crate::settings::builder::TimeStampSettings::enabled
     #[async_generic(async_signature(
         &self,
+        signer: &(impl AsyncSigner + ?Sized),
         provenance_claim: &mut Claim,
     ))]
-    fn maybe_add_timestamp(&self, provenance_claim: &mut Claim) -> Result<()> {
+    fn maybe_add_timestamp(
+        &self,
+        signer: &(impl Signer + ?Sized),
+        provenance_claim: &mut Claim,
+    ) -> Result<()> {
         let settings = self.context().settings();
 
         if !settings.builder.auto_timestamp_assertion.enabled
@@ -1949,11 +1954,6 @@ impl Builder {
             return Ok(());
         }
 
-        let signer = if _sync {
-            self.context().signer()?
-        } else {
-            self.context().async_signer()?
-        };
         if signer.time_authority_url().is_none() {
             return Ok(());
         }
@@ -2917,9 +2917,9 @@ impl Builder {
         let mut claim = self.to_claim()?;
 
         if _sync {
-            self.maybe_add_timestamp(&mut claim)?;
+            self.maybe_add_timestamp(signer, &mut claim)?;
         } else {
-            self.maybe_add_timestamp_async(&mut claim).await?
+            self.maybe_add_timestamp_async(signer, &mut claim).await?
         }
 
         let mut store = self.to_store_with_claim(claim)?;
@@ -3012,12 +3012,13 @@ impl Builder {
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
 
-        // convert the manifest to a store
-        let mut store = self.to_store()?;
+        let mut claim = self.to_claim()?;
 
         // Get signer from context
         let signer = self.context.signer()?;
+        self.maybe_add_timestamp(signer, &mut claim)?;
 
+        let mut store = self.to_store_with_claim(claim)?;
         // sign and write our store to to the output image file
         store.save_to_stream(&format, source, dest, signer, &self.context)
     }
