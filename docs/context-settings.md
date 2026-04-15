@@ -157,11 +157,10 @@ The Settings definition has the following top-level structure:
 }
 ```
 
-NOTES:
-
-- All properties are optional. If you do not specify a value, the SDK will use the default value, if any.
-- If you specify a value of `null`, then the property will be set to `null`, not the default.
-- Do not quote Boolean property values (for example, use `true` not `"true"`).
+> [!NOTE]
+> - All properties are optional. If you do not specify a value, the SDK will use the default value, if any.
+> - If you specify a value of `null`, then the property will be set to `null`, not the default.
+> - Do not quote Boolean property values (for example, use `true` not `"true"`).
 
 For a complete reference to all the Settings properties, see the [SDK object reference - Settings](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema).
 
@@ -583,4 +582,4 @@ Context wraps a `Settings` instance and uses it to:
 
 4. **Configure builder behavior** - The `builder` settings control thumbnail generation, actions, and other manifest creation options.
 
-The `Settings` format hasn't changed&mdash;only how you provide those settings.
+The `Settings` format hasn't changed; only how you provide those settings has changed.

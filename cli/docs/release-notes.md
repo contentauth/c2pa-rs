@@ -1,6 +1,7 @@
 # C2PA Tool release notes - ARCHIVE
 
-NOTE: This page provides information on releases 0.9.x and earlier and is not being updated.  It will be removed in the near future.
+> [!NOTE]
+> This page provides information on releases 0.9.x and earlier and is not being updated. It will be removed in the near future.
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/cli/CHANGELOG.md) for information on more recent releases.
 
@@ -44,7 +45,8 @@ This page highlights noteworthy changes in each release of the `c2patool` CLI.
 
 ## 0.5.4
 
-NOTE: This release introduced a 1.3 required change in signature format that is not compatible with previous verify code.
+> [!NOTE]
+> This release introduced a 1.3 required change in signature format that is not compatible with previous verify code.
 We want to give some time for developers to integrate 1.3 validation before using 1.3 signatures.
 Please avoid using 0.5.4 and update to 0.6.0 which can validate the new format but does not create it.
 
