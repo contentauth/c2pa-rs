@@ -203,8 +203,7 @@ fn test_builder_fragmented() -> Result<()> {
     use common::tempdirectory;
     use std::path::PathBuf;
 
-    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
-    let context = Context::new().with_settings(settings)?.into_shared();
+    let context = test_context().into_shared();
 
     let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Create(c2pa::DigitalSourceType::Empty));

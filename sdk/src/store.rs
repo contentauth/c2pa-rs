@@ -2936,9 +2936,9 @@ impl Store {
             let mut fragments = Vec::new();
             let init_dir = init_path
                 .parent()
-                .ok_or(Error::BadParam(format!(
-                    "failed to get parent directory for init segment"
-                )))?
+                .ok_or(Error::BadParam(
+                    "failed to get parent directory for init segment".to_string(),
+                ))?
                 .to_path_buf();
             let frag_glob = init_dir.join(fragment_glob.as_ref());
             let frag_glob_str = frag_glob
@@ -2987,18 +2987,18 @@ impl Store {
         let unsigned_jumbf = self.to_jumbf_internal(signer.reserve_size())?;
         for (init_path, (unique_id, local_id)) in output_map.iter() {
             let init_name = PathBuf::from(init_path.file_name().ok_or(Error::BadParam(
-                format!("failed to get file name for init segment"),
+                "failed to get file name for init segment".to_string(),
             ))?);
             let init_dir = PathBuf::from(
                 init_path
                     .parent()
-                    .ok_or(Error::BadParam(format!(
-                        "failed to get parent directory for init segment"
-                    )))?
+                    .ok_or(Error::BadParam(
+                        "failed to get parent directory for init segment".to_string(),
+                    ))?
                     .file_name()
-                    .ok_or(Error::BadParam(format!(
-                        "failed to get file name for init segment"
-                    )))?,
+                    .ok_or(Error::BadParam(
+                        "failed to get file name for init segment".to_string(),
+                    ))?,
             );
 
             let output_file = output_path.as_ref().join(init_dir).join(init_name);
@@ -8329,8 +8329,8 @@ pub mod tests {
         )
         .unwrap()
         {
-            if init.is_ok() {
-                inits.push(init.unwrap());
+            if let Ok(item) = init {
+                inits.push(item);
             }
         }
 

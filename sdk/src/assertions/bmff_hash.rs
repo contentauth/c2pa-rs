@@ -1760,7 +1760,7 @@ impl BmffHash {
         &mut self,
         max_proofs: usize,
         alg: &str,
-        fragment_paths: &Vec<std::path::PathBuf>,
+        fragment_paths: &[std::path::PathBuf],
         output_dir: &std::path::Path,
         local_id: usize,
         unique_id: usize,
