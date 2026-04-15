@@ -96,7 +96,7 @@ mod cawg {
         builder: &mut Builder,
         signer: &dyn Signer,
         init_pattern: &Path,
-        frag_pattern: &PathBuf,
+        frag_pattern: &Path,
         output_path: &Path,
     ) -> Result<()> {
         builder
