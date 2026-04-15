@@ -483,7 +483,7 @@ fn sign_fragmented(
     builder: &mut Builder,
     signer: &dyn Signer,
     init_pattern: &Path,
-    frag_pattern: &PathBuf,
+    frag_pattern: &Path,
     output_path: &Path,
 ) -> Result<()> {
     // search folders for init segments
