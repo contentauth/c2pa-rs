@@ -24,6 +24,7 @@ use crate::{
         cose::CertificateTrustPolicy,
         time_stamp::{
             send_time_stamp_request_with_fallback, send_time_stamp_request_with_fallback_async,
+            TimeStampError,
         },
     },
     error::Result,
@@ -166,18 +167,23 @@ impl TimeStamp {
         signer: &(impl Signer + ?Sized),
     ) -> Result<()> {
         let timestamp_token = if _sync {
-            TimeStamp::send_timestamp_token_request_with_signer(signature, http_resolver, signer)?
+            TimeStamp::send_timestamp_token_request_with_signer(signature, http_resolver, signer)
         } else {
             TimeStamp::send_timestamp_token_request_with_signer_async(
                 signature,
                 http_resolver,
                 signer,
             )
-            .await?
+            .await
         };
 
-        self.0
-            .insert(manifest_id.to_owned(), ByteBuf::from(timestamp_token));
+        match timestamp_token {
+            Ok(token) => {
+                self.0.insert(manifest_id.to_owned(), ByteBuf::from(token));
+            }
+            Err(Error::TimeStampError(TimeStampError::NotImplemented)) => {}
+            Err(e) => return Err(e),
+        }
 
         Ok(())
     }

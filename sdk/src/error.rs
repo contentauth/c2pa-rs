@@ -489,9 +489,9 @@ impl From<Error> for RawSignerError {
 
 impl From<Error> for TimeStampError {
     fn from(err: Error) -> Self {
-        // See if better mappings exist, but I doubt it.
         match err {
             Error::TimestampNotImplemented => Self::NotImplemented,
+            Error::TimeStampError(e) => e,
             _ => Self::InternalError(err.to_string()),
         }
     }
