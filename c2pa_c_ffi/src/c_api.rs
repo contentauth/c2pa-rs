@@ -2009,6 +2009,87 @@ pub unsafe extern "C" fn c2pa_builder_to_archive(
     0 // returns 0 on success
 }
 
+/// Adds an ingredient to the C2paBuilder from a C2PA ingredient archive stream.
+///
+/// The stream must contain a C2PA ingredient archive produced by
+/// `c2pa_builder_write_ingredient_archive`. Use
+/// `c2pa_builder_add_ingredient_from_stream` for regular asset streams.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * stream: pointer to a readable, seekable C2paStream containing the ingredient archive.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// Pointers must be valid and non-NULL.
+///
+/// # Example
+/// ```c
+/// // Write the ingredient archive first
+/// C2paStream* archive = c2pa_create_stream(...);
+/// int result = c2pa_builder_write_ingredient_archive(ingredient_builder, "ingredient-id", archive);
+///
+/// // Rewind and add it to the parent builder
+/// c2pa_stream_seek(archive, 0, C2PA_SEEK_START);
+/// result = c2pa_builder_add_ingredient_from_archive(parent_builder, archive);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_archive(
+    builder_ptr: *mut C2paBuilder,
+    stream: *mut C2paStream,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let stream = deref_mut_or_return_int!(stream, C2paStream);
+    let result = builder.add_ingredient_from_archive(&mut *stream);
+    ok_or_return_int!(result);
+    0 // returns 0 on success
+}
+
+/// Writes a single-ingredient C2PA archive to the destination stream.
+///
+/// The archive can later be loaded with `c2pa_builder_add_ingredient_from_archive`.
+/// This requires the `generate_c2pa_archive` builder setting to be enabled via
+/// `c2pa_builder_with_settings` / `c2pa_context_with_settings` before calling.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * ingredient_id: pointer to a C string identifying the ingredient within the builder.
+/// * stream: pointer to a writable C2paStream.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings. Pointers must be valid and non-NULL.
+///
+/// # Example
+/// ```c
+/// C2paStream* archive = c2pa_create_stream(...);
+/// int result = c2pa_builder_write_ingredient_archive(builder, "my-ingredient", archive);
+/// if (result < 0) {
+///     char* error = c2pa_error();
+///     printf("Error: %s\n", error);
+///     c2pa_string_free(error);
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_write_ingredient_archive(
+    builder_ptr: *mut C2paBuilder,
+    ingredient_id: *const c_char,
+    stream: *mut C2paStream,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let ingredient_id = cstr_or_return_int!(ingredient_id);
+    let stream = deref_mut_or_return_int!(stream, C2paStream);
+    let result = builder.write_ingredient_archive(&ingredient_id, &mut *stream);
+    ok_or_return_int!(result);
+    0 // returns 0 on success
+}
+
 /// Creates and writes signed manifest from the C2paBuilder to the destination stream.
 ///
 /// # Parameters
@@ -3546,6 +3627,67 @@ mod tests {
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
+        unsafe { c2pa_builder_free(builder) };
+    }
+
+    #[test]
+    fn test_c2pa_builder_add_ingredient_from_archive_null_stream() {
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+        let result =
+            unsafe { c2pa_builder_add_ingredient_from_archive(builder, std::ptr::null_mut()) };
+        assert_eq!(result, -1);
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
+        unsafe { c2pa_builder_free(builder) };
+    }
+
+    #[test]
+    fn test_c2pa_builder_add_ingredient_from_archive_null_builder() {
+        let archive_bytes = include_bytes!(fixture_path!("cloud.jpg"));
+        let mut stream = TestStream::new(archive_bytes.to_vec());
+        let result = unsafe {
+            c2pa_builder_add_ingredient_from_archive(std::ptr::null_mut(), stream.as_ptr())
+        };
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn test_c2pa_builder_write_ingredient_archive_null_stream() {
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+        let ingredient_id = CString::new("test-ingredient").unwrap();
+        let result = unsafe {
+            c2pa_builder_write_ingredient_archive(
+                builder,
+                ingredient_id.as_ptr(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(result, -1);
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
+        unsafe { c2pa_builder_free(builder) };
+    }
+
+    #[test]
+    fn test_c2pa_builder_write_ingredient_archive_null_ingredient_id() {
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+        let archive_bytes = vec![0u8; 0];
+        let mut stream = TestStream::new(archive_bytes);
+        let result = unsafe {
+            c2pa_builder_write_ingredient_archive(builder, std::ptr::null(), stream.as_ptr())
+        };
+        assert_eq!(result, -1);
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: ingredient_id");
         unsafe { c2pa_builder_free(builder) };
     }
 
