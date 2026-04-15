@@ -1269,7 +1269,6 @@ impl Builder {
     /// Copies binary resources from `store` into this builder when the id is not already present.
     fn merge_resources_from_store(&mut self, store: &ResourceStore) -> Result<()> {
         for (id, data) in store.resources() {
-            dbg!(&id);
             let _sanitized_id = sanitize_archive_path(id)?;
             if !self.resources.exists(id) {
                 self.resources.add(id, data.clone())?;
