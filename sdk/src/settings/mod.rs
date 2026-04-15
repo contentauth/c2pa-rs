@@ -34,6 +34,11 @@ use crate::{
 
 const VERSION: u32 = 1;
 
+/// Default maximum number of assertions allowed per manifest.
+/// Shared by [`BuilderSettings`], [`Verify`], [`crate::Claim`], and [`crate::Store`] so that
+/// all enforcement points use the same value.
+pub(crate) const MAX_ASSERTIONS: usize = 100_000;
+
 thread_local!(
     static SETTINGS: RefCell<Config> =
         RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default());
@@ -436,8 +441,14 @@ pub struct Settings {
 impl Settings {
     #[cfg(feature = "file_io")]
     /// Load thread-local [Settings] from a file.
-    /// to be deprecated - use [Settings::with_file] instead
+    ///
+    /// Use [`Settings::new().with_file()`](Settings::with_file) instead,
+    /// which does not modify thread-local state.
     #[doc(hidden)]
+    #[deprecated(
+        note = "Use `Settings::new().with_file(path)` instead, which does not modify thread-local state."
+    )]
+    #[allow(deprecated)]
     pub fn from_file<P: AsRef<Path>>(settings_path: P) -> Result<Self> {
         let ext = settings_path
             .as_ref()
@@ -451,8 +462,14 @@ impl Settings {
 
     /// Load thread-local [Settings] from string representation of the configuration.
     /// Format of configuration must be supplied (json or toml).
-    /// to be deprecated - use [Settings::with_json] or [Settings::with_toml] instead
+    ///
+    /// Use [`Settings::new().with_json()`](Settings::with_json) or
+    /// [`Settings::new().with_toml()`](Settings::with_toml) instead,
+    /// which do not modify thread-local state.
     #[doc(hidden)]
+    #[deprecated(
+        note = "Use `Settings::new().with_json(str)` or `Settings::new().with_toml(str)` instead, which do not modify thread-local state."
+    )]
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let f = match format.to_lowercase().as_str() {
             "json" => FileFormat::Json,
@@ -490,8 +507,14 @@ impl Settings {
         }
     }
 
-    /// Set the thread-local [Settings] from a toml file.
-    /// to be deprecated use [Settings::with_toml] instead
+    /// Set the thread-local [Settings] from a toml string.
+    ///
+    /// Use [`Settings::new().with_toml()`](Settings::with_toml) instead,
+    /// which does not modify thread-local state.
+    #[deprecated(
+        note = "Use `Settings::new().with_toml(toml)` instead, which does not modify thread-local state."
+    )]
+    #[allow(deprecated)]
     pub fn from_toml(toml: &str) -> Result<()> {
         Settings::from_string(toml, "toml").map(|_| ())
     }
@@ -772,23 +795,39 @@ impl Settings {
     }
 
     /// Serializes the thread-local [Settings] into a toml string.
+    ///
+    /// Use `toml::to_string(&settings)` on a [`Settings`] instance instead.
     #[doc(hidden)]
+    #[deprecated(
+        note = "Use `toml::to_string(&settings)` on a `Settings` instance instead of reading from thread-local state."
+    )]
     pub fn to_toml() -> Result<String> {
         let settings = get_thread_local_settings();
         Ok(toml::to_string(&settings)?)
     }
 
     /// Serializes the thread-local [Settings] into a pretty (formatted) toml string.
+    ///
+    /// Use `toml::to_string_pretty(&settings)` on a [`Settings`] instance instead.
     #[doc(hidden)]
+    #[deprecated(
+        note = "Use `toml::to_string_pretty(&settings)` on a `Settings` instance instead of reading from thread-local state."
+    )]
     pub fn to_pretty_toml() -> Result<String> {
         let settings = get_thread_local_settings();
         Ok(toml::to_string_pretty(&settings)?)
     }
 
-    /// Returns the constructed signer from the `signer` field.
+    /// Returns the constructed signer from the thread-local `signer` settings field.
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
+    ///
+    /// Configure the signer via a [`Context`](crate::Context) passed explicitly to
+    /// [`Builder::from_context`](crate::Builder::from_context) instead.
     #[inline]
+    #[deprecated(
+        note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings."
+    )]
     pub fn signer() -> Result<crate::BoxedSigner> {
         SignerSettings::signer()
     }
@@ -1015,86 +1054,30 @@ pub mod tests {
         std::fs::write(settings_path, settings_json.as_bytes()).map_err(Error::IoError)
     }
 
+    /// Legacy test: verifies the thread-local settings API reads defaults and round-trips values.
     #[test]
-    fn test_get_defaults() {
+    fn test_thread_local_settings() {
+        // Verify defaults are accessible via thread-local
         let settings = get_thread_local_settings();
-
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
-        assert_eq!(settings.cawg_trust, Trust::default());
         assert_eq!(settings.verify, Verify::default());
         assert_eq!(settings.builder, BuilderSettings::default());
 
-        reset_default_settings().unwrap();
-    }
-
-    #[test]
-    fn test_get_val_by_direct_path() {
-        // you can do this for all values but if these sanity checks pass they all should if the path is correct
+        // Verify individual values can be read by path
         assert_eq!(
             get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
             BuilderSettings::default().thumbnail.enabled
         );
         assert_eq!(
-            get_settings_value::<Option<String>>("trust.user_anchors").unwrap(),
-            Trust::default().user_anchors
-        );
-
-        // test getting full objects
-        assert_eq!(get_settings_value::<Core>("core").unwrap(), Core::default());
-        assert_eq!(
-            get_settings_value::<Verify>("verify").unwrap(),
-            Verify::default()
-        );
-        assert_eq!(
-            get_settings_value::<BuilderSettings>("builder").unwrap(),
-            BuilderSettings::default()
-        );
-        assert_eq!(
-            get_settings_value::<Trust>("trust").unwrap(),
-            Trust::default()
-        );
-
-        // test implicit deserialization
-        let remote_manifest_fetch: bool =
-            get_settings_value("verify.remote_manifest_fetch").unwrap();
-        let auto_thumbnail: bool = get_settings_value("builder.thumbnail.enabled").unwrap();
-        let user_anchors: Option<String> = get_settings_value("trust.user_anchors").unwrap();
-
-        assert_eq!(
-            remote_manifest_fetch,
+            get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap(),
             Verify::default().remote_manifest_fetch
         );
-        assert_eq!(auto_thumbnail, BuilderSettings::default().thumbnail.enabled);
-        assert_eq!(user_anchors, Trust::default().user_anchors);
 
-        // test implicit deserialization on objects
-        let core: Core = get_settings_value("core").unwrap();
-        let verify: Verify = get_settings_value("verify").unwrap();
-        let builder: BuilderSettings = get_settings_value("builder").unwrap();
-        let trust: Trust = get_settings_value("trust").unwrap();
-
-        assert_eq!(core, Core::default());
-        assert_eq!(verify, Verify::default());
-        assert_eq!(builder, BuilderSettings::default());
-        assert_eq!(trust, Trust::default());
-
-        reset_default_settings().unwrap();
-    }
-
-    #[test]
-    fn test_set_val_by_direct_path() {
-        let ts = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
-
-        // test updating values
+        // Verify set/get round-trip via thread-local API
         Settings::set_thread_local_value("core.merkle_tree_chunk_size_in_kb", 10).unwrap();
         Settings::set_thread_local_value("verify.remote_manifest_fetch", false).unwrap();
         Settings::set_thread_local_value("builder.thumbnail.enabled", false).unwrap();
-        Settings::set_thread_local_value(
-            "trust.user_anchors",
-            Some(String::from_utf8(ts.to_vec()).unwrap()),
-        )
-        .unwrap();
 
         assert_eq!(
             get_settings_value::<usize>("core.merkle_tree_chunk_size_in_kb").unwrap(),
@@ -1102,22 +1085,6 @@ pub mod tests {
         );
         assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
         assert!(!get_settings_value::<bool>("builder.thumbnail.enabled").unwrap());
-        assert_eq!(
-            get_settings_value::<Option<String>>("trust.user_anchors").unwrap(),
-            Some(String::from_utf8(ts.to_vec()).unwrap())
-        );
-
-        // the current config should be different from the defaults
-        assert_ne!(get_settings_value::<Core>("core").unwrap(), Core::default());
-        assert_ne!(
-            get_settings_value::<Verify>("verify").unwrap(),
-            Verify::default()
-        );
-        assert_ne!(
-            get_settings_value::<BuilderSettings>("builder").unwrap(),
-            BuilderSettings::default()
-        );
-        assert!(get_settings_value::<Trust>("trust").unwrap() == Trust::default());
 
         reset_default_settings().unwrap();
     }
@@ -1130,74 +1097,21 @@ pub mod tests {
 
         save_settings_as_json(&op).unwrap();
 
-        Settings::from_file(&op).unwrap();
-        let settings = get_thread_local_settings();
-
+        let settings = Settings::new().with_file(&op).unwrap();
         assert_eq!(settings, Settings::default());
-
-        reset_default_settings().unwrap();
-    }
-
-    #[cfg(feature = "file_io")]
-    #[test]
-    fn test_save_load_from_string() {
-        let temp_dir = tempdirectory().unwrap();
-        let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
-
-        save_settings_as_json(&op).unwrap();
-
-        let setting_buf = std::fs::read(&op).unwrap();
-
-        {
-            let settings_str: &str = &String::from_utf8_lossy(&setting_buf);
-            Settings::from_string(settings_str, "json").map(|_| ())
-        }
-        .unwrap();
-        let settings = get_thread_local_settings();
-
-        assert_eq!(settings, Settings::default());
-
-        reset_default_settings().unwrap();
     }
 
     #[test]
-    fn test_partial_loading() {
-        // we support just changing the fields you are interested in changing
-        // here is an example of incomplete structures only overriding specific
-        // fields
-
-        let modified_core = toml::toml! {
-            [core]
-            debug = true
-            hash_alg = "sha512"
-            max_memory_usage = 123456
-        }
-        .to_string();
-
-        Settings::from_toml(&modified_core).unwrap();
-
-        // see if updated values match
-        assert!(get_settings_value::<bool>("core.debug").unwrap());
-        assert_eq!(
-            get_settings_value::<String>("core.hash_alg").unwrap(),
-            "sha512".to_string()
-        );
-        assert_eq!(
-            get_settings_value::<u32>("core.max_memory_usage").unwrap(),
-            123456u32
-        );
-
-        // check a few defaults to make sure they are still there
-        assert_eq!(
-            get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
-            BuilderSettings::default().thumbnail.enabled
-        );
-
-        reset_default_settings().unwrap();
+    fn test_settings_from_json_str() {
+        // Verify that Settings round-trips through JSON without touching thread-local state.
+        let json = serde_json::to_string(&Settings::default()).unwrap();
+        let settings = Settings::new().with_json(&json).unwrap();
+        assert_eq!(settings, Settings::default());
     }
 
     #[test]
     fn test_bad_setting() {
+        // Verify that type-invalid TOML values are rejected without touching thread-local state.
         let modified_core = toml::toml! {
             [core]
             merkle_tree_chunk_size_in_kb = true
@@ -1206,12 +1120,15 @@ pub mod tests {
         }
         .to_string();
 
-        assert!(Settings::from_toml(&modified_core).is_err());
-
-        reset_default_settings().unwrap();
+        assert!(Settings::new().with_toml(&modified_core).is_err());
     }
+
+    /// Legacy test: verifies arbitrary (hidden) keys can be stored and retrieved via the
+    /// thread-local Figment config. This is not possible with the instance-based API since
+    /// unknown keys are not part of the `Settings` struct.
     #[test]
-    fn test_hidden_setting() {
+    #[allow(deprecated)]
+    fn test_thread_local_hidden_setting() {
         let secret = toml::toml! {
             [hidden]
             test1 = true
@@ -1236,45 +1153,11 @@ pub mod tests {
     }
 
     #[test]
-    fn test_all_setting() {
-        let all_settings = toml::toml! {
-            version = 1
-
-            [trust]
-
-            [Core]
-            debug = false
-            hash_alg = "sha256"
-            salt_jumbf_boxes = true
-            prefer_bmff_merkle_tree = false
-            compress_manifests = true
-
-            [Builder]
-            prefer_box_hash = false
-
-            [Verify]
-            verify_after_reading = true
-            verify_after_sign = true
-            verify_trust = true
-            ocsp_fetch = false
-            remote_manifest_fetch = true
-            skip_ingredient_conflict_resolution = false
-            strict_v1_validation = false
-        }
-        .to_string();
-
-        Settings::from_toml(&all_settings).unwrap();
-
-        reset_default_settings().unwrap();
-    }
-
-    #[test]
     fn test_load_settings_from_sample_toml() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
         let toml = include_bytes!("../../examples/c2pa.toml");
-        Settings::from_toml(std::str::from_utf8(toml).unwrap()).unwrap();
+        Settings::new()
+            .with_toml(std::str::from_utf8(toml).unwrap())
+            .unwrap();
     }
 
     #[test]

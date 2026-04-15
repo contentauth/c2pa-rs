@@ -15,17 +15,17 @@
 
 use std::io::Cursor;
 
-use c2pa::{Builder, Context, Reader, Result, Settings};
+use c2pa::{Builder, Reader, Result};
+
+use super::super::common::test_context;
 
 const TEST_IMAGE: &[u8] = include_bytes!("../fixtures/CA.jpg");
-const TEST_SETTINGS: &str = include_str!("../fixtures/test_settings.toml");
 
 #[test]
 fn test_created_and_gathered_assertions_separated() -> Result<()> {
     use serde_json::json;
 
-    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
-    let context = Context::new().with_settings(settings)?.into_shared();
+    let context = test_context().into_shared();
 
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
@@ -62,7 +62,7 @@ fn test_created_and_gathered_assertions_separated() -> Result<()> {
 
     // Now read it with Reader
     dest.set_position(0);
-    let reader = Reader::from_stream(format, dest)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, dest)?;
     let json_value = reader.to_crjson_value()?;
 
     // Get manifests array
@@ -179,8 +179,7 @@ fn test_created_and_gathered_assertions_separated() -> Result<()> {
 fn test_hash_assertions_in_created() -> Result<()> {
     use serde_json::json;
 
-    let settings = Settings::new().with_toml(TEST_SETTINGS)?;
-    let context = Context::new().with_settings(settings)?.into_shared();
+    let context = test_context().into_shared();
 
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
@@ -206,7 +205,7 @@ fn test_hash_assertions_in_created() -> Result<()> {
 
     // Now read it with Reader
     dest.set_position(0);
-    let reader = Reader::from_stream(format, dest)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, dest)?;
     let json_value = reader.to_crjson_value()?;
 
     // Get manifests array

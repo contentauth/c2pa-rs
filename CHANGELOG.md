@@ -9,6 +9,26 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.79.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.3...c2pa-v0.79.4)
+_14 April 2026_
+
+### Fixed
+
+* Run cargo fmt ([#2046](https://github.com/contentauth/c2pa-rs/pull/2046))
+* Wrap Error::NotImplemented in Err() for wasip1 tempfile_builder ([#2037](https://github.com/contentauth/c2pa-rs/pull/2037))
+* Limit the maximum number of assertions allowed for C2PA Manifest ([#1951](https://github.com/contentauth/c2pa-rs/pull/1951))
+
+## [0.79.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.2...c2pa-v0.79.3)
+_09 April 2026_
+
+### Added
+
+* *(sdk)* Ingredient JUMBF archives, archive metadata typing ([#2007](https://github.com/contentauth/c2pa-rs/pull/2007))
+
+### Fixed
+
+* Redaction follow-up fix ([#2030](https://github.com/contentauth/c2pa-rs/pull/2030))
+
 ## [0.79.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.1...c2pa-v0.79.2)
 _08 April 2026_
 

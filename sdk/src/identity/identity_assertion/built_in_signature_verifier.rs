@@ -186,8 +186,9 @@ mod tests {
             x509::AsyncX509CredentialHolder,
             IdentityAssertion, SignerPayload, ValidationError,
         },
+        settings::Settings,
         status_tracker::StatusTracker,
-        Builder, HashedUri, Reader, SigningAlg,
+        Builder, Context, HashedUri, Reader, SigningAlg,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
@@ -199,7 +200,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
@@ -234,7 +235,7 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
@@ -266,7 +267,10 @@ mod tests {
 
     #[c2pa_test_async]
     async fn adobe_connected_identities() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        let settings = Settings::new()
+            .with_value("verify.verify_trust", false)
+            .unwrap();
+        let context = Context::new().with_settings(settings).unwrap();
 
         let format = "image/jpeg";
         let test_image =
@@ -274,7 +278,9 @@ mod tests {
 
         let mut test_image = Cursor::new(test_image);
 
-        let reader = Reader::from_stream(format, &mut test_image).unwrap();
+        let reader = Reader::from_context(context)
+            .with_stream(format, &mut test_image)
+            .unwrap();
         assert_eq!(reader.validation_status(), None);
 
         let manifest = reader.active_manifest().unwrap();
@@ -364,7 +370,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
@@ -386,7 +392,7 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
