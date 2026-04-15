@@ -49,7 +49,9 @@ use crate::{
 ///    bytes reserved for the `c2pa.signature` JUMBF box in this claim's manifest.
 ///    (If `box_size` is too small for the generated signature, this function
 ///    will respond with an error.)
-/// 3. Verifies that the signature is valid COSE. Will respond with an error
+/// 3. Requests a RFC 3161 timestamp from the signer if one is available. The
+///    timestamp is embedded in the COSE signature structure.
+/// 4. Verifies that the signature is valid COSE. Will respond with an error
 ///    [`Error::CoseSignature`] if unable to validate.
 #[async_generic(async_signature(
     claim_bytes: &[u8],
