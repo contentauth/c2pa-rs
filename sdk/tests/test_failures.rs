@@ -2,15 +2,15 @@ mod common;
 use std::io::Cursor;
 
 use c2pa::{
-    assertions::DataHash, settings::Settings, validation_status, Builder, BuilderIntent, Error,
-    HashRange, Reader, Result,
+    assertions::DataHash, validation_status, Builder, BuilderIntent, Error, HashRange, Reader,
+    Result,
 };
-use common::fixture_stream;
+use common::{fixture_stream, test_context};
 
 #[test]
 fn test_reader_ts_changed() -> Result<()> {
     let (format, mut stream) = fixture_stream("CA_ct.jpg")?;
-    let reader = Reader::from_stream(&format, &mut stream).unwrap();
+    let reader = Reader::default().with_stream(&format, &mut stream).unwrap();
     // in the older validation statuses, this was an error, but now it is informational
     assert_eq!(
         reader
@@ -28,13 +28,13 @@ fn test_reader_ts_changed() -> Result<()> {
 
 #[test]
 fn test_bad_data_hash() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let context = test_context().into_shared();
 
     const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
     let format = "image/jpeg";
     let mut source = Cursor::new(TEST_IMAGE);
 
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
 
     use c2pa::assertions::Action;
@@ -65,7 +65,7 @@ fn test_bad_data_hash() -> Result<()> {
 
     let mut dest = Cursor::new(Vec::new());
 
-    let result = builder.sign(&Settings::signer()?, format, &mut source, &mut dest);
+    let result = builder.sign(context.signer()?, format, &mut source, &mut dest);
     assert!(matches!(result, Err(Error::HashMismatch(..))));
 
     Ok(())

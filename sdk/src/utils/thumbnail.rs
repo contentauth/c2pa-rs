@@ -407,26 +407,21 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_bytes_from_stream() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.thumbnail]
+                    prefer_smallest_format = false
+                    ignore_errors = false
+                }
+                .to_string(),
+            )
+            .unwrap();
 
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.thumbnail]
-                prefer_smallest_format = false
-                ignore_errors = false
-            }
-            .to_string(),
-        )
-        .unwrap();
-
-        let (format, bytes) = make_thumbnail_bytes_from_stream(
-            "image/jpeg",
-            Cursor::new(TEST_JPEG),
-            &Settings::default(),
-        )
-        .unwrap()
-        .unwrap();
+        let (format, bytes) =
+            make_thumbnail_bytes_from_stream("image/jpeg", Cursor::new(TEST_JPEG), &settings)
+                .unwrap()
+                .unwrap();
 
         assert!(matches!(format, ThumbnailFormat::Jpeg));
 
@@ -437,26 +432,21 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_with_prefer_smallest_format() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.thumbnail]
+                    prefer_smallest_format = true
+                    ignore_errors = false
+                }
+                .to_string(),
+            )
+            .unwrap();
 
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.thumbnail]
-                prefer_smallest_format = true
-                ignore_errors = false
-            }
-            .to_string(),
-        )
-        .unwrap();
-
-        let (format, bytes) = make_thumbnail_bytes_from_stream(
-            "image/png",
-            Cursor::new(TEST_PNG),
-            &Settings::default(),
-        )
-        .unwrap()
-        .unwrap();
+        let (format, bytes) =
+            make_thumbnail_bytes_from_stream("image/png", Cursor::new(TEST_PNG), &settings)
+                .unwrap()
+                .unwrap();
 
         assert!(matches!(format, ThumbnailFormat::Jpeg));
 
@@ -504,24 +494,19 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_and_ignore_errors() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.thumbnail]
+                    ignore_errors = true
+                }
+                .to_string(),
+            )
+            .unwrap();
 
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.thumbnail]
-                ignore_errors = true
-            }
-            .to_string(),
-        )
-        .unwrap();
-
-        let thumbnail = make_thumbnail_bytes_from_stream(
-            "image/png",
-            Cursor::new(Vec::new()),
-            &Settings::default(),
-        )
-        .unwrap();
+        let thumbnail =
+            make_thumbnail_bytes_from_stream("image/png", Cursor::new(Vec::new()), &settings)
+                .unwrap();
         assert!(thumbnail.is_none());
     }
 }

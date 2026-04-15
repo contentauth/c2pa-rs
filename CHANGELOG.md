@@ -9,6 +9,80 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.79.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.4...c2pa-v0.79.5)
+_15 April 2026_
+
+### Fixed
+
+* Handle more thumbnail redaction edge cases ([#2049](https://github.com/contentauth/c2pa-rs/pull/2049))
+
+## [0.79.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.3...c2pa-v0.79.4)
+_14 April 2026_
+
+### Fixed
+
+* Run cargo fmt ([#2046](https://github.com/contentauth/c2pa-rs/pull/2046))
+* Wrap Error::NotImplemented in Err() for wasip1 tempfile_builder ([#2037](https://github.com/contentauth/c2pa-rs/pull/2037))
+* Limit the maximum number of assertions allowed for C2PA Manifest ([#1951](https://github.com/contentauth/c2pa-rs/pull/1951))
+
+## [0.79.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.2...c2pa-v0.79.3)
+_09 April 2026_
+
+### Added
+
+* *(sdk)* Ingredient JUMBF archives, archive metadata typing ([#2007](https://github.com/contentauth/c2pa-rs/pull/2007))
+
+### Fixed
+
+* Redaction follow-up fix ([#2030](https://github.com/contentauth/c2pa-rs/pull/2030))
+
+## [0.79.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.1...c2pa-v0.79.2)
+_08 April 2026_
+
+### Fixed
+
+* Harden against integer overflow panic in big tiff processing ([#2012](https://github.com/contentauth/c2pa-rs/pull/2012))
+* Harden against integer underflow panic in assertion label parsing ([#2013](https://github.com/contentauth/c2pa-rs/pull/2013))
+* Harden assertion label URI parsing logic to fix index out of bounds access ([#2018](https://github.com/contentauth/c2pa-rs/pull/2018))
+* Harden BMFF hash merkle validation via count/range mismatch ([#2019](https://github.com/contentauth/c2pa-rs/pull/2019))
+* Harden BmffHash timed media chunk verification against out of bounds access issue ([#2020](https://github.com/contentauth/c2pa-rs/pull/2020))
+* Harden BMFF Merkle maps processing logic to avoid panic ([#2021](https://github.com/contentauth/c2pa-rs/pull/2021))
+* Harden against invalid MP4 files during BmffHash timed-media chunk mapping ([#2022](https://github.com/contentauth/c2pa-rs/pull/2022))
+* Redact thumbnails when ingredient with thumbnails added through add_ingredient is being thumbnail-redacted too ([#2016](https://github.com/contentauth/c2pa-rs/pull/2016))
+* Allow any file type to be signed with a sidecar ([#2014](https://github.com/contentauth/c2pa-rs/pull/2014))
+
+## [0.79.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.0...c2pa-v0.79.1)
+_07 April 2026_
+
+### Fixed
+
+* Redact thumbnails in databoxes (v1 claims) ([#2015](https://github.com/contentauth/c2pa-rs/pull/2015))
+
+## [0.79.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.8...c2pa-v0.79.0)
+_03 April 2026_
+
+### Fixed
+
+* Redacting things in multiple ingredients ([#2009](https://github.com/contentauth/c2pa-rs/pull/2009))
+* Adds more granular progress for validation ([#2006](https://github.com/contentauth/c2pa-rs/pull/2006))
+* [**breaking**] Disable HTTP redirects in restricted networking implementation ([#1907](https://github.com/contentauth/c2pa-rs/pull/1907))
+
+## [0.78.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.7...c2pa-v0.78.8)
+_31 March 2026_
+
+### Added
+
+* Expose a C FFI API to help determine the hashtype a Builder uses with embeddable APIs ([#1992](https://github.com/contentauth/c2pa-rs/pull/1992))
+* Add support for JPEG XL file format ([#1870](https://github.com/contentauth/c2pa-rs/pull/1870))
+
+### Fixed
+
+* Switch to Firefox for CI web tests ([#1999](https://github.com/contentauth/c2pa-rs/pull/1999))
+
+### Other
+
+* Fix clippy lints ([#1996](https://github.com/contentauth/c2pa-rs/pull/1996))
+
 ## [0.78.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.78.6...c2pa-v0.78.7)
 _27 March 2026_
 

@@ -19,7 +19,9 @@ use crate::{Error, Result, SignerInfo};
 ///
 /// If data_dir is provided, any thumbnail or c2pa data will be written to that folder.
 /// Any Validation errors will be reported in the validation_status field.
+#[allow(deprecated)]
 pub fn read_file(path: &str, data_dir: Option<String>) -> Result<String> {
+    // Legacy JSON API: inherits thread-local settings set by c2pa_load_settings.
     let mut reader = Reader::from_file(path).map_err(Error::from_c2pa_error)?;
 
     #[cfg(target_arch = "wasm32")]
@@ -53,6 +55,7 @@ pub fn read_file(path: &str, data_dir: Option<String>) -> Result<String> {
 /// Signer information must also be supplied
 ///
 /// Any file paths in the manifest will be read relative to the source file
+#[allow(deprecated)]
 pub fn sign_file(
     source: &str,
     dest: &str,
@@ -60,6 +63,7 @@ pub fn sign_file(
     signer_info: &SignerInfo,
     data_dir: Option<String>,
 ) -> Result<Vec<u8>> {
+    // Legacy JSON API: inherits thread-local settings set by c2pa_load_settings.
     let mut builder = c2pa::Builder::from_json(manifest_json).map_err(Error::from_c2pa_error)?;
 
     // if data_dir is provided, set the base path for the manifest
@@ -86,6 +90,7 @@ pub fn sign_file(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use std::{ffi::CString, fs::remove_dir_all, path::PathBuf};
 

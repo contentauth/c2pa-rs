@@ -10,7 +10,7 @@ fn read_jpeg(c: &mut Criterion) {
     c.bench_function("read 100kb-signed.jpg (with manifest)", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(data);
-            Reader::from_stream(format, &mut stream)
+            Reader::default().with_stream(format, &mut stream)
         })
     });
 }
@@ -22,7 +22,7 @@ fn read_png(c: &mut Criterion) {
     c.bench_function("read 100kb-signed.png (with manifest)", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(data);
-            Reader::from_stream(format, &mut stream)
+            Reader::default().with_stream(format, &mut stream)
         })
     });
 }
@@ -34,7 +34,7 @@ fn read_gif(c: &mut Criterion) {
     c.bench_function("read 100kb-signed.gif (with manifest)", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(data);
-            Reader::from_stream(format, &mut stream)
+            Reader::default().with_stream(format, &mut stream)
         })
     });
 }
@@ -46,7 +46,7 @@ fn read_tiff(c: &mut Criterion) {
     c.bench_function("read 100kb-signed.tiff (with manifest)", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(data);
-            Reader::from_stream(format, &mut stream)
+            Reader::default().with_stream(format, &mut stream)
         })
     });
 }
@@ -58,7 +58,7 @@ fn read_svg(c: &mut Criterion) {
     c.bench_function("read 100kb-signed.svg (with manifest)", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(data);
-            Reader::from_stream(format, &mut stream)
+            Reader::default().with_stream(format, &mut stream)
         })
     });
 }
@@ -72,7 +72,7 @@ fn read_svg(c: &mut Criterion) {
 //     c.bench_function("read 100kb-signed.pdf (with manifest)", |b| {
 //         b.iter(|| {
 //             let mut stream = Cursor::new(data);
-//             Reader::from_stream(format, &mut stream)
+//             Reader::default().with_stream(format, &mut stream)
 //         })
 //     });
 // }
@@ -84,7 +84,7 @@ fn read_mp3(c: &mut Criterion) {
     c.bench_function("read 100kb-signed.mp3 (with manifest)", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(data);
-            Reader::from_stream(format, &mut stream)
+            Reader::default().with_stream(format, &mut stream)
         })
     });
 }
@@ -96,7 +96,7 @@ fn read_mp4(c: &mut Criterion) {
     c.bench_function("read 100kb-signed.mp4 (with manifest)", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(data);
-            Reader::from_stream(format, &mut stream)
+            Reader::default().with_stream(format, &mut stream)
         })
     });
 }
@@ -108,7 +108,7 @@ fn read_wav(c: &mut Criterion) {
     c.bench_function("read 100kb-signed.wav (with manifest)", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(data);
-            Reader::from_stream(format, &mut stream)
+            Reader::default().with_stream(format, &mut stream)
         })
     });
 }
