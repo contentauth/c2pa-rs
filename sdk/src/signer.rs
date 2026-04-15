@@ -20,7 +20,7 @@ use crate::{
     },
     dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
     maybe_send_sync::{MaybeSend, MaybeSync},
-    Result,
+    Error, Result,
 };
 
 // Type aliases for boxed trait objects with conditional Send + Sync bounds
@@ -94,12 +94,15 @@ pub trait Signer {
     /// `message` is a preliminary hash of the claim.
     ///
     /// Implement this function to provide custom networking for timestamp
-    /// requests. The default implementation returns `None`.
+    /// requests. The default implementation returns
+    /// `Some(Err(Error::TimestampNotImplemented))`.
     ///
-    /// If this method returns `None` and [`Signer::time_authority_url`] is
-    /// set, the SDK falls back to its built-in networking implementation.
+    /// If this method returns `None`, timestamping is skipped entirely.
+    /// If this method returns `Some(Err(Error::TimestampNotImplemented))` and
+    /// [`Signer::time_authority_url`] is set, the SDK falls back to its
+    /// built-in networking implementation.
     fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
-        None
+        Some(Err(Error::TimestampNotImplemented))
     }
 
     /// OCSP response for the signing cert if available
@@ -219,12 +222,15 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
     /// `message` is a preliminary hash of the claim.
     ///
     /// Implement this function to provide custom networking for timestamp
-    /// requests. The default implementation returns `None`.
+    /// requests. The default implementation returns
+    /// `Some(Err(Error::TimestampNotImplemented))`.
     ///
-    /// If this method returns `None` and [`AsyncSigner::time_authority_url`] is
-    /// set, the SDK falls back to its built-in networking implementation.
+    /// If this method returns `None`, timestamping is skipped entirely.
+    /// If this method returns `Some(Err(Error::TimestampNotImplemented))` and
+    /// [`AsyncSigner::time_authority_url`] is set, the SDK falls back to its
+    /// built-in networking implementation.
     async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
-        None
+        Some(Err(Error::TimestampNotImplemented))
     }
 
     /// OCSP response for the signing cert if available

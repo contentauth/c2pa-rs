@@ -252,7 +252,7 @@ pub(crate) fn add_sigtst_header(
     };
     let mut cts = match cts {
         Ok(cts) => cts,
-        Err(TimeStampError::TimeStampRequestNotConfigured) => return Ok(header_builder),
+        Err(TimeStampError::NotImplemented) => return Ok(header_builder),
         Err(err) => return Err(err.into()),
     };
 

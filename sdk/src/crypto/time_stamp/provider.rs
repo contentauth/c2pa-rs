@@ -64,17 +64,19 @@ pub trait TimeStampProvider {
     /// Request a [RFC 3161] time stamp over an arbitrary data packet.
     ///
     /// Implement this function to provide custom networking for timestamp
-    /// requests. The default implementation returns `None`.
+    /// requests. The default implementation returns
+    /// `Some(Err(TimeStampError::NotImplemented))`.
     ///
-    /// If this method returns `None` and [`TimeStampProvider::time_stamp_service_url`] is
-    /// set, the SDK falls back to its built-in networking implementation via
-    /// [`send_time_stamp_request_with_fallback`].
+    /// If this method returns `None`, timestamping is skipped entirely.
+    /// If this method returns `Some(Err(TimeStampError::NotImplemented))` and
+    /// [`TimeStampProvider::time_stamp_service_url`] is set, the SDK falls back
+    /// to its built-in networking implementation.
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     ///
     /// todo: THIS CODE IS NOT COMPATIBLE WITH C2PA 2.x sigTst2
     fn send_time_stamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>, TimeStampError>> {
-        None
+        Some(Err(TimeStampError::NotImplemented))
     }
 }
 
@@ -121,27 +123,32 @@ pub trait AsyncTimeStampProvider: MaybeSync {
     /// `message` is a preliminary hash of the claim.
     ///
     /// Implement this function to provide custom networking for timestamp
-    /// requests. The default implementation returns `None`.
+    /// requests. The default implementation returns
+    /// `Some(Err(TimeStampError::NotImplemented))`.
     ///
-    /// If this method returns `None` and [`AsyncTimeStampProvider::time_stamp_service_url`] is
-    /// set, the SDK falls back to its built-in networking implementation via
-    /// [`send_time_stamp_request_with_fallback`].
+    /// If this method returns `None`, timestamping is skipped entirely.
+    /// If this method returns `Some(Err(TimeStampError::NotImplemented))` and
+    /// [`AsyncTimeStampProvider::time_stamp_service_url`] is set, the SDK falls
+    /// back to its built-in networking implementation.
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     async fn send_time_stamp_request(
         &self,
         _message: &[u8],
     ) -> Option<Result<Vec<u8>, TimeStampError>> {
-        None
+        Some(Err(TimeStampError::NotImplemented))
     }
 }
 
 /// Request a timestamp from the provider, falling back to a built-in networking
-/// implementation if the provider does not implement [`TimeStampProvider::send_time_stamp_request`].
+/// implementation if the provider returns [`TimeStampError::NotImplemented`].
 ///
-/// This function will return [`TimeStampError::TimeStampRequestNotConfigured`] if there is no
-/// custom implementation via [`TimeStampProvider::send_time_stamp_request`] and there is no
-/// [`TimeStampProvider::time_stamp_service_url`] for the built-in implementation.
+/// If [`TimeStampProvider::send_time_stamp_request`] returns `None`, timestamping is
+/// skipped and [`TimeStampError::NotImplemented`] is returned. If it returns
+/// `Some(Err(TimeStampError::NotImplemented))` and
+/// [`TimeStampProvider::time_stamp_service_url`] is set, the SDK falls back to its
+/// built-in networking implementation. If no URL is configured either,
+/// [`TimeStampError::NotImplemented`] is returned.
 #[async_generic(async_signature(
     ts_provider: &(impl AsyncTimeStampProvider + ?Sized),
     message: &[u8],
@@ -153,35 +160,39 @@ pub(crate) fn send_time_stamp_request_with_fallback(
     http_resolver: &(impl SyncHttpResolver + ?Sized),
 ) -> Result<Vec<u8>, TimeStampError> {
     if _sync {
-        if let Some(cts) = ts_provider.send_time_stamp_request(message) {
-            cts
-        } else {
-            let Some(url) = ts_provider.time_stamp_service_url() else {
-                return Err(TimeStampError::TimeStampRequestNotConfigured);
-            };
-            super::default_rfc3161_request(
-                &url,
-                ts_provider.time_stamp_request_headers(),
-                &ts_provider.time_stamp_request_body(message)?,
-                message,
-                http_resolver,
-            )
+        match ts_provider.send_time_stamp_request(message) {
+            None => Err(TimeStampError::NotImplemented),
+            Some(Err(TimeStampError::NotImplemented)) => {
+                let Some(url) = ts_provider.time_stamp_service_url() else {
+                    return Err(TimeStampError::NotImplemented);
+                };
+                super::default_rfc3161_request(
+                    &url,
+                    ts_provider.time_stamp_request_headers(),
+                    &ts_provider.time_stamp_request_body(message)?,
+                    message,
+                    http_resolver,
+                )
+            }
+            Some(result) => result,
         }
     } else {
-        if let Some(cts) = ts_provider.send_time_stamp_request(message).await {
-            cts
-        } else {
-            let Some(url) = ts_provider.time_stamp_service_url() else {
-                return Err(TimeStampError::TimeStampRequestNotConfigured);
-            };
-            super::default_rfc3161_request_async(
-                &url,
-                ts_provider.time_stamp_request_headers(),
-                &ts_provider.time_stamp_request_body(message)?,
-                message,
-                http_resolver,
-            )
-            .await
+        match ts_provider.send_time_stamp_request(message).await {
+            None => Err(TimeStampError::NotImplemented),
+            Some(Err(TimeStampError::NotImplemented)) => {
+                let Some(url) = ts_provider.time_stamp_service_url() else {
+                    return Err(TimeStampError::NotImplemented);
+                };
+                super::default_rfc3161_request_async(
+                    &url,
+                    ts_provider.time_stamp_request_headers(),
+                    &ts_provider.time_stamp_request_body(message)?,
+                    message,
+                    http_resolver,
+                )
+                .await
+            }
+            Some(result) => result,
         }
     }
 }
