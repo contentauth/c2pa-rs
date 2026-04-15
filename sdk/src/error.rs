@@ -82,6 +82,10 @@ pub enum Error {
     ///
     /// When this error is returned and [`Signer::time_authority_url`] is set,
     /// the SDK falls back to its built-in networking implementation.
+    ///
+    /// [`Signer::send_timestamp_request`]: crate::Signer::send_timestamp_request
+    /// [`AsyncSigner::send_timestamp_request`]: crate::AsyncSigner::send_timestamp_request
+    /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
     #[error("timestamp provider has no custom implementation")]
     TimestampNotImplemented,
 
