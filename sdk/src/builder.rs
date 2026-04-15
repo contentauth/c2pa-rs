@@ -1216,7 +1216,7 @@ impl Builder {
     ///
     /// This will be stored in the standard application/c2pa .c2pa JUMBF format
     /// The legacy zip format will be written if `builder.generate_c2pa_archive` is set to `false`
-    /// See docs/working-stores.md for more information.
+    /// See docs/archives.md for more information.
     ///
     /// # Arguments
     /// * `stream` - A stream to write the C2PA archive or ZIP file into.
@@ -3330,7 +3330,8 @@ impl Builder {
     ///
     /// IMPORTANT: This certificate is useful only in a private context and will
     /// not be considered trusted in the C2PA conformance sense.
-    fn working_store_sign(&self, kind: ArchiveKind) -> Result<Vec<u8>> {
+    #[allow(deprecated)]
+    fn working_store_sign(&mut self, kind: ArchiveKind) -> Result<Vec<u8>> {
         // First we need to generate a `BoxHash` over an empty string.
         let mut empty_asset = std::io::Cursor::new("");
 
@@ -3342,6 +3343,11 @@ impl Builder {
 
         let box_hash = BoxHash { boxes };
 
+        // Temporarily clear the intent so to_claim() skips intent enforcement.
+        // The intent is preserved in archive metadata below and restored afterward,
+        // so that it can be re-applied (and properly validated) at sign() time.
+        let intent = self.intent.take();
+
         let mut claim = match &kind {
             ArchiveKind::Builder => self.to_claim()?,
             ArchiveKind::Ingredient { ingredient_id } => self
@@ -3349,17 +3355,20 @@ impl Builder {
                 .to_claim()?,
         };
 
+        // Restore the intent.
+        self.intent = intent.clone();
+
         let archive_type = kind.archive_type_str();
-        let json = json!(
-            {
-                "@context":
-                {
-                    "archive": "https://contentauth.org/ns/archive#",
-                },
-                "archive:type": archive_type
-            }
-        )
-        .to_string();
+        let mut metadata_value = json!({
+            "@context": {
+                "archive": "https://contentauth.org/ns/archive#",
+            },
+            "archive:type": archive_type
+        });
+        if let Some(ref intent) = intent {
+            metadata_value["archive:intent"] = serde_json::to_value(intent)?;
+        }
+        let json = metadata_value.to_string();
 
         let archive_metadata = Metadata::new(labels::ARCHIVE_METADATA, &json)?;
         claim.add_created_assertion(&archive_metadata)?;
@@ -7098,6 +7107,112 @@ mod tests {
             !has_archive_metadata,
             "org.contentauth.archive.metadata must not appear in a final signed manifest"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    // Verify that intent is round-tripped through an archive for Edit, Update, and Create variants.
+    fn test_archive_preserves_intent() -> Result<()> {
+        // Edit intent
+        let mut builder =
+            Builder::default().with_definition(r#"{"title": "Intent Round-trip"}"#)?;
+        builder.set_intent(BuilderIntent::Edit);
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+
+        archive.rewind()?;
+        let restored = Builder::default().with_archive(archive)?;
+        assert_eq!(
+            restored.intent(),
+            Some(BuilderIntent::Edit),
+            "Edit intent must survive archive round-trip"
+        );
+
+        // Update intent
+        let mut builder =
+            Builder::default().with_definition(r#"{"title": "Intent Round-trip Update"}"#)?;
+        builder.set_intent(BuilderIntent::Update);
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+
+        archive.rewind()?;
+        let restored = Builder::default().with_archive(archive)?;
+        assert_eq!(
+            restored.intent(),
+            Some(BuilderIntent::Update),
+            "Update intent must survive archive round-trip"
+        );
+
+        // Create intent (also checks that DigitalSourceType is preserved)
+        let mut builder =
+            Builder::default().with_definition(r#"{"title": "Intent Round-trip Create"}"#)?;
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+
+        archive.rewind()?;
+        let restored = Builder::default().with_archive(archive)?;
+        assert_eq!(
+            restored.intent(),
+            Some(BuilderIntent::Create(DigitalSourceType::DigitalCapture)),
+            "Create intent with DigitalSourceType must survive archive round-trip"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    // Verify that to_archive() with Edit intent and no parent ingredient succeeds —
+    // the parent is deferred to sign() time where the asset stream is available.
+    fn test_archive_edit_intent_without_parent_succeeds() -> Result<()> {
+        let mut builder =
+            Builder::default().with_definition(r#"{"title": "Edit Intent No Parent"}"#)?;
+        builder.set_intent(BuilderIntent::Edit);
+
+        let mut archive = Cursor::new(Vec::new());
+        // Must not error even though no parent ingredient is present yet.
+        builder.to_archive(&mut archive)?;
+
+        // Restore, then sign against a real asset — the parent ingredient and
+        // c2pa.opened action should be auto-derived from the source stream at sign time.
+        archive.rewind()?;
+        let mut restored = Builder::default().with_archive(archive)?;
+        assert_eq!(restored.intent(), Some(BuilderIntent::Edit));
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        restored.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
+
+        dest.rewind()?;
+        let reader = Reader::default().with_stream("image/jpeg", &mut dest)?;
+        let manifest = reader.active_manifest().expect("signed manifest present");
+
+        // Parent ingredient must have been derived at sign time.
+        assert!(
+            manifest
+                .ingredients()
+                .iter()
+                .any(|i| i.relationship() == &crate::assertions::Relationship::ParentOf),
+            "parent ingredient must be auto-derived at sign time"
+        );
+
+        // c2pa.opened action must have been added at sign time.
+        let has_opened = manifest.assertions().iter().any(|a| {
+            if let Ok(actions) = a.to_assertion::<crate::assertions::Actions>() {
+                actions
+                    .actions()
+                    .iter()
+                    .any(|action| action.action() == crate::assertions::c2pa_action::OPENED)
+            } else {
+                false
+            }
+        });
+        assert!(has_opened, "c2pa.opened action must be present after sign");
 
         Ok(())
     }

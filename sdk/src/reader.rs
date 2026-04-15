@@ -1226,6 +1226,8 @@ impl Reader {
     /// # Errors
     /// Returns an [`Error`] if there is no active manifest.
     pub fn into_builder(mut self) -> Result<crate::Builder> {
+        // Extract intent before self.context is moved below.
+        let archive_intent = self.active_archive_intent();
         // Preserve the Reader's context in the new Builder
         let context = self.context;
         let mut builder = crate::Builder::from_shared_context(&context);
@@ -1259,6 +1261,10 @@ impl Reader {
                     }
                     builder.add_ingredient(ingredient);
                 }
+                // Restore intent that was stored in archive metadata at to_archive() time.
+                if let Some(intent) = archive_intent {
+                    builder.set_intent(intent);
+                }
                 for assertion in manifest.assertions.iter() {
                     // Skip internal archive metadata — it must not appear in final signed manifests.
                     if assertion.label() == crate::assertions::labels::ARCHIVE_METADATA {
@@ -1285,6 +1291,17 @@ impl Reader {
             .get("archive:type")
             .and_then(|v: &Value| v.as_str())
             .map(crate::assertions::labels::ArchiveType::from_str)
+    }
+
+    /// Returns the [`BuilderIntent`] from the active manifest's `org.contentauth.archive.metadata`
+    /// assertion, if one was stored at archive time.
+    pub(crate) fn active_archive_intent(&self) -> Option<crate::BuilderIntent> {
+        let manifest = self.active_manifest()?;
+        let metadata: Metadata = manifest
+            .find_assertion(crate::assertions::labels::ARCHIVE_METADATA)
+            .ok()?;
+        let intent_value = metadata.value.get("archive:intent")?.clone();
+        serde_json::from_value(intent_value).ok()
     }
 
     /// Convert a Reader into an [`Ingredient`] using the parent ingredient from the active manifest.
