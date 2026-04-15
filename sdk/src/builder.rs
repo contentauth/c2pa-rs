@@ -3015,8 +3015,10 @@ impl Builder {
     ///
     /// # Arguments
     /// * `signer` - The signer to use.
-    /// * `asset_path` - The path to the primary asset file.
-    /// * `fragment_glob` - The glob pattern to the fragmented files.
+    /// * `asset_path` - The path to the primary asset file or glob pattern if there are mulitple init segments in a set.
+    /// * `fragment_glob` - The glob pattern to the fragmented files. Do not full path, only the
+    /// *   pattern to find the fragmented files in the same directory as the asset file. For example,
+    /// *   if your fragmented files are named `video_1.m4s`, `video_2.m4s`, etc., then the glob pattern should be `video_*.m4s`.
     /// * `output_path` - The path to the output file.
     ///
     /// # Errors
@@ -3032,49 +3034,29 @@ impl Builder {
         // convert the manifest to a store
         let mut store = self.to_store()?;
 
+        let asset_path_str = asset_path.as_ref().to_str().ok_or(Error::BadParam(
+            "init glob pattern is not valid".to_string(),
+        ))?; // segment match pattern
+
+        let mut asset_paths = Vec::new();
+        for entry in glob::glob(asset_path_str)
+            .map_err(|e| Error::BadParam(format!("Invalid glob pattern for asset path: {}", e)))?
+        {
+            let path = entry.map_err(|e| {
+                Error::BadParam(format!("Error occurred while reading asset path: {}", e))
+            })?;
+            asset_paths.push(path);
+        }
+
         // sign and write our store to DASH content
         store.save_to_bmff_fragmented(
-            &[asset_path],
-            fragment_paths,
+            &asset_paths,
+            fragment_glob.as_ref(),
             output_path.as_ref(),
             signer,
             &self.context,
         )?;
-         Ok(())
-    }
-
-    /// Sign a set of renditions.
-    ///
-    /// Note: Currently this does not support files with existing C2PA manifest.
-    ///
-    /// # Arguments
-    /// * `signer` - The signer to use.
-    /// * `asset_paths` - The path to init segment for each rendition.
-    /// * `fragment_glob` - The glob pattern to the fragmented files.
-    /// * `output_path` - The path to the output file.
-    ///
-    /// # Errors
-    /// * Returns an [`Error`] if the manifest cannot be signed.
-    #[cfg(feature = "file_io")]
-    pub fn sign_renditions<P: AsRef<Path>>(
-        &mut self,
-        signer: &dyn Signer,
-        asset_paths: &[P],
-        fragment_glob: P,
-        output_path: P,
-    ) -> Result<()> {
-        // convert the manifest to a store
-        let mut store = self.to_store()?;
-
-        // sign and write our store to DASH content
-        store.save_to_bmff_fragmented(
-            asset_paths,
-            fragment_glob,
-            output_path.as_ref(),
-            signer,
-            &self.context,
-        )?;
-         Ok(())
+        Ok(())
     }
 
     #[cfg(feature = "file_io")]

@@ -200,19 +200,25 @@ fn test_builder_sidecar_only() -> Result<()> {
 
 #[test]
 #[cfg(feature = "file_io")]
-#[ignore = "generates a hash error, needs investigation"]
 fn test_builder_fragmented() -> Result<()> {
     use common::tempdirectory;
+    use std::path::PathBuf;
+
     let settings = Settings::new().with_toml(TEST_SETTINGS)?;
     let context = Context::new().with_settings(settings)?.into_shared();
 
     let mut builder = Builder::from_shared_context(&context);
-    builder.set_intent(BuilderIntent::Edit);
+    builder.set_intent(BuilderIntent::Create(c2pa::DigitalSourceType::Empty));
     let tempdir = tempdirectory().expect("temp dir");
-    let output_path = tempdir.path();
+    let output_path = tempdir.path().to_path_buf();
     let mut init_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     init_path.push("tests/fixtures/bunny/**/BigBuckBunny_2s_init.mp4");
     let pattern = init_path.as_os_str().to_str().unwrap();
+
+    let frag_glob = PathBuf::from("BigBuckBunny_2s*.m4s");
+
+    builder.sign_fragmented_files(context.signer()?, &init_path, &frag_glob, &output_path)?;
+
     for init in glob::glob(pattern).unwrap() {
         match init {
             Ok(p) => {
@@ -228,35 +234,28 @@ fn test_builder_fragmented() -> Result<()> {
                     fragments.push(seg);
                 }
 
-                dbg!(&fragments);
                 // add manifest based on
-                let mut new_output_path =
-                    output_path.join(p.parent().unwrap().file_name().unwrap());
-                new_output_path.push(p.file_name().unwrap());
-
-                builder
-                    .sign_fragmented_files(
-                        &Settings::signer()?,
-                        p.as_path(),
-                        &fragments,
-                        new_output_path.as_path(),
-                    )
-                    .unwrap();
-
-                // verify the fragments
+                let new_output_path = output_path.join(p.parent().unwrap().file_name().unwrap());
                 let output_init = new_output_path.join(p.file_name().unwrap());
+
+                // verify all the fragments
                 let output_fragments = fragments
                     .into_iter()
                     .map(|f| new_output_path.join(f.file_name().unwrap()))
                     .collect();
-                let reader = Reader::from_fragmented_files(&output_init, &output_fragments)?;
+                let reader = Reader::from_shared_context(&context)
+                    .with_fragmented_files(&output_init, &output_fragments)?;
                 //println!("reader: {}", reader);
                 assert_eq!(reader.validation_status(), None);
 
                 // test a single fragment
                 let init_segment = std::fs::File::open(output_init)?;
                 let fragment = std::fs::File::open(output_fragments[0].as_path())?;
-                let reader = Reader::from_fragment("video/mp4", init_segment, fragment)?;
+                let reader = Reader::from_shared_context(&context).with_fragment(
+                    "video/mp4",
+                    init_segment,
+                    fragment,
+                )?;
                 assert_eq!(reader.validation_status(), None);
             }
             Err(e) => panic!("error = {e:?}"),

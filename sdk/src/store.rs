@@ -2794,7 +2794,6 @@ impl Store {
     #[cfg(feature = "file_io")]
     fn add_merkmap_for_rendition(
         &mut self,
-        asset_path: &Path,
         fragments: &Vec<std::path::PathBuf>,
         local_id: usize,
         unique_id: usize,
@@ -2826,7 +2825,6 @@ impl Store {
         bmff_hash.add_merkle_for_fragmented(
             settings.core.merkle_tree_max_proofs,
             pc.alg(),
-            asset_path,
             fragments,
             output_dir,
             local_id,
@@ -2870,9 +2868,9 @@ impl Store {
 
     /// Embed the claims store as jumbf into fragmented assets.
     #[cfg(feature = "file_io")]
-    pub fn save_to_bmff_fragmented<P: AsRef<Path>>(
+    pub fn save_to_bmff_fragmented<P: AsRef<Path> + Copy>(
         &mut self,
-        init_paths: &[P],
+        init_paths: &[PathBuf],
         fragment_glob: P,
         output_path: P,
         signer: &dyn Signer,
@@ -2881,16 +2879,21 @@ impl Store {
         let mut output_map = HashMap::new();
 
         // make sure output path is not a file
-        if output_path.is_file() {
+        if output_path.as_ref().is_file() {
             return Err(crate::Error::BadParam(
                 "output_path must be a folder".to_string(),
             ));
         }
 
         // mak sure we can make the output folder
-        if !output_path.exists() {
+        if !output_path.as_ref().exists() {
             // ensure the path exists
-            std::fs::create_dir_all(output_path)?;
+            std::fs::create_dir_all(output_path).map_err(|e| {
+                Error::BadParam(format!(
+                    "failed to create output directory for fragments: {}",
+                    e
+                ))
+            })?;
         }
 
         // add dynamic assertions placeholders to the store
@@ -2913,7 +2916,12 @@ impl Store {
 
             // build the list of fragments for this init segment based on the glob pattern
             let mut fragments = Vec::new();
-            let init_dir = init_path.as_ref().parent().unwrap().to_path_buf();
+            let init_dir = init_path
+                .parent()
+                .ok_or(Error::BadParam(format!(
+                    "failed to get parent directory for init segment"
+                )))?
+                .to_path_buf();
             let frag_glob = init_dir.join(fragment_glob.as_ref());
             let frag_glob_str = frag_glob
                 .to_str()
@@ -2934,7 +2942,7 @@ impl Store {
                 }
             }
 
-            let new_output_path = output_path.join(
+            let new_output_path = output_path.as_ref().join(
                 init_dir
                     .file_name()
                     .ok_or(Error::BadParam("init segment bad file name".to_string()))?,
@@ -2943,7 +2951,6 @@ impl Store {
             // add the Merkle tree map for this rendition
             // creating fragments in the output location
             self.add_merkmap_for_rendition(
-                init_path.as_ref(),
                 &fragments,
                 i, // unique id for this rendition
                 i, // local id for this rendition (same as unique since we are only doing one rendition per claim for now)
@@ -2951,7 +2958,7 @@ impl Store {
                 context.settings(),
             )?;
 
-            output_map.insert(init_path.as_ref().to_owned(), (i, i));
+            output_map.insert(init_path.to_owned(), (i, i));
         }
 
         // now save the manifest to each output init segment (the manifest is the same for each segment per the spec to allow related rendtions to be validated as a set)
@@ -2960,12 +2967,23 @@ impl Store {
         let bmff_hashes = pc.bmff_hash_assertions();
         let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0].assertion())?;
         let unsigned_jumbf = self.to_jumbf_internal(signer.reserve_size())?;
-        for init_path in init_paths.iter() {
-            let init_name = PathBuf::from(init_path.file_name().unwrap_or_default());
-            let init_dir = PathBuf::from(init_path.parent().unwrap().file_name().unwrap());
+        for (init_path, (unique_id, local_id)) in output_map.iter() {
+            let init_name = PathBuf::from(init_path.file_name().ok_or(Error::BadParam(
+                format!("failed to get file name for init segment"),
+            ))?);
+            let init_dir = PathBuf::from(
+                init_path
+                    .parent()
+                    .ok_or(Error::BadParam(format!(
+                        "failed to get parent directory for init segment"
+                    )))?
+                    .file_name()
+                    .ok_or(Error::BadParam(format!(
+                        "failed to get file name for init segment"
+                    )))?,
+            );
 
-            let mut output_file = output_path.to_path_buf();
-            output_file = output_file.join(init_dir).join(init_name);
+            let output_file = output_path.as_ref().join(init_dir).join(init_name);
 
             // copy the init segment to the output location so we can modify it in place
             std::fs::copy(init_path, &output_file)?;
@@ -2975,7 +2993,6 @@ impl Store {
             save_jumbf_to_file(&unsigned_jumbf, &output_file, Some(&output_file))?;
 
             // update the initHash for each init segment
-            let (unique_id, local_id) = output_map.get(init_path).ok_or(Error::NotFound)?;
             bmff_hash.update_fragmented_inithash(*unique_id, *local_id, &output_file)?;
 
             output_files.push(output_file);
@@ -3497,27 +3514,6 @@ impl Store {
         Ok((sig, jumbf_bytes))
     }
 
-    #[cfg(feature = "file_io")]
-    fn finish_save(
-        &self,
-        mut jumbf_bytes: Vec<u8>,
-        output_path: &Path,
-        sig: Vec<u8>,
-        sig_placeholder: &[u8],
-    ) -> Result<(Vec<u8>, Vec<u8>)> {
-        if sig_placeholder.len() != sig.len() {
-            return Err(Error::CoseSigboxTooSmall);
-        }
-
-        patch_bytes(&mut jumbf_bytes, sig_placeholder, &sig)
-            .map_err(|_| Error::JumbfCreationError)?;
-
-        // re-save to file
-        save_jumbf_to_file(&jumbf_bytes, output_path, Some(output_path))?;
-
-        Ok((sig, jumbf_bytes))
-    }
-
     /// Verify Store from an existing asset
     /// asset_path: path to input asset
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
@@ -3814,7 +3810,7 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
-        let manifest_bytes = Store::load_jumbf_from_stream(format, &mut init_segment, context)?.0;
+        let manifest_bytes = Store::load_jumbf_from_stream(asset_type, init_segment, context)?.0;
 
         let store = Store::from_jumbf_with_context(&manifest_bytes, validation_log, context)?;
         let verify = context.settings().verify.verify_after_reading;
@@ -8334,7 +8330,7 @@ pub mod tests {
             .save_to_bmff_fragmented(
                 &inits,
                 &PathBuf::from("BigBuckBunny_2s*.m4s"),
-                output_path,
+                &output_path.to_path_buf(),
                 signer.as_ref(),
                 &context,
             )
