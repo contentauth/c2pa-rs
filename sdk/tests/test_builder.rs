@@ -200,8 +200,9 @@ fn test_builder_sidecar_only() -> Result<()> {
 #[test]
 #[cfg(feature = "file_io")]
 fn test_builder_fragmented() -> Result<()> {
-    use common::tempdirectory;
     use std::path::PathBuf;
+
+    use common::tempdirectory;
 
     let context = test_context().into_shared();
 
