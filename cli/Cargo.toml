@@ -1,7 +1,7 @@
 [package]
 name = "c2patool"
 default-run = "c2patool"
-version = "0.26.47"
+version = "0.26.48"
 description = "Tool for displaying and creating C2PA manifests."
 authors = [
     "Gavin Peacock <gpeacock@adobe.com>",
@@ -28,7 +28,7 @@ networking = [
 [dependencies]
 anyhow = "1.0"
 indextree = "4.8.0"
-c2pa = { path = "../sdk", version = "0.79.3", features = [
+c2pa = { path = "../sdk", version = "0.79.4", features = [
     "fetch_remote_manifests",
     "file_io",
     "add_thumbnails",
