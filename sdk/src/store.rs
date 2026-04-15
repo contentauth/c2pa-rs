@@ -2908,8 +2908,7 @@ impl Store {
             // ensure the path exists
             std::fs::create_dir_all(output_path).map_err(|e| {
                 Error::BadParam(format!(
-                    "failed to create output directory for fragments: {}",
-                    e
+                    "failed to create output directory for fragments: {e}"
                 ))
             })?;
         }
@@ -2947,14 +2946,13 @@ impl Store {
 
             // grab the fragments that go with this init segment
             for entry in glob::glob(frag_glob_str)
-                .map_err(|e| Error::BadParam(format!("glob pattern is not valid: {}", e)))?
+                .map_err(|e| Error::BadParam(format!("glob pattern is not valid: {e}")))?
             {
                 match entry {
                     Ok(path) => fragments.push(path),
                     Err(e) => {
                         return Err(Error::BadParam(format!(
-                            "error processing glob pattern: {}",
-                            e
+                            "error processing glob pattern: {e}"
                         )))
                     }
                 }

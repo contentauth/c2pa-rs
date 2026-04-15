@@ -3076,10 +3076,10 @@ impl Builder {
 
         let mut asset_paths = Vec::new();
         for entry in glob::glob(asset_path_str)
-            .map_err(|e| Error::BadParam(format!("Invalid glob pattern for asset path: {}", e)))?
+            .map_err(|e| Error::BadParam(format!("Invalid glob pattern for asset path: {e}")))?
         {
             let path = entry.map_err(|e| {
-                Error::BadParam(format!("Error occurred while reading asset path: {}", e))
+                Error::BadParam(format!("Error occurred while reading asset path: {e}"))
             })?;
             asset_paths.push(path);
         }
