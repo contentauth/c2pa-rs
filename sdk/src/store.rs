@@ -2812,7 +2812,7 @@ impl Store {
     #[cfg(feature = "file_io")]
     fn add_merkmap_for_rendition(
         &mut self,
-        fragments: &Vec<std::path::PathBuf>,
+        fragments: &[std::path::PathBuf],
         local_id: usize,
         unique_id: usize,
         output_dir: &Path,
@@ -8322,16 +8322,11 @@ pub mod tests {
 
         // search folders for init segments
         let mut inits = Vec::new();
-        for init in glob::glob(
-            fixture_path("bunny/**/BigBuckBunny_2s_init.mp4")
-                .to_str()
-                .unwrap(),
-        )
-        .unwrap()
+        for item in glob::glob(&fixture_path("bunny/**/BigBuckBunny_2s_init.mp4").to_string_lossy())
+            .unwrap()
+            .flatten()
         {
-            if let Ok(item) = init {
-                inits.push(item);
-            }
+            inits.push(item);
         }
 
         // Create claims store.
