@@ -68,6 +68,7 @@ pub struct Ingredient {
     pub description: Option<String>,
     pub informational_uri: Option<String>,
     pub data_types: Option<Vec<AssetType>>,
+    pub digital_source_type: Option<String>,
 
     pub validation_results: Option<ValidationResults>,
     pub active_manifest: Option<HashedUri>,
@@ -431,6 +432,11 @@ impl Ingredient {
                 "Ingredient v3 activeManifest and validationResults must both be present or absent",
             ));
         }
+        if self.active_manifest.is_some() && self.digital_source_type.is_some() {
+            return Err(serde::ser::Error::custom(
+                "Ingredient v3 shall not contain both activeManifest and digitalSourceType",
+            ));
+        }
 
         let mut ingredient_map_len = 1;
         if self.title.is_some() {
@@ -473,6 +479,9 @@ impl Ingredient {
             ingredient_map_len += 1
         }
         if self.metadata.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.digital_source_type.is_some() {
             ingredient_map_len += 1
         }
 
@@ -523,6 +532,9 @@ impl Ingredient {
         }
         if let Some(md) = &self.metadata {
             ingredient_map.serialize_field("metadata", md)?;
+        }
+        if let Some(dst) = &self.digital_source_type {
+            ingredient_map.serialize_field("digitalSourceType", dst)?;
         }
 
         ingredient_map.end()
@@ -698,7 +710,7 @@ impl AssertionBase for Ingredient {
             "metadata",
         ];
 
-        static V3_FIELDS: [&str; 15] = [
+        static V3_FIELDS: [&str; 16] = [
             "dc:title",
             "dc:format",
             "relationship",
@@ -714,6 +726,7 @@ impl AssertionBase for Ingredient {
             "softBindingsMatched",
             "softBindingAlgorithmsMatched",
             "metadata",
+            "digitalSourceType",
         ];
 
         // make sure decoded matches expected fields
@@ -904,6 +917,8 @@ impl AssertionBase for Ingredient {
                     map_cbor_to_type("softBindingAlgorithmsMatched", &ingredient_value);
                 let metadata: Option<AssertionMetadata> =
                     map_cbor_to_type("metadata", &ingredient_value);
+                let digital_source_type: Option<String> =
+                    map_cbor_to_type("digitalSourceType", &ingredient_value);
 
                 Ingredient {
                     title,
@@ -921,6 +936,7 @@ impl AssertionBase for Ingredient {
                     claim_signature,
                     soft_bindings_matched,
                     soft_binding_algorithms_matched,
+                    digital_source_type,
                     version,
                     ..Default::default()
                 }
