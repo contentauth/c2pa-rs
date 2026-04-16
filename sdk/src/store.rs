@@ -2941,15 +2941,17 @@ impl Store {
 
             // add the Merkle tree map for this rendition
             // creating fragments in the output location
+            let unique_id = i + 1;
+            let local_id = i + 1;
             self.add_merkmap_for_rendition(
                 &fragments,
-                i + 1, // local id for this rendition (same as unique since we are only doing one rendition per claim for now)
-                i + 1, // unique id for this rendition
+                local_id, // local id for this rendition (same as unique since we are only doing one rendition per claim for now)
+                unique_id, // unique id for this rendition
                 &new_output_path,
                 context.settings(),
             )?;
 
-            output_map.insert(init_path.to_owned(), (i, i));
+            output_map.insert(init_path.to_owned(), (unique_id, local_id));
         }
 
         // now save the manifest to each output init segment (the manifest is the same for each segment per the spec to allow related rendtions to be validated as a set)
@@ -2976,12 +2978,9 @@ impl Store {
 
             let output_file = output_path.as_ref().join(init_dir).join(init_name);
 
-            // copy the init segment to the output location so we can modify it in place
-            std::fs::copy(init_path, &output_file)?;
-
             // add manifest a placeholder that will be replaced with the final manifest after signing,
             // but we need to add it now to properly calculate the BMFF hash for each init segment
-            save_jumbf_to_file(&unsigned_jumbf, &output_file, Some(&output_file))?;
+            save_jumbf_to_file(&unsigned_jumbf, init_path, Some(&output_file))?;
 
             // update the initHash for each init segment
             bmff_hash.update_fragmented_inithash(*unique_id, *local_id, &output_file)?;
