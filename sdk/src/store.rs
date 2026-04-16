@@ -2944,7 +2944,7 @@ impl Store {
             self.add_merkmap_for_rendition(
                 &fragments,
                 i + 1, // local id for this rendition (same as unique since we are only doing one rendition per claim for now)
-                i + 1, // unique id for this rendition 
+                i + 1, // unique id for this rendition
                 &new_output_path,
                 context.settings(),
             )?;
