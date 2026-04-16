@@ -1458,6 +1458,10 @@ impl Builder {
             claim.alg = Some(alg.to_string());
         }
 
+        // set compression override setting
+        let compress = self.context().settings().core.prefer_compress_manifests;
+        claim.set_compressed_manifest(compress);
+
         if let Some(thumb_ref) = definition.thumbnail.as_ref() {
             // Setting the format to "none" will ensure that no claim thumbnail is added
             if thumb_ref.format != "none" {
@@ -3045,14 +3049,16 @@ impl Builder {
         Ok(())
     }
 
-    /// Sign a set of fragmented BMFF files.
+    /// Sign rendition(s) containing fragmented BMFF files.
     ///
     /// Note: Currently this does not support files with existing C2PA manifest.
     ///
     /// # Arguments
     /// * `signer` - The signer to use.
-    /// * `asset_path` - The path to the primary asset file.
-    /// * `fragment_paths` - The paths to the fragmented files.
+    /// * `asset_path` - The path to the primary asset file or glob pattern if there are mulitple init segments in a set.
+    /// * `fragment_glob` - The glob pattern to the fragmented files. Do not use the full path, only the
+    /// *   pattern to find the fragmented files in the same directory/subdirectory as the asset file. For example,
+    /// *   if your fragmented files are named `video_1.m4s`, `video_2.m4s`, etc., then the glob pattern should be `video_*.m4s`.
     /// * `output_path` - The path to the output file.
     ///
     /// # Errors
@@ -3062,41 +3068,35 @@ impl Builder {
         &mut self,
         signer: &dyn Signer,
         asset_path: P,
-        fragment_paths: &Vec<std::path::PathBuf>,
+        fragment_glob: P,
         output_path: P,
     ) -> Result<()> {
-        if !output_path.as_ref().exists() {
-            // ensure the path exists
-            std::fs::create_dir_all(output_path.as_ref())?;
-        } else {
-            // if the file exists, we need to remove it
-            if output_path.as_ref().is_file() {
-                return Err(crate::Error::BadParam(
-                    "output_path must be a folder".to_string(),
-                ));
-            } else {
-                let file_name = asset_path.as_ref().file_name().unwrap_or_default();
-                let mut output_file = output_path.as_ref().to_owned();
-                output_file = output_file.join(file_name);
-                if output_file.exists() {
-                    return Err(crate::Error::BadParam(
-                        "Destination file already exists".to_string(),
-                    ));
-                }
-            }
-        }
-
         // convert the manifest to a store
         let mut store = self.to_store()?;
 
+        let asset_path_str = asset_path.as_ref().to_str().ok_or(Error::BadParam(
+            "init glob pattern is not valid".to_string(),
+        ))?; // segment match pattern
+
+        let mut asset_paths = Vec::new();
+        for entry in glob::glob(asset_path_str)
+            .map_err(|e| Error::BadParam(format!("Invalid glob pattern for asset path: {e}")))?
+        {
+            let path = entry.map_err(|e| {
+                Error::BadParam(format!("Error occurred while reading asset path: {e}"))
+            })?;
+            asset_paths.push(path);
+        }
+
         // sign and write our store to DASH content
         store.save_to_bmff_fragmented(
-            asset_path.as_ref(),
-            fragment_paths,
+            &asset_paths,
+            fragment_glob.as_ref(),
             output_path.as_ref(),
             signer,
             &self.context,
-        )
+        )?;
+        Ok(())
     }
 
     #[cfg(feature = "file_io")]
@@ -3427,6 +3427,7 @@ mod tests {
         settings::Settings,
         utils::{
             hash_utils::HashRange,
+            io_utils::patch_stream,
             test::{
                 setup_logger, test_context, write_bmff_placeholder_stream,
                 write_jpeg_placeholder_stream,
@@ -4580,10 +4581,39 @@ mod tests {
             "sign_embeddable must return non-empty bytes"
         );
 
+        // Splice the manifest bytes into the clean JPEG and validate with Reader. The
+        // manifest should be spliced in according to where it is specifed in the BoxHash
+        // assertion. The splice point should be where the C2PA box starts. It will not always
+        // the first segmment after the SOI.
+
+        // The box locations are not saved in the BoxHash assertion, so we need to get the box map again from the format handler to find the C2PA box location for splicing.
+        let boxes = {
+            stream.rewind()?;
+            let c2pa_io = jumbf_io::get_assetio_handler("image/jpeg").ok_or(Error::OtherError(
+                "failed to get asset I/O handler for image/jpeg".into(),
+            ))?;
+            let box_mapper = c2pa_io.asset_box_hash_ref().ok_or(Error::OtherError(
+                "failed to get box mapper for image/jpeg".into(),
+            ))?;
+            box_mapper.get_box_map(&mut stream)?
+        };
+
+        let c2pa_box_map = boxes
+            .iter()
+            .find(|boxes| boxes.names.first().is_some_and(|n| n == "C2PA"))
+            .ok_or(Error::OtherError(
+                "the BoxMap must contain a C2PA entry".into(),
+            ))?;
+
         let mut embedded = Vec::with_capacity(TEST_IMAGE_CLEAN.len() + manifest_bytes.len());
-        embedded.extend_from_slice(&TEST_IMAGE_CLEAN[..2]); // SOI (FF D8)
-        embedded.extend_from_slice(&manifest_bytes); // C2PA APP11 segments
-        embedded.extend_from_slice(&TEST_IMAGE_CLEAN[2..]); // rest of JPEG
+        let mut source_stream = Cursor::new(TEST_IMAGE_CLEAN);
+        patch_stream(
+            &mut source_stream,
+            &mut embedded,
+            c2pa_box_map.range_start,
+            c2pa_box_map.range_len,
+            &manifest_bytes,
+        )?;
 
         let mut embedded_stream = Cursor::new(embedded);
         let reader = Reader::default().with_stream("image/jpeg", &mut embedded_stream)?;
