@@ -197,20 +197,28 @@ fn test_builder_sidecar_only() -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 #[cfg(feature = "file_io")]
 fn test_builder_fragmented() -> Result<()> {
+    use std::path::PathBuf;
+
     use common::tempdirectory;
+
     let context = test_context().into_shared();
 
     let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Create(c2pa::DigitalSourceType::Empty));
-
     let tempdir = tempdirectory().expect("temp dir");
-    let output_path = tempdir.path();
+    let output_path = tempdir.path().to_path_buf();
     let mut init_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     init_path.push("tests/fixtures/bunny/**/BigBuckBunny_2s_init.mp4");
     let pattern = init_path.as_os_str().to_str().unwrap();
+
+    let frag_glob = PathBuf::from("BigBuckBunny_2s*.m4s");
+
+    builder.sign_fragmented_files(context.signer()?, &init_path, &frag_glob, &output_path)?;
+
     for init in glob::glob(pattern).unwrap() {
         match init {
             Ok(p) => {
@@ -226,23 +234,11 @@ fn test_builder_fragmented() -> Result<()> {
                     fragments.push(seg);
                 }
 
-                dbg!(&fragments);
                 // add manifest based on
-                let mut new_output_path =
-                    output_path.join(p.parent().unwrap().file_name().unwrap());
-                new_output_path.push(p.file_name().unwrap());
-
-                builder
-                    .sign_fragmented_files(
-                        context.signer()?,
-                        p.as_path(),
-                        &fragments,
-                        new_output_path.as_path(),
-                    )
-                    .unwrap();
-
-                // verify the fragments
+                let new_output_path = output_path.join(p.parent().unwrap().file_name().unwrap());
                 let output_init = new_output_path.join(p.file_name().unwrap());
+
+                // verify all the fragments
                 let output_fragments = fragments
                     .into_iter()
                     .map(|f| new_output_path.join(f.file_name().unwrap()))

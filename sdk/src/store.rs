@@ -79,7 +79,6 @@ use crate::{
         hash_utils::HashRange,
         io_utils::{self, insert_data_at, stream_len},
         is_zero,
-        patch::patch_bytes,
     },
     validation_results::validation_codes::{
         ASSERTION_CBOR_INVALID, ASSERTION_JSON_INVALID, ASSERTION_MISSING, CLAIM_MALFORMED,
@@ -2774,42 +2773,55 @@ impl Store {
     }
 
     #[cfg(feature = "file_io")]
-    fn start_save_bmff_fragmented(
+    fn add_merkmap_for_rendition(
         &mut self,
-        asset_path: &Path,
-        fragments: &Vec<std::path::PathBuf>,
+        fragments: &[std::path::PathBuf],
+        local_id: usize,
+        unique_id: usize,
         output_dir: &Path,
-        reserve_size: usize,
         settings: &Settings,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<()> {
+        if fragments.is_empty() {
+            return Err(Error::BadParam(
+                "at least one fragment path must be provided".to_string(),
+            ));
+        }
+
         // get the provenance claim changing mutability
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.clear_data(); // clear since we are reusing an existing claim
 
-        let output_filename = asset_path.file_name().ok_or(Error::NotFound)?;
-        let dest_path = output_dir.join(output_filename);
+        // get the BMFF hash assertion if it exists or create a new one if not
+        let mut bmff_hash = if let Some(bmff_hash_assertion) = pc.bmff_hash_assertions().first() {
+            BmffHash::from_assertion(bmff_hash_assertion.assertion())?
+        } else {
+            let mut bmff_hash = BmffHash::new("jumbf manifest", pc.alg(), None);
 
-        let mut data;
+            bmff_hash.set_default_exclusions();
 
-        // 2) Get hash ranges if needed
-        let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(pc.alg())?;
+            if pc.version() < 2 {
+                bmff_hash.set_bmff_version(2); // backcompat support
+            }
 
-        bmff_hash.clear_hash();
-        if pc.version() < 2 {
-            bmff_hash.set_bmff_version(2); // backcompat support
-        }
+            pc.add_assertion(&bmff_hash)?;
+            bmff_hash
+        };
+        bmff_hash.clear_hash(); // hash is not used when using fragmented Merkle tree approach
 
         // generate fragments and produce Merkle tree
         bmff_hash.add_merkle_for_fragmented(
             settings.core.merkle_tree_max_proofs,
             pc.alg(),
-            asset_path,
             fragments,
             output_dir,
-            1,
-            None,
+            local_id,
+            unique_id,
         )?;
 
+        // update the BMFF hash assertion with the new Merkle tree information
+        pc.update_bmff_hash(bmff_hash)?;
+
+        /*
         // add in the BMFF assertion
         pc.add_assertion(&bmff_hash)?;
 
@@ -2836,107 +2848,197 @@ impl Store {
         if jumbf_size != data.len() {
             return Err(Error::JumbfCreationError);
         }
+        */
 
-        Ok(data) // return JUMBF data
+        Ok(())
     }
 
     /// Embed the claims store as jumbf into fragmented assets.
     #[cfg(feature = "file_io")]
-    pub fn save_to_bmff_fragmented(
+    pub fn save_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,
-        asset_path: &Path,
-        fragments: &Vec<std::path::PathBuf>,
-        output_path: &Path,
+        init_paths: &[PathBuf],
+        fragment_glob: P,
+        output_path: P,
         signer: &dyn Signer,
         context: &Context,
     ) -> Result<()> {
-        match get_supported_file_extension(asset_path) {
-            Some(ext) => {
-                if !is_bmff_format(&ext) {
-                    return Err(Error::UnsupportedType);
-                }
-            }
-            None => return Err(Error::UnsupportedType),
+        if init_paths.is_empty() {
+            return Err(Error::BadParam(
+                "at least one init segment path must be provided".to_string(),
+            ));
         }
 
-        let output_filename = asset_path.file_name().ok_or(Error::NotFound)?;
-        let dest_path = output_path.join(output_filename);
+        let mut output_map = HashMap::new();
 
-        let mut validation_log =
-            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        // make sure output path is not a file
+        if output_path.as_ref().is_file() {
+            return Err(crate::Error::BadParam(
+                "output_path must be a folder".to_string(),
+            ));
+        }
 
-        // add dynamic assertions to the store
+        // mak sure we can make the output folder
+        if !output_path.as_ref().exists() {
+            // ensure the path exists
+            std::fs::create_dir_all(output_path.as_ref()).map_err(|e| {
+                Error::BadParam(format!(
+                    "failed to create output directory for fragments: {e}"
+                ))
+            })?;
+        }
+
+        // add dynamic assertions placeholders to the store
         let dynamic_assertions = signer.dynamic_assertions();
-        let _ = self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
-
-        // make sure there is no compression enabled since we do not support it for BMFF manifests
-        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-        pc.set_compressed_manifest(false);
-
-        // get temp store as JUMBF
-        let jumbf = self.to_jumbf(signer)?;
-
-        // use temp store so mulitple calls across renditions will work (the Store is not finalized this way)
-        let mut temp_store = Store::from_jumbf_with_context(&jumbf, &mut validation_log, context)?;
-
-        let mut jumbf_bytes = temp_store.start_save_bmff_fragmented(
-            asset_path,
-            fragments,
-            output_path,
-            signer.reserve_size(),
-            context.settings(),
-        )?;
-
-        let mut preliminary_claim = PartialClaim::default();
-        {
-            let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-            for assertion in pc.assertions() {
-                preliminary_claim.add_assertion(assertion);
-            }
+        if !dynamic_assertions.is_empty() {
+            self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
         }
 
-        // Now add the dynamic assertions and update the JUMBF.
-        let modified =
-            temp_store.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-
-        // update the JUMBF if modified with dynamic assertions
-        if modified {
-            let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-            match pc.remote_manifest() {
-                RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
-                    jumbf_bytes = temp_store.to_jumbf_internal(signer.reserve_size())?;
-
-                    // save the jumbf to the output path
-                    save_jumbf_to_file(&jumbf_bytes, &dest_path, Some(&dest_path))?;
-
-                    let pc = temp_store
-                        .provenance_claim_mut()
-                        .ok_or(Error::ClaimEncoding)?;
-                    // generate actual hash values
-                    let bmff_hashes = pc.bmff_hash_assertions();
-
-                    if !bmff_hashes.is_empty() {
-                        let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0].assertion())?;
-                        bmff_hash.update_fragmented_inithash(&dest_path)?;
-                        pc.update_bmff_hash(bmff_hash)?;
+        // add a Merkle tree map for each init segment and its associated fragments
+        for (i, init_path) in init_paths.iter().enumerate() {
+            // make sure it is a supported BMFF format
+            match get_supported_file_extension(init_path.as_ref()) {
+                Some(ext) => {
+                    if !is_bmff_format(&ext) {
+                        return Err(Error::UnsupportedType);
                     }
-
-                    // regenerate the jumbf because the cbor changed
-                    jumbf_bytes = temp_store.to_jumbf_internal(signer.reserve_size())?;
                 }
-                _ => (),
+                None => return Err(Error::UnsupportedType),
+            }
+
+            // build the list of fragments for this init segment based on the glob pattern
+            let mut fragments = Vec::new();
+            let init_dir = init_path
+                .parent()
+                .ok_or(Error::BadParam(
+                    "failed to get parent directory for init segment".to_string(),
+                ))?
+                .to_path_buf();
+            let frag_glob = init_dir.join(fragment_glob.as_ref());
+            let frag_glob_str = frag_glob
+                .to_str()
+                .ok_or(Error::BadParam("glob pattern is not valid".to_string()))?; // segment match pattern
+
+            // grab the fragments that go with this init segment
+            for entry in glob::glob(frag_glob_str)
+                .map_err(|e| Error::BadParam(format!("glob pattern is not valid: {e}")))?
+            {
+                match entry {
+                    Ok(path) => fragments.push(path),
+                    Err(e) => {
+                        return Err(Error::BadParam(format!(
+                            "error processing glob pattern: {e}"
+                        )))
+                    }
+                }
+            }
+
+            let new_output_path = output_path.as_ref().join(
+                init_dir
+                    .file_name()
+                    .ok_or(Error::BadParam("init segment bad file name".to_string()))?,
+            );
+
+            // add the Merkle tree map for this rendition
+            // creating fragments in the output location
+            let unique_id = i + 1;
+            let local_id = i + 1;
+            self.add_merkmap_for_rendition(
+                &fragments,
+                local_id, // local id for this rendition (same as unique since we are only doing one rendition per claim for now)
+                unique_id, // unique id for this rendition
+                &new_output_path,
+                context.settings(),
+            )?;
+
+            output_map.insert(init_path.to_owned(), (unique_id, local_id));
+        }
+
+        // now save the manifest to each output init segment (the manifest is the same for each segment per the spec to allow related rendtions to be validated as a set)
+        let mut output_files = Vec::new();
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
+        let bmff_hashes = pc.bmff_hash_assertions();
+        let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0].assertion())?;
+        let unsigned_jumbf = self.to_jumbf_internal(signer.reserve_size())?;
+        for (init_path, (unique_id, local_id)) in output_map.iter() {
+            let init_name = PathBuf::from(init_path.file_name().ok_or(Error::BadParam(
+                "failed to get file name for init segment".to_string(),
+            ))?);
+            let init_dir = PathBuf::from(
+                init_path
+                    .parent()
+                    .ok_or(Error::BadParam(
+                        "failed to get parent directory for init segment".to_string(),
+                    ))?
+                    .file_name()
+                    .ok_or(Error::BadParam(
+                        "failed to get file name for init segment".to_string(),
+                    ))?,
+            );
+
+            let output_file = output_path.as_ref().join(init_dir).join(init_name);
+
+            // add manifest a placeholder that will be replaced with the final manifest after signing,
+            // but we need to add it now to properly calculate the BMFF hash for each init segment
+            save_jumbf_to_file(&unsigned_jumbf, init_path, Some(&output_file))?;
+
+            // update the initHash for each init segment
+            bmff_hash.update_fragmented_inithash(*unique_id, *local_id, &output_file)?;
+
+            output_files.push(output_file);
+        }
+
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?; // reborrow to change mutability
+
+        // update the BMFF hash in the final BMFFHash assertion containing the unique initHash values for each rendition
+        pc.update_bmff_hash(bmff_hash)?;
+
+        // Write dynamic assertions only if placeholders were added during placeholder generation.
+        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
+        // weren't added and we should skip writing to avoid size mismatches.
+        let dynamic_assertions = signer.dynamic_assertions();
+        if !dynamic_assertions.is_empty() {
+            // Check if placeholders exist for these dynamic assertions
+            let has_placeholders = {
+                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                dynamic_assertions
+                    .iter()
+                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
             };
+
+            if has_placeholders {
+                let mut preliminary_claim = PartialClaim::default();
+                {
+                    let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                    for assertion in pc.assertions() {
+                        preliminary_claim.add_assertion(assertion);
+                    }
+                }
+
+                self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+            }
         }
 
         // sign the claim
-        let pc = temp_store.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = temp_store.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
-        let sig_placeholder = Store::sign_claim_placeholder(pc, signer.reserve_size());
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
 
-        match temp_store.finish_save(jumbf_bytes, &dest_path, sig, &sig_placeholder) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(e),
+        // update the provenance claim with the signature so it gets saved in the manifest
+        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        pc.set_signature_val(sig);
+
+        // regenerate the JUMBF with the signature
+        let final_jumbf = self.to_jumbf_internal(signer.reserve_size())?;
+        if final_jumbf.len() != unsigned_jumbf.len() {
+            return Err(Error::JumbfCreationError);
         }
+
+        // write the signed manifest to each output init segment
+        for output_file in output_files.iter() {
+            save_jumbf_to_file(&final_jumbf, output_file, Some(output_file))?;
+        }
+
+        Ok(())
     }
 
     /// Embed the claims store as JUMBF into a stream. Updates XMP with provenance
@@ -3397,27 +3499,6 @@ impl Store {
 
         output_stream.flush()?;
         Ok((pc.signature_val().to_vec(), jumbf_bytes))
-    }
-
-    #[cfg(feature = "file_io")]
-    fn finish_save(
-        &self,
-        mut jumbf_bytes: Vec<u8>,
-        output_path: &Path,
-        sig: Vec<u8>,
-        sig_placeholder: &[u8],
-    ) -> Result<(Vec<u8>, Vec<u8>)> {
-        if sig_placeholder.len() != sig.len() {
-            return Err(Error::CoseSigboxTooSmall);
-        }
-
-        patch_bytes(&mut jumbf_bytes, sig_placeholder, &sig)
-            .map_err(|_| Error::JumbfCreationError)?;
-
-        // re-save to file
-        save_jumbf_to_file(&jumbf_bytes, output_path, Some(output_path))?;
-
-        Ok((sig, jumbf_bytes))
     }
 
     /// Verify Store from an existing asset
@@ -8309,7 +8390,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn test_fragmented_jumbf_generation() {
         let mut context = crate::context::Context::new();
-        context.settings_mut().verify.verify_after_reading = false;
+        context.settings_mut().verify.verify_after_reading = true;
 
         // test adding to actual image
 
@@ -8317,91 +8398,84 @@ pub mod tests {
         let output_path = tempdir.path();
 
         // search folders for init segments
-        for init in glob::glob(
-            fixture_path("bunny/**/BigBuckBunny_2s_init.mp4")
-                .to_str()
-                .unwrap(),
-        )
-        .unwrap()
+        let mut inits = Vec::new();
+        for item in glob::glob(&fixture_path("bunny/**/BigBuckBunny_2s_init.mp4").to_string_lossy())
+            .unwrap()
+            .flatten()
         {
-            match init {
-                Ok(p) => {
-                    let mut fragments = Vec::new();
-                    let init_dir = p.parent().unwrap();
-                    let seg_glob = init_dir.join("BigBuckBunny_2s*.m4s"); // segment match pattern
+            inits.push(item);
+        }
 
-                    // grab the fragments that go with this init segment
-                    for seg in glob::glob(seg_glob.to_str().unwrap()).unwrap().flatten() {
-                        fragments.push(seg);
-                    }
+        // Create claims store.
+        let mut store = Store::from_context(&context);
 
-                    // Create claims store.
-                    let mut store = Store::from_context(&context);
+        // Create a new claim.
+        let claim = create_test_claim().unwrap();
+        store.commit_claim(claim).unwrap();
 
-                    // Create a new claim.
-                    let claim = create_test_claim().unwrap();
-                    store.commit_claim(claim).unwrap();
+        // Do we generate JUMBF?
+        let signer = test_cawg_signer(SigningAlg::Ps256, &[labels::SCHEMA_ORG]).unwrap();
 
-                    // Do we generate JUMBF?
-                    let signer =
-                        test_cawg_signer(SigningAlg::Ps256, &[labels::SCHEMA_ORG]).unwrap();
+        store
+            .save_to_bmff_fragmented(
+                &inits,
+                &PathBuf::from("BigBuckBunny_2s*.m4s"),
+                &output_path.to_path_buf(),
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
 
-                    // Use Tempdir for automatic cleanup
-                    let new_subdir = tempfile::TempDir::new_in(output_path)
-                        .expect("Failed to create temp subdir");
-                    let new_output_path = new_subdir.path().join(init_dir.file_name().unwrap());
-                    store
-                        .save_to_bmff_fragmented(
-                            p.as_path(),
-                            &fragments,
-                            new_output_path.as_path(),
-                            signer.as_ref(),
-                            &context,
-                        )
-                        .unwrap();
+        // verify the fragments
+        for init_path in &inits {
+            let init_name = PathBuf::from(init_path.file_name().unwrap_or_default());
+            let init_dir = PathBuf::from(init_path.parent().unwrap().file_name().unwrap());
 
-                    // verify the fragments
-                    let output_init = new_output_path.join(p.file_name().unwrap());
-                    let mut init_stream = std::fs::File::open(&output_init).unwrap();
+            let mut output_file = output_path.to_path_buf();
+            output_file = output_file.join(&init_dir).join(&init_name);
 
-                    for entry in &fragments {
-                        let file_path = new_output_path.join(entry.file_name().unwrap());
+            let mut init_stream = std::fs::File::open(&output_file).unwrap();
 
-                        let mut validation_log = StatusTracker::default();
+            // build the list of fragments for this init segment based on the glob pattern
+            let mut fragments = Vec::new();
+            let frag_glob = output_path.join(&init_dir).join("BigBuckBunny_2s*.m4s");
+            let frag_glob_str = frag_glob.to_str().unwrap();
 
-                        let mut fragment_stream = std::fs::File::open(&file_path).unwrap();
-                        let _manifest = Store::load_fragment_from_stream(
-                            "mp4",
-                            &mut init_stream,
-                            &mut fragment_stream,
-                            &mut validation_log,
-                            &context,
-                        )
-                        .unwrap();
-                        init_stream.seek(std::io::SeekFrom::Start(0)).unwrap();
-                        assert!(!validation_log.has_any_error());
-                    }
-
-                    // test verifying all at once
-                    let mut output_fragments = Vec::new();
-                    for entry in &fragments {
-                        output_fragments.push(new_output_path.join(entry.file_name().unwrap()));
-                    }
-
-                    let mut validation_log = StatusTracker::default();
-                    let _manifest = Store::load_from_file_and_fragments(
-                        "mp4",
-                        &mut init_stream,
-                        &output_fragments,
-                        &mut validation_log,
-                        &context,
-                    )
-                    .unwrap();
-
-                    assert!(!validation_log.has_any_error());
-                }
-                Err(_) => panic!("test misconfigures"),
+            // grab the fragments that go with this init segment
+            for entry in glob::glob(frag_glob_str).unwrap() {
+                fragments.push(entry.unwrap());
             }
+
+            // check fragments individually
+            for entry in &fragments {
+                let mut validation_log = StatusTracker::default();
+
+                let mut fragment_stream = std::fs::File::open(entry).unwrap();
+                let _manifest = Store::load_fragment_from_stream(
+                    "mp4",
+                    &mut init_stream,
+                    &mut fragment_stream,
+                    &mut validation_log,
+                    &context,
+                )
+                .unwrap();
+                init_stream.seek(std::io::SeekFrom::Start(0)).unwrap();
+                assert!(!validation_log.has_any_error());
+            }
+
+            // check all fragments together with the init
+            let mut validation_log = StatusTracker::default();
+            init_stream.rewind().unwrap();
+            let _manifest = Store::load_from_file_and_fragments(
+                "mp4",
+                &mut init_stream,
+                &fragments,
+                &mut validation_log,
+                &context,
+            )
+            .unwrap();
+
+            assert!(!validation_log.has_any_error());
         }
     }
 
