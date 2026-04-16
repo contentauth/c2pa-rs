@@ -1051,7 +1051,7 @@ impl Builder {
     /// * `stream` - A stream to write the zip into.
     /// # Errors
     /// * Returns an [`Error`] if the archive cannot be written.
-    fn old_to_archive(&mut self, stream: impl Write + Seek) -> Result<()> {
+    fn old_to_archive(&self, stream: impl Write + Seek) -> Result<()> {
         drop(
             // this drop seems to be required to force a flush before reading back.
             {
@@ -1223,7 +1223,7 @@ impl Builder {
     ///
     /// # Errors
     /// * Returns an [`Error`] if the archive cannot be written.
-    pub fn to_archive(&mut self, mut stream: impl Write + Seek) -> Result<()> {
+    pub fn to_archive(&self, mut stream: impl Write + Seek) -> Result<()> {
         if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
             let c2pa_data = self.working_store_sign(ArchiveKind::Builder)?;
             stream.write_all(&c2pa_data)?;
@@ -1249,7 +1249,7 @@ impl Builder {
     /// # Errors
     /// * Returns [`Error::BadParam`] if the ingredient is not found, or JUMBF archives are disabled in settings.
     pub fn write_ingredient_archive(
-        &mut self,
+        &self,
         ingredient_id: &str,
         mut stream: impl Write + Seek,
     ) -> Result<()> {
@@ -2739,7 +2739,7 @@ impl Builder {
     /// # Errors
     /// * In Mode 2, returns an [`Error`] if no valid hard binding assertion exists.
     /// * Returns an [`Error`] if signing fails.
-    pub fn sign_embeddable(&mut self, format: &str) -> Result<Vec<u8>> {
+    pub fn sign_embeddable(&self, format: &str) -> Result<Vec<u8>> {
         let placeholder_jumbf_len = self.placeholder_jumbf_len;
 
         // Check that a valid hard binding exists in Mode 2 (no placeholder).
@@ -7075,7 +7075,7 @@ mod tests {
 
     #[test]
     fn test_with_archive() -> Result<()> {
-        let mut builder = Builder::default().with_definition(r#"{"title": "Test Image"}"#)?;
+        let builder = Builder::default().with_definition(r#"{"title": "Test Image"}"#)?;
 
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive)?;
@@ -7175,7 +7175,7 @@ mod tests {
         // Test 1: New C2PA format (generate_c2pa_archive = true)
         let settings_new = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
         let context_new = Context::new().with_settings(settings_new)?;
-        let mut builder_new = Builder::from_context(context_new)
+        let builder_new = Builder::from_context(context_new)
             .with_definition(r#"{"title": "Test New Format"}"#)?;
 
         let mut archive_new = Cursor::new(Vec::new());
@@ -7197,7 +7197,7 @@ mod tests {
         let settings_old = Settings::new().with_value("builder.generate_c2pa_archive", false)?;
 
         let context_old = Context::new().with_settings(settings_old)?;
-        let mut builder_old = Builder::from_context(context_old)
+        let builder_old = Builder::from_context(context_old)
             .with_definition(r#"{"title": "Test Old Format"}"#)?;
 
         let mut archive_old = Cursor::new(Vec::new());
@@ -7232,7 +7232,7 @@ mod tests {
         let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
 
         let context = Context::new().with_settings(settings.clone())?;
-        let mut builder =
+        let builder =
             Builder::from_context(context).with_definition(r#"{"title": "Test Self Signed"}"#)?;
 
         let mut archive = Cursor::new(Vec::new());
