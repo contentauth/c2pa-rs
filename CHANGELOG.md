@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.79.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.4...c2pa-v0.79.5)
+_15 April 2026_
+
+### Fixed
+
+* Handle more thumbnail redaction edge cases ([#2049](https://github.com/contentauth/c2pa-rs/pull/2049))
+
 ## [0.79.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.3...c2pa-v0.79.4)
 _14 April 2026_
 

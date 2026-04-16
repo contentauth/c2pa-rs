@@ -199,13 +199,13 @@ fn test_builder_sidecar_only() -> Result<()> {
 
 #[test]
 #[cfg(feature = "file_io")]
-#[ignore = "generates a hash error, needs investigation"]
 fn test_builder_fragmented() -> Result<()> {
     use common::tempdirectory;
     let context = test_context().into_shared();
 
     let mut builder = Builder::from_shared_context(&context);
-    builder.set_intent(BuilderIntent::Edit);
+    builder.set_intent(BuilderIntent::Create(c2pa::DigitalSourceType::Empty));
+
     let tempdir = tempdirectory().expect("temp dir");
     let output_path = tempdir.path();
     let mut init_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -255,7 +255,11 @@ fn test_builder_fragmented() -> Result<()> {
                 // test a single fragment
                 let init_segment = std::fs::File::open(output_init)?;
                 let fragment = std::fs::File::open(output_fragments[0].as_path())?;
-                let reader = Reader::from_fragment("video/mp4", init_segment, fragment)?;
+                let reader = Reader::from_shared_context(&context).with_fragment(
+                    "video/mp4",
+                    init_segment,
+                    fragment,
+                )?;
                 assert_eq!(reader.validation_status(), None);
             }
             Err(e) => panic!("error = {e:?}"),
@@ -823,5 +827,32 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
         matches!(result, Err(Error::XmpNotSupported)),
         "expected XmpNotSupported, got {result:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn test_builder_compressed_manifests() -> Result<()> {
+    let mut settings = test_settings();
+    settings.core.prefer_compress_manifests = true;
+    let context = Context::new().with_settings(settings)?.into_shared();
+    let mut source = Cursor::new(include_bytes!("fixtures/CA.jpg"));
+    let format = "image/jpeg";
+
+    let dest_buf = Vec::new();
+    let mut dest = Cursor::new(dest_buf);
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    builder.definition.claim_version = Some(2);
+    builder.save_to_stream(format, &mut source, &mut dest)?;
+
+    dest.rewind()?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+
+    assert!(
+        reader.validation_status().is_none(),
+        "Validation should succeed for compressed manifest"
+    );
+
     Ok(())
 }
