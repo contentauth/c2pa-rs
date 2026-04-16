@@ -7762,4 +7762,468 @@ mod tests {
         let future = builder.sign_async(&signer, "image/jpeg", &mut src, &mut dst);
         assert_send(future);
     }
+
+    #[test]
+    fn test_builder_ingredient_action_linking_and_post_hoc_update() {
+        use crate::assertions::{Action, Actions, Relationship};
+
+        // ── Step 1: Build ───────────────────────────────────────────────
+        // Add 3 ingredients via add_ingredient_from_stream (the standard path).
+        // Mix: one parent (opened) and two components (placed).
+        let mut builder = Builder::default();
+
+        // Ingredient A: parent (opened). Stream may or may not produce an instance_id.
+        let ing_a = builder
+            .add_ingredient_from_stream(
+                json!({
+                    "title": "Asset A",
+                    "relationship": "parentOf",
+                })
+                .to_string(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+        let uuid_a = ing_a.instance_id().to_string();
+
+        // Ingredient B: component (placed), linked by label instead of instance_id.
+        // When an ingredient has a label, the SDK uses it as the map key for action linking.
+        let label_b = "ingredient-b-label";
+        let ing_b = builder
+            .add_ingredient_from_stream(
+                json!({
+                    "title": "Asset B",
+                    "relationship": "componentOf",
+                    "label": label_b,
+                })
+                .to_string(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+        // label_b is the linking key (not instance_id) since label takes priority.
+        let uuid_b = label_b.to_string();
+
+        // Ingredient C: component (placed).
+        let ing_c = builder
+            .add_ingredient_from_stream(
+                json!({
+                    "title": "Asset C",
+                    "relationship": "componentOf",
+                })
+                .to_string(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+        let uuid_c = ing_c.instance_id().to_string();
+
+        // Create actions linked to ingredients by their instance_id (unique_test_uuid).
+        // Note: opened/created actions get inserted at position 0 by add_action,
+        // so the final order may differ from insertion order.
+        let action_a = Action::new(c2pa_action::OPENED)
+            .set_when("2025-01-15T10:00:00Z")
+            .add_ingredient_id(&uuid_a)
+            .unwrap();
+        let action_b = Action::new(c2pa_action::PLACED)
+            .set_when("2025-01-15T11:00:00Z")
+            .add_ingredient_id(&uuid_b)
+            .unwrap();
+        let action_c = Action::new(c2pa_action::PLACED)
+            .set_when("2025-01-15T12:00:00Z")
+            .add_ingredient_id(&uuid_c)
+            .unwrap();
+
+        builder.add_action(action_a).unwrap();
+        builder.add_action(action_b).unwrap();
+        builder.add_action(action_c).unwrap();
+
+        // ── Step 2: Archive ─────────────────────────────────────────────
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+
+        // ── Step 3: Restore from archive into a new Builder ─────────────
+        archive.rewind().unwrap();
+        let mut builder = Builder::default().with_archive(archive).unwrap();
+
+        assert_eq!(builder.definition.ingredients.len(), 3);
+
+        // ── Step 4: Post-hoc update ─────────────────────────────────────
+        // Using ONLY data on the restored builder (no prior state).
+        //
+        // After archive round-trip, each action's parameters.ingredients contains
+        // HashedUri(s) whose URL ends with the ingredient's label, e.g.:
+        //   "self#jumbf=c2pa.assertions/c2pa.ingredient.v3__1"
+        // We match this against ingredient.label() to pair them.
+
+        // 4a. Ensure every ingredient has a unique_test_uuid (= its instance_id).
+        // If instance_id is missing, generate one.
+        for ing in builder.definition.ingredients.iter_mut() {
+            if ing.instance_id() == "None" {
+                ing.set_instance_id(&Uuid::new_v4().to_string());
+            }
+        }
+
+        // 4b. Extract actions via serde (same pattern as from_redaction_configuration).
+        let actions_idx = builder
+            .definition
+            .assertions
+            .iter()
+            .position(|a| a.label.starts_with(Actions::LABEL))
+            .expect("actions assertion must exist after archive round-trip");
+
+        let mut actions: Actions =
+            serde_json::to_value(&builder.definition.assertions[actions_idx].data)
+                .ok()
+                .and_then(|v| serde_json::from_value::<Actions>(v).ok())
+                .unwrap_or_else(Actions::new);
+
+        // 4c. Match each action to its ingredient via the HashedUri URL,
+        // then stamp both with the same unique_test_uuid.
+        for action in actions.actions_mut() {
+            // Get the ingredient label from the action's resolved HashedUri.
+            let ingredient_label = action
+                .parameters()
+                .and_then(|p| p.ingredients.as_ref())
+                .and_then(|ings| ings.first())
+                .map(|huri| {
+                    // URL format: "self#jumbf=c2pa.assertions/{ingredient_label}"
+                    let url = huri.url();
+                    url.rsplit('/').next().unwrap_or("").to_string()
+                });
+
+            if let Some(ref ing_label) = ingredient_label {
+                // Find the matching ingredient by label.
+                if let Some(ing) = builder
+                    .definition
+                    .ingredients
+                    .iter()
+                    .find(|i| i.label().map_or(false, |l| l == ing_label))
+                {
+                    let uuid = ing.instance_id().to_string();
+                    let updated = std::mem::take(action)
+                        .set_parameter("unique_test_uuid", uuid)
+                        .unwrap();
+                    *action = updated;
+                }
+            }
+        }
+
+        // Remove old actions assertion, re-add the updated one.
+        builder.definition.assertions.remove(actions_idx);
+        builder
+            .add_assertion("c2pa.actions.v2", &actions)
+            .unwrap();
+
+        // ── Step 5: Verify ──────────────────────────────────────────────
+        let verify_idx = builder
+            .definition
+            .assertions
+            .iter()
+            .position(|a| a.label.starts_with(Actions::LABEL))
+            .unwrap();
+        let verify_actions: Actions =
+            serde_json::to_value(&builder.definition.assertions[verify_idx].data)
+                .ok()
+                .and_then(|v| serde_json::from_value::<Actions>(v).ok())
+                .unwrap();
+
+        let mut action_count = 0;
+        for action in verify_actions.actions() {
+            let is_linked = action.action() == c2pa_action::OPENED
+                || action.action() == c2pa_action::PLACED;
+            if !is_linked {
+                continue;
+            }
+
+            // Every linked action must have the unique_test_uuid parameter.
+            let tracking: Option<String> = action.get_parameter("unique_test_uuid");
+            assert!(
+                tracking.is_some(),
+                "{} action must have unique_test_uuid",
+                action.action()
+            );
+            let tracking = tracking.unwrap();
+
+            // The unique_test_uuid must match one of the ingredient instance_ids.
+            let matched_ingredient = builder
+                .definition
+                .ingredients
+                .iter()
+                .find(|i| i.instance_id() == tracking);
+            assert!(
+                matched_ingredient.is_some(),
+                "unique_test_uuid {} must match an ingredient's instance_id",
+                tracking
+            );
+
+            action_count += 1;
+        }
+        assert_eq!(action_count, 3, "must have exactly 3 linked actions (1 opened + 2 placed)");
+
+        // ── Step 6: Sign with a dummy asset (no existing credentials) ───
+        let no_manifest_image: &[u8] = include_bytes!("../tests/fixtures/no_manifest.jpg");
+        let mut source = Cursor::new(no_manifest_image);
+        let mut dest = Cursor::new(Vec::new());
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+
+        // Read back and log the resulting manifest.
+        dest.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut dest)
+            .expect("signed manifest must be readable");
+
+        eprintln!("=== Signed manifest ===\n{reader}");
+
+        assert_ne!(reader.validation_state(), ValidationState::Invalid);
+        let manifest = reader.active_manifest().expect("must have active manifest");
+
+        // Verify actions survived signing with unique_test_uuid intact.
+        let signed_actions: Actions = manifest
+            .find_assertion(Actions::LABEL)
+            .expect("signed manifest must contain actions");
+
+        let mut signed_action_count = 0;
+        for action in signed_actions.actions() {
+            let is_linked = action.action() == c2pa_action::OPENED
+                || action.action() == c2pa_action::PLACED;
+            if !is_linked {
+                continue;
+            }
+            let tracking: Option<String> = action.get_parameter("unique_test_uuid");
+            assert!(
+                tracking.is_some(),
+                "signed {} action must retain unique_test_uuid",
+                action.action()
+            );
+            signed_action_count += 1;
+        }
+        assert_eq!(signed_action_count, 3, "signed manifest must have 3 linked actions");
+    }
+
+    #[test]
+    fn test_builder_ingredient_action_linking_and_post_hoc_update_no_archive() {
+        use crate::assertions::{Action, Actions, Relationship};
+
+        // ── Step 1: Build ───────────────────────────────────────────────
+        let mut builder = Builder::default();
+
+        // Ingredient A: parent (opened).
+        let ing_a = builder
+            .add_ingredient_from_stream(
+                json!({
+                    "title": "Asset A",
+                    "relationship": "parentOf",
+                })
+                .to_string(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+        let uuid_a = ing_a.instance_id().to_string();
+
+        // Ingredient B: component (placed), linked by label.
+        let label_b = "ingredient-b-label";
+        let ing_b = builder
+            .add_ingredient_from_stream(
+                json!({
+                    "title": "Asset B",
+                    "relationship": "componentOf",
+                    "label": label_b,
+                })
+                .to_string(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+        let uuid_b = label_b.to_string();
+
+        // Ingredient C: component (placed).
+        let ing_c = builder
+            .add_ingredient_from_stream(
+                json!({
+                    "title": "Asset C",
+                    "relationship": "componentOf",
+                })
+                .to_string(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+            )
+            .unwrap();
+        let uuid_c = ing_c.instance_id().to_string();
+
+        // Create actions linked to ingredients.
+        let action_a = Action::new(c2pa_action::OPENED)
+            .set_when("2025-01-15T10:00:00Z")
+            .add_ingredient_id(&uuid_a)
+            .unwrap();
+        let action_b = Action::new(c2pa_action::PLACED)
+            .set_when("2025-01-15T11:00:00Z")
+            .add_ingredient_id(&uuid_b)
+            .unwrap();
+        let action_c = Action::new(c2pa_action::PLACED)
+            .set_when("2025-01-15T12:00:00Z")
+            .add_ingredient_id(&uuid_c)
+            .unwrap();
+
+        builder.add_action(action_a).unwrap();
+        builder.add_action(action_b).unwrap();
+        builder.add_action(action_c).unwrap();
+
+        // ── No archive round-trip — work directly on the same builder ───
+
+        // ── Step 2: Post-hoc update ─────────────────────────────────────
+        // Without archive, ingredientIds stays as raw strings in
+        // parameters.common (not resolved to HashedUri). We match each
+        // action's ingredientIds against ingredient label (priority) or
+        // instance_id — same resolution order the SDK uses at sign time.
+
+        // 2a. Ensure every ingredient has a unique_test_uuid (= its instance_id).
+        for ing in builder.definition.ingredients.iter_mut() {
+            if ing.instance_id() == "None" {
+                ing.set_instance_id(&Uuid::new_v4().to_string());
+            }
+        }
+
+        // 2b. Extract actions via serde.
+        let actions_idx = builder
+            .definition
+            .assertions
+            .iter()
+            .position(|a| a.label.starts_with(Actions::LABEL))
+            .expect("actions assertion must exist");
+
+        let mut actions: Actions =
+            serde_json::to_value(&builder.definition.assertions[actions_idx].data)
+                .ok()
+                .and_then(|v| serde_json::from_value::<Actions>(v).ok())
+                .unwrap_or_else(Actions::new);
+
+        // 2c. Match each action to its ingredient via ingredientIds.
+        // Without archive, ingredientIds contains the raw linking key
+        // (instance_id or label) passed to add_ingredient_id().
+        for action in actions.actions_mut() {
+            let ingredient_ids: Option<Vec<String>> =
+                action.get_parameter("ingredientIds");
+
+            if let Some(ids) = ingredient_ids {
+                if let Some(linking_key) = ids.first() {
+                    // Find ingredient: match label first (SDK priority), then instance_id.
+                    let matched = builder
+                        .definition
+                        .ingredients
+                        .iter()
+                        .find(|i| {
+                            i.label()
+                                .filter(|l| !l.is_empty())
+                                .map_or(false, |l| l == linking_key)
+                                || i.instance_id() == linking_key
+                        });
+
+                    if let Some(ing) = matched {
+                        let uuid = ing.instance_id().to_string();
+                        let updated = std::mem::take(action)
+                            .set_parameter("unique_test_uuid", uuid)
+                            .unwrap();
+                        *action = updated;
+                    }
+                }
+            }
+        }
+
+        // Remove old assertion, re-add updated one.
+        builder.definition.assertions.remove(actions_idx);
+        builder
+            .add_assertion("c2pa.actions.v2", &actions)
+            .unwrap();
+
+        // ── Step 3: Verify ──────────────────────────────────────────────
+        let verify_idx = builder
+            .definition
+            .assertions
+            .iter()
+            .position(|a| a.label.starts_with(Actions::LABEL))
+            .unwrap();
+        let verify_actions: Actions =
+            serde_json::to_value(&builder.definition.assertions[verify_idx].data)
+                .ok()
+                .and_then(|v| serde_json::from_value::<Actions>(v).ok())
+                .unwrap();
+
+        let mut action_count = 0;
+        for action in verify_actions.actions() {
+            let is_linked = action.action() == c2pa_action::OPENED
+                || action.action() == c2pa_action::PLACED;
+            if !is_linked {
+                continue;
+            }
+
+            let tracking: Option<String> = action.get_parameter("unique_test_uuid");
+            assert!(
+                tracking.is_some(),
+                "{} action must have unique_test_uuid",
+                action.action()
+            );
+            let tracking = tracking.unwrap();
+
+            let matched_ingredient = builder
+                .definition
+                .ingredients
+                .iter()
+                .find(|i| i.instance_id() == tracking);
+            assert!(
+                matched_ingredient.is_some(),
+                "unique_test_uuid {} must match an ingredient's instance_id",
+                tracking
+            );
+
+            action_count += 1;
+        }
+        assert_eq!(action_count, 3, "must have exactly 3 linked actions (1 opened + 2 placed)");
+
+        // ── Step 4: Sign with a dummy asset (no existing credentials) ───
+        let no_manifest_image: &[u8] = include_bytes!("../tests/fixtures/no_manifest.jpg");
+        let mut source = Cursor::new(no_manifest_image);
+        let mut dest = Cursor::new(Vec::new());
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut dest)
+            .expect("signed manifest must be readable");
+
+        eprintln!("=== Signed manifest (no archive) ===\n{reader}");
+
+        assert_ne!(reader.validation_state(), ValidationState::Invalid);
+        let manifest = reader.active_manifest().expect("must have active manifest");
+
+        let signed_actions: Actions = manifest
+            .find_assertion(Actions::LABEL)
+            .expect("signed manifest must contain actions");
+
+        let mut signed_action_count = 0;
+        for action in signed_actions.actions() {
+            let is_linked = action.action() == c2pa_action::OPENED
+                || action.action() == c2pa_action::PLACED;
+            if !is_linked {
+                continue;
+            }
+            let tracking: Option<String> = action.get_parameter("unique_test_uuid");
+            assert!(
+                tracking.is_some(),
+                "signed {} action must retain unique_test_uuid",
+                action.action()
+            );
+            signed_action_count += 1;
+        }
+        assert_eq!(signed_action_count, 3, "signed manifest must have 3 linked actions");
+    }
 }
