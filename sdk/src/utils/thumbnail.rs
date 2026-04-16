@@ -145,6 +145,18 @@ where
     let mut decoder = ImageReader::with_format(input, input_format.into()).into_decoder()?;
     let orientation = decoder.orientation()?;
 
+    // Guard against decompression bombs: reject images whose raw decoded size would
+    // exceed 512 MB before allocating any pixel buffer. 512 MB matches the default
+    // `Limits::max_alloc` in the `image` crate (image-0.25, src/io/limits.rs line 54),
+    // covering all legitimate inputs including 16-bit 50 MP professional images (~302 MB).
+    const MAX_IMAGE_BYTES: u64 = 512 * 1024 * 1024;
+    let total_bytes = decoder.total_bytes();
+    if total_bytes > MAX_IMAGE_BYTES {
+        return Err(Error::InvalidAsset(format!(
+            "image decoded size ({total_bytes} bytes) exceeds the maximum allowed (512 MB)"
+        )));
+    }
+
     let mut image = DynamicImage::from_decoder(decoder)?;
     image.apply_orientation(orientation);
 
@@ -490,6 +502,46 @@ pub mod tests {
             .decode()
             .unwrap();
         assert!(image.width() == 100 || image.height() == 100);
+    }
+
+    /// Regression test for decompression bomb via oversized PNG dimensions.
+    ///
+    /// A malicious PNG can claim 16384×16384 RGBA dimensions (1 GB decoded) while
+    /// compressing to ~65 bytes. Before the fix, `DynamicImage::from_decoder` would
+    /// attempt the full 1 GB allocation. After the fix, `total_bytes()` is checked
+    /// against the 512 MB limit before any allocation occurs, returning `InvalidAsset`.
+    #[test]
+    fn test_make_thumbnail_rejects_decompression_bomb() {
+        // Minimal valid PNG: IHDR declares 16384×16384 RGBA (total_bytes = 1 GB).
+        // Signature + IHDR + minimal IDAT + IEND; CRC values are correct.
+        let bomb_png: &[u8] = &[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
+            0x00, 0x00, 0x00, 0x0d, // IHDR length = 13
+            0x49, 0x48, 0x44, 0x52, // "IHDR"
+            0x00, 0x00, 0x40, 0x00, // width  = 16384
+            0x00, 0x00, 0x40, 0x00, // height = 16384
+            0x08, 0x06, 0x00, 0x00, 0x00, // 8-bit RGBA, no interlace
+            0xa9, 0xc8, 0x10, 0x84, // IHDR CRC
+            0x00, 0x00, 0x00, 0x08, // IDAT length = 8
+            0x49, 0x44, 0x41, 0x54, // "IDAT"
+            0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01, // minimal zlib-compressed data
+            0x48, 0x06, 0x89, 0xd2, // IDAT CRC
+            0x00, 0x00, 0x00, 0x00, // IEND length = 0
+            0x49, 0x45, 0x4e, 0x44, // "IEND"
+            0xae, 0x42, 0x60, 0x82, // IEND CRC
+        ];
+
+        let mut settings = Settings::default();
+        settings.builder.thumbnail.ignore_errors = false;
+        let result =
+            make_thumbnail_bytes_from_stream("image/png", Cursor::new(bomb_png), &settings);
+
+        // Before the fix: attempts to allocate 1 GB, crashing containers.
+        // After the fix: returns Err(InvalidAsset) without any large allocation.
+        assert!(
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "expected Err(InvalidAsset) for decompression bomb, got: {result:?}"
+        );
     }
 
     #[test]
