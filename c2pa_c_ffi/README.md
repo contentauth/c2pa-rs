@@ -20,7 +20,7 @@ Since there are so many examples of this, AI engines are very good at constructi
 
 The C language is not object-oriented, does not perform garbage collection, and does not natively support things like exception handling. The API may use unsafe pointer references, so take care with pointers and memory management.
 
-For these reasons, you shouldn't use the C API directly for application code. Instead, use higher-level structures in other languages to ensure that references to native structures are correctly managed and freed.
+For these reasons, use the the C++ API unless you have a specific reason to use C.
 
 ## Building locally
 
