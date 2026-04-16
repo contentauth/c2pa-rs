@@ -192,11 +192,11 @@ jobs:
           # introduce a lifetime check that creates a whole slew of build
           # errors.
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install cargo-udeps
+        run: cargo binstall --no-confirm cargo-udeps
+
       - name: Run cargo-udeps
-        env:
-          FEATURES: ${{needs.get-features.outputs.openssl-features}}
-        run: |
-          mv ./.github/temp-bin/cargo-udeps /home/runner/.cargo/bin/cargo-udeps
-          cargo udeps --all-targets --features "$FEATURES"
-          # NOTE: Using pre-built binary as a workaround for
-          # https://github.com/aig787/cargo-udeps-action/issues/6.
+        run: cargo udeps --all-targets --all-features
