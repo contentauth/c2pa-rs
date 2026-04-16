@@ -25,20 +25,26 @@ use crate::{
         claim_aggregation::{IcaSignatureVerifier, IdentityProvider, VerifiedIdentity},
         IdentityAssertion, SignerPayload,
     },
+    settings::Settings,
     status_tracker::StatusTracker,
-    HashedUri, Reader,
+    Context, HashedUri, Reader,
 };
 
 #[c2pa_test_async]
 async fn adobe_connected_identities() {
-    crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+    let settings = Settings::new()
+        .with_value("verify.verify_trust", false)
+        .unwrap();
+    let context = Context::new().with_settings(settings).unwrap();
 
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/adobe_connected_identities.jpg");
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::from_context(context)
+        .with_stream(format, &mut test_image)
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -117,14 +123,19 @@ async fn adobe_connected_identities() {
 
 #[c2pa_test_async]
 async fn ims_multiple_manifests() {
-    crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+    let settings = Settings::new()
+        .with_value("verify.verify_trust", false)
+        .unwrap();
+    let context = Context::new().with_settings(settings).unwrap();
 
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/ims_multiple_manifests.jpg");
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = Reader::from_context(context)
+        .with_stream(format, &mut test_image)
+        .unwrap();
     assert_eq!(reader.validation_status(), None);
 
     // Check the summary report for the entire manifest store.

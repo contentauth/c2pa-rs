@@ -1130,7 +1130,7 @@ pub mod tests {
             "title": "Large AVI Test"
         }"#;
 
-        let mut builder = Builder::from_json(manifest_json).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json).unwrap();
         let mut source = File::open(test_file).unwrap();
         let mut dest = Cursor::new(Vec::new());
 

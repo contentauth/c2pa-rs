@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.79.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.4...c2pa-c-ffi-v0.79.5)
+_15 April 2026_
+
+## [0.79.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.3...c2pa-c-ffi-v0.79.4)
+_14 April 2026_
+
+## [0.79.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.2...c2pa-c-ffi-v0.79.3)
+_09 April 2026_
+
+## [0.79.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.1...c2pa-c-ffi-v0.79.2)
+_08 April 2026_
+
+## [0.79.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.0...c2pa-c-ffi-v0.79.1)
+_07 April 2026_
+
+## [0.78.9](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.8...c2pa-c-ffi-v0.78.9)
+_03 April 2026_
+
+## [0.78.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.7...c2pa-c-ffi-v0.78.8)
+_31 March 2026_
+
+### Added
+
+* Expose a C FFI API to help determine the hashtype a Builder uses with embeddable APIs ([#1992](https://github.com/contentauth/c2pa-rs/pull/1992))
+
+### Fixed
+
+* Set release flags for emscripten to default use case ([#1993](https://github.com/contentauth/c2pa-rs/pull/1993))
+
 ## [0.78.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.6...c2pa-c-ffi-v0.78.7)
 _27 March 2026_
 
