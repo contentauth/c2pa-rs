@@ -3056,8 +3056,8 @@ impl Builder {
     /// # Arguments
     /// * `signer` - The signer to use.
     /// * `asset_path` - The path to the primary asset file or glob pattern if there are mulitple init segments in a set.
-    /// * `fragment_glob` - The glob pattern to the fragmented files. Do not full path, only the
-    /// *   pattern to find the fragmented files in the same directory as the asset file. For example,
+    /// * `fragment_glob` - The glob pattern to the fragmented files. Do not use the full path, only the
+    /// *   pattern to find the fragmented files in the same directory/subdirectory as the asset file. For example,
     /// *   if your fragmented files are named `video_1.m4s`, `video_2.m4s`, etc., then the glob pattern should be `video_*.m4s`.
     /// * `output_path` - The path to the output file.
     ///
