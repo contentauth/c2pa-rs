@@ -494,9 +494,7 @@ fn sign_fragmented(
     let count = inits.count();
 
     if count > 0 {
-        builder
-            .sign_fragmented_files(signer, init_pattern, frag_pattern, output_path)
-            .map_err(anyhow::Error::from)?;
+        builder.sign_fragmented_files(signer, init_pattern, frag_pattern, output_path)?;
     } else {
         println!("No files matching pattern: {ip}");
     }

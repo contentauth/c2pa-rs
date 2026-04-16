@@ -2781,6 +2781,12 @@ impl Store {
         output_dir: &Path,
         settings: &Settings,
     ) -> Result<()> {
+        if fragments.is_empty() {
+            return Err(Error::BadParam(
+                "at least one fragment path must be provided".to_string(),
+            ));
+        }
+
         // get the provenance claim changing mutability
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.clear_data(); // clear since we are reusing an existing claim
@@ -2849,7 +2855,7 @@ impl Store {
 
     /// Embed the claims store as jumbf into fragmented assets.
     #[cfg(feature = "file_io")]
-    pub fn save_to_bmff_fragmented<P: AsRef<Path> + Copy>(
+    pub fn save_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,
         init_paths: &[PathBuf],
         fragment_glob: P,
@@ -2857,6 +2863,12 @@ impl Store {
         signer: &dyn Signer,
         context: &Context,
     ) -> Result<()> {
+        if init_paths.is_empty() {
+            return Err(Error::BadParam(
+                "at least one init segment path must be provided".to_string(),
+            ));
+        }
+
         let mut output_map = HashMap::new();
 
         // make sure output path is not a file
@@ -2869,7 +2881,7 @@ impl Store {
         // mak sure we can make the output folder
         if !output_path.as_ref().exists() {
             // ensure the path exists
-            std::fs::create_dir_all(output_path).map_err(|e| {
+            std::fs::create_dir_all(output_path.as_ref()).map_err(|e| {
                 Error::BadParam(format!(
                     "failed to create output directory for fragments: {e}"
                 ))
@@ -2931,8 +2943,8 @@ impl Store {
             // creating fragments in the output location
             self.add_merkmap_for_rendition(
                 &fragments,
-                i, // unique id for this rendition
-                i, // local id for this rendition (same as unique since we are only doing one rendition per claim for now)
+                i + 1, // local id for this rendition (same as unique since we are only doing one rendition per claim for now)
+                i + 1, // unique id for this rendition 
                 &new_output_path,
                 context.settings(),
             )?;
