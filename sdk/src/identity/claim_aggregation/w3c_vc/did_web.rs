@@ -18,8 +18,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::Read;
+
 use super::{did::Did, did_doc::DidDocument};
 use crate::http::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
+
+/// Maximum number of bytes accepted from a DID Web server response body.
+pub(crate) const MAX_DID_DOC_SIZE: u64 = 1024 * 1024; // 1 MiB
 
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
@@ -55,6 +60,9 @@ pub enum DidWebError {
 
     #[error("invalid web DID: {0}")]
     InvalidWebDid(String),
+
+    #[error("response body exceeded size limit of {MAX_DID_DOC_SIZE} bytes")]
+    ResponseTooLarge,
 }
 
 pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
@@ -96,8 +104,13 @@ async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
     };
 
     let mut document = Vec::new();
-    body.read_to_end(&mut document)
+    body.take(MAX_DID_DOC_SIZE + 1)
+        .read_to_end(&mut document)
         .map_err(|e| DidWebError::Response(e.into()))?;
+
+    if document.len() as u64 > MAX_DID_DOC_SIZE {
+        return Err(DidWebError::ResponseTooLarge);
+    }
 
     Ok(document)
 }
@@ -190,7 +203,7 @@ mod tests {
         use super::did;
         use crate::identity::claim_aggregation::w3c_vc::{
             did_doc::DidDocument,
-            did_web::{self, PROXY},
+            did_web::{self, DidWebError, MAX_DID_DOC_SIZE, PROXY},
         };
 
         #[tokio::test]
@@ -234,6 +247,36 @@ mod tests {
             });
 
             did_doc_mock.assert();
+        }
+
+        #[tokio::test]
+        async fn oversized_response_returns_error() {
+            let server = MockServer::start();
+
+            PROXY.with(|proxy| {
+                let server_url = server.url("/").replace("127.0.0.1", "localhost");
+                proxy.replace(Some(server_url));
+            });
+
+            // Serve a body one byte larger than the allowed limit.
+            let oversized_body = vec![b'X'; (MAX_DID_DOC_SIZE + 1) as usize];
+            let _mock = server.mock(|when, then| {
+                when.method(GET).path("/.well-known/did.json");
+                then.status(200)
+                    .header("content-type", "application/did+json")
+                    .body(oversized_body);
+            });
+
+            let result = did_web::resolve(&did("did:web:localhost")).await;
+
+            PROXY.with(|proxy| {
+                proxy.replace(None);
+            });
+
+            assert!(
+                matches!(result, Err(did_web::DidWebError::ResponseTooLarge)),
+                "expected ResponseTooLarge, got {result:?}"
+            );
         }
 
         /*
