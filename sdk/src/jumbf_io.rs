@@ -28,8 +28,8 @@ use crate::asset_handlers::pdf_io::PdfIO;
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
-        jpegxl_io::JpegXlIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
-        tiff_io::TiffIO,
+        jpegxl_io::JpegXlIO, mp3_io::Mp3IO, ogg_io::OggIO, png_io::PngIO, riff_io::RiffIO,
+        svg_io::SvgIO, tiff_io::TiffIO,
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
@@ -53,6 +53,7 @@ lazy_static! {
             Box::new(Mp3IO::new("")),
             Box::new(GifIO::new("")),
             Box::new(FlacIO::new("")),
+            Box::new(OggIO::new("")),
         ];
 
         let mut handler_map = HashMap::new();
@@ -84,6 +85,7 @@ lazy_static! {
             Box::new(Mp3IO::new("")),
             Box::new(FlacIO::new("")),
             Box::new(GifIO::new("")),
+            Box::new(OggIO::new("")),
         ];
         let mut handler_map = HashMap::new();
 
@@ -382,6 +384,7 @@ pub mod tests {
             Box::new(SvgIO::new("")),
             Box::new(Mp3IO::new("")),
             Box::new(FlacIO::new("")),
+            Box::new(OggIO::new("")),
         ];
 
         // build handler map
@@ -408,6 +411,7 @@ pub mod tests {
             Box::new(SvgIO::new("")),
             Box::new(Mp3IO::new("")),
             Box::new(FlacIO::new("")),
+            Box::new(OggIO::new("")),
         ];
 
         // build handler map
@@ -430,6 +434,7 @@ pub mod tests {
             Box::new(SvgIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(GifIO::new("")),
+            Box::new(OggIO::new("")),
         ];
 
         // build handler map
@@ -485,6 +490,8 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "svg"));
         assert!(supported.iter().any(|s| s == "mp3"));
         assert!(supported.iter().any(|s| s == "jxl"));
+        assert!(supported.iter().any(|s| s == "ogg"));
+        assert!(supported.iter().any(|s| s == "opus"));
     }
 
     fn test_jumbf(asset_type: &str, reader: &mut dyn CAIRead) {
@@ -633,6 +640,19 @@ pub mod tests {
         test_jumbf("jxl", &mut reader);
         reader.rewind().unwrap();
         test_remote_ref("jxl", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_ogg() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.ogg").unwrap();
+        test_jumbf("ogg", &mut reader);
+        // OGG doesn't support remote refs (XMP not defined in C2PA spec for OGG)
+    }
+
+    #[test]
+    fn test_streams_opus() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.opus").unwrap();
+        test_jumbf("opus", &mut reader);
     }
 
     #[test]

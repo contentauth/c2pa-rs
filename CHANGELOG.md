@@ -9,6 +9,10 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+### Added
+
+* Add OGG Vorbis and Opus support for C2PA manifest embedding per spec v2.3 §A.3.5
+
 ## [0.80.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.5...c2pa-v0.80.0)
 _16 April 2026_
 
