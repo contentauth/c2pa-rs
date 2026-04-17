@@ -12,7 +12,7 @@
 // each license.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fs::OpenOptions,
     io::{Cursor, Read, Seek, SeekFrom, Write},
     path::Path,
@@ -398,8 +398,11 @@ where
     let ts = TiffStructure::load(input)?;
 
     let tiff_tree: Arena<ImageFileDirectory> = if let Some(ifd) = ts.first_ifd.clone() {
+        let first_offset = ifd.offset;
         let (mut tiff_tree, page_0) = Arena::with_data(ifd);
         let mut current_token = page_0;
+        let mut visited_offsets: HashSet<u64> = HashSet::new();
+        visited_offsets.insert(first_offset);
 
         // get the pages
         loop {
@@ -502,7 +505,9 @@ where
 
             // move to next page
             if let Some(next_ifd_offset) = tiff_tree[current_token].data.next_ifd_offset {
-                // move to next page
+                if !visited_offsets.insert(next_ifd_offset) {
+                    return Err(Error::InvalidAsset("Cyclic IFD chain detected".to_string()));
+                }
                 input.seek(SeekFrom::Start(next_ifd_offset))?;
                 let next_ifd =
                     TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Page)?;
@@ -1970,6 +1975,54 @@ pub mod tests {
         let loaded = tiff_io.read_cai_store(&output).unwrap();
 
         assert_eq!(&loaded, data2.as_bytes());
+    }
+
+    #[test]
+    fn cyclic_ifd_self_loop_returns_error() {
+        // 14-byte little-endian TIFF: IFD at offset 8 has next-offset = 8.
+        // Chain: A → A
+        #[rustfmt::skip]
+        let crafted_tiff: &[u8] = &[
+            0x49, 0x49, // byte order: little-endian
+            0x2A, 0x00, // magic: 42
+            0x08, 0x00, 0x00, 0x00, // first IFD at offset 8
+            0x00, 0x00, // IFD entry count: 0
+            0x08, 0x00, 0x00, 0x00, // next IFD offset: 8 (self-loop)
+        ];
+        let mut cursor = Cursor::new(crafted_tiff);
+        let result = map_tiff(&mut cursor);
+        assert!(result.is_err(), "self-loop IFD must return an error");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Cyclic IFD chain"),
+            "unexpected error message: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn cyclic_ifd_two_node_cycle_returns_error() {
+        // 20-byte little-endian TIFF with two IFDs forming a cycle.
+        // Chain: A (offset 8) → B (offset 14) → A (offset 8)
+        #[rustfmt::skip]
+        let crafted_tiff: &[u8] = &[
+            0x49, 0x49, // byte order: little-endian
+            0x2A, 0x00, // magic: 42
+            0x08, 0x00, 0x00, 0x00, // first IFD at offset 8
+            // IFD A at offset 8
+            0x00, 0x00, // entry count: 0
+            0x0E, 0x00, 0x00, 0x00, // next IFD offset: 14 (IFD B)
+            // IFD B at offset 14
+            0x00, 0x00, // entry count: 0
+            0x08, 0x00, 0x00, 0x00, // next IFD offset: 8 (back to IFD A)
+        ];
+        let mut cursor = Cursor::new(crafted_tiff);
+        let result = map_tiff(&mut cursor);
+        assert!(result.is_err(), "A→B→A IFD cycle must return an error");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Cyclic IFD chain"),
+            "unexpected error message: {err_msg}"
+        );
     }
 
     #[test]
