@@ -28,7 +28,6 @@ use std::{
 };
 
 use serde_bytes::ByteBuf;
-use tempfile::Builder;
 
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
@@ -102,16 +101,19 @@ fn ogg_crc32(data: &[u8]) -> u32 {
 // ── OGG Page ─────────────────────────────────────────────────────────────────
 
 /// A parsed OGG page with positional metadata.
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
+#[derive(Debug)]
 struct OggPage {
     header_type: u8,
+    #[allow(dead_code)]
     granule_position: u64,
     serial_number: u32,
+    #[allow(dead_code)]
     page_sequence_number: u32,
     segment_table: Vec<u8>,
     body: Vec<u8>,
     /// Absolute byte offset where this page starts in the source stream.
+    /// Used by [`AssetPatch`] for in-place manifest replacement.
+    #[allow(dead_code)]
     file_offset: u64,
 }
 
@@ -790,29 +792,9 @@ impl AssetIO for OggIO {
 
     fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let mut reader = fs::File::open(asset_path).map_err(Error::IoError)?;
-
-        let temp_file = Builder::new()
-            .prefix("c2pa_ogg_")
-            .suffix(
-                Path::new(asset_path)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| format!(".{e}"))
-                    .as_deref()
-                    .unwrap_or(".ogg"),
-            )
-            .tempfile_in(
-                asset_path
-                    .parent()
-                    .unwrap_or_else(|| Path::new(".")),
-            )
-            .map_err(Error::IoError)?;
-
-        let mut temp_writer = temp_file.reopen().map_err(Error::IoError)?;
-        self.write_cai(&mut reader, &mut temp_writer, store_bytes)?;
-
-        rename_or_move(temp_file, asset_path)?;
-        Ok(())
+        let mut temp_file = crate::utils::io_utils::tempfile_builder("c2pa_ogg")?;
+        self.write_cai(&mut reader, &mut temp_file, store_bytes)?;
+        rename_or_move(temp_file, asset_path)
     }
 
     fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
