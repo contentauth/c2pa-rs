@@ -192,7 +192,13 @@ pub struct ManifestDefinition {
     #[serde(default = "default_vec::<AssertionDefinition>")]
     pub assertions: Vec<AssertionDefinition>,
 
-    /// A list of redactions - URIs to redacted assertions.
+    /// JUMBF URIs of assertions to redact from ingredient manifests.
+    ///
+    /// Each URI has the form
+    /// `self#jumbf=/c2pa/<manifest_label>/c2pa.assertions/<assertion_label>`.
+    /// Use a [`Reader`](crate::Reader) to discover the manifest label.
+    /// See the [redaction guide](https://github.com/contentauth/c2pa-rs/blob/main/docs/redaction.md)
+    /// for details.
     pub redactions: Option<Vec<String>>,
 
     /// Allows you to pre-define the manifest label, which must be unique.
@@ -718,7 +724,7 @@ impl Builder {
     /// ```
     /// # use c2pa::{Builder, ClaimGeneratorInfo, Result};
     /// # fn main() -> Result<()> {
-    /// let mut builder = Builder::new();
+    /// let mut builder = Builder::default();
     /// builder.set_claim_generator_info(ClaimGeneratorInfo::new("my_app"));
     /// # Ok(())
     /// # }
