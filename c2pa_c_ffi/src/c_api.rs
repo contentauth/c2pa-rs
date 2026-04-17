@@ -3340,6 +3340,7 @@ mod tests {
         assert!(!remote_url.is_null());
         let remote_url = unsafe { std::ffi::CStr::from_ptr(remote_url) };
         assert_eq!(remote_url, c"https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391");
+        unsafe { c2pa_reader_free(result) };
     }
 
     // cargo test test_reader_file_with_wrong_label -- --nocapture
@@ -3353,6 +3354,7 @@ mod tests {
         let result: *mut C2paReader =
             unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         assert!(!result.is_null());
+        unsafe { c2pa_reader_free(result) };
     }
 
     #[test]
@@ -3383,6 +3385,7 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("cawg.ica.credential_valid"));
+        unsafe { c2pa_reader_free(reader) };
     }
 
     #[test]
@@ -3791,6 +3794,7 @@ mod tests {
         let json_report = json_str.to_str().unwrap();
         assert!(json_report.contains("cawg.identity"));
         assert!(json_report.contains("cawg.identity.well-formed"));
+        unsafe { c2pa_reader_free(reader) };
     }
 
     #[test]
