@@ -416,19 +416,15 @@ macro_rules! cstr_or_return {
             $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
             return $err_val;
         } else {
-            // SAFETY: We create a bounded slice up to MAX_CSTRING_LEN.
-            // Caller must ensure ptr is valid for reading and points to a
-            // null-terminated string within MAX_CSTRING_LEN bytes.
-            let bytes = unsafe {
-                std::slice::from_raw_parts(ptr as *const u8, $crate::macros::MAX_CSTRING_LEN)
-            };
-            match std::ffi::CStr::from_bytes_until_nul(bytes) {
-                Ok(cstr) => cstr.to_string_lossy().into_owned(),
-                Err(_) => {
-                    $crate::CimplError::string_too_long(stringify!($ptr)).set_last();
-                    return $err_val;
-                }
+            // SAFETY: Caller must ensure ptr is valid and points to a null-terminated string.
+            // CStr::from_ptr reads only until the null terminator, staying within the allocation.
+            let cstr =
+                unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
+            if cstr.to_bytes().len() > $crate::macros::MAX_CSTRING_LEN {
+                $crate::CimplError::string_too_long(stringify!($ptr)).set_last();
+                return $err_val;
             }
+            cstr.to_string_lossy().into_owned()
         }
     }};
 }
@@ -444,17 +440,15 @@ macro_rules! cstr_or_return_with_limit {
             $crate::cimpl_error::null_parameter(stringify!($ptr)).set_last();
             return $err_val;
         } else {
-            // SAFETY: We create a bounded slice up to max_len.
-            // Caller must ensure ptr is valid for reading and points to a
-            // null-terminated string within max_len bytes.
-            let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, max_len) };
-            match std::ffi::CStr::from_bytes_until_nul(bytes) {
-                Ok(cstr) => cstr.to_string_lossy().into_owned(),
-                Err(_) => {
-                    $crate::cimpl_error::string_too_long(stringify!($ptr).to_string());
-                    return $err_val;
-                }
+            // SAFETY: Caller must ensure ptr is valid and points to a null-terminated string.
+            // CStr::from_ptr reads only until the null terminator, staying within the allocation.
+            let cstr =
+                unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
+            if cstr.to_bytes().len() > max_len {
+                $crate::cimpl_error::string_too_long(stringify!($ptr).to_string());
+                return $err_val;
             }
+            cstr.to_string_lossy().into_owned()
         }
     }};
 }
