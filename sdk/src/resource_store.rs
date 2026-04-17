@@ -509,7 +509,7 @@ mod tests {
         println!("{_json}");
     }
 
-    #[cfg(feature = "file_io")]
+    #[cfg(all(feature = "file_io", not(target_arch = "wasm32")))]
     mod zip_slip_tests {
         use tempfile::tempdir;
 
