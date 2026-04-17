@@ -348,6 +348,9 @@ impl CAIWriter for JpegIO {
         input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
         let jpeg = Jpeg::from_bytes(buf.into())
             .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
+        if jpeg.segments().is_empty() {
+            return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
+        }
 
         let jpeg_with_dummy = if get_cai_segments(&jpeg)?.is_empty() {
             // create dummy JUMBF seg
@@ -372,10 +375,6 @@ impl CAIWriter for JpegIO {
             length: 0,
             htype: HashBlockObjectType::Cai,
         };
-
-        if jpeg.segments().is_empty() {
-            return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
-        }
 
         for seg in jpeg.segments() {
             match seg.marker() {
