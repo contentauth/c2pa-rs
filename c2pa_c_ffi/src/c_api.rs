@@ -3582,10 +3582,9 @@ mod tests {
 
     #[test]
     fn test_c2pa_free_string_array_with_count_1() {
-        let strings = vec![CString::new("image/jpeg").unwrap()];
-        let ptrs: Vec<*mut c_char> = strings.into_iter().map(|s| s.into_raw()).collect();
-        let ptr = ptrs.as_ptr() as *const *const c_char;
+        let mut ptrs = vec![to_c_string("image/jpeg".to_string())];
         let count = ptrs.len();
+        let ptr = ptrs.as_mut_ptr() as *const *const c_char;
         std::mem::forget(ptrs);
 
         // Assert the function doesn't panic
