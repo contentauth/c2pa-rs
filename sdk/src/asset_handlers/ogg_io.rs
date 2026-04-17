@@ -572,50 +572,41 @@ impl CAIWriter for OggIO {
         let c2pa_serial = pages
             .iter()
             .find(|p| p.is_c2pa_bos())
-            .map(|p| p.serial_number);
+            .map(|p| p.serial_number)
+            .ok_or(Error::JumbfNotFound)?;
 
-        let c2pa_serial = c2pa_serial.ok_or(Error::JumbfNotFound)?;
-
-        // Re-read to compute actual offsets.
-        temp_output.rewind()?;
-        let pages = read_all_pages(&mut temp_output)?;
-
-        // Compute output positions.
+        // Walk pages in file order and build regions.  C2PA pages may
+        // not be contiguous (BOS is in the BOS group, data pages come
+        // later), so we emit separate Cai/Other regions as needed.
+        let mut regions: Vec<HashObjectPositions> = Vec::new();
         let mut offset: usize = 0;
-        let mut c2pa_start: Option<usize> = None;
-        let mut c2pa_len: usize = 0;
 
         for page in &pages {
             let page_size = page.total_size();
-            if page.serial_number == c2pa_serial {
-                if c2pa_start.is_none() {
-                    c2pa_start = Some(offset);
+            let is_c2pa = page.serial_number == c2pa_serial;
+            let htype = if is_c2pa {
+                HashBlockObjectType::Cai
+            } else {
+                HashBlockObjectType::Other
+            };
+
+            // Extend the last region if it has the same type.
+            let extend = regions.last().is_some_and(|last| last.htype == htype);
+            if extend {
+                if let Some(last) = regions.last_mut() {
+                    last.length += page_size;
                 }
-                c2pa_len += page_size;
+            } else {
+                regions.push(HashObjectPositions {
+                    offset,
+                    length: page_size,
+                    htype,
+                });
             }
             offset += page_size;
         }
 
-        let total_len = offset;
-        let c2pa_start = c2pa_start.unwrap_or(0);
-
-        Ok(vec![
-            HashObjectPositions {
-                offset: 0,
-                length: c2pa_start,
-                htype: HashBlockObjectType::Other,
-            },
-            HashObjectPositions {
-                offset: c2pa_start,
-                length: c2pa_len,
-                htype: HashBlockObjectType::Cai,
-            },
-            HashObjectPositions {
-                offset: c2pa_start + c2pa_len,
-                length: total_len - (c2pa_start + c2pa_len),
-                htype: HashBlockObjectType::Other,
-            },
-        ])
+        Ok(regions)
     }
 
     fn remove_cai_store_from_stream(
@@ -732,7 +723,7 @@ impl AssetBoxHash for OggIO {
 
             // Try to extend the last BoxMap entry if it has the same name
             // and is immediately adjacent.
-            let extend = box_maps.last().map_or(false, |last| {
+            let extend = box_maps.last().is_some_and(|last| {
                 last.names[0] == name && last.range_start + last.range_len == offset
             });
 
@@ -943,6 +934,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_read_cai_too_many_manifests() {
+        let handler = OggIO::new("ogg");
+
+        // Write a manifest into the file.
+        let mut input = Cursor::new(SAMPLE_OGG);
+        let mut signed = Cursor::new(Vec::new());
+        handler
+            .write_cai(&mut input, &mut signed, TEST_MANIFEST)
+            .unwrap();
+
+        // Manually inject a SECOND C2PA bitstream by appending pages
+        // with a different serial but the same \x00c2pa magic.
+        let signed_bytes = signed.into_inner();
+        let second_c2pa = build_c2pa_pages(b"second-manifest", 0xDEAD_BEEF);
+        let mut tampered = signed_bytes.clone();
+        for page in &second_c2pa {
+            tampered.extend_from_slice(&serialize_page(page));
+        }
+
+        let mut cursor = Cursor::new(tampered);
+        match handler.read_cai(&mut cursor) {
+            Err(Error::TooManyManifestStores) => {}
+            other => panic!(
+                "expected TooManyManifestStores for dual C2PA bitstreams, got {:?}",
+                other
+            ),
+        }
+    }
+
     // ── Write + read round-trip ─────────────────────────────────────────────
 
     #[test]
@@ -1128,22 +1149,25 @@ mod tests {
             .get_object_locations_from_stream(&mut output)
             .unwrap();
 
-        assert_eq!(locs.len(), 3, "expected 3 hash regions");
+        assert!(!locs.is_empty(), "expected at least one hash region");
 
         // Regions must cover the entire file without overlap.
         let total_size = output.get_ref().len();
         let sum: usize = locs.iter().map(|l| l.length).sum();
         assert_eq!(sum, total_size, "regions must sum to file size");
 
-        // Check types.
-        assert_eq!(locs[0].htype, HashBlockObjectType::Other);
-        assert_eq!(locs[1].htype, HashBlockObjectType::Cai);
-        assert_eq!(locs[2].htype, HashBlockObjectType::Other);
+        // Must have at least one Cai region.
+        assert!(
+            locs.iter().any(|l| l.htype == HashBlockObjectType::Cai),
+            "must have at least one Cai region",
+        );
 
-        // Contiguous.
-        assert_eq!(locs[0].offset, 0);
-        assert_eq!(locs[1].offset, locs[0].length);
-        assert_eq!(locs[2].offset, locs[1].offset + locs[1].length);
+        // Regions must be contiguous and non-overlapping.
+        let mut expected_offset = 0;
+        for loc in &locs {
+            assert_eq!(loc.offset, expected_offset, "regions must be contiguous");
+            expected_offset += loc.length;
+        }
     }
 
     // ── BoxMap ──────────────────────────────────────────────────────────────
