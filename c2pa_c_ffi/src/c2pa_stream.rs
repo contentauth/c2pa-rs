@@ -402,6 +402,10 @@ impl TestC2paStream {
     }
 
     pub fn drop_c_stream(c_stream: *mut C2paStream) {
+        if !c_stream.is_null() {
+            let context = unsafe { (*c_stream).context };
+            cimpl_free(context as *mut std::ffi::c_void);
+        }
         cimpl_free(c_stream as *mut std::ffi::c_void);
     }
 }
