@@ -98,7 +98,7 @@ jobs:
           github.event.pull_request.author_association == 'COLLABORATOR' ||
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
@@ -154,7 +154,7 @@ jobs:
           github.event.pull_request.author_association == 'COLLABORATOR' ||
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
@@ -204,7 +204,7 @@ jobs:
           github.event.pull_request.author_association == 'COLLABORATOR' ||
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
@@ -368,7 +368,7 @@ jobs:
       #     github.event.pull_request.author_association == 'COLLABORATOR' ||
       #     github.event.pull_request.author_association == 'MEMBER' ||
       #     github.event.pull_request.user.login == 'dependabot[bot]'
-      #   uses: codecov/codecov-action@v5
+      #   uses: codecov/codecov-action@v6
       #   with:
       #     token: ${{ secrets.CODECOV_TOKEN }}
       #     fail_ci_if_error: true

@@ -1051,7 +1051,7 @@ impl Builder {
     /// * `stream` - A stream to write the zip into.
     /// # Errors
     /// * Returns an [`Error`] if the archive cannot be written.
-    fn old_to_archive(&mut self, stream: impl Write + Seek) -> Result<()> {
+    fn old_to_archive(&self, stream: impl Write + Seek) -> Result<()> {
         drop(
             // this drop seems to be required to force a flush before reading back.
             {
@@ -1223,7 +1223,7 @@ impl Builder {
     ///
     /// # Errors
     /// * Returns an [`Error`] if the archive cannot be written.
-    pub fn to_archive(&mut self, mut stream: impl Write + Seek) -> Result<()> {
+    pub fn to_archive(&self, mut stream: impl Write + Seek) -> Result<()> {
         if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
             let c2pa_data = self.working_store_sign(ArchiveKind::Builder)?;
             stream.write_all(&c2pa_data)?;
@@ -1249,7 +1249,7 @@ impl Builder {
     /// # Errors
     /// * Returns [`Error::BadParam`] if the ingredient is not found, or JUMBF archives are disabled in settings.
     pub fn write_ingredient_archive(
-        &mut self,
+        &self,
         ingredient_id: &str,
         mut stream: impl Write + Seek,
     ) -> Result<()> {
@@ -2739,7 +2739,7 @@ impl Builder {
     /// # Errors
     /// * In Mode 2, returns an [`Error`] if no valid hard binding assertion exists.
     /// * Returns an [`Error`] if signing fails.
-    pub fn sign_embeddable(&mut self, format: &str) -> Result<Vec<u8>> {
+    pub fn sign_embeddable(&self, format: &str) -> Result<Vec<u8>> {
         let placeholder_jumbf_len = self.placeholder_jumbf_len;
 
         // Check that a valid hard binding exists in Mode 2 (no placeholder).
@@ -3049,14 +3049,16 @@ impl Builder {
         Ok(())
     }
 
-    /// Sign a set of fragmented BMFF files.
+    /// Sign rendition(s) containing fragmented BMFF files.
     ///
     /// Note: Currently this does not support files with existing C2PA manifest.
     ///
     /// # Arguments
     /// * `signer` - The signer to use.
-    /// * `asset_path` - The path to the primary asset file.
-    /// * `fragment_paths` - The paths to the fragmented files.
+    /// * `asset_path` - The path to the primary asset file or glob pattern if there are mulitple init segments in a set.
+    /// * `fragment_glob` - The glob pattern to the fragmented files. Do not use the full path, only the
+    /// *   pattern to find the fragmented files in the same directory/subdirectory as the asset file. For example,
+    /// *   if your fragmented files are named `video_1.m4s`, `video_2.m4s`, etc., then the glob pattern should be `video_*.m4s`.
     /// * `output_path` - The path to the output file.
     ///
     /// # Errors
@@ -3066,41 +3068,35 @@ impl Builder {
         &mut self,
         signer: &dyn Signer,
         asset_path: P,
-        fragment_paths: &Vec<std::path::PathBuf>,
+        fragment_glob: P,
         output_path: P,
     ) -> Result<()> {
-        if !output_path.as_ref().exists() {
-            // ensure the path exists
-            std::fs::create_dir_all(output_path.as_ref())?;
-        } else {
-            // if the file exists, we need to remove it
-            if output_path.as_ref().is_file() {
-                return Err(crate::Error::BadParam(
-                    "output_path must be a folder".to_string(),
-                ));
-            } else {
-                let file_name = asset_path.as_ref().file_name().unwrap_or_default();
-                let mut output_file = output_path.as_ref().to_owned();
-                output_file = output_file.join(file_name);
-                if output_file.exists() {
-                    return Err(crate::Error::BadParam(
-                        "Destination file already exists".to_string(),
-                    ));
-                }
-            }
-        }
-
         // convert the manifest to a store
         let mut store = self.to_store()?;
 
+        let asset_path_str = asset_path.as_ref().to_str().ok_or(Error::BadParam(
+            "init glob pattern is not valid".to_string(),
+        ))?; // segment match pattern
+
+        let mut asset_paths = Vec::new();
+        for entry in glob::glob(asset_path_str)
+            .map_err(|e| Error::BadParam(format!("Invalid glob pattern for asset path: {e}")))?
+        {
+            let path = entry.map_err(|e| {
+                Error::BadParam(format!("Error occurred while reading asset path: {e}"))
+            })?;
+            asset_paths.push(path);
+        }
+
         // sign and write our store to DASH content
         store.save_to_bmff_fragmented(
-            asset_path.as_ref(),
-            fragment_paths,
+            &asset_paths,
+            fragment_glob.as_ref(),
             output_path.as_ref(),
             signer,
             &self.context,
-        )
+        )?;
+        Ok(())
     }
 
     #[cfg(feature = "file_io")]
@@ -7079,7 +7075,7 @@ mod tests {
 
     #[test]
     fn test_with_archive() -> Result<()> {
-        let mut builder = Builder::default().with_definition(r#"{"title": "Test Image"}"#)?;
+        let builder = Builder::default().with_definition(r#"{"title": "Test Image"}"#)?;
 
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive)?;
@@ -7179,7 +7175,7 @@ mod tests {
         // Test 1: New C2PA format (generate_c2pa_archive = true)
         let settings_new = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
         let context_new = Context::new().with_settings(settings_new)?;
-        let mut builder_new = Builder::from_context(context_new)
+        let builder_new = Builder::from_context(context_new)
             .with_definition(r#"{"title": "Test New Format"}"#)?;
 
         let mut archive_new = Cursor::new(Vec::new());
@@ -7201,7 +7197,7 @@ mod tests {
         let settings_old = Settings::new().with_value("builder.generate_c2pa_archive", false)?;
 
         let context_old = Context::new().with_settings(settings_old)?;
-        let mut builder_old = Builder::from_context(context_old)
+        let builder_old = Builder::from_context(context_old)
             .with_definition(r#"{"title": "Test Old Format"}"#)?;
 
         let mut archive_old = Cursor::new(Vec::new());
@@ -7236,7 +7232,7 @@ mod tests {
         let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
 
         let context = Context::new().with_settings(settings.clone())?;
-        let mut builder =
+        let builder =
             Builder::from_context(context).with_definition(r#"{"title": "Test Self Signed"}"#)?;
 
         let mut archive = Cursor::new(Vec::new());
