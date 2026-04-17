@@ -135,7 +135,7 @@ impl Read for C2paStream {
         }
 
         let bytes_read =
-            unsafe { (self.reader)(&mut (*self.context), buf.as_mut_ptr(), buf.len() as isize) };
+            unsafe { (self.reader)(self.context, buf.as_mut_ptr(), buf.len() as isize) };
 
         // Returns a negative number for errors.
         if bytes_read < 0 {
@@ -173,7 +173,7 @@ impl Seek for C2paStream {
             std::io::SeekFrom::End(pos) => (pos, C2paSeekMode::End),
         };
 
-        let new_pos = unsafe { (self.seeker)(&mut (*self.context), pos as isize, mode) };
+        let new_pos = unsafe { (self.seeker)(self.context, pos as isize, mode) };
         if new_pos < 0 {
             return Err(CimplError::last_message()
                 .map(|msg| {
@@ -207,7 +207,7 @@ impl Write for C2paStream {
             ));
         }
         let bytes_written =
-            unsafe { (self.writer)(&mut (*self.context), buf.as_ptr(), buf.len() as isize) };
+            unsafe { (self.writer)(self.context, buf.as_ptr(), buf.len() as isize) };
         if bytes_written < 0 {
             return Err(CimplError::last_message()
                 .map(|msg| {
@@ -228,7 +228,7 @@ impl Write for C2paStream {
     /// # Errors
     /// * Returns an error if the underlying C callback returns an error too (negative value)
     fn flush(&mut self) -> std::io::Result<()> {
-        let err = unsafe { (self.flusher)(&mut (*self.context)) };
+        let err = unsafe { (self.flusher)(self.context) };
         if err < 0 {
             return Err(std::io::Error::last_os_error());
         }
