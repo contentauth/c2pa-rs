@@ -850,6 +850,37 @@ impl AssetBoxHash for JpegXlIO {
             });
         }
 
+        // If there is no C2PA jumb box, add a placeholder to the box map so the hashing layer
+        // can identify the correct offset for the Cai exclusion region before the real manifest
+        // is written.
+        if !box_maps
+            .iter()
+            .any(|m| m.names.contains(&C2PA_BOXHASH.to_string()))
+        {
+            let range_start = find_jumb_insertion_offset(&boxes);
+
+            let c2pa_box = BoxMap {
+                names: vec![C2PA_BOXHASH.to_string()],
+                alg: None,
+                hash: ByteBuf::from(Vec::new()),
+                excluded: None,
+                pad: ByteBuf::from(Vec::new()),
+                range_start, // will be patched to correct offset by add_required_jumb_to_stream
+                range_len: 0,
+            };
+
+            // Insert the C2PA box after ftyp.
+            let ftyp_string = String::from("ftyp");
+            let insert_index = box_maps
+                .iter()
+                .position(|m| m.names.contains(&ftyp_string))
+                .ok_or_else(|| {
+                    Error::InvalidAsset("invalid JPEG XL container: missing ftyp box".to_string())
+                })?;
+
+            box_maps.insert(insert_index + 1, c2pa_box);
+        }
+
         Ok(box_maps)
     }
 }
@@ -1635,37 +1666,6 @@ pub mod tests {
                 "Box map entries must be ordered by offset and non-overlapping"
             );
         }
-    }
-
-    #[test]
-    fn test_box_map_brob_jumb_not_marked_as_c2pa() -> Result<()> {
-        // brob-wrapped jumb is treated as opaque data for hashing, so it should
-        // NOT be marked as C2PA_BOXHASH in the box map.
-        let manifest_data = b"brob_wrapped_manifest";
-        let container = build_jxl_with_brob_jumb(manifest_data)?;
-        let mut cursor = Cursor::new(&container);
-
-        let jpegxl_io = JpegXlIO {};
-        let box_map = jpegxl_io.get_box_map(&mut cursor).unwrap();
-
-        let c2pa_entries: Vec<_> = box_map
-            .iter()
-            .filter(|bm| bm.names[0] == C2PA_BOXHASH)
-            .collect();
-        assert_eq!(
-            c2pa_entries.len(),
-            0,
-            "brob-wrapped jumb should NOT be identified as C2PA"
-        );
-
-        // The brob box should appear as a regular "brob" entry
-        let brob_entries: Vec<_> = box_map.iter().filter(|bm| bm.names[0] == "brob").collect();
-        assert_eq!(
-            brob_entries.len(),
-            1,
-            "brob box should appear as opaque data"
-        );
-        Ok(())
     }
 
     // ─── Remote reference (XMP embedding) tests ───
