@@ -614,9 +614,11 @@ impl Ingredient {
 
                 if let Some(claim) = store.provenance_claim() {
                     // if the parent claim is valid and has a thumbnail, use it
-                    if validation_results
-                        .active_manifest()
-                        .is_some_and(|m| m.failure().is_empty())
+                    // but only if the caller has not already supplied a thumbnail override
+                    if self.thumbnail.is_none()
+                        && validation_results
+                            .active_manifest()
+                            .is_some_and(|m| m.failure().is_empty())
                     {
                         if let Some(hashed_uri) = claim
                             .assertions()
@@ -704,13 +706,25 @@ impl Ingredient {
     }
 
     #[cfg(feature = "file_io")]
-    /// Creates an `Ingredient` from a file path.
+    /// Creates an `Ingredient` from a file path using thread-local settings.
+    ///
+    /// Use [`Ingredient::from_file_with_options`] with an explicit context instead.
+    #[deprecated(
+        note = "Use `Ingredient::from_file_with_options` with an explicit `Context` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::from_file_with_options(path.as_ref(), &DefaultOptions { base: None })
     }
 
     #[cfg(feature = "file_io")]
-    /// Creates an `Ingredient` from a file path.
+    /// Creates an `Ingredient` from a file path using thread-local settings.
+    ///
+    /// Use [`Ingredient::from_file_with_options`] with an explicit context instead.
+    #[deprecated(
+        note = "Use `Ingredient::from_file_with_options` with an explicit `Context` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub fn from_file_with_folder<P: AsRef<Path>>(path: P, folder: P) -> Result<Self> {
         Self::from_file_with_options(
             path.as_ref(),
@@ -725,8 +739,15 @@ impl Ingredient {
         (assertion.content_type(), assertion.data())
     }
 
-    /// Creates an `Ingredient` from a file path and options.
+    /// Creates an `Ingredient` from a file path and options, using thread-local settings.
+    ///
+    /// Pass an explicit [`Context`](crate::Context) to `from_file_impl` directly, or use
+    /// the [`Builder`](crate::Builder) API with [`Builder::from_context`](crate::Builder::from_context)
+    /// to avoid relying on thread-local settings.
     #[cfg(feature = "file_io")]
+    #[deprecated(
+        note = "Rely on `Builder::from_context` with an explicit `Context` instead of using thread-local settings."
+    )]
     pub fn from_file_with_options<P: AsRef<Path>>(
         path: P,
         options: &dyn IngredientOptions,
@@ -816,19 +837,28 @@ impl Ingredient {
         Ok(ingredient)
     }
 
-    /// Creates an `Ingredient` from a memory buffer.
+    /// Creates an `Ingredient` from a memory buffer using thread-local settings.
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
+    ///
+    /// Use [`Ingredient::from_stream`] with an explicit [`Context`](crate::Context) instead.
+    #[deprecated(
+        note = "Use `Ingredient::from_stream` with an explicit `Context` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub fn from_memory(format: &str, buffer: &[u8]) -> Result<Self> {
         let mut stream = Cursor::new(buffer);
         Self::from_stream(format, &mut stream)
     }
 
-    /// Creates an `Ingredient` from a stream.
+    /// Creates an `Ingredient` from a stream using thread-local settings.
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
+    ///
+    /// Pass an explicit [`Context`](crate::Context) via `add_stream_internal` instead.
+    #[deprecated(note = "Pass an explicit `Context` instead of relying on thread-local settings.")]
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = crate::settings::get_thread_local_settings();
@@ -971,19 +1001,30 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Creates an `Ingredient` from a memory buffer (async version).
+    /// Creates an `Ingredient` from a memory buffer (async version) using thread-local settings.
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
+    ///
+    /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
+    #[deprecated(
+        note = "Use `Builder::from_context(context)` with an explicit `Context` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub async fn from_memory_async(format: &str, buffer: &[u8]) -> Result<Self> {
         let mut stream = Cursor::new(buffer);
         Self::from_stream_async(format, &mut stream).await
     }
 
-    /// Creates an `Ingredient` from a stream (async version).
+    /// Creates an `Ingredient` from a stream (async version) using thread-local settings.
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
+    ///
+    /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
+    #[deprecated(
+        note = "Use `Builder::from_context(context)` with an explicit `Context` instead of relying on thread-local settings."
+    )]
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = crate::settings::get_thread_local_settings();
@@ -1141,13 +1182,15 @@ impl Ingredient {
                     ingredient.thumbnail = Some(data_ref?);
                 }
                 None => {
-                    error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
-                    validation_status.push(
-                        ValidationStatus::new_failure(
-                            validation_status::ASSERTION_MISSING.to_string(),
-                        )
-                        .set_url(hashed_uri.url()),
-                    );
+                    if !store.is_uri_redacted(claim_label, &hashed_uri.url()) {
+                        error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
+                        validation_status.push(
+                            ValidationStatus::new_failure(
+                                validation_status::ASSERTION_MISSING.to_string(),
+                            )
+                            .set_url(hashed_uri.url()),
+                        );
+                    }
                 }
             }
         };
@@ -1182,13 +1225,15 @@ impl Ingredient {
                     ingredient.data = Some(data_ref?);
                 }
                 None => {
-                    error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
-                    validation_status.push(
-                        ValidationStatus::new_failure(
-                            validation_status::ASSERTION_MISSING.to_string(),
-                        )
-                        .set_url(data_uri.url()),
-                    );
+                    if !store.is_uri_redacted(claim_label, &data_uri.url()) {
+                        error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
+                        validation_status.push(
+                            ValidationStatus::new_failure(
+                                validation_status::ASSERTION_MISSING.to_string(),
+                            )
+                            .set_url(data_uri.url()),
+                        );
+                    }
                 }
             }
         };
@@ -1216,6 +1261,17 @@ impl Ingredient {
                     .and_then(|r| r.get(id))
             })
         };
+
+        // Collect the redacted thumbnail URIs, use them for comparison.
+        let redacted_thumbnail_uris: std::collections::HashSet<String> = redactions
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| {
+                r.contains(labels::CLAIM_THUMBNAIL) || r.contains(labels::INGREDIENT_THUMBNAIL)
+            })
+            .cloned()
+            .collect();
 
         // add the ingredient manifest_data to the claim
         // this is how any existing claims are added to the new store
@@ -1245,20 +1301,25 @@ impl Ingredient {
                 let uri = jumbf::labels::to_manifest_uri(manifest_label);
                 let signature_uri = jumbf::labels::to_signature_uri(manifest_label);
 
-                // if there are validations and they have all passed, then use the parent claim thumbnail if available
-                if let Some(validation_results) = self.validation_results() {
-                    if validation_results.validation_state() != crate::ValidationState::Invalid {
-                        thumbnail = ingredient_active_claim
-                            .assertions()
-                            .iter()
-                            .find(|hashed_uri| hashed_uri.url().contains(labels::CLAIM_THUMBNAIL))
-                            .map(|t| {
-                                // convert ingredient uris to absolute when adding them
-                                // since this uri references a different manifest
-                                let url = jumbf::labels::to_absolute_uri(manifest_label, &t.url());
-                                HashedUri::new(url, t.alg(), &t.hash())
-                            });
-                    }
+                // Use the parent claim thumbnail if validation passed and it was not redacted.
+                let is_valid = self
+                    .validation_results()
+                    .is_some_and(|v| v.validation_state() != crate::ValidationState::Invalid);
+                if is_valid {
+                    thumbnail = ingredient_active_claim
+                        .assertions()
+                        .iter()
+                        .find(|hashed_uri| hashed_uri.url().contains(labels::CLAIM_THUMBNAIL))
+                        .and_then(|t| {
+                            // convert ingredient uris to absolute when adding them
+                            // since this uri references a different manifest
+                            let url = jumbf::labels::to_absolute_uri(manifest_label, &t.url());
+                            if redacted_thumbnail_uris.contains(url.as_str()) {
+                                None
+                            } else {
+                                Some(HashedUri::new(url, t.alg(), &t.hash()))
+                            }
+                        });
                 }
                 // generate c2pa_manifest hashed_uris
                 (
@@ -1277,37 +1338,77 @@ impl Ingredient {
             None => (None, None),
         };
 
-        // if the ingredient defines a thumbnail, add it to the claim
-        // otherwise use the parent claim thumbnail if available
+        // If the ingredient defines a thumbnail, add it to the claim,
+        // unless the thumbnail URI is explicitly listed in the redactions.
         if let Some(thumb_ref) = self.thumbnail_ref() {
-            // if we have a hash, just build the hashed uri
-            let hash_url = match thumb_ref.hash.as_ref() {
-                Some(h) => {
-                    let hash = base64::decode(h)
-                        .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?;
-                    HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash)
-                }
-                None => {
-                    // get the resource data and add it to the claim
-                    let data = get_resource(&thumb_ref.identifier)?;
-                    if claim.version() < 2 {
-                        claim.add_databox(
-                            &thumb_ref.format,
-                            data.into_owned(),
-                            thumb_ref.data_types.clone(),
-                        )?
-                    } else {
-                        // add EmbeddedData thumbnail for v3 assertions in v2 claims
-                        let thumbnail = EmbeddedData::new(
-                            labels::INGREDIENT_THUMBNAIL,
-                            format_to_mime(&thumb_ref.format),
-                            data.into_owned(),
-                        );
-                        claim.add_assertion(&thumbnail)?
+            // A relative self#jumbf= URI on an ingredient that already
+            // has manifest_data is a stale reference from the outer (archive) manifest being
+            // rebuilt. Due to staleness, resources might need to be removed if stale/redacted.
+            // Ingredients without manifest_data may also carry relative self#jumbf= thumbnail
+            // identifiers (e.g. written by the archive format for freshly-generated thumbnails),
+            // those are valid resources in the builder's resource store and must be kept.
+            let is_stale_outer_ref = self.manifest_data_ref().is_some()
+                && thumb_ref.identifier.starts_with("self#jumbf=")
+                && !thumb_ref.identifier.starts_with("self#jumbf=/");
+
+            // Resolve the thumbnail identifier to an absolute JUMBF URI using the ingredient's
+            // own manifest label (self.active_manifest), then check directly against the
+            // redacted URI set...
+            let abs_thumb_uri = self
+                .active_manifest
+                .as_deref()
+                .map(|active_label| {
+                    jumbf::labels::to_absolute_uri(active_label, &thumb_ref.identifier)
+                })
+                .unwrap_or_else(|| thumb_ref.identifier.clone());
+
+            // For ingredients with embedded manifest data, a freshly-generated thumbnail
+            // (e.g. an XMP-IID filename from maybe_add_thumbnail) may exist even when the
+            // manifest's own claim thumbnail failed validation. If any thumbnail from
+            // this ingredient's manifest chain is being redacted, suppress the fresh
+            // thumbnail too, it represents the same provenance (edge case for thumbnails
+            // added from files).
+            let active_manifest_label = self.active_manifest.as_deref().unwrap_or("");
+            let fresh_thumb_is_suppressed = self.manifest_data_ref().is_some()
+                && !active_manifest_label.is_empty()
+                && redacted_thumbnail_uris
+                    .iter()
+                    .any(|uri| uri.contains(active_manifest_label));
+
+            let thumbnail_is_redacted = is_stale_outer_ref
+                || redacted_thumbnail_uris.contains(abs_thumb_uri.as_str())
+                || fresh_thumb_is_suppressed;
+
+            if !thumbnail_is_redacted {
+                // if we have a hash, just build the hashed uri
+                let hash_url = match thumb_ref.hash.as_ref() {
+                    Some(h) => {
+                        let hash = base64::decode(h)
+                            .map_err(|_e| Error::BadParam("Invalid hash".to_string()))?;
+                        HashedUri::new(thumb_ref.identifier.clone(), thumb_ref.alg.clone(), &hash)
                     }
-                }
-            };
-            thumbnail = Some(hash_url);
+                    None => {
+                        // get the resource data and add it to the claim
+                        let data = get_resource(&thumb_ref.identifier)?;
+                        if claim.version() < 2 {
+                            claim.add_databox(
+                                &thumb_ref.format,
+                                data.into_owned(),
+                                thumb_ref.data_types.clone(),
+                            )?
+                        } else {
+                            // add EmbeddedData thumbnail for v3 assertions in v2 claims
+                            let thumbnail = EmbeddedData::new(
+                                labels::INGREDIENT_THUMBNAIL,
+                                format_to_mime(&thumb_ref.format),
+                                data.into_owned(),
+                            );
+                            claim.add_assertion(&thumbnail)?
+                        }
+                    }
+                };
+                thumbnail = Some(hash_url);
+            }
         }
 
         // if the ingredient has a data field, resolve and add it to the claim
@@ -1408,7 +1509,11 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes.
+    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes,
+    /// using thread-local settings.
+    ///
+    /// Use [`Ingredient::from_manifest_and_asset_stream_async`] with an explicit
+    /// [`Context`](crate::Context) instead.
     ///
     /// # Example: Create an Ingredient from a binary manifest (.c2pa) and asset bytes
     /// ```
@@ -1429,6 +1534,10 @@ impl Ingredient {
     /// #    Ok(())
     /// }
     /// ```
+    #[deprecated(
+        note = "Pass an explicit `Context` via `from_manifest_and_asset_stream_async` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub async fn from_manifest_and_asset_bytes_async<M: Into<Vec<u8>>>(
         manifest_bytes: M,
         format: &str,
@@ -1438,7 +1547,11 @@ impl Ingredient {
         Self::from_manifest_and_asset_stream_async(manifest_bytes, format, &mut stream).await
     }
 
-    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset.
+    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset,
+    /// using thread-local settings.
+    ///
+    /// Pass an explicit [`Context`](crate::Context) instead of relying on thread-local settings.
+    #[deprecated(note = "Pass an explicit `Context` instead of relying on thread-local settings.")]
     pub async fn from_manifest_and_asset_stream_async<M: Into<Vec<u8>>>(
         manifest_bytes: M,
         format: &str,
@@ -1626,6 +1739,7 @@ impl IngredientOptions for DefaultOptions {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
 
     use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -1870,6 +1984,7 @@ mod tests {
 mod tests_file_io {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
 
     use super::*;
     use crate::{assertion::AssertionData, utils::test::fixture_path};

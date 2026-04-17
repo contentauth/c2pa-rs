@@ -12,14 +12,14 @@ members = [
 
 # members in this workspace can share this version setting
 [workspace.package]
-version = "0.78.5"
+version = "0.80.0"
 
 [workspace.dependencies]
 c2pa = { path = "sdk", default-features = false }
 
 [profile.dev]
 opt-level = 1          # allows test code to run faster at a small compile time cost
-debug = 1              # line tables only for debugging - switch to 2 or debug for full symbols
+debug = 2              # symbols for debugging - switch to 1 to disable debug symbols
 
 [profile.release]
 strip = true  # Automatically strip symbols from the binary.

@@ -29,19 +29,19 @@ Practical distinction:
 
 | Operation | API | Description |
 |-----------|-----|-------------|
-| Save | [`builder.to_archive(&mut stream)`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.to_archive) | Writes the working store to `stream`. By default, generates the current archive format. Use the [setting](settings.md) `builder.generate_c2pa_archive = false` to specify legacy ZIP format. |
+| Save | [`builder.to_archive(&mut stream)`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.to_archive) | Writes the working store to `stream`. By default, generates the current archive format. Use the [setting](context-settings.md) `builder.generate_c2pa_archive = false` to specify legacy ZIP format. |
 | Restore to a new `Builder` | [`Builder::from_archive(stream)`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.from_archive) | Creates a default-context `Builder` and loads the archive into it. |
 | Restore (existing context) | [`builder.with_archive(stream)`](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html#method.with_archive) | Loads the archive into an existing `Builder` (preserving its context). |
 
 ### Legacy ZIP archive format
 
-The SDK also supports an older format: a ZIP file containing `manifest.json`, `resources/`, and `manifests/` (see [Settings](settings.md)). This ZIP format is generated when `builder.generate_c2pa_archive = false`. When `builder.generate_c2pa_archive = true` (default), `to_archive()` writes the C2PA working-store format. Restore accepts both (`with_archive` / `from_archive`): it tries ZIP first, then falls back to the C2PA format.
+The SDK also supports an older format: a ZIP file containing `manifest.json`, `resources/`, and `manifests/` (see [Settings](context-settings.md)). This ZIP format is generated when `builder.generate_c2pa_archive = false`. When `builder.generate_c2pa_archive = true` (default), `to_archive()` writes the C2PA working-store format. Restore accepts both (`with_archive` / `from_archive`): it tries ZIP first, then falls back to the C2PA format.
 
 ## Best practices
 
 1. [**Use intents**](intents.md): Set an intent to get automatic validation and action generation.
 2. [**Archive validated ingredients**](#capture-an-ingredient-as-an-archive-and-reuse-it): Save expensive validation results.
-3. [**Use shared context**](context.md): Create once, share across operations.
+3. [**Use shared context**](context-settings.md): Create once, share across operations.
 4. [**Label ingredients**](#link-ingredients-to-actions): Use labels to link ingredients to actions.
 5. **Store archives flexibly**: Files, databases, and cloud storage all work.
 
@@ -153,7 +153,7 @@ pub fn with_archive(self, stream: impl Read + Seek + Send) -> Result<Self>
 // Restore (default context)
 let builder = Builder::from_archive(Cursor::new(std::fs::read("work.c2pa")?))?;
 
-// Or restore with a custom, shared context (see: docs/context.md)
+// Or restore with a custom, shared context (see: docs/context-settings.md)
 let builder = Builder::from_shared_context(&context)
     .with_archive(Cursor::new(std::fs::read("work.c2pa")?))?;
 ```
@@ -227,7 +227,7 @@ builder.add_ingredient_from_stream(
 )?;
 ```
 
-For creating and sharing a `Context` (including using `Arc`), see: [Configuring the SDK using Context](context.md).
+For creating and sharing a `Context` (including using `Arc`), see: [Configuring the SDK using Context](context-settings.md).
 
 ### Link ingredients to actions
 

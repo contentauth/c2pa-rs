@@ -22,7 +22,7 @@ const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/CA.jpg");
 
 #[test]
 fn test_cr_json_omits_asset_info_content_metadata() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
 
     let json_value = reader.to_crjson_value()?;
 
@@ -50,7 +50,7 @@ fn test_cr_json_omits_asset_info_content_metadata() -> Result<()> {
 #[test]
 #[cfg(feature = "file_io")]
 fn test_cr_json_from_file_omits_asset_info_content_metadata() -> Result<()> {
-    let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
+    let reader = Reader::default().with_file("tests/fixtures/CA.jpg")?;
 
     let json_value = reader.to_crjson_value()?;
 

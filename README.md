@@ -23,6 +23,7 @@ You can also read the documentation directly in GitHub:
 - [Using intents](https://github.com/contentauth/c2pa-rs/blob/main/docs/intents.md)
 - [Using working stores and archives](https://github.com/contentauth/c2pa-rs/blob/main/docs/working-stores.md)
 - [Using the embeddable API](https://github.com/contentauth/c2pa-rs/blob/main/docs/embeddable-api.md) that provides explicit control over how a C2PA manifest is embedded into an asset. 
+- [Progress and cancellation API](https://github.com/contentauth/c2pa-rs/blob/main/docs/progress_callbacks.md)
 - [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
 - [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md)
 
@@ -32,6 +33,7 @@ You can also read the documentation directly in GitHub:
   - [Using an X.509 certificate](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/x_509.md)
   - [Change log](https://github.com/contentauth/c2pa-rs/blob/main/cli/CHANGELOG.md)
 
+- [C API](https://github.com/contentauth/c2pa-rs/blob/main/c2pa_c_ffi/README.md): Interface that you can use to integrate with any application that uses C or interfaces with C libraries.
 </div>
 
 ## Key features
@@ -48,6 +50,8 @@ The library enables a desktop, mobile, or embedded application to:
 The library supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_hard_bindings).
 
 For details on what you can do with the library, see [Using the Rust library](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/usage).
+
+This library also provides a [C API](https://github.com/contentauth/c2pa-rs/blob/main/c2pa_c_ffi/README.md)  that you can use to integrate with any application that uses C or interfaces with C libraries.
 
 ## State of the project
 

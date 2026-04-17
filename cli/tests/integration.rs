@@ -660,6 +660,6 @@ fn tool_read_image_crjson() -> Result<(), Box<dyn Error>> {
         .assert()
         .success()
         .stdout(str::contains("\"jsonGenerator\""))
-        .stdout(str::contains("https://contentcredentials.org/crjson"));
+        .stdout(str::contains("https://c2pa.org/crjson"));
     Ok(())
 }

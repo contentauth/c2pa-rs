@@ -34,8 +34,9 @@ use serde_with::skip_serializing_none;
 use crate::utils::io_utils::uri_to_path;
 use crate::{
     assertion::AssertionBase,
+    assertions::Metadata,
     claim::Claim,
-    context::Context,
+    context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
@@ -127,6 +128,9 @@ impl Reader {
     /// This method takes ownership of the [`Context`] and wraps it in an [`Arc`] internally.
     /// Use this for single-use contexts where you don't need to share the context.
     ///
+    /// Use [`Reader::default()`] when no special configuration is needed.
+    /// Use [`Reader::from_shared_context`] to share a context across multiple readers.
+    ///
     /// # Arguments
     /// * `context` - The [`Context`] to use for the Reader
     ///
@@ -138,6 +142,10 @@ impl Reader {
     /// ```
     /// # use c2pa::{Context, Reader, Result};
     /// # fn main() -> Result<()> {
+    /// // With default settings (no explicit context needed):
+    /// let reader = Reader::default();
+    ///
+    /// // With custom settings:
     /// let context = Context::new().with_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
     /// let reader = Reader::from_context(context);
     /// # Ok(())
@@ -201,6 +209,9 @@ impl Reader {
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
         stream.rewind()?; // Ensure stream is at the start
+
+        self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
+
         let store = if _sync {
             Store::from_stream(format, stream, &mut validation_log, &self.context)
         } else {
@@ -225,6 +236,9 @@ impl Reader {
     /// A [`Reader`] for the manifest store.
     /// # Note
     /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
+    #[deprecated(
+        note = "Use `Reader::from_context(context).with_stream(format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+    )]
     #[async_generic]
     pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -260,7 +274,7 @@ impl Reader {
     /// ```no_run
     /// use c2pa::{Context, Reader};
     /// # fn main() -> c2pa::Result<()> {
-    /// let reader = Reader::from_context(Context::new()).with_file("path/to/file.jpg")?;
+    /// let reader = Reader::default().with_file("path/to/file.jpg")?;
     /// # Ok(())
     /// # }
     /// ```
@@ -352,6 +366,9 @@ impl Reader {
     /// # Note
     /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[cfg(feature = "file_io")]
+    #[deprecated(
+        note = "Use `Reader::from_context(context).with_file(path)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+    )]
     #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
         // Legacy behavior: explicitly get thread-local settings for backward compatibility
@@ -433,6 +450,9 @@ impl Reader {
     /// # Errors
     /// This function returns an [`Error`] ef the c2pa_data is not valid, or severe errors occur in validation.
     /// You must check validation status for non-severe errors.
+    #[deprecated(
+        note = "Use `Reader::from_context(context).with_manifest_data_and_stream(c2pa_data, format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+    )]
     #[async_generic]
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
@@ -516,9 +536,9 @@ impl Reader {
         fragment: impl Read + Seek + MaybeSend,
     ) -> Result<Self> {
         if _sync {
-            Reader::from_context(Context::new()).with_fragment(format, stream, fragment)
+            Reader::default().with_fragment(format, stream, fragment)
         } else {
-            Reader::from_context(Context::new())
+            Reader::default()
                 .with_fragment_async(format, stream, fragment)
                 .await
         }
@@ -566,6 +586,9 @@ impl Reader {
     /// would be used to load and validate fragmented MP4 files that span
     /// multiple separate asset files.
     #[cfg(feature = "file_io")]
+    #[deprecated(
+        note = "Use `Reader::from_context(context).with_fragmented_files(path, fragments)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+    )]
     pub fn from_fragmented_files<P: AsRef<std::path::Path>>(
         path: P,
         fragments: &Vec<std::path::PathBuf>,
@@ -834,9 +857,7 @@ impl Reader {
     /// use c2pa::{Context, Reader};
     /// // Create a Reader from an in-memory stream (placeholder bytes shown here).
     /// let input = Cursor::new(Vec::new());
-    /// let reader = Reader::from_context(Context::new())
-    ///     .with_stream("image/jpeg", input)
-    ///     .unwrap();
+    /// let reader = Reader::default().with_stream("image/jpeg", input).unwrap();
     ///
     /// // Get a resource identifier from the active manifest (e.g., a thumbnail).
     /// let manifest = reader.active_manifest().unwrap();
@@ -1249,6 +1270,19 @@ impl Reader {
         Ok(builder)
     }
 
+    /// Returns the [`ArchiveType`] from the active manifest's `org.contentauth.archive.metadata` assertion, if present.
+    pub(crate) fn active_archive_type(&self) -> Option<crate::assertions::labels::ArchiveType> {
+        let manifest = self.active_manifest()?;
+        let metadata: Metadata = manifest
+            .find_assertion(crate::assertions::labels::ARCHIVE_METADATA)
+            .ok()?;
+        metadata
+            .value
+            .get("archive:type")
+            .and_then(|v: &Value| v.as_str())
+            .map(crate::assertions::labels::ArchiveType::from_str)
+    }
+
     /// Convert a Reader into an [`Ingredient`] using the parent ingredient from the active manifest.
     /// # Errors
     /// Returns an [`Error`] if there is no parent ingredient.
@@ -1329,6 +1363,7 @@ pub mod tests {
     #[cfg(feature = "fetch_remote_manifests")]
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
     const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACA.jpg");
+    const SAMPLE1_HEIC: &[u8] = include_bytes!("../tests/fixtures/sample1.heic");
 
     #[test]
     // Verify that we can convert a Reader back into a Builder re-sign and the read it back again
@@ -1358,7 +1393,8 @@ pub mod tests {
 
     #[test]
     fn test_reader_embedded() -> Result<()> {
-        let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+        let reader =
+            Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
         assert_eq!(reader.remote_url(), None);
         assert!(reader.is_embedded());
 
@@ -1384,7 +1420,8 @@ pub mod tests {
     #[test]
     #[cfg(feature = "fetch_remote_manifests")]
     fn test_reader_remote_url() -> Result<()> {
-        let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?;
+        let reader =
+            Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?;
         let remote_url = reader.remote_url();
         assert_eq!(remote_url, Some("https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391"));
         assert!(!reader.is_embedded());
@@ -1395,7 +1432,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_reader_from_file_no_manifest() -> Result<()> {
-        let result = Reader::from_file("tests/fixtures/IMG_0003.jpg");
+        let result = Reader::default().with_file("tests/fixtures/IMG_0003.jpg");
         assert!(matches!(result, Err(Error::JumbfNotFound)));
         Ok(())
     }
@@ -1403,13 +1440,70 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_reader_from_file_validation_err() -> Result<()> {
-        let reader = Reader::from_file("tests/fixtures/XCA.jpg")?;
+        let reader = Reader::default().with_file("tests/fixtures/XCA.jpg")?;
         assert!(reader.validation_status().is_some());
         assert_eq!(
             reader.validation_status().unwrap()[0].code(),
             crate::validation_status::ASSERTION_DATAHASH_MISMATCH
         );
         assert_eq!(reader.validation_state(), ValidationState::Invalid);
+        Ok(())
+    }
+
+    /// BMFF hash verification now fires at least one `VerifyingAssetHash` progress event per
+    /// hash pass (file-level or per-chunk/track), matching the granularity of the data-hash path.
+    ///
+    /// Uses in-memory streams and an embedded fixture so this runs on targets without a usable
+    /// host filesystem (e.g. WASI without preopened paths).
+    #[test]
+    fn test_bmff_read_reports_verifying_asset_hash_progress() -> Result<()> {
+        use std::sync::Mutex;
+
+        use crate::Builder;
+
+        let received = Arc::new(Mutex::new(Vec::<(ProgressPhase, u32, u32)>::new()));
+        let received_cb = Arc::clone(&received);
+        let ctx = test_context()
+            .with_progress_callback(move |phase, step, total| {
+                received_cb.lock().unwrap().push((phase, step, total));
+                true
+            })
+            .into_shared();
+
+        let mut builder = Builder::from_shared_context(&ctx);
+        let ctx_for_signer = builder.context().clone();
+        let signer = ctx_for_signer.signer()?;
+        let mut source = Cursor::new(SAMPLE1_HEIC);
+        let mut dest = Cursor::new(Vec::new());
+        builder.sign(signer, "heic", &mut source, &mut dest)?;
+
+        received.lock().unwrap().clear();
+
+        dest.set_position(0);
+        let _reader = Reader::from_shared_context(&ctx).with_stream("image/heic", &mut dest)?;
+
+        let asset_hash_events: Vec<_> = received
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(p, _, _)| *p == ProgressPhase::VerifyingAssetHash)
+            .cloned()
+            .collect();
+
+        assert!(
+            !asset_hash_events.is_empty(),
+            "expected at least one VerifyingAssetHash event; got none"
+        );
+        // Steps should be monotonically increasing, starting from 1.
+        for (i, (_, step, _)) in asset_hash_events.iter().enumerate() {
+            assert_eq!(
+                *step,
+                (i + 1) as u32,
+                "expected step {} but got {step} at index {i}",
+                i + 1
+            );
+        }
+
         Ok(())
     }
 
@@ -1442,8 +1536,8 @@ pub mod tests {
     #[test]
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_nested_resource() -> Result<()> {
-        let reader =
-            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
+        let reader = Reader::default()
+            .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_COMPLEX_MANIFEST))?;
         assert_eq!(reader.validation_status(), None);
         assert_eq!(reader.manifests.len(), 3);
         let manifest = reader.active_manifest().unwrap();
@@ -1466,7 +1560,7 @@ pub mod tests {
         }
 
         use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
-        let reader = Reader::from_stream(
+        let reader = Reader::default().with_stream(
             "image/jpeg",
             std::io::Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST),
         )?;
@@ -1495,7 +1589,7 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     /// Test that the reader can validate a file with nested assertion errors
     fn test_reader_detailed_json() -> Result<()> {
-        let reader = Reader::from_file("tests/fixtures/CACAE-uri-CA.jpg")?;
+        let reader = Reader::default().with_file("tests/fixtures/CACAE-uri-CA.jpg")?;
         let json = reader.json();
         let detailed_json = reader.detailed_json();
         let parsed_json: Value = serde_json::from_str(json.as_str())?;
@@ -1526,8 +1620,8 @@ pub mod tests {
     fn test_reader_post_validate() -> Result<()> {
         use crate::{log_item, status_tracker::StatusTracker};
 
-        let mut reader =
-            Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
+        let mut reader = Reader::default()
+            .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
 
         struct TestValidator;
         impl PostValidator for TestValidator {

@@ -41,7 +41,7 @@ use crate::{
     },
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
-    context::Context,
+    context::{Context, ProgressPhase},
     cose_validator::{
         get_signing_cert_serial_num, get_signing_info, get_signing_info_async, verify_cose,
         verify_cose_async,
@@ -74,7 +74,7 @@ use crate::{
     log_item,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator},
-    settings::Settings,
+    settings::{Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
@@ -268,6 +268,9 @@ pub struct Claim {
     // root of CAI store
     update_manifest: bool,
 
+    // true if manifest is or will be stored compressed
+    compressed: bool,
+
     pub title: Option<String>, // title for this claim, generally the name of the containing asset
 
     pub format: Option<String>, // mime format of document containing this claim
@@ -449,6 +452,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            compressed: false,
             data_boxes: Vec::new(),
             metadata: None,
             claim_version,
@@ -548,6 +552,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            compressed: false,
             data_boxes: Vec::new(),
             metadata: None,
             claim_version,
@@ -660,6 +665,7 @@ impl Claim {
             Ok(Claim {
                 remote_manifest: RemoteManifest::NoRemote,
                 update_manifest: false,
+                compressed: false,
                 title,
                 format: Some(format),
                 instance_id,
@@ -768,6 +774,7 @@ impl Claim {
             Ok(Claim {
                 remote_manifest: RemoteManifest::NoRemote,
                 update_manifest: false,
+                compressed: false,
                 title,
                 format: None,
                 instance_id,
@@ -1148,6 +1155,15 @@ impl Claim {
         self.claim_version
     }
 
+    // manifests compression enabled
+    pub fn compressed(&self) -> bool {
+        self.compressed
+    }
+
+    pub(crate) fn set_compressed_manifest(&mut self, compressed: bool) {
+        self.compressed = compressed;
+    }
+
     pub fn set_remote_manifest<S: Into<String> + AsRef<str>>(
         &mut self,
         remote_url: S,
@@ -1427,6 +1443,14 @@ impl Claim {
         salt_generator: &impl SaltGenerator,
         add_as_created_assertion: bool,
     ) -> Result<C2PAAssertion> {
+        // Enforce the per-manifest assertion limit to prevent resource exhaustion
+        // regardless of how the claim is constructed.
+        if self.assertion_store.len() >= MAX_ASSERTIONS {
+            return Err(Error::TooManyAssertions {
+                max: MAX_ASSERTIONS,
+            });
+        }
+
         // make sure the assertion is valid
         let assertion = assertion_builder.to_assertion()?;
         let assertion_label = assertion.label();
@@ -1816,7 +1840,7 @@ impl Claim {
             }
         }
 
-        Err(Error::AssertionInvalidRedaction)
+        Err(Error::AssertionRedactionNotFound)
     }
 
     /// Return a hash of this claim.
@@ -1921,7 +1945,7 @@ impl Claim {
         .await;
 
         let result =
-            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, settings);
+            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, context);
         validation_log.pop_current_uri();
         result
     }
@@ -2007,6 +2031,7 @@ impl Claim {
             context,
         )?;
 
+        context.check_progress(ProgressPhase::VerifyingSignature, 1, 1)?;
         let verified = verify_cose(
             sig,
             data,
@@ -2018,14 +2043,8 @@ impl Claim {
             &adjusted_settings,
         );
 
-        let result = Claim::verify_internal(
-            claim,
-            asset_data,
-            svi,
-            verified,
-            validation_log,
-            &adjusted_settings,
-        );
+        let result =
+            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, context);
         validation_log.pop_current_uri();
         result
     }
@@ -2497,13 +2516,18 @@ impl Claim {
                                     {
                                         // The assertion may or may not be in the assertion store.
                                         // It can exist and be zeroed or be removed entirely
-                                        // but it must be in the claim's assertions HashUri list
-                                        parent_tested = Some(
-                                            ingredient_claim
-                                                .assertions()
-                                                .iter()
-                                                .any(|a| a.url().contains(&redaction_label)),
-                                        );
+                                        // but it must be in the claim's assertions HashUri list.
+                                        // For databox items, check the claim's redacted_assertions
+                                        // since databox refs are not in the assertions list.
+                                        let in_assertions = ingredient_claim
+                                            .assertions()
+                                            .iter()
+                                            .any(|a| a.url().contains(&redaction_label));
+                                        let in_redacted = redacted_uri.contains(DATABOX_STORE)
+                                            && claim
+                                                .redactions()
+                                                .is_some_and(|r| r.contains(redacted_uri));
+                                        parent_tested = Some(in_assertions || in_redacted);
                                     } else {
                                         dbg!("failed here");
                                         parent_tested = Some(false);
@@ -2604,6 +2628,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData<'_>,
         svi: &StoreValidationInfo,
         validation_log: &mut StatusTracker,
+        context: &Context,
     ) -> Result<()> {
         const UNNAMED: &str = "unnamed";
         let default_str = |s: &String| s.clone();
@@ -2696,17 +2721,33 @@ impl Claim {
                         }
 
                         // only verify local hashes here
+                        let mut cb = |step, total| {
+                            context.check_progress(ProgressPhase::VerifyingAssetHash, step, total)
+                        };
                         let hash_result = match asset_data {
                             #[cfg(feature = "file_io")]
                             ClaimAssetData::Path(asset_path) => {
-                                dh.verify_hash(asset_path, Some(claim.alg()))
+                                let mut file = std::fs::File::open(asset_path)?;
+                                dh.verify_stream_hash_with_progress(
+                                    &mut file,
+                                    Some(claim.alg()),
+                                    &mut cb,
+                                )
                             }
                             ClaimAssetData::Bytes(asset_bytes, _) => {
-                                dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
+                                let mut cursor = std::io::Cursor::new(*asset_bytes);
+                                dh.verify_stream_hash_with_progress(
+                                    &mut cursor,
+                                    Some(claim.alg()),
+                                    &mut cb,
+                                )
                             }
-                            ClaimAssetData::Stream(stream_data, _) => {
-                                dh.verify_stream_hash(*stream_data, Some(claim.alg()))
-                            }
+                            ClaimAssetData::Stream(stream_data, _) => dh
+                                .verify_stream_hash_with_progress(
+                                    *stream_data,
+                                    Some(claim.alg()),
+                                    &mut cb,
+                                ),
                             _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
                         };
 
@@ -2758,29 +2799,42 @@ impl Claim {
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
 
+                    let mut step = 0u32;
+                    let mut cb = |_s: u32, t: u32| {
+                        step += 1;
+                        context.check_progress(ProgressPhase::VerifyingAssetHash, step, t)
+                    };
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
-                            dh.verify_hash(asset_path, Some(claim.alg()))
+                            dh.verify_hash_with_progress(asset_path, Some(claim.alg()), &mut cb)
                         }
-                        ClaimAssetData::Bytes(asset_bytes, _) => {
-                            dh.verify_in_memory_hash(asset_bytes, Some(claim.alg()))
-                        }
-                        ClaimAssetData::Stream(stream_data, _) => {
-                            dh.verify_stream_hash(*stream_data, Some(claim.alg()))
-                        }
+                        ClaimAssetData::Bytes(asset_bytes, _) => dh
+                            .verify_in_memory_hash_with_progress(
+                                asset_bytes,
+                                Some(claim.alg()),
+                                &mut cb,
+                            ),
+                        ClaimAssetData::Stream(stream_data, _) => dh
+                            .verify_stream_hash_with_progress(
+                                *stream_data,
+                                Some(claim.alg()),
+                                &mut cb,
+                            ),
                         ClaimAssetData::StreamFragment(initseg_data, fragment_data, _) => dh
-                            .verify_stream_segment(
+                            .verify_stream_segment_with_progress(
                                 *initseg_data,
                                 *fragment_data,
                                 Some(claim.alg()),
+                                &mut cb,
                             ),
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::StreamFragments(initseg_data, fragment_paths, _) => dh
-                            .verify_stream_segments(
+                            .verify_stream_segments_with_progress(
                                 *initseg_data,
                                 fragment_paths,
                                 Some(claim.alg()),
+                                &mut cb,
                             ),
                     };
 
@@ -2828,6 +2882,9 @@ impl Claim {
                     // handle BMFF data hashes
                     let bh = BoxHash::from_assertion(hash_binding_assertion.assertion())?;
 
+                    let mut cb = |step, total| {
+                        context.check_progress(ProgressPhase::VerifyingAssetHash, step, total)
+                    };
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
@@ -2839,7 +2896,13 @@ impl Claim {
                                         "Box hash not supported".to_string(),
                                     ))?;
 
-                            bh.verify_hash(asset_path, Some(claim.alg()), box_hash_processor)
+                            let mut file = std::fs::File::open(asset_path)?;
+                            bh.verify_stream_hash_with_progress(
+                                &mut file,
+                                Some(claim.alg()),
+                                box_hash_processor,
+                                &mut cb,
+                            )
                         }
                         ClaimAssetData::Bytes(asset_bytes, asset_type) => {
                             let box_hash_processor = get_assetio_handler(asset_type)
@@ -2849,10 +2912,12 @@ impl Claim {
                                     "Box hash not supported for: {asset_type}"
                                 )))?;
 
-                            bh.verify_in_memory_hash(
-                                asset_bytes,
+                            let mut cursor = std::io::Cursor::new(*asset_bytes);
+                            bh.verify_stream_hash_with_progress(
+                                &mut cursor,
                                 Some(claim.alg()),
                                 box_hash_processor,
+                                &mut cb,
                             )
                         }
                         ClaimAssetData::Stream(stream_data, asset_type) => {
@@ -2863,10 +2928,11 @@ impl Claim {
                                     "Box hash not supported for: {asset_type}"
                                 )))?;
 
-                            bh.verify_stream_hash(
+                            bh.verify_stream_hash_with_progress(
                                 *stream_data,
                                 Some(claim.alg()),
                                 box_hash_processor,
+                                &mut cb,
                             )
                         }
                         _ => return Err(Error::UnsupportedType),
@@ -2921,7 +2987,7 @@ impl Claim {
         svi: &StoreValidationInfo,
         verified: Result<CertificateInfo>,
         validation_log: &mut StatusTracker,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<()> {
         // signature check
         match verified {
@@ -3242,10 +3308,10 @@ impl Claim {
         }
 
         // verify data hashes for provenance claims
-        Claim::verify_hash_binding(claim, asset_data, svi, validation_log)?;
+        Claim::verify_hash_binding(claim, asset_data, svi, validation_log, context)?;
 
         // check action rules
-        Claim::verify_actions(claim, svi, validation_log, settings)?;
+        Claim::verify_actions(claim, svi, validation_log, context.settings())?;
 
         // check metadata rules
         if claim.version() >= 2 {
@@ -3434,7 +3500,14 @@ impl Claim {
             )));
         }
 
-        // redact assertion from incoming ingredients
+        // Redact assertion from incoming ingredients
+        // Only apply redactions that match claims in the current ingredient batch,
+        // redactions targeting other ingredients will be applied when those are processed
+        // (otherwise can't find them).
+        // TODO: per C2PA 2.4 spec, when redacting an ingredient assertion that references
+        // a C2PA Manifest, the associated manifest should be removed from the Manifest Store
+        // if no other references to it remain. This was also TODO'ed before...
+        let mut applied_redactions = Vec::new();
         if let Some(redactions) = &redactions_opt {
             for redaction in redactions {
                 if let Some(claim) = ingredient
@@ -3442,16 +3515,19 @@ impl Claim {
                     .find(|x| redaction.contains(x.label()))
                 {
                     claim.redact_assertion(redaction)?;
-
-                    // if this is an ingredient we should remove the ingredient
-                } else {
-                    return Err(Error::AssertionRedactionNotFound);
+                    applied_redactions.push(redaction.clone());
                 }
             }
         }
 
-        // all have been removed (if necessary) so replace redaction list
-        self.redacted_assertions = redactions_opt;
+        // accumulate applied redactions across multiple ingredient batches
+        match &mut self.redacted_assertions {
+            Some(existing) => existing.extend(applied_redactions),
+            None if !applied_redactions.is_empty() => {
+                self.redacted_assertions = Some(applied_redactions);
+            }
+            _ => {}
+        }
 
         // just replace the ingredients with new once since conflicts are resolved by the caller
         for i in ingredient {

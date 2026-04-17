@@ -26,7 +26,7 @@ use std::{
     any::Any,
     ffi::CString,
     fmt,
-    io::{Read, Result as IoResult, Seek, SeekFrom, Write},
+    io::{Cursor, Read, Result as IoResult, Seek, SeekFrom, Write},
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
@@ -94,6 +94,9 @@ pub enum JumbfParseError {
 
     #[error("invalid JUMD box")]
     InvalidDescriptionBox,
+
+    #[error("JUMB box nesting depth exceeds the maximum allowed depth")]
+    BoxNestingTooDeep,
 }
 
 /// A specialized `JumbfParseResult` type for JUMBF parsing operations.
@@ -351,6 +354,14 @@ impl JUMBFSuperBox {
                 .downcast_ref::<JUMBFEmbeddedFileDescriptionBox>()
         })
     }
+
+    pub fn data_box_as_brotli_box(&self, index: usize) -> Option<&JUMBFBrotliContentBox> {
+        let da_box = &self.data_boxes[index];
+        da_box
+            .as_ref()
+            .as_any()
+            .downcast_ref::<JUMBFBrotliContentBox>()
+    }
 }
 
 impl BMFFBox for JUMBFSuperBox {
@@ -512,6 +523,8 @@ pub const JUMBF_CBOR_UUID: &str = "63626F7200110010800000AA00389B71";
 pub const JUMBF_UUID_UUID: &str = "7575696400110010800000AA00389B71";
 pub const JUMBF_EMBEDDED_FILE_UUID: &str = "40CB0C32BB8A489DA70B2AD6F47F4369";
 pub const C2PA_REDACTION_UUID: &str = "CAA98EEE9D4DF80E86AD4DFFCA263973";
+pub const JUMBF_BROTLI_UUID: &str = "62726F6200110010800000AA00389B71";
+
 // ANCHOR JUMBF Content box
 /// JUMBF Content box (ISO 19566-5:2019, Annex B)
 #[derive(Debug, Default)]
@@ -721,6 +734,51 @@ impl JUMBFCodestreamContentBox {
     }
 }
 
+// ANCHOR JUMBF Brotli Content box
+#[derive(Debug, Default)]
+pub struct JUMBFBrotliContentBox {
+    data: Vec<u8>, // compressed Brotli data
+}
+
+impl BMFFBox for JUMBFBrotliContentBox {
+    fn box_type(&self) -> &'static [u8; 4] {
+        b"brob"
+    }
+
+    fn box_uuid(&self) -> &'static str {
+        JUMBF_BROTLI_UUID
+    }
+
+    fn box_payload_size(&self) -> IoResult<u32> {
+        let size = self.data.len();
+        Ok(size as u32)
+    }
+
+    fn write_box_payload(&self, writer: &mut dyn Write) -> IoResult<()> {
+        if !self.data.is_empty() {
+            write_all!(writer, &self.data);
+        }
+        Ok(())
+    }
+
+    // Necessary method to enable conversion between types...
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl JUMBFBrotliContentBox {
+    // the content box takes ownership of the data!
+    pub fn new(data_in: Vec<u8>) -> Self {
+        JUMBFBrotliContentBox { data: data_in }
+    }
+
+    // getter
+    pub fn data(&self) -> &Vec<u8> {
+        &self.data
+    }
+}
+
 // ANCHOR JUMBF UUID Content box
 /// JUMBF UUID Content box (ISO 19566-5:2019, Annex B.5)
 #[derive(Debug, Default)]
@@ -786,7 +844,8 @@ impl JUMBFUUIDContentBox {
 // SECTION CAI
 //---------------
 pub const CAI_BLOCK_UUID: &str = "6332706100110010800000AA00389B71"; // c2pa
-pub const CAI_STORE_UUID: &str = "63326D6100110010800000AA00389B71"; // c2ma
+pub const CAI_MANIFEST_UUID: &str = "63326D6100110010800000AA00389B71"; // c2ma
+pub const CAI_COMPRESSED_MANIFEST_UUID: &str = "6332636D00110010800000AA00389B71"; // c2cm
 pub const CAI_UPDATE_MANIFEST_UUID: &str = "6332756D00110010800000AA00389B71"; // c2um
 pub const CAI_ASSERTION_STORE_UUID: &str = "6332617300110010800000AA00389B71"; // c2as
 pub const CAI_INGREDIENT_STORE_UUID: &str = "6361697300110010800000AA00389B71"; //cais
@@ -802,6 +861,7 @@ pub const CAI_EMBEDDED_FILE_DATA_UUID: &str = "6269646200110010800000AA00389B71"
 pub const CAI_VERIFIABLE_CREDENTIALS_STORE_UUID: &str = "6332766300110010800000AA00389B71"; // c2vc
 pub const CAI_UUID_ASSERTION_UUID: &str = "7575696400110010800000AA00389B71"; // uuid
 pub const CAI_DATABOXES_STORE_UUID: &str = "6332646200110010800000AA00389B71"; // c2db
+pub const CAI_BROTLI_BOX_UUID: &str = "62726F6200110010800000AA00389B71"; // brob
 
 // ANCHOR Salt Content Box
 /// Salt Content Box
@@ -1373,24 +1433,30 @@ impl Default for CAIVerifiableCredentialStore {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum ManifestType {
+    Manifest,
+    UpdateManifest,
+}
+
 // ANCHOR CAI Store
 /// CAI Store
 #[derive(Debug)]
-pub struct CAIStore {
-    is_update_manifest: bool,
+pub struct CAIManifest {
+    pub compressed_store: bool,
+    manifest_type: ManifestType,
     store: JUMBFSuperBox,
 }
 
-impl BMFFBox for CAIStore {
+impl BMFFBox for CAIManifest {
     fn box_type(&self) -> &'static [u8; 4] {
         b"    "
     }
 
     fn box_uuid(&self) -> &'static str {
-        if self.is_update_manifest {
-            CAI_UPDATE_MANIFEST_UUID
-        } else {
-            CAI_STORE_UUID
+        match self.manifest_type {
+            ManifestType::Manifest => CAI_MANIFEST_UUID,
+            ManifestType::UpdateManifest => CAI_UPDATE_MANIFEST_UUID,
         }
     }
 
@@ -1400,7 +1466,37 @@ impl BMFFBox for CAIStore {
     }
 
     fn write_box_payload(&self, writer: &mut dyn Write) -> IoResult<()> {
-        self.store.write_box(writer)
+        if self.compressed_store {
+            // get the complete uncompressed manifest box
+            let uncompressed_manifest = Vec::new();
+            let mut uncompressed_stream = Cursor::new(uncompressed_manifest);
+
+            self.store.write_box(&mut uncompressed_stream)?;
+            uncompressed_stream.rewind()?;
+
+            let mut compressed_manifest = Vec::new();
+
+            // decompress brotli box
+            let params = brotli::enc::BrotliEncoderParams::default();
+            brotli::BrotliCompress(&mut uncompressed_stream, &mut compressed_manifest, &params)?;
+
+            // make brotli box
+            let brotli_box = JUMBFBrotliContentBox {
+                data: compressed_manifest,
+            };
+
+            // convert current box to a comoressed manifest box with same label
+            let mut sbox = JUMBFSuperBox::new(
+                &self.store.desc_box().label(),
+                Some(CAI_COMPRESSED_MANIFEST_UUID),
+            );
+            sbox.add_data_box(Box::new(brotli_box));
+
+            // write out brotli super box
+            sbox.write_box(writer)
+        } else {
+            self.store.write_box(writer)
+        }
     }
 
     // Necessary method to enable conversion between types...
@@ -1409,26 +1505,59 @@ impl BMFFBox for CAIStore {
     }
 }
 
-impl CAIStore {
-    pub fn new(box_label: &str, update_manifest: bool) -> Self {
-        let id = if update_manifest {
-            Some(CAI_UPDATE_MANIFEST_UUID)
-        } else {
-            Some(CAI_STORE_UUID)
+impl CAIManifest {
+    pub fn new(box_label: &str, manifest_type: ManifestType, compressed_store: bool) -> Self {
+        let id = match manifest_type {
+            ManifestType::Manifest => Some(CAI_MANIFEST_UUID),
+            ManifestType::UpdateManifest => Some(CAI_UPDATE_MANIFEST_UUID),
         };
+
         let sbox = JUMBFSuperBox::new(box_label, id);
-        CAIStore {
-            is_update_manifest: update_manifest,
+
+        CAIManifest {
+            compressed_store,
+            manifest_type,
             store: sbox,
         }
     }
 
-    pub fn from(sbox: JUMBFSuperBox) -> Self {
-        let update_manifest = sbox.box_uuid() == CAI_UPDATE_MANIFEST_UUID;
+    pub fn from(sbox: &JUMBFSuperBox) -> JumbfParseResult<Self> {
+        let mut compressed_store = false;
 
-        CAIStore {
-            is_update_manifest: update_manifest,
-            store: sbox,
+        // decompress brotli box if available
+        let store_box = if let Some(compressed_manifest) = sbox.data_box_as_brotli_box(0) {
+            let decompressed_manifest = Vec::new();
+
+            let mut decompressed_stream = Cursor::new(decompressed_manifest);
+            let mut compressed_stream = Cursor::new(compressed_manifest.data());
+            brotli::BrotliDecompress(&mut compressed_stream, &mut decompressed_stream)?;
+
+            decompressed_stream.rewind()?;
+
+            compressed_store = true;
+            BoxReader::read_super_box(&mut decompressed_stream)?
+        } else {
+            // clone superbox
+            let box_as_data = Vec::new();
+            let mut stream = Cursor::new(box_as_data);
+            sbox.write_box(&mut stream)?;
+            stream.rewind()?;
+
+            BoxReader::read_super_box(&mut stream)?
+        };
+
+        if store_box.desc_box.box_uuid() == CAI_UPDATE_MANIFEST_UUID {
+            Ok(CAIManifest {
+                compressed_store,
+                manifest_type: ManifestType::UpdateManifest,
+                store: store_box,
+            })
+        } else {
+            Ok(CAIManifest {
+                compressed_store,
+                manifest_type: ManifestType::Manifest,
+                store: store_box,
+            })
         }
     }
 
@@ -1860,7 +1989,8 @@ boxtype! {
     Jp2c => 0x6A70_3263,
     Cbor => 0x6362_6F72,
     EmbedMediaDesc => 0x6266_6462,
-    EmbedContent => 0x6269_6462
+    EmbedContent => 0x6269_6462,
+    Brotli => 0x6272_6F62
 }
 
 // ANCHOR BlockHeader
@@ -1880,6 +2010,10 @@ impl BoxHeader {
 pub struct BoxReader {}
 
 impl BoxReader {
+    /// Maximum allowed nesting depth for JUMB superboxes.
+    /// Prevents stack overflow from crafted files with arbitrarily deep nesting.
+    const MAX_JUMB_DEPTH: usize = 32;
+
     pub fn read_header<R: Read>(reader: &mut R) -> JumbfParseResult<BoxHeader> {
         // Create and read to buf.
         let mut buf = [0u8; 8]; // 8 bytes for box header.
@@ -1924,6 +2058,16 @@ impl BoxReader {
         reader: &mut R,
         size: u64,
     ) -> JumbfParseResult<JUMBFDescriptionBox> {
+        // Per ISO/IEC 19566-5 (JUMBF), a jumd box must contain at minimum:
+        //   16 bytes (UUID) + 1 byte (toggles) + 1 byte (null label terminator) = 18 bytes content.
+        // The size parameter is the raw BMFF size field, which includes the 8-byte BMFF header,
+        // so the minimum total declared size is HEADER_SIZE + 16 + 1 + 1 = 26.
+        // Reject undersized boxes to prevent integer underflow during field parsing.
+        const JUMD_MIN_SIZE: u64 = HEADER_SIZE + 16 + 1 + 1;
+        if size < JUMD_MIN_SIZE {
+            return Err(JumbfParseError::InvalidDescriptionBox);
+        }
+
         let mut bytes_left = size;
         let mut uuid = [0u8; 16]; // 16 bytes for the UUID
         let bytes_read = reader.read(&mut uuid)?;
@@ -1942,6 +2086,12 @@ impl BoxReader {
             // must be requestable and labeled
             // read label
             loop {
+                // Guard: bytes_left tracks the declared box size including the already-consumed
+                // BMFF header. Once bytes_left reaches HEADER_SIZE, all content bytes are
+                // exhausted; reading further would underflow and cross the box boundary.
+                if bytes_left <= HEADER_SIZE {
+                    return Err(JumbfParseError::InvalidDescriptionBox);
+                }
                 let mut buf = [0; 1];
                 reader.read_exact(&mut buf)?;
                 bytes_left -= 1;
@@ -2101,6 +2251,29 @@ impl BoxReader {
         Ok(JUMBFCodestreamContentBox::new(buf))
     }
 
+    pub fn read_brotli_box<R: Read + Seek>(
+        reader: &mut R,
+        size: u64,
+    ) -> JumbfParseResult<JUMBFBrotliContentBox> {
+        let header =
+            BoxReader::read_header(reader).map_err(|_| JumbfParseError::InvalidBoxHeader)?;
+        if header.size == 0 {
+            // bad read, return empty box...
+            return Ok(JUMBFBrotliContentBox::new(Vec::new()));
+        } else if header.size != size {
+            // this means that we started w/o the header...
+            unread_bytes(reader, HEADER_SIZE)?;
+        }
+
+        // read the data itself...
+        let data_len = size - HEADER_SIZE;
+        let buf = reader
+            .read_to_vec(data_len)
+            .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
+
+        Ok(JUMBFBrotliContentBox::new(buf))
+    }
+
     pub fn read_uuid_box<R: Read + Seek>(
         reader: &mut R,
         size: u64,
@@ -2132,6 +2305,15 @@ impl BoxReader {
         reader: &mut R,
         size: u64,
     ) -> JumbfParseResult<JUMBFEmbeddedFileDescriptionBox> {
+        // A bfdb box must contain at minimum 1 byte (toggles); media type is optional.
+        // Minimum total BMFF size = HEADER_SIZE + TOGGLE_SIZE = 9.
+        // Reject boxes below this threshold to prevent u64 underflow in the data_len
+        // computation (size - HEADER_SIZE - TOGGLE_SIZE) for size < 9.
+        const BFDB_MIN_SIZE: u64 = HEADER_SIZE + TOGGLE_SIZE;
+        if size < BFDB_MIN_SIZE {
+            return Err(JumbfParseError::InvalidDescriptionBox);
+        }
+
         let header =
             BoxReader::read_header(reader).map_err(|_| JumbfParseError::InvalidBoxHeader)?;
         if header.size == 0 {
@@ -2173,7 +2355,7 @@ impl BoxReader {
             }
             _ => {
                 // we do not store the trailing 0 on load
-                if buf[buf.len() - 1] == 0 {
+                if buf.last() == Some(&0) {
                     buf.pop();
                 }
 
@@ -2210,6 +2392,17 @@ impl BoxReader {
     }
 
     pub fn read_super_box<R: Read + Seek>(reader: &mut R) -> JumbfParseResult<JUMBFSuperBox> {
+        BoxReader::read_super_box_impl(reader, 0)
+    }
+
+    fn read_super_box_impl<R: Read + Seek>(
+        reader: &mut R,
+        depth: usize,
+    ) -> JumbfParseResult<JUMBFSuperBox> {
+        if depth >= BoxReader::MAX_JUMB_DEPTH {
+            return Err(JumbfParseError::BoxNestingTooDeep);
+        }
+
         // find out where we're starting...
         let start_pos = current_pos(reader).map_err(|_| JumbfParseError::InvalidBoxRange)?;
 
@@ -2255,9 +2448,7 @@ impl BoxReader {
             } else {
                 unread_bytes(reader, HEADER_SIZE)?; // seek back to the beginning of the box
                 let next_box: Box<dyn BMFFBox> = match box_header.name {
-                    BoxType::Jumb => Box::new(
-                        BoxReader::read_super_box(reader)?, //.map_err(|_| JumbfParseError::InvalidJumbBox)?,
-                    ),
+                    BoxType::Jumb => Box::new(BoxReader::read_super_box_impl(reader, depth + 1)?),
                     BoxType::Json => Box::new(
                         BoxReader::read_json_box(reader, box_header.size)
                             .map_err(|_| JumbfParseError::InvalidJsonBox)?,
@@ -2274,7 +2465,10 @@ impl BoxReader {
                         BoxReader::read_jp2c_box(reader, box_header.size)
                             .map_err(|_| JumbfParseError::InvalidJp2cBox)?,
                     ),
-
+                    BoxType::Brotli => Box::new(
+                        BoxReader::read_brotli_box(reader, box_header.size)
+                            .map_err(|_| JumbfParseError::InvalidJp2cBox)?,
+                    ),
                     BoxType::Uuid => Box::new(
                         BoxReader::read_uuid_box(reader, box_header.size)
                             .map_err(|_| JumbfParseError::InvalidUuidBox)?,
@@ -2584,7 +2778,7 @@ pub mod tests {
     fn cai_store() {
         // create the CAI store
         let store_label = "cb.adobe_1";
-        let mut cai_store = CAIStore::new(store_label, false);
+        let mut cai_store = CAIManifest::new(store_label, ManifestType::Manifest, false);
 
         // create the assertion store
         let mut a_store = CAIAssertionStore::new();
@@ -2652,7 +2846,7 @@ pub mod tests {
 
         // create the CAI store
         let store_label = "cb.adobe_1";
-        let mut cai_store = CAIStore::new(store_label, false);
+        let mut cai_store = CAIManifest::new(store_label, ManifestType::Manifest, false);
 
         // create the assertion store
         let mut a_store = CAIAssertionStore::new();
@@ -2753,6 +2947,80 @@ pub mod tests {
         let desc_box = BoxReader::read_desc_box(&mut buf_reader, jumd_header.size).unwrap();
         assert_eq!(desc_box.label(), labels::MANIFEST_STORE);
         assert_eq!(desc_box.uuid(), "6332706100110010800000AA00389B71");
+    }
+
+    // Verify the two aspects of the bfdb vulnerability fix:
+    //
+    // 1. size=9 (exact reported case): payload is 1-byte toggles, empty media type buffer.
+    //    The writer legitimately produces 9-byte bfdb boxes for empty media types, so this
+    //    must parse successfully. Without the buf.last() fix, buf[buf.len()-1] panics when
+    //    togs != 1 and buf is empty.
+    //
+    // 2. size < 9: data_len = size - HEADER_SIZE - TOGGLE_SIZE underflows on u64.
+    //    The minimum size guard (BFDB_MIN_SIZE = 9) must reject these before any reads.
+    #[test]
+    fn embedded_media_desc_box_handles_empty_media_type_and_rejects_undersized() {
+        // Craft a valid 9-byte bfdb BMFF box: 4-byte big-endian size=9, 4-byte type "bfdb",
+        // then 1-byte toggles=0x00 (hits the `_` arm). Without the buf.last() fix, the
+        // empty buf causes buf[buf.len()-1] = buf[usize::MAX] → index-out-of-bounds panic.
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&[0x00, 0x00, 0x00, 0x09]); // BMFF size = 9
+        stream.extend_from_slice(b"bfdb"); // box type
+        stream.push(0x00); // toggles = 0x00 (non-1, hits `_` arm)
+        stream.extend_from_slice(&[0x00u8; 32]); // padding
+
+        let mut reader = Cursor::new(&stream);
+        assert!(
+            BoxReader::read_embedded_media_desc_box(&mut reader, 9).is_ok(),
+            "size=9 with empty media type should parse successfully"
+        );
+
+        // size=8: minimum size guard rejects before any reads — data_len would underflow.
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_embedded_media_desc_box(&mut reader, 8),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+
+        // size=0: BMFF "extends to EOF" sentinel — invalid for a bounded inner box.
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_embedded_media_desc_box(&mut reader, 0),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+    }
+
+    // Verify that read_desc_box rejects jumd boxes whose declared BMFF size is below the
+    // spec minimum, preventing integer underflow (u64 wrap in release / panic in debug).
+    // Minimum valid size: 8 (BMFF header) + 16 (UUID) + 1 (toggles) + 1 (null label) = 26.
+    // The stream is padded with 0x03 bytes (non-null, toggles-like) so reader.read() never
+    // returns EOF early, simulating a crafted file where the box header declares a small size
+    // but the underlying stream contains data from the following box.
+    #[test]
+    fn desc_box_reader_rejects_undersized_jumd() {
+        let stream = vec![0x03u8; 64];
+
+        // size=25: the exact reported case — payload is 17 bytes (16-byte UUID + 1-byte
+        // toggles=0x03)
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 25),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+
+        // size=0: BMFF "extends to EOF" semantics — invalid for a bounded jumd inner box.
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 0),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+
+        // size=17: even more severely undersized (payload=9 bytes, UUID alone needs 16).
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 17),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
     }
 
     // ANCHOR: JSON Content Box Reader
@@ -2887,6 +3155,47 @@ pub mod tests {
         }
     }
     */
+
+    /// Builds a JUMBF buffer with `levels` of nested `jumb` superboxes.
+    /// The outermost box wraps the next, and so on down to a single innermost box.
+    fn build_nested_jumb(levels: usize) -> Vec<u8> {
+        assert!(levels >= 1);
+        let mut sbox = JUMBFSuperBox::new("t", None);
+        for _ in 1..levels {
+            let mut wrapper = JUMBFSuperBox::new("t", None);
+            wrapper.add_data_box(Box::new(sbox));
+            sbox = wrapper;
+        }
+        let mut buf = Vec::new();
+        sbox.write_box(&mut buf).expect("write failed");
+        buf
+    }
+
+    #[test]
+    fn test_read_super_box_at_max_depth() {
+        // MAX_JUMB_DEPTH levels should parse successfully (innermost reads at depth MAX-1).
+        let buf = build_nested_jumb(BoxReader::MAX_JUMB_DEPTH);
+        let mut reader = Cursor::new(buf);
+        assert!(
+            BoxReader::read_super_box(&mut reader).is_ok(),
+            "expected Ok for exactly MAX_JUMB_DEPTH nested boxes"
+        );
+    }
+
+    #[test]
+    fn test_read_super_box_exceeds_max_depth() {
+        // One level beyond the limit must return BoxNestingTooDeep, not stack-overflow.
+        let buf = build_nested_jumb(BoxReader::MAX_JUMB_DEPTH + 1);
+        let mut reader = Cursor::new(buf);
+        assert!(
+            matches!(
+                BoxReader::read_super_box(&mut reader),
+                Err(JumbfParseError::BoxNestingTooDeep)
+            ),
+            "expected BoxNestingTooDeep for {} nested boxes",
+            BoxReader::MAX_JUMB_DEPTH + 1
+        );
+    }
 }
 
 // !SECTION

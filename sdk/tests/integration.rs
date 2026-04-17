@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+mod common;
+
 /// Complete functional integration test with parent and ingredients.
 // Isolate from wasm by wrapping in module.
 #[cfg(feature = "file_io")]
@@ -24,6 +26,8 @@ mod integration_1 {
     use c2pa_macros::c2pa_test_async;
     #[allow(unused)] // different code path for WASI
     use tempfile::{tempdir, TempDir};
+
+    use super::common::test_context;
 
     /// Returns the path to a fixture file.
     fn fixture_path(file_name: &str) -> PathBuf {
@@ -50,9 +54,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
-        let settings =
-            Settings::new().with_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-        let context = Context::new().with_settings(settings)?.into_shared();
+        let context = test_context().into_shared();
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
@@ -97,6 +99,7 @@ mod integration_1 {
         );
 
         // add an ingredient
+        #[allow(deprecated)]
         let ingredient = Ingredient::from_file(&ingredient_path)?;
 
         // add an action assertion stating that we imported this file
@@ -133,7 +136,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_json_manifest() -> Result<()> {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        let context = test_context().into_shared();
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
@@ -144,15 +147,15 @@ mod integration_1 {
 
         let json = std::fs::read_to_string(manifest_path)?;
 
-        let mut builder = Builder::from_json(&json)?;
+        let mut builder = Builder::from_shared_context(&context).with_definition(&json)?;
         builder.set_base_path(fixture_path(""));
 
         // sign and embed into the target file
-        let signer = Settings::signer()?;
-        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+        let signer = context.signer()?;
+        builder.sign_file(signer, &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
-        let reader = Reader::from_file(&output_path)?;
+        let reader = Reader::from_shared_context(&context).with_file(&output_path)?;
 
         println!("{reader}");
         // std::fs::copy(&output_path, "test_file.jpg")?; // for debugging to get copy of the file
@@ -170,9 +173,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_bmff_manifest() -> Result<()> {
-        let settings =
-            Settings::new().with_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-        let context = Context::new().with_settings(settings)?.into_shared();
+        let context = test_context().into_shared();
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
@@ -207,9 +208,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_asset_reference_assertion() -> Result<()> {
-        let settings =
-            Settings::new().with_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-        let context = Context::new().with_settings(settings)?.into_shared();
+        let context = test_context().into_shared();
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
@@ -234,7 +233,7 @@ mod integration_1 {
         builder.sign_file(signer, &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
-        let reader = Reader::from_file(&output_path)?;
+        let reader = Reader::from_shared_context(&context).with_file(&output_path)?;
 
         println!("{reader}");
 
@@ -253,9 +252,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_metadata_assertion() -> Result<()> {
-        let settings =
-            Settings::new().with_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-        let context = Context::new().with_settings(settings)?.into_shared();
+        let context = test_context().into_shared();
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;

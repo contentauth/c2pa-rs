@@ -1369,6 +1369,14 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 | IFDEntryType::Double
                 | IFDEntryType::Long8
                 | IFDEntryType::Ifd8 => {
+                    // Each element is 8 bytes wide. Use checked_mul to prevent u64 overflow
+                    // when a crafted BigTIFF supplies a malicious value_count (e.g.
+                    // 0x2000000000000001 * 8 wraps past u64::MAX in release builds and
+                    // panics in debug builds).
+                    let num_bytes_8 = cnt
+                        .checked_mul(8)
+                        .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?;
+
                     // move to start of data
                     asset_reader.seek(SeekFrom::Start(decode_offset(
                         entry.value_offset,
@@ -1376,7 +1384,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         self.big_tiff,
                     )?))?;
 
-                    asset_reader.read_to_vec(cnt * 8)?
+                    asset_reader.read_to_vec(num_bytes_8)?
                 }
             };
 
@@ -1463,12 +1471,22 @@ where
 {
     let (tiff_tree, page_tokens, e, big_tiff) = map_tiff(asset_reader)?;
 
+    let first_page = page_tokens
+        .first()
+        .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
     let last_page = page_tokens
         .last()
         .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
     let last_ifd = &tiff_tree[*last_page].data;
 
-    let cai_ifd_entry = last_ifd.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?;
+    let cai_ifd_entry = match last_ifd.get_tag(C2PA_TAG) {
+        Some(entry) => entry,
+        None => {
+            // if the last page doesn't have the C2PA tag, check the first page for backwards compatibility with older TIFFs
+            let first_ifd = &tiff_tree[*first_page].data;
+            first_ifd.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?
+        }
+    };
 
     // make sure data type is for unstructured data
     if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
@@ -2132,6 +2150,65 @@ pub mod tests {
 
         let tiff_io = TiffIO {};
 
+        let locations = tiff_io.get_object_locations_from_stream(&mut stream);
+        assert!(matches!(locations, Err(Error::InvalidAsset(_))));
+    }
+
+    /// Regression test for integer overflow in `clone_ifd_entries` for 8-byte element types.
+    ///
+    /// IFD entry types Rational, SRational, Double, Long8, SLong8, and Ifd8 are all 8 bytes
+    /// wide per element. Before the fix, the byte count was computed as `cnt * 8` with no
+    /// overflow guard. A crafted BigTIFF carrying `value_count = 0x2000000000000001` causes
+    /// `0x2000000000000001 * 8 = 0x10000000000000008`, which wraps past u64::MAX:
+    ///   - debug builds: immediate panic (exit code 101)
+    ///   - release builds: silent truncation to 0x8, producing wrong results
+    ///
+    /// The fix adds `checked_mul(8)` — matching the pattern already used for every other
+    /// multi-byte type — and returns `Error::InvalidAsset` instead of overflowing.
+    ///
+    /// The binary blob below is the same crafted BigTIFF as in `test_overflow_clone_ifd_entries`
+    /// but with entry_type changed from 0x04 (Long, ×4) to 0x05 (Rational, ×8) and
+    /// value_count set to 0x2000000000000001 (overflows ×8).
+    #[test]
+    fn test_overflow_clone_ifd_entries_rational_type() {
+        let data = [
+            0x49, 0x49, 0x2b, 0x00, 0x08, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x49,
+            0x49, 0x2a, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xf9, 0x00,
+            0x00, 0x00, 0x00, 0x05, 0x00, 0x07, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+            // entry — type 0x05 (Rational, 8 bytes/element), count overflows × 8
+            //
+            0x00, 0x00, // entry_tag
+            0x05, 0x00, // entry_type: Rational (was 0x04 Long)
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x20, // value_count = 0x2000000000000001
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // value_offset
+            //
+            // entry
+            //
+            0x00, 0x00, // entry_tag
+            0x05, 0x00, // entry_type: Rational (was 0x04 Long)
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x20, // value_count = 0x2000000000000001
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // value_offset
+            //
+            // ...
+            //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00,
+        ];
+
+        let mut stream = Cursor::new(&data);
+        let tiff_io = TiffIO {};
+
+        // Before the fix: this would panic (exit 101) in debug or silently overflow in release.
+        // After the fix: must return Err(Error::InvalidAsset) without any panic.
         let locations = tiff_io.get_object_locations_from_stream(&mut stream);
         assert!(matches!(locations, Err(Error::InvalidAsset(_))));
     }

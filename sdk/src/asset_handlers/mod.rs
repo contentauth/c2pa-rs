@@ -17,6 +17,7 @@ pub mod flac_io;
 pub mod gif_io;
 pub(crate) mod id3_helper;
 pub mod jpeg_io;
+pub mod jpegxl_io;
 pub mod mp3_io;
 pub mod png_io;
 pub mod riff_io;

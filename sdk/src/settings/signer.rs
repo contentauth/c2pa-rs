@@ -279,7 +279,8 @@ impl Signer for RemoteSigner {
         use std::io::Read;
 
         let request = Request::post(&self.url).body(data.to_vec())?;
-        let response = SyncGenericResolver::new()
+        let response = SyncGenericResolver::with_redirects()
+            .unwrap_or_default()
             .http_resolve(request)
             .map_err(|_| Error::FailedToRemoteSign)?;
         let mut bytes: Vec<u8> = Vec::with_capacity(self.reserve_size);
@@ -310,6 +311,7 @@ impl Signer for RemoteSigner {
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
+    #![allow(clippy::expect_used)]
 
     use crate::{settings::Settings, utils::test_signer, SigningAlg};
 
@@ -324,32 +326,34 @@ pub mod tests {
         })
     }
 
+    /// Legacy test verifying the deprecated thread-local signer API still works.
     #[test]
-    fn test_make_test_signer() {
-        // Makes a default test signer.
+    #[allow(deprecated)]
+    fn test_thread_local_signer() {
         assert!(Settings::signer().is_ok());
     }
 
     #[test]
     fn test_make_local_signer() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
-        // Testing with a different alg than the default test signer.
         let alg = SigningAlg::Ps384;
         let (sign_cert, private_key) = test_signer::cert_chain_and_private_key_for_alg(alg);
-        Settings::from_toml(
-            &toml::toml! {
-                [signer.local]
-                alg = (alg.to_string())
-                sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
-                private_key = (String::from_utf8(private_key.to_vec()).unwrap())
-            }
-            .to_string(),
-        )
-        .unwrap();
 
-        let signer = Settings::signer().unwrap();
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [signer.local]
+                    alg = (alg.to_string())
+                    sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
+                    private_key = (String::from_utf8(private_key.to_vec()).unwrap())
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        // Test the settings signer path directly (context.signer() uses a custom test
+        // signer in test mode, so we test SignerSettings::c2pa_signer() directly here)
+        let signer_settings = settings.signer.expect("signer settings should be present");
+        let signer = signer_settings.c2pa_signer().unwrap();
         assert_eq!(signer.alg(), alg);
         assert_eq!(signer.time_authority_url(), None);
         assert!(signer.sign(&[1, 2, 3]).is_ok());
@@ -362,9 +366,6 @@ pub mod tests {
 
         use crate::create_signer;
 
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
         let alg = SigningAlg::Ps384;
         let (sign_cert, private_key) = test_signer::cert_chain_and_private_key_for_alg(alg);
 
@@ -374,18 +375,22 @@ pub mod tests {
         let server = MockServer::start();
         let mock = remote_signer_mock_server(&server, &signed_bytes);
 
-        Settings::from_toml(
-            &toml::toml! {
-                [signer.remote]
-                url = (server.base_url())
-                alg = (alg.to_string())
-                sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
-            }
-            .to_string(),
-        )
-        .unwrap();
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [signer.remote]
+                    url = (server.base_url())
+                    alg = (alg.to_string())
+                    sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
+                }
+                .to_string(),
+            )
+            .unwrap();
 
-        let signer = Settings::signer().unwrap();
+        // Test the settings signer path directly (context.signer() uses a custom test
+        // signer in test mode, so we test SignerSettings::c2pa_signer() directly here)
+        let signer_settings = settings.signer.expect("signer settings should be present");
+        let signer = signer_settings.c2pa_signer().unwrap();
         assert_eq!(signer.alg(), alg);
         assert_eq!(signer.time_authority_url(), None);
         assert_eq!(signer.sign(&[1, 2, 3]).unwrap(), signed_bytes);

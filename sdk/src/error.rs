@@ -63,6 +63,10 @@ pub enum Error {
     #[error("bad parameter: {0}")]
     BadParam(String),
 
+    /// The operation was cancelled by a progress callback or cancellation token.
+    #[error("operation cancelled")]
+    OperationCancelled,
+
     #[error("required feature missing")]
     MissingFeature(String),
 
@@ -115,6 +119,9 @@ pub enum Error {
 
     #[error("more than one manifest store detected")]
     TooManyManifestStores,
+
+    #[error("assertion limit exceeded: maximum allowed is {max}")]
+    TooManyAssertions { max: usize },
 
     #[error("manifest is not refernced by any ingredient")]
     UnreferencedManifest,
