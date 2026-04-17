@@ -91,6 +91,15 @@ const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifest
 #[cfg(feature = "fetch_remote_manifests")]
 const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
+/// Maximum depth of nested ingredient references allowed during validation.
+///
+/// Prevents stack overflow when processing a manifest store that contains a deep
+/// linear chain of ingredient references (A → B → C → … → N). With the default
+/// 8 MB thread stack, ~3 000 levels causes an unrecoverable stack overflow (exit 134).
+/// A limit of 200 uses only ~540 KB of stack, providing a large safety margin while
+/// accommodating any realistic provenance chain depth.
+const MAX_INGREDIENT_DEPTH: usize = 200;
+
 pub(crate) struct ManifestHashes {
     pub manifest_box_hash: Vec<u8>,
     pub signature_box_hash: Vec<u8>,
@@ -1528,7 +1537,14 @@ impl Store {
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
         context: &Context,
+        depth: usize,
     ) -> Result<()> {
+        if depth >= MAX_INGREDIENT_DEPTH {
+            return Err(Error::InvalidAsset(format!(
+                "ingredient chain depth ({depth}) exceeds maximum ({MAX_INGREDIENT_DEPTH})"
+            )));
+        }
+
         let settings = context.settings();
 
         // Pre-count verifiable ingredients so we can emit accurate step/total values.
@@ -1722,6 +1738,7 @@ impl Store {
                         asset_data,
                         validation_log,
                         context,
+                        depth + 1,
                     )?;
                 } else {
                     log_item!(label.clone(), "ingredient not found", "ingredient_checks")
@@ -1756,7 +1773,14 @@ impl Store {
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
         context: &Context,
+        depth: usize,
     ) -> Result<()> {
+        if depth >= MAX_INGREDIENT_DEPTH {
+            return Err(Error::InvalidAsset(format!(
+                "ingredient chain depth ({depth}) exceeds maximum ({MAX_INGREDIENT_DEPTH})"
+            )));
+        }
+
         let settings = context.settings();
 
         let total_ingredients = claim
@@ -1954,6 +1978,7 @@ impl Store {
                         asset_data,
                         validation_log,
                         context,
+                        depth + 1,
                     ))
                     .await?;
                 } else {
@@ -2158,7 +2183,7 @@ impl Store {
                 context,
             )?;
 
-            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log, context)?;
+            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log, context, 0)?;
         } else {
             Claim::verify_claim_async(
                 claim,
@@ -2171,8 +2196,16 @@ impl Store {
             )
             .await?;
 
-            Store::ingredient_checks_async(store, claim, &svi, asset_data, validation_log, context)
-                .await?;
+            Store::ingredient_checks_async(
+                store,
+                claim,
+                &svi,
+                asset_data,
+                validation_log,
+                context,
+                0,
+            )
+            .await?;
         }
 
         Ok(())
@@ -3969,6 +4002,14 @@ impl Store {
         validation_log: &mut StatusTracker,
         claim_label_path: &mut Vec<&'a str>,
     ) -> Result<()> {
+        if claim_label_path.len() >= MAX_INGREDIENT_DEPTH {
+            return Err(Error::InvalidAsset(format!(
+                "ingredient chain depth ({}) exceeds maximum ({})",
+                claim_label_path.len(),
+                MAX_INGREDIENT_DEPTH
+            )));
+        }
+
         let claim_label = claim.label();
 
         if svi.manifest_map.contains_key(claim_label) {
@@ -8911,5 +8952,63 @@ pub mod tests {
 
         // Verify that flush was called
         assert!(flush_called.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_ingredient_depth_limit_get_claim_referenced_manifests() {
+        let store = Store::new();
+        let claim = Claim::new("depth_test", Some("contentauth"), 2);
+        let mut svi = StoreValidationInfo::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        // Pre-fill claim_label_path to exactly MAX_INGREDIENT_DEPTH entries so the
+        // depth guard fires immediately without needing a real ingredient chain.
+        let labels: Vec<String> = (0..MAX_INGREDIENT_DEPTH)
+            .map(|i| format!("claim_{i}"))
+            .collect();
+        let mut claim_label_path: Vec<&str> = labels.iter().map(String::as_str).collect();
+
+        let result = Store::get_claim_referenced_manifests_impl(
+            &claim,
+            &store,
+            &mut svi,
+            true,
+            &mut validation_log,
+            &mut claim_label_path,
+        );
+
+        assert!(
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "expected Err(InvalidAsset) for depth >= MAX_INGREDIENT_DEPTH, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_ingredient_depth_limit_ingredient_checks() {
+        use crate::{claim::ClaimAssetData, context::Context};
+
+        let store = Store::new();
+        let claim = Claim::new("depth_test", Some("contentauth"), 2);
+        let svi = StoreValidationInfo::default();
+        let mut asset_data = ClaimAssetData::Bytes(&[], "image/jpeg");
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let context = Context::new();
+
+        let result = Store::ingredient_checks(
+            &store,
+            &claim,
+            &svi,
+            &mut asset_data,
+            &mut validation_log,
+            &context,
+            MAX_INGREDIENT_DEPTH,
+        );
+
+        assert!(
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "expected Err(InvalidAsset) for depth >= MAX_INGREDIENT_DEPTH, got: {result:?}"
+        );
     }
 }
