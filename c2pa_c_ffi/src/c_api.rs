@@ -4193,6 +4193,9 @@ verify_after_sign = true
 
         // Function should execute without crashing - that's the main test
         // The result value depends on whether the placeholder is valid
+        if !result_ptr.is_null() {
+            unsafe { c2pa_free(result_ptr as *const c_void) };
+        }
     }
 
     #[test]

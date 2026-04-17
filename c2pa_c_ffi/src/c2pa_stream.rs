@@ -570,5 +570,6 @@ mod tests {
         assert_eq!(buf, [1, 2, 3]);
 
         unsafe { c2pa_release_stream(c2pa_stream) };
+        cimpl_free(context as *mut std::ffi::c_void);
     }
 }
