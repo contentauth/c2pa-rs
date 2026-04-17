@@ -22,7 +22,6 @@
 //! C2PA bitstream is named with the standard [`C2PA_BOXHASH`] label.
 
 use std::{
-    collections::HashMap,
     fs,
     io::{self, Cursor, Seek, SeekFrom, Write},
     path::Path,
@@ -35,7 +34,7 @@ use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
         rename_or_move, AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader,
-        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        CAIWriter, HashBlockObjectType, HashObjectPositions,
     },
     error::{Error, Result},
 };
@@ -497,29 +496,35 @@ impl CAIWriter for OggIO {
             build_c2pa_pages(store_bytes, new_c2pa_serial)
         };
 
-        // Write output so that each bitstream's pages are contiguous,
-        // which is required for BoxHash byte-range verification.
+        // Write output in valid OGG order per RFC 3533:
+        // ALL BOS pages must appear before ANY data pages.
         //
         // Layout:
         //   1. C2PA BOS page
-        //   2. C2PA continuation + EOS pages
-        //   3. Audio BOS pages (one per non-C2PA bitstream)
+        //   2. Audio BOS page(s)
+        //   3. C2PA continuation + EOS pages (if manifest spans multiple pages)
         //   4. Audio data pages grouped by serial
         //
-        // OGG spec requires all BOS pages before any data pages.  Here
-        // the C2PA BOS comes first, followed by audio BOS pages, then
-        // data pages.  This keeps each bitstream's pages contiguous:
-        // C2PA occupies bytes [0..C2PA_total), audio occupies the rest.
+        // This means the C2PA bitstream's pages are NOT contiguous when
+        // the manifest spans multiple pages (BOS in group 1, data in
+        // group 3).  The BoxHash implementation accounts for this by
+        // summing the actual page sizes per serial rather than assuming
+        // a contiguous byte range.
 
         output_stream.rewind()?;
 
-        // 1-2. All C2PA pages (BOS + continuation + EOS) — contiguous block.
-        for page in &c2pa_pages {
+        // 1. C2PA BOS page (if any).
+        if let Some(c2pa_bos) = c2pa_pages.first() {
+            write_page(output_stream, c2pa_bos)?;
+        }
+
+        // 2. Audio BOS pages.
+        for page in &bos_pages {
             write_page(output_stream, page)?;
         }
 
-        // 3. Audio BOS pages.
-        for page in &bos_pages {
+        // 3. C2PA continuation + EOS pages.
+        for page in c2pa_pages.iter().skip(1) {
             write_page(output_stream, page)?;
         }
 
@@ -673,26 +678,11 @@ impl AssetPatch for OggIO {
     }
 }
 
-impl RemoteRefEmbed for OggIO {
-    fn embed_reference(&self, _asset_path: &Path, _embed_ref: RemoteRefEmbedType) -> Result<()> {
-        // XMP/remote references are not defined for OGG in the C2PA spec.
-        Err(Error::UnsupportedType)
-    }
-
-    fn embed_reference_to_stream(
-        &self,
-        _source_stream: &mut dyn CAIRead,
-        _output_stream: &mut dyn CAIReadWrite,
-        _embed_ref: RemoteRefEmbedType,
-    ) -> Result<()> {
-        Err(Error::UnsupportedType)
-    }
-}
+// RemoteRefEmbed is not implemented for OGG: the C2PA specification
+// does not define XMP or remote reference embedding for OGG containers.
 
 impl AssetBoxHash for OggIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
-        // To get correct contiguous ranges, we write to a temporary buffer
-        // first (which groups pages by serial).
         let has_c2pa = {
             input_stream.rewind()?;
             let pages = read_all_pages(input_stream)?;
@@ -711,58 +701,64 @@ impl AssetBoxHash for OggIO {
         temp_output.rewind()?;
         let pages = read_all_pages(&mut temp_output)?;
 
-        // Track byte ranges per serial, in the order pages appear.
-        let mut serial_ranges: HashMap<u32, (u64, u64)> = HashMap::new(); // serial -> (start, end)
-        let mut serial_order: Vec<u32> = Vec::new();
+        // Build a map of byte ranges per page, grouped by serial.
+        // Pages for a given serial may not be contiguous (C2PA BOS is
+        // in the BOS group, while C2PA data pages come after all BOS
+        // pages).  We emit one BoxMap entry per contiguous run of pages
+        // for each serial.
         let mut c2pa_serial: Option<u32> = None;
-        let mut offset: u64 = 0;
-
         for page in &pages {
-            let page_size = page.total_size() as u64;
-
             if page.is_c2pa_bos() {
                 c2pa_serial = Some(page.serial_number);
+                break;
             }
-
-            let entry = serial_ranges
-                .entry(page.serial_number)
-                .or_insert((offset, offset));
-            entry.1 = offset + page_size;
-
-            if !serial_order.contains(&page.serial_number) {
-                serial_order.push(page.serial_number);
-            }
-
-            offset += page_size;
         }
 
-        let mut box_maps = Vec::new();
+        let mut box_maps: Vec<BoxMap> = Vec::new();
+        let mut offset: u64 = 0;
 
-        for serial in &serial_order {
-            let (start, end) = serial_ranges[serial];
-            let is_c2pa = c2pa_serial == Some(*serial);
+        // Walk pages in file order.  Merge consecutive pages with the
+        // same serial into one BoxMap entry; start a new entry when the
+        // serial changes.
+        for page in &pages {
+            let page_size = page.total_size() as u64;
+            let is_c2pa = c2pa_serial == Some(page.serial_number);
 
             let name = if is_c2pa {
                 C2PA_BOXHASH.to_string()
             } else {
-                format!("Stream-{serial}")
+                format!("Stream-{}", page.serial_number)
             };
 
-            let excluded = if is_c2pa && !has_c2pa {
-                Some(true)
-            } else {
-                None
-            };
-
-            box_maps.push(BoxMap {
-                names: vec![name],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded,
-                pad: ByteBuf::from(Vec::new()),
-                range_start: start,
-                range_len: end - start,
+            // Try to extend the last BoxMap entry if it has the same name
+            // and is immediately adjacent.
+            let extend = box_maps.last().map_or(false, |last| {
+                last.names[0] == name && last.range_start + last.range_len == offset
             });
+
+            if extend {
+                if let Some(last) = box_maps.last_mut() {
+                    last.range_len += page_size;
+                }
+            } else {
+                let excluded = if is_c2pa && !has_c2pa {
+                    Some(true)
+                } else {
+                    None
+                };
+
+                box_maps.push(BoxMap {
+                    names: vec![name],
+                    alg: None,
+                    hash: ByteBuf::from(Vec::new()),
+                    excluded,
+                    pad: ByteBuf::from(Vec::new()),
+                    range_start: offset,
+                    range_len: page_size,
+                });
+            }
+
+            offset += page_size;
         }
 
         Ok(box_maps)
@@ -837,10 +833,6 @@ impl AssetIO for OggIO {
         self.save_cai_store(asset_path, &[])
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
-        Some(self)
-    }
-
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -857,10 +849,7 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::{
-        asset_io::{HashBlockObjectType, RemoteRefEmbedType},
-        error::Error,
-    };
+    use crate::error::Error;
 
     /// Minimal valid OGG Vorbis file.
     const SAMPLE_OGG: &[u8] = include_bytes!("../../tests/fixtures/sample1.ogg");
@@ -1266,24 +1255,6 @@ mod tests {
             other => panic!("unexpected: {:?}", other),
         }
         assert!(new_handler.supported_types().contains(&"audio/ogg"));
-    }
-
-    // ── Remote ref unsupported ──────────────────────────────────────────────
-
-    #[test]
-    fn test_embed_reference_unsupported() {
-        let handler = OggIO::new("ogg");
-        let mut input = Cursor::new(SAMPLE_OGG);
-        let mut output = Cursor::new(Vec::new());
-        let result = handler.embed_reference_to_stream(
-            &mut input,
-            &mut output,
-            RemoteRefEmbedType::Xmp("https://example.com".to_string()),
-        );
-        assert!(
-            matches!(result, Err(Error::UnsupportedType)),
-            "expected UnsupportedType for OGG remote ref"
-        );
     }
 
     // ── File-based read/write ───────────────────────────────────────────────
