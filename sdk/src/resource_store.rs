@@ -289,7 +289,19 @@ impl ResourceStore {
     {
         #[cfg(feature = "file_io")]
         if let Some(base) = self.base_path.as_ref() {
-            let path = base.join(id.into());
+            use std::path::Component;
+            let id_str: String = id.into();
+            for component in Path::new(&id_str).components() {
+                match component {
+                    Component::Normal(_) | Component::CurDir => {}
+                    _ => {
+                        return Err(crate::Error::BadParam(format!(
+                            "Path traversal not allowed: {id_str}"
+                        )));
+                    }
+                }
+            }
+            let path = base.join(&id_str);
             create_dir_all(path.parent().unwrap_or(Path::new("")))?;
             write(path, value.into())?;
             return Ok(self);
@@ -495,5 +507,57 @@ mod tests {
             .expect("from_bytes");
         let _json = reader.json();
         println!("{_json}");
+    }
+
+    #[cfg(feature = "file_io")]
+    mod zip_slip_tests {
+        use tempfile::tempdir;
+
+        use super::*;
+
+        #[test]
+        fn add_with_base_path_rejects_parent_dir_traversal() {
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            let result = store.add("../outside_evil.txt", b"attacker data".to_vec());
+            assert!(result.is_err());
+
+            let escaped = temp.path().parent().unwrap().join("outside_evil.txt");
+            assert!(!escaped.exists());
+        }
+
+        #[test]
+        fn add_with_base_path_rejects_absolute_path() {
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            let result = store.add("/etc/passwd", b"attacker data".to_vec());
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn add_with_base_path_accepts_normal_resource() {
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            store.add("thumbnail.jpg", b"image data".to_vec()).unwrap();
+            assert!(temp.path().join("thumbnail.jpg").exists());
+        }
+
+        #[test]
+        fn add_with_base_path_accepts_subdir_resource() {
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            store
+                .add("subdir/thumbnail.jpg", b"image data".to_vec())
+                .unwrap();
+            assert!(temp.path().join("subdir/thumbnail.jpg").exists());
+        }
     }
 }

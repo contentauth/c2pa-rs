@@ -93,58 +93,52 @@ impl ArchiveKind {
 /// Version of the Builder Archive file
 const ARCHIVE_VERSION: &str = "1";
 
-/// Sanitizes a path to prevent directory traversal attacks.
+/// Validate and canonicalize an archive entry path.
 ///
-/// This function validates that the path:
-/// - Does not contain '..' components
-/// - Does not contain absolute path markers
-/// - Does not escape the intended directory structure
+/// Uses [`std::path::Path::components`] for platform-correct parsing. This
+/// catches `..` (`ParentDir`), leading separators (`RootDir`), and Windows
+/// drive/UNC prefixes (`Prefix`) on all host platforms — cases that a
+/// hand-rolled string split can miss when they appear as inner components.
 ///
-/// # Arguments
-/// * `path` - The path string to sanitize
-///
-/// # Returns
-/// * The sanitized path if valid
-///
-/// # Errors
-/// * Returns an [`Error::BadParam`] if the path contains dangerous components
+/// Returns the normalized, forward-slash-separated path (`.` components are
+/// stripped), or an error if the path is empty, absolute, contains a `..`
+/// traversal, or includes a Windows drive/UNC prefix.
 fn sanitize_archive_path(path: &str) -> Result<String> {
-    // Reject empty paths
+    use std::path::{Component, Path};
+
     if path.is_empty() {
         return Err(Error::BadParam("Empty path not allowed".to_string()));
     }
 
-    // Reject paths that start with '/' (absolute paths)
-    if path.starts_with('/') || path.starts_with('\\') {
-        return Err(Error::BadParam(format!(
-            "Absolute path not allowed: {path}"
-        )));
-    }
+    let mut sanitized = String::new();
 
-    // Check for drive letters on Windows (e.g., "C:")
-    if path.len() >= 2 && path.chars().nth(1) == Some(':') {
-        return Err(Error::BadParam(format!("Drive letter not allowed: {path}")));
-    }
-
-    // Split the path and check each component
-    let components: Vec<&str> = path.split(&['/', '\\'][..]).collect();
-
-    for component in &components {
-        // Reject '..' components
-        if *component == ".." {
-            return Err(Error::BadParam(format!(
-                "Path traversal not allowed: {path}"
-            )));
-        }
-
-        // Reject empty components (which could come from '//')
-        if component.is_empty() {
-            continue; // Allow empty components from trailing slashes
+    for component in Path::new(path).components() {
+        match component {
+            Component::Normal(part) => {
+                let part = part.to_str().ok_or_else(|| {
+                    Error::BadParam(format!("Non-UTF-8 path component in: {path}"))
+                })?;
+                if !sanitized.is_empty() {
+                    sanitized.push('/');
+                }
+                sanitized.push_str(part);
+            }
+            // Silently drop current-directory markers (`.`).
+            Component::CurDir => {}
+            // Absolute paths (`/`), Windows drive/UNC prefixes, and `..` are all rejected.
+            Component::RootDir | Component::Prefix(_) | Component::ParentDir => {
+                return Err(Error::BadParam(format!(
+                    "Path traversal not allowed: {path}"
+                )));
+            }
         }
     }
 
-    // Normalize the path to use forward slashes
-    Ok(path.replace('\\', "/"))
+    if sanitized.is_empty() {
+        return Err(Error::BadParam("Empty path not allowed".to_string()));
+    }
+
+    Ok(sanitized)
 }
 
 /// Use a ManifestDefinition to define a manifest and to build a `ManifestStore`.
@@ -1032,15 +1026,14 @@ impl Builder {
         id: &str,
         mut stream: impl Read + Seek + Send,
     ) -> Result<&mut Self> {
-        // Sanitize the resource ID to prevent path traversal attacks
-        let _sanitized_id = sanitize_archive_path(id)?;
+        let sanitized_id = sanitize_archive_path(id)?;
 
-        if self.resources.exists(id) {
+        if self.resources.exists(&sanitized_id) {
             return Err(Error::BadParam(id.to_string())); // todo add specific error
         }
         let mut buf = Vec::new();
         let _size = stream.read_to_end(&mut buf)?;
-        self.resources.add(id, buf)?;
+        self.resources.add(sanitized_id, buf)?;
         Ok(self)
     }
 
@@ -1143,11 +1136,11 @@ impl Builder {
                     .nth(1)
                     .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
 
-                // Additional validation: ensure id itself is safe
-                let _sanitized_id = sanitize_archive_path(id)?;
+                // Sanitize id to prevent path traversal via stored key
+                let sanitized_id = sanitize_archive_path(id)?;
 
                 //println!("adding resource {}", id);
-                builder.resources.add(id, data)?;
+                builder.resources.add(sanitized_id, data)?;
             }
 
             // Load the c2pa_manifests.
@@ -1164,7 +1157,7 @@ impl Builder {
                     .nth(1)
                     .ok_or(Error::BadParam("Invalid manifest path".to_string()))?;
 
-                // Additional validation: ensure manifest_label is safe
+                // Sanitize manifest_label to prevent path traversal
                 let _sanitized_label = sanitize_archive_path(manifest_label)?;
 
                 let manifest_label = manifest_label.replace(['_'], ":");
@@ -1194,10 +1187,12 @@ impl Builder {
                     .map_err(|_| Error::BadParam("Invalid ingredient path".to_string()))?;
                 let id = file.name().split('/').nth(2).unwrap_or_default();
 
-                // Additional validation: ensure id is safe
-                if !id.is_empty() {
-                    let _sanitized_id = sanitize_archive_path(id)?;
-                }
+                // Sanitize id to prevent path traversal via stored key
+                let sanitized_id = if !id.is_empty() {
+                    sanitize_archive_path(id)?
+                } else {
+                    String::new()
+                };
 
                 if index >= builder.definition.ingredients.len() {
                     return Err(Error::OtherError(Box::new(std::io::Error::other(format!(
@@ -1206,7 +1201,7 @@ impl Builder {
                 }
                 builder.definition.ingredients[index]
                     .resources_mut()
-                    .add(id, data)?;
+                    .add(sanitized_id, data)?;
             }
         }
         Ok(builder)
@@ -1269,9 +1264,9 @@ impl Builder {
     /// Copies binary resources from `store` into this builder when the id is not already present.
     fn merge_resources_from_store(&mut self, store: &ResourceStore) -> Result<()> {
         for (id, data) in store.resources() {
-            let _sanitized_id = sanitize_archive_path(id)?;
-            if !self.resources.exists(id) {
-                self.resources.add(id, data.clone())?;
+            let sanitized_id = sanitize_archive_path(id)?;
+            if !self.resources.exists(&sanitized_id) {
+                self.resources.add(sanitized_id, data.clone())?;
             }
         }
         Ok(())
@@ -7756,5 +7751,49 @@ mod tests {
 
         let future = builder.sign_async(&signer, "image/jpeg", &mut src, &mut dst);
         assert_send(future);
+    }
+
+    // --- sanitize_archive_path regression tests ---
+
+    #[test]
+    fn sanitize_archive_path_normal_path_accepted() {
+        assert_eq!(
+            sanitize_archive_path("resources/thumbnail.jpg").unwrap(),
+            "resources/thumbnail.jpg"
+        );
+    }
+
+    #[test]
+    fn sanitize_archive_path_dot_stripped() {
+        assert_eq!(
+            sanitize_archive_path("./resources/thumb.jpg").unwrap(),
+            "resources/thumb.jpg"
+        );
+    }
+
+    #[test]
+    fn sanitize_archive_path_parent_dir_rejected() {
+        assert!(sanitize_archive_path("../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn sanitize_archive_path_inner_parent_dir_rejected() {
+        assert!(sanitize_archive_path("resources/../../../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn sanitize_archive_path_absolute_rejected() {
+        assert!(sanitize_archive_path("/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn sanitize_archive_path_empty_rejected() {
+        assert!(sanitize_archive_path("").is_err());
+    }
+
+    #[test]
+    fn sanitize_archive_path_dot_only_rejected() {
+        // "." normalises to no Normal components → empty result → error
+        assert!(sanitize_archive_path(".").is_err());
     }
 }
