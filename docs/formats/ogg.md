@@ -15,9 +15,11 @@ An OGG file consists of interleaved **pages**, each belonging to a **logical bit
 Layout after C2PA embedding:
 
 1. **C2PA BOS page** – Beginning-of-stream page for the manifest bitstream. First packet starts with `\x00c2pa` followed by JUMBF manifest data.
-2. **C2PA continuation/EOS pages** – If the manifest exceeds ~65 KB, it spans multiple pages. The last page carries the EOS flag.
-3. **Audio BOS page(s)** – Original Vorbis or Opus identification header.
+2. **Audio BOS page(s)** – Original Vorbis or Opus identification header.
+3. **C2PA continuation/EOS pages** – If the manifest exceeds ~65 KB, it spans multiple pages. The last page carries the EOS flag. For small manifests the BOS page is also the EOS page, so this group is empty.
 4. **Audio data pages** – Original audio content, unmodified.
+
+This ordering ensures all BOS pages appear before any data pages (RFC 3533 requirement).
 
 This ordering ensures each bitstream's pages are contiguous, which is required for BoxHash byte-range verification.
 

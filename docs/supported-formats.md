@@ -17,10 +17,10 @@ The following table summarizes the supported media (asset) file formats.  This i
 | `jxl`         | `image/jxl`                                                                   |
 | `m4a`         | `audio/mp4`                                                                   |
  | `mp3`         | `audio/mpeg`                                                                  |
- | `ogg`         | `audio/ogg`                                                                   |
- | `opus`        | `audio/opus`                                                                  |
  | `mp4`         | `video/mp4`, `application/mp4` <br/>Fragmented MP4 (DASH) supported only for file-based operations from the Rust library.                                   |
  | `mov`         | `video/quicktime`                                                             |
+ | `ogg`         | `audio/ogg`                                                                   |
+ | `opus`        | `audio/opus`                                                                  |
  | `pdf`         | `application/pdf` (**read-only**)                                              |
  | `png`         | `image/png`                                                                   |
  | `svg`         | `image/svg+xml`                                                               |
