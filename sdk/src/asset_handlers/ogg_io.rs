@@ -909,10 +909,10 @@ mod tests {
     #[test]
     fn test_read_cai_too_short() {
         let handler = OggIO::new("ogg");
-        let mut cursor = Cursor::new(&[0x4f, 0x67, 0x67]); // "Ogg" (missing S)
+        let mut cursor = Cursor::new(&[0x4f, 0x67, 0x67]); // "Ogg" (3 bytes, too short for a page)
         match handler.read_cai(&mut cursor) {
-            Err(_) => {} // either IoError or InvalidCapture
-            Ok(_) => panic!("expected error for truncated stream"),
+            Err(Error::OggError(OggError::InvalidCapture)) => {}
+            other => panic!("expected InvalidCapture for truncated stream, got {:?}", other),
         }
     }
 
@@ -1099,6 +1099,32 @@ mod tests {
     }
 
     #[test]
+    fn test_audio_preserved_after_write_remove() {
+        // For single-stream OGG files (the common case for audio), a
+        // sign + remove cycle should produce byte-identical output.
+        // Multi-stream files may have page ordering changed (grouped
+        // by serial instead of interleaved), but content is preserved.
+        let handler = OggIO::new("ogg");
+        let mut input = Cursor::new(SAMPLE_OGG);
+        let mut signed = Cursor::new(Vec::new());
+
+        handler
+            .write_cai(&mut input, &mut signed, TEST_MANIFEST)
+            .unwrap();
+
+        let mut restored = Cursor::new(Vec::new());
+        handler
+            .remove_cai_store_from_stream(&mut signed, &mut restored)
+            .unwrap();
+
+        assert_eq!(
+            restored.into_inner(),
+            SAMPLE_OGG,
+            "single-stream audio should be byte-identical after sign + remove"
+        );
+    }
+
+    #[test]
     fn test_write_empty_removes() {
         let handler = OggIO::new("ogg");
         let mut input = Cursor::new(SAMPLE_OGG);
@@ -1240,6 +1266,45 @@ mod tests {
                 bm.range_start, expected_start,
                 "BoxMap entries must be contiguous (gap at offset {expected_start})"
             );
+            expected_start += bm.range_len;
+        }
+    }
+
+    #[test]
+    fn test_get_box_map_large_manifest() {
+        // A large manifest spans multiple C2PA pages.  With BOS-compliant
+        // ordering the C2PA pages are non-contiguous (BOS in BOS group,
+        // continuation after audio BOS), producing two separate "C2PA"
+        // BoxMap entries.
+        let handler = OggIO::new("ogg");
+        let large_manifest = vec![0xAB; 100_000];
+        let mut input = Cursor::new(SAMPLE_OGG);
+        let mut output = Cursor::new(Vec::new());
+
+        handler
+            .write_cai(&mut input, &mut output, &large_manifest)
+            .unwrap();
+
+        let box_map = handler.get_box_map(&mut output).unwrap();
+
+        // Should have two separate "C2PA" entries (non-contiguous pages).
+        let c2pa_count = box_map
+            .iter()
+            .filter(|bm| bm.names[0] == C2PA_BOXHASH)
+            .count();
+        assert!(
+            c2pa_count >= 2,
+            "large manifest should produce non-contiguous C2PA entries, got {c2pa_count}"
+        );
+
+        // Ranges must still be contiguous and cover the full file.
+        let total: u64 = box_map.iter().map(|bm| bm.range_len).sum();
+        let file_len = output.get_ref().len() as u64;
+        assert_eq!(total, file_len, "BoxMap ranges must sum to file size");
+
+        let mut expected_start = 0u64;
+        for bm in &box_map {
+            assert_eq!(bm.range_start, expected_start, "BoxMap gap at {expected_start}");
             expected_start += bm.range_len;
         }
     }
