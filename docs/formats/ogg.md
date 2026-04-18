@@ -34,8 +34,8 @@ OGG page parsing and writing are implemented directly in the handler. The OGG pa
 
 - **Module**: `sdk/src/asset_handlers/ogg_io.rs`.
 - **Handler**: `OggIO` with `supported_types()` returning `["ogg", "audio/ogg", "opus", "audio/opus"]`.
-- **Traits**: `CAIReader`, `CAIWriter`, `AssetIO`, `AssetPatch`, `AssetBoxHash`, `RemoteRefEmbed`.
-- **Note on RemoteRefEmbed**: Returns `UnsupportedType` for all embed types — the C2PA specification does not define XMP embedding for OGG containers.
+- **Traits**: `CAIReader`, `CAIWriter`, `AssetIO`, `AssetPatch`, `AssetBoxHash`.
+- **Note**: `RemoteRefEmbed` is not implemented — the C2PA specification does not define XMP or remote reference embedding for OGG containers.
 - **Flow**:
   - **Read**: Parse all pages, find the BOS page whose first packet starts with `\x00c2pa`, collect all pages with that serial number, reconstruct the packet, strip the 5-byte magic prefix, return the JUMBF bytes.
   - **Write**: Parse all pages, remove any existing C2PA bitstream, build new C2PA pages from the manifest data (handling fragmentation across pages for large manifests), write output with C2PA pages first followed by audio pages grouped by serial for contiguous BoxHash ranges.

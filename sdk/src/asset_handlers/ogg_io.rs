@@ -1006,6 +1006,56 @@ mod tests {
     }
 
     #[test]
+    fn test_write_read_roundtrip_255_boundary() {
+        // Manifest of 250 bytes → packet = 250 + 5 magic = 255 bytes exactly.
+        // This triggers the zero-length terminator segment logic.
+        let handler = OggIO::new("ogg");
+        let manifest = vec![0xCC; 250];
+        let mut input = Cursor::new(SAMPLE_OGG);
+        let mut output = Cursor::new(Vec::new());
+
+        handler
+            .write_cai(&mut input, &mut output, &manifest)
+            .expect("write_cai failed for 255-boundary manifest");
+
+        let read_back = handler
+            .read_cai(&mut output)
+            .expect("read_cai failed for 255-boundary manifest");
+
+        assert_eq!(read_back, manifest, "255-boundary manifest round-trip mismatch");
+    }
+
+    #[test]
+    fn test_bos_grouping_large_manifest() {
+        // Large manifest spans multiple C2PA pages.  Verify BOS pages
+        // are still grouped before any data pages.
+        let handler = OggIO::new("ogg");
+        let large_manifest = vec![0xAB; 100_000];
+        let mut input = Cursor::new(SAMPLE_OGG);
+        let mut output = Cursor::new(Vec::new());
+
+        handler
+            .write_cai(&mut input, &mut output, &large_manifest)
+            .unwrap();
+
+        output.rewind().unwrap();
+        let pages = read_all_pages(&mut output).unwrap();
+
+        let mut seen_non_bos = false;
+        for page in &pages {
+            if page.is_bos() {
+                assert!(
+                    !seen_non_bos,
+                    "BOS page found after non-BOS page (multi-page manifest): serial {}",
+                    page.serial_number,
+                );
+            } else {
+                seen_non_bos = true;
+            }
+        }
+    }
+
+    #[test]
     fn test_write_replaces_existing() {
         let handler = OggIO::new("ogg");
         let mut input = Cursor::new(SAMPLE_OGG);
@@ -1179,10 +1229,19 @@ mod tests {
             .find(|bm| bm.names.iter().any(|n| n.starts_with("Stream-")));
         assert!(audio_entry.is_some(), "missing Stream-N BoxMap entry");
 
-        // Ranges must not overlap and should cover the file.
+        // Ranges must be contiguous, non-overlapping, and cover the file.
         let total: u64 = box_map.iter().map(|bm| bm.range_len).sum();
         let file_len = output.get_ref().len() as u64;
         assert_eq!(total, file_len, "BoxMap ranges must sum to file size");
+
+        let mut expected_start = 0u64;
+        for bm in &box_map {
+            assert_eq!(
+                bm.range_start, expected_start,
+                "BoxMap entries must be contiguous (gap at offset {expected_start})"
+            );
+            expected_start += bm.range_len;
+        }
     }
 
     #[test]
