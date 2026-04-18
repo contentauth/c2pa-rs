@@ -622,7 +622,12 @@ impl CAIWriter for OggIO {
 
 impl AssetPatch for OggIO {
     fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut file = fs::File::open(asset_path).map_err(Error::IoError)?;
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
         let pages = read_all_pages(&mut file)?;
 
         let c2pa_serial = pages
@@ -655,11 +660,6 @@ impl AssetPatch for OggIO {
         }
 
         // Overwrite each C2PA page in-place.
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
         for (old_page, new_page) in c2pa_pages.iter().zip(new_pages.iter()) {
             let serialized = serialize_page(new_page);
             file.seek(SeekFrom::Start(old_page.file_offset))

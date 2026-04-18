@@ -40,7 +40,7 @@ OGG page parsing and writing are implemented directly in the handler. The OGG pa
 - **Note**: `RemoteRefEmbed` is not implemented — the C2PA specification does not define XMP or remote reference embedding for OGG containers.
 - **Flow**:
   - **Read**: Parse all pages, find the BOS page whose first packet starts with `\x00c2pa`, collect all pages with that serial number, reconstruct the packet, strip the 5-byte magic prefix, return the JUMBF bytes.
-  - **Write**: Parse all pages, remove any existing C2PA bitstream, build new C2PA pages from the manifest data (handling fragmentation across pages for large manifests), write output with C2PA pages first followed by audio pages grouped by serial for contiguous BoxHash ranges.
+  - **Write**: Parse all pages, remove any existing C2PA bitstream, build new C2PA pages from the manifest data (handling fragmentation across pages for large manifests), write output with BOS pages grouped first (C2PA BOS, then audio BOS), followed by C2PA continuation/EOS pages, then audio data pages grouped by serial.
   - **BoxHash**: Each logical bitstream maps to a `BoxMap` entry. Audio streams are named `Stream-{serial}` (decimal). The C2PA stream uses the `C2PA` label. If no C2PA stream exists, a placeholder entry is inserted with `excluded: true`.
   - **Patch**: For same-size manifest replacement, C2PA pages are overwritten in-place with recomputed CRC checksums.
 
