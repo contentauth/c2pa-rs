@@ -499,7 +499,7 @@ jobs:
         run: cargo codspeed build -m $CODSPEED_MODE -p c2pa --no-default-features --features rust_native_crypto
 
       - name: Run the benchmarks
-        uses: CodSpeedHQ/action@v4
+        uses: CodSpeedHQ/action@v4.13.1
         with:
           mode: ${{ env.CODSPEED_MODE }}
           run: cargo codspeed run
