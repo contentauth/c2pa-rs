@@ -1142,6 +1142,7 @@ pub mod tests {
             description: Some("Some ingredient description".to_owned()),
             informational_uri: Some("https://tfhub.dev/deepmind/bigbigan-resnet50/1".to_owned()),
             data_types: Some(data_types.clone()),
+            digital_source_type: None,
             validation_results: Some(validation_results.clone()),
             active_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
             claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
@@ -1230,6 +1231,42 @@ pub mod tests {
         assert!(!v3_decoded.is_v1_compatible());
         assert!(!v3_decoded.is_v2_compatible());
         assert!(v3_decoded.is_v3_compatible());
+    }
+
+    #[test]
+    fn test_digital_source_type_in_ingredient() {
+        // v3 round-trip with digital_source_type (no active_manifest)
+        let ingredient = Ingredient {
+            title: Some("test_title".to_owned()),
+            format: Some("image/jpeg".to_owned()),
+            instance_id: Some("67890".to_owned()),
+            relationship: Relationship::ParentOf,
+            digital_source_type: Some(
+                "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia".to_owned(),
+            ),
+            version: 3,
+            ..Default::default()
+        };
+
+        let assertion = ingredient.to_assertion().expect("to_assertion");
+        let decoded = Ingredient::from_assertion(&assertion).expect("from_assertion");
+        assert_eq!(decoded, ingredient);
+
+        // digital_source_type + active_manifest is mutually exclusive
+        let bad = Ingredient {
+            digital_source_type: Some(
+                "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia".to_owned(),
+            ),
+            active_manifest: Some(HashedUri::new(
+                "self#jumbf=c2pa/urn:c2pa:TEST".to_owned(),
+                Some("sha256".to_owned()),
+                &[1, 2, 3],
+            )),
+            validation_results: Some(ValidationResults::default()),
+            version: 3,
+            ..Default::default()
+        };
+        assert!(bad.to_assertion().is_err());
     }
 
     #[test]

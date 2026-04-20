@@ -1822,6 +1822,11 @@ mod tests {
             "thumbnail".as_bytes().to_vec()
         );
         assert_eq!(ingredient.active_manifest(), Some("active_manifest"));
+        ingredient.set_digital_source_type(DigitalSourceType::TrainedAlgorithmicMedia);
+        assert_eq!(
+            ingredient.digital_source_type(),
+            Some(&DigitalSourceType::TrainedAlgorithmicMedia)
+        );
 
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),
