@@ -627,6 +627,6 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Audit crate dependencies
-        uses: EmbarkStudios/cargo-deny-action@v2
+        uses: EmbarkStudios/cargo-deny-action@v2.0.16
         with:
           command: check advisories bans licenses sources
