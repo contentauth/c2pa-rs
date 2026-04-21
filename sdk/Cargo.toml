@@ -172,7 +172,7 @@ serde_json = { version = "1.0.117", features = ["preserve_order"] }
 serde_with = "3.15.1"
 serde-transcode = "1.1.1"
 sha1 = "0.10.6"
-spki = { version = "0.7.3", optional = true }
+spki = { version = "0.8.0", optional = true }
 static-iref = "3.0"
 tempfile = "3.23.0"
 thiserror = "2.0.17"
