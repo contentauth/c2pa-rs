@@ -38,7 +38,8 @@ To add the icon using C2PA Tool, make sure the icon file and the manifest defini
 c2patool image_to_sign.jpg -m manifest.json -o signed_with_icon.jpg
 ```
 
-NOTE: [ACA Inspect](https://inspect.cr/) will only display an icon for a signing certificate if the certificate can be traced back to a root certificate on the [C2PA trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists#c2pa-trust-list).
+> [!NOTE]
+> [ACA Inspect](https://inspect.cr/) will only display an icon for a signing certificate if the certificate can be traced back to a root certificate on the [C2PA trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists#c2pa-trust-list).
 
 ## Special properties used by C2PA Tool
 
@@ -53,7 +54,8 @@ The following manifest properties are specific to C2PA Tool and used for signing
 
 The example below is a minimal manifest definition that uses a default testing certificate in the [sample folder](https://github.com/contentauth/c2pa-rs/tree/main/cli/sample) that are also built into the `c2patool` binary.
 
-**NOTE**:  When you don't specify a key or certificate in the manifest `private_key` and `sign_cert` fields, the tool will use the built-in key and cert. You'll see a warning message, since they are meant for development purposes only. 
+> [!NOTE]
+> When you don't specify a key or certificate in the manifest `private_key` and `sign_cert` fields, the tool will use the built-in key and cert. You'll see a warning message, since they are meant for development purposes only.
 
 For actual use, provide a permanent key and certificate in the manifest definition or environment variables; see [Creating and using an X.509 certificate](x_509.md). 
 

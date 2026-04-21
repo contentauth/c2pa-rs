@@ -321,7 +321,7 @@ _26 August 2025_
 _15 August 2025_
 # Changelog
 
-All changes to C2PA Tool are documented in this file.  For additional information on versions 0.9.x and earlier, see the [Archived release motes](../docs/release-notes.md).
+All changes to C2PA Tool are documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
 
