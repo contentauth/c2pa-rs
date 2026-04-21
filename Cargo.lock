@@ -494,7 +494,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa"
-version = "0.79.4"
+version = "0.80.0"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.79.4"
+version = "0.80.0"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -625,7 +625,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.79.4"
+version = "0.80.0"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -633,7 +633,7 @@ dependencies = [
 
 [[package]]
 name = "c2patool"
-version = "0.26.48"
+version = "0.26.50"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -778,9 +778,9 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "4.6.0"
+version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b193af5b67834b676abd72466a96c1024e6a6ad978a1f484bd90b85c94041351"
+checksum = "1ddb117e43bbf7dacf0a4190fef4d345b9bad68dfc649cb349e7d17d28428e51"
 dependencies = [
  "clap_builder",
  "clap_derive",
@@ -800,9 +800,9 @@ dependencies = [
 
 [[package]]
 name = "clap_derive"
-version = "4.6.0"
+version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1110bd8a634a1ab8cb04345d8d878267d57c3cf1b38d91b71af6686408bbca6a"
+checksum = "f2ce8604710f6733aa641a2b3731eaa1e8b3d9973d5e3565da11800813f997a9"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -1385,7 +1385,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.79.4"
+version = "0.80.0"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -1946,9 +1946,9 @@ dependencies = [
 
 [[package]]
 name = "hyper-rustls"
-version = "0.27.8"
+version = "0.27.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2b52f86d1d4bc0d6b4e6826d960b1b333217e07d36b882dca570a5e1c48895b"
+checksum = "33ca68d021ef39cf6463ab54c1d0f5daf03377b70561305bb89a8f83aab66e0f"
 dependencies = [
  "http",
  "hyper",
@@ -2501,7 +2501,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.79.4"
+version = "0.80.0"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -3147,9 +3147,9 @@ checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
 
 [[package]]
 name = "portable-atomic-util"
-version = "0.2.6"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "091397be61a01d4be58e7841595bd4bfedb15f1cd54977d79b8271e94ed799a3"
+checksum = "c2a106d1259c23fac8e543272398ae0e3c0b8d33c88ed73d0cc71b0f1d902618"
 dependencies = [
  "portable-atomic",
 ]
@@ -3277,9 +3277,9 @@ dependencies = [
 
 [[package]]
 name = "pxfm"
-version = "0.1.28"
+version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5a041e753da8b807c9255f28de81879c78c876392ff2469cde94799b2896b9d"
+checksum = "e0c5ccf5294c6ccd63a74f1565028353830a9c2f5eb0c682c355c471726a6e3f"
 
 [[package]]
 name = "quick-error"
@@ -3470,9 +3470,9 @@ checksum = "973443cf09a9c8656b574a866ab68dfa19f0867d0340648c7d2f6a71b8a8ea68"
 
 [[package]]
 name = "rasn"
-version = "0.28.11"
+version = "0.28.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c00672f0ebff31e31b6d7e8db8b7c639b4a8ee9ae6afa206bc4e6acd706e6b2"
+checksum = "3b5124d11b83affd994615edb202e27cb7990ea64241255fe3b72c03f311d108"
 dependencies = [
  "bitvec",
  "bitvec-nom2",
@@ -3493,9 +3493,9 @@ dependencies = [
 
 [[package]]
 name = "rasn-cms"
-version = "0.28.11"
+version = "0.28.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b062f8fd7cd3f3273c923c79b326d4cae2c20df17536feb522d8720de415fbb6"
+checksum = "9e14205d1fff7071fc387e5ba3e3a3beab9154cf9e516e534cc381be251f0b7c"
 dependencies = [
  "rasn",
  "rasn-pkix",
@@ -3503,9 +3503,9 @@ dependencies = [
 
 [[package]]
 name = "rasn-derive"
-version = "0.28.11"
+version = "0.28.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6eaf3291a7744ab19ddd7eb12610859e73b804fa642e56b4b04b902a4a5d0ad"
+checksum = "a597b42152853fced502c26baa6c51b0fc2f1cbc2c07e019d3ea4d6872475d2e"
 dependencies = [
  "proc-macro2",
  "rasn-derive-impl",
@@ -3514,9 +3514,9 @@ dependencies = [
 
 [[package]]
 name = "rasn-derive-impl"
-version = "0.28.11"
+version = "0.28.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1676f3d82e9a8899f157366cd2b0890d9baf55240e8f0e8d78559e8325595014"
+checksum = "fbf5ea9c459c6029dcdd4b95dfbb521a6c3a384527c3a3b5c7e8c260d35f5157"
 dependencies = [
  "either",
  "itertools 0.13.0",
@@ -3528,9 +3528,9 @@ dependencies = [
 
 [[package]]
 name = "rasn-ocsp"
-version = "0.28.11"
+version = "0.28.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c87a5fee571244591a4c3139078910ce0d9ea84110ff8afc83f48666970e2f9"
+checksum = "33045e42cdbcc1e860c1426f76780d410c83677fe2e5057ea1e2bf8e61261a9d"
 dependencies = [
  "rasn",
  "rasn-pkix",
@@ -3538,9 +3538,9 @@ dependencies = [
 
 [[package]]
 name = "rasn-pkix"
-version = "0.28.11"
+version = "0.28.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0ef60fdd14a70643442e46b45f99e878c454c67354f122017b4630f4f766cac"
+checksum = "e5710ec0a395b7730c94d881132e3dcc2c13d3191ad788d6dfb48215dfa96d8e"
 dependencies = [
  "rasn",
 ]
@@ -4504,9 +4504,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.51.1"
+version = "1.52.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f66bf9585cda4b724d3e78ab34b73fb2bbaba9011b9bfdf69dc836382ea13b8c"
+checksum = "b67dee974fe86fd92cc45b7a95fdd2f99a36a6d7b0d431a231178d3d670bbcc6"
 dependencies = [
  "bytes",
  "libc",
@@ -4908,9 +4908,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.23.0"
+version = "1.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ac8b6f42ead25368cf5b098aeb3dc8a1a2c05a3eee8a9a1a68c640edbfc79d9"
+checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
@@ -5157,9 +5157,9 @@ dependencies = [
 
 [[package]]
 name = "webpki-roots"
-version = "1.0.6"
+version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22cfaf3c063993ff62e73cb4311efde4db1efb31ab78a3e5c457939ad5cc0bed"
+checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
 dependencies = [
  "rustls-pki-types",
 ]

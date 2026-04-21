@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.50](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.49...c2patool-v0.26.50)
+_16 April 2026_
+
+### Fixed
+
+* Multi rendition support ([#2058](https://github.com/contentauth/c2pa-rs/pull/2058))
+
+## [0.26.49](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.48...c2patool-v0.26.49)
+_15 April 2026_
+
 ## [0.26.48](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.47...c2patool-v0.26.48)
 _14 April 2026_
 
@@ -311,7 +321,7 @@ _26 August 2025_
 _15 August 2025_
 # Changelog
 
-All changes to C2PA Tool are documented in this file.  For additional information on versions 0.9.x and earlier, see the [Archived release motes](../docs/release-notes.md).
+All changes to C2PA Tool are documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
 

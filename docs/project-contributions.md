@@ -1,4 +1,4 @@
-# Contributing to the project 
+# Contributing to the project
 
 The information in this page is primarily for those who wish to contribute to the c2pa-rs library project itself, rather than those who simply wish to use it in an application.  For general contribution guidelines, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
@@ -15,7 +15,8 @@ On macOS, follow these steps:
 1. Install Clang with Homebrew `brew install llvm`.
 2. Set the `CC` environment variable to the Clang binary in the Cargo configuration file `.cargo/config.toml` in the project root; see the [example configuration file](#example-cargo-configuration) below.
 
-NOTE: Only Wasm targets `wasm32-wasip2` and later can use the `file_io` feature.
+> [!NOTE]
+> Only Wasm targets `wasm32-wasip2` and later can use the `file_io` feature.
 
 As of March 2025, `wasm32-wasip2` still requires the nightly toolchain as tracked by this issue: [wasip2 target should not conditionally feature gate stdlib APIs](https://github.com/rust-lang/rust/issues/130323)
 

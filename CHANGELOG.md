@@ -9,6 +9,29 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.80.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.5...c2pa-v0.80.0)
+_16 April 2026_
+
+### Added
+
+* Add ingredient archive FFI functions and relax Builder mutability ([#2061](https://github.com/contentauth/c2pa-rs/pull/2061))
+* Compressed manifest ([#2027](https://github.com/contentauth/c2pa-rs/pull/2027))
+
+### Documented
+
+* Separate out C docs ([#2052](https://github.com/contentauth/c2pa-rs/pull/2052))
+
+### Fixed
+
+* Multi rendition support ([#2058](https://github.com/contentauth/c2pa-rs/pull/2058))
+
+## [0.79.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.4...c2pa-v0.79.5)
+_15 April 2026_
+
+### Fixed
+
+* Handle more thumbnail redaction edge cases ([#2049](https://github.com/contentauth/c2pa-rs/pull/2049))
+
 ## [0.79.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.3...c2pa-v0.79.4)
 _14 April 2026_
 
