@@ -1302,7 +1302,10 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
             break;
         }
 
-        if current + s > end {
+        let box_end = current
+            .checked_add(s)
+            .ok_or_else(|| Error::InvalidAsset("BMFF box size overflow".to_string()))?;
+        if box_end > end {
             if BoxType::MdatBox == header.name {
                 // for mdat boxes that extend beyond the end of the file we will just set the size to the remaining bytes in the file since
                 // some files have malformed mdat sizes but we can still hash the content by treating it as a truncated box
@@ -2933,5 +2936,30 @@ pub mod tests {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn test_bmff_large_size_overflow_does_not_panic() {
+        // Craft a 32-byte MP4: 16-byte ftyp box followed by a 16-byte large-size box
+        // that claims 0xFFFFFFFFFFFFFFF0 bytes. When current=16 (after ftyp), the
+        // unchecked addition 16 + 0xFFFFFFFFFFFFFFF0 overflows u64 in debug mode
+        // (panic exit 101) and silently wraps to bypass the bounds check in release mode.
+        let mut data: Vec<u8> = Vec::new();
+        // ftyp box (16 bytes): size=16, type='ftyp', major_brand='mp41', minor_version=0
+        data.extend_from_slice(&16u32.to_be_bytes());
+        data.extend_from_slice(b"ftyp");
+        data.extend_from_slice(b"mp41");
+        data.extend_from_slice(&0u32.to_be_bytes());
+        // large-size box (16 bytes): size=1 signals largesize, type='mdat', largesize=MAX-15
+        data.extend_from_slice(&1u32.to_be_bytes());
+        data.extend_from_slice(b"mdat");
+        data.extend_from_slice(&0xfffffffffffffff0u64.to_be_bytes());
+
+        let bmff_io = BmffIO::new("mp4");
+        let mut source = Cursor::new(data);
+        assert!(matches!(
+            bmff_io.read_cai(&mut source),
+            Err(Error::InvalidAsset(_))
+        ));
     }
 }
