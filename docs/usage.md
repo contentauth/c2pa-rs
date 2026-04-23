@@ -20,7 +20,8 @@ To use the library, add this to your `Cargo.toml`:
 c2pa = "0.72.0"
 ```
 
-NOTE: The version above is just a placeholder.  Find the latest version at https://crates.io/crates/c2pa.
+> [!NOTE]
+> The version above is just a placeholder. Find the latest version at https://crates.io/crates/c2pa.
 
 To read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
 
@@ -34,7 +35,7 @@ c2pa = { version = "0.72.0", features = ["file_io", "add_thumbnails"] }
 
 ## Example code
 
-The [sdk/examples](https://github.com/contentauth/c2pa-rs/tree/main/sdk/examples) directory contains some minimal example code.  The [client/client.rs](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/client/client.rs) is the most instructive and provides and example of reading the contents of a manifest store, recursively displaying nested manifests.
+The [sdk/examples](https://github.com/contentauth/c2pa-rs/tree/main/sdk/examples) directory contains some minimal example code.  The [client/client.rs](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/client/client.rs) is the most instructive and provides an example of reading the contents of a manifest store, recursively displaying nested manifests.
 
 ## Features
 
@@ -61,7 +62,10 @@ Other features:
 
 ### HTTP features
 
-WARNING: These features are for advanced users. Most people can ignore them. These features toggle compilation with different HTTP libraries, depending on the one you use. Some are async-only and others are sync-only. Disabling all of them will disable HTTP, speed up compilation, and decrease build size.
+> [!WARNING]
+> These features are for advanced users. Most people can ignore them.
+
+These features toggle compilation with different HTTP libraries, depending on the one you use. Some are async-only and others are sync-only. Disabling all of them will disable HTTP, speed up compilation, and decrease build size.
 
 - **http_ureq**: Enables `ureq` for sync HTTP requests.
 - **http_reqwest**: Enables `reqwest` for async HTTP requests.

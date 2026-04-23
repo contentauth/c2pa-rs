@@ -11,7 +11,7 @@ The library does not currently support the following optional fields from the CA
 
 ## Example
 
-The code in [`sdk/examples/cawg.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/cawg.rs) provides a minimal example of signing and verifying a claim including a CAWG identitiy assertion.  Run it by entering the command:
+The code in [`sdk/examples/cawg.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/cawg.rs) provides a minimal example of signing and verifying a claim including a CAWG identity assertion.  Run it by entering the command:
 
 ```sh
 cargo run --example cawg -- <SOURCE_FILE> <OUTPUT_FILE>
