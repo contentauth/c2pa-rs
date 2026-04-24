@@ -1985,7 +1985,6 @@ impl Builder {
                 let cose_sign1 = claim.cose_sign1()?;
                 if cose::get_cose_tst_info(&cose_sign1).is_some() {
                     claim_uris.remove(&claim.uri());
-                    continue;
                 }
 
                 // Then check timestamp assertions.
