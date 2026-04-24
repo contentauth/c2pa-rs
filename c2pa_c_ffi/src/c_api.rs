@@ -1266,6 +1266,48 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     box_tracked!(result)
 }
 
+/// Configures an existing reader with a single-ingredient C2PA archive produced
+/// by `c2pa_builder_write_ingredient_archive`.
+///
+/// This method consumes the original reader and returns a new configured reader.
+/// The original reader pointer becomes invalid after this call.
+///
+/// Warning: ingredient archives are unsigned working stores (BoxHash placeholder)
+/// intended for intra-system ingredient exchange. Signatures are NOT verified and
+/// the `verify_after_reading` setting is ignored.
+///
+/// # Safety
+///
+/// * `reader` must be a valid pointer to a C2paReader.
+/// * `stream` must be a valid pointer to a C2paStream positioned at the start
+///   of the archive bytes.
+/// * After calling this function, the `reader` pointer is INVALID.
+///
+/// # Returns
+///
+/// A pointer to a newly configured C2paReader, or NULL on error.
+///
+/// # Example
+/// ```c
+/// C2paReader* reader = c2pa_reader_from_context(ctx);
+/// reader = c2pa_reader_with_ingredient_archive(reader, archive_stream);
+/// char* json = c2pa_reader_json(reader);
+/// // ... c2pa_string_free(json); c2pa_reader_free(reader);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_with_ingredient_archive(
+    reader: *mut C2paReader,
+    stream: *mut C2paStream,
+) -> *mut C2paReader {
+    let stream = deref_mut_or_return_null!(stream, C2paStream);
+
+    untrack_or_return_null!(reader, C2paReader);
+    let reader = Box::from_raw(reader);
+    let result = (*reader).with_ingredient_archive(stream);
+    let result = ok_or_return_null!(result);
+    box_tracked!(result)
+}
+
 /// Configures an existing passed in Reader with manifest data and a stream.
 /// This covers the case when a Reader needs to be able to re-read signed
 /// manifest bytes. This method consumes the original Reader and returns a
@@ -3689,6 +3731,26 @@ mod tests {
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: ingredient_id");
         unsafe { c2pa_builder_free(builder) };
+    }
+
+    #[test]
+    fn test_c2pa_reader_with_ingredient_archive_null_stream() {
+        let reader = unsafe { c2pa_reader_new() };
+        assert!(!reader.is_null());
+        let result = unsafe { c2pa_reader_with_ingredient_archive(reader, std::ptr::null_mut()) };
+        assert!(result.is_null());
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
+    }
+
+    #[test]
+    fn test_c2pa_reader_with_ingredient_archive_null_reader() {
+        let archive_bytes = include_bytes!(fixture_path!("cloud.jpg"));
+        let mut stream = TestStream::new(archive_bytes.to_vec());
+        let result =
+            unsafe { c2pa_reader_with_ingredient_archive(std::ptr::null_mut(), stream.as_ptr()) };
+        assert!(result.is_null());
     }
 
     #[test]

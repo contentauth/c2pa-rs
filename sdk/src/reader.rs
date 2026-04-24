@@ -226,6 +226,69 @@ impl Reader {
         Ok(self)
     }
 
+    /// Load a single-ingredient archive produced by
+    /// [`Builder::write_ingredient_archive`](crate::Builder::write_ingredient_archive)
+    /// into this [`Reader`] and expose its manifest store.
+    ///
+    /// The archive is an `application/c2pa` JUMBF working store signed with a
+    /// BoxHash placeholder. Its active manifest describes the exported ingredient.
+    ///
+    /// # Warning
+    /// This method does NOT verify signatures. Ingredient archives are unsigned
+    /// working stores intended for intra-system ingredient exchange, not for
+    /// trust decisions. The `verify.verify_after_reading` setting is ignored.
+    ///
+    /// # Arguments
+    /// * `stream` - The archive stream. Must implement `Read + Seek + Send`.
+    ///
+    /// # Errors
+    /// * [`Error::BadParam`] if the stream is not an ingredient archive (e.g.
+    ///   a full builder archive).
+    /// * Underlying store errors if the stream is not a valid `application/c2pa`
+    ///   JUMBF working store.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use c2pa::{Builder, Context, Reader, Result, Settings};
+    /// # use std::io::{Cursor, Seek};
+    /// # fn main() -> Result<()> {
+    /// let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+    /// let context = Context::new().with_settings(settings)?.into_shared();
+    ///
+    /// # let builder = Builder::from_shared_context(&context);
+    /// let mut archive = Cursor::new(Vec::new());
+    /// builder.write_ingredient_archive("ingredient_1", &mut archive)?;
+    /// archive.rewind()?;
+    ///
+    /// let reader = Reader::from_shared_context(&context)
+    ///     .with_ingredient_archive(archive)?;
+    /// let json = reader.json();
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_ingredient_archive(mut self, stream: impl Read + Seek + Send) -> Result<Self> {
+        use crate::assertions::labels::ArchiveType;
+
+        let mut stream = stream;
+        let mut validation_log = StatusTracker::default();
+        stream.rewind()?;
+
+        let store = Store::from_stream(
+            "application/c2pa",
+            &mut stream,
+            &mut validation_log,
+            &self.context,
+        )?;
+        self.with_store(store, &mut validation_log)?;
+
+        match self.active_archive_type() {
+            Some(ArchiveType::Ingredient) => Ok(self),
+            other => Err(Error::BadParam(format!(
+                "expected ingredient archive, found {other:?}"
+            ))),
+        }
+    }
+
     /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
     ///
     /// # Arguments
@@ -1684,5 +1747,121 @@ pub mod tests {
             assert_send::<Reader>();
             assert_sync::<Reader>();
         }
+    }
+
+    const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
+
+    fn build_ingredient_archive(context: &Arc<Context>) -> Result<(Vec<u8>, String)> {
+        use crate::Builder;
+
+        let mut builder = Builder::from_shared_context(context)
+            .with_definition(r#"{"title": "Parent manifest"}"#)?;
+
+        builder.add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))?;
+
+        builder.add_ingredient_from_stream(
+            serde_json::json!({
+                "title": "Exported ingredient",
+                "format": "image/jpeg",
+                "thumbnail": {
+                    "format": "image/jpeg",
+                    "identifier": "thumbnail.jpg"
+                },
+                "relationship": "componentOf",
+                "label": "ingredient_1"
+            })
+            .to_string(),
+            "image/jpeg",
+            &mut Cursor::new(TEST_IMAGE),
+        )?;
+
+        let ingredient_id = "ingredient_1".to_string();
+        let mut archive = Cursor::new(Vec::new());
+        builder.write_ingredient_archive(&ingredient_id, &mut archive)?;
+        Ok((archive.into_inner(), ingredient_id))
+    }
+
+    #[test]
+    fn test_reader_with_ingredient_archive_exposes_active_manifest() -> Result<()> {
+        let settings = crate::Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context = Context::new().with_settings(settings)?.into_shared();
+
+        let (archive_bytes, _ingredient_id) = build_ingredient_archive(&context)?;
+
+        let reader = Reader::from_shared_context(&context)
+            .with_ingredient_archive(Cursor::new(archive_bytes))?;
+
+        // The archive's active manifest is the one describing the exported ingredient.
+        let active_label = reader
+            .active_label()
+            .expect("archive must have an active manifest")
+            .to_string();
+
+        let active_manifest = reader
+            .active_manifest()
+            .expect("active_manifest() must resolve the active label");
+
+        // The exported ingredient is present in the active manifest's ingredients.
+        let ingredients = active_manifest.ingredients();
+        assert_eq!(
+            ingredients.len(),
+            1,
+            "archive's active manifest must contain exactly the exported ingredient"
+        );
+        assert_eq!(ingredients[0].title(), Some("Exported ingredient"));
+
+        // Thumbnail resource round-trips byte-for-byte.
+        let thumb_ref = ingredients[0]
+            .thumbnail_ref()
+            .expect("ingredient should carry a thumbnail ref");
+        let mut thumb_out = Cursor::new(Vec::new());
+        reader.resource_to_stream(&thumb_ref.identifier, &mut thumb_out)?;
+        assert_eq!(thumb_out.into_inner().as_slice(), TEST_THUMBNAIL);
+
+        // JSON view exposes the same active manifest label.
+        let json: Value = serde_json::from_str(&reader.json())?;
+        assert_eq!(
+            json.get("active_manifest").and_then(|v| v.as_str()),
+            Some(active_label.as_str()),
+            "JSON active_manifest must match the Reader's active label"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reader_with_ingredient_archive_rejects_full_builder_archive() -> Result<()> {
+        use crate::Builder;
+
+        let settings = crate::Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context = Context::new().with_settings(settings)?.into_shared();
+
+        let builder = Builder::from_shared_context(&context)
+            .with_definition(r#"{"title": "Parent manifest"}"#)?;
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+        archive.set_position(0);
+
+        let err = Reader::from_shared_context(&context)
+            .with_ingredient_archive(archive)
+            .expect_err("full builder archive must be rejected");
+
+        assert!(
+            matches!(err, Error::BadParam(_)),
+            "expected BadParam, got {err:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_reader_with_ingredient_archive_rejects_garbage_stream() {
+        let bogus = Cursor::new(b"not a c2pa archive".to_vec());
+        let err = Reader::default()
+            .with_ingredient_archive(bogus)
+            .expect_err("garbage input must fail");
+        // We don't care about the exact variant — just that it errors and does not panic.
+        let _ = err;
     }
 }
