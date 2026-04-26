@@ -153,7 +153,7 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>], context: &Context) -> Optio
         context
             .check_progress(ProgressPhase::FetchingOCSP, step, requests_len)
             .ok()?;
-        let req_url = request_data.url.join(&request_data.request_str).ok()?;
+        let req_url = request_data.url.join(&request_data.request_str.trim_start_matches('/')).ok()?;
 
         let mut request = http::Request::get(req_url.to_string());
         if let Some(host) = req_url.host() {
