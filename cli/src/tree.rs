@@ -12,21 +12,21 @@
 
 use std::path::Path;
 
-use atree::{Arena, Token};
 use c2pa::{Reader, Result};
+use indextree::{Arena, NodeId};
 use treeline::Tree;
 
 fn populate_node(
     tree: &mut Arena<String>,
     reader: &Reader,
     manifest_label: &str,
-    current_token: &Token,
+    current_token: NodeId,
     name_only: bool,
 ) -> Result<()> {
     if let Some(manifest) = reader.get_manifest(manifest_label) {
         for assertion in manifest.assertions().iter() {
             let label = assertion.label_with_instance();
-            current_token.append(tree, format!("Assertion:{label}"));
+            current_token.append_value(format!("Assertion:{label}"), tree);
         }
 
         for ingredient in manifest.ingredients().iter() {
@@ -39,30 +39,30 @@ fn populate_node(
                     format!("Asset:{title}, Manifest:{label}")
                 };
 
-                let new_token = current_token.append(tree, data);
+                let new_token = current_token.append_value(data, tree);
 
-                populate_node(tree, reader, label, &new_token, name_only)?;
+                populate_node(tree, reader, label, new_token, name_only)?;
             } else {
                 let data = if name_only {
                     title.to_string()
                 } else {
                     format!("Asset:{title}")
                 };
-                current_token.append(tree, data);
+                current_token.append_value(data, tree);
             }
         }
     }
     Ok(())
 }
 
-fn walk_tree(tree: &Arena<String>, token: &Token) -> Tree<String> {
-    let result = token.children_tokens(tree).fold(
-        Tree::root(tree[*token].data.clone()),
+fn walk_tree(tree: &Arena<String>, token: NodeId) -> Tree<String> {
+    let result = token.children(tree).fold(
+        Tree::root(tree[token].get().clone()),
         |mut root, entry_token| {
-            if entry_token.is_leaf(tree) {
-                root.push(Tree::root(tree[entry_token].data.clone()));
+            if tree[entry_token].first_child().is_none() {
+                root.push(Tree::root(tree[entry_token].get().clone()));
             } else {
-                root.push(walk_tree(tree, &entry_token));
+                root.push(walk_tree(tree, entry_token));
             }
             root
         },
@@ -84,10 +84,11 @@ pub fn tree<P: AsRef<Path>>(path: P) -> Result<String> {
     // walk through the manifests and show the contents
     Ok(if let Some(manifest_label) = reader.active_label() {
         let data = format!("Asset:{asset_name}, Manifest:{manifest_label}");
-        let (mut tree, root_token) = Arena::with_data(data);
-        populate_node(&mut tree, &reader, manifest_label, &root_token, false)?;
+        let mut tree = Arena::new();
+        let root_token = tree.new_node(data);
+        populate_node(&mut tree, &reader, manifest_label, root_token, false)?;
         // print tree
-        format!("Tree View:\n {}", walk_tree(&tree, &root_token))
+        format!("Tree View:\n {}", walk_tree(&tree, root_token))
     } else {
         format!("Tree View:\n Asset:{asset_name}")
     })
