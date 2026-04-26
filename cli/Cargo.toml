@@ -55,6 +55,27 @@ tokio = { version = "1.44.2", features = ["rt", "rt-multi-thread"] }
 wasi = "0.14"
 wstd = "0.5"
 
+[package.metadata.deb]
+maintainer = "CAI Open Source <caiopensrc@adobe.com>"
+copyright = "2026 Adobe. All rights reserved."
+license-file = ["../LICENSE-MIT", "4"]
+extended-description = """\
+    c2patool is a command line tool for working with C2PA manifests \
+    and media asset provenance."""
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+    ["target/release/c2patool", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/c2patool/README.md", "644"],
+]
+
+[package.metadata.generate-rpm]
+assets = [
+    { source = "target/release/c2patool", dest = "/usr/bin/c2patool", mode = "0755" },
+    { source = "README.md", dest = "/usr/share/doc/c2patool/README.md", mode = "0644", doc = true },
+]
+
 [dev-dependencies]
 mockall = "0.14.0"
 

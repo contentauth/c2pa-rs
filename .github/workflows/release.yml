@@ -249,3 +249,67 @@ jobs:
           asset_name: ${{ matrix.sbom_asset_name }}
           tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
           overwrite: true
+
+      - name: Build Chocolatey package
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag && matrix.os == 'windows-latest' }}
+        shell: pwsh
+        run: |
+          $tag = '${{ needs.release-plz.outputs.c2patool-release-tag }}'
+          $version = $tag -replace '^c2patool-', ''
+          $checksum = (Get-FileHash target\c2patool_win_intel.zip -Algorithm SHA256).Hash.ToLower()
+
+          Copy-Item -Recurse cli\chocolatey chocolatey-pkg
+
+          (Get-Content chocolatey-pkg\c2patool.nuspec) `
+            -replace '__VERSION__', $version |
+            Set-Content chocolatey-pkg\c2patool.nuspec
+
+          (Get-Content chocolatey-pkg\tools\chocolateyInstall.ps1) `
+            -replace '__VERSION__', $version `
+            -replace '__CHECKSUM__', $checksum |
+            Set-Content chocolatey-pkg\tools\chocolateyInstall.ps1
+
+          New-Item -ItemType Directory -Force -Path target\chocolatey | Out-Null
+          choco pack chocolatey-pkg\c2patool.nuspec --outputdirectory target\chocolatey
+
+      - name: Upload Chocolatey package to GitHub
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag && matrix.os == 'windows-latest' }}
+        uses: svenstaro/upload-release-action@2.11.4
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/chocolatey/c2patool.*.nupkg
+          file_glob: true
+          tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+          overwrite: true
+
+      - name: Build .deb package
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag && matrix.os == 'ubuntu-latest' }}
+        run: |
+          cargo install cargo-deb
+          cargo deb -p c2patool --no-build
+
+      - name: Upload .deb to GitHub
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag && matrix.os == 'ubuntu-latest' }}
+        uses: svenstaro/upload-release-action@2.11.4
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/debian/c2patool_*.deb
+          file_glob: true
+          tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+          overwrite: true
+
+      - name: Build .rpm package
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag && matrix.os == 'ubuntu-latest' }}
+        run: |
+          cargo install cargo-generate-rpm
+          cargo generate-rpm -p cli
+
+      - name: Upload .rpm to GitHub
+        if: ${{ needs.release-plz.outputs.c2patool-release-tag && matrix.os == 'ubuntu-latest' }}
+        uses: svenstaro/upload-release-action@2.11.4
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: target/generate-rpm/c2patool-*.rpm
+          file_glob: true
+          tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
+          overwrite: true
