@@ -29,7 +29,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["openssl", "default_http"]
-add_thumbnails = ["image"]
+add_thumbnails = ["dep:image"]
+image_gif = ["add_thumbnails", "image/gif"]
+image_webp = ["add_thumbnails", "image/webp"]
+image_tiff = ["add_thumbnails", "image/tiff"]
 file_io = []
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
@@ -241,9 +244,6 @@ image = { version = "0.25.6", default-features = false, features = [
     #       up here.
     "png",
     "jpeg",
-    "gif",
-    "webp",
-    "tiff",
     # "bmp",
     # "ico",
     # "avif",

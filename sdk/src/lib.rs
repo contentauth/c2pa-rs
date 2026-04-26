@@ -160,9 +160,12 @@
 //! If both are enabled, `rust_native_crypto` is used.
 //!
 //! Other features:
-//! - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
+//! - **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails (PNG/JPEG), if possible and enabled in settings.
 //! - **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
 //! - **file_io**: Enables APIs that use filesystem I/O.
+//! - **image_gif**: Enables GIF thumbnail support (requires `add_thumbnails`).
+//! - **image_tiff**: Enables TIFF thumbnail support (requires `add_thumbnails`).
+//! - **image_webp**: Enables WebP thumbnail support (requires `add_thumbnails`).
 //! - **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
 //! - **pdf**: Enables basic PDF read support.
 //! - **rust_native_crypto**: Use Rust native cryptography.
