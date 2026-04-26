@@ -612,6 +612,23 @@ fn print_reader(reader: &Reader, detailed: bool, crjson: bool) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    // Harden against DLL hijacking on Windows by removing the current working
+    // directory from the DLL search path. Without this, Windows' default DLL
+    // search order includes the CWD, which allows an attacker to place a
+    // malicious DLL alongside the executable. LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
+    // restricts the search to: the application directory, System32, and
+    // directories added via AddDllDirectory/SetDllDirectory — excluding the CWD.
+    // SAFETY: no invariants to uphold; the argument is a valid constant.
+    #[cfg(windows)]
+    unsafe {
+        if windows_sys::Win32::System::LibraryLoader::SetDefaultDllDirectories(
+            windows_sys::Win32::System::LibraryLoader::LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
+        ) == 0
+        {
+            bail!("Failed to set default DLL directories");
+        }
+    }
+
     let args = CliArgs::parse();
 
     // set RUST_LOG=debug to get detailed debug logging

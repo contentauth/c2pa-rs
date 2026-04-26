@@ -51,6 +51,9 @@ etcetera = "0.11.0"
 reqwest = { version = "0.12.4", features = ["blocking"] }
 tokio = { version = "1.44.2", features = ["rt", "rt-multi-thread"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_LibraryLoader"] }
+
 [target.'cfg(target_os = "wasi")'.dependencies]
 wasi = "0.14"
 wstd = "0.5"
