@@ -162,8 +162,13 @@ pub struct ManifestDefinition {
     /// This is typically a reverse domain name.
     pub vendor: Option<String>,
 
-    /// Claim Generator Info is always required with an entry
-    #[serde(default = "default_claim_generator_info")]
+    /// Software that generated the claim, as a list of [`ClaimGeneratorInfo`].
+    ///
+    /// In JSON, when this key is **omitted** (or the array is empty), the value is
+    /// resolved at claim-building time: settings.builder.claim_generator_info if set, otherwise
+    /// on the active [`Context`] is used if set, otherwise [`ClaimGeneratorInfo::default`].
+    /// A non-empty list in the definition is used as given.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub claim_generator_info: Vec<ClaimGeneratorInfo>,
 
     /// Optional manifest metadata. This will be deprecated in the future; not recommended to use.
@@ -216,10 +221,6 @@ pub struct ManifestDefinition {
 
 fn default_instance_id() -> String {
     format!("xmp:iid:{}", Uuid::new_v4())
-}
-
-fn default_claim_generator_info() -> Vec<ClaimGeneratorInfo> {
-    [ClaimGeneratorInfo::default()].to_vec()
 }
 
 fn default_format() -> String {
@@ -1381,19 +1382,20 @@ impl Builder {
 
         let definition = &self.definition;
         let mut claim_generator_info = definition.claim_generator_info.clone();
-
-        // add the default claim generator info for this library
         if claim_generator_info.is_empty() {
-            let claim_generator_info_settings =
-                &self.context.settings().builder.claim_generator_info;
-            match claim_generator_info_settings {
-                Some(claim_generator_info_settings) => {
-                    claim_generator_info.push(claim_generator_info_settings.clone().try_into()?);
-                }
-                _ => {
-                    claim_generator_info.push(ClaimGeneratorInfo::default());
-                }
-            }
+            //Manifest omitted `claim_generator_info` (or `[]`): one entry from settings, else
+            // [`ClaimGeneratorInfo::default`].
+            let info: ClaimGeneratorInfo = match self
+                .context
+                .settings()
+                .builder
+                .claim_generator_info
+                .as_ref()
+            {
+                Some(settings) => settings.clone().try_into()?,
+                None => ClaimGeneratorInfo::default(),
+            };
+            claim_generator_info.push(info);
         }
 
         claim_generator_info[0].insert("org.contentauth.c2pa_rs", env!("CARGO_PKG_VERSION"));
@@ -3620,6 +3622,79 @@ mod tests {
         // convert back to json and compare to original
         let builder_json = serde_json::to_string(&builder.definition).unwrap();
         assert_eq!(builder_json, stripped_json);
+    }
+
+    #[test]
+    fn test_omitted_claim_generator_info_is_empty_vec() {
+        let json = json!({
+            "title": "Test_Manifest",
+            "format": "image/jpeg",
+        })
+        .to_string();
+        let def: ManifestDefinition = serde_json::from_str(&json).expect("parse");
+        assert!(def.claim_generator_info.is_empty());
+    }
+
+    #[test]
+    fn test_claim_generator_info_uses_settings_when_omitted_from_json() {
+        use std::sync::Arc;
+
+        let settings = Settings::new()
+            .with_toml(
+                r#"
+                [builder.claim_generator_info]
+                name = "from_settings"
+                version = "9.9.9"
+                "#,
+            )
+            .expect("with_toml");
+        let context = Arc::new(
+            Context::new()
+                .with_settings(settings)
+                .expect("with_settings"),
+        );
+
+        let json = json!({
+            "title": "t",
+            "format": "image/jpeg",
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+        let mut builder = Builder::from_shared_context(&context)
+            .with_definition(json.to_string())
+            .expect("with_definition");
+
+        const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/no_manifest.jpg");
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .expect("sign");
+
+        dest.set_position(0);
+        let reader = Reader::from_shared_context(&context)
+            .with_stream(format, &mut dest)
+            .expect("reader");
+        let m = reader.active_manifest().expect("active manifest");
+        let cgi = m
+            .claim_generator_info
+            .as_ref()
+            .expect("claim_generator_info in manifest");
+        assert_eq!(cgi[0].name, "from_settings");
+        assert_eq!(cgi[0].version.as_deref(), Some("9.9.9"));
     }
 
     #[test]

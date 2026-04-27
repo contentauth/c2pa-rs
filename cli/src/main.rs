@@ -230,8 +230,9 @@ enum Commands {
 #[derive(Debug, Default, Deserialize)]
 // Add fields that are not part of the standard Manifest
 struct ManifestDef {
+    // Flattened into the JSON root; the field is not read directly after deserialize.
     #[serde(flatten)]
-    manifest: ManifestDefinition,
+    _manifest: ManifestDefinition,
     // allows adding ingredients with file paths
     ingredient_paths: Option<Vec<PathBuf>>,
 }
@@ -702,18 +703,16 @@ fn main() -> Result<()> {
         // read the manifest information
         let manifest_def: ManifestDef = serde_json::from_slice(json.as_bytes())?;
         let mut builder = Builder::from_shared_context(&context).with_definition(&json)?;
-        let mut manifest = manifest_def.manifest;
 
         // add claim_tool generator so we know this was created using this tool
         let mut tool_generator = ClaimGeneratorInfo::new(env!("CARGO_PKG_NAME"));
         tool_generator.set_version(env!("CARGO_PKG_VERSION"));
-        if !manifest.claim_generator_info.is_empty()
-            || manifest.claim_generator_info[0].name == "c2pa-rs"
+        if builder.definition.claim_generator_info.is_empty()
+            || builder.definition.claim_generator_info[0].name == "c2pa-rs"
         {
-            manifest.claim_generator_info = vec![tool_generator];
-        } else {
-            manifest.claim_generator_info.insert(1, tool_generator);
+            builder.definition.claim_generator_info = vec![tool_generator];
         }
+        // else: user supplied a custom `claim_generator_info` (v2 allows only one); keep it
 
         // set manifest base path before ingredients so ingredients can override it
         if let Some(base) = base_path.as_ref() {

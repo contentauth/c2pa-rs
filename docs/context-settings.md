@@ -140,6 +140,8 @@ fn main() -> Result<()> {
 }
 ```
 
+When the manifest JSON omits `claim_generator_info` (or uses `[]`), `Builder` resolves it at claim time: first from `builder.claim_generator_info` in the settings you passed to `Context` (as in the `json!` above, if you set that field), otherwise the library default.
+
 ## Settings definition
 
 The Settings definition has the following top-level structure:
