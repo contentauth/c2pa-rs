@@ -269,7 +269,9 @@ impl TestStream {
 #[cfg(test)]
 impl Drop for TestStream {
     fn drop(&mut self) {
-        TestC2paStream::drop_c_stream(self.0);
+        unsafe {
+            TestC2paStream::drop_c_stream(self.0);
+        }
     }
 }
 
@@ -401,7 +403,12 @@ impl TestC2paStream {
         test_stream.into_c_stream()
     }
 
-    pub fn drop_c_stream(c_stream: *mut C2paStream) {
+    /// # Safety
+    ///
+    /// - `c_stream` must be a pointer allocated via `box_tracked!`.
+    /// - If non-null, `c_stream.context` must also be a tracked pointer allocated via `box_tracked!`.
+    /// - Must not be called more than once for the same pointer.
+    pub unsafe fn drop_c_stream(c_stream: *mut C2paStream) {
         if !c_stream.is_null() {
             let context = unsafe { (*c_stream).context };
             cimpl_free(context as *mut std::ffi::c_void);
