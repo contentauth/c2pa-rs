@@ -50,7 +50,10 @@ use crate::{
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
     store::Store,
-    utils::{hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime},
+    utils::{
+        hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime,
+        path_utils::sanitize_archive_path,
+    },
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
 };
@@ -92,54 +95,6 @@ impl ArchiveKind {
 
 /// Version of the Builder Archive file
 const ARCHIVE_VERSION: &str = "1";
-
-/// Validate and canonicalize an archive entry path.
-///
-/// Uses [`std::path::Path::components`] for platform-correct parsing. This
-/// catches `..` (`ParentDir`), leading separators (`RootDir`), and Windows
-/// drive/UNC prefixes (`Prefix`) on all host platforms — cases that a
-/// hand-rolled string split can miss when they appear as inner components.
-///
-/// Returns the normalized, forward-slash-separated path (`.` components are
-/// stripped), or an error if the path is empty, absolute, contains a `..`
-/// traversal, or includes a Windows drive/UNC prefix.
-fn sanitize_archive_path(path: &str) -> Result<String> {
-    use std::path::{Component, Path};
-
-    if path.is_empty() {
-        return Err(Error::BadParam("Empty path not allowed".to_string()));
-    }
-
-    let mut sanitized = String::new();
-
-    for component in Path::new(path).components() {
-        match component {
-            Component::Normal(part) => {
-                let part = part.to_str().ok_or_else(|| {
-                    Error::BadParam(format!("Non-UTF-8 path component in: {path}"))
-                })?;
-                if !sanitized.is_empty() {
-                    sanitized.push('/');
-                }
-                sanitized.push_str(part);
-            }
-            // Silently drop current-directory markers (`.`).
-            Component::CurDir => {}
-            // Absolute paths (`/`), Windows drive/UNC prefixes, and `..` are all rejected.
-            Component::RootDir | Component::Prefix(_) | Component::ParentDir => {
-                return Err(Error::BadParam(format!(
-                    "Path traversal not allowed: {path}"
-                )));
-            }
-        }
-    }
-
-    if sanitized.is_empty() {
-        return Err(Error::BadParam("Empty path not allowed".to_string()));
-    }
-
-    Ok(sanitized)
-}
 
 /// Use a ManifestDefinition to define a manifest and to build a `ManifestStore`.
 /// A manifest is a collection of ingredients and assertions
@@ -7751,49 +7706,5 @@ mod tests {
 
         let future = builder.sign_async(&signer, "image/jpeg", &mut src, &mut dst);
         assert_send(future);
-    }
-
-    // --- sanitize_archive_path regression tests ---
-
-    #[test]
-    fn sanitize_archive_path_normal_path_accepted() {
-        assert_eq!(
-            sanitize_archive_path("resources/thumbnail.jpg").unwrap(),
-            "resources/thumbnail.jpg"
-        );
-    }
-
-    #[test]
-    fn sanitize_archive_path_dot_stripped() {
-        assert_eq!(
-            sanitize_archive_path("./resources/thumb.jpg").unwrap(),
-            "resources/thumb.jpg"
-        );
-    }
-
-    #[test]
-    fn sanitize_archive_path_parent_dir_rejected() {
-        assert!(sanitize_archive_path("../etc/passwd").is_err());
-    }
-
-    #[test]
-    fn sanitize_archive_path_inner_parent_dir_rejected() {
-        assert!(sanitize_archive_path("resources/../../../etc/passwd").is_err());
-    }
-
-    #[test]
-    fn sanitize_archive_path_absolute_rejected() {
-        assert!(sanitize_archive_path("/etc/passwd").is_err());
-    }
-
-    #[test]
-    fn sanitize_archive_path_empty_rejected() {
-        assert!(sanitize_archive_path("").is_err());
-    }
-
-    #[test]
-    fn sanitize_archive_path_dot_only_rejected() {
-        // "." normalises to no Normal components → empty result → error
-        assert!(sanitize_archive_path(".").is_err());
     }
 }

@@ -22,7 +22,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "file_io")]
 use {
-    crate::utils::io_utils::uri_to_path,
+    crate::utils::{io_utils::uri_to_path, path_utils::sanitize_archive_path},
     std::{
         fs::{create_dir_all, read, write},
         path::{Path, PathBuf},
@@ -289,19 +289,8 @@ impl ResourceStore {
     {
         #[cfg(feature = "file_io")]
         if let Some(base) = self.base_path.as_ref() {
-            use std::path::Component;
-            let id_str: String = id.into();
-            for component in Path::new(&id_str).components() {
-                match component {
-                    Component::Normal(_) | Component::CurDir => {}
-                    _ => {
-                        return Err(crate::Error::BadParam(format!(
-                            "Path traversal not allowed: {id_str}"
-                        )));
-                    }
-                }
-            }
-            let path = base.join(&id_str);
+            let sanitized_id = sanitize_archive_path(&id.into())?;
+            let path = base.join(&sanitized_id);
             create_dir_all(path.parent().unwrap_or(Path::new("")))?;
             write(path, value.into())?;
             return Ok(self);
@@ -558,6 +547,21 @@ mod tests {
                 .add("subdir/thumbnail.jpg", b"image data".to_vec())
                 .unwrap();
             assert!(temp.path().join("subdir/thumbnail.jpg").exists());
+        }
+
+        #[test]
+        fn add_with_base_path_rejects_backslash_traversal() {
+            // Cross-platform regression: a Windows-authored archive can carry
+            // entry IDs that use `\` as a path separator. On Linux those would
+            // appear as a single Normal component to Path::components() and
+            // would slip past the traversal check unless we reject backslash
+            // explicitly.
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            let result = store.add("..\\..\\etc\\passwd", b"attacker data".to_vec());
+            assert!(result.is_err());
         }
     }
 }
