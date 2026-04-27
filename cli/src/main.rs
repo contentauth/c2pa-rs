@@ -611,6 +611,14 @@ fn print_reader(reader: &Reader, detailed: bool, crjson: bool) -> Result<()> {
     }
 }
 
+/// True when `--output` is suitable for folder-style use (e.g. `--ingredient` to a report dir,
+/// or manifest report to a directory). A missing path is allowed (`create_dir_all` will make it);
+/// an existing path must be a directory (names like `v1.0` are not inferred from a dot in the
+/// last component).
+pub(crate) fn folder_mode_output_path_ok(path: &Path) -> bool {
+    !path.exists() || path.is_dir()
+}
+
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
@@ -864,7 +872,7 @@ fn main() -> Result<()> {
     } else if args.parent.is_some() || args.sidecar || args.remote.is_some() {
         bail!("Manifest definition required with these options or flags")
     } else if let Some(output) = args.output {
-        if output.is_file() || output.extension().is_some() {
+        if !folder_mode_output_path_ok(&output) {
             bail!("Output must be a folder for this option.")
         }
         if output.exists() {
@@ -930,6 +938,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use c2pa::{BuilderIntent, DigitalSourceType};
+    use std::fs::{create_dir, write};
     use tempfile::TempDir;
 
     use super::*;
@@ -953,6 +962,29 @@ pub mod tests {
 
         #[cfg(not(target_os = "wasi"))]
         return tempfile::tempdir().map_err(Into::into);
+    }
+
+    #[test]
+    fn folder_mode_output_path_accepts_dir_with_dot_in_name() {
+        let tmp = tempdirectory().unwrap();
+        let p = tmp.path().join("release.v1.0");
+        create_dir(&p).unwrap();
+        assert!(folder_mode_output_path_ok(&p));
+    }
+
+    #[test]
+    fn folder_mode_output_path_accepts_nonexistent_path() {
+        let tmp = tempdirectory().unwrap();
+        let p = tmp.path().join("not_created_yet");
+        assert!(folder_mode_output_path_ok(&p));
+    }
+
+    #[test]
+    fn folder_mode_output_path_rejects_existing_file() {
+        let tmp = tempdirectory().unwrap();
+        let f = tmp.path().join("report.json");
+        write(&f, b"{}").unwrap();
+        assert!(!folder_mode_output_path_ok(&f));
     }
 
     #[allow(deprecated)]
