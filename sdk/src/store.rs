@@ -1536,8 +1536,8 @@ impl Store {
         svi: &StoreValidationInfo,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
-        context: &Context,
         depth: usize,
+        context: &Context,
     ) -> Result<()> {
         if depth >= MAX_INGREDIENT_DEPTH {
             return Err(Error::InvalidAsset(format!(
@@ -1737,8 +1737,8 @@ impl Store {
                         svi,
                         asset_data,
                         validation_log,
+                        depth.saturating_add(1),
                         context,
-                        depth + 1,
                     )?;
                 } else {
                     log_item!(label.clone(), "ingredient not found", "ingredient_checks")
@@ -1772,8 +1772,8 @@ impl Store {
         svi: &StoreValidationInfo<'_>,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
-        context: &Context,
         depth: usize,
+        context: &Context,
     ) -> Result<()> {
         if depth >= MAX_INGREDIENT_DEPTH {
             return Err(Error::InvalidAsset(format!(
@@ -1977,8 +1977,8 @@ impl Store {
                         svi,
                         asset_data,
                         validation_log,
+                        depth.saturating_add(1),
                         context,
-                        depth + 1,
                     ))
                     .await?;
                 } else {
@@ -2183,7 +2183,7 @@ impl Store {
                 context,
             )?;
 
-            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log, context, 0)?;
+            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log, 0, context)?;
         } else {
             Claim::verify_claim_async(
                 claim,
@@ -2202,8 +2202,8 @@ impl Store {
                 &svi,
                 asset_data,
                 validation_log,
-                context,
                 0,
+                context,
             )
             .await?;
         }
@@ -4002,6 +4002,11 @@ impl Store {
         validation_log: &mut StatusTracker,
         claim_label_path: &mut Vec<&'a str>,
     ) -> Result<()> {
+        // `claim_label_path` is the chain of claims currently being walked
+        // recursively: each entry pushes on entry (line below) and pops on
+        // return (end of function), so its length is the current recursion
+        // depth — not the total number of ingredients seen. A claim with a
+        // million sibling ingredients still recurses at depth 1 per sibling.
         if claim_label_path.len() >= MAX_INGREDIENT_DEPTH {
             return Err(Error::InvalidAsset(format!(
                 "ingredient chain depth ({}) exceeds maximum ({})",
@@ -9002,8 +9007,8 @@ pub mod tests {
             &svi,
             &mut asset_data,
             &mut validation_log,
-            &context,
             MAX_INGREDIENT_DEPTH,
+            &context,
         );
 
         assert!(
