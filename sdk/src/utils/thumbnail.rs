@@ -21,7 +21,7 @@ use image::{
         jpeg::JpegEncoder,
         png::{CompressionType, FilterType, PngEncoder},
     },
-    DynamicImage, ImageDecoder, ImageFormat, ImageReader,
+    DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits,
 };
 
 use crate::{
@@ -142,18 +142,23 @@ where
     R: BufRead + Seek,
     W: Write + Seek,
 {
-    let mut decoder = ImageReader::with_format(input, input_format.into()).into_decoder()?;
+    // Apply the image crate's own `Limits` (default `max_alloc` = 512 MiB) so
+    // decoders that honor them reject crafted inputs internally.
+    let mut reader = ImageReader::with_format(input, input_format.into());
+    reader.limits(Limits::default());
+    let mut decoder = reader.into_decoder()?;
     let orientation = decoder.orientation()?;
 
-    // Guard against decompression bombs: reject images whose raw decoded size would
-    // exceed 512 MB before allocating any pixel buffer. 512 MB matches the default
-    // `Limits::max_alloc` in the `image` crate (image-0.25, src/io/limits.rs line 54),
-    // covering all legitimate inputs including 16-bit 50 MP professional images (~302 MB).
+    // Defense-in-depth against decompression bombs: `DynamicImage::from_decoder`
+    // allocates the pixel buffer directly via `vec![0u8; total_bytes]`, which
+    // bypasses `Limits::max_alloc`. Reject decoded sizes over 512 MiB ourselves
+    // before that allocation runs. 512 MiB covers all legitimate inputs incl.
+    // 16-bit 50 MP professional images (~302 MB) and matches `Limits::default`.
     const MAX_IMAGE_BYTES: u64 = 512 * 1024 * 1024;
     let total_bytes = decoder.total_bytes();
     if total_bytes > MAX_IMAGE_BYTES {
         return Err(Error::InvalidAsset(format!(
-            "image decoded size ({total_bytes} bytes) exceeds the maximum allowed (512 MB)"
+            "image decoded size ({total_bytes} bytes) exceeds the maximum allowed (512 MiB)"
         )));
     }
 
@@ -506,10 +511,11 @@ pub mod tests {
 
     /// Regression test for decompression bomb via oversized PNG dimensions.
     ///
-    /// A malicious PNG can claim 16384×16384 RGBA dimensions (1 GB decoded) while
-    /// compressing to ~65 bytes. Before the fix, `DynamicImage::from_decoder` would
-    /// attempt the full 1 GB allocation. After the fix, `total_bytes()` is checked
-    /// against the 512 MB limit before any allocation occurs, returning `InvalidAsset`.
+    /// A malicious PNG can claim 16384×16384 RGBA dimensions (1 GB decoded)
+    /// while compressing to ~65 bytes. Before the fix, `DynamicImage::from_decoder`
+    /// would attempt the full 1 GB allocation. After the fix, we explicitly
+    /// check `decoder.total_bytes()` against 512 MiB before that allocation
+    /// runs and return `Error::InvalidAsset`.
     #[test]
     fn test_make_thumbnail_rejects_decompression_bomb() {
         // Minimal valid PNG: IHDR declares 16384×16384 RGBA (total_bytes = 1 GB).
@@ -537,10 +543,11 @@ pub mod tests {
             make_thumbnail_bytes_from_stream("image/png", Cursor::new(bomb_png), &settings);
 
         // Before the fix: attempts to allocate 1 GB, crashing containers.
-        // After the fix: returns Err(InvalidAsset) without any large allocation.
+        // After the fix: total_bytes check returns Err(InvalidAsset) before
+        // any large allocation occurs.
         assert!(
             matches!(result, Err(Error::InvalidAsset(_))),
-            "expected Err(InvalidAsset) for decompression bomb, got: {result:?}"
+            "expected Err(InvalidAsset), got: {result:?}"
         );
     }
 
