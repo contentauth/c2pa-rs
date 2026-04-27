@@ -9,6 +9,17 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.80.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.0...c2pa-v0.80.1)
+_27 April 2026_
+
+### Fixed
+
+* Harden against empty certificates during OCSP certificate validation ([#2067](https://github.com/contentauth/c2pa-rs/pull/2067))
+* Prevent duplicate timestamp assertion ([#2085](https://github.com/contentauth/c2pa-rs/pull/2085))
+* Harden riff chunk parser against forged size field memory attacks ([#2053](https://github.com/contentauth/c2pa-rs/pull/2053))
+* Harden bmff parsing against integer overflow attack ([#2054](https://github.com/contentauth/c2pa-rs/pull/2054))
+* Harden against cyclic IFD chain in tiff parser ([#2068](https://github.com/contentauth/c2pa-rs/pull/2068))
+
 ## [0.80.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.5...c2pa-v0.80.0)
 _16 April 2026_
 
