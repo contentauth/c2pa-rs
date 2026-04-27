@@ -361,12 +361,16 @@ fn check_stapled_ocsp_response(
 
     // If we get a valid response, validate the certs.
     if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+        let Some(first_cert) = ocsp_certs.first() else {
+            return Ok(OcspResponse::default());
+        };
+
         // make sure this is an OCSP signing EKU
         let mut new_ctp = ctp.clone();
         new_ctp.clear_ekus();
         new_ctp.add_valid_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
         if check_end_entity_certificate_profile(
-            &ocsp_certs[0],
+            first_cert,
             &new_ctp,
             validation_log,
             tst_info.as_ref(),
@@ -378,11 +382,7 @@ fn check_stapled_ocsp_response(
 
         // validate the trust
         if new_ctp
-            .check_certificate_trust(
-                ocsp_certs,
-                &ocsp_certs[0],
-                signing_time.map(|t| t.timestamp()),
-            )
+            .check_certificate_trust(ocsp_certs, first_cert, signing_time.map(|t| t.timestamp()))
             .is_err()
         {
             return Ok(OcspResponse::default());
@@ -457,13 +457,16 @@ pub(crate) fn fetch_and_check_ocsp_response(
 
     // If we get a valid response validate the certs.
     if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
+        let Some(first_cert) = ocsp_certs.first() else {
+            return Ok(OcspResponse::default());
+        };
+
         // make sure this is an OCSP signing EKU
         let mut new_ctp = ctp.clone();
         new_ctp.clear_ekus();
         new_ctp.add_valid_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
 
-        if check_end_entity_certificate_profile(&ocsp_certs[0], &new_ctp, validation_log, None)
-            .is_err()
+        if check_end_entity_certificate_profile(first_cert, &new_ctp, validation_log, None).is_err()
         {
             return Ok(OcspResponse::default());
         }
