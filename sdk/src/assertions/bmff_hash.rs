@@ -2006,7 +2006,7 @@ impl BmffHash {
 
     /// Reject a Merkle tree whose leaf vector would exceed the
     /// `MAX_MERKLE_LEAVES_SIZE` memory budget for the resolved hash algorithm.
-    /// Centralises the budget check used by both Merkle-tree construction
+    /// Centralizes the budget check used by both Merkle-tree construction
     /// (`create_merkle_tree_for_merkle_map`) and validation
     /// (`validate_merkle_maps_mdat_boxes`).
     fn check_merkle_leaf_memory(
