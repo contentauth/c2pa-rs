@@ -34,6 +34,7 @@ use c2pa::{
     Signer,
 };
 use clap::{Parser, Subcommand};
+use env_logger::Env;
 use etcetera::BaseStrategy;
 use log::debug;
 use serde::Deserialize;
@@ -622,11 +623,8 @@ pub(crate) fn folder_mode_output_path_ok(path: &Path) -> bool {
 fn main() -> Result<()> {
     let args = CliArgs::parse();
 
-    // set RUST_LOG=debug to get detailed debug logging
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "error");
-    }
-    env_logger::init();
+    // default to error logging, RUST_LOG=debug to get detailed debug logging
+    env_logger::Builder::from_env(Env::default().default_filter_or("error")).init();
 
     let path = &args.path;
 
@@ -937,8 +935,9 @@ fn main() -> Result<()> {
 pub mod tests {
     #![allow(clippy::unwrap_used)]
 
-    use c2pa::{BuilderIntent, DigitalSourceType};
     use std::fs::{create_dir, write};
+
+    use c2pa::{BuilderIntent, DigitalSourceType};
     use tempfile::TempDir;
 
     use super::*;

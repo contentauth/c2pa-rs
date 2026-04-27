@@ -429,6 +429,40 @@ fn tool_sign_to_same_file_no_force() -> Result<(), Box<dyn Error>> {
 // }
 
 #[test]
+// With RUST_LOG unset, default level is `error` (see main) — debug! lines in configure_sdk must not appear.
+fn rust_log_unset_suppresses_trust_debug_messages() -> Result<(), Box<dyn Error>> {
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
+        .arg("trust")
+        .arg("--trust_anchors")
+        .arg(fixture_path("trust/anchors.pem"))
+        .arg("--trust_config")
+        .arg(fixture_path("trust/store.cfg"))
+        .env_remove("RUST_LOG")
+        .assert()
+        .success()
+        .stderr(str::contains("Using trust anchors").not());
+    Ok(())
+}
+
+#[test]
+// With RUST_LOG=debug, trust setup emits debug! lines; proves the test above is exercising log level.
+fn rust_log_debug_shows_trust_debug_messages() -> Result<(), Box<dyn Error>> {
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
+        .arg("trust")
+        .arg("--trust_anchors")
+        .arg(fixture_path("trust/anchors.pem"))
+        .arg("--trust_config")
+        .arg(fixture_path("trust/store.cfg"))
+        .env("RUST_LOG", "debug")
+        .assert()
+        .success()
+        .stderr(str::contains("Using trust"));
+    Ok(())
+}
+
+#[test]
 // c2patool tests/fixtures/C.jpg trust --trust_anchors=tests/fixtures/trust/anchors.pem --trust_config=tests/fixtures/trust/store.cfg
 fn tool_load_trust_settings_from_file_trusted() -> Result<(), Box<dyn Error>> {
     Command::new(cargo::cargo_bin!("c2patool"))
