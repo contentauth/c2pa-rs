@@ -24,7 +24,7 @@ The C2PA specification imposes restrictions on what can be redacted:
 | **No self-redaction** | A manifest cannot redact its own assertions. |
 | **Cannot redact `c2pa.actions`** | Action assertions are protected. |
 | **Cannot redact `c2pa.hash.*`** | Hash binding assertions are protected. |
-| **URI must match** | Every URI in the redactions list must resolve to an assertion in an ingredient; otherwise signing fails with `AssertionRedactionNotFound`. |
+| **URI must match** | Every URI in the redactions list must resolve to an assertion in an ingredient, or signing fails with `AssertionRedactionNotFound`. |
 
 ## JUMBF URI format
 
@@ -48,7 +48,7 @@ The recommended workflow uses a [`Reader`] to discover assertion URIs, then a [`
 
 ### Step 1 — Discover the redaction target
 
-Open the signed asset and find the assertion you want to redact:
+Open the signed asset and gather URIs for all assertions you want to redact:
 
 ```rust
 use c2pa::Reader;
@@ -67,7 +67,7 @@ let redacted_uri = manifest.assertion_references()
 
 ### Step 2 — Build the manifest
 
-Use `BuilderIntent::Update` if redaction is your only change — update manifests
+Use `BuilderIntent::Update` if redaction is your only change. Update manifests
 can only modify manifest-level information and cannot alter the asset's content.
 If the redaction is part of a wider edit that also changes the asset, use
 `BuilderIntent::Edit` instead.
@@ -75,7 +75,7 @@ If the redaction is part of a wider edit that also changes the asset, use
 Create a [`Builder`] and add the URI to the `redactions` list:
 
 ```rust
-use c2pa::{Builder, BuilderIntent};
+use c2pa::{assertions::c2pa_action, Builder, BuilderIntent};
 use serde_json::json;
 
 let mut builder = Builder::default();
@@ -84,14 +84,13 @@ builder.set_intent(BuilderIntent::Update);
 // Add the JUMBF URI to the redactions list
 builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
-// Per the spec, include a c2pa.redacted action
-builder.add_action(json!({
-    "action": "c2pa.redacted",
-    "reason": "Removing location metadata for privacy",
-    "parameters": {
-        "redacted": redacted_uri,
-    }
-}))?;
+// Per the spec, include a c2pa.redacted action with a reason.
+// Standard reasons are defined in c2pa_reason (e.g. PII_PRESENT,
+// INVALID_DATA, TRADE_SECRET_PRESENT, GOVERNMENT_CONFIDENTIAL).
+let redacted_action = Action::new(c2pa_action::REDACTED)
+    .set_reason(c2pa_reason::PII_PRESENT)
+    .set_parameter("redacted", &redacted_uri)?;
+builder.add_action(redacted_action)?;
 ```
 
 ### Step 3 — Sign
@@ -125,7 +124,7 @@ The SDK validates that every listed redaction was actually applied, so checking
 
 ## JSON manifest definition
 
-If you build manifests from JSON, set the `redactions` array on the definition:
+If you build manifests from JSON, set the `redactions` array on the definition, as well as the `c2pa.redacted` actions:
 
 ```json
 {
@@ -140,7 +139,7 @@ If you build manifests from JSON, set the `redactions` array on the definition:
         "actions": [
           {
             "action": "c2pa.redacted",
-            "reason": "Removing location metadata for privacy",
+            "reason": "c2pa.PII.present",
             "parameters": {
               "redacted": "self#jumbf=/c2pa/urn:c2pa:acme:12345/c2pa.assertions/c2pa.metadata"
             }

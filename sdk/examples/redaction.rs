@@ -27,8 +27,10 @@ use std::io::Cursor;
 
 use anyhow::Result;
 use c2pa::{
-    settings::Settings, validation_results::ValidationState, Builder, BuilderIntent, Context,
-    Reader,
+    assertions::{c2pa_action, c2pa_reason, Action},
+    settings::Settings,
+    validation_results::ValidationState,
+    Builder, BuilderIntent, Context, Reader,
 };
 use serde_json::json;
 
@@ -93,13 +95,10 @@ fn main() -> Result<()> {
     update_builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
     // Per the C2PA spec, include a c2pa.redacted action explaining the redaction.
-    update_builder.add_action(json!({
-        "action": "c2pa.redacted",
-        "reason": "Removing location metadata for privacy",
-        "parameters": {
-            "redacted": redacted_uri,
-        }
-    }))?;
+    let redacted_action = Action::new(c2pa_action::REDACTED)
+        .set_reason(c2pa_reason::PII_PRESENT)
+        .set_parameter("redacted", &redacted_uri)?;
+    update_builder.add_action(redacted_action)?;
 
     // Sign the update manifest. The source is the previously signed asset.
     signed_asset.set_position(0);
@@ -133,14 +132,15 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use c2pa_macros::c2pa_test_async;
+    //use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
 
-    #[c2pa_test_async]
-    async fn test_redaction_example() -> Result<()> {
+    //#[c2pa_test_async]
+    #[test]
+    fn test_redaction_example() -> Result<()> {
         main()
     }
 }
