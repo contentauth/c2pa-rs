@@ -384,6 +384,19 @@ fn decode_offset(offset_file_native: u64, endianness: Endianness, big_tiff: bool
     Ok(offset)
 }
 
+/// Reject forged IFD `value_count` fields whose claimed byte size exceeds the
+/// actual file size. Used before every `safe_vec`/`read_to_vec` allocation
+/// driven by attacker-controlled count fields, so a 52-byte BigTIFF can't
+/// trigger a multi-GB allocation.
+fn check_ifd_data_size(claimed_size: u64, file_size: u64) -> Result<()> {
+    if claimed_size > file_size {
+        return Err(Error::InvalidAsset(
+            "IFD entry data size exceeds file size".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 // create tree of TIFF structure IFDs and IFD entries.
 fn map_tiff<R>(
     mut input: &mut R,
@@ -425,11 +438,7 @@ where
                 )
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                if num_longs_x4 as u64 > file_size {
-                    return Err(Error::InvalidAsset(
-                        "IFD entry data size exceeds file size".to_string(),
-                    ));
-                }
+                check_ifd_data_size(num_longs_x4 as u64, file_size)?;
 
                 let mut subfile_offsets = safe_vec(subifd.value_count, Some(0u32))?; // will contain offsets in native endianness
 
@@ -1207,11 +1216,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                     let num_bytes = usize::try_from(cnt)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                    if cnt > file_size {
-                        return Err(Error::InvalidAsset(
-                            "IFD entry data size exceeds file size".to_string(),
-                        ));
-                    }
+                    check_ifd_data_size(cnt, file_size)?;
 
                     let mut data = safe_vec(cnt, Some(0u8))?;
 
@@ -1239,11 +1244,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                    if num_shorts_x2 as u64 > file_size {
-                        return Err(Error::InvalidAsset(
-                            "IFD entry data size exceeds file size".to_string(),
-                        ));
-                    }
+                    check_ifd_data_size(num_shorts_x2 as u64, file_size)?;
 
                     let mut data = safe_vec(num_shorts_x2 as u64, Some(0u8))?;
 
@@ -1275,11 +1276,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                    if num_longs_x4 as u64 > file_size {
-                        return Err(Error::InvalidAsset(
-                            "IFD entry data size exceeds file size".to_string(),
-                        ));
-                    }
+                    check_ifd_data_size(num_longs_x4 as u64, file_size)?;
 
                     let mut data = safe_vec(num_longs_x4 as u64, Some(0u8))?;
 
@@ -1311,11 +1308,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                    if num_sshorts_x2 as u64 > file_size {
-                        return Err(Error::InvalidAsset(
-                            "IFD entry data size exceeds file size".to_string(),
-                        ));
-                    }
+                    check_ifd_data_size(num_sshorts_x2 as u64, file_size)?;
 
                     let mut data = safe_vec(num_sshorts_x2 as u64, Some(0u8))?;
 
@@ -1347,11 +1340,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                    if num_slongs_x4 as u64 > file_size {
-                        return Err(Error::InvalidAsset(
-                            "IFD entry data size exceeds file size".to_string(),
-                        ));
-                    }
+                    check_ifd_data_size(num_slongs_x4 as u64, file_size)?;
 
                     let mut data = safe_vec(num_slongs_x4 as u64, Some(0u8))?;
 
@@ -1383,11 +1372,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                    if num_floats_x4 as u64 > file_size {
-                        return Err(Error::InvalidAsset(
-                            "IFD entry data size exceeds file size".to_string(),
-                        ));
-                    }
+                    check_ifd_data_size(num_floats_x4 as u64, file_size)?;
 
                     let mut data = safe_vec(num_floats_x4 as u64, Some(0u8))?;
 
