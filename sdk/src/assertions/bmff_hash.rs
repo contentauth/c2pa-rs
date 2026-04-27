@@ -31,12 +31,31 @@ use sha2::{Digest, Sha256, Sha384, Sha512};
 /// Practical BMFF files rarely have more than 4 mdat boxes.
 const MAX_MDAT_BOXES: usize = 4;
 
-/// Maximum number of Merkle tree leaves allowed when building or validating a Merkle map.
-/// Prevents resource exhaustion when an attacker sets `fixed_block_size` to a tiny value
-/// or embeds a huge `variable_block_sizes` list in a BmffHash assertion.
-/// 500 000 leaves supports a 50 GB mdat with 100 KB blocks — sufficient for all practical
-/// streaming-video content authentication granularities.
-const MAX_MERKLE_LEAVES: u64 = 500_000;
+/// Maximum total memory (in bytes) that a single BmffHash Merkle leaf vector
+/// may consume. Prevents resource exhaustion when an attacker sets
+/// `fixed_block_size` to a tiny value or embeds a huge `variable_block_sizes`
+/// list in a BmffHash assertion.
+///
+/// Expressed as memory rather than leaf count because the per-leaf footprint
+/// depends on the hash algorithm (SHA-256: 32 B, SHA-384: 48 B, SHA-512: 64 B).
+/// 32 MB matches the cap at SHA-512 worst case and supports
+/// a 50 GB mdat with 100 KB blocks at SHA-256 — sufficient for all practical
+/// scenarios
+const MAX_MERKLE_LEAVES_SIZE: u64 = 32 * 1024 * 1024;
+
+/// Output size in bytes for a BmffHash-supported hash algorithm, derived from
+/// the actual `sha2` hasher types via the `Digest` trait so the values stay in
+/// sync with what `hash_stream_by_alg` produces.
+fn hash_alg_size_in_bytes(alg: &str) -> crate::Result<u64> {
+    match alg {
+        "sha256" => Ok(<Sha256 as Digest>::output_size() as u64),
+        "sha384" => Ok(<Sha384 as Digest>::output_size() as u64),
+        "sha512" => Ok(<Sha512 as Digest>::output_size() as u64),
+        other => Err(Error::BadParam(format!(
+            "unsupported hash alg for Merkle leaf sizing: {other}"
+        ))),
+    }
+}
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
@@ -1985,6 +2004,30 @@ impl BmffHash {
         Ok(())
     }
 
+    /// Reject a Merkle tree whose leaf vector would exceed the
+    /// `MAX_MERKLE_LEAVES_SIZE` memory budget for the resolved hash algorithm.
+    /// Centralises the budget check used by both Merkle-tree construction
+    /// (`create_merkle_tree_for_merkle_map`) and validation
+    /// (`validate_merkle_maps_mdat_boxes`).
+    fn check_merkle_leaf_memory(
+        &self,
+        num_leaves: u64,
+        merkle_map: &MerkleMap,
+    ) -> crate::Result<()> {
+        let alg = merkle_map
+            .alg
+            .as_ref()
+            .or(self.alg.as_ref())
+            .ok_or(Error::BadParam("alg is required".to_string()))?;
+        let leaf_size = hash_alg_size_in_bytes(alg)?;
+        if num_leaves.saturating_mul(leaf_size) > MAX_MERKLE_LEAVES_SIZE {
+            return Err(Error::InvalidAsset(format!(
+                "Merkle tree leaf memory ({num_leaves} leaves × {leaf_size} B) exceeds maximum ({MAX_MERKLE_LEAVES_SIZE} bytes)"
+            )));
+        }
+        Ok(())
+    }
+
     // create Merkle tree for MerkleMap
     fn create_merkle_tree_for_merkle_map(
         &self,
@@ -2018,11 +2061,7 @@ impl BmffHash {
             }
 
             let num_leaves = bytes_left.div_ceil(fixed_block_size);
-            if num_leaves > MAX_MERKLE_LEAVES {
-                return Err(Error::InvalidAsset(format!(
-                    "Merkle tree leaf count ({num_leaves}) exceeds maximum ({MAX_MERKLE_LEAVES})"
-                )));
-            }
+            self.check_merkle_leaf_memory(num_leaves, merkle_map)?;
 
             while bytes_left > 0 {
                 let leaf_length = std::cmp::min(bytes_left, fixed_block_size);
@@ -2045,12 +2084,8 @@ impl BmffHash {
                 ));
             }
 
-            if variable_block_sizes.len() as u64 > MAX_MERKLE_LEAVES {
-                return Err(Error::InvalidAsset(format!(
-                    "Merkle tree leaf count ({}) exceeds maximum ({MAX_MERKLE_LEAVES})",
-                    variable_block_sizes.len()
-                )));
-            }
+            let num_leaves = variable_block_sizes.len() as u64;
+            self.check_merkle_leaf_memory(num_leaves, merkle_map)?;
 
             for block_size in variable_block_sizes {
                 let hash_range = vec![HashRange::new(block_start, *block_size)];
@@ -2216,11 +2251,7 @@ impl BmffHash {
                 }
 
                 let num_leaves = bytes_left.div_ceil(fixed_block_size);
-                if num_leaves > MAX_MERKLE_LEAVES {
-                    return Err(Error::InvalidAsset(format!(
-                        "Merkle tree leaf count ({num_leaves}) exceeds maximum ({MAX_MERKLE_LEAVES})"
-                    )));
-                }
+                self.check_merkle_leaf_memory(num_leaves, merkle_map)?;
 
                 let mut hash_ranges = Vec::new();
                 while bytes_left > 0 {
@@ -2243,12 +2274,8 @@ impl BmffHash {
                     ));
                 }
 
-                if variable_block_sizes.len() as u64 > MAX_MERKLE_LEAVES {
-                    return Err(Error::InvalidAsset(format!(
-                        "Merkle tree leaf count ({}) exceeds maximum ({MAX_MERKLE_LEAVES})",
-                        variable_block_sizes.len()
-                    )));
-                }
+                let num_leaves = variable_block_sizes.len() as u64;
+                self.check_merkle_leaf_memory(num_leaves, merkle_map)?;
 
                 let mut hash_ranges = Vec::new();
                 for block_size in variable_block_sizes {
@@ -2642,18 +2669,26 @@ mod bmff_hash_tests {
         );
     }
 
-    /// Regression test: `fixed_block_size=1` on a large mdat would create ~500_001 leaves,
-    /// exhausting memory and CPU. After the fix both call sites reject this with InvalidAsset.
+    /// Regression test: a tiny `fixed_block_size` produces enough leaves that
+    /// `num_leaves * hash_size > MAX_MERKLE_LEAVES_SIZE` (32 MB). Both
+    /// call sites reject with `InvalidAsset` before any hashing.
+    ///
+    /// SHA-512 (64 B/leaf) is used so the limit is hit at 524_289 leaves —
+    /// keeping the test box size bounded at ~1 MiB instead of the
+    /// ~32 MB needed at SHA-256.
     #[test]
     fn test_merkle_tree_fixed_block_size_too_small_rejected() {
-        // Box size chosen so that bytes_left = size - 16 = 500_001 > MAX_MERKLE_LEAVES (500_000).
+        // 524_289 leaves × 64 B = 33_554_496 B > 33_554_432 B (32 MiB).
+        const NUM_LEAVES: u64 = 524_289;
+
+        // Site 1: create_merkle_tree_for_merkle_map (fixed_block_size = 1).
         let oversized_box = BoxInfoLite {
             path: "mdat".to_string(),
             offset: 0,
-            size: 500_017, // bytes_left = 500_017 - 16 = 500_001 leaves at fixed_block_size=1
+            size: NUM_LEAVES + 16,
         };
         let mut merkle_map = MerkleMap {
-            alg: Some("sha256".to_string()),
+            alg: Some("sha512".to_string()),
             unique_id: 0,
             local_id: 0,
             count: 1,
@@ -2662,10 +2697,9 @@ mod bmff_hash_tests {
             fixed_block_size: Some(1),
             variable_block_sizes: None,
         };
-
-        // Site 1: create_merkle_tree_for_merkle_map
-        let bmff_hash = BmffHash::new("test", "sha256", None);
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 500_017]));
+        let bmff_hash = BmffHash::new("test", "sha512", None);
+        let mut reader: Box<dyn CAIRead> =
+            Box::new(Cursor::new(vec![0u8; (NUM_LEAVES + 16) as usize]));
         let result = bmff_hash.create_merkle_tree_for_merkle_map(
             reader.as_mut(),
             &oversized_box,
@@ -2676,17 +2710,18 @@ mod bmff_hash_tests {
             "expected Err(InvalidAsset) from create_merkle_tree_for_merkle_map"
         );
 
-        // Site 2: validate_merkle_maps_mdat_boxes (fixed_block_size <= 1 guard fires first,
-        // so use fixed_block_size=2 to reach the leaf-count guard: 500_001/2 = 250_001 <= 500_000,
-        // need size = 2*500_001 + 16 = 1_000_018 so bytes_left = 1_000_002, leaves = 500_001).
+        // Site 2: validate_merkle_maps_mdat_boxes — guard rejects fixed_block_size <= 1
+        // before reaching the memory check, so use fixed_block_size = 2 with
+        // 2 * NUM_LEAVES bytes_left.
+        let bytes_left = NUM_LEAVES * 2;
         let oversized_box2 = BoxInfoLite {
             path: "mdat".to_string(),
             offset: 0,
-            size: 1_000_018,
+            size: bytes_left + 16,
         };
-        let mut bmff_hash2 = BmffHash::new("test", "sha256", None);
+        let mut bmff_hash2 = BmffHash::new("test", "sha512", None);
         bmff_hash2.set_merkle(vec![MerkleMap {
-            alg: Some("sha256".to_string()),
+            alg: Some("sha512".to_string()),
             unique_id: 0,
             local_id: 0,
             count: 1,
@@ -2711,7 +2746,8 @@ mod bmff_hash_tests {
             xmp_box_size: 0,
             xmp_box_offset: 0,
         };
-        let mut reader2: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 1_000_018]));
+        let mut reader2: Box<dyn CAIRead> =
+            Box::new(Cursor::new(vec![0u8; (bytes_left + 16) as usize]));
         let result2 = bmff_hash2.validate_merkle_maps_mdat_boxes(reader2.as_mut(), &c2pa_boxes2);
         assert!(
             matches!(result2, Err(Error::InvalidAsset(_))),
@@ -2719,31 +2755,31 @@ mod bmff_hash_tests {
         );
     }
 
-    /// Regression test: a `variable_block_sizes` array with more than MAX_MERKLE_LEAVES
-    /// entries is rejected with InvalidAsset before any hashing occurs.
+    /// Regression test: a `variable_block_sizes` array large enough to push
+    /// the leaf memory over the 32 MB cap is rejected with `InvalidAsset`
+    /// before any hashing occurs. Uses SHA-512 (64 B/leaf), so 524_289 entries
+    /// trip the limit (524_289 × 64 = 33_554_496 B > 33_554_432 B).
     #[test]
     fn test_merkle_tree_variable_block_sizes_too_many_rejected() {
-        // 500_001 entries each of size 1; total = 500_001, box size = 500_001 + 16.
-        let num_blocks: u64 = 500_001;
-        let box_size = num_blocks + 16;
+        const NUM_BLOCKS: u64 = 524_289;
+        let box_size = NUM_BLOCKS + 16;
         let oversized_box = BoxInfoLite {
             path: "mdat".to_string(),
             offset: 0,
             size: box_size,
         };
         let mut merkle_map = MerkleMap {
-            alg: Some("sha256".to_string()),
+            alg: Some("sha512".to_string()),
             unique_id: 0,
             local_id: 0,
             count: 1,
             init_hash: None,
             hashes: VecByteBuf(vec![]),
             fixed_block_size: None,
-            variable_block_sizes: Some(vec![1u64; num_blocks as usize]),
+            variable_block_sizes: Some(vec![1u64; NUM_BLOCKS as usize]),
         };
 
-        // Site 1: create_merkle_tree_for_merkle_map
-        let bmff_hash = BmffHash::new("test", "sha256", None);
+        let bmff_hash = BmffHash::new("test", "sha512", None);
         let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; box_size as usize]));
         let result = bmff_hash.create_merkle_tree_for_merkle_map(
             reader.as_mut(),
