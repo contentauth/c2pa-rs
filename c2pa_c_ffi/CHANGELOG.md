@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.80.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.0...c2pa-c-ffi-v0.80.1)
+_27 April 2026_
+
+## [0.80.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.5...c2pa-c-ffi-v0.80.0)
+_16 April 2026_
+
+### Added
+
+* Add ingredient archive FFI functions and relax Builder mutability ([#2061](https://github.com/contentauth/c2pa-rs/pull/2061))
+
+### Documented
+
+* Separate out C docs ([#2052](https://github.com/contentauth/c2pa-rs/pull/2052))
+
 ## [0.79.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.4...c2pa-c-ffi-v0.79.5)
 _15 April 2026_
 
