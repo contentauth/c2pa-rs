@@ -128,7 +128,7 @@
 //! All macros follow: `action_or_return_<what>`
 //! - `_null`: Returns `NULL` pointer
 //! - `_int`: Returns `-1`
-//! - `_zero`: Returns `0`  
+//! - `_zero`: Returns `0`
 //! - `_false`: Returns `false`
 //!
 //! # Type Mapping Guide
@@ -405,9 +405,8 @@ macro_rules! untrack_or_return_null {
 /// Maximum length for C strings when using bounded conversion (64KB)
 pub const MAX_CSTRING_LEN: usize = 1048576;
 
-/// Convert C string with bounded length check or early-return with error value
-/// Uses a safe bounded approach to prevent reading unbounded memory.
-/// Maximum string length is MAX_CSTRING_LEN (1MB).
+/// Convert C string with bounded length check or early-return with error value.
+/// Errors if the string exceeds MAX_CSTRING_LEN bytes.
 #[macro_export]
 macro_rules! cstr_or_return {
     ($ptr:expr, $err_val:expr) => {{
@@ -416,10 +415,8 @@ macro_rules! cstr_or_return {
             $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
             return $err_val;
         } else {
-            // SAFETY: Caller must ensure ptr is valid and points to a null-terminated string.
-            // CStr::from_ptr reads only until the null terminator, staying within the allocation.
-            let cstr =
-                unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
+            // SAFETY: caller must ensure ptr is a valid null-terminated C string.
+            let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
             if cstr.to_bytes().len() > $crate::macros::MAX_CSTRING_LEN {
                 $crate::CimplError::string_too_long(stringify!($ptr)).set_last();
                 return $err_val;
@@ -429,23 +426,21 @@ macro_rules! cstr_or_return {
     }};
 }
 
-/// Convert C string with custom length limit or early-return with error value
-/// Allows specifying a custom maximum length for the string.
+/// Convert C string with custom length limit or early-return with error value.
+/// Errors if the string exceeds max_len bytes.
 #[macro_export]
 macro_rules! cstr_or_return_with_limit {
     ($ptr:expr, $max_len:expr, $err_val:expr) => {{
         let ptr = $ptr;
         let max_len = $max_len;
         if ptr.is_null() {
-            $crate::cimpl_error::null_parameter(stringify!($ptr)).set_last();
+            $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
             return $err_val;
         } else {
-            // SAFETY: Caller must ensure ptr is valid and points to a null-terminated string.
-            // CStr::from_ptr reads only until the null terminator, staying within the allocation.
-            let cstr =
-                unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
+            // SAFETY: caller must ensure ptr is a valid null-terminated C string.
+            let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
             if cstr.to_bytes().len() > max_len {
-                $crate::cimpl_error::string_too_long(stringify!($ptr).to_string());
+                $crate::CimplError::string_too_long(stringify!($ptr)).set_last();
                 return $err_val;
             }
             cstr.to_string_lossy().into_owned()
@@ -683,18 +678,13 @@ macro_rules! cstr_option {
         if ptr.is_null() {
             None
         } else {
-            // SAFETY: We create a bounded slice up to MAX_CSTRING_LEN.
-            // Caller must ensure ptr is valid for reading and points to a
-            // null-terminated string within MAX_CSTRING_LEN bytes.
-            let bytes = unsafe {
-                std::slice::from_raw_parts(ptr as *const u8, $crate::macros::MAX_CSTRING_LEN)
-            };
-            match std::ffi::CStr::from_bytes_until_nul(bytes) {
-                Ok(cstr) => Some(cstr.to_string_lossy().into_owned()),
-                Err(_) => {
-                    $crate::CimplError::string_too_long(stringify!($ptr)).set_last();
-                    None
-                }
+            // SAFETY: caller must ensure ptr is a valid null-terminated C string.
+            let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
+            if cstr.to_bytes().len() > $crate::macros::MAX_CSTRING_LEN {
+                $crate::CimplError::string_too_long(stringify!($ptr)).set_last();
+                None
+            } else {
+                Some(cstr.to_string_lossy().into_owned())
             }
         }
     }};
