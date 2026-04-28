@@ -283,9 +283,9 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "atree"
-version = "0.5.2"
+version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "132573478eb9ff973c6f75d0ed425ac12da77d266506483345f46743ecc83a98"
+checksum = "239d25181cb40f1955529367ee495e35d03aab4e578028f41e7abc8b21c367a8"
 
 [[package]]
 name = "autocfg"
