@@ -9,6 +9,23 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.80.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.1...c2pa-v0.80.2)
+_28 April 2026_
+
+### Documented
+
+* Adds redaction docs and example ([#2071](https://github.com/contentauth/c2pa-rs/pull/2071))
+
+### Fixed
+
+* `c2pa-c-ffi` UB detected by miri ([#2089](https://github.com/contentauth/c2pa-rs/pull/2089))
+* Harden RSA validators against invalid BER sequences ([#2065](https://github.com/contentauth/c2pa-rs/pull/2065))
+* Harden against deep linear ingredient chains with max limits ([#2064](https://github.com/contentauth/c2pa-rs/pull/2064))
+* Harden BMFF hash merkel tree creation with max merkel leaves limits ([#2063](https://github.com/contentauth/c2pa-rs/pull/2063))
+* Harden against image decompression bomb attacks in building thumbnail ([#2062](https://github.com/contentauth/c2pa-rs/pull/2062))
+* Harden tiff parser against forged IFD entry count fields ([#2059](https://github.com/contentauth/c2pa-rs/pull/2059))
+* Harden builder and resource store addition against path traversal zip slip attacks ([#2066](https://github.com/contentauth/c2pa-rs/pull/2066))
+
 ## [0.80.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.0...c2pa-v0.80.1)
 _27 April 2026_
 
