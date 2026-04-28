@@ -16,7 +16,7 @@ A _build configuration_ will specify:
   * `stable` ([the most recent “stable” release](https://blog.rust-lang.org/releases/latest))
   * `MSRV` (the oldest release supported by this project)
 * A feature flag set, which will be either `all` (all flags defined in the c2pa-rs crate) or a list of specific features.
-* A crypto library flag, which will be either `rust_native_crypto` or `openssl`, depicting which cryptogrpahy stack is being built and tested.
+* A crypto library flag, which will be either `rust_native_crypto` or `openssl`, specifying the  cryptography stack to build and test.
 * On platforms where relevant, a C library identifier (i.e. `glibc` or `musl`).
 
 ## Tier 1A
@@ -93,7 +93,7 @@ A release will be blocked if the build fails.
 This test suite may be triggered for a PR by adding the `release-readiness` label to the PR.
 * A test suite that is a subset of the Tier 1 test suite may be defined for this build configuration.
 If it exists, a release will be blocked if the test suite fails.
-* Tier 2 should generally be avoided, but may necessary when a fully-native execution environment is not available to us.
+* Tier 2 should generally be avoided, but may be necessary when a fully-native execution environment is not available to us.
 (As an example, we can run iOS code in a _simulator,_ but we do not currently pay for hosted iPhone test machines that we can use from GitHub, so iOS native builds can not be in Tier 1.)
 * If built artifacts are generated for this build configuration, they should be built for every versioned release and the location should be documented.
 

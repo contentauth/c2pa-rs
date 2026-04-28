@@ -641,7 +641,7 @@ fn test_archive_path_traversal_protection() -> Result<()> {
     let result = builder.add_resource("/etc/passwd", &mut malicious_resource2);
 
     match result {
-        Err(Error::BadParam(msg)) if msg.contains("Absolute path not allowed") => {
+        Err(Error::BadParam(msg)) if msg.contains("Path traversal not allowed") => {
             // Expected error
         }
         Err(e) => {
