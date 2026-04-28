@@ -90,6 +90,9 @@ required-features = ["file_io"]
 [[example]]
 name = "progress"
 
+[[example]]
+name = "redaction"
+
 [lib]
 crate-type = ["lib"]
 

@@ -141,7 +141,13 @@ pub struct ManifestDefinition {
     #[serde(default = "default_vec::<AssertionDefinition>")]
     pub assertions: Vec<AssertionDefinition>,
 
-    /// A list of redactions - URIs to redacted assertions.
+    /// JUMBF URIs of assertions to redact from ingredient manifests.
+    ///
+    /// Each URI has the form
+    /// `self#jumbf=/c2pa/<manifest_label>/c2pa.assertions/<assertion_label>`.
+    /// Use a [`Reader`](crate::Reader) to discover the manifest label.
+    /// See the [redaction guide](https://github.com/contentauth/c2pa-rs/blob/main/docs/redaction.md)
+    /// for details.
     pub redactions: Option<Vec<String>>,
 
     /// Allows you to pre-define the manifest label, which must be unique.
@@ -667,7 +673,7 @@ impl Builder {
     /// ```
     /// # use c2pa::{Builder, ClaimGeneratorInfo, Result};
     /// # fn main() -> Result<()> {
-    /// let mut builder = Builder::new();
+    /// let mut builder = Builder::default();
     /// builder.set_claim_generator_info(ClaimGeneratorInfo::new("my_app"));
     /// # Ok(())
     /// # }
@@ -3366,7 +3372,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     use crate::utils::test::fixture_path;
     use crate::{
-        assertions::{c2pa_action, BoxHash, DigitalSourceType},
+        assertions::{c2pa_action, c2pa_reason, BoxHash, DigitalSourceType},
         asset_handlers::bmff_io::{
             inject_manifest_into_free_box, inject_placeholder, read_bmff_c2pa_boxes,
         },
@@ -5458,7 +5464,7 @@ mod tests {
         builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = crate::assertions::Action::new("c2pa.redacted")
-            .set_reason("testing".to_owned())
+            .set_reason(c2pa_reason::PII_PRESENT)
             .set_parameter("redacted".to_owned(), redacted_uri.clone())
             .unwrap();
 
@@ -5507,7 +5513,7 @@ mod tests {
         builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = crate::assertions::Action::new("c2pa.redacted")
-            .set_reason("testing".to_owned())
+            .set_reason(c2pa_reason::PII_PRESENT)
             .set_parameter("redacted".to_owned(), redacted_uri.clone())
             .unwrap();
 
@@ -5540,8 +5546,6 @@ mod tests {
 
     #[test]
     fn test_redaction_two_ingredients() {
-        use crate::assertions::{c2pa_action, Action, Actions};
-
         setup_logger();
         let context = test_context().into_shared();
 
@@ -5650,11 +5654,11 @@ mod tests {
 
         // Add redacted actions for both
         let redacted_action1 = Action::new("c2pa.redacted")
-            .set_reason("testing redaction from parent 1".to_owned())
+            .set_reason(c2pa_reason::PII_PRESENT)
             .set_parameter("redacted".to_owned(), redacted_uri1)
             .unwrap();
         let redacted_action2 = Action::new("c2pa.redacted")
-            .set_reason("testing redaction from parent 2".to_owned())
+            .set_reason(c2pa_reason::PII_PRESENT)
             .set_parameter("redacted".to_owned(), redacted_uri2)
             .unwrap();
 
@@ -5702,11 +5706,6 @@ mod tests {
 
     #[test]
     fn test_redaction_assertion_via_archive() {
-        use crate::{
-            assertions::{c2pa_action, Action, Actions},
-            utils::test::setup_logger,
-        };
-
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
 
@@ -5792,7 +5791,7 @@ mod tests {
         combiner.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = Action::new("c2pa.redacted")
-            .set_reason("testing redaction via archive".to_owned())
+            .set_reason(c2pa_reason::PII_PRESENT)
             .set_parameter("redacted".to_owned(), redacted_uri)
             .unwrap();
         let actions = Actions::new().add_action(redacted_action);
@@ -5825,11 +5824,6 @@ mod tests {
     #[cfg(feature = "add_thumbnails")]
     #[test]
     fn test_redaction_thumbnails_via_archive() {
-        use crate::{
-            assertions::{c2pa_action, Action, Actions},
-            utils::test::setup_logger,
-        };
-
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
 
@@ -5941,7 +5935,7 @@ mod tests {
         let mut redaction_actions = Actions::new();
         for uri in &redaction_uris {
             let redacted_action = Action::new("c2pa.redacted")
-                .set_reason("testing thumbnail redaction via archive".to_owned())
+                .set_reason(c2pa_reason::PII_PRESENT)
                 .set_parameter("redacted".to_owned(), uri.clone())
                 .unwrap();
             redaction_actions = redaction_actions.add_action(redacted_action);
@@ -6000,11 +5994,6 @@ mod tests {
     #[cfg(feature = "add_thumbnails")]
     #[test]
     fn test_redaction_thumbnails_local_resource_id() {
-        use crate::{
-            assertions::{c2pa_action, Action, Actions},
-            utils::test::setup_logger,
-        };
-
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
 
@@ -6088,7 +6077,7 @@ mod tests {
         let mut redaction_actions = Actions::new();
         for uri in &redaction_uris {
             let action = Action::new("c2pa.redacted")
-                .set_reason("testing thumbnail redaction via local resource ID".to_owned())
+                .set_reason(c2pa_reason::PII_PRESENT)
                 .set_parameter("redacted".to_owned(), uri.clone())
                 .unwrap();
             redaction_actions = redaction_actions.add_action(action);
@@ -6134,11 +6123,6 @@ mod tests {
 
     #[test]
     fn test_redaction_assertion_two_ingredients_via_archive() {
-        use crate::{
-            assertions::{c2pa_action, Action, Actions},
-            utils::test::setup_logger,
-        };
-
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
 
@@ -6291,11 +6275,11 @@ mod tests {
         combiner.definition.redactions = Some(vec![redacted_uri1.clone(), redacted_uri2.clone()]);
 
         let redacted_action1 = Action::new("c2pa.redacted")
-            .set_reason("testing redaction from archive parent 1".to_owned())
+            .set_reason(c2pa_reason::PII_PRESENT)
             .set_parameter("redacted".to_owned(), redacted_uri1)
             .unwrap();
         let redacted_action2 = Action::new("c2pa.redacted")
-            .set_reason("testing redaction from archive parent 2".to_owned())
+            .set_reason(c2pa_reason::PII_PRESENT)
             .set_parameter("redacted".to_owned(), redacted_uri2)
             .unwrap();
 
@@ -6338,11 +6322,6 @@ mod tests {
     #[cfg(feature = "add_thumbnails")]
     #[test]
     fn test_redaction_thumbnails_two_ingredients_via_archive() {
-        use crate::{
-            assertions::{c2pa_action, Action, Actions},
-            utils::test::setup_logger,
-        };
-
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
 
@@ -6541,7 +6520,7 @@ mod tests {
         let mut redaction_actions = Actions::new();
         for uri in &all_redaction_uris {
             let redacted_action = Action::new("c2pa.redacted")
-                .set_reason("testing thumbnail redaction from archives".to_owned())
+                .set_reason(c2pa_reason::PII_PRESENT)
                 .set_parameter("redacted".to_owned(), uri.clone())
                 .unwrap();
             redaction_actions = redaction_actions.add_action(redacted_action);
@@ -6613,7 +6592,6 @@ mod tests {
     /// this first creates a manifest with an assertion we will later redact
     /// then creates an update manifest that redacts the assertion
     fn test_redaction2() {
-        use crate::assertions::Action;
         setup_logger();
         let context = test_context().into_shared();
         // the label of the assertion we are going to redact
@@ -6689,7 +6667,7 @@ mod tests {
             crate::jumbf::labels::to_assertion_uri(parent_manifest_label, ASSERTION_LABEL);
 
         let redacted_action = Action::new("c2pa.redacted")
-            .set_reason("testing".to_owned())
+            .set_reason(c2pa_reason::PII_PRESENT)
             .set_parameter("redacted".to_owned(), redacted_uri.clone())
             .unwrap();
 
@@ -6729,7 +6707,6 @@ mod tests {
     #[cfg(feature = "add_thumbnails")]
     #[test]
     fn test_redact_claim_thumbnail_via_update() {
-        use crate::{assertions::Action, utils::test::setup_logger};
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
 
@@ -6790,7 +6767,7 @@ mod tests {
         builder2.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = Action::new("c2pa.redacted")
-            .set_reason("thumbnail contains sensitive content".to_owned())
+            .set_reason(c2pa_reason::PII_PRESENT)
             .set_parameter("redacted".to_owned(), redacted_uri)
             .unwrap();
         let actions = Actions::new().add_action(redacted_action);
@@ -6940,7 +6917,7 @@ mod tests {
         builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = crate::assertions::Action::new("c2pa.redacted")
-            .set_reason("redacting databox thumbnail".to_owned())
+            .set_reason(c2pa_reason::PII_PRESENT)
             .set_parameter("redacted".to_owned(), redacted_uri.clone())
             .unwrap();
         builder.add_action(redacted_action).unwrap();
