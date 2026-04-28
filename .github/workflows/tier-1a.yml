@@ -98,7 +98,7 @@ jobs:
           github.event.pull_request.author_association == 'COLLABORATOR' ||
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
@@ -154,7 +154,7 @@ jobs:
           github.event.pull_request.author_association == 'COLLABORATOR' ||
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
@@ -204,7 +204,7 @@ jobs:
           github.event.pull_request.author_association == 'COLLABORATOR' ||
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
@@ -368,7 +368,7 @@ jobs:
       #     github.event.pull_request.author_association == 'COLLABORATOR' ||
       #     github.event.pull_request.author_association == 'MEMBER' ||
       #     github.event.pull_request.user.login == 'dependabot[bot]'
-      #   uses: codecov/codecov-action@v5
+      #   uses: codecov/codecov-action@v6
       #   with:
       #     token: ${{ secrets.CODECOV_TOKEN }}
       #     fail_ci_if_error: true
@@ -441,12 +441,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up Chrome
-        uses: browser-actions/setup-chrome@v2
-        with:
-          chrome-version: 146
-          install-chromedriver: true
-
       - name: Add wasm web target
         run: rustup target add wasm32-unknown-unknown
 
@@ -467,6 +461,7 @@ jobs:
         run: cargo test -p c2pa --no-default-features --features rust_native_crypto,fetch_remote_manifests,http_reqwest --target wasm32-unknown-unknown
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+          GECKODRIVER: geckodriver
           WASM_BINDGEN_TEST_TIMEOUT: 60
 
   benchmarks:

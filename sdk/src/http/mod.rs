@@ -161,6 +161,14 @@ impl SyncGenericResolver {
             inner: sync_resolver::new(),
         }
     }
+
+    /// Create a new [`SyncGenericResolver`] with an auto-specified [`SyncHttpResolver`] that has
+    /// redirects enabled. Returns `None` if unsupported for the enabled HTTP resolver features.
+    ///
+    /// For more information, see [`SyncGenericResolver::new`].
+    pub fn with_redirects() -> Option<Self> {
+        sync_resolver::with_redirects().map(|inner| Self { inner })
+    }
 }
 
 impl Default for SyncGenericResolver {
@@ -204,6 +212,14 @@ impl AsyncGenericResolver {
         Self {
             inner: async_resolver::new(),
         }
+    }
+
+    /// Create a new [`AsyncGenericResolver`] with an auto-specified [`AsyncHttpResolver`] that has
+    /// redirects enabled. Returns `None` if unsupported for the enabled HTTP resolver features.
+    ///
+    /// For more information, see [`AsyncGenericResolver::new`].
+    pub fn with_redirects() -> Option<Self> {
+        async_resolver::with_redirects().map(|inner| Self { inner })
     }
 }
 
@@ -269,25 +285,19 @@ pub enum HttpResolverError {
     not(feature = "http_ureq")
 ))]
 mod sync_resolver {
-    pub type Impl = reqwest::blocking::Client;
-    pub fn new() -> Impl {
-        reqwest::blocking::Client::new()
-    }
+    pub use crate::http::reqwest::sync_impl::{new, with_redirects, Impl};
 }
+
 #[cfg(all(not(target_arch = "wasm32"), feature = "http_ureq"))]
 mod sync_resolver {
-    pub type Impl = ureq::Agent;
-    pub fn new() -> Impl {
-        ureq::agent()
-    }
+    pub use crate::http::ureq::sync_impl::{new, with_redirects, Impl};
 }
+
 #[cfg(all(target_os = "wasi", feature = "http_wasi"))]
 mod sync_resolver {
-    pub type Impl = super::wasi::sync_impl::SyncWasiResolver;
-    pub fn new() -> Impl {
-        super::wasi::sync_impl::SyncWasiResolver::new()
-    }
+    pub use crate::http::wasi::sync_impl::{new, with_redirects, Impl};
 }
+
 #[cfg(not(any(
     all(target_os = "wasi", feature = "http_wasi"),
     all(
@@ -301,6 +311,9 @@ mod sync_resolver {
     pub type Impl = SyncNoopResolver;
     pub fn new() -> Impl {
         SyncNoopResolver
+    }
+    pub fn with_redirects() -> Option<Impl> {
+        Some(SyncNoopResolver)
     }
 
     pub struct SyncNoopResolver;
@@ -317,18 +330,14 @@ mod sync_resolver {
 
 #[cfg(all(not(target_os = "wasi"), feature = "http_reqwest"))]
 mod async_resolver {
-    pub type Impl = reqwest::Client;
-    pub fn new() -> Impl {
-        reqwest::Client::new()
-    }
+    pub use crate::http::reqwest::async_impl::{new, with_redirects, Impl};
 }
+
 #[cfg(all(target_os = "wasi", feature = "http_wstd"))]
 mod async_resolver {
-    pub type Impl = wstd::http::Client;
-    pub fn new() -> Impl {
-        wstd::http::Client::new()
-    }
+    pub use crate::http::wasi::async_impl::{new, with_redirects, Impl};
 }
+
 #[cfg(not(any(
     feature = "http_reqwest",
     all(target_os = "wasi", feature = "http_wstd")
@@ -339,6 +348,9 @@ mod async_resolver {
     pub type Impl = AsyncNoopResolver;
     pub fn new() -> Impl {
         AsyncNoopResolver
+    }
+    pub fn with_redirects() -> Option<Impl> {
+        Some(AsyncNoopResolver)
     }
 
     pub struct AsyncNoopResolver;
@@ -366,10 +378,17 @@ pub mod tests {
 
     use super::*;
 
-    fn remote_mock_server<'a>(server: &'a httpmock::MockServer) -> httpmock::Mock<'a> {
+    fn mock_server<'a>(server: &'a httpmock::MockServer) -> httpmock::Mock<'a> {
         server.mock(|when, then| {
             when.method(httpmock::Method::GET);
             then.status(200).body([1, 2, 3]);
+        })
+    }
+
+    fn redirect_mock_server<'a>(server: &'a httpmock::MockServer) -> httpmock::Mock<'a> {
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/redirect");
+            then.status(302).header("Location", "/").body([3, 2, 1]);
         })
     }
 
@@ -378,7 +397,7 @@ pub mod tests {
         use httpmock::MockServer;
 
         let server = MockServer::start();
-        let mock = remote_mock_server(&server);
+        let mock = mock_server(&server);
 
         let request = Request::get(server.base_url()).body(vec![1, 2, 3]).unwrap();
 
@@ -396,5 +415,28 @@ pub mod tests {
         assert_eq!(&response_body, &[1, 2, 3]);
 
         mock.assert();
+    }
+
+    #[async_generic(async_signature(resolver: impl AsyncHttpResolver))]
+    pub fn assert_http_resolver_with_redirects(resolver: impl SyncHttpResolver) {
+        use httpmock::MockServer;
+
+        let server = MockServer::start();
+        let redirect = redirect_mock_server(&server);
+        let target = mock_server(&server);
+
+        let request = Request::get(format!("{}/redirect", server.base_url()))
+            .body(vec![3, 2, 1])
+            .unwrap();
+
+        let response = if _sync {
+            resolver.http_resolve(request).unwrap()
+        } else {
+            resolver.http_resolve_async(request).await.unwrap()
+        };
+
+        assert_eq!(response.status(), 200);
+        redirect.assert_calls(1);
+        target.assert_calls(1);
     }
 }

@@ -42,7 +42,11 @@ test-wasm:
 	cd sdk && wasm-pack test --node -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests, http_reqwest"
 
 test-wasm-web:
-	cd sdk && wasm-pack test --chrome --headless -- --no-default-features --features="rust_native_crypto, fetch_remote_manifests, http_reqwest"
+ifeq ($(PLATFORM),mac)
+	SAFARIDRIVER=$(shell which safaridriver) cargo test -p c2pa --no-default-features --features rust_native_crypto,fetch_remote_manifests,http_reqwest --target wasm32-unknown-unknown
+else
+	cargo test -p c2pa --no-default-features --features rust_native_crypto,fetch_remote_manifests,http_reqwest --target wasm32-unknown-unknown
+endif
 
 # WASI testing requires upstream llvm clang (not XCode), wasmtime, and the target wasm32-wasip2 on the nightly toolchain
 test-wasi:

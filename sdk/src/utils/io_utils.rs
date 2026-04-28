@@ -198,7 +198,9 @@ impl<R: Read + Seek> ReaderUtils for R {
 
 pub(crate) fn tempfile_builder<T: AsRef<OsStr> + Sized>(prefix: T) -> Result<NamedTempFile> {
     #[cfg(all(target_os = "wasi", target_env = "p1"))]
-    return Error::NotImplemented("tempfile_builder requires wasip2 or later".to_string());
+    return Err(Error::NotImplemented(
+        "tempfile_builder requires wasip2 or later".to_string(),
+    ));
 
     #[cfg(all(target_os = "wasi", not(target_env = "p1")))]
     return Builder::new()

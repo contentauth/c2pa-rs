@@ -251,6 +251,9 @@ struct CawgX509IdentitySigner {
     signing_mode: CawgSigningMode,
     cawg_referenced_assertions: Vec<String>,
     cawg_roles: Vec<String>,
+    // NOTE: The CAWG signing settings are stored here because
+    // we can't clone or transfer ownership of an `X509CredentialHolder`
+    // inside the dynamic_assertions callback.
 }
 
 impl Signer for CawgX509IdentitySigner {
@@ -365,35 +368,38 @@ impl Signer for CawgX509IdentitySigner {
 
 #[cfg(test)]
 pub mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::expect_used)]
+
     use crate::{settings::Settings, utils::test_signer, SigningAlg};
 
     #[test]
-    fn test_make_test_signer() {
-        // Makes a default test signer.
+    #[allow(deprecated)]
+    fn test_thread_local_signer() {
         assert!(Settings::signer().is_ok());
     }
 
     #[test]
     fn test_make_local_signer() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
-        // Testing with a different alg than the default test signer.
         let alg = SigningAlg::Ps384;
         let (sign_cert, private_key) = test_signer::cert_chain_and_private_key_for_alg(alg);
-        Settings::from_toml(
-            &toml::toml! {
-                [signer.local]
-                alg = (alg.to_string())
-                sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
-                private_key = (String::from_utf8(private_key.to_vec()).unwrap())
-            }
-            .to_string(),
-        )
-        .unwrap();
 
-        let signer = Settings::signer().unwrap();
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [signer.local]
+                    alg = (alg.to_string())
+                    sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
+                    private_key = (String::from_utf8(private_key.to_vec()).unwrap())
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        // Test the settings signer path directly (context.signer() uses a custom test
+        // signer in test mode, so we test SignerSettings::c2pa_signer() directly here)
+        let signer_settings = settings.signer.expect("signer settings should be present");
+        let signer = signer_settings.c2pa_signer().unwrap();
         assert_eq!(signer.alg(), alg);
         assert_eq!(signer.time_authority_url(), None);
         assert!(signer.sign(&[1, 2, 3]).is_ok());
@@ -402,9 +408,6 @@ pub mod tests {
     #[cfg(all(feature = "remote_signing", not(target_arch = "wasm32")))]
     #[test]
     fn test_make_remote_signer() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
         use httpmock::MockServer;
 
         use crate::{create_signer, utils::test_remote_signer};
@@ -418,18 +421,22 @@ pub mod tests {
         let server = MockServer::start();
         let mock = test_remote_signer::remote_signer_mock_server(&server, &signed_bytes);
 
-        Settings::from_toml(
-            &toml::toml! {
-                [signer.remote]
-                url = (server.base_url())
-                alg = (alg.to_string())
-                sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
-            }
-            .to_string(),
-        )
-        .unwrap();
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [signer.remote]
+                    url = (server.base_url())
+                    alg = (alg.to_string())
+                    sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
+                }
+                .to_string(),
+            )
+            .unwrap();
 
-        let signer = Settings::signer().unwrap();
+        // Test the settings signer path directly (context.signer() uses a custom test
+        // signer in test mode, so we test SignerSettings::c2pa_signer() directly here)
+        let signer_settings = settings.signer.expect("signer settings should be present");
+        let signer = signer_settings.c2pa_signer().unwrap();
         assert_eq!(signer.alg(), alg);
         assert_eq!(signer.time_authority_url(), None);
         assert_eq!(signer.sign(&[1, 2, 3]).unwrap(), signed_bytes);
@@ -440,32 +447,26 @@ pub mod tests {
     #[cfg(all(not(feature = "remote_signing"), not(target_arch = "wasm32")))]
     #[test]
     fn test_make_remote_signer_disabled() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
         let alg = SigningAlg::Ps384;
         let (sign_cert, _) = test_signer::cert_chain_and_private_key_for_alg(alg);
 
-        Settings::from_toml(
-            &toml::toml! {
-                [signer.remote]
-                url = "http:://dummy_url:2026/"
-                alg = (alg.to_string())
-                sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
-            }
-            .to_string(),
-        )
-        .unwrap();
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [signer.remote]
+                    url = "http:://dummy_url:2026/"
+                    alg = (alg.to_string())
+                    sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
+                }
+                .to_string(),
+            )
+            .unwrap();
 
-        let signer = Settings::signer();
-        assert!(signer.is_err());
+        assert(settings.signer.is_none());
     }
 
     #[test]
     fn test_make_local_cawg_signer() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
         let c2pa_alg = SigningAlg::Ps384;
         let cawg_alg = SigningAlg::Es384;
         let (c2pa_sign_cert, c2pa_private_key) =
@@ -473,23 +474,26 @@ pub mod tests {
         let (cawg_cert, cawg_private_key) =
             test_signer::cert_chain_and_private_key_for_alg(cawg_alg);
 
-        Settings::from_toml(
-            &toml::toml! {
-                [signer.local]
-                alg = (c2pa_alg.to_string())
-                sign_cert = (String::from_utf8(c2pa_sign_cert.to_vec()).unwrap())
-                private_key = (String::from_utf8(c2pa_private_key.to_vec()).unwrap())
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [signer.local]
+                    alg = (c2pa_alg.to_string())
+                    sign_cert = (String::from_utf8(c2pa_sign_cert.to_vec()).unwrap())
+                    private_key = (String::from_utf8(c2pa_private_key.to_vec()).unwrap())
 
-                [cawg_x509_signer.local]
-                alg = (cawg_alg.to_string())
-                sign_cert = (String::from_utf8(cawg_cert.to_vec()).unwrap())
-                private_key = (String::from_utf8(cawg_private_key.to_vec()).unwrap())
-            }
-            .to_string(),
-        )
-        .unwrap();
+                    [cawg_x509_signer.local]
+                    alg = (cawg_alg.to_string())
+                    sign_cert = (String::from_utf8(cawg_cert.to_vec()).unwrap())
+                    private_key = (String::from_utf8(cawg_private_key.to_vec()).unwrap())
+                }
+                .to_string(),
+            )
+            .unwrap();
 
-        let signer = Settings::signer().unwrap();
+        let signer_settings = settings.signer.expect("signer settings should be present");
+        let c2pa_signer = signer_settings.clone().c2pa_signer().unwrap();
+        let signer = signer_settings.cawg_signer(c2pa_signer).unwrap();
         assert_eq!(
             signer.alg(),
             c2pa_alg,
