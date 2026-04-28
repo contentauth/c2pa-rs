@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.80.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.1...c2pa-c-ffi-v0.80.2)
+_28 April 2026_
+
+### Fixed
+
+* `c2pa-c-ffi` UB detected by miri ([#2089](https://github.com/contentauth/c2pa-rs/pull/2089))
+
+## [0.80.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.0...c2pa-c-ffi-v0.80.1)
+_27 April 2026_
+
 ## [0.80.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.5...c2pa-c-ffi-v0.80.0)
 _16 April 2026_
 

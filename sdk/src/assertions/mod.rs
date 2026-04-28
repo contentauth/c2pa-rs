@@ -16,7 +16,7 @@
 mod actions;
 pub(crate) use actions::V2_DEPRECATED_ACTIONS;
 pub use actions::{
-    c2pa_action, Action, ActionParameters, ActionTemplate, Actions, DigitalSourceType,
+    c2pa_action, c2pa_reason, Action, ActionParameters, ActionTemplate, Actions, DigitalSourceType,
     SoftwareAgent,
 };
 

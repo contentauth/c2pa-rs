@@ -131,9 +131,12 @@ impl OcspResponse {
                 return Ok(output);
             };
 
-            // grab the signing key
+            // grab the signing key from the first cert; reject if certs is empty
+            let Some(first_cert) = ocsp_certs.first() else {
+                return Ok(output);
+            };
             let Ok(signing_key_der) =
-                rasn::der::encode(&ocsp_certs[0].tbs_certificate.subject_public_key_info)
+                rasn::der::encode(&first_cert.tbs_certificate.subject_public_key_info)
             else {
                 return Ok(output);
             };
@@ -471,6 +474,60 @@ mod tests {
         assert!(ocsp_data.revoked_at.is_none());
         assert!(validation_log.has_any_error());
         assert!(validation_log.has_status(SIGNING_CREDENTIAL_OCSP_UNKNOWN));
+    }
+
+    /// Crafted OcspResponse DER with `certs = Some([])` (present but empty).
+    ///
+    /// Structure:
+    ///   OcspResponse { status=successful, responseBytes = BasicOcspResponse {
+    ///     tbs_response_data = ResponseData { responderID=byKey(zeros),
+    ///                                        producedAt="20230101000000Z",
+    ///                                        responses=[] },
+    ///     signature_algorithm = sha256WithRSA,
+    ///     signature = dummy bytes,
+    ///     certs = [0] EXPLICIT SEQUENCE OF Certificate {}  ← empty
+    ///   }}
+    ///
+    /// This is syntactically valid DER.  The old code panicked at `ocsp_certs[0]`
+    /// when `basic_response.certs = Some([])` and all earlier guards passed.
+    /// The fix uses `.first()` and returns early when the vec is empty.
+    const OCSP_EMPTY_CERTS_DER: &[u8] = &[
+        0x30, 0x5d, // OcspResponse SEQUENCE (93 bytes)
+        0x0a, 0x01, 0x00, // status ENUMERATED 0 (successful)
+        0xa0, 0x58, // [0] EXPLICIT responseBytes (88 bytes)
+        0x30, 0x56, // ResponseBytes SEQUENCE (86 bytes)
+        0x06, 0x09, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x01,
+        0x01, // id-pkix-ocsp-basic
+        0x04, 0x49, // OCTET STRING — BasicOcspResponse DER (73 bytes)
+        0x30, 0x47, // BasicOcspResponse SEQUENCE (71 bytes)
+        0x30, 0x2b, // ResponseData SEQUENCE (43 bytes)
+        0xa2, 0x16, // responderID [2] EXPLICIT byKey (22 bytes)
+        0x04, 0x14, // KeyHash OCTET STRING (20 bytes)
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 20-byte placeholder
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18,
+        0x0f, // producedAt GeneralizedTime (15 bytes)
+        0x32, 0x30, 0x32, 0x33, 0x30, 0x31, 0x30, 0x31, // "20230101"
+        0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5a, // "000000Z"
+        0x30, 0x00, // responses SEQUENCE OF SingleResponse (empty)
+        0x30, 0x0d, // AlgorithmIdentifier sha256WithRSA (15 bytes)
+        0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, // OID
+        0x05, 0x00, // NULL params
+        0x03, 0x05, // BIT STRING signature (5 bytes content)
+        0x00, 0xde, 0xad, 0xbe, 0xef, // 0 unused bits + 4 dummy bytes
+        0xa0, 0x02, // certs [0] EXPLICIT (2 bytes content)
+        0x30, 0x00, // SEQUENCE OF Certificate — empty
+    ];
+
+    #[test]
+    fn from_der_checked_empty_certs_returns_default_not_panic() {
+        // Regression: old code panicked at `ocsp_certs[0]` when
+        // `basic_response.certs = Some([])`.  The fix uses `.first()` and
+        // returns Ok(output) (with ocsp_certs = None) instead of panicking.
+        let mut log = StatusTracker::default();
+        let result = OcspResponse::from_der_checked(OCSP_EMPTY_CERTS_DER, None, &mut log);
+        assert!(result.is_ok());
+        // certs were empty so no cert data flows through
+        assert!(result.unwrap().ocsp_certs.is_none());
     }
 
     #[test]
