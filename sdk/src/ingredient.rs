@@ -28,7 +28,8 @@ use crate::Manifest;
 use crate::{
     assertion::{Assertion, AssertionBase},
     assertions::{
-        self, labels, AssertionMetadata, AssetType, CertificateStatus, EmbeddedData, Relationship,
+        self, labels, AssertionMetadata, AssetType, CertificateStatus, DigitalSourceType,
+        EmbeddedData, Relationship,
     },
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
@@ -133,6 +134,10 @@ pub struct Ingredient {
     /// Additional information about the data's type to the ingredient V2 structure.
     #[serde(skip_serializing_if = "Option::is_none")]
     data_types: Option<Vec<AssetType>>,
+
+    /// Digital source type for ingredients in lieu of an active manifest.
+    #[serde(rename = "digitalSourceType", skip_serializing_if = "Option::is_none")]
+    digital_source_type: Option<DigitalSourceType>,
 
     /// A [`ManifestStore`] from the source asset extracted as a binary C2PA blob.
     ///
@@ -352,6 +357,11 @@ impl Ingredient {
         self.data_types.as_deref()
     }
 
+    /// Returns the digital source type if set.
+    pub fn digital_source_type(&self) -> Option<&DigitalSourceType> {
+        self.digital_source_type.as_ref()
+    }
+
     /// Sets a human-readable title for this ingredient.
     pub fn set_title<S: Into<String>>(&mut self, title: S) -> &mut Self {
         self.title = Some(title.into());
@@ -508,6 +518,12 @@ impl Ingredient {
     /// Sets an informational URI if needed.
     pub fn set_informational_uri<S: Into<String>>(&mut self, uri: S) -> &mut Self {
         self.informational_uri = Some(uri.into());
+        self
+    }
+
+    /// Sets the digital source type for ingredients in lieu of an active manifest.
+    pub fn set_digital_source_type<T: Into<DigitalSourceType>>(&mut self, dst: T) -> &mut Self {
+        self.digital_source_type = Some(dst.into());
         self
     }
 
@@ -1135,6 +1151,7 @@ impl Ingredient {
             description: ingredient_assertion.description,
             informational_uri: ingredient_assertion.informational_uri,
             data_types: ingredient_assertion.data_types,
+            digital_source_type: ingredient_assertion.digital_source_type.map(DigitalSourceType::from),
             label,
             ..Default::default()
         };
@@ -1496,6 +1513,7 @@ impl Ingredient {
             .informational_uri
             .clone_from(&self.informational_uri);
         ingredient_assertion.data_types.clone_from(&self.data_types);
+        ingredient_assertion.digital_source_type = self.digital_source_type.as_ref().map(|dst| dst.to_string());
         claim.add_assertion(&ingredient_assertion)
     }
 
@@ -1671,6 +1689,9 @@ impl Ingredient {
         if let Some(label) = &other.label {
             self.label = Some(label.clone());
         }
+        if let Some(dst) = &other.digital_source_type {
+            self.digital_source_type = Some(dst.clone());
+        }
         //println!("after merge: {}", self);
     }
 }
@@ -1801,6 +1822,11 @@ mod tests {
             "thumbnail".as_bytes().to_vec()
         );
         assert_eq!(ingredient.active_manifest(), Some("active_manifest"));
+        ingredient.set_digital_source_type(DigitalSourceType::TrainedAlgorithmicMedia);
+        assert_eq!(
+            ingredient.digital_source_type(),
+            Some(&DigitalSourceType::TrainedAlgorithmicMedia)
+        );
 
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),
