@@ -388,6 +388,19 @@ fn decode_offset(offset_file_native: u64, endianness: Endianness, big_tiff: bool
     Ok(offset)
 }
 
+/// Reject forged IFD `value_count` fields whose claimed byte size exceeds the
+/// actual file size. Used before every `safe_vec`/`read_to_vec` allocation
+/// driven by attacker-controlled count fields, so a 52-byte BigTIFF can't
+/// trigger a multi-GB allocation.
+fn check_ifd_data_size(claimed_size: u64, file_size: u64) -> Result<()> {
+    if claimed_size > file_size {
+        return Err(Error::InvalidAsset(
+            "IFD entry data size exceeds file size".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 // create tree of TIFF structure IFDs and IFD entries.
 fn map_tiff<R>(
     mut input: &mut R,
@@ -395,7 +408,7 @@ fn map_tiff<R>(
 where
     R: Read + Seek + ?Sized,
 {
-    let _size = stream_len(input)?;
+    let file_size = stream_len(input)?;
     input.rewind()?;
 
     let mut tokens = Vec::new();
@@ -428,6 +441,9 @@ where
                         .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?,
                 )
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                check_ifd_data_size(num_longs_x4 as u64, file_size)?;
+
                 let mut subfile_offsets = safe_vec(subifd.value_count, Some(0u32))?; // will contain offsets in native endianness
 
                 if num_longs_x4 <= 4 || ts.big_tiff && num_longs_x4 <= 8 {
@@ -1295,6 +1311,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         entries: &HashMap<u16, IfdEntry>,
         mut asset_reader: &mut R,
     ) -> Result<BTreeMap<u16, IfdClonedEntry>> {
+        let file_size = stream_len(asset_reader)?;
         let mut target_ifd: BTreeMap<u16, IfdClonedEntry> = BTreeMap::new();
 
         for (tag, entry) in entries {
@@ -1314,6 +1331,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 | IFDEntryType::Ascii => {
                     let num_bytes = usize::try_from(cnt)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    check_ifd_data_size(cnt, file_size)?;
 
                     let mut data = safe_vec(cnt, Some(0u8))?;
 
@@ -1340,6 +1359,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             Error::InvalidAsset("value out of range".to_string())
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    check_ifd_data_size(num_shorts_x2 as u64, file_size)?;
 
                     let mut data = safe_vec(num_shorts_x2 as u64, Some(0u8))?;
 
@@ -1371,6 +1392,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
+                    check_ifd_data_size(num_longs_x4 as u64, file_size)?;
+
                     let mut data = safe_vec(num_longs_x4 as u64, Some(0u8))?;
 
                     if num_longs_x4 <= 4 || self.big_tiff && num_longs_x4 <= 8 {
@@ -1400,6 +1423,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             Error::InvalidAsset("value out of range".to_string())
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    check_ifd_data_size(num_sshorts_x2 as u64, file_size)?;
 
                     let mut data = safe_vec(num_sshorts_x2 as u64, Some(0u8))?;
 
@@ -1431,6 +1456,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
+                    check_ifd_data_size(num_slongs_x4 as u64, file_size)?;
+
                     let mut data = safe_vec(num_slongs_x4 as u64, Some(0u8))?;
 
                     if num_slongs_x4 <= 4 || self.big_tiff && num_slongs_x4 <= 8 {
@@ -1460,6 +1487,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             Error::InvalidAsset("value out of range".to_string())
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    check_ifd_data_size(num_floats_x4 as u64, file_size)?;
 
                     let mut data = safe_vec(num_floats_x4 as u64, Some(0u8))?;
 
@@ -2378,6 +2407,65 @@ pub mod tests {
 
         // Before the fix: this would panic (exit 101) in debug or silently overflow in release.
         // After the fix: must return Err(Error::InvalidAsset) without any panic.
+        let locations = tiff_io.get_object_locations_from_stream(&mut stream);
+        assert!(matches!(locations, Err(Error::InvalidAsset(_))));
+    }
+
+    /// Regression test for OOM in `clone_ifd_entries` for Byte/1-byte element types.
+    ///
+    /// On Linux containers with memory overcommit (the default), `safe_vec` uses
+    /// `try_reserve_exact` which succeeds for a 10 GB allocation because the OS commits
+    /// virtual address space lazily. The subsequent `resize` then touches all 10 GB of
+    /// pages, triggering the OOM killer (exit 137) in any 8 GB container.
+    ///
+    /// The fix validates `cnt <= file_size` before calling `safe_vec`, returning
+    /// `Err(InvalidAsset)` for any count that exceeds the file's actual byte count.
+    ///
+    /// The binary blob is the same crafted BigTIFF as `test_overflow_clone_ifd_entries`
+    /// but with entry_type changed from 0x04 (Long, ×4) to 0x01 (Byte, ×1) and
+    /// value_count set to 10_000_000_000 (0x00000002540BE400 little-endian).
+    #[test]
+    fn test_oom_clone_ifd_entries_byte_type() {
+        // Same BigTIFF blob as test_overflow_clone_ifd_entries, with entry_type changed from
+        // 0x04 (Long, ×4) to 0x01 (Byte, ×1) and value_count changed from the overflow-inducing
+        // 0x8000000000000003 to 10_000_000_000 (0x00000002540BE400 LE). The IFD offset (0x31 = 49)
+        // and entry count (3) at that offset must stay identical to the original blob.
+        let data = [
+            0x49, 0x49, 0x2b, 0x00, 0x08, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x49,
+            0x49, 0x2a, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xf9, 0x00,
+            0x00, 0x00, 0x00, 0x05, 0x00, 0x07, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+            // entry — type 0x01 (Byte, 1 byte/element), value_count = 10_000_000_000
+            //
+            0x00, 0x00, // entry_tag
+            0x01, 0x00, // entry_type: Byte (was 0x04 Long)
+            0x00, 0xe4, 0x0b, 0x54, 0x02, 0x00, 0x00, 0x00, // value_count = 10_000_000_000 LE
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // value_offset
+            //
+            // entry
+            //
+            0x00, 0x00, // entry_tag
+            0x01, 0x00, // entry_type: Byte (was 0x04 Long)
+            0x00, 0xe4, 0x0b, 0x54, 0x02, 0x00, 0x00, 0x00, // value_count = 10_000_000_000 LE
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // value_offset
+            //
+            // ...
+            //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00,
+        ];
+
+        let mut stream = Cursor::new(&data);
+        let tiff_io = TiffIO {};
+
+        // Before the fix: this would OOM-kill an 8 GB Linux container.
+        // After the fix: must return Err(Error::InvalidAsset) without any allocation.
         let locations = tiff_io.get_object_locations_from_stream(&mut stream);
         assert!(matches!(locations, Err(Error::InvalidAsset(_))));
     }
