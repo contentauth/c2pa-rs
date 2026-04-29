@@ -75,45 +75,6 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
     segs.find_map(extract_xmp).map(String::from)
 }
 
-fn add_required_segs_to_stream(
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
-) -> Result<()> {
-    let mut buf: Vec<u8> = Vec::new();
-    input_stream.rewind()?;
-    input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-    input_stream.rewind()?;
-
-    let dimg_opt = DynImage::from_bytes(buf.into())
-        .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
-
-    if let Some(DynImage::Jpeg(jpeg)) = dimg_opt {
-        if jpeg.segments().is_empty() {
-            return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
-        }
-
-        // check for JUMBF Seg
-        let cai_app11 = get_cai_segments(&jpeg)?; // make sure we only check for C2PA segments
-
-        if cai_app11.is_empty() {
-            // create dummy JUMBF seg
-            let mut no_bytes: Vec<u8> = vec![0; 50]; // enough bytes to be valid
-            no_bytes.splice(16..20, C2PA_MARKER); // cai UUID signature
-            let aio = JpegIO {};
-            aio.write_cai(input_stream, output_stream, &no_bytes)?;
-        } else {
-            // just clone
-            input_stream.rewind()?;
-            output_stream.rewind()?;
-            std::io::copy(input_stream, output_stream)?;
-        }
-    } else {
-        return Err(Error::UnsupportedType);
-    }
-
-    Ok(())
-}
-
 // all cai specific segments
 fn get_cai_segments(jpeg: &img_parts::jpeg::Jpeg) -> Result<Vec<usize>> {
     let mut cai_segs: Vec<usize> = Vec::new();
@@ -296,6 +257,7 @@ impl CAIWriter for JpegIO {
         let mut buf = Vec::new();
         // read the whole asset
         input_stream.rewind()?;
+        // TODO: optimize this by implementing a streaming parser
         input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
         let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
@@ -379,16 +341,34 @@ impl CAIWriter for JpegIO {
         let mut positions: Vec<HashObjectPositions> = Vec::new();
         let mut curr_offset = 2; // start after JPEG marker
 
-        let output_vec: Vec<u8> = Vec::new();
-        let mut output_stream = Cursor::new(output_vec);
-        // make sure the file has the required segments so we can generate all the required offsets
-        add_required_segs_to_stream(input_stream, &mut output_stream)?;
+        input_stream.rewind()?;
+        let mut buf = Vec::new();
 
-        let buf: Vec<u8> = output_stream.into_inner();
+        // TODO: optimize this by implementing a streaming parser
+        input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        let jpeg = Jpeg::from_bytes(buf.into())
+            .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
+        if jpeg.segments().is_empty() {
+            return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
+        }
 
-        let dimg = DynImage::from_bytes(buf.into())
-            .map_err(|e| Error::OtherError(Box::new(e)))?
-            .ok_or(Error::UnsupportedType)?;
+        let jpeg_with_dummy = if get_cai_segments(&jpeg)?.is_empty() {
+            // create dummy JUMBF seg
+            let mut no_bytes = vec![0; 50]; // enough bytes to be valid
+            no_bytes.splice(16..20, C2PA_MARKER); // cai UUID signature
+            input_stream.rewind()?;
+            let mut output_stream = Cursor::new(Vec::new());
+            self.write_cai(input_stream, &mut output_stream, &no_bytes)?;
+            let buf = output_stream.into_inner();
+            Some(
+                Jpeg::from_bytes(buf.into())
+                    .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?,
+            )
+        } else {
+            None
+        };
+
+        let jpeg = jpeg_with_dummy.as_ref().unwrap_or(&jpeg);
 
         let mut cai_loc = HashObjectPositions {
             offset: 0,
@@ -396,80 +376,72 @@ impl CAIWriter for JpegIO {
             htype: HashBlockObjectType::Cai,
         };
 
-        match dimg {
-            DynImage::Jpeg(jpeg) => {
-                if jpeg.segments().is_empty() {
-                    return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
-                }
-                for seg in jpeg.segments() {
-                    match seg.marker() {
-                        markers::APP11 => {
-                            // JUMBF marker
-                            let raw_bytes = seg.contents();
+        for seg in jpeg.segments() {
+            match seg.marker() {
+                markers::APP11 => {
+                    // JUMBF marker
+                    let raw_bytes = seg.contents();
 
-                            if raw_bytes.len() > 16 {
-                                // we need at least 16 bytes in each segment for CAI
-                                let mut raw_vec = raw_bytes.to_vec();
-                                let _ci = raw_vec.as_mut_slice()[0..2].to_vec();
-                                let en = raw_vec.as_mut_slice()[2..4].to_vec();
+                    if raw_bytes.len() > 16 {
+                        // we need at least 16 bytes in each segment for CAI
+                        let mut raw_vec = raw_bytes.to_vec();
+                        let _ci = raw_vec.as_mut_slice()[0..2].to_vec();
+                        let en = raw_vec.as_mut_slice()[2..4].to_vec();
 
-                                let is_cai_continuation = vec_compare(&cai_en, &en);
+                        let is_cai_continuation = vec_compare(&cai_en, &en);
 
-                                if cai_seg_cnt > 0 && is_cai_continuation {
-                                    cai_seg_cnt += 1;
-                                    cai_loc.length += seg.len_with_entropy();
-                                } else {
-                                    // check if this is a CAI JUMBF block
-                                    let jumb_type = raw_vec
-                                        .get(24..28)
-                                        .ok_or(Error::InvalidAsset(
-                                            "Invalid JPEG CAI JUMBF block".to_string(),
-                                        ))?
-                                        .to_vec();
-                                    let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
-                                    if is_cai {
-                                        cai_seg_cnt = 1;
-                                        cai_en.clone_from(&en); // store the identifier
+                        if cai_seg_cnt > 0 && is_cai_continuation {
+                            cai_seg_cnt += 1;
+                            cai_loc.length += seg.len_with_entropy();
+                        } else {
+                            // check if this is a CAI JUMBF block
+                            let jumb_type = raw_vec
+                                .get(24..28)
+                                .ok_or(Error::InvalidAsset(
+                                    "Invalid JPEG CAI JUMBF block".to_string(),
+                                ))?
+                                .to_vec();
+                            let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
+                            if is_cai {
+                                cai_seg_cnt = 1;
+                                cai_en.clone_from(&en); // store the identifier
 
-                                        cai_loc.offset = curr_offset;
-                                        cai_loc.length += seg.len_with_entropy();
-                                    } else {
-                                        // save other for completeness sake
-                                        let v = HashObjectPositions {
-                                            offset: curr_offset,
-                                            length: seg.len_with_entropy(),
-                                            htype: HashBlockObjectType::Other,
-                                        };
-                                        positions.push(v);
-                                    }
-                                }
+                                cai_loc.offset = curr_offset;
+                                cai_loc.length += seg.len_with_entropy();
+                            } else {
+                                // save other for completeness sake
+                                let v = HashObjectPositions {
+                                    offset: curr_offset,
+                                    length: seg.len_with_entropy(),
+                                    htype: HashBlockObjectType::Other,
+                                };
+                                positions.push(v);
                             }
                         }
-                        markers::APP1 => {
-                            // XMP marker or EXIF or Extra XMP
-                            let v = HashObjectPositions {
-                                offset: curr_offset,
-                                length: seg.len_with_entropy(),
-                                htype: HashBlockObjectType::Xmp,
-                            };
-                            // todo: pick the app1 that is the xmp (not crucial as it gets hashed either way)
-                            positions.push(v);
-                        }
-                        _ => {
-                            // save other for completeness sake
-                            let v = HashObjectPositions {
-                                offset: curr_offset,
-                                length: seg.len_with_entropy(),
-                                htype: HashBlockObjectType::Other,
-                            };
-
-                            positions.push(v);
-                        }
                     }
-                    curr_offset += seg.len_with_entropy();
+                }
+                markers::APP1 => {
+                    // XMP marker or EXIF or Extra XMP
+                    let v = HashObjectPositions {
+                        offset: curr_offset,
+                        length: seg.len_with_entropy(),
+                        htype: HashBlockObjectType::Xmp,
+                    };
+                    // todo: pick the app1 that is the xmp (not crucial as it gets hashed either way)
+                    positions.push(v);
+                }
+                _ => {
+                    // save other for completeness sake
+                    let v = HashObjectPositions {
+                        offset: curr_offset,
+                        length: seg.len_with_entropy(),
+                        htype: HashBlockObjectType::Other,
+                    };
+
+                    positions.push(v);
                 }
             }
-            _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
+            curr_offset += seg.len_with_entropy();
         }
 
         if cai_loc.length > 0 {
