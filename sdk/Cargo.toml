@@ -209,7 +209,7 @@ reqwest = { version = "0.12.23", default-features = false, features = [
 ], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-openssl = { version = "0.10.72", features = ["vendored"], optional = true }
+openssl = { version = "0.10.78", features = ["vendored"], optional = true }
 ureq = { version = "3.1.0", default-features = false, features = [
     "rustls"
 ], optional = true }
