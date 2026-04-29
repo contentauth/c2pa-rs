@@ -235,11 +235,23 @@ impl ResourceStore {
     /// Adds a resource, generating a [`ResourceRef`] from a key and format.
     ///
     /// The generated identifier may be different from the key.
+    /// For JUMBF URIs (`self#jumbf=...`), the identifier is preserved as the URI when not
+    /// writing to the filesystem, so that serialized output (e.g. JPEG Trust) contains valid
+    /// resolvable URIs rather than a mangled path.
     pub fn add_with<R>(&mut self, key: &str, format: &str, value: R) -> crate::Result<ResourceRef>
     where
         R: Into<Vec<u8>>,
     {
-        let id = self.id_from(key, format);
+        #[cfg(feature = "file_io")]
+        let use_filesystem_safe_id = self.base_path.is_some();
+        #[cfg(not(feature = "file_io"))]
+        let use_filesystem_safe_id = false;
+
+        let id = if key.starts_with("self#jumbf=") && !use_filesystem_safe_id {
+            key.to_string()
+        } else {
+            self.id_from(key, format)
+        };
         self.add(&id, value)?;
         Ok(ResourceRef::new(format, id))
     }
