@@ -118,13 +118,21 @@ impl SignerSettings {
                 tsa_url,
                 referenced_assertions: _,
                 roles: _,
-            } => Ok(Box::new(RemoteSigner {
-                url,
-                alg,
-                reserve_size: 10000 + sign_cert.len(),
-                certs: vec![sign_cert.into_bytes()],
-                tsa_url,
-            })),
+            } => {
+                let certs = pem::parse_many(&sign_cert)
+                    .map_err(|e| Error::OtherError(Box::new(e)))?
+                    .into_iter()
+                    .map(|p| p.into_contents())
+                    .collect::<Vec<Vec<u8>>>();
+                let reserve_size = 10000 + certs.iter().map(|c| c.len()).sum::<usize>();
+                Ok(Box::new(RemoteSigner {
+                    url,
+                    alg,
+                    reserve_size,
+                    certs,
+                    tsa_url,
+                }))
+            }
         }
     }
 
