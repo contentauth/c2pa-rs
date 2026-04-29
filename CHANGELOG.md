@@ -9,6 +9,18 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.80.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.2...c2pa-v0.80.3)
+_29 April 2026_
+
+### Added
+
+* Support DNG big data ([#2092](https://github.com/contentauth/c2pa-rs/pull/2092))
+* Add `init trust`, trust sidecars, and atomic sidecar writes, plus fixes ([#2093](https://github.com/contentauth/c2pa-rs/pull/2093))
+
+### Updated dependencies
+
+* Bump openssl from 0.10.77 to 0.10.78 ([#2082](https://github.com/contentauth/c2pa-rs/pull/2082))
+
 ## [0.80.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.1...c2pa-v0.80.2)
 _28 April 2026_
 

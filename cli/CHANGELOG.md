@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.53](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.52...c2patool-v0.26.53)
+_29 April 2026_
+
+### Added
+
+* Add `init trust`, trust sidecars, and atomic sidecar writes, plus fixes ([#2093](https://github.com/contentauth/c2pa-rs/pull/2093))
+
 ## [0.26.52](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.51...c2patool-v0.26.52)
 _28 April 2026_
 
