@@ -3378,8 +3378,12 @@ mod tests {
         asset_handlers::bmff_io::{
             inject_manifest_into_free_box, inject_placeholder, read_bmff_c2pa_boxes,
         },
-        crypto::raw_signature::SigningAlg,
+        crypto::raw_signature::{self, SigningAlg},
         hash_stream_by_alg,
+        identity::{
+            builder::IdentityAssertionSigner,
+            x509::X509CredentialHolder,
+        },
         maybe_send_sync::MaybeSend,
         settings::Settings,
         utils::{
@@ -7758,5 +7762,97 @@ mod tests {
 
         let future = builder.sign_async(&signer, "image/jpeg", &mut src, &mut dst);
         assert_send(future);
+    }
+
+    fn test_identity_signer() -> IdentityAssertionSigner {
+        use crate::identity::{
+            builder::IdentityAssertionBuilder,
+            tests::fixtures::cert_chain_and_private_key_for_alg,
+        };
+
+        let mut signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+        let (cert, key) = cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
+        let raw = raw_signature::signer_from_cert_chain_and_private_key(
+            &cert, &key, SigningAlg::Ed25519, None,
+        )
+        .unwrap();
+        let holder = X509CredentialHolder::from_raw_signer(raw);
+        signer.add_identity_assertion(IdentityAssertionBuilder::for_credential_holder(holder));
+        signer
+    }
+
+    fn assert_has_identity(reader: &Reader) {
+        let manifest = reader.active_manifest().unwrap();
+        let labels: Vec<_> = manifest.assertions().iter().map(|a| a.label()).collect();
+        assert!(
+            labels.iter().any(|l| l.starts_with("cawg.identity")),
+            "cawg.identity missing. Present: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn test_identity_present_in_data_hashed_embeddable() {
+        let signer = test_identity_signer();
+
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        let placeholder = builder
+            .data_hashed_placeholder(signer.reserve_size(), "application/c2pa")
+            .unwrap();
+
+        let mut dh = DataHash::new("source_hash", "sha256");
+        dh.exclusions = Some(vec![HashRange::new(0, placeholder.len() as u64)]);
+        let mut stream = Cursor::new(placeholder);
+        dh.set_hash(
+            hash_stream_by_alg("sha256", &mut stream, dh.exclusions.clone(), true).unwrap(),
+        );
+
+        let signed = builder
+            .sign_data_hashed_embeddable(&signer, &dh, "application/c2pa")
+            .unwrap();
+
+        let reader = Reader::default()
+            .with_stream("application/c2pa", Cursor::new(signed))
+            .unwrap();
+        assert_has_identity(&reader);
+    }
+
+    #[test]
+    fn test_identity_present_in_sign_embeddable() {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let signer = test_identity_signer();
+        let context = crate::Context::new().with_signer(signer).into_shared();
+
+        let mut builder = Builder::from_shared_context(&context)
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        let composed = builder.placeholder("image/jpeg").unwrap();
+
+        let mut input = Cursor::new(TEST_IMAGE_CLOUD);
+        let mut output = Cursor::new(Vec::new());
+        let offset = write_jpeg_placeholder_stream(
+            &composed, "image/jpeg", &mut input, &mut output, None,
+        )
+        .unwrap();
+
+        builder
+            .set_data_hash_exclusions(vec![HashRange::new(offset as u64, composed.len() as u64)])
+            .unwrap();
+        output.rewind().unwrap();
+        builder.update_hash_from_stream("image/jpeg", &mut output).unwrap();
+
+        let signed = builder.sign_embeddable("image/jpeg").unwrap();
+        output.seek(SeekFrom::Start(offset as u64)).unwrap();
+        output.write_all(&signed).unwrap();
+        output.rewind().unwrap();
+
+        let reader = Reader::default()
+            .with_stream("image/jpeg", output)
+            .unwrap();
+        assert_has_identity(&reader);
     }
 }
