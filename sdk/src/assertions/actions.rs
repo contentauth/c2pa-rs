@@ -249,6 +249,29 @@ pub mod c2pa_action {
     pub const UNKNOWN: &str = "c2pa.unknown";
 }
 
+/// Predefined reason values for the `reason` field on [`Action`].
+///
+/// The C2PA specification defines these standard values for use with
+/// `c2pa.redacted` actions. Custom values must follow entity-specific
+/// namespace syntax (e.g., `com.example.my-reason`).
+///
+/// New constants may be added in future releases.
+///
+/// See [Reason - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_reason).
+pub mod c2pa_reason {
+    /// Personally identifiable information is present.
+    pub const PII_PRESENT: &str = "c2pa.PII.present";
+
+    /// The data is invalid.
+    pub const INVALID_DATA: &str = "c2pa.invalid.data";
+
+    /// Trade secret information is present.
+    pub const TRADE_SECRET_PRESENT: &str = "c2pa.trade-secret.present";
+
+    /// Government classified or confidential information is present.
+    pub const GOVERNMENT_CONFIDENTIAL: &str = "c2pa.government.confidential";
+}
+
 pub static V2_DEPRECATED_ACTIONS: [&str; 7] = [
     "c2pa.copied",
     "c2pa.formatted",
@@ -627,8 +650,11 @@ impl Action {
 
     /// Sets the reason why this action was performed.
     ///
-    /// This is only present in C2PA v2.
-    /// See [Related actions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_reason).
+    /// Required for `c2pa.redacted` actions. The value should be one of
+    /// the constants in [`c2pa_reason`] or a custom value following
+    /// entity-specific namespace syntax (e.g., `com.example.my-reason`).
+    ///
+    /// See [Reason - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_reason).
     pub fn set_reason<S: Into<String>>(mut self, reason: S) -> Self {
         self.reason = Some(reason.into());
         self

@@ -107,7 +107,12 @@ pub struct Manifest {
     #[serde(skip)]
     assertion_references: Vec<HashedUri>,
 
-    /// A list of redactions - URIs to a redacted assertions
+    /// JUMBF URIs of assertions that were redacted by this manifest.
+    ///
+    /// Each entry has the form
+    /// `self#jumbf=/c2pa/<manifest_label>/c2pa.assertions/<assertion_label>`
+    /// and corresponds to an assertion that was intentionally removed from an
+    /// ingredient manifest in the claim chain.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) redactions: Option<Vec<String>>,
 
@@ -228,6 +233,14 @@ impl Manifest {
     /// Returns raw assertion references.
     pub fn assertion_references(&self) -> Iter<'_, HashedUri> {
         self.assertion_references.iter()
+    }
+
+    /// Returns JUMBF URIs of assertions redacted by this manifest, if any.
+    ///
+    /// Each URI identifies an assertion that was intentionally removed from
+    /// an ingredient manifest in the claim chain.
+    pub fn redactions(&self) -> Option<&[String]> {
+        self.redactions.as_deref()
     }
 
     /// Returns Verifiable Credentials.

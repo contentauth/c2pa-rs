@@ -512,10 +512,10 @@ pub struct BuilderSettings {
     /// The name of the vendor creating the content credential.
     pub vendor: Option<String>,
 
-    /// Claim generator info that is automatically added to the builder.
-    ///
-    /// Note that this information will prepend any claim generator info
-    /// provided explicitly to the builder.
+    /// When set, used as [`ClaimGeneratorInfo`] when
+    /// [`ManifestDefinition::claim_generator_info`](crate::builder::ManifestDefinition) is empty
+    /// (e.g. key omitted in JSON or an empty array). If `None` or when the definition lists at
+    /// least one generator, that path does not use this value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claim_generator_info: Option<ClaimGeneratorInfoSettings>,
     /// Various settings for configuring automatic thumbnail generation.
