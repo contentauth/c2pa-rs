@@ -17,11 +17,15 @@ use std::{
     fmt::{Debug, Formatter},
 };
 
+use async_generic::async_generic;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    crypto::cose::{CertificateTrustPolicy, Verifier},
+    crypto::{
+        cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
+        raw_signature::RawSignatureValidationError,
+    },
     dynamic_assertion::PartialClaim,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
@@ -33,7 +37,7 @@ use crate::{
             signer_payload::SignerPayload,
         },
         internal::debug_byte_slice::DebugByteSlice,
-        x509::X509SignatureVerifier,
+        x509::X509SignatureInfo,
         SignatureVerifier, ToCredentialSummary, ValidationError,
     },
     jumbf::labels::to_assertion_uri,
@@ -283,14 +287,20 @@ impl IdentityAssertion {
             .await
     }
 
-    /// Using the provided [`SignatureVerifier`], check the validity of this
-    /// identity assertion.
+    /// Validate this identity assertion against a list of claim assertion URIs.
     ///
-    /// If successful, returns the credential-type specific information that can
-    /// be derived from the signature. This is the [`SignatureVerifier::Output`]
-    /// type which typically describes the named actor, but may also contain
-    /// information about the time of signing or the credential's source.
-    pub(crate) async fn validate_partial_claim(
+    /// Accepts a plain slice of [`HashedUri`]s so callers do not need to
+    /// construct the internal [`PartialClaim`] type.
+    ///
+    /// The sync variant (`validate_partial_claim`) handles `cawg.x509.cose`
+    /// fully; other signature types that require network I/O (e.g.
+    /// `cawg.identity_claims_aggregation`) are skipped with an informational
+    /// log entry and return `None` from the caller's perspective.
+    ///
+    /// The async variant (`validate_partial_claim_async`) handles all known
+    /// signature types.
+    #[async_generic]
+    pub(crate) fn validate_partial_claim(
         &self,
         partial_claim: &PartialClaim,
         status_tracker: &mut StatusTracker,
@@ -331,13 +341,47 @@ impl IdentityAssertion {
                 Verifier::IgnoreProfileAndTrustPolicy
             };
 
-            let verifier = X509SignatureVerifier { cose_verifier };
+            let mut signer_payload_cbor: Vec<u8> = vec![];
+            c2pa_cbor::to_writer(&mut signer_payload_cbor, &self.signer_payload).map_err(|_| {
+                ValidationError::InternalError("CBOR serialization error".to_string())
+            })?;
 
-            let result = verifier
-                .check_signature(&self.signer_payload, &self.signature, status_tracker)
-                .await
-                .map(|v| v.to_summary())
-                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
+            let cose_sign1 =
+                parse_cose_sign1(&self.signature, &signer_payload_cbor, status_tracker)
+                    .map_err(|e| ValidationError::SignatureError(e.to_string()))?;
+
+            let cert_info = if _sync {
+                cose_verifier.verify_signature(
+                    &self.signature,
+                    &signer_payload_cbor,
+                    &[],
+                    None,
+                    status_tracker,
+                )
+            } else {
+                cose_verifier
+                    .verify_signature_async(
+                        &self.signature,
+                        &signer_payload_cbor,
+                        &[],
+                        None,
+                        status_tracker,
+                    )
+                    .await
+            }
+            .map_err(|e| match e {
+                CoseError::RawSignatureValidationError(
+                    RawSignatureValidationError::SignatureMismatch,
+                ) => ValidationError::SignatureMismatch,
+                e => ValidationError::SignatureError(e.to_string()),
+            })?;
+
+            let info = X509SignatureInfo {
+                signer_payload: self.signer_payload.clone(),
+                cose_sign1,
+                cert_info,
+            };
+            let result = info.to_summary();
 
             log_current_item!(
                 "CAWG X.509 identity signature valid",
@@ -351,22 +395,35 @@ impl IdentityAssertion {
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else if sig_type == "cawg.identity_claims_aggregation" {
-            let verifier = IcaSignatureVerifier {};
+            if _sync {
+                // ICA verification requires async network I/O; skip in sync context.
+                log_current_item!(
+                    "identity_claims_aggregation validation skipped in sync context",
+                    "validate_partial_claim"
+                )
+                .validation_status("cawg.validation_skipped")
+                .informational(status_tracker);
+                Err(ValidationError::UnknownSignatureType(
+                    "cawg.identity_claims_aggregation requires async".to_string(),
+                ))
+            } else {
+                let verifier = IcaSignatureVerifier {};
+                let result = verifier
+                    .check_signature(&self.signer_payload, &self.signature, status_tracker)
+                    .await
+                    .map(|v| v.to_summary())
+                    .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
 
-            let result = verifier
-                .check_signature(&self.signer_payload, &self.signature, status_tracker)
-                .await
-                .map(|v| v.to_summary())
-                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
-            log_current_item!(
-                "CAWG identity_claims_aggregation signature valid",
-                "validate_partial_claim"
-            )
-            .validation_status("cawg.ica.credential_valid")
-            .success(status_tracker);
+                log_current_item!(
+                    "CAWG identity_claims_aggregation signature valid",
+                    "validate_partial_claim"
+                )
+                .validation_status("cawg.ica.credential_valid")
+                .success(status_tracker);
 
-            serde_json::to_value(result)
-                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
+                serde_json::to_value(result)
+                    .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
+            }
         } else {
             Err(ValidationError::UnknownSignatureType(sig_type.to_string()))
         }
