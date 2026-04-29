@@ -988,7 +988,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     // Special DNG case - clone BigTable data if present. BigTable data is stored similarly
     // to strip/tile data but with three separate tags for offsets, byte counts, and digests.
     // We need to clone the data and patch the offsets to preserve the integrity of the DNG.
-    // Note: this is not a general DNG feature.  Converts the target_ifd to the final
+    // Note: this is not a general DNG feature. Converts the target_ifd to the final
     // IFD with the copied data and actual offsets.
     fn clone_dng_bigtable_data<R: Read + Seek + ?Sized>(
         &mut self,
