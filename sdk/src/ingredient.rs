@@ -473,6 +473,12 @@ impl Ingredient {
         self
     }
 
+    /// Sets the ingredient's label, used as the linking key for action `ingredientIds[]`.
+    pub fn set_label<S: Into<String>>(&mut self, label: S) -> &mut Self {
+        self.label = Some(label.into());
+        self
+    }
+
     /// Sets a reference to Manifest C2PA data.
     pub fn set_manifest_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
         self.manifest_data = Some(data_ref);
