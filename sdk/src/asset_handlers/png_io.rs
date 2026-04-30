@@ -402,21 +402,27 @@ impl CAIWriter for PngIO {
             .find(|pcp| pcp.name == CAI_CHUNK)
             .ok_or(Error::JumbfNotFound)?;
 
+        let cai_offset = usize::try_from(pcp.start)
+            .map_err(|_| Error::InvalidAsset("PNG CAI chunk offset overflows usize".to_string()))?;
+        let cai_length = usize::try_from(pcp.length as u64 + PNG_HDR_LEN)
+            .map_err(|_| Error::InvalidAsset("PNG CAI chunk length overflows usize".to_string()))?;
+        let end = usize::try_from(pcp.end())
+            .map_err(|_| Error::InvalidAsset("PNG CAI chunk end overflows usize".to_string()))?;
+
         positions.push(HashObjectPositions {
-            offset: pcp.start as usize,
-            length: pcp.length as usize + PNG_HDR_LEN as usize,
+            offset: cai_offset,
+            length: cai_length,
             htype: HashBlockObjectType::Cai,
         });
 
         // add hash of chunks before cai
         positions.push(HashObjectPositions {
             offset: 0,
-            length: pcp.start as usize,
+            length: cai_offset,
             htype: HashBlockObjectType::Other,
         });
 
         // add position from cai to end
-        let end = pcp.end() as usize;
         let file_end = png_buf.len();
         positions.push(HashObjectPositions {
             offset: end, // len of cai
@@ -604,7 +610,7 @@ fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)>
 
     if let Some(xmp) = xmp_box {
         // overwrite existing box
-        Some((xmp.start, xmp.length + PNG_HDR_LEN as u32))
+        Some((xmp.start, xmp.length.checked_add(PNG_HDR_LEN as u32)?))
     } else {
         // insert after IHDR
         ps.iter()
@@ -1050,6 +1056,32 @@ pub mod tests {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn test_cai_chunk_length_near_u32_max_returns_error() {
+        // A CAI chunk claiming length = u32::MAX - 11 is the minimum value whose
+        // `length as usize + PNG_HDR_LEN(12)` overflows usize on 32-bit/WASM targets.
+        // Without actual chunk data the parser hits EOF at CRC-read time, so the
+        // call must return Err — not panic — on any target width.
+        let mut data: Vec<u8> = Vec::new();
+        data.extend_from_slice(&PNG_ID);
+        // Minimal IHDR: width=1, height=1, 8-bit RGB, no interlace
+        let ihdr_payload: [u8; 13] = [0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0];
+        data.extend_from_slice(&(ihdr_payload.len() as u32).to_be_bytes());
+        data.extend_from_slice(b"IHDR");
+        data.extend_from_slice(&ihdr_payload);
+        data.extend_from_slice(&[0x90, 0x77, 0x53, 0xde]); // valid IHDR CRC
+                                                           // CAI chunk: claimed length = u32::MAX - 11 (overflows usize + 12 on 32-bit).
+                                                           // No payload follows — the parser hits EOF before recording this chunk position.
+        data.extend_from_slice(&(u32::MAX - 11).to_be_bytes());
+        data.extend_from_slice(b"caBX");
+
+        let png_io = PngIO {};
+        let mut stream = Cursor::new(data);
+        assert!(png_io
+            .get_object_locations_from_stream(&mut stream)
+            .is_err());
     }
 
     #[test]
