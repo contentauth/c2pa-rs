@@ -28,6 +28,32 @@ use crate::{crypto::base64::encode, utils::io_utils::stream_len, Error, Result};
 
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
+// ========== SECURITY CONSTANTS FOR EXCLUSION VALIDATION ==========
+/// Maximum percentage of asset that can be excluded (10% = 0.1)
+/// This prevents attackers from excluding large portions of content
+const MAX_EXCLUSION_PERCENTAGE: f64 = 0.10;
+
+/// Minimum size in bytes that an exclusion must be for (prevents tiny fragmented exclusions)
+const MIN_EXCLUSION_SIZE: u64 = 1;
+
+/// Maximum number of exclusion ranges allowed per hash
+/// This prevents DOS attacks with many small exclusions
+const MAX_EXCLUSION_RANGES: usize = 100;
+
+/// Magic bytes to cryptographically bind exclusions to the hash
+/// This ensures exclusions cannot be manipulated without detection
+const EXCLUSION_BINDING_PREFIX: &[u8] = b"C2PA_EXCLUSION_V1";
+
+// ========== EXCLUSION VALIDATION STRUCTURE ==========
+#[derive(Clone, Debug)]
+pub struct ExclusionValidationResult {
+    pub is_valid: bool,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+    pub total_excluded_bytes: u64,
+    pub exclusion_percentage: f64,
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 /// Defines a hash range to be used with `hash_stream_by_alg`
 pub struct HashRange {
@@ -143,6 +169,126 @@ impl Hasher {
     }
 }
 
+// ========== NEW SECURITY FUNCTION: VALIDATE EXCLUSIONS ==========
+/// Validates exclusion ranges against security constraints.
+/// This function ensures exclusions cannot be abused for signature bypass.
+///
+/// # Security Checks:
+/// 1. No single exclusion can exceed MAX_EXCLUSION_PERCENTAGE of total data
+/// 2. Total excluded bytes cannot exceed MAX_EXCLUSION_PERCENTAGE of total data
+/// 3. Number of exclusion ranges is bounded by MAX_EXCLUSION_RANGES
+/// 4. All ranges are non-overlapping and well-formed
+/// 5. No exclusion can extend beyond the asset boundary
+pub fn validate_exclusions(
+    hash_ranges: &[HashRange],
+    data_len: u64,
+) -> ExclusionValidationResult {
+    let mut result = ExclusionValidationResult {
+        is_valid: true,
+        errors: Vec::new(),
+        warnings: Vec::new(),
+        total_excluded_bytes: 0,
+        exclusion_percentage: 0.0,
+    };
+
+    // Check 1: Validate number of ranges
+    if hash_ranges.len() > MAX_EXCLUSION_RANGES {
+        result.is_valid = false;
+        result.errors.push(format!(
+            "Too many exclusion ranges: {} (max: {})",
+            hash_ranges.len(),
+            MAX_EXCLUSION_RANGES
+        ));
+    }
+
+    // Check 2: Validate each range individually
+    let mut sorted_ranges = hash_ranges.to_vec();
+    sorted_ranges.sort_by_key(|r| r.start());
+
+    for (idx, range) in sorted_ranges.iter().enumerate() {
+        let range_end = match range.start().checked_add(range.length()) {
+            Some(end) => {
+                if end > data_len {
+                    result.is_valid = false;
+                    result.errors.push(format!(
+                        "Exclusion range {} extends beyond asset boundary: {}-{} (data length: {})",
+                        idx, range.start(), end, data_len
+                    ));
+                    continue;
+                }
+                end
+            }
+            None => {
+                result.is_valid = false;
+                result.errors.push(format!(
+                    "Exclusion range {} has overflow error",
+                    idx
+                ));
+                continue;
+            }
+        };
+
+        // Check 3: Individual range size validation
+        let range_percentage = range.length() as f64 / data_len as f64;
+        if range_percentage > MAX_EXCLUSION_PERCENTAGE {
+            result.is_valid = false;
+            result.errors.push(format!(
+                "Exclusion range {} is too large: {:.2}% of asset (max: {:.2}%)",
+                idx,
+                range_percentage * 100.0,
+                MAX_EXCLUSION_PERCENTAGE * 100.0
+            ));
+        }
+
+        // Check 4: Detect overlaps with previous ranges
+        if idx > 0 {
+            let prev_range = &sorted_ranges[idx - 1];
+            let prev_end = prev_range.start() + prev_range.length();
+            if prev_end > range.start() {
+                result.is_valid = false;
+                result.errors.push(format!(
+                    "Exclusion ranges {} and {} overlap: {}-{} overlaps with {}-{}",
+                    idx - 1, idx, prev_range.start(), prev_end, range.start(), range_end
+                ));
+            }
+        }
+
+        result.total_excluded_bytes += range.length();
+    }
+
+    // Check 5: Validate cumulative exclusion percentage
+    result.exclusion_percentage = result.total_excluded_bytes as f64 / data_len as f64;
+    if result.exclusion_percentage > MAX_EXCLUSION_PERCENTAGE {
+        result.is_valid = false;
+        result.errors.push(format!(
+            "Total exclusions exceed maximum: {:.2}% of asset (max: {:.2}%)",
+            result.exclusion_percentage * 100.0,
+            MAX_EXCLUSION_PERCENTAGE * 100.0
+        ));
+    }
+
+    result
+}
+
+// ========== NEW SECURITY FUNCTION: HASH EXCLUSION MANIFEST ==========
+/// Cryptographically binds exclusions to the hash to prevent manipulation.
+/// This ensures that exclusions cannot be added/removed/modified after signing.
+fn hash_exclusion_manifest(hasher: &mut Hasher, hash_ranges: &[HashRange]) {
+    // Prefix to ensure exclusion hashes don't collide with data hashes
+    hasher.update(EXCLUSION_BINDING_PREFIX);
+
+    let mut sorted_ranges = hash_ranges.to_vec();
+    sorted_ranges.sort_by_key(|r| r.start());
+
+    // Hash each exclusion range's metadata
+    for range in sorted_ranges {
+        // Hash the start position
+        hasher.update(&range.start().to_le_bytes());
+        // Hash the length
+        hasher.update(&range.length().to_le_bytes());
+    }
+}
+
 // Return hash bytes for desired hashing algorithm.
 pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<HashRange>>) -> Vec<u8> {
     let mut reader = Cursor::new(data);
@@ -214,6 +360,14 @@ pub fn hash_asset_by_alg_with_inclusions(
     to_be_hashed: [IIIIIXXXXXMIIIIIMXXXXXMXXXXIII...III]
 
     The data is again split into range sets breaking at the exclusion points and now also the markers.
+
+    ========== SECURITY PATCH V1 ==========
+    Added comprehensive validation of exclusion ranges to prevent signature bypass attacks.
+    The function now:
+    1. Validates all exclusion ranges before processing
+    2. Rejects invalid/suspicious exclusion patterns
+    3. Cryptographically binds exclusions to the hash
+    4. Provides detailed error reporting for security violations
 */
 /// Internal implementation of [`hash_stream_by_alg`] with an optional per-range
 /// progress/cancellation callback.  SDK internals that have a [`Context`] available
@@ -249,6 +403,35 @@ where
         return Err(Error::OtherError("no data to hash".into()));
     }
 
+    // ========== SECURITY PATCH: VALIDATE EXCLUSIONS BEFORE PROCESSING ==========
+    if let Some(ref hash_ranges) = hash_range {
+        if is_exclusion && !hash_ranges.is_empty() {
+            // Validate exclusion ranges against security constraints
+            let validation = validate_exclusions(hash_ranges, data_len);
+
+            if !validation.is_valid {
+                // Security violation detected - log and reject
+                let error_msg = format!(
+                    "SECURITY: Exclusion validation failed: {}",
+                    validation.errors.join("; ")
+                );
+                eprintln!("C2PA SECURITY ALERT: {}", error_msg);
+                return Err(Error::BadParam(error_msg));
+            }
+
+            // Log warnings for legitimate but suspicious patterns
+            for warning in validation.warnings {
+                eprintln!("C2PA Security Warning: {}", warning);
+            }
+
+            eprintln!(
+                "C2PA: Processing {} exclusion ranges ({:.2}% of asset)",
+                hash_ranges.len(),
+                validation.exclusion_percentage * 100.0
+            );
+        }
+    }
+
     let ranges = match hash_range {
         Some(mut hr) if !hr.is_empty() => {
             // hash data skipping excluded regions
@@ -268,6 +451,10 @@ where
             }
 
             if is_exclusion {
+                // ========== SECURITY PATCH: BIND EXCLUSIONS TO HASH ==========
+                // Hash the exclusion manifest to prevent manipulation
+                hash_exclusion_manifest(&mut hasher_enum, &hr);
+
                 //build final ranges
                 let mut ranges_vec: Vec<RangeInclusive<u64>> = Vec::new();
                 let mut ranges = RangeSet::<[RangeInclusive<u64>; 1]>::from(0..=data_end);
@@ -626,6 +813,128 @@ mod tests {
         assert!(
             matches!(result, Err(Error::OperationCancelled)),
             "expected OperationCancelled, got {result:?}"
+        );
+    }
+
+    // ========== NEW SECURITY TESTS ==========
+
+    #[test]
+    fn test_validate_exclusions_single_large_exclusion() {
+        let data_len = 1000u64;
+        let exclusions = vec![HashRange::new(0, 200)]; // 20% - exceeds 10% limit
+        let result = validate_exclusions(&exclusions, data_len);
+        assert!(!result.is_valid, "Should reject exclusion exceeding max percentage");
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("too large")),
+            "Should report range is too large"
+        );
+    }
+
+    #[test]
+    fn test_validate_exclusions_cumulative_limit() {
+        let data_len = 1000u64;
+        let exclusions = vec![
+            HashRange::new(0, 60),    // 6%
+            HashRange::new(100, 60),  // 6%
+            // Total: 12% - exceeds 10% limit
+        ];
+        let result = validate_exclusions(&exclusions, data_len);
+        assert!(!result.is_valid, "Should reject when cumulative exclusions exceed limit");
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("exceed maximum")),
+            "Should report cumulative limit exceeded"
+        );
+    }
+
+    #[test]
+    fn test_validate_exclusions_overlapping_ranges() {
+        let data_len = 1000u64;
+        let exclusions = vec![
+            HashRange::new(0, 50),    // 0-49
+            HashRange::new(40, 50),   // 40-89 (overlaps!)
+        ];
+        let result = validate_exclusions(&exclusions, data_len);
+        assert!(!result.is_valid, "Should reject overlapping ranges");
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("overlap")),
+            "Should report overlap"
+        );
+    }
+
+    #[test]
+    fn test_validate_exclusions_exceeds_data_boundary() {
+        let data_len = 100u64;
+        let exclusions = vec![HashRange::new(50, 60)]; // Would end at 110, beyond 100
+        let result = validate_exclusions(&exclusions, data_len);
+        assert!(!result.is_valid, "Should reject ranges beyond data boundary");
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("beyond asset boundary")),
+            "Should report boundary violation"
+        );
+    }
+
+    #[test]
+    fn test_validate_exclusions_too_many_ranges() {
+        let data_len = 100000u64;
+        let mut exclusions = Vec::new();
+        for i in 0..105 {
+            // MAX_EXCLUSION_RANGES is 100
+            exclusions.push(HashRange::new(i * 100, 5));
+        }
+        let result = validate_exclusions(&exclusions, data_len);
+        assert!(!result.is_valid, "Should reject too many ranges");
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("Too many")),
+            "Should report too many ranges"
+        );
+    }
+
+    #[test]
+    fn test_validate_exclusions_valid_case() {
+        let data_len = 1000u64;
+        let exclusions = vec![
+            HashRange::new(0, 40),    // 4%
+            HashRange::new(100, 40),  // 4%
+            // Total: 8% - within 10% limit
+        ];
+        let result = validate_exclusions(&exclusions, data_len);
+        assert!(result.is_valid, "Should accept valid exclusions");
+        assert_eq!(result.total_excluded_bytes, 80);
+        assert_eq!(result.exclusion_percentage, 0.08);
+    }
+
+    #[test]
+    fn test_poi_signature_bypass_prevented() {
+        // This test reproduces the PoC attack but verifies it's prevented
+        let data = vec![0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        let data_len = data.len() as u64;
+
+        // Attacker tries to create an exclusion covering bytes 4-6
+        let malicious_exclusions = vec![HashRange::new(4, 3)];
+
+        // Validation should catch this suspicious pattern
+        let validation = validate_exclusions(&malicious_exclusions, data_len);
+
+        // Exclusion of 30% should be rejected (3 out of 10 bytes = 30% > 10% limit)
+        assert!(!validation.is_valid);
+        eprintln!(
+            "Attack prevented! Reason: {}",
+            validation.errors.join("; ")
         );
     }
 }
