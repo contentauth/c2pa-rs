@@ -31,7 +31,7 @@ use crate::{
         AssertionBase, AssertionData,
     },
     assertions::{
-        self,
+        self, c2pa_action,
         labels::{
             self, ACTIONS, ASSERTION_METADATA, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL,
             DATABOX_STORE, METADATA_LABEL_REGEX,
@@ -2133,8 +2133,8 @@ impl Claim {
                 let first_actions_first_action = &first_actions.actions().first();
 
                 if let Some(first_actions_first_action) = first_actions_first_action {
-                    if first_actions_first_action.action() == "c2pa.opened"
-                        || first_actions_first_action.action() == "c2pa.created"
+                    if first_actions_first_action.action() == c2pa_action::OPENED
+                        || first_actions_first_action.action() == c2pa_action::CREATED
                     {
                         first_actions_assertion = Some(assertion);
                     }
@@ -2216,8 +2216,8 @@ impl Claim {
                 // 2.a any other actions assertions cannot contain created or opened actions (v2 claim)
                 if let Some(fa) = first_actions_assertion {
                     if fa != actions_assertion
-                        && (action.action() == "c2pa.opened"
-                            || action.action() == "c2pa.created")
+                        && (action.action() == c2pa_action::OPENED
+                            || action.action() == c2pa_action::CREATED)
                     {
                         log_item!(
                             label.clone(),
@@ -2236,8 +2236,8 @@ impl Claim {
 
                 // 2.a created or opened must be first action
                 if index != 0
-                    && (action.action() == "c2pa.opened"
-                        || action.action() == "c2pa.created")
+                    && (action.action() == c2pa_action::OPENED
+                        || action.action() == c2pa_action::CREATED)
                 {
                     log_item!(
                         label.clone(),
@@ -2252,9 +2252,9 @@ impl Claim {
                 }
 
                 // 2.b rules
-                if action.action() == "c2pa.opened"
-                    || action.action() == "c2pa.placed"
-                    || action.action() == "c2pa.removed"
+                if action.action() == c2pa_action::OPENED
+                    || action.action() == c2pa_action::PLACED
+                    || action.action() == c2pa_action::REMOVED
                 {
                     // 2.b.i must have parameters
                     let Some(params) = action.parameters() else {
@@ -2305,7 +2305,7 @@ impl Claim {
                     }
 
                     // 2.b.iv.A opened must have a parentOf
-                    if action.action() == "c2pa.opened" {
+                    if action.action() == c2pa_action::OPENED {
                         let mut found_good = 0usize;
 
                         if let Some(h) = &params.ingredient {
@@ -2365,8 +2365,8 @@ impl Claim {
                     }
 
                     // 2.b.iv.B, 2.b.iv.C must have a ComponentOf
-                    if action.action() == "c2pa.placed"
-                        || action.action() == "c2pa.removed"
+                    if action.action() == c2pa_action::PLACED
+                        || action.action() == c2pa_action::REMOVED
                     {
                         let mut found_good = 0usize;
 
@@ -2428,8 +2428,8 @@ impl Claim {
                 }
 
                 // 2.c if ingredient is present it must be a valid parentOf reference
-                if action.action() == "c2pa.transcoded"
-                    || action.action() == "c2pa.repackaged"
+                if action.action() == c2pa_action::TRANSCODED
+                    || action.action() == c2pa_action::REPACKAGED
                 {
                     if let Some(params) = action.parameters() {
                         let mut parent_tested = None; // on exists if action actually pointed to an ingredient
@@ -2500,7 +2500,7 @@ impl Claim {
                 }
 
                 // 2.d if redacted actions contains a redacted parameter if must be a resolvable reference
-                if action.action() == "c2pa.redacted" {
+                if action.action() == c2pa_action::REDACTED {
                     if let Some(params) = action.parameters() {
                         let mut parent_tested = None; // on exists if action actually pointed to an ingredient
                         if let Some(redacted_uri) = &params.redacted {

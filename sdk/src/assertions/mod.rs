@@ -16,9 +16,11 @@
 mod actions;
 pub(crate) use actions::V2_DEPRECATED_ACTIONS;
 pub use actions::{
-    C2paAction, C2paReason, Action, ActionParameters, ActionTemplate, Actions, DigitalSourceType,
+    c2pa_action, C2paReason, Action, ActionParameters, ActionTemplate, Actions, DigitalSourceType,
     SoftwareAgent,
 };
+#[allow(deprecated)]
+pub use actions::c2pa_reason;
 
 mod asset_reference;
 pub use asset_reference::AssetReference;

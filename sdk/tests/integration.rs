@@ -20,7 +20,7 @@ mod integration_1 {
     use std::{io, path::PathBuf};
 
     use c2pa::{
-        assertions::{Action, Actions, AssetReference, C2paAction, Metadata},
+        assertions::{c2pa_action, Action, Actions, AssetReference, Metadata},
         Builder, Context, Ingredient, Reader, Result, Settings,
     };
     use c2pa_macros::c2pa_test_async;
@@ -74,7 +74,7 @@ mod integration_1 {
         // parent.set_is_parent();
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
-            Action::new(C2paAction::Opened)
+            Action::new(c2pa_action::OPENED)
                 .set_when("2015-06-26T16:43:23+0200")
                 .set_parameter("name".to_owned(), "import")?
                 .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
@@ -104,7 +104,7 @@ mod integration_1 {
 
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
-            Action::new(C2paAction::Edited)
+            Action::new(c2pa_action::EDITED)
                 .set_parameter("name".to_owned(), "import")?
                 .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
         );

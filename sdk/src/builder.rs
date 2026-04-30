@@ -33,8 +33,9 @@ use crate::assertions::CreativeWork;
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
+        c2pa_action,
         labels::{self, parse_label},
-        Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, C2paAction, DataHash,
+        Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, DataHash,
         DigitalSourceType, EmbeddedData, ExclusionsMap, Exif, MerkleMap, Metadata, SoftwareAgent,
         SubsetMap, Thumbnail, TimeStamp, User, UserCbor,
     },
@@ -1695,7 +1696,7 @@ impl Builder {
 
         if (self.intent().is_some() || auto_created || auto_opened)
             && !actions.actions.iter().any(|action| {
-                action.action() == "c2pa.created" || action.action() == "c2pa.opened"
+                action.action() == c2pa_action::CREATED || action.action() == c2pa_action::OPENED
             })
         {
             // look for a parentOf relationship ingredient in the ingredient map and return a copy of the hashed URI if found.
@@ -1711,12 +1712,12 @@ impl Builder {
                             "Cannot have ParentOf ingredient with a Create intent".to_string(),
                         ));
                     }
-                    Some(Action::new(C2paAction::Created).set_source_type(source_type.clone()))
+                    Some(Action::new(c2pa_action::CREATED).set_source_type(source_type.clone()))
                 }
                 Some(BuilderIntent::Edit) | Some(BuilderIntent::Update) => {
                     if let Some(parent_ingredient_uri) = parent_ingredient_uri {
                         Some(
-                            Action::new(C2paAction::Opened)
+                            Action::new(c2pa_action::OPENED)
                                 .set_parameter("ingredients", vec![parent_ingredient_uri])?,
                         )
                     } else {
@@ -1731,7 +1732,7 @@ impl Builder {
                     if auto_opened && parent_ingredient_uri.is_some() {
                         // only add if we have a parent ingredient
                         if let Some(parent_uri) = &parent_ingredient_uri {
-                            let mut action = Action::new(C2paAction::Opened)
+                            let mut action = Action::new(c2pa_action::OPENED)
                                 .set_parameter("ingredients", vec![parent_uri])?;
                             if let Some(source_type) =
                                 &settings.builder.actions.auto_opened_action.source_type
@@ -1743,7 +1744,7 @@ impl Builder {
                             None
                         }
                     } else if auto_created {
-                        let mut action = Action::new(C2paAction::Created);
+                        let mut action = Action::new(c2pa_action::CREATED);
                         if let Some(source_type) =
                             &settings.builder.actions.auto_created_action.source_type
                         {
@@ -1783,7 +1784,7 @@ impl Builder {
                 if *relationship == &Relationship::ComponentOf
                     && !referenced_uris.contains(&uri.url())
                 {
-                    let action = Action::new(C2paAction::Placed);
+                    let action = Action::new(c2pa_action::PLACED);
 
                     let action = action.set_parameter("ingredients", vec![uri])?;
 
@@ -3373,7 +3374,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     use crate::utils::test::fixture_path;
     use crate::{
-        assertions::{C2paAction, C2paReason, BoxHash, DigitalSourceType},
+        assertions::{c2pa_action, BoxHash, C2paReason, DigitalSourceType},
         asset_handlers::bmff_io::{
             inject_manifest_into_free_box, inject_placeholder, read_bmff_c2pa_boxes,
         },
@@ -3797,7 +3798,7 @@ mod tests {
         let num_placed_actions = actions
             .actions
             .iter()
-            .filter(|action| action.action() == "c2pa.placed")
+            .filter(|action| action.action() == c2pa_action::PLACED)
             .count();
         assert_eq!(num_placed_actions, 2);
     }
@@ -3840,7 +3841,7 @@ mod tests {
             .unwrap();
 
         let action = actions.actions().first().unwrap();
-        assert_eq!(action.action(), "c2pa.created");
+        assert_eq!(action.action(), c2pa_action::CREATED);
     }
 
     #[test]
@@ -3885,7 +3886,7 @@ mod tests {
             .unwrap();
 
         let action = actions.actions().first().unwrap();
-        assert_eq!(action.action(), "c2pa.opened");
+        assert_eq!(action.action(), c2pa_action::OPENED);
 
         let ingredient_uris = action
             .parameters
@@ -3978,10 +3979,10 @@ mod tests {
             .unwrap();
 
         let action1 = actions.actions().get(1).unwrap();
-        assert_eq!(action1.action(), "c2pa.placed");
+        assert_eq!(action1.action(), c2pa_action::PLACED);
 
         let action2 = actions.actions().get(2).unwrap();
-        assert_eq!(action2.action(), "c2pa.placed");
+        assert_eq!(action2.action(), c2pa_action::PLACED);
 
         let reader_json = reader.json();
 
@@ -4066,11 +4067,11 @@ mod tests {
                     source_type = (DigitalSourceType::Empty.to_string())
 
                     [[builder.actions.templates]]
-                    action = (C2paAction::Edited.to_string())
+                    action = (c2pa_action::EDITED)
                     source_type = (DigitalSourceType::Empty.to_string())
 
                     [[builder.actions.templates]]
-                    action = (C2paAction::ColorAdjustments.to_string())
+                    action = (c2pa_action::COLOR_ADJUSTMENTS)
                     source_type = (DigitalSourceType::TrainedAlgorithmicData.to_string())
                 }
                 .to_string(),
@@ -4103,10 +4104,10 @@ mod tests {
 
         for template in templates {
             match template.action.as_str() {
-                "c2pa.edited" => {
+                c2pa_action::EDITED => {
                     assert_eq!(template.source_type, Some(DigitalSourceType::Empty));
                 }
-                "c2pa.color_adjustments" => {
+                c2pa_action::COLOR_ADJUSTMENTS => {
                     assert_eq!(
                         template.source_type,
                         Some(DigitalSourceType::TrainedAlgorithmicData)
@@ -4130,11 +4131,11 @@ mod tests {
                     source_type = (DigitalSourceType::Empty.to_string())
 
                     [[builder.actions.actions]]
-                    action = (C2paAction::Edited.to_string())
+                    action = (c2pa_action::EDITED)
                     source_type = (DigitalSourceType::Empty.to_string())
 
                     [[builder.actions.actions]]
-                    action = (C2paAction::ColorAdjustments.to_string())
+                    action = (c2pa_action::COLOR_ADJUSTMENTS)
                     source_type = (DigitalSourceType::TrainedAlgorithmicData.to_string())
                 }
                 .to_string(),
@@ -4166,10 +4167,10 @@ mod tests {
 
         for action in actions.actions {
             match action.action() {
-                "c2pa.edited" => {
+                c2pa_action::EDITED => {
                     assert_eq!(action.source_type(), Some(&DigitalSourceType::Empty));
                 }
-                "c2pa.color_adjustments" => {
+                c2pa_action::COLOR_ADJUSTMENTS => {
                     assert_eq!(
                         action.source_type(),
                         Some(&DigitalSourceType::TrainedAlgorithmicData)
@@ -5638,7 +5639,7 @@ mod tests {
         };
 
         let created_action =
-            Action::new(C2paAction::Created).set_source_type(DigitalSourceType::Empty);
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         let actions = Actions::new().add_action(created_action);
         builder1.add_assertion(Actions::LABEL, &actions).unwrap();
         builder1
@@ -5670,7 +5671,7 @@ mod tests {
         };
 
         let created_action2 =
-            Action::new(C2paAction::Created).set_source_type(DigitalSourceType::Empty);
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         let actions2 = Actions::new().add_action(created_action2);
         builder2.add_assertion(Actions::LABEL, &actions2).unwrap();
         builder2
@@ -5799,7 +5800,7 @@ mod tests {
         };
 
         let created_action =
-            Action::new(C2paAction::Created).set_source_type(DigitalSourceType::Empty);
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         let actions = Actions::new().add_action(created_action);
         builder.add_assertion(Actions::LABEL, &actions).unwrap();
         builder
@@ -5917,7 +5918,7 @@ mod tests {
         };
 
         let created_action =
-            Action::new(C2paAction::Created).set_source_type(DigitalSourceType::Empty);
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         let actions = Actions::new().add_action(created_action);
         builder.add_assertion(Actions::LABEL, &actions).unwrap();
         builder
@@ -6084,7 +6085,7 @@ mod tests {
             ..Default::default()
         };
         let created_action =
-            Action::new(C2paAction::Created).set_source_type(DigitalSourceType::Empty);
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         parent_builder
             .add_assertion(Actions::LABEL, &Actions::new().add_action(created_action))
             .unwrap();
@@ -6216,7 +6217,7 @@ mod tests {
         };
 
         let created_action =
-            Action::new(C2paAction::Created).set_source_type(DigitalSourceType::Empty);
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         let actions = Actions::new().add_action(created_action);
         builder1.add_assertion(Actions::LABEL, &actions).unwrap();
         builder1
@@ -6271,7 +6272,7 @@ mod tests {
         };
 
         let created_action2 =
-            Action::new(C2paAction::Created).set_source_type(DigitalSourceType::Empty);
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         let actions2 = Actions::new().add_action(created_action2);
         builder2.add_assertion(Actions::LABEL, &actions2).unwrap();
         builder2
@@ -6415,7 +6416,7 @@ mod tests {
         };
 
         let created_action =
-            Action::new(C2paAction::Created).set_source_type(DigitalSourceType::Empty);
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         let actions = Actions::new().add_action(created_action);
         builder1.add_assertion(Actions::LABEL, &actions).unwrap();
         builder1
@@ -6470,7 +6471,7 @@ mod tests {
         };
 
         let created_action2 =
-            Action::new(C2paAction::Created).set_source_type(DigitalSourceType::Empty);
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         let actions2 = Actions::new().add_action(created_action2);
         builder2.add_assertion(Actions::LABEL, &actions2).unwrap();
         builder2
@@ -6685,7 +6686,7 @@ mod tests {
         };
 
         // Create a parent with a c2pa_action type assertion.
-        let created_action = crate::assertions::Action::new(C2paAction::Created)
+        let created_action = crate::assertions::Action::new(c2pa_action::CREATED)
             .set_source_type(DigitalSourceType::Empty);
 
         let actions = crate::assertions::Actions::new().add_action(created_action);
@@ -6797,7 +6798,7 @@ mod tests {
             ..Default::default()
         };
 
-        let created_action = crate::assertions::Action::new(C2paAction::Created)
+        let created_action = crate::assertions::Action::new(c2pa_action::CREATED)
             .set_source_type(DigitalSourceType::Empty);
         let actions = crate::assertions::Actions::new().add_action(created_action);
         builder.add_assertion(Actions::LABEL, &actions).unwrap();

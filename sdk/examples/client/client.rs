@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 #[allow(deprecated)]
 use c2pa::{
-    assertions::{labels, Action, Actions, C2paAction, CreativeWork, Exif, SchemaDotOrgPerson},
+    assertions::{c2pa_action, labels, Action, Actions, CreativeWork, Exif, SchemaDotOrgPerson},
     create_signer,
     crypto::raw_signature::SigningAlg,
     Builder, ClaimGeneratorInfo, Ingredient, Reader, Relationship,
@@ -116,7 +116,7 @@ pub fn main() -> Result<()> {
 
     // create an action assertion stating that we imported this file
     let actions = Actions::new().add_action(
-        Action::new(C2paAction::Opened)
+        Action::new(c2pa_action::OPENED)
             .set_parameter("ingredientIds", [parent.instance_id().to_owned()])?,
     );
 

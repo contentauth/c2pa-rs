@@ -190,103 +190,85 @@ impl fmt::Display for DigitalSourceType {
 }
 
 /// C2PA actions defined in the C2PA specification.
-///
-/// New variants may be added in future releases.
-///
-/// See [Actions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_actions).
-#[non_exhaustive]
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
-#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-pub enum C2paAction {
+pub mod c2pa_action {
     /// Changes to tone, saturation, etc.
-    #[serde(rename = "c2pa.color_adjustments")]
-    ColorAdjustments,
+    pub const COLOR_ADJUSTMENTS: &str = "c2pa.color_adjustments";
 
     /// The format of the asset was changed.
-    #[serde(rename = "c2pa.converted")]
-    Converted,
+    pub const CONVERTED: &str = "c2pa.converted";
 
     /// The asset was first created, usually the asset's origin.
-    #[serde(rename = "c2pa.created")]
-    Created,
+    pub const CREATED: &str = "c2pa.created";
 
     /// Areas of the asset's "editorial" content were cropped out.
-    #[serde(rename = "c2pa.cropped")]
-    Cropped,
+    pub const CROPPED: &str = "c2pa.cropped";
 
     /// Changes using drawing tools including brushes or eraser.
-    #[serde(rename = "c2pa.drawing")]
-    Drawing,
+    pub const DRAWING: &str = "c2pa.drawing";
 
     /// Generalized actions that affect the "editorial" meaning of the content.
-    #[serde(rename = "c2pa.edited")]
-    Edited,
+    pub const EDITED: &str = "c2pa.edited";
 
     /// Changes to appearance with applied filters, styles, etc.
-    #[serde(rename = "c2pa.filtered")]
-    Filtered,
+    pub const FILTERED: &str = "c2pa.filtered";
 
     /// An existing asset was opened and is being set as the `parentOf` ingredient.
-    #[serde(rename = "c2pa.opened")]
-    Opened,
+    pub const OPENED: &str = "c2pa.opened";
 
     /// Changes to the direction and position of content.
-    #[serde(rename = "c2pa.orientation")]
-    Orientation,
+    pub const ORIENTATION: &str = "c2pa.orientation";
 
     /// Added/Placed a `componentOf` ingredient into the asset.
-    #[serde(rename = "c2pa.placed")]
-    Placed,
+    pub const PLACED: &str = "c2pa.placed";
 
     /// A componentOf ingredient was removed.
-    #[serde(rename = "c2pa.removed")]
-    Removed,
+    pub const REMOVED: &str = "c2pa.removed";
 
-    /// Sensitive content was redacted.
-    #[serde(rename = "c2pa.redacted")]
-    Redacted,
+    /// A componentOf ingredient was removed.
+    pub const REDACTED: &str = "c2pa.redacted";
 
     /// Asset is released to a wider audience.
-    #[serde(rename = "c2pa.published")]
-    Published,
+    pub const PUBLISHED: &str = "c2pa.published";
 
     /// Repackage from one container to another.
     ///
     /// A conversion of one packaging or container format to another. Content may be repackaged without transcoding.
     /// Does not include any adjustments that would affect the "editorial" meaning of the content.
-    #[serde(rename = "c2pa.repackaged")]
-    Repackaged,
+    pub const REPACKAGED: &str = "c2pa.repackaged";
 
-    /// Changes to content dimensions and/or file size.
-    #[serde(rename = "c2pa.resized")]
-    Resized,
+    /// Changes to content dimensions and/or file size
+    pub const RESIZED: &str = "c2pa.resized";
 
     /// Direct conversion of one encoding to another.
     ///
-    /// This includes resolution scaling, bitrate adjustment and encoding format change.
+    /// This included resolution scaling, bitrate adjustment and encoding format change.
     /// Does not include any adjustments that would affect the "editorial" meaning of the content.
-    #[serde(rename = "c2pa.transcoded")]
-    Transcoded,
+    pub const TRANSCODED: &str = "c2pa.transcoded";
 
     /// Something happened, but the claim_generator cannot specify what.
-    #[serde(rename = "c2pa.unknown")]
-    Unknown,
-
-    /// An unknown or custom action value.
-    #[serde(untagged)]
-    Other(String),
+    pub const UNKNOWN: &str = "c2pa.unknown";
 }
 
-impl fmt::Display for C2paAction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.serialize(f)
-    }
-}
+/// Deprecated string constants for C2PA action reasons.
+///
+/// Use [`C2paReason`] enum variants instead.
+#[deprecated(since = "0.39.0", note = "Use `C2paReason` enum variants instead")]
+pub mod c2pa_reason {
+    /// Personally identifiable information is present.
+    #[deprecated(since = "0.39.0", note = "Use `C2paReason::PiiPresent`")]
+    pub const PII_PRESENT: &str = "c2pa.PII.present";
 
-impl From<C2paAction> for String {
-    fn from(a: C2paAction) -> Self {
-        a.to_string()
-    }
+    /// The data is invalid.
+    #[deprecated(since = "0.39.0", note = "Use `C2paReason::InvalidData`")]
+    pub const INVALID_DATA: &str = "c2pa.invalid.data";
+
+    /// Trade secret information is present.
+    #[deprecated(since = "0.39.0", note = "Use `C2paReason::TradeSecretPresent`")]
+    pub const TRADE_SECRET_PRESENT: &str = "c2pa.trade-secret.present";
+
+    /// Government classified or confidential information is present.
+    #[deprecated(since = "0.39.0", note = "Use `C2paReason::GovernmentConfidential`")]
+    pub const GOVERNMENT_CONFIDENTIAL: &str = "c2pa.government.confidential";
 }
 
 /// Predefined reason values for the `reason` field on [`Action`].
@@ -323,15 +305,52 @@ pub enum C2paReason {
     Other(String),
 }
 
+impl C2paReason {
+    /// Returns the string representation of this reason without allocating.
+    pub fn as_str(&self) -> &str {
+        match self {
+            C2paReason::PiiPresent => "c2pa.PII.present",
+            C2paReason::InvalidData => "c2pa.invalid.data",
+            C2paReason::TradeSecretPresent => "c2pa.trade-secret.present",
+            C2paReason::GovernmentConfidential => "c2pa.government.confidential",
+            C2paReason::Other(s) => s.as_str(),
+        }
+    }
+}
+
 impl fmt::Display for C2paReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.serialize(f)
+        f.write_str(self.as_str())
     }
 }
 
 impl From<C2paReason> for String {
     fn from(r: C2paReason) -> Self {
-        r.to_string()
+        r.as_str().to_owned()
+    }
+}
+
+impl PartialEq<str> for C2paReason {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for C2paReason {
+    fn eq(&self, other: &&str) -> bool {
+        self == *other
+    }
+}
+
+impl PartialEq<C2paReason> for str {
+    fn eq(&self, other: &C2paReason) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<C2paReason> for &str {
+    fn eq(&self, other: &C2paReason) -> bool {
+        other == *self
     }
 }
 
@@ -414,8 +433,7 @@ pub struct ActionParameters {
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Action {
-    /// The label associated with this action. See [`C2paAction`].
-    #[cfg_attr(feature = "json_schema", schemars(with = "C2paAction"))]
+    /// The label associated with this action. See ([`c2pa_action`]).
     pub(crate) action: String,
 
     /// Timestamp of when the action occurred.
@@ -477,18 +495,18 @@ pub struct Action {
 impl Action {
     /// Create a new action with a specific action label.
     ///
-    /// This label is often one of the values defined in [`C2paAction`],
+    /// This label is often one of the labels defined in [`c2pa_action`],
     /// but can also be a custom string in reverse-domain format.
-    pub fn new(label: impl Into<String>) -> Self {
+    pub fn new(label: &str) -> Self {
         Self {
-            action: label.into(),
+            action: label.to_owned(),
             ..Default::default()
         }
     }
 
     /// Returns the label for this action.
     ///
-    /// This label is often one of the values defined in [`C2paAction`],
+    /// This label is often one of the labels defined in [`c2pa_action`],
     /// but can also be a custom string in reverse-domain format.
     pub fn action(&self) -> &str {
         &self.action
@@ -932,7 +950,7 @@ impl Actions {
     /// as required by the c2pa specification.
     /// Note, this does not check for duplicates since it does not return errors.
     pub fn add_action(mut self, action: Action) -> Self {
-        if action.action() == "c2pa.opened" || action.action() == "c2pa.created" {
+        if action.action() == c2pa_action::OPENED || action.action() == c2pa_action::CREATED {
             self.actions.insert(0, action);
         } else {
             self.actions.push(action);
@@ -953,7 +971,7 @@ impl Actions {
                 "Action '{action_name}' is deprecated in C2PA v2"
             )));
         }
-        if action_name == "c2pa.opened" || action_name == "c2pa.created" {
+        if action_name == c2pa_action::OPENED || action_name == c2pa_action::CREATED {
             let existing_action = self.actions.iter().find(|a| a.action() == action_name);
             if existing_action.is_some() {
                 return Err(Error::AssertionSpecificError(format!(
@@ -1043,7 +1061,7 @@ pub mod tests {
     }
 
     fn make_action1() -> Action {
-        Action::new(C2paAction::Cropped)
+        Action::new(c2pa_action::CROPPED)
             .set_software_agent("test")
             .set_when("2015-06-26T16:43:23+0200")
             .set_parameter(

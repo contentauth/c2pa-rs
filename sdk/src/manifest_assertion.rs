@@ -144,11 +144,11 @@ impl ManifestAssertion {
     /// ```
     /// # use c2pa::Result;
     /// use c2pa::{
-    ///     assertions::{C2paAction, Action, Actions},
+    ///     assertions::{c2pa_action, Action, Actions},
     ///     ManifestAssertion,
     /// };
     /// # fn main() -> Result<()> {
-    /// let actions = Actions::new().add_action(Action::new(C2paAction::Edited));
+    /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
     /// let _ma = ManifestAssertion::from_assertion(&actions)?;
     /// # Ok(())
     /// # }
@@ -166,11 +166,11 @@ impl ManifestAssertion {
     /// ```
     /// # use c2pa::Result;
     /// use c2pa::{
-    ///     assertions::{C2paAction, Action, Actions},
+    ///     assertions::{c2pa_action, Action, Actions},
     ///     ManifestAssertion,
     /// };
     /// # fn main() -> Result<()> {
-    /// let actions = Actions::new().add_action(Action::new(C2paAction::Edited));
+    /// let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
     /// let manifest_assertion = ManifestAssertion::from_assertion(&actions)?;
     ///
     /// let actions: Actions = manifest_assertion.to_assertion()?;
@@ -198,11 +198,11 @@ pub(crate) mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::assertions::{C2paAction, Action, Actions};
+    use crate::assertions::{c2pa_action, Action, Actions};
 
     #[test]
     fn test_manifest_assertion() {
-        let actions = Actions::new().add_action(Action::new(C2paAction::Edited));
+        let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
         let value = serde_json::to_value(actions).unwrap();
         let mut ma = ManifestAssertion::new(Actions::LABEL.to_owned(), value);
         assert_eq!(ma.label(), Actions::LABEL);
@@ -217,7 +217,7 @@ pub(crate) mod tests {
         ma = ma.set_kind(ManifestAssertionKind::Json);
         assert_eq!(ma.kind(), &ManifestAssertionKind::Json);
 
-        let actions = Actions::new().add_action(Action::new(C2paAction::Edited));
+        let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
         let ma2 = ManifestAssertion::from_assertion(&actions).expect("from_assertion");
         let _actions2: Actions = ma2.to_assertion().expect("to_assertion");
     }
