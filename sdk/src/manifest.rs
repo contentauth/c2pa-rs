@@ -765,7 +765,7 @@ pub(crate) mod tests {
     };
     #[allow(unused_imports)]
     use crate::{
-        assertions::{c2pa_action, Action, Actions},
+        assertions::{C2paAction, Action, Actions},
         ingredient::Ingredient,
         reader::Reader,
         store::Store,
@@ -977,7 +977,7 @@ pub(crate) mod tests {
         // Create parent with a c2pa_action type assertion.
         let mut parent_manifest = test_manifest();
         let actions = Actions::new().add_action(
-            Action::new(c2pa_action::FILTERED)
+            Action::new(C2paAction::Filtered)
                 .set_parameter("name".to_owned(), "gaussian blur")
                 .unwrap()
                 .set_when("2015-06-26T16:43:23+0200"),
@@ -1017,7 +1017,7 @@ pub(crate) mod tests {
     #[test]
     fn manifest_assertion_instances() {
         let mut manifest = Manifest::new("test".to_owned());
-        let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
+        let actions = Actions::new().add_action(Action::new(C2paAction::Edited));
         // add three assertions with the same label
         manifest.add_assertion(&actions).expect("add_assertion");
         manifest.add_assertion(&actions).expect("add_assertion");
@@ -1035,7 +1035,7 @@ pub(crate) mod tests {
         // now check to see if we have three separate assertions with different instances
         let action2: Result<Actions> = manifest2.find_assertion_with_instance(Actions::LABEL, 2);
         assert!(action2.is_ok());
-        assert_eq!(action2.unwrap().actions()[0].action(), c2pa_action::EDITED);
+        assert_eq!(action2.unwrap().actions()[0].action(), "c2pa.edited");
     }
 
     #[cfg(feature = "file_io")]

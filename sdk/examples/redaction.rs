@@ -27,7 +27,7 @@ use std::io::Cursor;
 
 use anyhow::Result;
 use c2pa::{
-    assertions::{c2pa_action, c2pa_reason, Action},
+    assertions::{Action, C2paAction, C2paReason},
     settings::Settings,
     validation_results::ValidationState,
     Builder, BuilderIntent, Context, Reader,
@@ -95,8 +95,8 @@ fn main() -> Result<()> {
     update_builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
     // Per the C2PA spec, include a c2pa.redacted action explaining the redaction.
-    let redacted_action = Action::new(c2pa_action::REDACTED)
-        .set_reason(c2pa_reason::PII_PRESENT)
+    let redacted_action = Action::new(C2paAction::Redacted)
+        .set_reason(C2paReason::PiiPresent)
         .set_parameter("redacted", &redacted_uri)?;
     update_builder.add_action(redacted_action)?;
 

@@ -29,7 +29,7 @@ use std::{
 };
 
 use c2pa::{
-    assertions::{c2pa_action, Action},
+    assertions::{Action, C2paAction},
     Builder, ClaimGeneratorInfo, HashRange, Reader, Result,
 };
 use serde_json::json;
@@ -67,7 +67,7 @@ fn user_data_hash_with_placeholder_api() -> Result<()> {
         &mut std::fs::File::open(&source)?,
     )?;
     builder.add_action(
-        Action::new(c2pa_action::OPENED).set_parameter("ingredientIds", ["parent_label"])?,
+        Action::new(C2paAction::Opened).set_parameter("ingredientIds", ["parent_label"])?,
     )?;
 
     // Create the placeholder manifest (automatically adds a DataHash if none exists).
