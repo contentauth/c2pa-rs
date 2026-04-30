@@ -13,6 +13,7 @@
 
 use async_trait::async_trait;
 use thiserror::Error;
+use url::Url;
 
 use crate::{
     crypto::{
@@ -202,6 +203,41 @@ pub fn signer_from_cert_chain_and_private_key(
     )))
 }
 
+/// Return a built-in [`RawSigner`] instance using the provided signing
+/// certificate and url to a remote signing service.
+///
+/// Which signers are available depends on the remote signing service.
+/// It is assumed that the signature returned by the remote signing service
+/// conforms to the public key in the certificate chain
+/// Responds with `Err(RawSignerError::InternalError)` if the required feature are not
+/// enabled
+///
+/// Returns `None` if the signing algorithm is unsupported. May return an `Err`
+/// response if the certificate chain is invalid
+#[allow(unused)]
+pub fn signer_from_cert_chain_and_url(
+    cert_chain: &[u8],
+    url: Url,
+    alg: SigningAlg,
+    time_stamp_service_url: Option<String>,
+) -> Result<Box<dyn RawSigner + Send + Sync>, RawSignerError> {
+    let cert_chain = fix_json_pem(cert_chain);
+
+    #[cfg(feature = "remote_signing")]
+    {
+        return crate::crypto::raw_signature::remote::signer_from_cert_chain_and_url(
+            &cert_chain,
+            url,
+            alg,
+            time_stamp_service_url,
+        );
+    }
+
+    Err(RawSignerError::InternalError(format!(
+        "unsupported remote signing for algorithm: {alg}"
+    )))
+}
+
 /// Return a built-in [`AsyncRawSigner`] instance using the provided signing
 /// certificate and private key.
 ///
@@ -223,6 +259,27 @@ pub fn async_signer_from_cert_chain_and_private_key(
         alg,
         time_stamp_service_url,
     )?;
+
+    Ok(Box::new(AsyncRawSignerWrapper(sync_signer)))
+}
+
+/// Return a built-in [`AsyncRawSigner`] instance using the provided signing
+/// certificate and url to a remote signing service.
+///
+/// Which signers are available depends on the remote signing service.
+/// It is assumed that the signature returned by the remote signing service
+/// conforms to the public key in the certificate chain
+///
+/// Returns `None` if the signing algorithm is unsupported. May return an `Err`
+/// response if the certificate chain is invalid.
+#[allow(unused)]
+pub fn async_signer_from_cert_chain_and_url(
+    cert_chain: &[u8],
+    url: Url,
+    alg: SigningAlg,
+    time_stamp_service_url: Option<String>,
+) -> Result<Box<dyn AsyncRawSigner + Send + Sync>, RawSignerError> {
+    let sync_signer = signer_from_cert_chain_and_url(cert_chain, url, alg, time_stamp_service_url)?;
 
     Ok(Box::new(AsyncRawSignerWrapper(sync_signer)))
 }

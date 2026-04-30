@@ -18,6 +18,9 @@
 #[cfg(feature = "file_io")]
 use std::path::Path;
 
+#[cfg(feature = "remote_signing")]
+use url::Url;
+
 use crate::{
     crypto::raw_signature::{signer_from_cert_chain_and_private_key, SigningAlg},
     error::Result,
@@ -68,4 +71,29 @@ pub fn from_files<P: AsRef<Path>>(
     let private_key = std::fs::read(pkey_path)?;
 
     from_keys(&cert_chain, &private_key, alg, tsa_url)
+}
+
+/// Creates a [`Signer`](crate::Signer) instance using a signing certificate and
+/// a remote signing service url
+///
+/// The signature operation by the created signer is delegated to the remote service at `url`.
+///
+/// # Arguments
+///
+/// * `signcert` - Signing certificate chain in PEM format
+/// * `url` - Remote signing service URL
+/// * `alg` - Format for signing
+/// * `tsa_url` - Optional URL for a timestamp authority
+#[cfg(feature = "remote_signing")]
+pub fn from_remote_url(
+    signcert: &[u8],
+    url: Url,
+    alg: SigningAlg,
+    tsa_url: Option<String>,
+) -> Result<BoxedSigner> {
+    use crate::crypto::raw_signature::signer_from_cert_chain_and_url;
+
+    Ok(Box::new(RawSignerWrapper(signer_from_cert_chain_and_url(
+        signcert, url, alg, tsa_url,
+    )?)))
 }

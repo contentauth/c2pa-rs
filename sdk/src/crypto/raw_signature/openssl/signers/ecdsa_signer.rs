@@ -16,13 +16,12 @@ use openssl::{
     hash::MessageDigest,
     pkey::{PKey, Private},
     sign::Signer,
-    x509::X509,
 };
 
 use crate::crypto::{
     ec_utils::{der_to_p1363, ec_curve_from_private_key_der},
     raw_signature::{
-        openssl::{cert_chain::check_chain_order, OpenSslMutex},
+        openssl::{cert_chain::parse_and_check_chain_order, OpenSslMutex},
         RawSigner, RawSignerError, SigningAlg,
     },
     time_stamp::TimeStampProvider,
@@ -65,28 +64,8 @@ impl EcdsaSigner {
                 ));
             }
         };
-
-        let _openssl = OpenSslMutex::acquire()?;
-
-        let cert_chain = X509::stack_from_pem(cert_chain)?;
-
-        if !check_chain_order(&cert_chain) {
-            return Err(RawSignerError::InvalidSigningCredentials(
-                "certificate chain in incorrect order".to_string(),
-            ));
-        }
-
-        // certs in DER format
-        let cert_chain = cert_chain
-            .iter()
-            .map(|cert| {
-                cert.to_der().map_err(|_| {
-                    RawSignerError::CryptoLibraryError(
-                        "could not encode certificate to DER".to_string(),
-                    )
-                })
-            })
-            .collect::<Result<Vec<_>, RawSignerError>>()?;
+        // get validly ordered certs in DER format
+        let cert_chain = parse_and_check_chain_order(cert_chain)?;
 
         // get the actual length of the certificate chain
         let cert_chain_len = cert_chain.iter().fold(0usize, |sum, c| sum + c.len());

@@ -25,6 +25,7 @@ use x509_parser::{error::PEMError, pem::Pem};
 use crate::crypto::{
     raw_signature::{
         oids::{EC_PUBLICKEY_OID, SECP521R1_OID},
+        rust_native::cert_chain::cert_chain_to_der,
         RawSigner, RawSignerError, SigningAlg,
     },
     time_stamp::TimeStampProvider,
@@ -62,13 +63,7 @@ impl EcdsaSigner {
         algorithm: SigningAlg,
         time_stamp_service_url: Option<String>,
     ) -> Result<Self, RawSignerError> {
-        let cert_chain = Pem::iter_from_buffer(cert_chain)
-            .map(|r| match r {
-                Ok(pem) => Ok(pem.contents),
-                Err(e) => Err(e),
-            })
-            .collect::<Result<Vec<Vec<u8>>, PEMError>>()
-            .map_err(|e| RawSignerError::InvalidSigningCredentials(e.to_string()))?;
+        let cert_chain = cert_chain_to_der(cert_chain)?;
 
         let cert_chain_len = cert_chain.iter().fold(0usize, |sum, c| sum + c.len());
 

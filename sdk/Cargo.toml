@@ -48,6 +48,9 @@ rust_native_crypto = [
     "dep:rsa",
     "dep:spki",
 ]
+remote_signing = [
+    "dep:reqwest"
+]
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364
 default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
@@ -304,7 +307,7 @@ jsonschema = { version = "0.45.0", default-features = false }
 wasm-bindgen-test = "0.3.55"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-httpmock = "0.8.2"
+httpmock = "0.8.3"
 tokio = { version = "1.44.2", features = ["full"] }
 criterion = { package = "codspeed-criterion-compat", version = "4.2.1" }
 
