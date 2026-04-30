@@ -33,9 +33,7 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
-    assertion::AssertionBase,
     assertions::Metadata,
-    claim::Claim,
     context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
@@ -92,7 +90,6 @@ pub trait AsyncPostValidator {
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema), schemars(default))]
-#[derive(Default)]
 pub struct Reader {
     /// A label for the active (most recent) manifest in the store
     active_manifest: Option<String>,
@@ -111,7 +108,7 @@ pub struct Reader {
 
     #[serde(skip)]
     /// We keep this around so we can generate a detailed report if needed
-    pub(crate) store: Store,
+    pub(crate) store: Arc<Store>,
 
     #[serde(skip)]
     /// Map to hold post-validation assertion values for reports
@@ -120,6 +117,21 @@ pub struct Reader {
 
     #[serde(skip)]
     context: Arc<Context>,
+}
+
+impl Default for Reader {
+    fn default() -> Self {
+        Self {
+            active_manifest: None,
+            manifests: HashMap::new(),
+            validation_status: None,
+            validation_results: None,
+            validation_state: None,
+            store: Arc::new(Store::new()),
+            assertion_values: HashMap::new(),
+            context: Arc::new(Context::default()),
+        }
+    }
 }
 
 impl Reader {
@@ -154,7 +166,7 @@ impl Reader {
     pub fn from_context(context: Context) -> Self {
         Self {
             context: Arc::new(context),
-            store: Store::new(),
+            store: Arc::new(Store::new()),
             assertion_values: HashMap::new(),
             ..Default::default()
         }
@@ -189,7 +201,7 @@ impl Reader {
     pub fn from_shared_context(context: &Arc<Context>) -> Self {
         Self {
             context: Arc::clone(context),
-            store: Store::new(),
+            store: Arc::new(Store::new()),
             assertion_values: HashMap::new(),
             ..Default::default()
         }
@@ -959,14 +971,15 @@ impl Reader {
         validation_log: &mut StatusTracker,
     ) -> Result<&Self> {
         let active_manifest = store.provenance_label();
+        let arc_store = Arc::new(store);
         let mut manifests = HashMap::new();
         let mut options = StoreOptions::default();
 
-        for claim in store.claims() {
+        for claim in arc_store.claims() {
             let manifest_label = claim.label();
             let result = if _sync {
                 Manifest::from_store(
-                    &store,
+                    arc_store.as_ref(),
                     manifest_label,
                     &mut options,
                     validation_log,
@@ -974,7 +987,7 @@ impl Reader {
                 )
             } else {
                 Manifest::from_store_async(
-                    &store,
+                    arc_store.as_ref(),
                     manifest_label,
                     &mut options,
                     validation_log,
@@ -985,13 +998,13 @@ impl Reader {
 
             match result {
                 Ok(mut manifest) => {
-                    // Populate manifest_data for ingredients using efficient flat store builder
                     for ingredient in manifest.ingredients_mut() {
+                        if ingredient.manifest_data_ref().is_some() {
+                            continue;
+                        }
                         if let Some(active_label) = ingredient.active_manifest() {
-                            if let Some(claim) = store.get_claim(active_label) {
-                                let ingredient_store = Self::build_ingredient_store(&store, claim)?;
-                                let jumbf = ingredient_store.to_jumbf_internal(0)?;
-                                ingredient.set_manifest_data(jumbf)?;
+                            if arc_store.get_claim(active_label).is_some() {
+                                ingredient.set_deferred_manifest_data(Arc::clone(&arc_store))?;
                             }
                         }
                     }
@@ -1007,7 +1020,7 @@ impl Reader {
             };
         }
 
-        let validation_results = ValidationResults::from_store(&store, validation_log);
+        let validation_results = ValidationResults::from_store(arc_store.as_ref(), validation_log);
 
         // resolve redactions
         // Even though we validate
@@ -1041,7 +1054,7 @@ impl Reader {
         self.validation_status = validation_results.validation_errors();
         self.validation_results = Some(validation_results);
         self.validation_state = Some(validation_state);
-        self.store = store;
+        self.store = arc_store;
         Ok(self)
     }
 
@@ -1166,61 +1179,6 @@ impl Reader {
         Ok(assertion_values)
     }
 
-    /// Build a flat ingredient store for a claim by walking ingredient assertions.
-    fn build_ingredient_store(store: &Store, claim: &Claim) -> Result<Store> {
-        let mut ingredient_store = Store::new();
-        let mut visited = HashSet::new();
-        let mut path = Vec::new();
-
-        fn collect_flat(
-            store: &Store,
-            claim: &Claim,
-            ingredient_store: &mut Store,
-            visited: &mut HashSet<String>,
-            path: &mut Vec<String>,
-        ) -> Result<()> {
-            use crate::assertions::Ingredient as IngredientAssertion;
-
-            let claim_label = claim.label().to_string();
-
-            if visited.contains(&claim_label) {
-                return Ok(());
-            }
-
-            // Cycle detection
-            if path.iter().any(|p| p == &claim_label) {
-                return Ok(());
-            }
-
-            path.push(claim_label.clone());
-
-            for ing_assertion in claim.ingredient_assertions() {
-                let ingredient = IngredientAssertion::from_assertion(ing_assertion.assertion())?;
-                let manifest_uri = ingredient
-                    .active_manifest
-                    .as_ref()
-                    .or(ingredient.c2pa_manifest.as_ref());
-                if let Some(manifest_uri) = manifest_uri {
-                    let ingredient_label = Store::manifest_label_from_path(&manifest_uri.url());
-                    if let Some(ingredient_claim) = store.get_claim(&ingredient_label) {
-                        collect_flat(store, ingredient_claim, ingredient_store, visited, path)?;
-                    }
-                }
-            }
-
-            // Post-order: add after all children
-            ingredient_store.insert_restored_claim(claim_label.clone(), claim.clone());
-            visited.insert(claim_label);
-            path.pop();
-
-            Ok(())
-        }
-
-        collect_flat(store, claim, &mut ingredient_store, &mut visited, &mut path)?;
-
-        Ok(ingredient_store)
-    }
-
     /// Convert the Reader back into a Builder.
     /// This can be used to modify an existing manifest store.
     /// # Errors
@@ -1248,13 +1206,10 @@ impl Reader {
                 let ingredients = std::mem::take(&mut manifest.ingredients);
                 for mut ingredient in ingredients {
                     if let Some(active_manifest) = ingredient.active_manifest() {
-                        if ingredient.manifest_data_ref().is_none() {
-                            if let Some(claim) = self.store.get_claim(active_manifest) {
-                                let ingredient_store =
-                                    Self::build_ingredient_store(&self.store, claim)?;
-                                let jumbf = ingredient_store.to_jumbf_internal(0)?;
-                                ingredient.set_manifest_data(jumbf)?;
-                            }
+                        if ingredient.manifest_data_ref().is_none()
+                            && self.store.get_claim(active_manifest).is_some()
+                        {
+                            ingredient.set_deferred_manifest_data(Arc::clone(&self.store))?;
                         }
                     }
                     builder.add_ingredient(ingredient);
@@ -1295,12 +1250,10 @@ impl Reader {
 
         // populate manifest_data on demand for ingredients with an active manifest
         if let Some(active_manifest) = ingredient.active_manifest() {
-            if ingredient.manifest_data_ref().is_none() {
-                if let Some(claim) = self.store.get_claim(active_manifest) {
-                    let ingredient_store = Self::build_ingredient_store(&self.store, claim)?;
-                    let jumbf = ingredient_store.to_jumbf_internal(0)?;
-                    ingredient.set_manifest_data(jumbf)?;
-                }
+            if ingredient.manifest_data_ref().is_none()
+                && self.store.get_claim(active_manifest).is_some()
+            {
+                ingredient.set_deferred_manifest_data(Arc::clone(&self.store))?;
             }
         }
 
