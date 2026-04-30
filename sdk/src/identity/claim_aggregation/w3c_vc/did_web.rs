@@ -92,9 +92,13 @@ async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
         .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))?;
     let response = AsyncGenericResolver::with_redirects()
         .unwrap_or_default()
+        .with_max_response_body_size(MAX_DID_DOC_SIZE)
         .http_resolve_async(request)
         .await
-        .map_err(|e| DidWebError::Request(url.to_owned(), e))?;
+        .map_err(|e| match e {
+            HttpResolverError::ResponseTooLarge => DidWebError::ResponseTooLarge,
+            e => DidWebError::Request(url.to_owned(), e),
+        })?;
 
     let (parts, mut body) = response.into_parts();
     match parts.status {
@@ -104,13 +108,8 @@ async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
     };
 
     let mut document = Vec::new();
-    body.take(MAX_DID_DOC_SIZE + 1)
-        .read_to_end(&mut document)
+    body.read_to_end(&mut document)
         .map_err(|e| DidWebError::Response(e.into()))?;
-
-    if document.len() as u64 > MAX_DID_DOC_SIZE {
-        return Err(DidWebError::ResponseTooLarge);
-    }
 
     Ok(document)
 }
@@ -247,6 +246,39 @@ mod tests {
             });
 
             did_doc_mock.assert();
+        }
+
+        #[tokio::test]
+        async fn content_length_above_limit_rejected() {
+            let server = MockServer::start();
+
+            PROXY.with(|proxy| {
+                let server_url = server.url("/").replace("127.0.0.1", "localhost");
+                proxy.replace(Some(server_url));
+            });
+
+            // Server explicitly advertises Content-Length above the limit.
+            // The Content-Length pre-check in AsyncGenericResolver rejects the
+            // response immediately, before passing any body bytes to the caller.
+            let oversized_body = vec![b'X'; (MAX_DID_DOC_SIZE + 1) as usize];
+            let _mock = server.mock(|when, then| {
+                when.method(GET).path("/.well-known/did.json");
+                then.status(200)
+                    .header("content-type", "application/did+json")
+                    .header("content-length", (MAX_DID_DOC_SIZE + 1).to_string())
+                    .body(oversized_body);
+            });
+
+            let result = did_web::resolve(&did("did:web:localhost")).await;
+
+            PROXY.with(|proxy| {
+                proxy.replace(None);
+            });
+
+            assert!(
+                matches!(result, Err(did_web::DidWebError::ResponseTooLarge)),
+                "expected ResponseTooLarge, got {result:?}"
+            );
         }
 
         #[tokio::test]
