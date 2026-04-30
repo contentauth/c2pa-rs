@@ -53,6 +53,13 @@ impl CAIReader for GifIO {
             .ok()?
             .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())?;
 
+        // The XMP magic trailer is exactly 257 bytes. A block shorter than that
+        // cannot carry a valid trailer; reject it rather than underflowing the
+        // usize subtraction below (panic in debug, wrap-to-MAX in release).
+        if bytes.len() < 257 {
+            return None;
+        }
+
         // TODO: this should be validated on construction
         // Validate the 258-byte XMP magic trailer (excluding terminator).
         if let Some(byte) = bytes.get(bytes.len() - 257) {
@@ -1487,6 +1494,39 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_xmp_short_trailer_does_not_panic() {
+        // An XMP Application Extension whose decoded payload is shorter than 257 bytes
+        // must return None, not panic with "attempt to subtract with overflow".
+        // Craft the minimum valid GIF structure with a short XMP block.
+        let gif_io = GifIO {};
+
+        // Build a minimal GIF89a with a single short XMP Application Extension.
+        // Header(6) + LogicalScreenDescriptor(7, no GCT) + AppExt + Trailer(1)
+        let mut data: Vec<u8> = Vec::new();
+
+        // GIF89a header
+        data.extend_from_slice(b"GIF89a");
+        // Logical Screen Descriptor: width=1, height=1, packed=0x00 (no GCT), bg=0, aspect=0
+        data.extend_from_slice(&[0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
+        // Application Extension introducer + label
+        data.push(0x21); // Extension introducer
+        data.push(0xff); // Application Extension label
+        data.push(0x0b); // Block size = 11
+        data.extend_from_slice(b"XMP Data"); // identifier (8 bytes)
+        data.extend_from_slice(&[0x58, 0x4d, 0x50]); // auth code "XMP"
+                                                     // One short sub-block: 10 bytes of payload (well under 257)
+        data.push(0x0a); // sub-block size
+        data.extend_from_slice(&[0u8; 10]); // payload
+        data.push(0x00); // sub-block terminator
+                         // Trailer
+        data.push(0x3b);
+
+        let mut stream = Cursor::new(data);
+        // Must return None, must not panic.
+        assert_eq!(gif_io.read_xmp(&mut stream), None);
     }
 
     #[test]
