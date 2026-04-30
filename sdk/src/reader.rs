@@ -1356,7 +1356,10 @@ pub mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::utils::test::test_context;
+    use crate::{
+        utils::{test::test_context, test_signer::test_signer},
+        Builder, SigningAlg,
+    };
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
@@ -1684,5 +1687,51 @@ pub mod tests {
             assert_send::<Reader>();
             assert_sync::<Reader>();
         }
+    }
+
+    #[test]
+    fn test_two_ingredient_thumbnails_via_resource_to_stream() -> Result<()> {
+        let thumbnail1 = b"the first super real thumbnail";
+        let thumbnail2 = b"the second super real thumbnail";
+
+        let mut ingredient1 = Ingredient::new_v2("Ingredient One", "image/jpeg");
+        ingredient1
+            .set_thumbnail("image/jpeg", thumbnail1.to_vec())
+            .unwrap();
+
+        let mut ingredient2 = Ingredient::new_v2("Ingredient Two", "image/jpeg");
+        ingredient2
+            .set_thumbnail("image/jpeg", thumbnail2.to_vec())
+            .unwrap();
+
+        let mut builder = Builder::default()
+            .with_definition(r#"{"title": "Test Image"}"#)
+            .unwrap();
+        builder.add_ingredient(ingredient1);
+        builder.add_ingredient(ingredient2);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut source = Cursor::new(include_bytes!("../tests/fixtures/C.jpg").as_slice());
+        let mut output = Cursor::new(Vec::new());
+        builder.sign(&signer, "image/jpeg", &mut source, &mut output)?;
+
+        let reader = Reader::default().with_stream("image/jpeg", &mut output)?;
+        let manifest = reader.active_manifest().unwrap();
+        let ingredients = manifest.ingredients();
+        assert_eq!(ingredients.len(), 2);
+
+        let uri1 = ingredients[0].thumbnail_ref().unwrap().identifier.clone();
+        let uri2 = ingredients[1].thumbnail_ref().unwrap().identifier.clone();
+        assert_ne!(uri1, uri2);
+
+        let mut out1 = Cursor::new(Vec::new());
+        reader.resource_to_stream(&uri1, &mut out1)?;
+        assert_eq!(out1.into_inner(), thumbnail1);
+
+        let mut out2 = Cursor::new(Vec::new());
+        reader.resource_to_stream(&uri2, &mut out2)?;
+        assert_eq!(out2.into_inner(), thumbnail2);
+
+        Ok(())
     }
 }
