@@ -1191,6 +1191,8 @@ impl Ingredient {
                 Some(label) => label,           // use the manifest from the thumbnail uri
                 None => claim_label.to_owned(), /* relative so use the whole url from the thumbnail assertion */
             };
+            let absolute_uri =
+                jumbf::labels::to_absolute_uri(&target_claim_label, &hashed_uri.url());
             let maybe_resource_ref = match hashed_uri.url() {
                 uri if uri.contains(jumbf::labels::ASSERTIONS) => {
                     // Get the bits of the thumbnail and convert it to a resource
@@ -1199,16 +1201,14 @@ impl Ingredient {
                         .get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_claim_label)
                         .map(|assertion| {
                             let (format, image) = Self::thumbnail_from_assertion(assertion);
-                            ingredient
-                                .resources
-                                .add_uri(&hashed_uri.url(), format, image)
+                            ingredient.resources.add_uri(&absolute_uri, format, image)
                         })
                 }
                 uri if uri.contains(jumbf::labels::DATABOXES) => store
                     .get_data_box_from_uri_and_claim(hashed_uri, &target_claim_label)
                     .map(|data_box| {
                         ingredient.resources.add_uri(
-                            &hashed_uri.url(),
+                            &absolute_uri,
                             &data_box.format,
                             data_box.data.clone(),
                         )
@@ -1787,6 +1787,7 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
+    use crate::{utils::test_signer::test_signer, Builder, Reader, SigningAlg};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -2017,6 +2018,37 @@ mod tests {
         assert_eq!(ingredient.validation_status(), None);
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.provenance().is_some());
+    }
+
+    #[test]
+    fn test_ingredient_thumbnail_uri_is_absolute() {
+        let mut ingredient = Ingredient::new_v2("Test Ingredient", "image/jpeg");
+        ingredient
+            .set_thumbnail("image/jpeg", b"a super real thumbnail".to_vec())
+            .unwrap();
+
+        let mut builder = Builder::default()
+            .with_definition(r#"{"title": "Test Image"}"#)
+            .unwrap();
+        builder.add_ingredient(ingredient);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut source = Cursor::new(include_bytes!("../tests/fixtures/C.jpg").as_slice());
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(&signer, "image/jpeg", &mut source, &mut output)
+            .unwrap();
+
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+        let manifest = reader.active_manifest().unwrap();
+        let manifest_label = manifest.label().unwrap();
+        let ingredient = manifest.ingredients().first().unwrap();
+        let thumb_ref = ingredient.thumbnail_ref().unwrap();
+
+        let expected_prefix = format!("self#jumbf=/c2pa/{manifest_label}/");
+        assert!(thumb_ref.identifier.starts_with(&expected_prefix),);
     }
 }
 
