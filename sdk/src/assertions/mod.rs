@@ -14,13 +14,13 @@
 //! Assertion helpers to build, validate, and parse assertions.
 
 mod actions;
-pub(crate) use actions::V2_DEPRECATED_ACTIONS;
-pub use actions::{
-    c2pa_action, C2paReason, Action, ActionParameters, ActionTemplate, Actions, DigitalSourceType,
-    SoftwareAgent,
-};
 #[allow(deprecated)]
 pub use actions::c2pa_reason;
+pub(crate) use actions::V2_DEPRECATED_ACTIONS;
+pub use actions::{
+    c2pa_action, Action, ActionParameters, ActionTemplate, Actions, C2paReason, DigitalSourceType,
+    SoftwareAgent,
+};
 
 mod asset_reference;
 pub use asset_reference::AssetReference;
