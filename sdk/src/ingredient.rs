@@ -1347,9 +1347,17 @@ impl Ingredient {
             // Ingredients without manifest_data may also carry relative self#jumbf= thumbnail
             // identifiers (e.g. written by the archive format for freshly-generated thumbnails),
             // those are valid resources in the builder's resource store and must be kept.
+            // A thumbnail is also "stale" when it comes from the outer archive manifest rather
+            // than the ingredient's own manifest chain. URIs are absolute but may
+            // still point to a different (outer) manifest, not the ingredient's active_manifest,
+            // which also makes them stale and should not be added in this case.
             let is_stale_outer_ref = self.manifest_data_ref().is_some()
                 && thumb_ref.identifier.starts_with("self#jumbf=")
-                && !thumb_ref.identifier.starts_with("self#jumbf=/");
+                && (!thumb_ref.identifier.starts_with("self#jumbf=/")
+                    || self
+                        .active_manifest
+                        .as_deref()
+                        .is_some_and(|label| !thumb_ref.identifier.contains(label)));
 
             // Resolve the thumbnail identifier to an absolute JUMBF URI using the ingredient's
             // own manifest label (self.active_manifest), then check directly against the
