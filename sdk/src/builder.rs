@@ -7813,6 +7813,232 @@ mod tests {
     }
 
     #[test]
+    fn test_redact_databox_thumbnail_nested_one_level() {
+        // v1 grandparent -> v2 parent (with v1 as ingredient) -> final builder
+        // redacts the v1 grandparent's databox thumbnail.
+        let context = test_context().into_shared();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut gp_input = Cursor::new(TEST_IMAGE);
+        let mut gp_clean = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut v1_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(1),
+                title: Some("V1 Grandparent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut gp_ingredient = Ingredient::from_json(&parent_json()).unwrap();
+        gp_ingredient = gp_ingredient
+            .with_stream("image/jpeg", &mut gp_input, &context)
+            .unwrap();
+        gp_ingredient
+            .set_thumbnail("image/jpeg", TEST_THUMBNAIL.to_vec())
+            .unwrap();
+        v1_builder.add_ingredient(gp_ingredient);
+        let mut v1_output = Cursor::new(Vec::new());
+        v1_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut gp_clean, &mut v1_output)
+            .expect("v1 grandparent sign");
+
+        v1_output.set_position(0);
+        let v1_reader = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut v1_output)
+            .expect("read v1");
+        let v1_label = v1_reader.active_label().unwrap().to_string();
+
+        // v2 intermediate parent ingests the v1 asset.
+        v1_output.set_position(0);
+        let mut p_clean = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut p_output = Cursor::new(Vec::new());
+        let mut p_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("V2 Intermediate".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        p_builder.set_intent(BuilderIntent::Edit);
+        let mut p_ing = Ingredient::from_json(&parent_json()).unwrap();
+        p_ing = p_ing
+            .with_stream("image/jpeg", &mut v1_output, &context)
+            .unwrap();
+        p_builder.add_ingredient(p_ing);
+        p_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut p_clean, &mut p_output)
+            .expect("v2 intermediate sign");
+
+        // Final builder redacts v1 grandparent's databox thumbnail.
+        let redacted_uri = crate::jumbf::labels::to_databox_uri(&v1_label, "c2pa.data");
+
+        p_output.set_position(0);
+        let mut final_output = Cursor::new(Vec::new());
+        let mut final_builder = Builder::default();
+        final_builder.set_intent(BuilderIntent::Edit);
+        final_builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+        final_builder.add_action(redacted_action).unwrap();
+
+        final_builder
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut p_output,
+                &mut final_output,
+            )
+            .expect("final builder sign");
+
+        final_output.set_position(0);
+        let reader = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut final_output)
+            .expect("read final");
+        assert!(matches!(
+            reader.validation_state(),
+            ValidationState::Trusted | ValidationState::Valid
+        ));
+        let v1_grandparent = reader.get_manifest(&v1_label).unwrap();
+        let gp_ing = &v1_grandparent.ingredients()[0];
+        assert!(
+            gp_ing.thumbnail_ref().is_none()
+                || !gp_ing
+                    .thumbnail_ref()
+                    .unwrap()
+                    .identifier
+                    .contains("c2pa.databoxes"),
+            "grandparent v1 ingredient thumbnail should not reference databox after redaction (1-level nested)"
+        );
+    }
+
+    #[test]
+    fn test_redact_databox_thumbnail_nested_two_levels() {
+        // v1 great-grandparent -> v2 intermediate1 -> v2 intermediate2 ->
+        // final redacts v1 databox thumbnail (2-level nesting).
+        let context = test_context().into_shared();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut ggp_input = Cursor::new(TEST_IMAGE);
+        let mut ggp_clean = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut v1_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(1),
+                title: Some("V1 GreatGrandparent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut ggp_ingredient = Ingredient::from_json(&parent_json()).unwrap();
+        ggp_ingredient = ggp_ingredient
+            .with_stream("image/jpeg", &mut ggp_input, &context)
+            .unwrap();
+        ggp_ingredient
+            .set_thumbnail("image/jpeg", TEST_THUMBNAIL.to_vec())
+            .unwrap();
+        v1_builder.add_ingredient(ggp_ingredient);
+        let mut v1_output = Cursor::new(Vec::new());
+        v1_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut ggp_clean, &mut v1_output)
+            .expect("v1 great-grandparent sign");
+
+        v1_output.set_position(0);
+        let v1_reader = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut v1_output)
+            .expect("read v1");
+        let v1_label = v1_reader.active_label().unwrap().to_string();
+
+        // intermediate1 ingests v1.
+        v1_output.set_position(0);
+        let mut i1_clean = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut i1_output = Cursor::new(Vec::new());
+        let mut i1_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("V2 Intermediate1".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        i1_builder.set_intent(BuilderIntent::Edit);
+        let mut i1_ing = Ingredient::from_json(&parent_json()).unwrap();
+        i1_ing = i1_ing
+            .with_stream("image/jpeg", &mut v1_output, &context)
+            .unwrap();
+        i1_builder.add_ingredient(i1_ing);
+        i1_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut i1_clean, &mut i1_output)
+            .expect("intermediate1 sign");
+
+        // intermediate2 ingests intermediate1.
+        i1_output.set_position(0);
+        let mut i2_clean = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut i2_output = Cursor::new(Vec::new());
+        let mut i2_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("V2 Intermediate2".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        i2_builder.set_intent(BuilderIntent::Edit);
+        let mut i2_ing = Ingredient::from_json(&parent_json()).unwrap();
+        i2_ing = i2_ing
+            .with_stream("image/jpeg", &mut i1_output, &context)
+            .unwrap();
+        i2_builder.add_ingredient(i2_ing);
+        i2_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut i2_clean, &mut i2_output)
+            .expect("intermediate2 sign");
+
+        // Final redacts v1 great-grandparent's databox thumbnail.
+        let redacted_uri = crate::jumbf::labels::to_databox_uri(&v1_label, "c2pa.data");
+
+        i2_output.set_position(0);
+        let mut final_output = Cursor::new(Vec::new());
+        let mut final_builder = Builder::default();
+        final_builder.set_intent(BuilderIntent::Edit);
+        final_builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+        final_builder.add_action(redacted_action).unwrap();
+
+        final_builder
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut i2_output,
+                &mut final_output,
+            )
+            .expect("final builder sign");
+
+        final_output.set_position(0);
+        let reader = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut final_output)
+            .expect("read final");
+        assert!(matches!(
+            reader.validation_state(),
+            ValidationState::Trusted | ValidationState::Valid
+        ));
+        let v1_ggp = reader.get_manifest(&v1_label).unwrap();
+        let ggp_ing = &v1_ggp.ingredients()[0];
+        assert!(
+            ggp_ing.thumbnail_ref().is_none()
+                || !ggp_ing
+                    .thumbnail_ref()
+                    .unwrap()
+                    .identifier
+                    .contains("c2pa.databoxes"),
+            "great-grandparent v1 ingredient thumbnail should not reference databox after redaction (2-level nested)"
+        );
+    }
+
+    #[test]
     fn test_redact_data_hash_returns_invalid_redaction() {
         let mut input = Cursor::new(TEST_IMAGE);
 
@@ -8019,8 +8245,8 @@ mod tests {
     fn test_redact_duplicate_uri_in_redactions() {
         // Documents behavior when same URI appears twice in `redactions`.
         // First pass redacts the assertion, second pass cannot find it but the
-        // post-sign check only verifies each requested redaction is present
-        // in `claim.redactions()`, which dedupes naturally, so succeeds.
+        // post-sign check only verifies each requested redaction is present,
+        // which deduplicates.
         let mut input = Cursor::new(TEST_IMAGE);
 
         let parent = Reader::default()
@@ -8669,6 +8895,524 @@ mod tests {
                 .any(|a| a.label().contains(REDACT_LABEL)),
             "redacted assertion should be gone"
         );
+    }
+
+    #[test]
+    fn test_redact_with_no_ingredients() {
+        // Builder with redactions list but no ingredient.
+        // Post-sign loop at should detect that no redaction was applied.
+        let mut input = Cursor::new(TEST_IMAGE_CLEAN);
+
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![
+            "self#jumbf=/c2pa/urn:c2pa:00000000-0000-0000-0000-000000000000/c2pa.assertions/org.example.foo".to_string(),
+        ]);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
+        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+    }
+
+    #[test]
+    fn test_redact_then_clear_redactions_re_sign() {
+        // Sign once with a redaction, reuse the builder, clear redactions.
+        // Sign again.
+        // Second sign must NOT strip anything.
+        let _context = test_context();
+
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+        let mut input1 = Cursor::new(TEST_IMAGE);
+
+        let parent = Reader::default()
+            .with_stream("image/jpeg", &mut input1)
+            .expect("from_stream");
+        let parent_manifest_label = parent.active_label().unwrap().to_string();
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(&parent_manifest_label, ASSERTION_LABEL);
+
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+        builder.add_action(redacted_action).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output1 = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut input1, &mut output1)
+            .expect("first sign");
+
+        // First output: assertion gone.
+        output1.set_position(0);
+        let r1 = Reader::default()
+            .with_stream("image/jpeg", &mut output1)
+            .expect("read1");
+        let p1 = r1.get_manifest(&parent_manifest_label).unwrap();
+        assert!(
+            !p1.assertions()
+                .iter()
+                .any(|a| a.label().contains(ASSERTION_LABEL)),
+            "first sign should redact CreativeWork"
+        );
+
+        // Now clear redactions and sign a fresh stream.
+        builder.definition.redactions = None;
+        let mut input2 = Cursor::new(TEST_IMAGE);
+        let mut output2 = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut input2, &mut output2)
+            .expect("second sign");
+
+        output2.set_position(0);
+        let r2 = Reader::default()
+            .with_stream("image/jpeg", &mut output2)
+            .expect("read2");
+        let p2 = r2.get_manifest(&parent_manifest_label).unwrap();
+        assert!(
+            p2.assertions()
+                .iter()
+                .any(|a| a.label().contains(ASSERTION_LABEL)),
+            "second sign without redactions must NOT strip CreativeWork — builder is leaking state"
+        );
+    }
+
+    #[test]
+    fn test_redact_thumbnail_of_ingredient_added_then_removed() {
+        // Add ingredient, set redactions targeting it, then clear ingredients
+        // before sign. Post-sign verifier should fail.
+        // AssertionRedactionNotFound (no ingredient to apply against).
+        let context = test_context().into_shared();
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        let mut parent_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        parent_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        let signer = test_signer(SigningAlg::Ps256);
+        parent_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .expect("parent sign");
+
+        dest.set_position(0);
+        let parent_reader = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut dest)
+            .expect("read parent");
+        let parent_label = parent_reader.active_label().unwrap().to_string();
+
+        // Add ingredient via stream.
+        dest.set_position(0);
+        let mut combiner = Builder::default();
+        combiner.set_intent(BuilderIntent::Edit);
+        combiner
+            .add_ingredient_from_stream(
+                serde_json::json!({"title": "Parent", "relationship": "parentOf"}).to_string(),
+                "image/jpeg",
+                &mut dest,
+            )
+            .unwrap();
+
+        // Set redaction targeting this ingredient.
+        let thumb_label = "c2pa.thumbnail.claim.jpeg";
+        let redact_uri = crate::jumbf::labels::to_assertion_uri(&parent_label, thumb_label);
+        combiner.definition.redactions = Some(vec![redact_uri.clone()]);
+
+        // Now remove the ingredient from the builder before signing.
+        combiner.definition.ingredients.clear();
+
+        let mut final_input = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut final_output = Cursor::new(Vec::new());
+        let result = combiner.sign(
+            signer.as_ref(),
+            "image/jpeg",
+            &mut final_input,
+            &mut final_output,
+        );
+        assert!(
+            matches!(result, Err(Error::AssertionRedactionNotFound)),
+            "expected AssertionRedactionNotFound after removing ingredient, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_redact_assertion_of_unreferenced_ingredient() {
+        // Two ingredients I1, I2 (both parent-of). I1's CreativeWork is referenced
+        // by an opened action, I2's is not. Redact I2's CreativeWork only.
+        setup_logger();
+        let context = test_context().into_shared();
+
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        // Sign two parent ingredients, each with its own CreativeWork.
+        let mut s1 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut d1 = Cursor::new(Vec::new());
+        let mut b1 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("I1".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        b1.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        b1.add_assertion_json(
+            ASSERTION_LABEL,
+            &serde_json::json!({"@context": "https://schema.org", "@type": "CreativeWork", "name": "I1"}),
+        )
+        .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        b1.sign(signer.as_ref(), "image/jpeg", &mut s1, &mut d1)
+            .expect("sign I1");
+
+        let mut s2 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut d2 = Cursor::new(Vec::new());
+        let mut b2 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("I2".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        b2.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        b2.add_assertion_json(
+            ASSERTION_LABEL,
+            &serde_json::json!({"@context": "https://schema.org", "@type": "CreativeWork", "name": "I2"}),
+        )
+        .unwrap();
+        b2.sign(signer.as_ref(), "image/jpeg", &mut s2, &mut d2)
+            .expect("sign I2");
+
+        // Read I2's manifest label so we can build a redaction URI.
+        d2.set_position(0);
+        let r2 = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut d2)
+            .expect("read I2");
+        let i2_label = r2.active_label().unwrap().to_string();
+        let redact_uri = crate::jumbf::labels::to_assertion_uri(&i2_label, ASSERTION_LABEL);
+
+        // Combiner with both as parent-of ingredients. Add no opened action
+        // referencing them — to simplify, only redact I2's CreativeWork. The
+        // "unreferenced" aspect is naturally satisfied: there is no action
+        // pointing at either ingredient.
+        d1.set_position(0);
+        d2.set_position(0);
+        let mut combiner = Builder::default();
+        combiner.set_intent(BuilderIntent::Edit);
+        combiner.definition.title = Some("Combiner".to_string());
+        // Distinct labels so ingredient_map doesn't collide.
+        let ing1_json = serde_json::json!({
+            "title": "I1", "relationship": "parentOf", "label": "I1.jpg"
+        }).to_string();
+        let mut ing1 = Ingredient::from_json(&ing1_json).unwrap();
+        ing1 = ing1.with_stream("image/jpeg", &mut d1, &context).unwrap();
+        combiner.add_ingredient(ing1);
+        let ing2_json = serde_json::json!({
+            "title": "I2", "relationship": "componentOf", "label": "I2.jpg"
+        }).to_string();
+        let mut ing2 = Ingredient::from_json(&ing2_json).unwrap();
+        ing2 = ing2.with_stream("image/jpeg", &mut d2, &context).unwrap();
+        combiner.add_ingredient(ing2);
+
+        combiner.definition.redactions = Some(vec![redact_uri.clone()]);
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redact_uri.clone())
+            .unwrap();
+        combiner.add_action(redacted_action).unwrap();
+
+        let mut final_input = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut final_output = Cursor::new(Vec::new());
+        combiner
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut final_input,
+                &mut final_output,
+            )
+            .expect("combiner sign");
+
+        final_output.set_position(0);
+        let reader = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut final_output)
+            .expect("read combined");
+        assert!(matches!(
+            reader.validation_state(),
+            ValidationState::Trusted | ValidationState::Valid
+        ));
+        let i2 = reader.get_manifest(&i2_label).unwrap();
+        assert!(
+            !i2.assertions()
+                .iter()
+                .any(|a| a.label().contains(ASSERTION_LABEL)),
+            "I2's CreativeWork should be redacted"
+        );
+        // I1's CreativeWork should still be present in its own manifest.
+        let any_creativework = reader
+            .iter_manifests()
+            .any(|m| m.assertions().iter().any(|a| a.label().contains(ASSERTION_LABEL)));
+        assert!(
+            any_creativework,
+            "I1's CreativeWork should survive — at least one manifest must still have CreativeWork"
+        );
+    }
+
+    #[cfg(feature = "add_thumbnails")]
+    #[test]
+    fn test_redact_thumbnail_of_unreferenced_ingredient() {
+        // Two parent-of ingredients I1 and I2. Redact I2's ingredient thumbnail.
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        setup_logger();
+        let context = test_context().into_shared();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Sign two parents (auto-thumbnails on).
+        let mut s1 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut d1 = Cursor::new(Vec::new());
+        let mut b1 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("I1".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        b1.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        b1.sign(signer.as_ref(), "image/jpeg", &mut s1, &mut d1)
+            .expect("sign I1");
+
+        let mut s2 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut d2 = Cursor::new(Vec::new());
+        let mut b2 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("I2".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        b2.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        b2.sign(signer.as_ref(), "image/jpeg", &mut s2, &mut d2)
+            .expect("sign I2");
+
+        // Discover I2's claim thumbnail label (auto-generated).
+        d2.set_position(0);
+        let r2 = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut d2)
+            .expect("read I2");
+        let i2_label = r2.active_label().unwrap().to_string();
+        let i2_manifest = r2.get_manifest(&i2_label).unwrap();
+        let thumb_label = i2_manifest
+            .assertions()
+            .iter()
+            .find(|a| a.label().contains("c2pa.thumbnail"))
+            .map(|a| a.label().to_string());
+        let Some(thumb_label) = thumb_label else {
+            return; // fixture variant lacks thumbnail
+        };
+        let redact_uri = crate::jumbf::labels::to_assertion_uri(&i2_label, &thumb_label);
+
+        // Read I1's label too for later assertions.
+        d1.set_position(0);
+        let r1 = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut d1)
+            .expect("read I1");
+        let i1_label = r1.active_label().unwrap().to_string();
+
+        // Combiner with both ingredients (no opened action linking to them).
+        d1.set_position(0);
+        d2.set_position(0);
+        let mut combiner = Builder::default();
+        combiner.set_intent(BuilderIntent::Edit);
+        combiner.definition.title = Some("Combiner".to_string());
+        let ing1_json = serde_json::json!({
+            "title": "I1", "relationship": "parentOf", "label": "I1.jpg"
+        }).to_string();
+        let mut ing1 = Ingredient::from_json(&ing1_json).unwrap();
+        ing1 = ing1.with_stream("image/jpeg", &mut d1, &context).unwrap();
+        combiner.add_ingredient(ing1);
+        let ing2_json = serde_json::json!({
+            "title": "I2", "relationship": "componentOf", "label": "I2.jpg"
+        }).to_string();
+        let mut ing2 = Ingredient::from_json(&ing2_json).unwrap();
+        ing2 = ing2.with_stream("image/jpeg", &mut d2, &context).unwrap();
+        combiner.add_ingredient(ing2);
+
+        combiner.definition.redactions = Some(vec![redact_uri.clone()]);
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redact_uri.clone())
+            .unwrap();
+        combiner.add_action(redacted_action).unwrap();
+
+        let mut final_input = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut final_output = Cursor::new(Vec::new());
+        combiner
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut final_input,
+                &mut final_output,
+            )
+            .expect("combiner sign");
+
+        final_output.set_position(0);
+        let reader = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut final_output)
+            .expect("read combined");
+        assert!(matches!(
+            reader.validation_state(),
+            ValidationState::Trusted | ValidationState::Valid
+        ));
+
+        // I2: thumbnail label gone.
+        let i2 = reader.get_manifest(&i2_label).unwrap();
+        assert!(
+            !i2.assertions()
+                .iter()
+                .any(|a| a.label() == thumb_label),
+            "I2 thumbnail should be redacted"
+        );
+
+        // I1: thumbnail intact.
+        let i1 = reader.get_manifest(&i1_label).unwrap();
+        assert!(
+            i1.assertions()
+                .iter()
+                .any(|a| a.label().contains("c2pa.thumbnail")),
+            "I1 thumbnail must survive — only I2's was redacted"
+        );
+    }
+
+    #[cfg(feature = "add_thumbnails")]
+    #[test]
+    fn test_redact_both_claim_and_ingredient_thumbnails_simultaneously() {
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        setup_logger();
+
+        // Parent with auto thumbnail.
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        let mut parent_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        parent_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        let signer = test_signer(SigningAlg::Ps256);
+        parent_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .expect("parent sign");
+
+        // Wrap as archive (this generates ingredient thumbnails too).
+        let mut archive_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Archive".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        dest.set_position(0);
+        archive_builder
+            .add_ingredient_from_stream(
+                serde_json::json!({"title": "Parent", "relationship": "parentOf"}).to_string(),
+                "image/jpeg",
+                &mut dest,
+            )
+            .unwrap();
+        let mut archive_stream = Cursor::new(Vec::new());
+        archive_builder.to_archive(&mut archive_stream).unwrap();
+
+        // Combiner with auto-thumbnail disabled.
+        let context = Context::new()
+            .with_settings(r#"{"builder": {"thumbnail": {"enabled": false}}}"#)
+            .unwrap();
+        let mut combiner = Builder::from_context(context);
+        combiner.definition.claim_version = Some(2);
+        combiner.definition.title = Some("Combiner".to_string());
+        combiner.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        archive_stream.set_position(0);
+        let ing = combiner
+            .add_ingredient_from_stream(
+                serde_json::json!({"title": "Parent", "relationship": "componentOf"}).to_string(),
+                "application/c2pa",
+                &mut archive_stream,
+            )
+            .unwrap();
+        let ing_label = ing.active_manifest().unwrap().to_owned();
+
+        // Discover both claim and ingredient thumbnail labels.
+        archive_stream.set_position(0);
+        let archive_reader =
+            Reader::from_stream("application/c2pa", &mut archive_stream).unwrap();
+        let mut claim_thumb_labels = Vec::new();
+        let mut ingredient_thumb_labels = Vec::new();
+        for manifest in archive_reader.iter_manifests() {
+            for href in manifest.assertion_references() {
+                if let Some(label) = crate::jumbf::labels::assertion_label_from_uri(&href.url()) {
+                    if label.starts_with("c2pa.thumbnail.claim") {
+                        claim_thumb_labels.push(label);
+                    } else if label.starts_with("c2pa.thumbnail.ingredient") {
+                        ingredient_thumb_labels.push(label);
+                    }
+                }
+            }
+        }
+        if claim_thumb_labels.is_empty() || ingredient_thumb_labels.is_empty() {
+            // Fixture didn't produce both kinds; skip.
+            return;
+        }
+
+        let mut redaction_uris = Vec::new();
+        for l in claim_thumb_labels.iter().chain(ingredient_thumb_labels.iter()) {
+            redaction_uris.push(crate::jumbf::labels::to_assertion_uri(&ing_label, l));
+        }
+        combiner.definition.redactions = Some(redaction_uris.clone());
+
+        let mut redaction_actions = Actions::new();
+        for uri in &redaction_uris {
+            let a = Action::new("c2pa.redacted")
+                .set_reason(C2paReason::PiiPresent)
+                .set_parameter("redacted".to_owned(), uri.clone())
+                .unwrap();
+            redaction_actions = redaction_actions.add_action(a);
+        }
+        combiner
+            .add_assertion(Actions::LABEL, &redaction_actions)
+            .unwrap();
+
+        dest.set_position(0);
+        let mut output = Cursor::new(Vec::new());
+        combiner
+            .sign(signer.as_ref(), "image/jpeg", &mut dest, &mut output)
+            .expect("combiner sign");
+
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        let parent = reader.get_manifest(&ing_label).unwrap();
+        for assertion in parent.assertions() {
+            assert!(
+                !assertion.label().starts_with("c2pa.thumbnail"),
+                "all thumbnail variants should be redacted, found: {}",
+                assertion.label()
+            );
+        }
     }
 
     #[test]
