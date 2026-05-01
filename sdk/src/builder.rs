@@ -8081,10 +8081,7 @@ mod tests {
         };
         parent_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
         parent_builder
-            .add_assertion(
-                CUSTOM_LABEL,
-                &serde_json::json!({"key": "value", "n": 42}),
-            )
+            .add_assertion(CUSTOM_LABEL, &serde_json::json!({"key": "value", "n": 42}))
             .unwrap();
         let signer = test_signer(SigningAlg::Ps256);
         parent_builder
@@ -8153,10 +8150,7 @@ mod tests {
         };
         parent_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
         parent_builder
-            .add_assertion_json(
-                CUSTOM_LABEL,
-                &serde_json::json!({"hello": "world"}),
-            )
+            .add_assertion_json(CUSTOM_LABEL, &serde_json::json!({"hello": "world"}))
             .unwrap();
         let signer = test_signer(SigningAlg::Ps256);
         parent_builder
@@ -8337,8 +8331,7 @@ mod tests {
             .with_stream("image/jpeg", &mut input_a)
             .expect("read a");
         let parent_a_label = parent_a.active_label().unwrap().to_string();
-        let redacted_uri =
-            crate::jumbf::labels::to_assertion_uri(&parent_a_label, ASSERTION_LABEL);
+        let redacted_uri = crate::jumbf::labels::to_assertion_uri(&parent_a_label, ASSERTION_LABEL);
 
         let mut builder_a = Builder::default();
         builder_a.set_intent(BuilderIntent::Edit);
@@ -8434,8 +8427,7 @@ mod tests {
 
         // Find ingredient thumbnail labels only (not claim thumbnails).
         archive_stream.set_position(0);
-        let archive_reader =
-            Reader::from_stream("application/c2pa", &mut archive_stream).unwrap();
+        let archive_reader = Reader::from_stream("application/c2pa", &mut archive_stream).unwrap();
         let mut ingredient_thumb_labels: Vec<String> = Vec::new();
         let mut claim_thumb_labels: Vec<String> = Vec::new();
         for manifest in archive_reader.iter_manifests() {
@@ -8557,12 +8549,7 @@ mod tests {
             .unwrap();
         child_builder.add_action(redacted_action).unwrap();
         child_builder
-            .sign(
-                signer.as_ref(),
-                "image/jpeg",
-                &mut dest,
-                &mut child_output,
-            )
+            .sign(signer.as_ref(), "image/jpeg", &mut dest, &mut child_output)
             .expect("child sign");
 
         // Verify parent's claim thumbnail is gone from parent manifest.
