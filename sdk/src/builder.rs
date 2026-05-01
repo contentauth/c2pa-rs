@@ -7056,8 +7056,7 @@ mod tests {
 
         // Discover thumbnail labels from archive
         archive_stream.set_position(0);
-        let archive_reader =
-            Reader::from_stream("application/c2pa", &mut archive_stream).unwrap();
+        let archive_reader = Reader::from_stream("application/c2pa", &mut archive_stream).unwrap();
         let mut thumbnail_labels: Vec<String> = Vec::new();
         for manifest in archive_reader.iter_manifests() {
             for href in manifest.assertion_references() {
@@ -7068,7 +7067,10 @@ mod tests {
                 }
             }
         }
-        assert!(!thumbnail_labels.is_empty(), "archive should have thumbnail");
+        assert!(
+            !thumbnail_labels.is_empty(),
+            "archive should have thumbnail"
+        );
 
         // Child builder: disable thumbnail, add archive, redact thumbnails
         let context = Context::new()
@@ -7076,8 +7078,7 @@ mod tests {
             .unwrap();
         let mut combiner = Builder::from_context(context);
         combiner.definition.claim_version = Some(2);
-        combiner.definition.title =
-            Some("Combined redaction via archive".to_string());
+        combiner.definition.title = Some("Combined redaction via archive".to_string());
         combiner.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
         archive_stream.set_position(0);
@@ -7299,7 +7300,10 @@ mod tests {
                 }
             }
         }
-        assert!(!thumbnail_labels1.is_empty(), "archive 1 should have thumbnail");
+        assert!(
+            !thumbnail_labels1.is_empty(),
+            "archive 1 should have thumbnail"
+        );
 
         archive2_stream.set_position(0);
         let archive2_reader =
@@ -7314,7 +7318,10 @@ mod tests {
                 }
             }
         }
-        assert!(!thumbnail_labels2.is_empty(), "archive 2 should have thumbnail");
+        assert!(
+            !thumbnail_labels2.is_empty(),
+            "archive 2 should have thumbnail"
+        );
 
         // Child builder: disable thumbnail, add both archives, redact CreativeWork + thumbnails
         let context = Context::new()
@@ -7322,8 +7329,7 @@ mod tests {
             .unwrap();
         let mut combiner = Builder::from_context(context);
         combiner.definition.claim_version = Some(2);
-        combiner.definition.title =
-            Some("Combined redaction from two archives".to_string());
+        combiner.definition.title = Some("Combined redaction from two archives".to_string());
         combiner.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
         archive1_stream.set_position(0);
