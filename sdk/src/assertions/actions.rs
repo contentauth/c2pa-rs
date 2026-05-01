@@ -252,22 +252,22 @@ pub mod c2pa_action {
 /// Deprecated string constants for C2PA action reasons.
 ///
 /// Use [`C2paReason`] enum variants instead.
-#[deprecated(since = "0.39.0", note = "Use `C2paReason` enum variants instead")]
+#[deprecated(since = "0.80.3", note = "Use `C2paReason` enum variants instead")]
 pub mod c2pa_reason {
     /// Personally identifiable information is present.
-    #[deprecated(since = "0.39.0", note = "Use `C2paReason::PiiPresent`")]
+    #[deprecated(since = "0.80.3", note = "Use `C2paReason::PiiPresent`")]
     pub const PII_PRESENT: &str = "c2pa.PII.present";
 
     /// The data is invalid.
-    #[deprecated(since = "0.39.0", note = "Use `C2paReason::InvalidData`")]
+    #[deprecated(since = "0.80.3", note = "Use `C2paReason::InvalidData`")]
     pub const INVALID_DATA: &str = "c2pa.invalid.data";
 
     /// Trade secret information is present.
-    #[deprecated(since = "0.39.0", note = "Use `C2paReason::TradeSecretPresent`")]
+    #[deprecated(since = "0.80.3", note = "Use `C2paReason::TradeSecretPresent`")]
     pub const TRADE_SECRET_PRESENT: &str = "c2pa.trade-secret.present";
 
     /// Government classified or confidential information is present.
-    #[deprecated(since = "0.39.0", note = "Use `C2paReason::GovernmentConfidential`")]
+    #[deprecated(since = "0.80.3", note = "Use `C2paReason::GovernmentConfidential`")]
     pub const GOVERNMENT_CONFIDENTIAL: &str = "c2pa.government.confidential";
 }
 
