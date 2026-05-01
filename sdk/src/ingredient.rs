@@ -1354,10 +1354,8 @@ impl Ingredient {
             let is_stale_outer_ref = self.manifest_data_ref().is_some()
                 && thumb_ref.identifier.starts_with("self#jumbf=")
                 && (!thumb_ref.identifier.starts_with("self#jumbf=/")
-                    || self
-                        .active_manifest
-                        .as_deref()
-                        .is_some_and(|label| !thumb_ref.identifier.contains(label)));
+                    || jumbf::labels::manifest_label_from_uri(&thumb_ref.identifier).as_deref()
+                        != self.active_manifest.as_deref());
 
             // Resolve the thumbnail identifier to an absolute JUMBF URI using the ingredient's
             // own manifest label (self.active_manifest), then check directly against the
@@ -1376,12 +1374,11 @@ impl Ingredient {
             // this ingredient's manifest chain is being redacted, suppress the fresh
             // thumbnail too, it represents the same provenance (edge case for thumbnails
             // added from files).
-            let active_manifest_label = self.active_manifest.as_deref().unwrap_or("");
             let fresh_thumb_is_suppressed = self.manifest_data_ref().is_some()
-                && !active_manifest_label.is_empty()
-                && redacted_thumbnail_uris
-                    .iter()
-                    .any(|uri| uri.contains(active_manifest_label));
+                && redacted_thumbnail_uris.iter().any(|uri| {
+                    jumbf::labels::manifest_label_from_uri(uri).as_deref()
+                        == self.active_manifest.as_deref()
+                });
 
             let thumbnail_is_redacted = is_stale_outer_ref
                 || redacted_thumbnail_uris.contains(abs_thumb_uri.as_str())
