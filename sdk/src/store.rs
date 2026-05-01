@@ -4207,13 +4207,12 @@ impl Store {
                     }
                 }
 
-                let combined_redactions = HashSet::<_>::from_iter(
-                    vec![claim_redactions.clone(), svi.redactions.clone()]
-                        .into_iter()
-                        .flatten(),
-                )
-                .into_iter()
-                .collect::<Vec<String>>();
+                // Deduplicated in `manifest_differs_by_redaction`
+                let combined_redactions: Vec<String> = claim_redactions
+                    .iter()
+                    .chain(svi.redactions.iter())
+                    .cloned()
+                    .collect();
 
                 // do any of the conflicting manifests contain redactions
                 for conflict_label in potential_conflicts {
