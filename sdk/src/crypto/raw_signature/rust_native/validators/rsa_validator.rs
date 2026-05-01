@@ -133,9 +133,8 @@ mod tests {
     fn ps256_empty_sequence_public_key_rejected() {
         assert_eq!(
             RsaValidator::Ps256
-                .validate(DUMMY_SIG_512, SAMPLE_DATA, RSA_SPKI_EMPTY_SEQUENCE)
-                .unwrap_err(),
-            RawSignatureValidationError::InvalidPublicKey
+                .validate(DUMMY_SIG_512, SAMPLE_DATA, RSA_SPKI_EMPTY_SEQUENCE),
+            Err(RawSignatureValidationError::InvalidPublicKey)
         );
     }
 
@@ -143,9 +142,8 @@ mod tests {
     fn ps256_single_element_sequence_public_key_rejected() {
         assert_eq!(
             RsaValidator::Ps256
-                .validate(DUMMY_SIG_512, SAMPLE_DATA, RSA_SPKI_SINGLE_ELEMENT_SEQUENCE)
-                .unwrap_err(),
-            RawSignatureValidationError::InvalidPublicKey
+                .validate(DUMMY_SIG_512, SAMPLE_DATA, RSA_SPKI_SINGLE_ELEMENT_SEQUENCE),
+            Err(RawSignatureValidationError::InvalidPublicKey)
         );
     }
 }

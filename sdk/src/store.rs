@@ -109,11 +109,7 @@ pub(crate) struct ManifestHashes {
 #[derive(Default)]
 pub(crate) struct StoreValidationInfo<'a> {
     pub redactions: Vec<String>, // list of redactions found in claim hierarchy
-    // Parsed index of `redactions` keyed by the manifest label each redaction targets.
-    // Each entry is a list of (assertion_label, instance) pairs. Lets validation
-    // answer "does any redaction target manifest X?" and "is (label, instance) on
-    // manifest X redacted?" in O(1) without re-parsing URIs in inner loops.
-    pub redactions_by_manifest: HashMap<String, Vec<(String, usize)>>,
+    pub redactions_by_manifest: HashMap<String, Vec<(String, usize)>>, // Parsed index of `redactions` keyed by the manifest label each redaction targets.
     pub ingredient_references: HashMap<String, HashSet<String>>, // mapping in ingredients to list of claims that reference it
     pub manifest_map: HashMap<String, &'a Claim>, // list of the addressable items in ingredient, saves re-parsing the items during validation
     pub binding_claim: String,                    // name of the claim that has the hash binding
@@ -3956,7 +3952,6 @@ impl Store {
         let differences = c1_set.symmetric_difference(&c2_set).collect::<Vec<_>>();
 
         // are the assertion differences listed in the redaction list
-        // Build a HashSet once for O(1) membership instead of O(D · R) Vec scan.
         let redaction_set: HashSet<&str> = redactions.iter().map(String::as_str).collect();
         let mut redact_matches = 0;
         let mut redactions_to_remove = Vec::new();
@@ -4027,7 +4022,7 @@ impl Store {
 
         claim_label_path.push(claim_label);
 
-        // add in current redactions and populate the parsed index in lockstep.
+        // add in current redactions and populate the parsed index for lookupin lockstep.
         if let Some(c_redactions) = claim.redactions() {
             for r in c_redactions {
                 svi.redactions.push(r.clone());
