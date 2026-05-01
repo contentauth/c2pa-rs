@@ -1485,26 +1485,40 @@ fn get_uuid_box_purpose<R: Read + Seek + ?Sized>(
     box_info: &atree::Node<BoxInfo>,
 ) -> Result<(String, u64)> {
     if box_info.data.box_type == BoxType::UuidBox {
-        let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
+        let mut data_len = box_info
+            .data
+            .size
+            .checked_sub(HEADER_SIZE)
+            .and_then(|n| n.checked_sub(16))
+            .ok_or_else(|| Error::InvalidAsset("UUID box too small".to_string()))?;
 
         // set reader to start of box contents
         skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
 
         // Fullbox => 8 bits for version 24 bits for flags
         let (_version, _flags) = read_box_header_ext(reader)?;
-        data_len -= 4;
+        data_len = data_len.checked_sub(4).ok_or_else(|| {
+            Error::InvalidAsset("UUID box too small for FullBox header".to_string())
+        })?;
 
-        // get the purpose
+        // get the purpose (null-terminated string bounded by the box)
         let mut purpose_bytes = Vec::with_capacity(64);
         loop {
+            // Guard prevents reading past the box boundary, which would cause
+            // data_len to underflow (wrapping to u64::MAX) and the caller to
+            // attempt a u64::MAX-byte allocation.
+            if data_len == 0 {
+                return Err(Error::InvalidAsset(
+                    "UUID box purpose field missing null terminator".to_string(),
+                ));
+            }
             let mut buf = [0; 1];
             reader.read_exact(&mut buf)?;
             data_len -= 1;
             if buf[0] == 0x00 {
                 break;
-            } else {
-                purpose_bytes.push(buf[0]);
             }
+            purpose_bytes.push(buf[0]);
         }
 
         let purpose = String::from_utf8_lossy(&purpose_bytes);
@@ -1613,7 +1627,11 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             // offset to first aux uuid with purpose merkle
                             let mut buf = [0u8; 8];
                             reader.read_exact(&mut buf)?;
-                            data_len -= 8;
+                            data_len = data_len.checked_sub(8).ok_or_else(|| {
+                                Error::InvalidAsset(
+                                    "UUID box too small for merkle offset field".to_string(),
+                                )
+                            })?;
 
                             // read the manifest box contents
                             let manifest = reader.read_to_vec(data_len)?;
@@ -1661,7 +1679,14 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             });
                         }
                     } else if vec_compare(&XMP_UUID, uuid) {
-                        let data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
+                        let data_len = box_info
+                            .data
+                            .size
+                            .checked_sub(HEADER_SIZE)
+                            .and_then(|n| n.checked_sub(16))
+                            .ok_or_else(|| {
+                                Error::InvalidAsset("XMP UUID box too small".to_string())
+                            })?;
 
                         // set reader to start of box contents
                         skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
@@ -2959,6 +2984,68 @@ pub mod tests {
         let mut source = Cursor::new(data);
         assert!(matches!(
             bmff_io.read_cai(&mut source),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    // Regression tests for the UUID box purpose field u64 underflow vulnerability.
+    // Without the data_len == 0 guard, reading past the end of the box would decrement
+    // data_len from 0 to u64::MAX (wrapping), causing the caller to attempt a
+    // u64::MAX-byte allocation (OOM crash).
+
+    #[test]
+    fn test_uuid_purpose_missing_null_terminator_rejected() {
+        // Box layout: HEADER(8) + UUID(16) + FullBox(4) + payload(8) = 36 bytes total.
+        // Payload is 8 non-null bytes — no null terminator — so the parser must hit
+        // data_len == 0 and return an error instead of underflowing.
+        let size: u64 = 36;
+        let (arena, token) = Arena::with_data(BoxInfo {
+            path: "/uuid".to_string(),
+            parent: None,
+            offset: 0,
+            size,
+            box_type: BoxType::UuidBox,
+            user_type: Some(C2PA_UUID.to_vec()),
+            version: None,
+            flags: None,
+        });
+        let node = &arena[token];
+
+        // Reader bytes starting at offset 0:
+        //   [0..7]   HEADER (8 bytes) — skipped by skip_bytes_to(offset + 8 + 16)
+        //   [8..23]  UUID extension (16 bytes)
+        //   [24..27] FullBox version(1)+flags(3) = 0x00000000
+        //   [28..35] purpose bytes — 8 non-null bytes, no terminator
+        let mut bytes = vec![0u8; 8 + 16]; // header + UUID
+        bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // FullBox
+        bytes.extend_from_slice(b"manifest"); // 8 bytes, no null terminator
+
+        let mut reader = Cursor::new(bytes);
+        assert!(matches!(
+            get_uuid_box_purpose(&mut reader, node),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    #[test]
+    fn test_uuid_purpose_box_too_small_rejected() {
+        // size = 20 < HEADER_SIZE(8) + UUID(16) = 24; the checked_sub chain must return
+        // Err(InvalidAsset) before any read occurs.
+        let (arena, token) = Arena::with_data(BoxInfo {
+            path: "/uuid".to_string(),
+            parent: None,
+            offset: 0,
+            size: 20,
+            box_type: BoxType::UuidBox,
+            user_type: Some(C2PA_UUID.to_vec()),
+            version: None,
+            flags: None,
+        });
+        let node = &arena[token];
+
+        let mut reader = Cursor::new(vec![0u8; 20]);
+        assert!(matches!(
+            get_uuid_box_purpose(&mut reader, node),
             Err(Error::InvalidAsset(_))
         ));
     }
