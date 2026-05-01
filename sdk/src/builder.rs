@@ -1768,7 +1768,7 @@ impl Builder {
             // Get a list of ingredient URIs referenced by "c2pa.placed" actions.
             let mut referenced_uris = HashSet::new();
             for action in &actions.actions {
-                if action.action() == c2pa_action::PLACED {
+                if action.action() == "c2pa.placed" {
                     if let Some(parameters) = &action.parameters {
                         if let Some(ingredient_uris) = &parameters.ingredients {
                             for uri in ingredient_uris {
@@ -3374,7 +3374,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     use crate::utils::test::fixture_path;
     use crate::{
-        assertions::{c2pa_action, c2pa_reason, BoxHash, DigitalSourceType},
+        assertions::{c2pa_action, BoxHash, C2paReason, DigitalSourceType},
         asset_handlers::bmff_io::{
             inject_manifest_into_free_box, inject_placeholder, read_bmff_c2pa_boxes,
         },
@@ -5539,7 +5539,7 @@ mod tests {
         builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = crate::assertions::Action::new("c2pa.redacted")
-            .set_reason(c2pa_reason::PII_PRESENT)
+            .set_reason(C2paReason::PiiPresent)
             .set_parameter("redacted".to_owned(), redacted_uri.clone())
             .unwrap();
 
@@ -5588,7 +5588,7 @@ mod tests {
         builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = crate::assertions::Action::new("c2pa.redacted")
-            .set_reason(c2pa_reason::PII_PRESENT)
+            .set_reason(C2paReason::PiiPresent)
             .set_parameter("redacted".to_owned(), redacted_uri.clone())
             .unwrap();
 
@@ -5729,11 +5729,11 @@ mod tests {
 
         // Add redacted actions for both
         let redacted_action1 = Action::new("c2pa.redacted")
-            .set_reason(c2pa_reason::PII_PRESENT)
+            .set_reason(C2paReason::PiiPresent)
             .set_parameter("redacted".to_owned(), redacted_uri1)
             .unwrap();
         let redacted_action2 = Action::new("c2pa.redacted")
-            .set_reason(c2pa_reason::PII_PRESENT)
+            .set_reason(C2paReason::PiiPresent)
             .set_parameter("redacted".to_owned(), redacted_uri2)
             .unwrap();
 
@@ -5866,7 +5866,7 @@ mod tests {
         combiner.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = Action::new("c2pa.redacted")
-            .set_reason(c2pa_reason::PII_PRESENT)
+            .set_reason(C2paReason::PiiPresent)
             .set_parameter("redacted".to_owned(), redacted_uri)
             .unwrap();
         let actions = Actions::new().add_action(redacted_action);
@@ -6010,7 +6010,7 @@ mod tests {
         let mut redaction_actions = Actions::new();
         for uri in &redaction_uris {
             let redacted_action = Action::new("c2pa.redacted")
-                .set_reason(c2pa_reason::PII_PRESENT)
+                .set_reason(C2paReason::PiiPresent)
                 .set_parameter("redacted".to_owned(), uri.clone())
                 .unwrap();
             redaction_actions = redaction_actions.add_action(redacted_action);
@@ -6152,7 +6152,7 @@ mod tests {
         let mut redaction_actions = Actions::new();
         for uri in &redaction_uris {
             let action = Action::new("c2pa.redacted")
-                .set_reason(c2pa_reason::PII_PRESENT)
+                .set_reason(C2paReason::PiiPresent)
                 .set_parameter("redacted".to_owned(), uri.clone())
                 .unwrap();
             redaction_actions = redaction_actions.add_action(action);
@@ -6350,11 +6350,11 @@ mod tests {
         combiner.definition.redactions = Some(vec![redacted_uri1.clone(), redacted_uri2.clone()]);
 
         let redacted_action1 = Action::new("c2pa.redacted")
-            .set_reason(c2pa_reason::PII_PRESENT)
+            .set_reason(C2paReason::PiiPresent)
             .set_parameter("redacted".to_owned(), redacted_uri1)
             .unwrap();
         let redacted_action2 = Action::new("c2pa.redacted")
-            .set_reason(c2pa_reason::PII_PRESENT)
+            .set_reason(C2paReason::PiiPresent)
             .set_parameter("redacted".to_owned(), redacted_uri2)
             .unwrap();
 
@@ -6595,7 +6595,7 @@ mod tests {
         let mut redaction_actions = Actions::new();
         for uri in &all_redaction_uris {
             let redacted_action = Action::new("c2pa.redacted")
-                .set_reason(c2pa_reason::PII_PRESENT)
+                .set_reason(C2paReason::PiiPresent)
                 .set_parameter("redacted".to_owned(), uri.clone())
                 .unwrap();
             redaction_actions = redaction_actions.add_action(redacted_action);
@@ -6742,7 +6742,7 @@ mod tests {
             crate::jumbf::labels::to_assertion_uri(parent_manifest_label, ASSERTION_LABEL);
 
         let redacted_action = Action::new("c2pa.redacted")
-            .set_reason(c2pa_reason::PII_PRESENT)
+            .set_reason(C2paReason::PiiPresent)
             .set_parameter("redacted".to_owned(), redacted_uri.clone())
             .unwrap();
 
@@ -6842,7 +6842,7 @@ mod tests {
         builder2.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = Action::new("c2pa.redacted")
-            .set_reason(c2pa_reason::PII_PRESENT)
+            .set_reason(C2paReason::PiiPresent)
             .set_parameter("redacted".to_owned(), redacted_uri)
             .unwrap();
         let actions = Actions::new().add_action(redacted_action);
@@ -6992,7 +6992,7 @@ mod tests {
         builder.definition.redactions = Some(vec![redacted_uri.clone()]);
 
         let redacted_action = crate::assertions::Action::new("c2pa.redacted")
-            .set_reason(c2pa_reason::PII_PRESENT)
+            .set_reason(C2paReason::PiiPresent)
             .set_parameter("redacted".to_owned(), redacted_uri.clone())
             .unwrap();
         builder.add_action(redacted_action).unwrap();
