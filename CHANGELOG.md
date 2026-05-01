@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.82.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.81.0...c2pa-v0.82.0)
+_01 May 2026_
+
+### Fixed
+
+* Harden against unbounded HTTP response body read in DID web server ([#2070](https://github.com/contentauth/c2pa-rs/pull/2070))
+
 ## [0.81.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.3...c2pa-v0.81.0)
 _01 May 2026_
 
