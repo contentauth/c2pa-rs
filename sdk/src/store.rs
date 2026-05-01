@@ -4022,17 +4022,32 @@ impl Store {
 
         claim_label_path.push(claim_label);
 
-        // add in current redactions and populate the parsed index for lookupin lockstep.
+        // add in current redactions and populate the parsed index in lockstep.
+        // A redaction URI that does not yield a manifest label is malformed and
+        // would be invisible to readers that consult `redactions_by_manifest`,
+        // so skip it and log — keeping the flat `redactions` Vec and the keyed
+        // map representing exactly the same set.
         if let Some(c_redactions) = claim.redactions() {
             for r in c_redactions {
+                let Some(manifest_label) = jumbf::labels::manifest_label_from_uri(r) else {
+                    log_item!(
+                        r.clone(),
+                        "redaction URI missing manifest label",
+                        "get_claim_referenced_manifests"
+                    )
+                    .validation_status(validation_status::ASSERTION_NOT_REDACTED)
+                    .failure_no_throw(
+                        validation_log,
+                        Error::OtherError("redaction URI malformed".into()),
+                    );
+                    continue;
+                };
                 svi.redactions.push(r.clone());
-                if let Some(manifest_label) = jumbf::labels::manifest_label_from_uri(r) {
-                    let (assertion_label, instance) = Claim::assertion_label_from_link(r);
-                    svi.redactions_by_manifest
-                        .entry(manifest_label)
-                        .or_default()
-                        .push((assertion_label, instance));
-                }
+                let (assertion_label, instance) = Claim::assertion_label_from_link(r);
+                svi.redactions_by_manifest
+                    .entry(manifest_label)
+                    .or_default()
+                    .push((assertion_label, instance));
             }
         }
 
@@ -4225,7 +4240,7 @@ impl Store {
                                 to_remove_from_incoming.push(conflict_label.clone());
                             } else if claim_redactions.is_empty() && !svi.redactions.is_empty() {
                                 // if redactions were only from the incoming ingredient replace claim
-                                // noting to do here since the incoming claim will just overwrite the current claim
+                                // nothing to do here since the incoming claim will just overwrite the current claim
                                 continue;
                             } else {
                                 to_both.append(&mut differences);
