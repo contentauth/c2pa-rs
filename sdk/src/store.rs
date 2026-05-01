@@ -4024,6 +4024,8 @@ impl Store {
 
         // Add in current redactions and populate the parsed index in lockstep.
         if let Some(c_redactions) = claim.redactions() {
+            // Creates // parsed index of `redactions` keyed by
+            // the manifest label each redaction targets.
             for r in c_redactions {
                 let Some(manifest_label) = jumbf::labels::manifest_label_from_uri(r) else {
                     log_item!(
