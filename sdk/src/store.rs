@@ -109,6 +109,11 @@ pub(crate) struct ManifestHashes {
 #[derive(Default)]
 pub(crate) struct StoreValidationInfo<'a> {
     pub redactions: Vec<String>, // list of redactions found in claim hierarchy
+    // Parsed index of `redactions` keyed by the manifest label each redaction targets.
+    // Each entry is a list of (assertion_label, instance) pairs. Lets validation
+    // answer "does any redaction target manifest X?" and "is (label, instance) on
+    // manifest X redacted?" in O(1) without re-parsing URIs in inner loops.
+    pub redactions_by_manifest: HashMap<String, Vec<(String, usize)>>,
     pub ingredient_references: HashMap<String, HashSet<String>>, // mapping in ingredients to list of claims that reference it
     pub manifest_map: HashMap<String, &'a Claim>, // list of the addressable items in ingredient, saves re-parsing the items during validation
     pub binding_claim: String,                    // name of the claim that has the hash binding
@@ -1614,7 +1619,7 @@ impl Store {
 
                     // are we evaluating a 2.x manifest, then use those rule
                     let ingredient_version = ingredient.version();
-                    let has_redactions = svi.redactions.iter().any(|r| r.contains(&label));
+                    let has_redactions = svi.redactions_by_manifest.contains_key(&label);
 
                     // allow the extra ingredient trust checks
                     // these checks are to prevent the trust spoofing
@@ -1853,7 +1858,7 @@ impl Store {
 
                     // are we evaluating a 2.x manifest, then use those rule
                     let ingredient_version = ingredient.version();
-                    let has_redactions = svi.redactions.iter().any(|r| r.contains(&label));
+                    let has_redactions = svi.redactions_by_manifest.contains_key(&label);
 
                     // allow the extra ingredient trust checks
                     // these checks are to prevent the trust spoofing
@@ -3951,16 +3956,15 @@ impl Store {
         let differences = c1_set.symmetric_difference(&c2_set).collect::<Vec<_>>();
 
         // are the assertion differences listed in the redaction list
+        // Build a HashSet once for O(1) membership instead of O(D · R) Vec scan.
+        let redaction_set: HashSet<&str> = redactions.iter().map(String::as_str).collect();
         let mut redact_matches = 0;
         let mut redactions_to_remove = Vec::new();
         for difference in &differences {
             let difference_uri = to_assertion_uri(c1.label(), &difference.label());
 
             // was the difference in the redacted list
-            if redactions
-                .iter()
-                .any(|redaction_uri| redaction_uri.as_str() == difference_uri.as_str())
-            {
+            if redaction_set.contains(difference_uri.as_str()) {
                 redact_matches += 1;
                 redactions_to_remove.push(difference_uri);
             }
@@ -4023,10 +4027,18 @@ impl Store {
 
         claim_label_path.push(claim_label);
 
-        // add in current redactions
+        // add in current redactions and populate the parsed index in lockstep.
         if let Some(c_redactions) = claim.redactions() {
-            svi.redactions
-                .append(&mut c_redactions.clone().into_iter().collect::<Vec<_>>());
+            for r in c_redactions {
+                svi.redactions.push(r.clone());
+                if let Some(manifest_label) = jumbf::labels::manifest_label_from_uri(r) {
+                    let (assertion_label, instance) = Claim::assertion_label_from_link(r);
+                    svi.redactions_by_manifest
+                        .entry(manifest_label)
+                        .or_default()
+                        .push((assertion_label, instance));
+                }
+            }
         }
 
         // save the addressible claims for quicker lookup

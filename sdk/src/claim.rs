@@ -3227,15 +3227,17 @@ impl Claim {
             }
 
             // we can skip if this is a redacted assertion
-            if svi.redactions.iter().any(|r| {
-                let r_manifest = manifest_label_from_uri(r).unwrap_or_default();
-                if r_manifest == claim.label() {
-                    let (r_label, r_instance) = Claim::assertion_label_from_link(r);
-                    r_label == label && r_instance == instance
-                } else {
-                    false
-                }
-            }) {
+            // Look up via the parsed redaction index — O(1) per assertion instead of
+            // re-parsing every redaction URI in an inner loop.
+            if svi
+                .redactions_by_manifest
+                .get(claim.label())
+                .is_some_and(|entries| {
+                    entries
+                        .iter()
+                        .any(|(r_label, r_instance)| r_label == &label && *r_instance == instance)
+                })
+            {
                 continue;
             }
 
