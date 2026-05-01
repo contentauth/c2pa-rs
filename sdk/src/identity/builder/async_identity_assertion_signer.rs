@@ -14,10 +14,8 @@
 use async_trait::async_trait;
 
 use crate::{
-    crypto::raw_signature::{AsyncRawSigner, SigningAlg},
-    dynamic_assertion::AsyncDynamicAssertion,
-    identity::builder::AsyncIdentityAssertionBuilder,
-    AsyncSigner, Result,
+    crypto::raw_signature::SigningAlg, dynamic_assertion::AsyncDynamicAssertion,
+    identity::builder::AsyncIdentityAssertionBuilder, AsyncSigner, Result,
 };
 
 /// An `AsyncIdentityAssertionSigner` extends the [`AsyncSigner`] interface to
@@ -28,19 +26,19 @@ use crate::{
 /// [`Manifest`]: crate::Manifest
 pub struct AsyncIdentityAssertionSigner {
     #[cfg(not(target_arch = "wasm32"))]
-    signer: Box<dyn AsyncRawSigner + Sync + Send>,
+    signer: Box<dyn AsyncSigner + Sync + Send>,
 
     #[cfg(target_arch = "wasm32")]
-    signer: Box<dyn AsyncRawSigner>,
+    signer: Box<dyn AsyncSigner>,
 
     identity_assertions: std::sync::RwLock<Vec<AsyncIdentityAssertionBuilder>>,
 }
 
 impl AsyncIdentityAssertionSigner {
     /// Create an `AsyncIdentityAssertionSigner` wrapping the provided
-    /// [`AsyncRawSigner`] instance.
+    /// [`AsyncSigner`] instance.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn new(signer: Box<dyn AsyncRawSigner + Sync + Send>) -> Self {
+    pub fn new(signer: Box<dyn AsyncSigner + Sync + Send>) -> Self {
         Self {
             signer,
             identity_assertions: std::sync::RwLock::new(vec![]),
@@ -48,9 +46,9 @@ impl AsyncIdentityAssertionSigner {
     }
 
     /// Create an `AsyncIdentityAssertionSigner` wrapping the provided
-    /// [`AsyncRawSigner`] instance.
+    /// [`AsyncSigner`] instance.
     #[cfg(target_arch = "wasm32")]
-    pub fn new(signer: Box<dyn AsyncRawSigner>) -> Self {
+    pub fn new(signer: Box<dyn AsyncSigner>) -> Self {
         Self {
             signer,
             identity_assertions: std::sync::RwLock::new(vec![]),
@@ -61,22 +59,11 @@ impl AsyncIdentityAssertionSigner {
     /// using test credentials for a particular algorithm.
     #[cfg(test)]
     pub(crate) fn from_test_credentials(alg: SigningAlg) -> Self {
-        use crate::{
-            crypto::raw_signature::async_signer_from_cert_chain_and_private_key,
-            identity::tests::fixtures::cert_chain_and_private_key_for_alg,
-        };
-
-        let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
+        use crate::utils::test_signer::async_test_signer;
 
         #[allow(clippy::unwrap_used)]
         Self {
-            signer: async_signer_from_cert_chain_and_private_key(
-                &cert_chain,
-                &private_key,
-                alg,
-                None,
-            )
-            .unwrap(),
+            signer: async_test_signer(alg),
             identity_assertions: std::sync::RwLock::new(vec![]),
         }
     }
@@ -101,7 +88,7 @@ impl AsyncIdentityAssertionSigner {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AsyncSigner for AsyncIdentityAssertionSigner {
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
-        self.signer.sign(data).await.map_err(|e| e.into())
+        self.signer.sign(data).await
     }
 
     fn alg(&self) -> SigningAlg {
@@ -109,7 +96,7 @@ impl AsyncSigner for AsyncIdentityAssertionSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        self.signer.cert_chain().map_err(|e| e.into())
+        self.signer.certs()
     }
 
     fn reserve_size(&self) -> usize {
@@ -117,32 +104,23 @@ impl AsyncSigner for AsyncIdentityAssertionSigner {
     }
 
     async fn ocsp_val(&self) -> Option<Vec<u8>> {
-        self.signer.ocsp_response().await
+        self.signer.ocsp_val().await
     }
 
     fn time_authority_url(&self) -> Option<String> {
-        self.signer.time_stamp_service_url()
+        self.signer.time_authority_url()
     }
 
     fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
-        self.signer.time_stamp_request_headers()
+        self.signer.timestamp_request_headers()
     }
 
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        self.signer
-            .time_stamp_request_body(message)
-            .map_err(|e| e.into())
+        self.signer.timestamp_request_body(message)
     }
 
     async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        self.signer
-            .send_time_stamp_request(message)
-            .await
-            .map(|r| r.map_err(|e| e.into()))
-    }
-
-    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
-        Some(Box::new(&*self.signer))
+        self.signer.send_timestamp_request(message).await
     }
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {

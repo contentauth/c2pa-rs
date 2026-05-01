@@ -37,17 +37,38 @@ use crate::{
 ///
 /// [`IdentityAssertionSigner`]: crate::identity::builder::IdentityAssertionSigner
 pub struct IdentityAssertionBuilder {
+    #[cfg(not(target_arch = "wasm32"))]
     credential_holder: Box<dyn CredentialHolder + Sync + Send>,
+
+    #[cfg(target_arch = "wasm32")]
+    credential_holder: Box<dyn CredentialHolder>,
+
     referenced_assertions: HashSet<String>,
     roles: Vec<String>,
 }
 
+// SAFETY: On wasm32, there is no threading, so Send is trivially safe
+#[cfg(target_arch = "wasm32")]
+unsafe impl Send for IdentityAssertionBuilder {}
+
 impl IdentityAssertionBuilder {
     /// Create an `IdentityAssertionBuilder` for the given `CredentialHolder`
     /// instance.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn for_credential_holder<CH: CredentialHolder + 'static + Send + Sync>(
         credential_holder: CH,
     ) -> Self {
+        Self {
+            credential_holder: Box::new(credential_holder),
+            referenced_assertions: HashSet::new(),
+            roles: vec![],
+        }
+    }
+
+    /// Create an `IdentityAssertionBuilder` for the given `CredentialHolder`
+    /// instance.
+    #[cfg(target_arch = "wasm32")]
+    pub fn for_credential_holder<CH: CredentialHolder + 'static>(credential_holder: CH) -> Self {
         Self {
             credential_holder: Box::new(credential_holder),
             referenced_assertions: HashSet::new(),

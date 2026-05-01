@@ -14,10 +14,9 @@
 use std::sync::RwLock;
 
 use crate::{
-    crypto::raw_signature::{RawSigner, SigningAlg},
-    dynamic_assertion::DynamicAssertion,
-    identity::builder::IdentityAssertionBuilder,
-    Result, Signer,
+    crypto::raw_signature::SigningAlg, dynamic_assertion::DynamicAssertion,
+    identity::{builder::IdentityAssertionBuilder, x509::X509CredentialHolder},
+    signer::BoxedSigner, Result, Signer,
 };
 
 /// An `IdentityAssertionSigner` extends the [`Signer`] interface to add zero or
@@ -26,35 +25,57 @@ use crate::{
 /// [`Signer`]: crate::Signer
 /// [`Manifest`]: crate::Manifest
 pub struct IdentityAssertionSigner {
-    signer: Box<dyn RawSigner + Send + Sync>,
+    signer: BoxedSigner,
     identity_assertions: RwLock<Vec<IdentityAssertionBuilder>>,
 }
 
 impl IdentityAssertionSigner {
-    /// Create an `IdentityAssertionSigner` wrapping the provided [`RawSigner`]
+    /// Create an `IdentityAssertionSigner` wrapping the provided [`Signer`]
     /// instance.
-    pub fn new(signer: Box<dyn RawSigner + Send + Sync>) -> Self {
+    pub fn new(signer: BoxedSigner) -> Self {
         Self {
             signer,
             identity_assertions: RwLock::new(vec![]),
         }
     }
 
+    /// Create an `IdentityAssertionSigner` that embeds a single CAWG X.509 identity assertion
+    /// (sig type `cawg.x509.cose`) into every manifest it signs.
+    ///
+    /// # Parameters
+    /// * `c2pa_signer` — used to sign the C2PA claim.
+    /// * `cawg_signer` — used to sign the CAWG identity assertion.
+    /// * `referenced_assertions` — assertion labels to include in the identity assertion's
+    ///   `referenced_assertions` list. Pass an empty slice to include none.
+    /// * `roles` — named actor roles to attach to the identity assertion. Pass an empty slice
+    ///   to include none.
+    pub fn from_cawg_x509(
+        c2pa_signer: BoxedSigner,
+        cawg_signer: BoxedSigner,
+        referenced_assertions: &[&str],
+        roles: &[&str],
+    ) -> Self {
+        let x509_holder = X509CredentialHolder::from_signer(cawg_signer);
+        let mut iab = IdentityAssertionBuilder::for_credential_holder(x509_holder);
+        if !referenced_assertions.is_empty() {
+            iab.add_referenced_assertions(referenced_assertions);
+        }
+        if !roles.is_empty() {
+            iab.add_roles(roles);
+        }
+        let mut signer = Self::new(c2pa_signer);
+        signer.add_identity_assertion(iab);
+        signer
+    }
+
     /// (FOR USE BY INTERNAL TESTS ONLY): Create an IdentityAssertionSigner
     /// using test credentials for a particular algorithm.
     #[cfg(test)]
     pub(crate) fn from_test_credentials(alg: SigningAlg) -> Self {
-        use crate::{
-            crypto::raw_signature::signer_from_cert_chain_and_private_key,
-            identity::tests::fixtures::cert_chain_and_private_key_for_alg,
-        };
+        use crate::utils::test_signer::test_signer;
 
-        let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
-
-        #[allow(clippy::unwrap_used)]
         Self {
-            signer: signer_from_cert_chain_and_private_key(&cert_chain, &private_key, alg, None)
-                .unwrap(),
+            signer: test_signer(alg),
             identity_assertions: RwLock::new(vec![]),
         }
     }
@@ -78,7 +99,7 @@ impl IdentityAssertionSigner {
 
 impl Signer for IdentityAssertionSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        self.signer.sign(data).map_err(|e| e.into())
+        self.signer.sign(data)
     }
 
     fn alg(&self) -> SigningAlg {
@@ -86,7 +107,7 @@ impl Signer for IdentityAssertionSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        self.signer.cert_chain().map_err(|e| e.into())
+        self.signer.certs()
     }
 
     fn reserve_size(&self) -> usize {
@@ -94,31 +115,23 @@ impl Signer for IdentityAssertionSigner {
     }
 
     fn ocsp_val(&self) -> Option<Vec<u8>> {
-        self.signer.ocsp_response()
+        self.signer.ocsp_val()
     }
 
     fn time_authority_url(&self) -> Option<String> {
-        self.signer.time_stamp_service_url()
+        self.signer.time_authority_url()
     }
 
     fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
-        self.signer.time_stamp_request_headers()
+        self.signer.timestamp_request_headers()
     }
 
     fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        self.signer
-            .time_stamp_request_body(message)
-            .map_err(|e| e.into())
+        self.signer.timestamp_request_body(message)
     }
 
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        self.signer
-            .send_time_stamp_request(message)
-            .map(|r| r.map_err(|e| e.into()))
-    }
-
-    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
-        Some(Box::new(&*self.signer))
+        self.signer.send_timestamp_request(message)
     }
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {

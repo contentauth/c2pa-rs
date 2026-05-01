@@ -12,14 +12,14 @@
 // each license.
 
 use crate::{
-    crypto::{
-        cose::{sign, TimeStampStorage},
-        raw_signature::RawSigner,
-    },
+    cose_sign::SignerWrapper,
+    crypto::cose::{sign, TimeStampStorage},
     identity::{
         builder::{CredentialHolder, IdentityBuilderError},
         SignerPayload,
     },
+    signer::BoxedSigner,
+    Signer,
 };
 
 /// An implementation of [`CredentialHolder`] that generates COSE signatures
@@ -28,17 +28,15 @@ use crate::{
 ///
 /// [`SignatureVerifier`]: crate::identity::SignatureVerifier
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
-pub struct X509CredentialHolder(Box<dyn RawSigner + Sync + Send + 'static>);
+pub struct X509CredentialHolder(BoxedSigner);
 
 impl X509CredentialHolder {
     /// Create an `X509CredentialHolder` instance by wrapping an instance of
-    /// [`RawSigner`].
+    /// [`Signer`].
     ///
-    /// The [`RawSigner`] implementation actually holds (or has access to)
+    /// The [`Signer`] implementation actually holds (or has access to)
     /// the relevant certificates and private key material.
-    ///
-    /// [`RawSigner`]: crate::crypto::raw_signature::RawSigner
-    pub fn from_raw_signer(signer: Box<dyn RawSigner + Sync + Send + 'static>) -> Self {
+    pub fn from_signer(signer: BoxedSigner) -> Self {
         Self(signer)
     }
 }
@@ -59,13 +57,9 @@ impl CredentialHolder for X509CredentialHolder {
         c2pa_cbor::to_writer(&mut sp_cbor, signer_payload)
             .map_err(|e| IdentityBuilderError::CborGenerationError(e.to_string()))?;
 
-        sign(
-            self.0.as_ref(),
-            &sp_cbor,
-            None,
-            TimeStampStorage::V2_sigTst2_CTT,
-        )
-        .map_err(|e| IdentityBuilderError::SignerError(e.to_string()))
+        let wrapper = SignerWrapper(self.0.as_ref());
+        sign(&wrapper, &sp_cbor, None, TimeStampStorage::V2_sigTst2_CTT)
+            .map_err(|e| IdentityBuilderError::SignerError(e.to_string()))
     }
 }
 
@@ -81,7 +75,8 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        crypto::{cose::Verifier, raw_signature},
+        create_signer,
+        crypto::cose::Verifier,
         identity::{
             builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
             tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
@@ -127,7 +122,7 @@ mod tests {
         let (cawg_cert_chain, cawg_private_key) =
             cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
 
-        let cawg_raw_signer = raw_signature::signer_from_cert_chain_and_private_key(
+        let cawg_signer = create_signer::from_keys(
             &cawg_cert_chain,
             &cawg_private_key,
             SigningAlg::Ed25519,
@@ -135,7 +130,7 @@ mod tests {
         )
         .unwrap();
 
-        let x509_holder = X509CredentialHolder::from_raw_signer(cawg_raw_signer);
+        let x509_holder = X509CredentialHolder::from_signer(cawg_signer);
         let iab = IdentityAssertionBuilder::for_credential_holder(x509_holder);
         c2pa_signer.add_identity_assertion(iab);
 

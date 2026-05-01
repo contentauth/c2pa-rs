@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     create_signer,
-    crypto::raw_signature::RawSigner,
     dynamic_assertion::DynamicAssertion,
     http::{SyncGenericResolver, SyncHttpResolver},
     identity::{builder::IdentityAssertionBuilder, x509::X509CredentialHolder},
@@ -225,19 +224,18 @@ impl Signer for CawgX509IdentitySigner {
     }
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
-        let Ok(raw_signer) = crate::crypto::raw_signature::signer_from_cert_chain_and_private_key(
+        let Ok(cawg_signer) = create_signer::from_keys(
             self.cawg_sign_cert.as_bytes(),
             self.cawg_private_key.as_bytes(),
             self.cawg_alg,
             self.cawg_tsa_url.clone(),
         ) else {
             // dynamic_assertions() API doesn't let us fail.
-            // signer_from_cert_chain_and_private_key rarely fails,
-            // so when it does, we do so silently.
+            // from_keys rarely fails, so when it does, we do so silently.
             return vec![];
         };
 
-        let x509_credential_holder = X509CredentialHolder::from_raw_signer(raw_signer);
+        let x509_credential_holder = X509CredentialHolder::from_signer(cawg_signer);
 
         let mut iab = IdentityAssertionBuilder::for_credential_holder(x509_credential_holder);
 
@@ -258,10 +256,6 @@ impl Signer for CawgX509IdentitySigner {
         }
 
         vec![Box::new(iab)]
-    }
-
-    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
-        self.c2pa_signer.raw_signer()
     }
 }
 

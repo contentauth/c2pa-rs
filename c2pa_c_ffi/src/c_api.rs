@@ -20,9 +20,13 @@ use std::{
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 use c2pa::{
-    assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
-    CallbackSigner, Context, ProgressPhase, Reader as C2paReader, Settings as C2paSettings,
-    SigningAlg,
+    assertions::DataHash,
+    identity::{
+        builder::IdentityAssertionSigner,
+        validator::CawgValidator,
+    },
+    Builder as C2paBuilder, CallbackSigner, Context, ProgressPhase, Reader as C2paReader,
+    Settings as C2paSettings, SigningAlg,
 };
 use tokio::runtime::Builder;
 
@@ -2716,6 +2720,99 @@ pub unsafe extern "C" fn c2pa_signer_create(
     }
     box_tracked!(C2paSigner {
         signer: Box::new(signer),
+    })
+}
+
+/// Reads a NULL-terminated array of C strings into a `Vec<String>`.
+///
+/// Returns an empty vec if `ptr` is NULL. Silently skips any entry that is
+/// not valid UTF-8.
+unsafe fn read_null_terminated_cstr_array(ptr: *const *const c_char) -> Vec<String> {
+    if ptr.is_null() {
+        return vec![];
+    }
+    let mut result = Vec::new();
+    let mut i = 0;
+    loop {
+        let entry = *ptr.add(i);
+        if entry.is_null() {
+            break;
+        }
+        if let Ok(s) = std::ffi::CStr::from_ptr(entry).to_str() {
+            result.push(s.to_owned());
+        }
+        i += 1;
+    }
+    result
+}
+
+/// Creates a C2paSigner that handles both C2PA claim signing and CAWG identity assertion signing
+/// by combining two existing [`C2paSigner`] instances.
+///
+/// The resulting signer will embed one CAWG X.509 identity assertion (using `cawg.x509.cose`)
+/// into every manifest it signs.
+///
+/// Both input signers are **consumed** by this call — ownership transfers to the returned
+/// signer and the caller MUST NOT free them afterward.
+///
+/// # Parameters
+/// * `c2pa_signer`: A `C2paSigner` used to sign the C2PA claim. Consumed by this call.
+/// * `cawg_signer`: A `C2paSigner` used to sign the CAWG identity assertion. Consumed by this
+///   call.
+/// * `referenced_assertions`: A NULL-terminated array of NULL-terminated UTF-8 strings naming
+///   assertions to reference in the identity assertion, or NULL if none.
+/// * `roles`: A NULL-terminated array of NULL-terminated UTF-8 strings specifying the named
+///   actor's roles, or NULL if none.
+///
+/// # Errors
+/// Returns NULL if either signer pointer is NULL; call `c2pa_error` to retrieve the error string.
+///
+/// # Safety
+/// Both signer pointers must have been created by a `c2pa_signer_*` function and not yet freed.
+/// After this call they are invalid — do NOT pass them to `c2pa_free`.
+/// The returned value MUST be released by calling `c2pa_free`.
+/// `referenced_assertions` and `roles`, if non-NULL, must each point to a NULL-terminated array
+/// of NULL-terminated UTF-8 strings that remain valid for the duration of this call.
+///
+/// # Example
+/// ```c
+/// C2paSigner* c2pa = c2pa_signer_create(c2pa_ctx, c2pa_sign_cb, C2PA_SIGNING_ALG_ES256, c2pa_certs, NULL);
+/// C2paSigner* cawg = c2pa_signer_create(cawg_ctx, cawg_sign_cb, C2PA_SIGNING_ALG_ES256, cawg_certs, NULL);
+/// const char* refs[] = { "c2pa.actions", NULL };
+/// C2paSigner* signer = c2pa_cawg_signer_create(c2pa, cawg, refs, NULL);
+/// if (signer == NULL) {
+///     char* error = c2pa_error();
+///     printf("Error: %s\n", error);
+///     c2pa_string_free(error);
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_cawg_signer_create(
+    c2pa_signer_ptr: *mut C2paSigner,
+    cawg_signer_ptr: *mut C2paSigner,
+    referenced_assertions: *const *const c_char,
+    roles: *const *const c_char,
+) -> *mut C2paSigner {
+    untrack_or_return_null!(c2pa_signer_ptr, C2paSigner);
+    untrack_or_return_null!(cawg_signer_ptr, C2paSigner);
+    let c2pa_signer = Box::from_raw(c2pa_signer_ptr);
+    let cawg_signer = Box::from_raw(cawg_signer_ptr);
+
+    let referenced_assertions = read_null_terminated_cstr_array(referenced_assertions);
+    let roles = read_null_terminated_cstr_array(roles);
+
+    let refs: Vec<&str> = referenced_assertions.iter().map(|s| s.as_str()).collect();
+    let role_refs: Vec<&str> = roles.iter().map(|s| s.as_str()).collect();
+
+    let ia_signer = IdentityAssertionSigner::from_cawg_x509(
+        Box::new(c2pa_signer.signer),
+        Box::new(cawg_signer.signer),
+        &refs,
+        &role_refs,
+    );
+
+    box_tracked!(C2paSigner {
+        signer: Box::new(ia_signer),
     })
 }
 
