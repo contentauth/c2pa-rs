@@ -109,7 +109,7 @@ pub(crate) struct ManifestHashes {
 #[derive(Default)]
 pub(crate) struct StoreValidationInfo<'a> {
     pub redactions: Vec<String>, // list of redactions found in claim hierarchy
-    pub redactions_by_manifest: HashMap<String, Vec<(String, usize)>>, // Parsed index of `redactions` keyed by the manifest label each redaction targets.
+    pub redactions_by_manifest: HashMap<String, Vec<(String, usize)>>, // parsed index of `redactions` keyed by the manifest label each redaction targets.
     pub ingredient_references: HashMap<String, HashSet<String>>, // mapping in ingredients to list of claims that reference it
     pub manifest_map: HashMap<String, &'a Claim>, // list of the addressable items in ingredient, saves re-parsing the items during validation
     pub binding_claim: String,                    // name of the claim that has the hash binding
@@ -4022,11 +4022,7 @@ impl Store {
 
         claim_label_path.push(claim_label);
 
-        // add in current redactions and populate the parsed index in lockstep.
-        // A redaction URI that does not yield a manifest label is malformed and
-        // would be invisible to readers that consult `redactions_by_manifest`,
-        // so skip it and log — keeping the flat `redactions` Vec and the keyed
-        // map representing exactly the same set.
+        // Add in current redactions and populate the parsed index in lockstep.
         if let Some(c_redactions) = claim.redactions() {
             for r in c_redactions {
                 let Some(manifest_label) = jumbf::labels::manifest_label_from_uri(r) else {

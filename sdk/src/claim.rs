@@ -3227,8 +3227,6 @@ impl Claim {
             }
 
             // we can skip if this is a redacted assertion
-            // Look up via the parsed redaction index — O(1) per assertion instead of
-            // re-parsing every redaction URI in an inner loop.
             if svi
                 .redactions_by_manifest
                 .get(claim.label())
