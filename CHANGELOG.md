@@ -9,6 +9,19 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.81.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.3...c2pa-v0.81.0)
+_01 May 2026_
+
+### Added
+
+* Make `c2pa_reason` an enum ([#2100](https://github.com/contentauth/c2pa-rs/pull/2100))
+
+### Fixed
+
+* Harden against integer underflow attacks in parsing purpose field in BMFF UUID box ([#2097](https://github.com/contentauth/c2pa-rs/pull/2097))
+* Harden against integer overflow attack in png chunk hashing for 32 bit WASM architecture ([#2102](https://github.com/contentauth/c2pa-rs/pull/2102))
+* [**breaking**] Use absolute URIs for ingredient thumbnails ([#2098](https://github.com/contentauth/c2pa-rs/pull/2098))
+
 ## [0.80.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.2...c2pa-v0.80.3)
 _29 April 2026_
 
