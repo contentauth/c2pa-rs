@@ -7813,6 +7813,852 @@ mod tests {
     }
 
     #[test]
+    fn test_redact_data_hash_returns_invalid_redaction() {
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let parent = Reader::default()
+            .with_stream("image/jpeg", &mut input)
+            .expect("from_stream");
+        let parent_manifest_label = parent.active_label().unwrap();
+
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(parent_manifest_label, "c2pa.hash.data");
+
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri]);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
+        assert!(matches!(result, Err(Error::AssertionInvalidRedaction)));
+    }
+
+    #[test]
+    fn test_redact_box_hash_returns_invalid_redaction() {
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let parent = Reader::default()
+            .with_stream("image/jpeg", &mut input)
+            .expect("from_stream");
+        let parent_manifest_label = parent.active_label().unwrap();
+
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(parent_manifest_label, "c2pa.hash.boxes");
+
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri]);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
+        assert!(matches!(result, Err(Error::AssertionInvalidRedaction)));
+    }
+
+    #[test]
+    fn test_redact_bmff_hash_returns_invalid_redaction() {
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let parent = Reader::default()
+            .with_stream("image/jpeg", &mut input)
+            .expect("from_stream");
+        let parent_manifest_label = parent.active_label().unwrap();
+
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(parent_manifest_label, "c2pa.hash.bmff");
+
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri]);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
+        assert!(matches!(result, Err(Error::AssertionInvalidRedaction)));
+    }
+
+    #[test]
+    fn test_redact_empty_uri_returns_not_found() {
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![String::new()]);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
+        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+    }
+
+    #[test]
+    fn test_redact_malformed_uri_returns_not_found() {
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec!["not-a-jumbf-uri".to_string()]);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
+        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+    }
+
+    #[test]
+    fn test_redact_wrong_manifest_label_returns_not_found() {
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let _parent = Reader::default()
+            .with_stream("image/jpeg", &mut input)
+            .expect("from_stream");
+
+        // Build a URI whose assertion label is real but manifest label is fabricated.
+        let redacted_uri = crate::jumbf::labels::to_assertion_uri(
+            "urn:uuid:00000000-0000-0000-0000-000000000000",
+            "stds.schema-org.CreativeWork",
+        );
+
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri]);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
+        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+    }
+
+    #[test]
+    fn test_redact_assertion_existing_in_other_ingredient_no_criss_cross() {
+        setup_logger();
+        let context = test_context().into_shared();
+
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        // Build ingredient 1, has CreativeWork assertion.
+        let mut source1 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest1 = Cursor::new(Vec::new());
+        let mut builder1 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Has Assertion".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        builder1.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        builder1
+            .add_assertion_json(
+                ASSERTION_LABEL,
+                &serde_json::json!({"@context": "https://schema.org", "@type": "CreativeWork"}),
+            )
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        builder1
+            .sign(signer.as_ref(), "image/jpeg", &mut source1, &mut dest1)
+            .expect("sign1");
+
+        // Build ingredient 2, no CreativeWork assertion.
+        let mut source2 = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest2 = Cursor::new(Vec::new());
+        let mut builder2 = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("No Assertion".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        builder2.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        builder2
+            .sign(signer.as_ref(), "image/jpeg", &mut source2, &mut dest2)
+            .expect("sign2");
+
+        // Read ingredient 2 to get its manifest label.
+        dest2.set_position(0);
+        let reader2 = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut dest2)
+            .expect("read2");
+        let ing2_label = reader2.active_label().unwrap().to_string();
+
+        // Now build a final manifest using ingredient 1 as parent, but request
+        // redaction of CreativeWork pointing to ingredient 2.
+        dest1.set_position(0);
+        let bogus_uri = crate::jumbf::labels::to_assertion_uri(&ing2_label, ASSERTION_LABEL);
+
+        let mut final_input = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut final_output = Cursor::new(Vec::new());
+        let mut final_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Final".to_string()),
+                redactions: Some(vec![bogus_uri]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        final_builder.set_intent(BuilderIntent::Edit);
+        let mut parent = Ingredient::from_json(&parent_json()).unwrap();
+        parent = parent
+            .with_stream("image/jpeg", &mut dest1, &context)
+            .unwrap();
+        final_builder.add_ingredient(parent);
+
+        let result = final_builder.sign(
+            signer.as_ref(),
+            "image/jpeg",
+            &mut final_input,
+            &mut final_output,
+        );
+        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+    }
+
+    #[test]
+    fn test_redact_duplicate_uri_in_redactions() {
+        // Documents behavior when same URI appears twice in `redactions`.
+        // First pass redacts the assertion, second pass cannot find it but the
+        // post-sign check only verifies each requested redaction is present
+        // in `claim.redactions()`, which dedupes naturally, so succeeds.
+        let mut input = Cursor::new(TEST_IMAGE);
+
+        let parent = Reader::default()
+            .with_stream("image/jpeg", &mut input)
+            .expect("from_stream");
+        let parent_manifest_label = parent.active_label().unwrap();
+        let redacted_uri = crate::jumbf::labels::to_assertion_uri(
+            parent_manifest_label,
+            "stds.schema-org.CreativeWork",
+        );
+
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri.clone(), redacted_uri.clone()]);
+
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redacted_uri)
+            .unwrap();
+        builder.add_action(redacted_action).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
+        // Either succeeds (dedupe-tolerant) or returns AssertionRedactionNotFound
+        // for the second pass.
+        match result {
+            Ok(_) => {
+                output.set_position(0);
+                let reader = Reader::default()
+                    .with_stream("image/jpeg", &mut output)
+                    .expect("from_bytes");
+                assert_eq!(reader.validation_state(), ValidationState::Trusted);
+            }
+            Err(Error::AssertionRedactionNotFound) => {
+                // Acceptable, second iteration could not re-redact.
+            }
+            Err(e) => unreachable!("unexpected error: {e:?}"),
+        }
+    }
+
+    #[test]
+    fn test_redact_user_cbor_assertion() {
+        let context = test_context();
+
+        const CUSTOM_LABEL: &str = "org.example.cbor";
+
+        // Step 1: sign a parent with a custom CBOR assertion.
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        let mut parent_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("CBOR Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        parent_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        parent_builder
+            .add_assertion(CUSTOM_LABEL, &serde_json::json!({"key": "value", "n": 42}))
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        parent_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .expect("parent sign");
+
+        // Step 2: read parent manifest label.
+        dest.set_position(0);
+        let parent_reader = Reader::from_context(context)
+            .with_stream("image/jpeg", &mut dest)
+            .expect("read parent");
+        let parent_manifest_label = parent_reader.active_label().unwrap();
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(parent_manifest_label, CUSTOM_LABEL);
+
+        // Step 3: redact via update manifest.
+        dest.set_position(0);
+        let mut output = Cursor::new(Vec::new());
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+        builder.add_action(redacted_action).unwrap();
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut dest, &mut output)
+            .expect("redact sign");
+
+        // Step 4: verify CBOR assertion gone.
+        output.set_position(0);
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .expect("from_bytes");
+        assert!(matches!(
+            reader.validation_state(),
+            ValidationState::Trusted | ValidationState::Valid
+        ));
+        let parent = reader.get_manifest(parent_manifest_label).unwrap();
+        assert!(
+            !parent
+                .assertions()
+                .iter()
+                .any(|a| a.label().contains(CUSTOM_LABEL)),
+            "custom CBOR assertion should be redacted"
+        );
+    }
+
+    #[test]
+    fn test_redact_user_json_assertion() {
+        let context = test_context();
+
+        const CUSTOM_LABEL: &str = "org.example.json";
+
+        // Step 1: sign a parent with a custom JSON assertion.
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        let mut parent_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("JSON Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        parent_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        parent_builder
+            .add_assertion_json(CUSTOM_LABEL, &serde_json::json!({"hello": "world"}))
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        parent_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .expect("parent sign");
+
+        // Step 2: read parent manifest label.
+        dest.set_position(0);
+        let parent_reader = Reader::from_context(context)
+            .with_stream("image/jpeg", &mut dest)
+            .expect("read parent");
+        let parent_manifest_label = parent_reader.active_label().unwrap();
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(parent_manifest_label, CUSTOM_LABEL);
+
+        // Step 3: redact via update manifest.
+        dest.set_position(0);
+        let mut output = Cursor::new(Vec::new());
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+        builder.add_action(redacted_action).unwrap();
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut dest, &mut output)
+            .expect("redact sign");
+
+        // Step 4: verify JSON assertion gone.
+        output.set_position(0);
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .expect("from_bytes");
+        assert!(matches!(
+            reader.validation_state(),
+            ValidationState::Trusted | ValidationState::Valid
+        ));
+        let parent = reader.get_manifest(parent_manifest_label).unwrap();
+        assert!(
+            !parent
+                .assertions()
+                .iter()
+                .any(|a| a.label().contains(CUSTOM_LABEL)),
+            "custom JSON assertion should be redacted"
+        );
+    }
+
+    #[test]
+    fn test_redact_in_three_deep_ingredient_chain() {
+        // grandparent (with assertion) -> parent (uses grandparent as ingredient)
+        // -> final builder (uses parent as ingredient, redacts grandparent's assertion).
+        setup_logger();
+        let context = test_context().into_shared();
+
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        // Step 1: grandparent.
+        let mut gp_source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut gp_dest = Cursor::new(Vec::new());
+        let mut gp_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Grandparent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        gp_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        gp_builder
+            .add_assertion_json(
+                ASSERTION_LABEL,
+                &serde_json::json!({"@context": "https://schema.org", "@type": "CreativeWork"}),
+            )
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        gp_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut gp_source, &mut gp_dest)
+            .expect("gp sign");
+
+        // Read grandparent manifest label.
+        gp_dest.set_position(0);
+        let gp_reader = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut gp_dest)
+            .expect("gp read");
+        let gp_label = gp_reader.active_label().unwrap().to_string();
+
+        // Step 2: parent, uses grandparent as ingredient.
+        gp_dest.set_position(0);
+        let mut p_source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut p_dest = Cursor::new(Vec::new());
+        let mut p_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        p_builder.set_intent(BuilderIntent::Edit);
+        let mut gp_ingredient = Ingredient::from_json(&parent_json()).unwrap();
+        gp_ingredient = gp_ingredient
+            .with_stream("image/jpeg", &mut gp_dest, &context)
+            .unwrap();
+        p_builder.add_ingredient(gp_ingredient);
+        p_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut p_source, &mut p_dest)
+            .expect("p sign");
+
+        // Step 3: final, uses parent as ingredient, redacts grandparent's assertion.
+        let redacted_uri = crate::jumbf::labels::to_assertion_uri(&gp_label, ASSERTION_LABEL);
+
+        p_dest.set_position(0);
+        let mut final_input = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut final_output = Cursor::new(Vec::new());
+        let mut final_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Final".to_string()),
+                redactions: Some(vec![redacted_uri.clone()]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        final_builder.set_intent(BuilderIntent::Edit);
+        let mut p_ingredient = Ingredient::from_json(&parent_json()).unwrap();
+        p_ingredient = p_ingredient
+            .with_stream("image/jpeg", &mut p_dest, &context)
+            .unwrap();
+        final_builder.add_ingredient(p_ingredient);
+
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+        final_builder.add_action(redacted_action).unwrap();
+
+        final_builder
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut final_input,
+                &mut final_output,
+            )
+            .expect("final sign");
+
+        // Verify: grandparent assertion gone, validation OK.
+        final_output.set_position(0);
+        let reader = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut final_output)
+            .expect("read final");
+        assert!(matches!(
+            reader.validation_state(),
+            ValidationState::Trusted | ValidationState::Valid
+        ));
+        let gp = reader.get_manifest(&gp_label).unwrap();
+        assert!(
+            !gp.assertions()
+                .iter()
+                .any(|a| a.label().contains(ASSERTION_LABEL)),
+            "grandparent CreativeWork assertion should be redacted in 3-deep chain"
+        );
+    }
+
+    #[test]
+    fn test_redact_already_redacted_assertion() {
+        // Sign A with redaction X applied (X is now gone in A's chain).
+        // Then sign B with A as ingredient and request redaction of X again.
+        setup_logger();
+        let context = test_context().into_shared();
+
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        // Step 1: TEST_IMAGE has CreativeWork assertion. Redact it in manifest A.
+        let mut input_a = Cursor::new(TEST_IMAGE);
+        let parent_a = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut input_a)
+            .expect("read a");
+        let parent_a_label = parent_a.active_label().unwrap().to_string();
+        let redacted_uri = crate::jumbf::labels::to_assertion_uri(&parent_a_label, ASSERTION_LABEL);
+
+        let mut builder_a = Builder::default();
+        builder_a.set_intent(BuilderIntent::Edit);
+        builder_a.definition.redactions = Some(vec![redacted_uri.clone()]);
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+        builder_a.add_action(redacted_action).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output_a = Cursor::new(Vec::new());
+        builder_a
+            .sign(signer.as_ref(), "image/jpeg", &mut input_a, &mut output_a)
+            .expect("sign a");
+
+        // Step 2: try to redact the same URI again with B taking A as ingredient.
+        output_a.set_position(0);
+        let mut builder_b = Builder::default();
+        builder_b.set_intent(BuilderIntent::Edit);
+        builder_b.definition.redactions = Some(vec![redacted_uri.clone()]);
+        let redacted_action_b = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+        builder_b.add_action(redacted_action_b).unwrap();
+        let mut output_b = Cursor::new(Vec::new());
+        let result = builder_b.sign(signer.as_ref(), "image/jpeg", &mut output_a, &mut output_b);
+        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+    }
+
+    #[cfg(feature = "add_thumbnails")]
+    #[test]
+    fn test_redact_ingredient_thumbnail_only() {
+        // Redact an ingredient thumbnail (c2pa.thumbnail.ingredient.*),
+        // verify claim thumbnail untouched.
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        setup_logger();
+
+        // Sign clean image (auto-generates claim thumbnail).
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        let mut parent_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        parent_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        let signer = test_signer(SigningAlg::Ps256);
+        parent_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .expect("parent sign");
+
+        // Use as archive ingredient so child gets ingredient thumbnail.
+        let mut archive_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Archive".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        dest.set_position(0);
+        archive_builder
+            .add_ingredient_from_stream(
+                serde_json::json!({"title": "Parent", "relationship": "parentOf"}).to_string(),
+                "image/jpeg",
+                &mut dest,
+            )
+            .unwrap();
+        let mut archive_stream = Cursor::new(Vec::new());
+        archive_builder.to_archive(&mut archive_stream).unwrap();
+
+        let context = Context::new()
+            .with_settings(r#"{"builder": {"thumbnail": {"enabled": false}}}"#)
+            .unwrap();
+        let mut combiner = Builder::from_context(context);
+        combiner.definition.claim_version = Some(2);
+        combiner.definition.title = Some("Combiner".to_string());
+        combiner.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        archive_stream.set_position(0);
+        let ing = combiner
+            .add_ingredient_from_stream(
+                serde_json::json!({"title": "Parent", "relationship": "componentOf"}).to_string(),
+                "application/c2pa",
+                &mut archive_stream,
+            )
+            .unwrap();
+        let ing_label = ing.active_manifest().unwrap().to_owned();
+
+        // Find ingredient thumbnail labels only (not claim thumbnails).
+        archive_stream.set_position(0);
+        let archive_reader = Reader::from_stream("application/c2pa", &mut archive_stream).unwrap();
+        let mut ingredient_thumb_labels: Vec<String> = Vec::new();
+        let mut claim_thumb_labels: Vec<String> = Vec::new();
+        for manifest in archive_reader.iter_manifests() {
+            for href in manifest.assertion_references() {
+                if let Some(label) = crate::jumbf::labels::assertion_label_from_uri(&href.url()) {
+                    if label.starts_with("c2pa.thumbnail.ingredient") {
+                        ingredient_thumb_labels.push(label);
+                    } else if label.starts_with("c2pa.thumbnail.claim") {
+                        claim_thumb_labels.push(label);
+                    }
+                }
+            }
+        }
+        // If no ingredient thumbnail exists in archive, skip.
+        if ingredient_thumb_labels.is_empty() {
+            return;
+        }
+
+        let redaction_uris: Vec<String> = ingredient_thumb_labels
+            .iter()
+            .map(|l| crate::jumbf::labels::to_assertion_uri(&ing_label, l))
+            .collect();
+        combiner.definition.redactions = Some(redaction_uris.clone());
+
+        let mut redaction_actions = Actions::new();
+        for uri in &redaction_uris {
+            let action = Action::new("c2pa.redacted")
+                .set_reason(C2paReason::PiiPresent)
+                .set_parameter("redacted".to_owned(), uri.clone())
+                .unwrap();
+            redaction_actions = redaction_actions.add_action(action);
+        }
+        combiner
+            .add_assertion(Actions::LABEL, &redaction_actions)
+            .unwrap();
+
+        dest.set_position(0);
+        let mut output = Cursor::new(Vec::new());
+        combiner
+            .sign(signer.as_ref(), "image/jpeg", &mut dest, &mut output)
+            .expect("combiner sign");
+
+        // Verify: ingredient thumbnails redacted, claim thumbnails (if any) survive.
+        output.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        let parent = reader.get_manifest(&ing_label).unwrap();
+        for assertion in parent.assertions() {
+            assert!(
+                !assertion.label().contains("c2pa.thumbnail.ingredient"),
+                "ingredient thumbnail should have been redacted"
+            );
+        }
+        // Claim thumbnails preserved (if they were present pre-redaction).
+        if !claim_thumb_labels.is_empty() {
+            let any_claim_thumb = parent
+                .assertions()
+                .iter()
+                .any(|a| a.label().contains("c2pa.thumbnail.claim"));
+            assert!(
+                any_claim_thumb,
+                "claim thumbnail should be untouched when redacting only ingredient thumbnails"
+            );
+        }
+    }
+
+    #[cfg(feature = "add_thumbnails")]
+    #[test]
+    fn test_redact_claim_thumbnail_with_auto_thumbnail_enabled() {
+        // Redact parent claim thumbnail; child has add_thumbnails feature ON.
+        // Verify the redacted thumbnail is not re-imported into the child manifest.
+        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        setup_logger();
+
+        // Sign with auto-thumbnail.
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        let mut parent_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        parent_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        let signer = test_signer(SigningAlg::Ps256);
+        parent_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .expect("parent sign");
+
+        dest.set_position(0);
+        let parent_reader = Reader::from_stream("image/jpeg", &mut dest).expect("read parent");
+        let parent_label = parent_reader.active_label().unwrap().to_string();
+        // Find a claim thumbnail label.
+        let parent_manifest = parent_reader.get_manifest(&parent_label).unwrap();
+        let claim_thumb_label = parent_manifest
+            .assertions()
+            .iter()
+            .find(|a| a.label().contains("c2pa.thumbnail.claim"))
+            .map(|a| a.label().to_string());
+        let Some(claim_thumb_label) = claim_thumb_label else {
+            // If auto-thumbnail produced no claim thumbnail in this fixture, skip.
+            return;
+        };
+
+        let redacted_uri =
+            crate::jumbf::labels::to_assertion_uri(&parent_label, &claim_thumb_label);
+
+        // Child builder with auto-thumbnails ENABLED, redacts parent's claim thumbnail.
+        dest.set_position(0);
+        let mut child_output = Cursor::new(Vec::new());
+        let mut child_builder = Builder::default();
+        child_builder.set_intent(BuilderIntent::Edit);
+        child_builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+        child_builder.add_action(redacted_action).unwrap();
+        child_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut dest, &mut child_output)
+            .expect("child sign");
+
+        // Verify parent's claim thumbnail is gone from parent manifest.
+        child_output.set_position(0);
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut child_output)
+            .expect("read child");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        let parent = reader.get_manifest(&parent_label).unwrap();
+        assert!(
+            !parent
+                .assertions()
+                .iter()
+                .any(|a| a.label() == claim_thumb_label),
+            "redacted parent claim thumbnail should not be present after child sign with auto-thumbnails enabled"
+        );
+    }
+
+    #[test]
+    fn test_non_redacted_assertions_remain_valid() {
+        // Manifest with multiple assertions; redact one; verify other assertions
+        // remain intact and reader validation passes.
+        let context = test_context();
+
+        const KEEP_LABEL: &str = "org.example.keep";
+        const REDACT_LABEL: &str = "org.example.redact";
+
+        // Sign parent with two custom assertions.
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        let mut parent_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Parent".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        parent_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        parent_builder
+            .add_assertion_json(KEEP_LABEL, &serde_json::json!({"keep": true}))
+            .unwrap();
+        parent_builder
+            .add_assertion_json(REDACT_LABEL, &serde_json::json!({"redact": true}))
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        parent_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .expect("parent sign");
+
+        dest.set_position(0);
+        let parent_reader = Reader::from_context(context)
+            .with_stream("image/jpeg", &mut dest)
+            .expect("read parent");
+        let parent_label = parent_reader.active_label().unwrap().to_string();
+        let parent_assertion_count = parent_reader
+            .get_manifest(&parent_label)
+            .unwrap()
+            .assertions()
+            .len();
+
+        let redacted_uri = crate::jumbf::labels::to_assertion_uri(&parent_label, REDACT_LABEL);
+
+        // Child redacts only one of the two custom assertions.
+        dest.set_position(0);
+        let mut output = Cursor::new(Vec::new());
+        let mut child_builder = Builder::default();
+        child_builder.set_intent(BuilderIntent::Edit);
+        child_builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+        let redacted_action = crate::assertions::Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+        child_builder.add_action(redacted_action).unwrap();
+        child_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut dest, &mut output)
+            .expect("child sign");
+
+        output.set_position(0);
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .expect("read child");
+        assert!(matches!(
+            reader.validation_state(),
+            ValidationState::Trusted | ValidationState::Valid
+        ));
+        let parent = reader.get_manifest(&parent_label).unwrap();
+        assert_eq!(
+            parent.assertions().len(),
+            parent_assertion_count - 1,
+            "exactly one assertion should be removed"
+        );
+        assert!(
+            parent
+                .assertions()
+                .iter()
+                .any(|a| a.label().contains(KEEP_LABEL)),
+            "kept assertion should remain"
+        );
+        assert!(
+            !parent
+                .assertions()
+                .iter()
+                .any(|a| a.label().contains(REDACT_LABEL)),
+            "redacted assertion should be gone"
+        );
+    }
+
+    #[test]
     fn test_supported_mime_types() {
         let mime_types = Builder::supported_mime_types();
         assert!(mime_types.contains(&"image/jpeg".to_string()));
