@@ -19,9 +19,9 @@ use std::{
     vec,
 };
 
-use atree::{Arena, Token};
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use byteordered::{with_order, ByteOrdered, Endianness};
+use indextree::{Arena, NodeId};
 
 use crate::{
     asset_io::{
@@ -404,7 +404,7 @@ fn check_ifd_data_size(claimed_size: u64, file_size: u64) -> Result<()> {
 // create tree of TIFF structure IFDs and IFD entries.
 fn map_tiff<R>(
     mut input: &mut R,
-) -> Result<(Arena<ImageFileDirectory>, Vec<Token>, Endianness, bool)>
+) -> Result<(Arena<ImageFileDirectory>, Vec<NodeId>, Endianness, bool)>
 where
     R: Read + Seek + ?Sized,
 {
@@ -416,7 +416,8 @@ where
 
     let tiff_tree: Arena<ImageFileDirectory> = if let Some(ifd) = ts.first_ifd.clone() {
         let first_offset = ifd.offset;
-        let (mut tiff_tree, page_0) = Arena::with_data(ifd);
+        let mut tiff_tree = Arena::new();
+        let page_0 = tiff_tree.new_node(ifd);
         let mut current_token = page_0;
         let mut visited_offsets: HashSet<u64> = HashSet::new();
         visited_offsets.insert(first_offset);
@@ -426,7 +427,7 @@ where
             tokens.push(current_token);
 
             // look for known special IFDs
-            let page_subifd = tiff_tree[current_token].data.get_tag(SUBFILE_TAG).copied();
+            let page_subifd = tiff_tree[current_token].get().get_tag(SUBFILE_TAG).copied();
 
             // grab SubIFDs for page (DNG)
             if let Some(subifd) = page_subifd {
@@ -484,13 +485,13 @@ where
                     let subfile_token = tiff_tree.new_node(subfile_ifd);
 
                     current_token
-                        .append_node(&mut tiff_tree, subfile_token)
+                        .checked_append(subfile_token, &mut tiff_tree)
                         .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
                 }
             }
 
             // grab EXIF IFD for page (DNG)
-            if let Some(exififd) = tiff_tree[current_token].data.get_tag(EXIFIFD_TAG) {
+            if let Some(exififd) = tiff_tree[current_token].get().get_tag(EXIFIFD_TAG) {
                 let decoded_offset =
                     decode_offset(exififd.value_offset, ts.byte_order, ts.big_tiff)?;
                 input.seek(SeekFrom::Start(decoded_offset))?;
@@ -502,12 +503,12 @@ where
                 let exif_token = tiff_tree.new_node(exif_ifd);
 
                 current_token
-                    .append_node(&mut tiff_tree, exif_token)
+                    .checked_append(exif_token, &mut tiff_tree)
                     .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
             }
 
             // grab GPS IFD for page (DNG)
-            if let Some(gpsifd) = tiff_tree[current_token].data.get_tag(GPSIFD_TAG) {
+            if let Some(gpsifd) = tiff_tree[current_token].get().get_tag(GPSIFD_TAG) {
                 let decoded_offset =
                     decode_offset(gpsifd.value_offset, ts.byte_order, ts.big_tiff)?;
                 input.seek(SeekFrom::Start(decoded_offset))?;
@@ -519,19 +520,23 @@ where
                 let gps_token = tiff_tree.new_node(gps_ifd);
 
                 current_token
-                    .append_node(&mut tiff_tree, gps_token)
+                    .checked_append(gps_token, &mut tiff_tree)
                     .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
             }
 
             // move to next page
-            if let Some(next_ifd_offset) = tiff_tree[current_token].data.next_ifd_offset {
+            if let Some(next_ifd_offset) = tiff_tree[current_token].get().next_ifd_offset {
                 if !visited_offsets.insert(next_ifd_offset) {
                     return Err(Error::InvalidAsset("Cyclic IFD chain detected".to_string()));
                 }
                 input.seek(SeekFrom::Start(next_ifd_offset))?;
                 let next_ifd =
                     TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Page)?;
-                current_token = current_token.insert_after(&mut tiff_tree, next_ifd);
+                let next_token = tiff_tree.new_node(next_ifd);
+                current_token
+                    .checked_insert_after(next_token, &mut tiff_tree)
+                    .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
+                current_token = next_token;
             } else {
                 break;
             }
@@ -1102,7 +1107,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     fn clone_sub_files<R: Read + Seek + ?Sized>(
         &mut self,
         tiff_tree: &Arena<ImageFileDirectory>,
-        page: Token,
+        page: NodeId,
         asset_reader: &mut R,
     ) -> Result<HashMap<u16, Vec<u64>>> {
         // offset map
@@ -1114,7 +1119,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
         // clone the EXIF entry and DNG entries
         for n in page.children(tiff_tree) {
-            let ifd = &n.data;
+            let ifd = tiff_tree[n].get();
 
             // clone IFD entries
             let mut cloned_ifd = self.clone_ifd_entries(&ifd.entries, asset_reader)?;
@@ -1147,7 +1152,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     pub fn clone_tiff<R: Read + Seek + ?Sized>(
         &mut self,
         tiff_tree: &mut Arena<ImageFileDirectory>,
-        tokens: &[Token],
+        tokens: &[NodeId],
         asset_reader: &mut R,
     ) -> Result<()> {
         let mut page_ifd_offsets = Vec::new();
@@ -1170,12 +1175,12 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         // is this an old manifest so we need to add a manifest or a
         // multipage tiff without a manifest
         let needs_end_ifd = last_page == first_page
-            || !last_page_ifd.data.entries.contains_key(&C2PA_TAG) && new_c2pa_entry.is_some();
+            || !last_page_ifd.get().entries.contains_key(&C2PA_TAG) && new_c2pa_entry.is_some();
 
         // if multipage, make sure last page containing C2PA contains a single entry
         if last_page != first_page
-            && last_page_ifd.data.entries.contains_key(&C2PA_TAG)
-            && last_page_ifd.data.entries.len() > 1
+            && last_page_ifd.get().entries.contains_key(&C2PA_TAG)
+            && last_page_ifd.get().entries.len() > 1
         {
             return Err(Error::ValidationRule(
                 "Last IDF with C2PA manifest contained additional tags, expected 1 tag".to_string(),
@@ -1184,7 +1189,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
         // is there and existing valid new end C2PA IFD
         let has_c2pa_ifd =
-            last_page != first_page || last_page_ifd.data.entries.contains_key(&C2PA_TAG);
+            last_page != first_page || last_page_ifd.get().entries.contains_key(&C2PA_TAG);
 
         for page_token in tokens {
             // clone the subfile entries (DNG)
@@ -1195,7 +1200,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 .ok_or_else(|| Error::InvalidAsset("TIFF does not have IFD".to_string()))?;
 
             // clone IFD entries
-            let mut cloned_ifd = self.clone_ifd_entries(&page_ifd.data.entries, asset_reader)?;
+            let mut cloned_ifd = self.clone_ifd_entries(&page_ifd.get().entries, asset_reader)?;
 
             // clone the image data
             self.clone_image_data(&mut cloned_ifd, asset_reader)?;
@@ -1627,13 +1632,13 @@ where
     let last_page = page_tokens
         .last()
         .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
-    let last_ifd = &tiff_tree[*last_page].data;
+    let last_ifd = tiff_tree[*last_page].get();
 
     let cai_ifd_entry = match last_ifd.get_tag(C2PA_TAG) {
         Some(entry) => entry,
         None => {
             // if the last page doesn't have the C2PA tag, check the first page for backwards compatibility with older TIFFs
-            let first_ifd = &tiff_tree[*first_page].data;
+            let first_ifd = tiff_tree[*first_page].get();
             first_ifd.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?
         }
     };
@@ -1662,7 +1667,7 @@ where
 {
     let (tiff_tree, page_tokens, e, big_tiff) = map_tiff(asset_reader).ok()?;
     let first_page = page_tokens.first()?;
-    let first_ifd = &tiff_tree[*first_page].data;
+    let first_ifd = tiff_tree[*first_page].get();
 
     let xmp_ifd_entry = first_ifd.get_tag(XMP_TAG)?;
     // make sure the tag type is correct
@@ -1682,7 +1687,7 @@ fn fast_update<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized>(
     asset_writer: &mut W,
     asset_reader: &mut R,
     tiff_tree: &mut Arena<ImageFileDirectory>,
-    tokens: &[Token],
+    tokens: &[NodeId],
     data: &[u8],
     big_tiff: bool,
     endianness: Endianness,
@@ -1703,14 +1708,14 @@ fn fast_update<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized>(
 
     // if the idf is not in its own c2pa only IDF we cannot do the fast path
     if last_page != first_page
-        && last_page_ifd.data.entries.contains_key(&C2PA_TAG)
-        && last_page_ifd.data.entries.len() == 1
+        && last_page_ifd.get().entries.contains_key(&C2PA_TAG)
+        && last_page_ifd.get().entries.len() == 1
     {
         // check if the manifest is last content in the file
-        let ifd_offset = last_page_ifd.data.offset;
-        let manifest_offset = &last_page_ifd.data.entries[&C2PA_TAG].value_offset;
+        let ifd_offset = last_page_ifd.get().offset;
+        let manifest_offset = &last_page_ifd.get().entries[&C2PA_TAG].value_offset;
         let new_manifest_size = data.len() as u64;
-        let manifest_size = last_page_ifd.data.entries[&C2PA_TAG].value_count;
+        let manifest_size = last_page_ifd.get().entries[&C2PA_TAG].value_count;
         let asset_len = stream_len(asset_reader)?;
 
         if (*manifest_offset + manifest_size) != asset_len {
@@ -1887,7 +1892,7 @@ impl CAIWriter for TiffIO {
         let last_page = page_tokens
             .last()
             .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
-        let cai_ifd_entry = match ifds[*last_page].data.get_tag(C2PA_TAG) {
+        let cai_ifd_entry = match ifds[*last_page].get().get_tag(C2PA_TAG) {
             Some(ifd) => ifd,
             None => {
                 return Ok(Vec::new());
@@ -1909,7 +1914,7 @@ impl CAIWriter for TiffIO {
 
         // figure out count  to exclude
         let entry_cnt_size = if big_tiff { 8u64 } else { 2u64 };
-        let count_offset = ifds[*last_page].data.offset
+        let count_offset = ifds[*last_page].get().offset
             + entry_cnt_size // entry count size
             + 2 // 1st tag
             + 2; // 1st type
@@ -1944,7 +1949,12 @@ impl CAIWriter for TiffIO {
             .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
 
         // we remove tag if found and rewrite the file
-        if ifds[*last_page].data.entries.remove(&C2PA_TAG).is_some() {
+        if ifds[*last_page]
+            .get_mut()
+            .entries
+            .remove(&C2PA_TAG)
+            .is_some()
+        {
             let mut bo = ByteOrdered::new(output_stream, e);
             let mut tc = TiffCloner::new(e, big_tiff, &mut bo)?;
 
@@ -1972,7 +1982,7 @@ impl AssetPatch for TiffIO {
         let last_page = page_tokens
             .last()
             .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
-        let last_ifd = &tiff_tree[*last_page].data;
+        let last_ifd = tiff_tree[*last_page].get();
 
         let cai_ifd_entry = last_ifd.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?;
 
@@ -2525,7 +2535,7 @@ pub mod tests {
 
         let (idfs, token, _endianness, _big_tiff) = map_tiff(&mut f).unwrap();
 
-        println!("IFD {}", idfs[token].data.entry_cnt);
+        println!("IFD {}", idfs[token].get().entry_cnt);
     }
     */
 }
