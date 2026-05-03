@@ -9,6 +9,66 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.82.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.81.0...c2pa-v0.82.0)
+_01 May 2026_
+
+### Fixed
+
+* Harden against unbounded HTTP response body read in DID web server ([#2070](https://github.com/contentauth/c2pa-rs/pull/2070))
+
+## [0.81.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.3...c2pa-v0.81.0)
+_01 May 2026_
+
+### Added
+
+* Make `c2pa_reason` an enum ([#2100](https://github.com/contentauth/c2pa-rs/pull/2100))
+
+### Fixed
+
+* Harden against integer underflow attacks in parsing purpose field in BMFF UUID box ([#2097](https://github.com/contentauth/c2pa-rs/pull/2097))
+* Harden against integer overflow attack in png chunk hashing for 32 bit WASM architecture ([#2102](https://github.com/contentauth/c2pa-rs/pull/2102))
+* [**breaking**] Use absolute URIs for ingredient thumbnails ([#2098](https://github.com/contentauth/c2pa-rs/pull/2098))
+
+## [0.80.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.2...c2pa-v0.80.3)
+_29 April 2026_
+
+### Added
+
+* Support DNG big data ([#2092](https://github.com/contentauth/c2pa-rs/pull/2092))
+* Add `init trust`, trust sidecars, and atomic sidecar writes, plus fixes ([#2093](https://github.com/contentauth/c2pa-rs/pull/2093))
+
+### Updated dependencies
+
+* Bump openssl from 0.10.77 to 0.10.78 ([#2082](https://github.com/contentauth/c2pa-rs/pull/2082))
+
+## [0.80.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.1...c2pa-v0.80.2)
+_28 April 2026_
+
+### Documented
+
+* Adds redaction docs and example ([#2071](https://github.com/contentauth/c2pa-rs/pull/2071))
+
+### Fixed
+
+* `c2pa-c-ffi` UB detected by miri ([#2089](https://github.com/contentauth/c2pa-rs/pull/2089))
+* Harden RSA validators against invalid BER sequences ([#2065](https://github.com/contentauth/c2pa-rs/pull/2065))
+* Harden against deep linear ingredient chains with max limits ([#2064](https://github.com/contentauth/c2pa-rs/pull/2064))
+* Harden BMFF hash merkel tree creation with max merkel leaves limits ([#2063](https://github.com/contentauth/c2pa-rs/pull/2063))
+* Harden against image decompression bomb attacks in building thumbnail ([#2062](https://github.com/contentauth/c2pa-rs/pull/2062))
+* Harden tiff parser against forged IFD entry count fields ([#2059](https://github.com/contentauth/c2pa-rs/pull/2059))
+* Harden builder and resource store addition against path traversal zip slip attacks ([#2066](https://github.com/contentauth/c2pa-rs/pull/2066))
+
+## [0.80.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.0...c2pa-v0.80.1)
+_27 April 2026_
+
+### Fixed
+
+* Harden against empty certificates during OCSP certificate validation ([#2067](https://github.com/contentauth/c2pa-rs/pull/2067))
+* Prevent duplicate timestamp assertion ([#2085](https://github.com/contentauth/c2pa-rs/pull/2085))
+* Harden riff chunk parser against forged size field memory attacks ([#2053](https://github.com/contentauth/c2pa-rs/pull/2053))
+* Harden bmff parsing against integer overflow attack ([#2054](https://github.com/contentauth/c2pa-rs/pull/2054))
+* Harden against cyclic IFD chain in tiff parser ([#2068](https://github.com/contentauth/c2pa-rs/pull/2068))
+
 ## [0.80.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.79.5...c2pa-v0.80.0)
 _16 April 2026_
 

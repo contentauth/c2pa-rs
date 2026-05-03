@@ -52,6 +52,10 @@ const STRIPOFFSETS: u16 = 273;
 const TILEBYTECOUNTS: u16 = 325;
 const TILEOFFSETS: u16 = 324;
 
+const BIGTABLEDIGESTS: u16 = 52540;
+const BIGTABLEOFFSETS: u16 = 52541;
+const BIGTABLEBYTECOUNTS: u16 = 52542;
+
 /* support when we find a use case
 const FREEOFFSETS: u16 = 288;
 const FREEBYTECOUNTS: u16 = 289;
@@ -384,6 +388,19 @@ fn decode_offset(offset_file_native: u64, endianness: Endianness, big_tiff: bool
     Ok(offset)
 }
 
+/// Reject forged IFD `value_count` fields whose claimed byte size exceeds the
+/// actual file size. Used before every `safe_vec`/`read_to_vec` allocation
+/// driven by attacker-controlled count fields, so a 52-byte BigTIFF can't
+/// trigger a multi-GB allocation.
+fn check_ifd_data_size(claimed_size: u64, file_size: u64) -> Result<()> {
+    if claimed_size > file_size {
+        return Err(Error::InvalidAsset(
+            "IFD entry data size exceeds file size".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 // create tree of TIFF structure IFDs and IFD entries.
 fn map_tiff<R>(
     mut input: &mut R,
@@ -391,7 +408,7 @@ fn map_tiff<R>(
 where
     R: Read + Seek + ?Sized,
 {
-    let _size = stream_len(input)?;
+    let file_size = stream_len(input)?;
     input.rewind()?;
 
     let mut tokens = Vec::new();
@@ -425,6 +442,9 @@ where
                         .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?,
                 )
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                check_ifd_data_size(num_longs_x4 as u64, file_size)?;
+
                 let mut subfile_offsets = safe_vec(subifd.value_count, Some(0u32))?; // will contain offsets in native endianness
 
                 if num_longs_x4 <= 4 || ts.big_tiff && num_longs_x4 <= 8 {
@@ -758,7 +778,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     fn clone_image_data<R: Read + Seek + ?Sized>(
         &mut self,
         target_ifd: &mut BTreeMap<u16, IfdClonedEntry>,
-        mut asset_reader: &mut R,
+        asset_reader: &mut R,
     ) -> Result<()> {
         match (
             target_ifd.contains_key(&STRIPBYTECOUNTS),
@@ -808,11 +828,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
                 // copy the strips
                 with_order!(so_entry.value_bytes.as_slice(), self.endianness, |src| {
-                    for c in sbcs.iter() {
-                        let cnt = usize::try_from(*c).map_err(|_err| {
-                            Error::InvalidAsset("value out of range".to_string())
-                        })?;
-
+                    for cnt in sbcs.iter() {
                         // get the offset
                         let so: u64 = match so_entry.entry_type {
                             4u16 => {
@@ -832,8 +848,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
                         // copy the strip to new file
                         asset_reader.seek(SeekFrom::Start(so))?;
-                        let data = asset_reader.read_to_vec(cnt as u64)?;
-                        self.writer.write_all(data.as_slice())?;
+                        let mut data_reader = asset_reader.take(*cnt);
+                        std::io::copy(&mut data_reader, &mut self.writer)?; // copy the BigTable block to new file
                     }
                 });
 
@@ -913,11 +929,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
                 // copy the tiles
                 with_order!(to_entry.value_bytes.as_slice(), self.endianness, |src| {
-                    for c in tbcs.iter() {
-                        let cnt = usize::try_from(*c).map_err(|_err| {
-                            Error::InvalidAsset("value out of range".to_string())
-                        })?;
-
+                    for cnt in tbcs.iter() {
                         // get the offset
                         let to: u64 = match to_entry.entry_type {
                             4u16 => {
@@ -933,8 +945,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
                         // copy the tile to new file
                         asset_reader.seek(SeekFrom::Start(to))?;
-                        let data = asset_reader.read_to_vec(cnt as u64)?;
-                        self.writer.write_all(data.as_slice())?;
+                        let mut data_reader = asset_reader.take(*cnt);
+                        std::io::copy(&mut data_reader, &mut self.writer)?; // copy the BigTable block to new file
                     }
                 });
 
@@ -978,6 +990,120 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         Ok(())
     }
 
+    // Special DNG case - clone BigTable data if present. BigTable data is stored similarly
+    // to strip/tile data but with three separate tags for offsets, byte counts, and digests.
+    // We need to clone the data and patch the offsets to preserve the integrity of the DNG.
+    // Note: this is not a general DNG feature. Converts the target_ifd to the final
+    // IFD with the copied data and actual offsets.
+    fn clone_dng_bigtable_data<R: Read + Seek + ?Sized>(
+        &mut self,
+        target_ifd: &mut BTreeMap<u16, IfdClonedEntry>,
+        asset_reader: &mut R,
+    ) -> Result<()> {
+        // BigTable image data — only when all three BigTable tags are present.
+        if target_ifd.contains_key(&BIGTABLEOFFSETS)
+            && target_ifd.contains_key(&BIGTABLEDIGESTS)
+            && target_ifd.contains_key(&BIGTABLEBYTECOUNTS)
+        {
+            let bbc_entry = target_ifd[&BIGTABLEBYTECOUNTS].clone();
+            let bo_entry = target_ifd
+                .get_mut(&BIGTABLEOFFSETS)
+                .ok_or(Error::NotFound)?;
+
+            if bo_entry.value_count != bbc_entry.value_count {
+                return Err(Error::InvalidAsset(
+                    "TIFF BigTable count does not match BigTable offset count".to_string(),
+                ));
+            }
+
+            let mut bbcs: Vec<u64> = safe_vec(bbc_entry.value_count, Some(0u64))?;
+            let mut dest_offsets: Vec<u64> = Vec::new();
+
+            // get the byte counts
+            with_order!(bbc_entry.value_bytes.as_slice(), self.endianness, |src| {
+                for val in &mut bbcs {
+                    match bbc_entry.entry_type {
+                        4u16 => {
+                            let s = src.read_u32()?;
+                            *val = s.into();
+                        }
+                        3u16 => {
+                            let s = src.read_u16()?;
+                            *val = s.into();
+                        }
+                        16u16 => {
+                            let s = src.read_u64()?;
+                            *val = s;
+                        }
+                        _ => return Err(Error::InvalidAsset("invalid TIFF BigTable".to_string())),
+                    }
+                }
+            });
+
+            // Seek to our tracked write position (not End(0) which could be wrong if stream has leftover data)
+            let current_offset = self.offset()?;
+            self.writer.seek(SeekFrom::Start(current_offset))?;
+
+            // copy the BigTable blocks
+            with_order!(bo_entry.value_bytes.as_slice(), self.endianness, |src| {
+                for cnt in bbcs.iter() {
+                    let bo: u64 = match bo_entry.entry_type {
+                        4u16 => {
+                            let s = src.read_u32()?;
+                            s.into()
+                        }
+                        3u16 => {
+                            let s = src.read_u16()?;
+                            s.into()
+                        }
+                        16u16 => src.read_u64()?,
+                        _ => return Err(Error::InvalidAsset("invalid TIFF BigTable".to_string())),
+                    };
+
+                    let dest_offset = self.writer.stream_position()?;
+                    dest_offsets.push(dest_offset); // save offset where the new BigTable block is written for patching later
+
+                    asset_reader.seek(SeekFrom::Start(bo))?;
+                    let mut data_reader = asset_reader.take(*cnt);
+                    std::io::copy(&mut data_reader, &mut self.writer)?; // copy the BigTable block to new file
+                }
+            });
+
+            // patch with final offsets where the BigTable blocks were written in the new file
+            with_order!(
+                bo_entry.value_bytes.as_mut_slice(),
+                self.endianness,
+                |dest| {
+                    for o in dest_offsets.iter() {
+                        match bo_entry.entry_type {
+                            4u16 => {
+                                let offset = u32::try_from(*o).map_err(|_err| {
+                                    Error::InvalidAsset("value out of range".to_string())
+                                })?;
+                                dest.write_u32(offset)?;
+                            }
+                            3u16 => {
+                                let offset = u16::try_from(*o).map_err(|_err| {
+                                    Error::InvalidAsset("value out of range".to_string())
+                                })?;
+                                dest.write_u16(offset)?;
+                            }
+                            16u16 => {
+                                dest.write_u64(*o)?;
+                            }
+                            _ => {
+                                return Err(Error::InvalidAsset(
+                                    "invalid TIFF BigTable".to_string(),
+                                ))
+                            }
+                        }
+                    }
+                }
+            );
+        }
+        Ok(())
+    }
+
     fn clone_sub_files<R: Read + Seek + ?Sized>(
         &mut self,
         tiff_tree: &Arena<ImageFileDirectory>,
@@ -1000,6 +1126,9 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
             // clone the image data
             self.clone_image_data(&mut cloned_ifd, asset_reader)?;
+
+            // clone bigtable data if DNG
+            self.clone_dng_bigtable_data(&mut cloned_ifd, asset_reader)?;
 
             // write directory
             let sub_ifd_offset = self.write_ifd(&mut cloned_ifd)?;
@@ -1075,6 +1204,9 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
             // clone the image data
             self.clone_image_data(&mut cloned_ifd, asset_reader)?;
+
+            // clone bigtable data if DNG
+            self.clone_dng_bigtable_data(&mut cloned_ifd, asset_reader)?;
 
             // add in new Tags to first IFD (XMP for example)
             if page_token == first_page {
@@ -1184,6 +1316,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         entries: &HashMap<u16, IfdEntry>,
         mut asset_reader: &mut R,
     ) -> Result<BTreeMap<u16, IfdClonedEntry>> {
+        let file_size = stream_len(asset_reader)?;
         let mut target_ifd: BTreeMap<u16, IfdClonedEntry> = BTreeMap::new();
 
         for (tag, entry) in entries {
@@ -1203,6 +1336,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 | IFDEntryType::Ascii => {
                     let num_bytes = usize::try_from(cnt)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    check_ifd_data_size(cnt, file_size)?;
 
                     let mut data = safe_vec(cnt, Some(0u8))?;
 
@@ -1229,6 +1364,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             Error::InvalidAsset("value out of range".to_string())
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    check_ifd_data_size(num_shorts_x2 as u64, file_size)?;
 
                     let mut data = safe_vec(num_shorts_x2 as u64, Some(0u8))?;
 
@@ -1260,6 +1397,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
+                    check_ifd_data_size(num_longs_x4 as u64, file_size)?;
+
                     let mut data = safe_vec(num_longs_x4 as u64, Some(0u8))?;
 
                     if num_longs_x4 <= 4 || self.big_tiff && num_longs_x4 <= 8 {
@@ -1289,6 +1428,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             Error::InvalidAsset("value out of range".to_string())
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    check_ifd_data_size(num_sshorts_x2 as u64, file_size)?;
 
                     let mut data = safe_vec(num_sshorts_x2 as u64, Some(0u8))?;
 
@@ -1320,6 +1461,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
+                    check_ifd_data_size(num_slongs_x4 as u64, file_size)?;
+
                     let mut data = safe_vec(num_slongs_x4 as u64, Some(0u8))?;
 
                     if num_slongs_x4 <= 4 || self.big_tiff && num_slongs_x4 <= 8 {
@@ -1349,6 +1492,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             Error::InvalidAsset("value out of range".to_string())
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    check_ifd_data_size(num_floats_x4 as u64, file_size)?;
 
                     let mut data = safe_vec(num_floats_x4 as u64, Some(0u8))?;
 
@@ -2080,6 +2225,28 @@ pub mod tests {
     }
 
     #[test]
+    fn test_read_write_manifest_dng_bigdata() {
+        let data = "some data";
+
+        let source = crate::utils::test::fixture_path("Foo.dng");
+
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "test.dng");
+
+        std::fs::copy(source, &output).unwrap();
+
+        let tiff_io = TiffIO {};
+
+        // save data to tiff
+        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+
+        // read data back
+        let loaded = tiff_io.read_cai_store(&output).unwrap();
+
+        assert_eq!(&loaded, data.as_bytes());
+    }
+
+    #[test]
     fn test_write_xmp() {
         let data = "some data";
 
@@ -2272,6 +2439,65 @@ pub mod tests {
 
         // Before the fix: this would panic (exit 101) in debug or silently overflow in release.
         // After the fix: must return Err(Error::InvalidAsset) without any panic.
+        let locations = tiff_io.get_object_locations_from_stream(&mut stream);
+        assert!(matches!(locations, Err(Error::InvalidAsset(_))));
+    }
+
+    /// Regression test for OOM in `clone_ifd_entries` for Byte/1-byte element types.
+    ///
+    /// On Linux containers with memory overcommit (the default), `safe_vec` uses
+    /// `try_reserve_exact` which succeeds for a 10 GB allocation because the OS commits
+    /// virtual address space lazily. The subsequent `resize` then touches all 10 GB of
+    /// pages, triggering the OOM killer (exit 137) in any 8 GB container.
+    ///
+    /// The fix validates `cnt <= file_size` before calling `safe_vec`, returning
+    /// `Err(InvalidAsset)` for any count that exceeds the file's actual byte count.
+    ///
+    /// The binary blob is the same crafted BigTIFF as `test_overflow_clone_ifd_entries`
+    /// but with entry_type changed from 0x04 (Long, ×4) to 0x01 (Byte, ×1) and
+    /// value_count set to 10_000_000_000 (0x00000002540BE400 little-endian).
+    #[test]
+    fn test_oom_clone_ifd_entries_byte_type() {
+        // Same BigTIFF blob as test_overflow_clone_ifd_entries, with entry_type changed from
+        // 0x04 (Long, ×4) to 0x01 (Byte, ×1) and value_count changed from the overflow-inducing
+        // 0x8000000000000003 to 10_000_000_000 (0x00000002540BE400 LE). The IFD offset (0x31 = 49)
+        // and entry count (3) at that offset must stay identical to the original blob.
+        let data = [
+            0x49, 0x49, 0x2b, 0x00, 0x08, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x49,
+            0x49, 0x2a, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xf9, 0x00,
+            0x00, 0x00, 0x00, 0x05, 0x00, 0x07, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+            // entry — type 0x01 (Byte, 1 byte/element), value_count = 10_000_000_000
+            //
+            0x00, 0x00, // entry_tag
+            0x01, 0x00, // entry_type: Byte (was 0x04 Long)
+            0x00, 0xe4, 0x0b, 0x54, 0x02, 0x00, 0x00, 0x00, // value_count = 10_000_000_000 LE
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // value_offset
+            //
+            // entry
+            //
+            0x00, 0x00, // entry_tag
+            0x01, 0x00, // entry_type: Byte (was 0x04 Long)
+            0x00, 0xe4, 0x0b, 0x54, 0x02, 0x00, 0x00, 0x00, // value_count = 10_000_000_000 LE
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // value_offset
+            //
+            // ...
+            //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00,
+        ];
+
+        let mut stream = Cursor::new(&data);
+        let tiff_io = TiffIO {};
+
+        // Before the fix: this would OOM-kill an 8 GB Linux container.
+        // After the fix: must return Err(Error::InvalidAsset) without any allocation.
         let locations = tiff_io.get_object_locations_from_stream(&mut stream);
         assert!(matches!(locations, Err(Error::InvalidAsset(_))));
     }

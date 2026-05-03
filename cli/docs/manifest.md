@@ -41,6 +41,10 @@ c2patool image_to_sign.jpg -m manifest.json -o signed_with_icon.jpg
 > [!NOTE]
 > [ACA Inspect](https://inspect.cr/) will only display an icon for a signing certificate if the certificate can be traced back to a root certificate on the [C2PA trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists#c2pa-trust-list).
 
+## `claim_generator_info` (optional)
+
+If you omit this property, or set it to an empty array `[]`, the SDK fills in a default when the claim is built: it uses `builder.claim_generator_info` from your [Context settings](../../docs/context-settings.md#with-builder) if you configured one, otherwise a built-in default for the `c2pa` library.
+
 ## Special properties used by C2PA Tool
 
 The following manifest properties are specific to C2PA Tool and used for signing manifests:
