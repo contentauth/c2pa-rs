@@ -3,7 +3,8 @@ use std::{fs, io::Cursor, path::Path};
 use c2pa::Reader;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 
-const SIZES: &[&str] = &["small", "medium", "large"];
+// const SIZES: &[&str] = &["small", "medium", "large"];
+const SIZES: &[&str] = &["small"];
 
 fn load(label: &str, ext: &str) -> Vec<u8> {
     let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/fixtures");
