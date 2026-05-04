@@ -21,7 +21,7 @@ fn read_jpeg(c: &mut Criterion) {
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
                 let mut stream = Cursor::new(data);
-                Reader::from_stream("image/jpeg", &mut stream)
+                Reader::default().with_stream("image/jpeg", &mut stream)
             })
         });
     }
@@ -36,7 +36,7 @@ fn read_png(c: &mut Criterion) {
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
                 let mut stream = Cursor::new(data);
-                Reader::from_stream("image/png", &mut stream)
+                Reader::default().with_stream("image/png", &mut stream)
             })
         });
     }
@@ -51,7 +51,7 @@ fn read_gif(c: &mut Criterion) {
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
                 let mut stream = Cursor::new(data);
-                Reader::from_stream("image/gif", &mut stream)
+                Reader::default().with_stream("image/gif", &mut stream)
             })
         });
     }
@@ -66,7 +66,7 @@ fn read_tiff(c: &mut Criterion) {
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
                 let mut stream = Cursor::new(data);
-                Reader::from_stream("image/tiff", &mut stream)
+                Reader::default().with_stream("image/tiff", &mut stream)
             })
         });
     }
@@ -81,7 +81,7 @@ fn read_svg(c: &mut Criterion) {
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
                 let mut stream = Cursor::new(data);
-                Reader::from_stream("image/svg+xml", &mut stream)
+                Reader::default().with_stream("image/svg+xml", &mut stream)
             })
         });
     }
@@ -96,7 +96,7 @@ fn read_mp3(c: &mut Criterion) {
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
                 let mut stream = Cursor::new(data);
-                Reader::from_stream("audio/mpeg", &mut stream)
+                Reader::default().with_stream("audio/mpeg", &mut stream)
             })
         });
     }
@@ -111,7 +111,7 @@ fn read_mp4(c: &mut Criterion) {
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
                 let mut stream = Cursor::new(data);
-                Reader::from_stream("video/mp4", &mut stream)
+                Reader::default().with_stream("video/mp4", &mut stream)
             })
         });
     }
@@ -126,7 +126,7 @@ fn read_wav(c: &mut Criterion) {
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
                 let mut stream = Cursor::new(data);
-                Reader::from_stream("audio/wav", &mut stream)
+                Reader::default().with_stream("audio/wav", &mut stream)
             })
         });
     }

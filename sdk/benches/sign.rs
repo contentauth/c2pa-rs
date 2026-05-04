@@ -31,7 +31,7 @@ fn load(label: &str, ext: &str) -> Vec<u8> {
 fn sign_jpeg(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign jpeg");
     let signer = create_signer();
-    let mut builder = Builder::from_json(MANIFEST_JSON).unwrap();
+    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
         let data = load(label, "jpg");
@@ -49,7 +49,7 @@ fn sign_jpeg(c: &mut Criterion) {
 fn sign_png(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign png");
     let signer = create_signer();
-    let mut builder = Builder::from_json(MANIFEST_JSON).unwrap();
+    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
         let data = load(label, "png");
@@ -69,7 +69,7 @@ fn sign_png(c: &mut Criterion) {
 fn sign_gif(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign gif");
     let signer = create_signer();
-    let mut builder = Builder::from_json(MANIFEST_JSON).unwrap();
+    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
         let data = load(label, "gif");
@@ -87,7 +87,7 @@ fn sign_gif(c: &mut Criterion) {
 fn sign_tiff(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign tiff");
     let signer = create_signer();
-    let mut builder = Builder::from_json(MANIFEST_JSON).unwrap();
+    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
         let data = load(label, "tiff");
@@ -105,7 +105,7 @@ fn sign_tiff(c: &mut Criterion) {
 fn sign_wav(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign wav");
     let signer = create_signer();
-    let mut builder = Builder::from_json(MANIFEST_JSON).unwrap();
+    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
         let data = load(label, "wav");
@@ -123,7 +123,7 @@ fn sign_wav(c: &mut Criterion) {
 fn sign_svg(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign svg");
     let signer = create_signer();
-    let mut builder = Builder::from_json(MANIFEST_JSON).unwrap();
+    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
         let data = load(label, "svg");
@@ -141,7 +141,7 @@ fn sign_svg(c: &mut Criterion) {
 fn sign_mp3(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign mp3");
     let signer = create_signer();
-    let mut builder = Builder::from_json(MANIFEST_JSON).unwrap();
+    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
         let data = load(label, "mp3");
@@ -159,7 +159,7 @@ fn sign_mp3(c: &mut Criterion) {
 fn sign_mp4(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign mp4");
     let signer = create_signer();
-    let mut builder = Builder::from_json(MANIFEST_JSON).unwrap();
+    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
         let data = load(label, "mp4");

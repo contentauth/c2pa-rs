@@ -15,7 +15,7 @@ fn wide_assertions(c: &mut Criterion) {
     c.bench_function("wide-assertions/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
-            Reader::from_stream("svg", &mut stream)
+            Reader::default().with_stream("svg", &mut stream)
         })
     });
 }
@@ -25,7 +25,7 @@ fn wide_ingredients(c: &mut Criterion) {
     c.bench_function("wide-ingredients/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
-            Reader::from_stream("svg", &mut stream)
+            Reader::default().with_stream("svg", &mut stream)
         })
     });
 }
@@ -35,7 +35,7 @@ fn deep_ingredients(c: &mut Criterion) {
     c.bench_function("deep-ingredients/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
-            Reader::from_stream("svg", &mut stream)
+            Reader::default().with_stream("svg", &mut stream)
         })
     });
 }
@@ -45,7 +45,7 @@ fn update_manifests(c: &mut Criterion) {
     c.bench_function("update-manifests/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
-            Reader::from_stream("svg", &mut stream)
+            Reader::default().with_stream("svg", &mut stream)
         })
     });
 }
@@ -55,7 +55,7 @@ fn large_cbor_assertion(c: &mut Criterion) {
     c.bench_function("large-cbor-assertion/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
-            Reader::from_stream("svg", &mut stream)
+            Reader::default().with_stream("svg", &mut stream)
         })
     });
 }
@@ -65,7 +65,7 @@ fn large_json_assertion(c: &mut Criterion) {
     c.bench_function("large-json-assertion/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
-            Reader::from_stream("svg", &mut stream)
+            Reader::default().with_stream("svg", &mut stream)
         })
     });
 }
