@@ -9,6 +9,15 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.82.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.82.0...c2pa-v0.82.1)
+_04 May 2026_
+
+### Fixed
+
+* Harden against integer underflow attack in GIF XMP validation ([#2099](https://github.com/contentauth/c2pa-rs/pull/2099))
+* Harden error code mapping for hash mismatch in validator ([#2101](https://github.com/contentauth/c2pa-rs/pull/2101))
+* Update logic for stale thumbnails detection in redaction ([#2107](https://github.com/contentauth/c2pa-rs/pull/2107))
+
 ## [0.82.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.81.0...c2pa-v0.82.0)
 _01 May 2026_
 
