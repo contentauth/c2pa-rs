@@ -11,7 +11,7 @@ on:
 
 jobs:
   benchmarks:
-    name: Run benchmarks on signing and reading
+    name: Run benchmarks
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -67,7 +67,7 @@ jobs:
       - name: Download and extract bench fixtures from S3
         if: steps.cache-fixtures.outputs.cache-hit != 'true'
         run: |
-          aws s3 cp s3://c2pa-rs-bench-fixtures/bench-fixtures.tar.gz bench-fixtures.tar.gz
+          aws s3 cp s3://adobe-cai-open-source-c2pa-sdk-test-assets-prod/bench-fixtures.tar.gz bench-fixtures.tar.gz
           mkdir -p sdk/benches/fixtures
           tar -xzf bench-fixtures.tar.gz -C sdk/benches/fixtures
           rm bench-fixtures.tar.gz
