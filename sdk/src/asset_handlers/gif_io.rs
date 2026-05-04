@@ -38,6 +38,9 @@ use crate::{
 };
 
 // https://www.w3.org/Graphics/GIF/spec-gif89a.txt
+
+const XMP_MAGIC_TRAILER_LEN: usize = 257;
+
 pub struct GifIO {}
 
 impl CAIReader for GifIO {
@@ -56,24 +59,28 @@ impl CAIReader for GifIO {
         // The XMP magic trailer is exactly 257 bytes. A block shorter than that
         // cannot carry a valid trailer; reject it rather than underflowing the
         // usize subtraction below (panic in debug, wrap-to-MAX in release).
-        if bytes.len() < 257 {
+        if bytes.len() < XMP_MAGIC_TRAILER_LEN {
             return None;
         }
 
         // TODO: this should be validated on construction
-        // Validate the 258-byte XMP magic trailer (excluding terminator).
-        if let Some(byte) = bytes.get(bytes.len() - 257) {
+        if let Some(byte) = bytes.get(bytes.len() - XMP_MAGIC_TRAILER_LEN) {
             if *byte != 1 {
                 return None;
             }
         }
-        for (i, byte) in bytes.iter().rev().take(256).enumerate() {
+        for (i, byte) in bytes
+            .iter()
+            .rev()
+            .take(XMP_MAGIC_TRAILER_LEN - 1)
+            .enumerate()
+        {
             if *byte != i as u8 {
                 return None;
             }
         }
 
-        bytes.truncate(bytes.len() - 257);
+        bytes.truncate(bytes.len() - XMP_MAGIC_TRAILER_LEN);
         String::from_utf8(bytes).ok()
     }
 }
@@ -910,7 +917,7 @@ impl ApplicationExtension {
 
     fn new_xmp(mut bytes: Vec<u8>) -> Result<ApplicationExtension> {
         // Add XMP magic trailer.
-        bytes.reserve(257);
+        bytes.reserve(XMP_MAGIC_TRAILER_LEN);
         bytes.push(1);
         for byte in (0..=255).rev() {
             bytes.push(byte);
