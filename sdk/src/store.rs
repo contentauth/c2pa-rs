@@ -109,7 +109,7 @@ pub(crate) struct ManifestHashes {
 #[derive(Default)]
 pub(crate) struct StoreValidationInfo<'a> {
     pub redactions: Vec<String>, // list of redactions found in claim hierarchy
-    pub redactions_by_manifest: HashMap<String, Vec<(String, usize)>>, // Parsed index of `redactions` keyed by the manifest label each redaction targets.
+    pub redactions_by_manifest: HashMap<String, Vec<(String, usize)>>, // parsed index of `redactions` keyed by the manifest label each redaction targets.
     pub ingredient_references: HashMap<String, HashSet<String>>, // mapping in ingredients to list of claims that reference it
     pub manifest_map: HashMap<String, &'a Claim>, // list of the addressable items in ingredient, saves re-parsing the items during validation
     pub binding_claim: String,                    // name of the claim that has the hash binding
@@ -4022,17 +4022,30 @@ impl Store {
 
         claim_label_path.push(claim_label);
 
-        // add in current redactions and populate the parsed index for lookupin lockstep.
+        // Add in current redactions and populate the parsed index in lockstep.
         if let Some(c_redactions) = claim.redactions() {
+            // Creates // parsed index of `redactions` keyed by
+            // the manifest label each redaction targets.
             for r in c_redactions {
+                let Some(manifest_label) = jumbf::labels::manifest_label_from_uri(r) else {
+                    log_item!(
+                        r.clone(),
+                        "redaction URI missing manifest label",
+                        "get_claim_referenced_manifests"
+                    )
+                    .validation_status(validation_status::ASSERTION_NOT_REDACTED)
+                    .failure_no_throw(
+                        validation_log,
+                        Error::OtherError("redaction URI malformed".into()),
+                    );
+                    continue;
+                };
                 svi.redactions.push(r.clone());
-                if let Some(manifest_label) = jumbf::labels::manifest_label_from_uri(r) {
-                    let (assertion_label, instance) = Claim::assertion_label_from_link(r);
-                    svi.redactions_by_manifest
-                        .entry(manifest_label)
-                        .or_default()
-                        .push((assertion_label, instance));
-                }
+                let (assertion_label, instance) = Claim::assertion_label_from_link(r);
+                svi.redactions_by_manifest
+                    .entry(manifest_label)
+                    .or_default()
+                    .push((assertion_label, instance));
             }
         }
 
@@ -4192,13 +4205,12 @@ impl Store {
                     }
                 }
 
-                let combined_redactions = HashSet::<_>::from_iter(
-                    vec![claim_redactions.clone(), svi.redactions.clone()]
-                        .into_iter()
-                        .flatten(),
-                )
-                .into_iter()
-                .collect::<Vec<String>>();
+                // Deduplicated in `manifest_differs_by_redaction`
+                let combined_redactions: Vec<String> = claim_redactions
+                    .iter()
+                    .chain(svi.redactions.iter())
+                    .cloned()
+                    .collect();
 
                 // do any of the conflicting manifests contain redactions
                 for conflict_label in potential_conflicts {
@@ -4225,7 +4237,7 @@ impl Store {
                                 to_remove_from_incoming.push(conflict_label.clone());
                             } else if claim_redactions.is_empty() && !svi.redactions.is_empty() {
                                 // if redactions were only from the incoming ingredient replace claim
-                                // noting to do here since the incoming claim will just overwrite the current claim
+                                // nothing to do here since the incoming claim will just overwrite the current claim
                                 continue;
                             } else {
                                 to_both.append(&mut differences);
