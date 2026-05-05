@@ -47,16 +47,24 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Cache codspeed build
+      - name: Check codspeed build cache
         id: cache-codspeed-build
         uses: actions/cache@v5
         with:
           path: target/codspeed/
           key: codspeed-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          lookup-only: true
 
       - name: Build all benchmark targets
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
         run: cargo codspeed build -m $BUILD_MODE -p c2pa --no-default-features --features rust_native_crypto
+
+      - name: Save codspeed build cache
+        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: target/codspeed/
+          key: codspeed-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
 
   download-fixtures:
     name: Download bench fixtures
@@ -91,20 +99,28 @@ jobs:
           ETAG=$(aws s3api head-object --bucket ${{ env.S3_BUCKET }} --key bench-fixtures.tar.zst --query ETag --output text)
           echo "etag=$ETAG" >> $GITHUB_OUTPUT
 
-      - name: Cache bench fixtures
+      - name: Check fixture cache
         id: cache-fixtures
         uses: actions/cache@v5
         with:
           path: sdk/benches/fixtures
           key: bench-fixtures-${{ steps.s3-etag.outputs.etag }}
+          lookup-only: true
 
-      - name: Download and extract bench fixtures from S3
+      - name: Download bench fixtures from S3
         if: steps.cache-fixtures.outputs.cache-hit != 'true'
         run: |
           aws s3 cp s3://${{ env.S3_BUCKET }}/bench-fixtures.tar.zst bench-fixtures.tar.zst
           mkdir -p sdk/benches/fixtures
           tar --zstd -xf bench-fixtures.tar.zst -C sdk/benches/fixtures
           rm bench-fixtures.tar.zst
+
+      - name: Save fixture cache
+        if: steps.cache-fixtures.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: sdk/benches/fixtures
+          key: bench-fixtures-${{ steps.s3-etag.outputs.etag }}
 
   benchmarks:
     name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }})
