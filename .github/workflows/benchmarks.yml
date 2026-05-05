@@ -10,16 +10,13 @@ on:
       - reopened
       - synchronize
       - labeled
-    paths:
-      - "**/*.rs"
-      - "**/*.toml"
 
 env:
   S3_BUCKET: adobe-cai-open-source-c2pa-sdk-test-assets-prod
 
 jobs:
-  build:
-    name: Build benchmarks
+  benchmarks:
+    name: Benchmark (${{ matrix.name }})
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -31,53 +28,24 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
-
-      - name: Install cargo-codspeed
-        run: cargo binstall --no-confirm cargo-codspeed
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Cache codspeed build
-        id: cache-codspeed-build
-        uses: actions/cache@v5
-        with:
-          path: target/codspeed/
-          key: codspeed-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
-
-      - name: Build all benchmark targets
-        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
-        run: cargo codspeed build -m simulation,memory -p c2pa --no-default-features --features rust_native_crypto
-
-  run:
-    name: Benchmark (${{ matrix.name }})
-    needs: build
-
-    runs-on: ubuntu-latest
-
     strategy:
       matrix:
         include:
-          - name: sign (simulation)
-            mode: simulation
+          - name: sign <simulation>
+            build_mode: simulation
+            build_flags: --bench sign
             run: cargo codspeed run --bench sign
-          - name: read (simulation)
-            mode: simulation
+          - name: read <simulation>
+            build_mode: simulation
+            build_flags: --bench read
             run: cargo codspeed run --bench read
-          - name: complex (simulation,memory)
-            mode: simulation,memory
+          - name: complex <simulation,memory>
+            build_mode: simulation,memory
+            build_flags: --bench complex
             run: cargo codspeed run --bench complex
-          - name: read+sign jpeg (memory)
-            mode: memory
+          - name: read+sign jpeg <memory>
+            build_mode: memory
+            build_flags: --bench read --bench sign
             run: cargo codspeed run --bench read --bench sign -- "jpeg/small"
 
     permissions:
@@ -94,21 +62,21 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
 
       - name: Install cargo-codspeed
         run: cargo binstall --no-confirm cargo-codspeed
 
-      - name: Restore codspeed build
-        uses: actions/cache/restore@v5
-        with:
-          path: target/codspeed/
-          key: codspeed-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
-          fail-on-cache-miss: true
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
 
-      - name: Set binary permissions
-        run: chmod +x target/codspeed/analysis/c2pa/*
+      - name: Build benchmark targets
+        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
+        run: cargo codspeed build -m ${{ matrix.build_mode }} ${{ matrix.build_flags }} -p c2pa --no-default-features --features rust_native_crypto
 
       - name: Get fixture ETag from S3
         id: s3-etag
@@ -134,6 +102,6 @@ jobs:
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4
         with:
-          mode: ${{ matrix.mode }}
+          mode: ${{ matrix.build_mode }}
           run: ${{ matrix.run }}
           token: ${{ secrets.CODSPEED_TOKEN }}
