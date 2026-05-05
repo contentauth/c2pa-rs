@@ -58,12 +58,6 @@ jobs:
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
         run: cargo codspeed build -m simulation,memory -p c2pa --no-default-features --features rust_native_crypto
 
-      - name: Upload benchmark binaries
-        uses: actions/upload-artifact@v7
-        with:
-          name: bench-binaries
-          path: target/codspeed/
-
   run:
     name: Benchmark (${{ matrix.name }})
     needs: build
@@ -106,14 +100,15 @@ jobs:
       - name: Install cargo-codspeed
         run: cargo binstall --no-confirm cargo-codspeed
 
-      - name: Download benchmark binaries
-        uses: actions/download-artifact@v8
+      - name: Restore codspeed build
+        uses: actions/cache/restore@v5
         with:
-          name: bench-binaries
           path: target/codspeed/
+          key: codspeed-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          fail-on-cache-miss: true
 
       - name: Set binary permissions
-        run: chmod +x target/codspeed/*
+        run: chmod +x target/codspeed/analysis/c2pa/*
 
       - name: Get fixture ETag from S3
         id: s3-etag
