@@ -33,20 +33,17 @@ jobs:
         include:
           - name: sign <simulation>
             build_mode: simulation
-            build_flags: --bench sign
-            run: cargo codspeed run --bench sign
+            benches: --bench sign
           - name: read <simulation>
             build_mode: simulation
-            build_flags: --bench read
-            run: cargo codspeed run --bench read
+            benches: --bench read
           - name: complex <simulation,memory>
             build_mode: simulation,memory
-            build_flags: --bench complex
-            run: cargo codspeed run --bench complex
+            benches: --bench complex
           - name: read+sign jpeg <memory>
             build_mode: memory
-            build_flags: --bench read --bench sign
-            run: cargo codspeed run --bench read --bench sign -- "jpeg/small"
+            benches: --bench read --bench sign
+            run_args: -- "jpeg/small"
 
     permissions:
       id-token: write
@@ -76,7 +73,7 @@ jobs:
 
       - name: Build benchmark targets
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
-        run: cargo codspeed build -m ${{ matrix.build_mode }} ${{ matrix.build_flags }} -p c2pa --no-default-features --features rust_native_crypto
+        run: cargo codspeed build -m ${{ matrix.build_mode }} ${{ matrix.benches }} -p c2pa --no-default-features --features rust_native_crypto
 
       - name: Get fixture ETag from S3
         id: s3-etag
@@ -103,5 +100,5 @@ jobs:
         uses: CodSpeedHQ/action@v4
         with:
           mode: ${{ matrix.build_mode }}
-          run: ${{ matrix.run }}
+          run: cargo codspeed run ${{ matrix.benches }} ${{ matrix.run_args }}
           token: ${{ secrets.CODSPEED_TOKEN }}
