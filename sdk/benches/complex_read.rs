@@ -70,6 +70,16 @@ fn large_json_assertion(c: &mut Criterion) {
     });
 }
 
+fn binary_ingredient_tree(c: &mut Criterion) {
+    let signed = load_signed("binary-ingredient-tree", "svg");
+    c.bench_function("binary-ingredient-tree/read", |b| {
+        b.iter(|| {
+            let mut stream = Cursor::new(&signed);
+            Reader::default().with_stream("svg", &mut stream)
+        })
+    });
+}
+
 criterion_group!(
     benches,
     wide_assertions,
@@ -78,5 +88,6 @@ criterion_group!(
     update_manifests,
     large_cbor_assertion,
     large_json_assertion,
+    binary_ingredient_tree,
 );
 criterion_main!(benches);
