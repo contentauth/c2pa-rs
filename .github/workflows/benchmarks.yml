@@ -9,9 +9,13 @@ on:
       - "**/*.rs"
       - "**/*.toml"
 
+env:
+  CODSPEED_MODE: simulation,memory
+  S3_BUCKET: adobe-cai-open-source-c2pa-sdk-test-assets-prod
+
 jobs:
-  benchmarks:
-    name: Run benchmarks
+  build:
+    name: Build benchmarks
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -22,8 +26,40 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    env:
-      CODSPEED_MODE: simulation,memory
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install cargo-codspeed
+        run: cargo binstall --no-confirm cargo-codspeed
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build all benchmark targets
+        run: cargo codspeed build -m $CODSPEED_MODE -p c2pa --no-default-features --features rust_native_crypto
+
+      - name: Upload benchmark binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-binaries
+          path: target/codspeed/
+
+  run:
+    name: Benchmark (${{ matrix.bench }})
+    needs: build
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        bench: [sign, read, complex]
 
     permissions:
       id-token: write
@@ -39,22 +75,22 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
 
       - name: Install cargo-codspeed
         run: cargo binstall --no-confirm cargo-codspeed
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Download benchmark binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-binaries
+          path: target/codspeed/
 
       - name: Get fixture ETag from S3
         id: s3-etag
         run: |
-          ETAG=$(aws s3api head-object --bucket adobe-cai-open-source-c2pa-sdk-test-assets-prod --key bench-fixtures.tar.gz --query ETag --output text)
+          ETAG=$(aws s3api head-object --bucket ${{ env.S3_BUCKET }} --key bench-fixtures.tar.gz --query ETag --output text)
           echo "etag=$ETAG" >> $GITHUB_OUTPUT
 
       - name: Cache bench fixtures
@@ -67,17 +103,14 @@ jobs:
       - name: Download and extract bench fixtures from S3
         if: steps.cache-fixtures.outputs.cache-hit != 'true'
         run: |
-          aws s3 cp s3://adobe-cai-open-source-c2pa-sdk-test-assets-prod/bench-fixtures.tar.gz bench-fixtures.tar.gz
+          aws s3 cp s3://${{ env.S3_BUCKET }}/bench-fixtures.tar.gz bench-fixtures.tar.gz
           mkdir -p sdk/benches/fixtures
           tar -xzf bench-fixtures.tar.gz -C sdk/benches/fixtures
           rm bench-fixtures.tar.gz
-
-      - name: Build the benchmark target(s)
-        run: cargo codspeed build -m $CODSPEED_MODE -p c2pa --no-default-features --features rust_native_crypto
 
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4
         with:
           mode: ${{ env.CODSPEED_MODE }}
-          run: cargo codspeed run
+          run: cargo codspeed run --bench ${{ matrix.bench }}
           token: ${{ secrets.CODSPEED_TOKEN }}
