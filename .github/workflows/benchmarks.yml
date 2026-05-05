@@ -15,8 +15,8 @@ env:
   S3_BUCKET: adobe-cai-open-source-c2pa-sdk-test-assets-prod
 
 jobs:
-  benchmarks:
-    name: Benchmark (${{ matrix.name }})
+  build:
+    name: Build benchmarks
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -25,6 +25,42 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
       contains(github.event.pull_request.labels.*.name, 'check-release') ||
       contains(github.event.pull_request.labels.*.name, 'benchmark')
+
+    runs-on: ubuntu-latest
+
+    env:
+      BUILD_MODE: simulation,memory
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install cargo-codspeed
+        run: cargo binstall --no-confirm cargo-codspeed
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cache codspeed build
+        id: cache-codspeed-build
+        uses: actions/cache@v5
+        with:
+          path: target/codspeed/
+          key: codspeed-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+
+      - name: Build all benchmark targets
+        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
+        run: cargo codspeed build -m $BUILD_MODE -p c2pa --no-default-features --features rust_native_crypto
+
+  benchmarks:
+    name: Benchmark (${{ matrix.name }})
+    needs: build
 
     runs-on: ubuntu-latest
 
@@ -40,10 +76,10 @@ jobs:
           - name: complex <simulation,memory>
             build_mode: simulation,memory
             benches: --bench complex
-          - name: read+sign jpeg <memory>
-            build_mode: memory
-            benches: --bench read --bench sign
-            run_args: -- "jpeg/small"
+          # - name: read+sign jpeg <memory>
+          #   build_mode: memory
+          #   benches: --bench read --bench sign
+          #   run_args: -- "jpeg/small"
 
     permissions:
       id-token: write
@@ -59,21 +95,21 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
 
       - name: Install cargo-codspeed
         run: cargo binstall --no-confirm cargo-codspeed
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+      - name: Restore codspeed build
+        uses: actions/cache/restore@v5
+        with:
+          path: target/codspeed/
+          key: codspeed-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          fail-on-cache-miss: true
 
-      - name: Build benchmark targets
-        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
-        run: cargo codspeed build -m ${{ matrix.build_mode }} ${{ matrix.benches }} -p c2pa --no-default-features --features rust_native_crypto
+      - name: Set binary permissions
+        run: chmod +x target/codspeed/analysis/c2pa/*
 
       - name: Get fixture ETag from S3
         id: s3-etag
