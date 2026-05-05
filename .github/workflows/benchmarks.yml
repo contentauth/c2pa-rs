@@ -65,21 +65,18 @@ jobs:
     strategy:
       matrix:
         include:
-          - name: sign
+          - name: sign (simulation)
             mode: simulation
             run: cargo codspeed run --bench sign
-          - name: read
+          - name: read (simulation)
             mode: simulation
             run: cargo codspeed run --bench read
-          - name: complex
+          - name: complex (simulation,memory)
             mode: simulation,memory
             run: cargo codspeed run --bench complex
-          - name: read (memory)
+          - name: read+sign jpeg (memory)
             mode: memory
-            run: cargo codspeed run --bench read -- "read jpeg/small"
-          - name: sign (memory)
-            mode: memory
-            run: cargo codspeed run --bench sign -- "sign jpeg/small"
+            run: cargo codspeed run --bench read --bench sign -- "jpeg/small"
 
     permissions:
       id-token: write
@@ -106,6 +103,9 @@ jobs:
         with:
           name: bench-binaries
           path: target/codspeed/
+
+      - name: Set binary permissions
+        run: chmod +x target/codspeed/*
 
       - name: Get fixture ETag from S3
         id: s3-etag
