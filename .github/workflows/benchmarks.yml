@@ -75,7 +75,7 @@ jobs:
             benches: --bench read
           - name: complex <simulation,memory>
             build_mode: simulation,memory
-            benches: --bench complex
+            benches: --bench complex_read
           # - name: read+sign jpeg <memory>
           #   build_mode: memory
           #   benches: --bench read --bench sign
@@ -114,7 +114,7 @@ jobs:
       - name: Get fixture ETag from S3
         id: s3-etag
         run: |
-          ETAG=$(aws s3api head-object --bucket ${{ env.S3_BUCKET }} --key bench-fixtures.tar.gz --query ETag --output text)
+          ETAG=$(aws s3api head-object --bucket ${{ env.S3_BUCKET }} --key bench-fixtures.tar.zst --query ETag --output text)
           echo "etag=$ETAG" >> $GITHUB_OUTPUT
 
       - name: Cache bench fixtures
@@ -127,10 +127,10 @@ jobs:
       - name: Download and extract bench fixtures from S3
         if: steps.cache-fixtures.outputs.cache-hit != 'true'
         run: |
-          aws s3 cp s3://${{ env.S3_BUCKET }}/bench-fixtures.tar.gz bench-fixtures.tar.gz
+          aws s3 cp s3://${{ env.S3_BUCKET }}/bench-fixtures.tar.zst bench-fixtures.tar.zst
           mkdir -p sdk/benches/fixtures
-          tar -xzf bench-fixtures.tar.gz -C sdk/benches/fixtures
-          rm bench-fixtures.tar.gz
+          tar --zstd -xf bench-fixtures.tar.zst -C sdk/benches/fixtures
+          rm bench-fixtures.tar.zst
 
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4

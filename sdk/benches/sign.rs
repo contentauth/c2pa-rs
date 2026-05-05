@@ -11,8 +11,7 @@ const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
 const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
 const MANIFEST_JSON: &str = include_str!("../tests/fixtures/simple_manifest.json");
 
-// const SIZES: &[&str] = &["small", "medium", "large"];
-const SIZES: &[&str] = &["small"];
+const SIZES: &[&str] = &["small", "medium", "large"];
 
 fn create_signer() -> CallbackSigner {
     let ed_signer =

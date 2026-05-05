@@ -322,6 +322,6 @@ name = "read"
 harness = false
 
 [[bench]]
-name = "complex"
+name = "complex_read"
 harness = false
 
