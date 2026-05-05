@@ -58,28 +58,72 @@ jobs:
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
         run: cargo codspeed build -m $BUILD_MODE -p c2pa --no-default-features --features rust_native_crypto
 
+  download-fixtures:
+    name: Download bench fixtures
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+      contains(github.event.pull_request.labels.*.name, 'check-release') ||
+      contains(github.event.pull_request.labels.*.name, 'benchmark')
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    outputs:
+      fixtures-cache-key: ${{ steps.s3-etag.outputs.etag }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Get fixture ETag from S3
+        id: s3-etag
+        run: |
+          ETAG=$(aws s3api head-object --bucket ${{ env.S3_BUCKET }} --key bench-fixtures.tar.zst --query ETag --output text)
+          echo "etag=$ETAG" >> $GITHUB_OUTPUT
+
+      - name: Cache bench fixtures
+        id: cache-fixtures
+        uses: actions/cache@v5
+        with:
+          path: sdk/benches/fixtures
+          key: bench-fixtures-${{ steps.s3-etag.outputs.etag }}
+
+      - name: Download and extract bench fixtures from S3
+        if: steps.cache-fixtures.outputs.cache-hit != 'true'
+        run: |
+          aws s3 cp s3://${{ env.S3_BUCKET }}/bench-fixtures.tar.zst bench-fixtures.tar.zst
+          mkdir -p sdk/benches/fixtures
+          tar --zstd -xf bench-fixtures.tar.zst -C sdk/benches/fixtures
+          rm bench-fixtures.tar.zst
+
   benchmarks:
-    name: Benchmark (${{ matrix.name }})
-    needs: build
+    name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }})
+    needs: [build, download-fixtures]
 
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
+        bench: [sign, read]
+        format: [jpeg, png, gif, tiff, svg, mp3, mp4, wav]
         include:
-          - name: sign <simulation>
-            build_mode: simulation
-            benches: --bench sign
-          - name: read <simulation>
-            build_mode: simulation
-            benches: --bench read
-          - name: complex <simulation,memory>
+          - bench: complex_read
+            format: ""
             build_mode: simulation,memory
-            benches: --bench complex_read
-          # - name: read+sign jpeg <memory>
+          # - bench: read
+          #   format: jpeg
           #   build_mode: memory
-          #   benches: --bench read --bench sign
-          #   run_args: -- "jpeg/small"
+          #   (read+sign jpeg/small - broken: 0 memtrack events with filter)
 
     permissions:
       id-token: write
@@ -111,30 +155,16 @@ jobs:
       - name: Set binary permissions
         run: chmod +x target/codspeed/analysis/c2pa/*
 
-      - name: Get fixture ETag from S3
-        id: s3-etag
-        run: |
-          ETAG=$(aws s3api head-object --bucket ${{ env.S3_BUCKET }} --key bench-fixtures.tar.zst --query ETag --output text)
-          echo "etag=$ETAG" >> $GITHUB_OUTPUT
-
-      - name: Cache bench fixtures
-        id: cache-fixtures
-        uses: actions/cache@v5
+      - name: Restore bench fixtures
+        uses: actions/cache/restore@v5
         with:
           path: sdk/benches/fixtures
-          key: bench-fixtures-${{ steps.s3-etag.outputs.etag }}
-
-      - name: Download and extract bench fixtures from S3
-        if: steps.cache-fixtures.outputs.cache-hit != 'true'
-        run: |
-          aws s3 cp s3://${{ env.S3_BUCKET }}/bench-fixtures.tar.zst bench-fixtures.tar.zst
-          mkdir -p sdk/benches/fixtures
-          tar --zstd -xf bench-fixtures.tar.zst -C sdk/benches/fixtures
-          rm bench-fixtures.tar.zst
+          key: bench-fixtures-${{ needs.download-fixtures.outputs.fixtures-cache-key }}
+          fail-on-cache-miss: true
 
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4
         with:
-          mode: ${{ matrix.build_mode }}
-          run: cargo codspeed run ${{ matrix.benches }} ${{ matrix.run_args }}
+          mode: ${{ matrix.build_mode || 'simulation' }}
+          run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}"', matrix.bench, matrix.format) || '' }}
           token: ${{ secrets.CODSPEED_TOKEN }}
