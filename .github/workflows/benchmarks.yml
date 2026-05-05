@@ -5,6 +5,11 @@ on:
   pull_request:
     branches:
       - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
     paths:
       - "**/*.rs"
       - "**/*.toml"
@@ -21,7 +26,8 @@ jobs:
       github.event.pull_request.author_association == 'MEMBER' ||
       github.event.pull_request.user.login == 'dependabot[bot]' ||
       contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+      contains(github.event.pull_request.labels.*.name, 'check-release') ||
+      contains(github.event.pull_request.labels.*.name, 'benchmark')
 
     runs-on: ubuntu-latest
 
