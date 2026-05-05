@@ -10,7 +10,6 @@ on:
       - "**/*.toml"
 
 env:
-  CODSPEED_MODE: simulation,memory
   S3_BUCKET: adobe-cai-open-source-c2pa-sdk-test-assets-prod
 
 jobs:
@@ -43,7 +42,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build all benchmark targets
-        run: cargo codspeed build -m $CODSPEED_MODE -p c2pa --no-default-features --features rust_native_crypto
+        run: cargo codspeed build -m simulation,memory -p c2pa --no-default-features --features rust_native_crypto
 
       - name: Upload benchmark binaries
         uses: actions/upload-artifact@v4
@@ -52,14 +51,29 @@ jobs:
           path: target/codspeed/
 
   run:
-    name: Benchmark (${{ matrix.bench }})
+    name: Benchmark (${{ matrix.name }})
     needs: build
 
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
-        bench: [sign, read, complex]
+        include:
+          - name: sign
+            mode: simulation
+            run: cargo codspeed run --bench sign
+          - name: read
+            mode: simulation
+            run: cargo codspeed run --bench read
+          - name: complex
+            mode: simulation,memory
+            run: cargo codspeed run --bench complex
+          - name: read (memory)
+            mode: memory
+            run: cargo codspeed run --bench read -- "read jpeg/small"
+          - name: sign (memory)
+            mode: memory
+            run: cargo codspeed run --bench sign -- "sign jpeg/small"
 
     permissions:
       id-token: write
@@ -111,6 +125,6 @@ jobs:
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4
         with:
-          mode: ${{ env.CODSPEED_MODE }}
-          run: cargo codspeed run --bench ${{ matrix.bench }}
+          mode: ${{ matrix.mode }}
+          run: ${{ matrix.run }}
           token: ${{ secrets.CODSPEED_TOKEN }}
