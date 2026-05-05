@@ -123,7 +123,7 @@ jobs:
           key: bench-fixtures-${{ steps.s3-etag.outputs.etag }}
 
   benchmarks:
-    name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }})
+    name: Benchmark (${{ matrix.bench }})
     needs: [build, download-fixtures]
 
     runs-on: ubuntu-latest
@@ -131,15 +131,10 @@ jobs:
     strategy:
       matrix:
         bench: [sign, read]
-        format: [jpeg, png, gif, tiff, svg, mp3, mp4, wav]
         include:
           - bench: complex_read
-            format: ""
             build_mode: simulation,memory
-          # - bench: read
-          #   format: jpeg
-          #   build_mode: memory
-          #   (read+sign jpeg/small - broken: 0 memtrack events with filter)
+          # - bench: read+sign jpeg <memory>
 
     permissions:
       id-token: write
@@ -182,5 +177,5 @@ jobs:
         uses: CodSpeedHQ/action@v4
         with:
           mode: ${{ matrix.build_mode || 'simulation' }}
-          run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}"', matrix.bench, matrix.format) || '' }}
+          run: cargo codspeed run --bench ${{ matrix.bench }}
           token: ${{ secrets.CODSPEED_TOKEN }}
