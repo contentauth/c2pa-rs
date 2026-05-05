@@ -127,7 +127,7 @@ jobs:
           key: bench-fixtures-${{ steps.s3-etag.outputs.etag }}
 
   benchmarks:
-    name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }})
+    name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }} <${{ matrix.build_mode || 'simulation' }}>)
     needs: [build, download-fixtures]
 
     runs-on: ubuntu-latest
@@ -139,7 +139,10 @@ jobs:
         include:
           - bench: complex_read
             format: ""
-            build_mode: simulation,memory
+            build_mode: simulation
+          - bench: complex_read
+            format: ""
+            build_mode: memory
           # - bench: read+sign jpeg <memory>
 
     permissions:
