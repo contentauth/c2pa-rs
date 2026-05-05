@@ -35,18 +35,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
-
-      - name: Install cargo-codspeed
-        run: cargo binstall --no-confirm cargo-codspeed
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
       - name: Check codspeed build cache
         id: cache-codspeed-build
         uses: actions/cache@v5
@@ -54,6 +42,22 @@ jobs:
           path: target/codspeed/
           key: codspeed-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
           lookup-only: true
+
+      - name: Install Rust toolchain
+        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-binstall
+        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install cargo-codspeed
+        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
+        run: cargo binstall --no-confirm cargo-codspeed
+
+      - name: Cache Rust dependencies
+        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@v2
 
       - name: Build all benchmark targets
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
