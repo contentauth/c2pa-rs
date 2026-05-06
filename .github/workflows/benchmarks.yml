@@ -155,9 +155,19 @@ jobs:
           key: bench-asset-${{ steps.s3-etag.outputs.etag }}
           fail-on-cache-miss: true
 
+      # Only run the full suite if the PR has the "benchmark" label or it's not a PR (such as for workflow_dispatch).
+      - name: Set size filter
+        id: size
+        run: |
+          if ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'benchmark') }}; then
+            echo "suffix=" >> $GITHUB_OUTPUT
+          else
+            echo "suffix=/small" >> $GITHUB_OUTPUT
+          fi
+
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4
         with:
           mode: ${{ matrix.build_mode || 'simulation' }}
-          run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}"', matrix.bench, matrix.format) || '' }}
+          run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}{2}"', matrix.bench, matrix.format, steps.size.outputs.suffix) || '' }}
           token: ${{ secrets.CODSPEED_TOKEN }}
