@@ -70,65 +70,9 @@ jobs:
           path: target/codspeed/
           key: codspeed-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
 
-  download-fixtures:
-    name: Download bench fixtures
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release') ||
-      contains(github.event.pull_request.labels.*.name, 'benchmark')
-
-    runs-on: ubuntu-latest
-
-    permissions:
-      id-token: write
-      contents: read
-
-    outputs:
-      fixtures-cache-key: ${{ steps.s3-etag.outputs.etag }}
-
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: us-east-1
-
-      - name: Get fixture ETag from S3
-        id: s3-etag
-        run: |
-          ETAG=$(aws s3api head-object --bucket ${{ env.S3_BUCKET }} --key bench-fixtures.tar.zst --query ETag --output text)
-          echo "etag=$ETAG" >> $GITHUB_OUTPUT
-
-      - name: Check fixture cache
-        id: cache-fixtures
-        uses: actions/cache@v5
-        with:
-          path: sdk/benches/fixtures
-          key: bench-fixtures-${{ steps.s3-etag.outputs.etag }}
-          lookup-only: true
-
-      - name: Download bench fixtures from S3
-        if: steps.cache-fixtures.outputs.cache-hit != 'true'
-        run: |
-          aws s3 cp s3://${{ env.S3_BUCKET }}/bench-fixtures.tar.zst bench-fixtures.tar.zst
-          mkdir -p sdk/benches/fixtures
-          tar --zstd -xf bench-fixtures.tar.zst -C sdk/benches/fixtures
-          rm bench-fixtures.tar.zst
-
-      - name: Save fixture cache
-        if: steps.cache-fixtures.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: sdk/benches/fixtures
-          key: bench-fixtures-${{ steps.s3-etag.outputs.etag }}
-
   benchmarks:
     name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }} <${{ matrix.build_mode || 'simulation' }}>)
-    needs: [build, download-fixtures]
+    needs: [build]
 
     runs-on: ubuntu-latest
 
@@ -175,11 +119,43 @@ jobs:
       - name: Set binary permissions
         run: chmod +x target/codspeed/analysis/c2pa/*
 
-      - name: Restore bench fixtures
+      - name: Get asset ETag from S3
+        id: s3-etag
+        run: |
+          KEY=bench/${{ matrix.bench }}${{ matrix.format && format('-{0}', matrix.format) || '' }}.tar.zst
+          ETAG=$(aws s3api head-object --bucket ${{ env.S3_BUCKET }} --key $KEY --query ETag --output text)
+          echo "etag=$ETAG" >> $GITHUB_OUTPUT
+          echo "key=$KEY" >> $GITHUB_OUTPUT
+
+      - name: Check asset cache
+        id: cache-assets
+        uses: actions/cache@v5
+        with:
+          path: sdk/benches/fixtures
+          key: bench-asset-${{ steps.s3-etag.outputs.etag }}
+          lookup-only: true
+
+      - name: Download bench assets from S3
+        if: steps.cache-assets.outputs.cache-hit != 'true'
+        run: |
+          aws s3 cp s3://${{ env.S3_BUCKET }}/${{ steps.s3-etag.outputs.key }} assets.tar.zst
+          mkdir -p sdk/benches/fixtures
+          tar --zstd -xf assets.tar.zst -C sdk/benches/fixtures
+          rm assets.tar.zst
+
+      - name: Save asset cache
+        if: steps.cache-assets.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: sdk/benches/fixtures
+          key: bench-asset-${{ steps.s3-etag.outputs.etag }}
+
+      - name: Restore asset cache
+        if: steps.cache-assets.outputs.cache-hit == 'true'
         uses: actions/cache/restore@v5
         with:
           path: sdk/benches/fixtures
-          key: bench-fixtures-${{ needs.download-fixtures.outputs.fixtures-cache-key }}
+          key: bench-asset-${{ steps.s3-etag.outputs.etag }}
           fail-on-cache-miss: true
 
       - name: Run the benchmarks
