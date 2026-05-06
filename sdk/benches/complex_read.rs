@@ -10,7 +10,9 @@ fn load_signed(label: &str, ext: &str) -> Option<Vec<u8>> {
 }
 
 fn wide_assertions(c: &mut Criterion) {
-    let Some(signed) = load_signed("wide-assertions", "c2pa") else { return };
+    let Some(signed) = load_signed("wide-assertions", "c2pa") else {
+        return;
+    };
     c.bench_function("wide-assertions/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
@@ -20,7 +22,9 @@ fn wide_assertions(c: &mut Criterion) {
 }
 
 fn wide_ingredients(c: &mut Criterion) {
-    let Some(signed) = load_signed("wide-ingredients", "c2pa") else { return };
+    let Some(signed) = load_signed("wide-ingredients", "c2pa") else {
+        return;
+    };
     c.bench_function("wide-ingredients/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
@@ -30,7 +34,9 @@ fn wide_ingredients(c: &mut Criterion) {
 }
 
 fn deep_ingredients(c: &mut Criterion) {
-    let Some(signed) = load_signed("deep-ingredients", "c2pa") else { return };
+    let Some(signed) = load_signed("deep-ingredients", "c2pa") else {
+        return;
+    };
     c.bench_function("deep-ingredients/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
@@ -40,7 +46,9 @@ fn deep_ingredients(c: &mut Criterion) {
 }
 
 fn update_manifests(c: &mut Criterion) {
-    let Some(signed) = load_signed("update-manifests", "c2pa") else { return };
+    let Some(signed) = load_signed("update-manifests", "c2pa") else {
+        return;
+    };
     c.bench_function("update-manifests/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
@@ -50,7 +58,9 @@ fn update_manifests(c: &mut Criterion) {
 }
 
 fn large_cbor_assertion(c: &mut Criterion) {
-    let Some(signed) = load_signed("large-cbor-assertion", "c2pa") else { return };
+    let Some(signed) = load_signed("large-cbor-assertion", "c2pa") else {
+        return;
+    };
     c.bench_function("large-cbor-assertion/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
@@ -60,7 +70,9 @@ fn large_cbor_assertion(c: &mut Criterion) {
 }
 
 fn large_json_assertion(c: &mut Criterion) {
-    let Some(signed) = load_signed("large-json-assertion", "c2pa") else { return };
+    let Some(signed) = load_signed("large-json-assertion", "c2pa") else {
+        return;
+    };
     c.bench_function("large-json-assertion/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
@@ -70,7 +82,9 @@ fn large_json_assertion(c: &mut Criterion) {
 }
 
 fn binary_ingredient_tree(c: &mut Criterion) {
-    let Some(signed) = load_signed("binary-ingredient-tree", "c2pa") else { return };
+    let Some(signed) = load_signed("binary-ingredient-tree", "c2pa") else {
+        return;
+    };
     c.bench_function("binary-ingredient-tree/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);

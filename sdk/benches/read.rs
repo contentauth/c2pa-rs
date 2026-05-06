@@ -14,7 +14,9 @@ fn load(label: &str, ext: &str) -> Option<Vec<u8>> {
 fn read_jpeg(c: &mut Criterion) {
     let mut group = c.benchmark_group("read jpeg");
     for label in SIZES {
-        let Some(data) = load(label, "jpg") else { continue };
+        let Some(data) = load(label, "jpg") else {
+            continue;
+        };
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
@@ -29,7 +31,9 @@ fn read_jpeg(c: &mut Criterion) {
 fn read_png(c: &mut Criterion) {
     let mut group = c.benchmark_group("read png");
     for label in SIZES {
-        let Some(data) = load(label, "png") else { continue };
+        let Some(data) = load(label, "png") else {
+            continue;
+        };
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
@@ -44,7 +48,9 @@ fn read_png(c: &mut Criterion) {
 fn read_gif(c: &mut Criterion) {
     let mut group = c.benchmark_group("read gif");
     for label in SIZES {
-        let Some(data) = load(label, "gif") else { continue };
+        let Some(data) = load(label, "gif") else {
+            continue;
+        };
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
@@ -59,7 +65,9 @@ fn read_gif(c: &mut Criterion) {
 fn read_tiff(c: &mut Criterion) {
     let mut group = c.benchmark_group("read tiff");
     for label in SIZES {
-        let Some(data) = load(label, "tiff") else { continue };
+        let Some(data) = load(label, "tiff") else {
+            continue;
+        };
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
@@ -75,7 +83,9 @@ fn read_svg(c: &mut Criterion) {
     let mut group = c.benchmark_group("read svg");
     // TODO: add back large SVG when optimized, CI takes ~2 hours otherwise
     for label in &["small", "medium"] {
-        let Some(data) = load(label, "svg") else { continue };
+        let Some(data) = load(label, "svg") else {
+            continue;
+        };
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
@@ -90,7 +100,9 @@ fn read_svg(c: &mut Criterion) {
 fn read_mp3(c: &mut Criterion) {
     let mut group = c.benchmark_group("read mp3");
     for label in SIZES {
-        let Some(data) = load(label, "mp3") else { continue };
+        let Some(data) = load(label, "mp3") else {
+            continue;
+        };
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
@@ -105,7 +117,9 @@ fn read_mp3(c: &mut Criterion) {
 fn read_mp4(c: &mut Criterion) {
     let mut group = c.benchmark_group("read mp4");
     for label in SIZES {
-        let Some(data) = load(label, "mp4") else { continue };
+        let Some(data) = load(label, "mp4") else {
+            continue;
+        };
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
@@ -120,7 +134,9 @@ fn read_mp4(c: &mut Criterion) {
 fn read_wav(c: &mut Criterion) {
     let mut group = c.benchmark_group("read wav");
     for label in SIZES {
-        let Some(data) = load(label, "wav") else { continue };
+        let Some(data) = load(label, "wav") else {
+            continue;
+        };
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(*label, &data, |b, data| {
             b.iter(|| {
