@@ -74,7 +74,8 @@ fn read_tiff(c: &mut Criterion) {
 
 fn read_svg(c: &mut Criterion) {
     let mut group = c.benchmark_group("read svg");
-    for label in SIZES {
+    // TODO: add back large SVG when optimized, CI takes ~2 hours otherwise
+    for label in &["small", "medium"] {
         let data = load(label, "svg");
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(*label, &data, |b, data| {

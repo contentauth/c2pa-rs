@@ -124,7 +124,8 @@ fn sign_svg(c: &mut Criterion) {
     let signer = create_signer();
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
-    for label in SIZES {
+    // TODO: add back large SVG when optimized, CI takes ~2 hours otherwise
+    for label in &["small", "medium"] {
         let data = load(label, "svg");
         group.throughput(Throughput::Bytes(data.len() as u64));
         group.bench_with_input(*label, &data, |b, data| {
