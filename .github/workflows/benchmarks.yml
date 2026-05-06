@@ -164,7 +164,7 @@ jobs:
           if ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'benchmark') }}; then
             echo "suffix=" >> $GITHUB_OUTPUT
           else
-            echo "suffix=/small" >> $GITHUB_OUTPUT
+            echo "suffix=::small" >> $GITHUB_OUTPUT
           fi
 
       - name: Run the benchmarks
