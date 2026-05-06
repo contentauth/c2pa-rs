@@ -83,8 +83,10 @@ jobs:
         include:
           - bench: complex_read
             format: ""
-            build_mode: simulation,memory
-          # - bench: read+sign jpeg <memory>
+            build_mode: simulation
+          - bench: complex_read
+            format: ""
+            build_mode: memory
 
     permissions:
       id-token: write
