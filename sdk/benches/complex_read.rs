@@ -11,71 +11,71 @@ fn load_signed(label: &str, ext: &str) -> Vec<u8> {
 }
 
 fn wide_assertions(c: &mut Criterion) {
-    let signed = load_signed("wide-assertions", "svg");
+    let signed = load_signed("wide-assertions", "c2pa");
     c.bench_function("wide-assertions/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
-            Reader::default().with_stream("svg", &mut stream)
+            Reader::default().with_stream("application/c2pa", &mut stream)
         })
     });
 }
 
 fn wide_ingredients(c: &mut Criterion) {
-    let signed = load_signed("wide-ingredients", "svg");
+    let signed = load_signed("wide-ingredients", "c2pa");
     c.bench_function("wide-ingredients/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
-            Reader::default().with_stream("svg", &mut stream)
+            Reader::default().with_stream("application/c2pa", &mut stream)
         })
     });
 }
 
 fn deep_ingredients(c: &mut Criterion) {
-    let signed = load_signed("deep-ingredients", "svg");
+    let signed = load_signed("deep-ingredients", "c2pa");
     c.bench_function("deep-ingredients/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
-            Reader::default().with_stream("svg", &mut stream)
+            Reader::default().with_stream("application/c2pa", &mut stream)
         })
     });
 }
 
 fn update_manifests(c: &mut Criterion) {
-    let signed = load_signed("update-manifests", "svg");
+    let signed = load_signed("update-manifests", "c2pa");
     c.bench_function("update-manifests/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
-            Reader::default().with_stream("svg", &mut stream)
+            Reader::default().with_stream("application/c2pa", &mut stream)
         })
     });
 }
 
 fn large_cbor_assertion(c: &mut Criterion) {
-    let signed = load_signed("large-cbor-assertion", "svg");
+    let signed = load_signed("large-cbor-assertion", "c2pa");
     c.bench_function("large-cbor-assertion/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
-            Reader::default().with_stream("svg", &mut stream)
+            Reader::default().with_stream("application/c2pa", &mut stream)
         })
     });
 }
 
 fn large_json_assertion(c: &mut Criterion) {
-    let signed = load_signed("large-json-assertion", "svg");
+    let signed = load_signed("large-json-assertion", "c2pa");
     c.bench_function("large-json-assertion/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
-            Reader::default().with_stream("svg", &mut stream)
+            Reader::default().with_stream("application/c2pa", &mut stream)
         })
     });
 }
 
 fn binary_ingredient_tree(c: &mut Criterion) {
-    let signed = load_signed("binary-ingredient-tree", "svg");
+    let signed = load_signed("binary-ingredient-tree", "c2pa");
     c.bench_function("binary-ingredient-tree/read", |b| {
         b.iter(|| {
             let mut stream = Cursor::new(&signed);
-            Reader::default().with_stream("svg", &mut stream)
+            Reader::default().with_stream("application/c2pa", &mut stream)
         })
     });
 }
