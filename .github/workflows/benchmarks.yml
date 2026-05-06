@@ -40,7 +40,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: target/codspeed/
-          key: codspeed-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
           lookup-only: true
 
       - name: Install Rust toolchain
@@ -68,7 +68,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: target/codspeed/
-          key: codspeed-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
 
   benchmarks:
     name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }} <${{ matrix.build_mode || 'simulation' }}>)
@@ -83,10 +83,7 @@ jobs:
         include:
           - bench: complex_read
             format: ""
-            build_mode: simulation
-          - bench: complex_read
-            format: ""
-            build_mode: memory
+            build_mode: simulation,memory
           # - bench: read+sign jpeg <memory>
 
     permissions:
@@ -113,7 +110,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: target/codspeed/
-          key: codspeed-build-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
           fail-on-cache-miss: true
 
       - name: Set binary permissions
