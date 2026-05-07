@@ -40,7 +40,7 @@
 //! [`SignerSettings::Remote`]: crate::settings::signer::SignerSettings::Remote
 
 use std::{
-    io::{self, Read},
+    io::{self, Cursor, Read},
     sync::Arc,
 };
 
@@ -199,6 +199,7 @@ impl SyncHttpResolver for SyncGenericResolver {
 /// [`RestrictedResolver`]: restricted::RestrictedResolver
 pub struct AsyncGenericResolver {
     inner: async_resolver::Impl,
+    max_response_body_size: Option<u64>,
 }
 
 impl AsyncGenericResolver {
@@ -211,6 +212,7 @@ impl AsyncGenericResolver {
     pub fn new() -> Self {
         Self {
             inner: async_resolver::new(),
+            max_response_body_size: None,
         }
     }
 
@@ -219,7 +221,24 @@ impl AsyncGenericResolver {
     ///
     /// For more information, see [`AsyncGenericResolver::new`].
     pub fn with_redirects() -> Option<Self> {
-        async_resolver::with_redirects().map(|inner| Self { inner })
+        async_resolver::with_redirects().map(|inner| Self {
+            inner,
+            max_response_body_size: None,
+        })
+    }
+
+    /// Set the maximum number of bytes accepted from an HTTP response body.
+    ///
+    /// When set, [`http_resolve_async`] checks the `Content-Length` response header before
+    /// returning the response. If the advertised size exceeds `limit`, it returns
+    /// [`HttpResolverError::ResponseTooLarge`] immediately, without reading the body.
+    ///
+    /// This is an opt-in guard; the default is no limit (`None`).
+    ///
+    /// [`http_resolve_async`]: AsyncHttpResolver::http_resolve_async
+    pub fn with_max_response_body_size(mut self, limit: u64) -> Self {
+        self.max_response_body_size = Some(limit);
+        self
     }
 }
 
@@ -236,7 +255,36 @@ impl AsyncHttpResolver for AsyncGenericResolver {
         &self,
         request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        self.inner.http_resolve_async(request).await
+        let response = self.inner.http_resolve_async(request).await?;
+
+        if let Some(limit) = self.max_response_body_size {
+            // Fast-fail if Content-Length exceeds the limit before reading body bytes.
+            let reported_len = response
+                .headers()
+                .get(http::header::CONTENT_LENGTH)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok());
+            if let Some(len) = reported_len {
+                if len > limit {
+                    return Err(HttpResolverError::ResponseTooLarge);
+                }
+            }
+
+            // Read the body with a hard cap so servers that omit or lie about
+            // Content-Length are also bounded.
+            let (parts, body) = response.into_parts();
+            let mut buf = Vec::new();
+            body.take(limit + 1).read_to_end(&mut buf)?;
+            if buf.len() as u64 > limit {
+                return Err(HttpResolverError::ResponseTooLarge);
+            }
+            return Ok(http::Response::from_parts(
+                parts,
+                Box::new(Cursor::new(buf)) as Box<dyn Read>,
+            ));
+        }
+
+        Ok(response)
     }
 }
 
@@ -273,6 +321,11 @@ pub enum HttpResolverError {
     /// [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
     #[error("remote URI \"{uri}\" is not permitted by the allowed list")]
     UriDisallowed { uri: String },
+
+    /// The `Content-Length` response header exceeded the limit set via
+    /// [`AsyncGenericResolver::with_max_response_body_size`].
+    #[error("response body exceeded maximum allowed size")]
+    ResponseTooLarge,
 
     /// An error occured from the underlying HTTP resolver.
     #[error("an error occurred from the underlying http resolver")]
