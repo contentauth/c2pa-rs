@@ -779,28 +779,23 @@ impl Settings {
     /// This overlays the parsed configuration on top of the current Settings
     /// instance without touching thread-local state.
     fn with_string(self, settings_str: &str, format: &str) -> Result<Self> {
-        let f = match format.to_lowercase().as_str() {
-            "json" => FileFormat::Json,
-            "toml" => FileFormat::Toml,
+        let overlay: serde_json::Value = match format.to_lowercase().as_str() {
+            "json" => serde_json::from_str(settings_str)
+                .map_err(|_| Error::BadParam("could not parse configuration".into()))?,
+            "toml" => {
+                let toml_value: toml::Value = toml::from_str(settings_str)
+                    .map_err(|_| Error::BadParam("could not parse configuration".into()))?;
+                serde_json::to_value(toml_value)
+                    .map_err(|_| Error::BadParam("could not parse configuration".into()))?
+            }
             _ => return Err(Error::UnsupportedType),
         };
 
-        // Convert current settings to Config
-        let current_config = Config::try_from(&self).map_err(|e| Error::OtherError(Box::new(e)))?;
+        let mut merged = serde_json::to_value(&self).map_err(|e| Error::OtherError(Box::new(e)))?;
+        merge_json(&mut merged, overlay);
 
-        // Parse new config and overlay it on current
-        let updated_config = Config::builder()
-            .add_source(current_config)
-            .add_source(config::File::from_str(settings_str, f))
-            .build()
-            .map_err(|_e| Error::BadParam("could not parse configuration".into()))?;
-
-        // Deserialize back to Settings
-        let settings = updated_config
-            .try_deserialize::<Settings>()
-            .map_err(|e| Error::BadParam(e.to_string()))?;
-
-        // Validate
+        let settings: Settings =
+            serde_json::from_value(merged).map_err(|e| Error::BadParam(e.to_string()))?;
         settings.validate()?;
 
         Ok(settings)
@@ -1011,6 +1006,20 @@ impl SettingsValidate for Settings {
         self.cawg_trust.validate()?;
         self.core.validate()?;
         self.builder.validate()
+    }
+}
+
+fn merge_json(target: &mut serde_json::Value, overlay: serde_json::Value) {
+    match (target, overlay) {
+        (serde_json::Value::Object(target_map), serde_json::Value::Object(overlay_map)) => {
+            for (key, overlay_value) in overlay_map {
+                merge_json(
+                    target_map.entry(key).or_insert(serde_json::Value::Null),
+                    overlay_value,
+                );
+            }
+        }
+        (target, overlay) => *target = overlay,
     }
 }
 
