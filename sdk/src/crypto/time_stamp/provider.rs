@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::sync::LazyLock;
-
 use async_trait::async_trait;
 use bcder::{encode::Values, OctetString};
 use rand::{thread_rng, Rng};
@@ -27,10 +25,6 @@ use crate::{
     http::SyncGenericResolver,
     maybe_send_sync::MaybeSync,
 };
-
-// Shared reusable TSA resolver
-static DEFAULT_TS_RESOLVER: LazyLock<SyncGenericResolver> =
-    LazyLock::new(|| SyncGenericResolver::with_redirects().unwrap_or_default());
 
 /// A `TimeStampProvider` implementation can contact a [RFC 3161] time stamp
 /// service and generate a corresponding time stamp for a specific piece of
@@ -74,7 +68,7 @@ pub trait TimeStampProvider {
                     headers,
                     &body,
                     message,
-                    &*DEFAULT_TS_RESOLVER,
+                    &SyncGenericResolver::with_redirects().unwrap_or_default(),
                 ));
             }
         }

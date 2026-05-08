@@ -17,10 +17,7 @@ use std::{
 };
 
 use image::{
-    codecs::{
-        jpeg::JpegEncoder,
-        png::{CompressionType, FilterType, PngEncoder},
-    },
+    codecs::png::{CompressionType, FilterType, PngEncoder},
     DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits,
 };
 
@@ -195,17 +192,14 @@ where
     let quality = settings.builder.thumbnail.quality;
     // TODO: investigate more formats
     match output_format {
-        ThumbnailFormat::Jpeg => match quality {
-            ThumbnailQuality::Low => {
-                image.write_with_encoder(JpegEncoder::new_with_quality(output, 38))?
-            }
-            ThumbnailQuality::Medium => {
-                image.write_with_encoder(JpegEncoder::new_with_quality(output, 75))?
-            }
-            ThumbnailQuality::High => {
-                image.write_with_encoder(JpegEncoder::new_with_quality(output, 100))?
-            }
-        },
+        ThumbnailFormat::Jpeg => {
+            let q = match quality {
+                ThumbnailQuality::Low => 38u8,
+                ThumbnailQuality::Medium => 75u8,
+                ThumbnailQuality::High => 100u8,
+            };
+            encode_jpeg_via_jpeg_encoder(&image, output, q)?;
+        }
         ThumbnailFormat::Png => match quality {
             ThumbnailQuality::Low => image.write_with_encoder(PngEncoder::new_with_quality(
                 output,
@@ -227,6 +221,57 @@ where
     }
 
     Ok(output_format)
+}
+
+/// Encode `image` as JPEG via the `jpeg-encoder` for light allocations
+fn encode_jpeg_via_jpeg_encoder<W: Write>(
+    image: &DynamicImage,
+    output: &mut W,
+    quality: u8,
+) -> Result<()> {
+    use jpeg_encoder::{ColorType, Encoder};
+
+    let (width, height) = (image.width() as u16, image.height() as u16);
+
+    // Borrow existing pixel buffer when possible...
+    let (color, raw): (ColorType, &[u8]);
+    let owned_rgb8;
+    let owned_rgba8;
+    match image {
+        DynamicImage::ImageRgb8(buf) => {
+            color = ColorType::Rgb;
+            raw = buf.as_raw();
+        }
+        DynamicImage::ImageRgba8(buf) => {
+            color = ColorType::Rgba;
+            raw = buf.as_raw();
+        }
+        DynamicImage::ImageLuma8(buf) => {
+            color = ColorType::Luma;
+            raw = buf.as_raw();
+        }
+        _ if image.color().has_alpha() => {
+            owned_rgba8 = image.to_rgba8();
+            color = ColorType::Rgba;
+            raw = owned_rgba8.as_raw();
+        }
+        _ => {
+            owned_rgb8 = image.to_rgb8();
+            color = ColorType::Rgb;
+            raw = owned_rgb8.as_raw();
+        }
+    }
+
+    let mut buf: Vec<u8> = Vec::new();
+    Encoder::new(&mut buf, quality)
+        .encode(raw, width, height, color)
+        .map_err(|e| {
+            Error::OtherError(Box::new(std::io::Error::other(format!(
+                "JPEG thumbnail encoding failed: {e}"
+            ))))
+        })?;
+    output.write_all(&buf)?;
+    Ok(())
 }
 
 #[cfg(test)]

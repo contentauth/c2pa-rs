@@ -29,7 +29,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["openssl", "default_http"]
-add_thumbnails = ["image"]
+add_thumbnails = ["image", "jpeg-encoder"]
 file_io = []
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
@@ -239,6 +239,7 @@ rsa = { version = "0.9.10", features = ["sha2"] }
 spki = "0.7.3"
 
 [target.'cfg(any(target_os = "wasi", not(target_arch = "wasm32")))'.dependencies]
+jpeg-encoder = { version = "0.6", default-features = false, optional = true }
 image = { version = "0.25.6", default-features = false, features = [
     # TODO: eventually define feature flags for the asset handlers and match them
     #       up here.
