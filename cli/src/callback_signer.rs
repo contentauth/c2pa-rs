@@ -127,7 +127,7 @@ impl CallbackSignerConfig {
 }
 
 #[cfg_attr(test, mockall::automock)]
-pub(crate) trait SignCallback {
+pub(crate) trait SignCallback: Send + Sync {
     /// Method which will be called with the `data` to be signed. Implementors
     /// should return the signed bytes as an [anyhow::Result].
     fn sign(&self, data: &[u8]) -> anyhow::Result<Vec<u8>>;

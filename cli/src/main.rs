@@ -29,9 +29,11 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
-    format_from_path, identity::validator::CawgValidator, settings::Settings, Builder,
-    ClaimGeneratorInfo, Context as C2paContext, Error, Ingredient, ManifestDefinition, Reader,
-    Signer,
+    format_from_path,
+    identity::{builder::IdentityAssertionSigner, validator::CawgValidator},
+    settings::Settings,
+    BoxedSigner, Builder, ClaimGeneratorInfo, Context as C2paContext, Error, Ingredient,
+    ManifestDefinition, Reader, Signer,
 };
 use clap::{Parser, Subcommand};
 use env_logger::Env;
@@ -154,6 +156,15 @@ struct CliArgs {
     #[clap(long)]
     signer_path: Option<PathBuf>,
 
+    /// Path to an executable that will sign the CAWG identity assertion bytes.
+    ///
+    /// The process receives bytes via stdin and must write the signature to stdout,
+    /// identical to `--signer-path`. The cert and algorithm are taken from
+    /// `cawg_x509_signer` in the settings file; if absent, the C2PA signer's
+    /// cert and algorithm are used.
+    #[clap(long)]
+    identity_signer_path: Option<PathBuf>,
+
     /// Reserved buffer size for `--signer-path` signing only.
     #[clap(long, default_value("20000"))]
     reserve_size: usize,
@@ -270,6 +281,30 @@ fn special_errs(e: c2pa::Error) -> anyhow::Error {
 }
 
 // Normalize extensions so we can compare them.
+/// Extract referenced_assertions and roles from a `cawg_x509_signer` settings value.
+/// Used when `--identity-signer-path` is provided so the same metadata can be applied
+/// to a callback-based identity signer.
+fn extract_cawg_metadata(
+    cawg_settings: Option<c2pa::settings::signer::SignerSettings>,
+) -> (Vec<String>, Vec<String>) {
+    match cawg_settings {
+        Some(c2pa::settings::signer::SignerSettings::Local {
+            referenced_assertions,
+            roles,
+            ..
+        })
+        | Some(c2pa::settings::signer::SignerSettings::Remote {
+            referenced_assertions,
+            roles,
+            ..
+        }) => (
+            referenced_assertions.unwrap_or_default(),
+            roles.unwrap_or_default(),
+        ),
+        _ => (vec![], vec![]),
+    }
+}
+
 fn ext_normal(path: &Path) -> String {
     let ext = path
         .extension()
@@ -939,25 +974,49 @@ fn main() -> Result<()> {
             builder.set_no_embed(true);
         }
 
-        let signer = if let Some(signer_process_name) = args.signer_path {
+        // Step 1: build the base C2PA signer.
+        let c2pa_signer: BoxedSigner = if let Some(signer_process_name) = args.signer_path {
             let cb_config = CallbackSignerConfig::new(&sign_config, args.reserve_size)?;
-
             let process_runner = Box::new(ExternalProcessRunner::new(
                 cb_config.clone(),
                 signer_process_name,
             ));
-            let signer = CallbackSigner::new(process_runner, cb_config);
-
-            Box::new(signer)
+            Box::new(CallbackSigner::new(process_runner, cb_config))
         } else if let Some(signer_cfg) = settings.signer.take() {
-            let c2pa_signer = signer_cfg.c2pa_signer()?;
-            if let Some(cawg_cfg) = settings.cawg_x509_signer.take() {
-                cawg_cfg.cawg_signer(c2pa_signer)?
-            } else {
-                c2pa_signer
-            }
+            signer_cfg.c2pa_signer()?
         } else {
             sign_config.signer()?
+        };
+
+        // Step 2: optionally wrap with a CAWG identity callback signer.
+        let signer: Box<dyn Signer> = if let Some(identity_path) = args.identity_signer_path {
+            // The identity signer uses the same cert/alg as the C2PA signer (from the
+            // manifest's sign_cert / alg fields). referenced_assertions and roles are
+            // pulled from cawg_x509_signer settings when present.
+            let identity_cb_config = CallbackSignerConfig::new(&sign_config, args.reserve_size)?;
+            let identity_runner = Box::new(ExternalProcessRunner::new(
+                identity_cb_config.clone(),
+                identity_path,
+            ));
+            let identity_signer: BoxedSigner =
+                Box::new(CallbackSigner::new(identity_runner, identity_cb_config));
+
+            let (referenced_assertions, roles) =
+                extract_cawg_metadata(settings.cawg_x509_signer.take());
+
+            let refs: Vec<&str> = referenced_assertions.iter().map(String::as_str).collect();
+            let roles_refs: Vec<&str> = roles.iter().map(String::as_str).collect();
+
+            Box::new(IdentityAssertionSigner::with_x509_identity(
+                c2pa_signer,
+                identity_signer,
+                &refs,
+                &roles_refs,
+            ))
+        } else if let Some(cawg_cfg) = settings.cawg_x509_signer.take() {
+            cawg_cfg.cawg_signer(c2pa_signer)?
+        } else {
+            c2pa_signer
         };
 
         if let Some(output) = args.output {

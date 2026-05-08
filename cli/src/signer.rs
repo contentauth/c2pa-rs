@@ -17,7 +17,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use c2pa::{create_signer, Signer, SigningAlg};
+use c2pa::{create_signer, BoxedSigner, SigningAlg};
 use serde::Deserialize;
 
 // Pull in default certs so the binary can self config
@@ -62,7 +62,7 @@ impl SignConfig {
         self
     }
 
-    pub fn signer(&self) -> Result<Box<dyn Signer>> {
+    pub fn signer(&self) -> Result<BoxedSigner> {
         let alg = self.alg.as_deref().unwrap_or("es256").to_lowercase();
         let alg: SigningAlg = alg.parse().map_err(|_| c2pa::Error::UnsupportedType)?;
         let tsa_url = self.ta_url.clone().or_else(get_ta_url);
