@@ -20,7 +20,7 @@ If you are using a signing algorithm other than the default `es256`, specify it 
 - `es512`
 - `ed25519`
 
-The specified algorithm must be compatible with the values of private key and signing certificate.  For more information, see [Signing manfiests](https://opensource.contentauthenticity.org/docs/signing-manifests).
+The specified algorithm must be compatible with the values of private key and signing certificate.  For more information, see [Signing manifests](https://opensource.contentauthenticity.org/docs/signing-manifests).
 
 To sign an asset using this technique, adapt the following command-line invocation:
 

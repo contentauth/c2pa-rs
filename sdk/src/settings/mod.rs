@@ -214,7 +214,9 @@ pub struct Core {
     /// [`MerkleMap::fixed_block_size`]: crate::assertions::MerkleMap::fixed_block_size
     /// [`BmffHash`]: crate::assertions::BmffHash
     pub merkle_tree_chunk_size_in_kb: Option<usize>,
-    /// Maximum number of proofs when validating or writing a [`BmffHash`] merkle tree.
+    /// Maximum number of proof hashes stored in UUID merkle boxes when  generating a [`BmffHash`] merkle tree.  This
+    /// determines the Merkle tree row stored in the manifest and thus the number of proof hashes that need to be
+    /// provided during validation. The value may be 0 to store just leaf node hashes (no UUID boxes are generated in this case).
     ///
     /// This option defaults to 5.
     ///
@@ -280,6 +282,15 @@ pub struct Core {
     /// When network requests occur depends on the operations being performed (reading manifests,
     /// validating credentials, timestamping, etc.).
     pub allowed_network_hosts: Option<Vec<HostPattern>>,
+    /// Whether to prefer compressing manifests. This can reduce the size of the manifest. Compressed manifest
+    /// are not always possible and will default back to uncompressed if the manifest contains features
+    /// that are not compatible with compression.
+    ///
+    ///  The default value is false.
+    ///
+    /// See more information in the spec here:
+    /// [Compressed manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_compressed_boxes)
+    pub prefer_compress_manifests: bool,
 }
 
 impl Default for Core {
@@ -290,6 +301,7 @@ impl Default for Core {
             backing_store_memory_threshold_in_mb: 512,
             decode_identity_assertions: true,
             allowed_network_hosts: None,
+            prefer_compress_manifests: false,
         }
     }
 }

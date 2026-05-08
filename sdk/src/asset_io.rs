@@ -223,7 +223,9 @@ pub trait AssetBoxHash {
     // Returns Vec containing all BoxMap level objects in the asset in the order
     // they occur in the asset.  The hashes do not need to be calculated, only the
     // name and the positional information.  The list should be flat with each BoxMap
-    // representing a single entry.
+    // representing a single entry.  If the C2PA manifest is not present we still
+    // as a placeholder BoxMap at the location in the Vec where it would appear in
+    // the final output when generating the file.
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>>;
 }
 

@@ -86,6 +86,9 @@ required-features = ["file_io"]
 [[example]]
 name = "progress"
 
+[[example]]
+name = "redaction"
+
 [lib]
 crate-type = ["lib"]
 
@@ -93,7 +96,7 @@ crate-type = ["lib"]
 asn1-rs = "0.7.1"
 async-generic = "1.1"
 async-trait = "0.1.78"
-atree = "=0.5.2"
+atree = "0.5.4"
 base64 = "0.22.1"
 bcder = "0.7.3"
 bytes = "1.11.1"
@@ -112,6 +115,7 @@ coset = "0.4.0"
 der = { version = "0.7.9", features = ["alloc"] }
 extfmt = "0.2.0"
 getrandom = { version = "0.3.4", default-features = false, features = ["std"] }
+glob = "0.3.1"
 ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
 ed25519-dalek = { version = "2.1.1", features = [
     "alloc",
@@ -199,7 +203,7 @@ reqwest = { version = "0.12.23", default-features = false, features = [
 ], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-openssl = { version = "0.10.72", features = ["vendored"], optional = true }
+openssl = { version = "0.10.78", features = ["vendored"], optional = true }
 ureq = { version = "3.1.0", default-features = false, features = [
     "rustls"
 ], optional = true }

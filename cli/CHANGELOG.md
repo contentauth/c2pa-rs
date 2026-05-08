@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.56](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.55...c2patool-v0.26.56)
+_04 May 2026_
+
+## [0.26.55](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.54...c2patool-v0.26.55)
+_01 May 2026_
+
+## [0.26.54](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.53...c2patool-v0.26.54)
+_01 May 2026_
+
+## [0.26.53](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.52...c2patool-v0.26.53)
+_29 April 2026_
+
+### Added
+
+* Add `init trust`, trust sidecars, and atomic sidecar writes, plus fixes ([#2093](https://github.com/contentauth/c2pa-rs/pull/2093))
+
+## [0.26.52](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.51...c2patool-v0.26.52)
+_28 April 2026_
+
+### Fixed
+
+* `c2pa-c-ffi` UB detected by miri ([#2089](https://github.com/contentauth/c2pa-rs/pull/2089))
+
+## [0.26.51](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.50...c2patool-v0.26.51)
+_27 April 2026_
+
+### Documented
+
+* Corrections and clean up ([#2057](https://github.com/contentauth/c2pa-rs/pull/2057))
+
+## [0.26.50](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.49...c2patool-v0.26.50)
+_16 April 2026_
+
+### Fixed
+
+* Multi rendition support ([#2058](https://github.com/contentauth/c2pa-rs/pull/2058))
+
+## [0.26.49](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.48...c2patool-v0.26.49)
+_15 April 2026_
+
+## [0.26.48](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.47...c2patool-v0.26.48)
+_14 April 2026_
+
 ## [0.26.47](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.46...c2patool-v0.26.47)
 _09 April 2026_
 
@@ -308,7 +351,7 @@ _26 August 2025_
 _15 August 2025_
 # Changelog
 
-All changes to C2PA Tool are documented in this file.  For additional information on versions 0.9.x and earlier, see the [Archived release motes](../docs/release-notes.md).
+All changes to C2PA Tool are documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html), except that – as is typical in the Rust community – the minimum supported Rust version may be increased without a major version increase.
 
