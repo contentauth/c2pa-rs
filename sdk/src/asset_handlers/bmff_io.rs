@@ -1296,12 +1296,12 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
         let header = match BoxHeaderLite::read(reader) {
             Ok(h) => h,
             Err(_) => {
-                // if we can't read a header, just return what we have so far since some files have trailing data after the last box 
+                // if we can't read a header, just return what we have so far since some files have trailing data after the last box
                 skip_bytes_to(reader, end)?;
-                break;    
+                break;
             }
         };
-            
+
         // Break if size zero BoxHeader
         let mut s = header.size;
         if s == 0 {
