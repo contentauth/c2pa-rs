@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::sync::LazyLock;
+
 use async_trait::async_trait;
 
 use crate::{
@@ -23,6 +25,10 @@ use crate::{
     maybe_send_sync::{MaybeSend, MaybeSync},
     Result,
 };
+
+// Shared reusable TSA resolver
+static DEFAULT_TS_RESOLVER: LazyLock<SyncGenericResolver> =
+    LazyLock::new(|| SyncGenericResolver::with_redirects().unwrap_or_default());
 
 // Type aliases for boxed trait objects with conditional Send + Sync bounds
 // These are the canonical definitions used throughout the codebase
@@ -97,7 +103,7 @@ pub trait Signer {
                         headers,
                         &body,
                         message,
-                        &SyncGenericResolver::with_redirects().unwrap_or_default(),
+                        &*DEFAULT_TS_RESOLVER,
                     )
                     .map_err(|e| e.into()),
                 );
