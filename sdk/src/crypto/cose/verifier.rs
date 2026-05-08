@@ -165,11 +165,19 @@ impl Verifier<'_> {
             .map(|attr| attr.to_string())
             .map_err(|_| CoseError::MissingSigningCertificateChain)?;
 
+        let common_name = sign_cert
+            .subject()
+            .iter_common_name()
+            .filter_map(|attr| attr.as_str().ok())
+            .next()
+            .map(|s| s.to_string());
+
         Ok(CertificateInfo {
             alg: Some(alg),
             date: tst_info.map(|t| t.gen_time.clone().into()),
             cert_serial_number: Some(sign_cert.serial.clone()),
             issuer_org: Some(subject),
+            common_name,
             validated: true,
             cert_chain: dump_cert_chain(&certs)?,
             revocation_status: Some(true),
