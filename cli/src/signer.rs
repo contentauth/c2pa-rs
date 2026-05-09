@@ -21,11 +21,45 @@ use c2pa::{create_signer, BoxedSigner, SigningAlg};
 use serde::Deserialize;
 
 // Pull in default certs so the binary can self config
-const DEFAULT_CERTS: &[u8] = include_bytes!("../sample/es256_certs.pem");
+pub const DEFAULT_CERTS: &[u8] = include_bytes!("../sample/es256_certs.pem");
 const DEFAULT_KEY: &[u8] = include_bytes!("../sample/es256_private.key");
 
 pub fn get_ta_url() -> Option<String> {
     std::env::var("C2PA_TA_URL").ok()
+}
+
+/// Read raw bytes from stdin, sign them with the baked-in test key, and write the
+/// raw signature bytes to stdout.
+///
+/// `mode` comes from `C2PATOOL_SIGN_MODE` and controls behaviour:
+/// - `"c2pa"` — sign C2PA manifest bytes with the baked-in es256 test key
+/// - `"cawg"` — sign CAWG identity assertion bytes (currently uses the same test key)
+/// - `"fail"` — exit with an error; used by integration tests to exercise error paths
+///
+/// This is invoked when the tool is used as its own subprocess signer via
+/// `--signer-path` / `--identity-signer-path`.
+pub fn sign_bytes_from_stdin(mode: &str, alg: SigningAlg) -> anyhow::Result<()> {
+    use std::io::{Read, Write};
+
+    if mode == "fail" {
+        anyhow::bail!("Test signer deliberately failed (C2PATOOL_SIGN_MODE=fail)");
+    }
+
+    let mut data = Vec::new();
+    std::io::stdin()
+        .read_to_end(&mut data)
+        .context("reading bytes from stdin")?;
+
+    let signer = create_signer::from_keys(DEFAULT_CERTS, DEFAULT_KEY, alg, None)
+        .context("creating test signer")?;
+
+    let sig = c2pa::Signer::sign(signer.as_ref(), &data).context("signing")?;
+
+    std::io::stdout()
+        .write_all(&sig)
+        .context("writing signature to stdout")?;
+
+    Ok(())
 }
 #[derive(Debug, Default, Deserialize)]
 pub struct SignConfig {

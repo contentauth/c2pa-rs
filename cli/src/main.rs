@@ -280,6 +280,10 @@ fn special_errs(e: c2pa::Error) -> anyhow::Error {
 /// Spawn an external signing process, pipe `data` to its stdin, and return the signature bytes
 /// written to stdout.  The process receives `--reserve-size N --alg ALG` and, when a cert path
 /// is available, `--sign-cert PATH`.
+/// `sign_mode` should be `"c2pa"` or `"cawg"`.  It is forwarded to the subprocess as
+/// `C2PATOOL_SIGN_MODE` so the subprocess can select the appropriate key.  Tests may
+/// set `C2PATOOL_FORCE_SIGN_MODE` in the parent environment to override this value
+/// (e.g. to `"fail"` to exercise error-handling paths).
 fn make_subprocess_signer(
     signer_path: PathBuf,
     alg: SigningAlg,
@@ -287,6 +291,7 @@ fn make_subprocess_signer(
     sign_cert_arg: Option<PathBuf>,
     reserve_size: usize,
     tsa_url: Option<String>,
+    sign_mode: &'static str,
 ) -> Result<BoxedSigner> {
     use std::{
         io::Write,
@@ -295,6 +300,8 @@ fn make_subprocess_signer(
 
     let alg_str = alg.to_string();
     let reserve_str = reserve_size.to_string();
+    let effective_mode =
+        std::env::var("C2PATOOL_FORCE_SIGN_MODE").unwrap_or_else(|_| sign_mode.to_string());
 
     let mut signer = CallbackSigner::new(
         move |_ctx: *const (), data: &[u8]| {
@@ -302,6 +309,8 @@ fn make_subprocess_signer(
             cmd.stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
+                .env("C2PATOOL_SIGN_MODE", &effective_mode)
+                .env("C2PATOOL_SIGN_ALG", &alg_str)
                 .args(["--reserve-size", &reserve_str])
                 .args(["--alg", &alg_str]);
 
@@ -311,9 +320,9 @@ fn make_subprocess_signer(
                 }
             }
 
-            let mut child = cmd
-                .spawn()
-                .map_err(|e| Error::OtherError(Box::new(e)))?;
+            let mut child = cmd.spawn().map_err(|e| {
+                Error::BadParam(format!("Failed to run command at {signer_path:?}: {e}"))
+            })?;
 
             child
                 .stdin
@@ -355,11 +364,19 @@ fn make_subprocess_signer(
     Ok(Box::new(signer))
 }
 
+/// Cert/alg and assertion metadata extracted from `cawg_x509_signer` settings.
+struct CawgIdentityInfo {
+    /// Inline PEM cert bytes and signing algorithm from settings, or `None` when absent.
+    cert_and_alg: Option<(Vec<u8>, SigningAlg)>,
+    referenced_assertions: Vec<String>,
+    roles: Vec<String>,
+}
+
 /// Extract cert bytes, alg, referenced_assertions and roles from a `cawg_x509_signer` settings
-/// value.  Returns `None` for the cert/alg pair when no CAWG settings are present.
+/// value.  `cert_and_alg` is `None` when no CAWG settings are present.
 fn extract_cawg_identity_info(
     cawg_settings: Option<c2pa::settings::signer::SignerSettings>,
-) -> (Option<(Vec<u8>, SigningAlg)>, Vec<String>, Vec<String>) {
+) -> CawgIdentityInfo {
     match cawg_settings {
         Some(c2pa::settings::signer::SignerSettings::Local {
             alg,
@@ -374,12 +391,16 @@ fn extract_cawg_identity_info(
             referenced_assertions,
             roles,
             ..
-        }) => (
-            Some((sign_cert.into_bytes(), alg)),
-            referenced_assertions.unwrap_or_default(),
-            roles.unwrap_or_default(),
-        ),
-        _ => (None, vec![], vec![]),
+        }) => CawgIdentityInfo {
+            cert_and_alg: Some((sign_cert.into_bytes(), alg)),
+            referenced_assertions: referenced_assertions.unwrap_or_default(),
+            roles: roles.unwrap_or_default(),
+        },
+        _ => CawgIdentityInfo {
+            cert_and_alg: None,
+            referenced_assertions: vec![],
+            roles: vec![],
+        },
     }
 }
 
@@ -902,6 +923,16 @@ pub(crate) fn folder_mode_output_path_ok(path: &Path) -> bool {
 }
 
 fn main() -> Result<()> {
+    // Must check BEFORE clap parsing: the subprocess signer receives args
+    // (--alg, --reserve-size, --sign-cert) that are not registered with clap.
+    if let Ok(mode) = std::env::var("C2PATOOL_SIGN_MODE") {
+        let alg: SigningAlg = std::env::var("C2PATOOL_SIGN_ALG")
+            .unwrap_or_else(|_| "es256".to_string())
+            .parse()
+            .context("Invalid C2PATOOL_SIGN_ALG value")?;
+        return signer::sign_bytes_from_stdin(&mode, alg);
+    }
+
     let args = CliArgs::parse();
 
     // default to error logging, RUST_LOG=debug to get detailed debug logging
@@ -1061,20 +1092,22 @@ fn main() -> Result<()> {
                 .to_lowercase()
                 .parse()
                 .context("Invalid signing algorithm")?;
-            let cert_path = sign_config
-                .sign_cert
-                .clone()
-                .context("sign_cert is required when using --signer-path")?;
-            let cert_bytes =
-                std::fs::read(&cert_path).context(format!("Reading sign cert: {cert_path:?}"))?;
+            let (cert_bytes, cert_path) = match sign_config.sign_cert.clone() {
+                Some(p) => {
+                    let bytes = std::fs::read(&p).context(format!("Reading sign cert: {p:?}"))?;
+                    (bytes, Some(p))
+                }
+                None => (signer::DEFAULT_CERTS.to_vec(), None),
+            };
             let tsa_url = sign_config.ta_url.clone().or_else(signer::get_ta_url);
             make_subprocess_signer(
                 signer_process_name,
                 alg,
                 cert_bytes,
-                Some(cert_path),
+                cert_path,
                 args.reserve_size,
                 tsa_url,
+                "c2pa",
             )?
         } else if let Some(signer_cfg) = settings.signer.take() {
             signer_cfg.c2pa_signer()?
@@ -1086,10 +1119,13 @@ fn main() -> Result<()> {
         let signer: Box<dyn Signer> = if let Some(identity_path) = args.identity_signer_path {
             // Prefer cert/alg from cawg_x509_signer settings; fall back to the manifest's
             // sign_cert / alg when no CAWG-specific settings are present.
-            let (cawg_cert_info, referenced_assertions, roles) =
-                extract_cawg_identity_info(settings.cawg_x509_signer.take());
+            let CawgIdentityInfo {
+                cert_and_alg,
+                referenced_assertions,
+                roles,
+            } = extract_cawg_identity_info(settings.cawg_x509_signer.take());
 
-            let (cert_bytes, alg, sign_cert_arg) = if let Some((bytes, alg)) = cawg_cert_info {
+            let (cert_bytes, alg, sign_cert_arg) = if let Some((bytes, alg)) = cert_and_alg {
                 // Cert came from settings as inline PEM — no file path to pass to subprocess.
                 (bytes, alg, None)
             } else {
@@ -1100,13 +1136,15 @@ fn main() -> Result<()> {
                     .to_lowercase()
                     .parse()
                     .context("Invalid signing algorithm")?;
-                let cert_path = sign_config
-                    .sign_cert
-                    .clone()
-                    .context("sign_cert is required when using --identity-signer-path")?;
-                let bytes = std::fs::read(&cert_path)
-                    .context(format!("Reading sign cert: {cert_path:?}"))?;
-                (bytes, alg, Some(cert_path))
+                let (bytes, cert_path) = match sign_config.sign_cert.clone() {
+                    Some(p) => {
+                        let bytes =
+                            std::fs::read(&p).context(format!("Reading sign cert: {p:?}"))?;
+                        (bytes, Some(p))
+                    }
+                    None => (signer::DEFAULT_CERTS.to_vec(), None),
+                };
+                (bytes, alg, cert_path)
             };
 
             let tsa_url = sign_config.ta_url.clone().or_else(signer::get_ta_url);
@@ -1117,6 +1155,7 @@ fn main() -> Result<()> {
                 sign_cert_arg,
                 args.reserve_size,
                 tsa_url,
+                "cawg",
             )?;
 
             let refs: Vec<&str> = referenced_assertions.iter().map(String::as_str).collect();
@@ -1386,20 +1425,20 @@ pub mod tests {
             roles: Some(vec!["creator".to_string()]),
         };
 
-        let (cert_info, refs, roles) = extract_cawg_identity_info(Some(settings));
-        let (bytes, alg) = cert_info.expect("cert info should be present");
+        let info = extract_cawg_identity_info(Some(settings));
+        let (bytes, alg) = info.cert_and_alg.expect("cert info should be present");
         assert_eq!(bytes, cert_pem.as_bytes());
         assert_eq!(alg, SigningAlg::Ps256);
-        assert_eq!(refs, ["c2pa.hash.data"]);
-        assert_eq!(roles, ["creator"]);
+        assert_eq!(info.referenced_assertions, ["c2pa.hash.data"]);
+        assert_eq!(info.roles, ["creator"]);
     }
 
     #[test]
     fn extract_cawg_identity_info_returns_none_when_no_settings() {
-        let (cert_info, refs, roles) = extract_cawg_identity_info(None);
-        assert!(cert_info.is_none());
-        assert!(refs.is_empty());
-        assert!(roles.is_empty());
+        let info = extract_cawg_identity_info(None);
+        assert!(info.cert_and_alg.is_none());
+        assert!(info.referenced_assertions.is_empty());
+        assert!(info.roles.is_empty());
     }
 
     #[cfg(not(target_os = "wasi"))]
@@ -1412,6 +1451,7 @@ pub mod tests {
             None,
             20000,
             None,
+            "c2pa",
         )
         .unwrap();
 

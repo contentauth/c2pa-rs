@@ -341,92 +341,87 @@ fn tool_sign_to_same_file_no_force() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
-// #[test]
-// fn test_succeed_using_example_signer() -> Result<(), Box<dyn Error>> {
-//     let output = temp_path("./output_external.jpg");
-//     // We are calling a cargo/bin here that successfully signs claim bytes. We are using
-//     // a cargo/bin because it works on all OSs, we like Rust, and our example external signing
-//     // code is compiled and verified during every test of this project.
-//     let mut successful_process = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-//     successful_process.push("target/debug/signer-path-success");
-//     Command::cargo_bin("c2patool")?
-//         .arg(fixture_path("earth_apollo17.jpg"))
-//         .arg("--signer-path")
-//         .arg(&successful_process)
-//         .arg("--reserve-size")
-//         .arg("20248")
-//         .arg("--manifest")
-//         .arg("sample/test.json")
-//         .arg("-o")
-//         .arg(&output)
-//         .arg("-f")
-//         .assert()
-//         .success();
-//     Ok(())
-// }
-// #[test]
-// fn test_fails_for_not_found_external_signer() -> Result<(), Box<dyn Error>> {
-//     let output = temp_path("./output_external.jpg");
-//     Command::cargo_bin("c2patool")?
-//         .arg(fixture_path("earth_apollo17.jpg"))
-//         .arg("--signer-path")
-//         .arg("./executable-not-found-test")
-//         .arg("--reserve-size")
-//         .arg("10248")
-//         .arg("--manifest")
-//         .arg("sample/test.json")
-//         .arg("-o")
-//         .arg(&output)
-//         .arg("-f")
-//         .assert()
-//         .stderr(str::contains("Failed to run command at"))
-//         .failure();
-//     Ok(())
-// }
-// #[test]
-// fn test_fails_for_external_signer_failure() -> Result<(), Box<dyn Error>> {
-//     let output = temp_path("./output_external.jpg");
-//     let mut failing_process = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-//     failing_process.push("target/debug/signer-path-fail");
-//     Command::cargo_bin("c2patool")?
-//         .arg(fixture_path("earth_apollo17.jpg"))
-//         .arg("--signer-path")
-//         .arg(&failing_process)
-//         .arg("--reserve-size")
-//         .arg("20248")
-//         .arg("--manifest")
-//         .arg("sample/test.json")
-//         .arg("-o")
-//         .arg(&output)
-//         .arg("-f")
-//         .assert()
-//         .stderr(str::contains("User supplied signer process failed"))
-//         // Ensures stderr from user executable is revealed to client.
-//         .stderr(str::contains("signer-path-fail-stderr"))
-//         .failure();
-//     Ok(())
-// }
-// #[test]
-// fn test_fails_for_external_signer_success_without_stdout() -> Result<(), Box<dyn Error>> {
-//     let output = temp_path("./output_external.jpg");
-//     let mut failing_process = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-//     failing_process.push("target/debug/signer-path-no-stdout");
-//     Command::cargo_bin("c2patool")?
-//         .arg(fixture_path("earth_apollo17.jpg"))
-//         .arg("--signer-path")
-//         .arg(&failing_process)
-//         .arg("--reserve-size")
-//         .arg("10248")
-//         .arg("--manifest")
-//         .arg("sample/test.json")
-//         .arg("-o")
-//         .arg(&output)
-//         .arg("-f")
-//         .assert()
-//         .stderr(str::contains("User supplied process succeeded, but the external process did not write signature bytes to stdout"))
-//         .failure();
-//     Ok(())
-// }
+#[test]
+fn test_sign_using_c2patool_as_subprocess_signer() -> Result<(), Box<dyn Error>> {
+    let output = temp_path("output_subprocess_signer.jpg");
+    // Point --signer-path at the c2patool binary itself. make_subprocess_signer sets
+    // C2PATOOL_SIGN_MODE=1 on the child process, which causes it to read bytes from
+    // stdin, sign with the baked-in es256 test key, and write the signature to stdout.
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("--signer-path")
+        .arg(cargo::cargo_bin!("c2patool"))
+        .arg("--manifest")
+        .arg("sample/test.json")
+        .arg("-o")
+        .arg(&output)
+        .arg("-f")
+        .assert()
+        .success();
+    Ok(())
+}
+
+#[test]
+fn test_sign_cawg_using_c2patool_as_identity_signer() -> Result<(), Box<dyn Error>> {
+    let output = temp_path("output_cawg_identity_signer.jpg");
+    // Both --signer-path and --identity-signer-path point at c2patool itself.
+    // Both use the baked-in es256 DEFAULT_CERTS/DEFAULT_KEY, so the identity
+    // assertion is signed with a cert that matches the key — well-formed.
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("--signer-path")
+        .arg(cargo::cargo_bin!("c2patool"))
+        .arg("--identity-signer-path")
+        .arg(cargo::cargo_bin!("c2patool"))
+        .arg("--manifest")
+        .arg("sample/test.json")
+        .arg("-o")
+        .arg(&output)
+        .arg("-f")
+        .assert()
+        .success()
+        .stdout(str::contains("cawg.identity"));
+    Ok(())
+}
+
+#[test]
+fn test_fails_for_not_found_external_signer() -> Result<(), Box<dyn Error>> {
+    let output = temp_path("output_not_found_signer.jpg");
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("--signer-path")
+        .arg("./nonexistent-signer-binary-xyz")
+        .arg("--manifest")
+        .arg("sample/test.json")
+        .arg("-o")
+        .arg(&output)
+        .arg("-f")
+        .assert()
+        .failure()
+        .stderr(str::contains("Failed to run command at"));
+    Ok(())
+}
+
+#[test]
+fn test_fails_for_external_signer_failure() -> Result<(), Box<dyn Error>> {
+    let output = temp_path("output_failing_signer.jpg");
+    // C2PATOOL_FORCE_SIGN_MODE=fail overrides the sign mode forwarded to the subprocess,
+    // causing the subprocess to exit nonzero. c2patool should surface the error.
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .env("C2PATOOL_FORCE_SIGN_MODE", "fail")
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("--signer-path")
+        .arg(cargo::cargo_bin!("c2patool"))
+        .arg("--manifest")
+        .arg("sample/test.json")
+        .arg("-o")
+        .arg(&output)
+        .arg("-f")
+        .assert()
+        .failure()
+        .stderr(str::contains("signer process failed"));
+    Ok(())
+}
 
 #[test]
 // With RUST_LOG unset, default level is `error` (see main) — debug! lines in configure_sdk must not appear.
