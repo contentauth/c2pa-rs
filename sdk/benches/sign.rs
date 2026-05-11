@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[path = "common.rs"]
+#[path = "common/mod.rs"]
 mod common;
 use common::{Size, SIZES};
 
