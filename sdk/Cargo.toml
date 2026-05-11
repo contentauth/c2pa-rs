@@ -29,7 +29,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["openssl", "default_http"]
-add_thumbnails = ["image"]
+add_thumbnails = ["dep:image"]
 file_io = []
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
@@ -316,3 +316,8 @@ harness = false
 [[bench]]
 name = "read"
 harness = false
+
+[[bench]]
+name = "complex_read"
+harness = false
+
