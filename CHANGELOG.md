@@ -9,6 +9,22 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.83.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.82.1...c2pa-v0.83.0)
+_11 May 2026_
+
+### Added
+
+* Large and complex benchmark suite ([#2116](https://github.com/contentauth/c2pa-rs/pull/2116))
+
+### Fixed
+
+* Reduce allocations in redactions ([#2127](https://github.com/contentauth/c2pa-rs/pull/2127))
+* Allow boxes with incomplete content to succeed. ([#2125](https://github.com/contentauth/c2pa-rs/pull/2125))
+
+### Other
+
+* Update `cargo-udeps` setup ([#2047](https://github.com/contentauth/c2pa-rs/pull/2047))
+
 ## [0.82.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.82.0...c2pa-v0.82.1)
 _04 May 2026_
 
