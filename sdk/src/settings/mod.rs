@@ -34,6 +34,9 @@ use crate::{
 
 const VERSION: u32 = 1;
 
+/// Maximum recursion depth for JSON merging.
+const MERGE_MAX_DEPTH: usize = 64;
+
 /// Default maximum number of assertions allowed per manifest.
 /// Shared by [`BuilderSettings`], [`Verify`], [`crate::Claim`], and [`crate::Store`] so that
 /// all enforcement points use the same value.
@@ -921,10 +924,18 @@ impl SettingsValidate for Settings {
 /// Overlays `overlay` onto `target`. Objects are merged key-by-key, and any
 /// other value (e.g. `null` and arrays) replaces the target value.
 fn merge_json(target: &mut Value, overlay: Value) {
+    merge_json_depth(target, overlay, 0);
+}
+
+fn merge_json_depth(target: &mut Value, overlay: Value, depth: usize) {
     match (target, overlay) {
-        (Value::Object(target_map), Value::Object(overlay_map)) => {
+        (Value::Object(target_map), Value::Object(overlay_map)) if depth < MERGE_MAX_DEPTH => {
             for (key, overlay_value) in overlay_map {
-                merge_json(target_map.entry(key).or_insert(Value::Null), overlay_value);
+                merge_json_depth(
+                    target_map.entry(key).or_insert(Value::Null),
+                    overlay_value,
+                    depth + 1,
+                );
             }
         }
         (target, overlay) => *target = overlay,
