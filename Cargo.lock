@@ -604,7 +604,6 @@ dependencies = [
  "c2pa",
  "cbindgen",
  "libc",
- "scopeguard",
  "serde",
  "serde_json",
  "tempfile",
