@@ -72,7 +72,7 @@ impl From<ThumbnailFormat> for ImageFormat {
     }
 }
 
-impl From<ThumbnailFormat> for config::ValueKind {
+impl From<ThumbnailFormat> for serde_json::Value {
     fn from(value: ThumbnailFormat) -> Self {
         let variant = match value {
             ThumbnailFormat::Png => "png",
@@ -81,7 +81,7 @@ impl From<ThumbnailFormat> for config::ValueKind {
             ThumbnailFormat::WebP => "webp",
             ThumbnailFormat::Tiff => "tiff",
         };
-        config::ValueKind::String(variant.to_owned())
+        serde_json::Value::String(variant.to_owned())
     }
 }
 
