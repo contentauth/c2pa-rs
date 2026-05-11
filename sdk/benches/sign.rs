@@ -19,7 +19,6 @@ fn create_signer() -> CallbackSigner {
     CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS)
 }
 
-// TODO: load into memory or as stream?
 fn load(label: &str, ext: &str) -> Option<Vec<u8>> {
     let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/fixtures");
     let path = fixtures_dir.join(format!("{label}-{ext}.{ext}"));
