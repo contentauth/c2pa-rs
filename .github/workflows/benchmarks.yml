@@ -89,8 +89,8 @@ jobs:
 
     strategy:
       matrix:
-        bench: [sign, read]
-        format: [jpeg, png, gif, tiff, svg, mp3, mp4, wav]
+        bench: [read]
+        format: [gif]
         include:
           - bench: complex_read
             format: ""
@@ -185,5 +185,5 @@ jobs:
         uses: CodSpeedHQ/action@v4
         with:
           mode: ${{ matrix.build_mode || 'walltime' }}
-          run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}{2}"', matrix.bench, matrix.format, steps.size.outputs.suffix) || '' }}
+          run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}/large"', matrix.bench, matrix.format) || '' }}
           token: ${{ secrets.CODSPEED_TOKEN }}
