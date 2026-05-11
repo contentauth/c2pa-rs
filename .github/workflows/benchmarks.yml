@@ -32,8 +32,6 @@ jobs:
     strategy:
       matrix:
         include:
-          - runner: ubuntu-latest
-            build_mode: simulation,memory
           - runner: codspeed-macro
             build_mode: walltime
 
@@ -91,13 +89,7 @@ jobs:
       matrix:
         bench: [read]
         format: [gif]
-        include:
-          - bench: complex_read
-            format: ""
-            build_mode: simulation
-          - bench: complex_read
-            format: ""
-            build_mode: memory
+        include: []
 
     permissions:
       id-token: write
