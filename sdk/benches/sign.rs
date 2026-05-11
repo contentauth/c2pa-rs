@@ -1,7 +1,6 @@
 use std::{
-    fs,
-    io::{self, Cursor},
-    path::Path,
+    fs, io,
+    path::{Path, PathBuf},
 };
 
 use c2pa::{Builder, CallbackSigner, SigningAlg};
@@ -19,10 +18,15 @@ fn create_signer() -> CallbackSigner {
     CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS)
 }
 
-fn load(label: &str, ext: &str) -> Option<Vec<u8>> {
-    let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/fixtures");
-    let path = fixtures_dir.join(format!("{label}-{ext}.{ext}"));
-    fs::read(&path).ok()
+fn fixture(label: &str, ext: &str) -> Option<(PathBuf, u64)> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("benches/fixtures")
+        .join(format!("{label}-{ext}.{ext}"));
+    match fs::metadata(&path) {
+        Ok(metadata) => Some((path, metadata.len())),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+        Err(err) => panic!("{err}"),
+    }
 }
 
 fn sign_jpeg(c: &mut Criterion) {
@@ -31,13 +35,13 @@ fn sign_jpeg(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some(data) = load(label, "jpg") else {
+        let Some((path, size)) = fixture(label, "jpg") else {
             continue;
         };
-        group.throughput(Throughput::Bytes(data.len() as u64));
-        group.bench_with_input(*label, &data, |b, data| {
+        group.throughput(Throughput::Bytes(size));
+        group.bench_with_input(*label, &path, |b, path| {
             b.iter(|| {
-                let mut src = Cursor::new(data);
+                let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "image/jpeg", &mut src, &mut io::empty())
             })
         });
@@ -51,13 +55,13 @@ fn sign_png(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some(data) = load(label, "png") else {
+        let Some((path, size)) = fixture(label, "png") else {
             continue;
         };
-        group.throughput(Throughput::Bytes(data.len() as u64));
-        group.bench_with_input(*label, &data, |b, data| {
+        group.throughput(Throughput::Bytes(size));
+        group.bench_with_input(*label, &path, |b, path| {
             b.iter(|| {
-                let mut src = Cursor::new(data);
+                let mut src = fs::File::open(path).unwrap();
                 builder
                     .sign(&signer, "image/png", &mut src, &mut io::empty())
                     .unwrap();
@@ -73,13 +77,13 @@ fn sign_gif(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some(data) = load(label, "gif") else {
+        let Some((path, size)) = fixture(label, "gif") else {
             continue;
         };
-        group.throughput(Throughput::Bytes(data.len() as u64));
-        group.bench_with_input(*label, &data, |b, data| {
+        group.throughput(Throughput::Bytes(size));
+        group.bench_with_input(*label, &path, |b, path| {
             b.iter(|| {
-                let mut src = Cursor::new(data);
+                let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "image/gif", &mut src, &mut io::empty())
             })
         });
@@ -93,13 +97,13 @@ fn sign_tiff(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some(data) = load(label, "tiff") else {
+        let Some((path, size)) = fixture(label, "tiff") else {
             continue;
         };
-        group.throughput(Throughput::Bytes(data.len() as u64));
-        group.bench_with_input(*label, &data, |b, data| {
+        group.throughput(Throughput::Bytes(size));
+        group.bench_with_input(*label, &path, |b, path| {
             b.iter(|| {
-                let mut src = Cursor::new(data);
+                let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "image/tiff", &mut src, &mut io::empty())
             })
         });
@@ -113,13 +117,13 @@ fn sign_wav(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some(data) = load(label, "wav") else {
+        let Some((path, size)) = fixture(label, "wav") else {
             continue;
         };
-        group.throughput(Throughput::Bytes(data.len() as u64));
-        group.bench_with_input(*label, &data, |b, data| {
+        group.throughput(Throughput::Bytes(size));
+        group.bench_with_input(*label, &path, |b, path| {
             b.iter(|| {
-                let mut src = Cursor::new(data);
+                let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "audio/wav", &mut src, &mut io::empty())
             })
         });
@@ -134,13 +138,13 @@ fn sign_svg(c: &mut Criterion) {
 
     // TODO: add back large SVG when optimized, CI takes ~2 hours otherwise
     for label in &["small", "medium"] {
-        let Some(data) = load(label, "svg") else {
+        let Some((path, size)) = fixture(label, "svg") else {
             continue;
         };
-        group.throughput(Throughput::Bytes(data.len() as u64));
-        group.bench_with_input(*label, &data, |b, data| {
+        group.throughput(Throughput::Bytes(size));
+        group.bench_with_input(*label, &path, |b, path| {
             b.iter(|| {
-                let mut src = Cursor::new(data);
+                let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "image/svg+xml", &mut src, &mut io::empty())
             })
         });
@@ -154,13 +158,13 @@ fn sign_mp3(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some(data) = load(label, "mp3") else {
+        let Some((path, size)) = fixture(label, "mp3") else {
             continue;
         };
-        group.throughput(Throughput::Bytes(data.len() as u64));
-        group.bench_with_input(*label, &data, |b, data| {
+        group.throughput(Throughput::Bytes(size));
+        group.bench_with_input(*label, &path, |b, path| {
             b.iter(|| {
-                let mut src = Cursor::new(data);
+                let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "audio/mpeg", &mut src, &mut io::empty())
             })
         });
@@ -174,13 +178,13 @@ fn sign_mp4(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some(data) = load(label, "mp4") else {
+        let Some((path, size)) = fixture(label, "mp4") else {
             continue;
         };
-        group.throughput(Throughput::Bytes(data.len() as u64));
-        group.bench_with_input(*label, &data, |b, data| {
+        group.throughput(Throughput::Bytes(size));
+        group.bench_with_input(*label, &path, |b, path| {
             b.iter(|| {
-                let mut src = Cursor::new(data);
+                let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "video/mp4", &mut src, &mut io::empty())
             })
         });
