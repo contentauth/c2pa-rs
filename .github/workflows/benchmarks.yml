@@ -19,7 +19,7 @@ env:
 
 jobs:
   build:
-    name: Build benchmarks
+    name: Build benchmarks (${{ matrix.build_mode }})
     if: |
       github.event_name != 'pull_request' ||
       github.event.pull_request.author_association == 'COLLABORATOR' ||
@@ -29,10 +29,18 @@ jobs:
       contains(github.event.pull_request.labels.*.name, 'check-release') ||
       contains(github.event.pull_request.labels.*.name, 'benchmark')
 
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            build_mode: simulation,memory
+          - runner: codspeed-macro
+            build_mode: walltime
+
+    runs-on: ${{ matrix.runner }}
 
     env:
-      BUILD_MODE: walltime,simulation,memory
+      BUILD_MODE: ${{ matrix.build_mode }}
 
     steps:
       - name: Checkout repository
@@ -43,7 +51,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: target/codspeed/
-          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
           lookup-only: true
 
       - name: Install Rust toolchain
@@ -71,13 +79,13 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: target/codspeed/
-          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
 
   benchmarks:
     name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }} <${{ matrix.build_mode || 'walltime' }}>)
     needs: [build]
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ (matrix.build_mode || 'walltime') == 'walltime' && 'codspeed-macro' || 'ubuntu-latest' }}
 
     strategy:
       matrix:
@@ -115,7 +123,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: target/codspeed/
-          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
           fail-on-cache-miss: true
 
       - name: Set binary permissions
