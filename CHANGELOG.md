@@ -9,6 +9,17 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.84.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.83.0...c2pa-v0.84.0)
+_11 May 2026_
+
+### Fixed
+
+* Archive preserves duplicate label assertions ([#2135](https://github.com/contentauth/c2pa-rs/pull/2135))
+
+### Other
+
+* [**breaking**] Remove `config` crate and use `serde_json` directly ([#2132](https://github.com/contentauth/c2pa-rs/pull/2132))
+
 ## [0.83.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.82.1...c2pa-v0.83.0)
 _11 May 2026_
 
