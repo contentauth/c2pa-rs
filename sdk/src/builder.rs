@@ -8730,6 +8730,44 @@ mod tests {
     }
 
     #[test]
+    fn test_to_archive_preserves_duplicate_label_assertions() -> Result<()> {
+        let mut builder = Builder::default();
+        builder.add_assertion("org.contentauth.test", &json!({"v": 1}))?;
+        builder.add_assertion("org.contentauth.test", &json!({"v": 2}))?;
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+        archive.rewind()?;
+        let mut builder = Builder::default().with_archive(archive)?;
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        builder.sign(
+            &signer,
+            "image/jpeg",
+            &mut Cursor::new(TEST_IMAGE_CLEAN),
+            &mut output,
+        )?;
+
+        output.rewind()?;
+        let reader = Reader::default().with_stream("image/jpeg", &mut output)?;
+        let manifest = reader.active_manifest().expect("active manifest");
+        let values: Vec<u64> = manifest
+            .assertions()
+            .iter()
+            .filter(|a| crate::assertions::labels::base(a.label()) == "org.contentauth.test")
+            .map(|a| a.value().unwrap()["v"].as_u64().unwrap())
+            .collect();
+
+        assert_eq!(values.len(), 2, "expected two duplicate-label assertions");
+        assert!(
+            values.contains(&1) && values.contains(&2),
+            "expected both v=1 and v=2 to survive archive round-trip, got {values:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_write_ingredient_archive_and_add_ingredient_from_archive() -> Result<()> {
         let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
         let context = Context::new().with_settings(settings)?.into_shared();
