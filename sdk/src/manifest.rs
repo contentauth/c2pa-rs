@@ -634,7 +634,7 @@ impl Manifest {
                     match assertion.decode_data() {
                         AssertionData::Cbor(_) => {
                             let value = assertion.as_json_object()?;
-                            let ma = ManifestAssertion::new(label, value)
+                            let ma = ManifestAssertion::new(base_label.clone(), value)
                                 .set_instance(claim_assertion.instance())
                                 .set_created(created);
 
@@ -642,7 +642,7 @@ impl Manifest {
                         }
                         AssertionData::Json(_) => {
                             let value = assertion.as_json_object()?;
-                            let ma = ManifestAssertion::new(label, value)
+                            let ma = ManifestAssertion::new(base_label.clone(), value)
                                 .set_instance(claim_assertion.instance())
                                 .set_kind(ManifestAssertionKind::Json)
                                 .set_created(created);
