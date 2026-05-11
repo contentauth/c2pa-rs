@@ -4178,8 +4178,7 @@ impl Store {
 
             if !potential_conflicts.is_empty() {
                 // get info about conflicting Claim from current claim
-                let mut claim_redactions: Vec<String> =
-                    redactions.unwrap_or_default().to_vec();
+                let mut claim_redactions: Vec<String> = redactions.unwrap_or_default().to_vec();
                 for c in claim.claim_ingredients() {
                     if let Some(r) = c.redactions() {
                         claim_redactions.append(&mut r.clone().into_iter().collect::<Vec<_>>());
