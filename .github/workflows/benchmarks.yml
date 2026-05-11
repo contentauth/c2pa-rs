@@ -127,7 +127,7 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Set binary permissions
-        run: chmod +x target/codspeed/analysis/c2pa/*
+        run: chmod +x target/codspeed/${{ (matrix.build_mode || 'walltime') == 'walltime' && 'walltime' || 'analysis' }}/c2pa/*
 
       - name: Get asset ETag from S3
         id: s3-etag
