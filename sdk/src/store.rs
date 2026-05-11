@@ -4271,8 +4271,8 @@ impl Store {
         // make necessary changes to the incoming store
         let mut i_store_mut = Store::from_jumbf_with_context(data, &mut report, context)?;
         let mut final_redactions = Vec::new();
-        if let Some(mut redactions) = redactions {
-            final_redactions.append(&mut redactions);
+        if let Some(redactions) = redactions {
+            final_redactions.extend_from_slice(redactions);
         }
 
         // remove the claims from the incoming store as to not overwrite the current claim

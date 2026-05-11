@@ -1264,7 +1264,6 @@ impl Ingredient {
 
         // Collect the redacted thumbnail URIs, use them for comparison.
         let redacted_thumbnail_uris: std::collections::HashSet<String> = redactions
-            .as_deref()
             .unwrap_or_default()
             .iter()
             .filter(|r| {
