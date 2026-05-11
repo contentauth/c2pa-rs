@@ -4178,20 +4178,15 @@ impl Store {
 
             if !potential_conflicts.is_empty() {
                 // get info about conflicting Claim from current claim
-                let mut claim_redactions: Vec<String> = redactions.clone().unwrap_or_default();
+                let mut combined: HashSet<String> =
+                    redactions.iter().flatten().cloned().collect();
                 for c in claim.claim_ingredients() {
                     if let Some(r) = c.redactions() {
-                        claim_redactions.append(&mut r.clone().into_iter().collect::<Vec<_>>());
+                        combined.extend(r.iter().cloned());
                     }
                 }
-
-                let combined_redactions = HashSet::<_>::from_iter(
-                    vec![claim_redactions.clone(), svi.redactions.clone()]
-                        .into_iter()
-                        .flatten(),
-                )
-                .into_iter()
-                .collect::<Vec<String>>();
+                let has_claim_redactions = !combined.is_empty();
+                combined.extend(svi.redactions.iter().cloned());
 
                 // do any of the conflicting manifests contain redactions
                 for conflict_label in potential_conflicts {
@@ -4211,12 +4206,12 @@ impl Store {
                         if let Some(mut differences) = Store::manifest_differs_by_redaction(
                             curr_claim_ingredient_conflict,
                             conflict,
-                            &combined_redactions,
+                            &combined,
                         ) {
-                            if !claim_redactions.is_empty() && svi.redactions.is_empty() {
+                            if has_claim_redactions && svi.redactions.is_empty() {
                                 // if redactions were only in the claim we can skip bringing the ingredient
                                 to_remove_from_incoming.push(conflict_label.clone());
-                            } else if claim_redactions.is_empty() && !svi.redactions.is_empty() {
+                            } else if !has_claim_redactions && !svi.redactions.is_empty() {
                                 // if redactions were only from the incoming ingredient replace claim
                                 // noting to do here since the incoming claim will just overwrite the current claim
                                 continue;
