@@ -105,10 +105,6 @@ byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
 c2pa_cbor = "0.77.2"
-config = { version = "0.14.0", default-features = false, features = [
-    "json",
-    "toml",
-] }
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
 coset = "0.4.0"
@@ -303,6 +299,7 @@ wasm-bindgen-test = "0.3.55"
 httpmock = "0.8.2"
 tokio = { version = "1.44.2", features = ["full"] }
 criterion = { package = "codspeed-criterion-compat", version = "4.2.1" }
+dhat = "0.3.3"
 
 # WASM/WASI doesn't support default criterion features.
 # https://github.com/bheisler/criterion.rs/blob/4c19e913b84e6a7e4a8470cb0f766796886ed891/book/src/user_guide/wasi.md
@@ -321,3 +318,10 @@ harness = false
 name = "complex_read"
 harness = false
 
+[[bench]]
+name = "settings"
+harness = false
+
+[[bench]]
+name = "settings_memory"
+harness = false
