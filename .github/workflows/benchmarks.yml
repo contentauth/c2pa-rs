@@ -185,5 +185,5 @@ jobs:
         uses: CodSpeedHQ/action@v4
         with:
           mode: ${{ matrix.build_mode || 'walltime' }}
-          run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}/large"', matrix.bench, matrix.format) || '' }}
+          run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}::large"', matrix.bench, matrix.format) || '' }}
           token: ${{ secrets.CODSPEED_TOKEN }}
