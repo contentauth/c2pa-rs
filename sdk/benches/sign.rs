@@ -3,14 +3,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "common.rs"]
+mod common;
+use common::{Size, SIZES};
+
 use c2pa::{Builder, CallbackSigner, SigningAlg};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 
 const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
 const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
 const MANIFEST_JSON: &str = include_str!("../tests/fixtures/simple_manifest.json");
-
-const SIZES: &[&str] = &["small", "medium", "large"];
 
 fn create_signer() -> CallbackSigner {
     let ed_signer =
@@ -35,11 +37,12 @@ fn sign_jpeg(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some((path, size)) = fixture(label, "jpg") else {
+        let Some((path, size)) = fixture(label.as_str(), "jpg") else {
             continue;
         };
+        group.sample_size(label.sample_size());
         group.throughput(Throughput::Bytes(size));
-        group.bench_with_input(*label, &path, |b, path| {
+        group.bench_with_input(label.as_str(), &path, |b, path| {
             b.iter(|| {
                 let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "image/jpeg", &mut src, &mut io::empty())
@@ -55,11 +58,12 @@ fn sign_png(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some((path, size)) = fixture(label, "png") else {
+        let Some((path, size)) = fixture(label.as_str(), "png") else {
             continue;
         };
+        group.sample_size(label.sample_size());
         group.throughput(Throughput::Bytes(size));
-        group.bench_with_input(*label, &path, |b, path| {
+        group.bench_with_input(label.as_str(), &path, |b, path| {
             b.iter(|| {
                 let mut src = fs::File::open(path).unwrap();
                 builder
@@ -77,11 +81,12 @@ fn sign_gif(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some((path, size)) = fixture(label, "gif") else {
+        let Some((path, size)) = fixture(label.as_str(), "gif") else {
             continue;
         };
+        group.sample_size(label.sample_size());
         group.throughput(Throughput::Bytes(size));
-        group.bench_with_input(*label, &path, |b, path| {
+        group.bench_with_input(label.as_str(), &path, |b, path| {
             b.iter(|| {
                 let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "image/gif", &mut src, &mut io::empty())
@@ -97,11 +102,12 @@ fn sign_tiff(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some((path, size)) = fixture(label, "tiff") else {
+        let Some((path, size)) = fixture(label.as_str(), "tiff") else {
             continue;
         };
+        group.sample_size(label.sample_size());
         group.throughput(Throughput::Bytes(size));
-        group.bench_with_input(*label, &path, |b, path| {
+        group.bench_with_input(label.as_str(), &path, |b, path| {
             b.iter(|| {
                 let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "image/tiff", &mut src, &mut io::empty())
@@ -117,11 +123,12 @@ fn sign_wav(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some((path, size)) = fixture(label, "wav") else {
+        let Some((path, size)) = fixture(label.as_str(), "wav") else {
             continue;
         };
+        group.sample_size(label.sample_size());
         group.throughput(Throughput::Bytes(size));
-        group.bench_with_input(*label, &path, |b, path| {
+        group.bench_with_input(label.as_str(), &path, |b, path| {
             b.iter(|| {
                 let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "audio/wav", &mut src, &mut io::empty())
@@ -137,12 +144,13 @@ fn sign_svg(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     // TODO: add back large SVG when optimized, CI takes ~2 hours otherwise
-    for label in &["small", "medium"] {
-        let Some((path, size)) = fixture(label, "svg") else {
+    for label in &[Size::Small, Size::Medium] {
+        let Some((path, size)) = fixture(label.as_str(), "svg") else {
             continue;
         };
+        group.sample_size(label.sample_size());
         group.throughput(Throughput::Bytes(size));
-        group.bench_with_input(*label, &path, |b, path| {
+        group.bench_with_input(label.as_str(), &path, |b, path| {
             b.iter(|| {
                 let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "image/svg+xml", &mut src, &mut io::empty())
@@ -158,11 +166,12 @@ fn sign_mp3(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some((path, size)) = fixture(label, "mp3") else {
+        let Some((path, size)) = fixture(label.as_str(), "mp3") else {
             continue;
         };
+        group.sample_size(label.sample_size());
         group.throughput(Throughput::Bytes(size));
-        group.bench_with_input(*label, &path, |b, path| {
+        group.bench_with_input(label.as_str(), &path, |b, path| {
             b.iter(|| {
                 let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "audio/mpeg", &mut src, &mut io::empty())
@@ -178,11 +187,12 @@ fn sign_mp4(c: &mut Criterion) {
     let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
 
     for label in SIZES {
-        let Some((path, size)) = fixture(label, "mp4") else {
+        let Some((path, size)) = fixture(label.as_str(), "mp4") else {
             continue;
         };
+        group.sample_size(label.sample_size());
         group.throughput(Throughput::Bytes(size));
-        group.bench_with_input(*label, &path, |b, path| {
+        group.bench_with_input(label.as_str(), &path, |b, path| {
             b.iter(|| {
                 let mut src = fs::File::open(path).unwrap();
                 builder.sign(&signer, "video/mp4", &mut src, &mut io::empty())
