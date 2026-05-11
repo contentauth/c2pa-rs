@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      BUILD_MODE: simulation,memory
+      BUILD_MODE: walltime,simulation,memory
 
     steps:
       - name: Checkout repository
@@ -74,7 +74,7 @@ jobs:
           key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
 
   benchmarks:
-    name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }} <${{ matrix.build_mode || 'simulation' }}>)
+    name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }} <${{ matrix.build_mode || 'walltime' }}>)
     needs: [build]
 
     runs-on: ubuntu-latest
@@ -173,6 +173,6 @@ jobs:
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4
         with:
-          mode: ${{ matrix.build_mode || 'simulation' }}
+          mode: ${{ matrix.build_mode || 'walltime' }}
           run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}{2}"', matrix.bench, matrix.format, steps.size.outputs.suffix) || '' }}
           token: ${{ secrets.CODSPEED_TOKEN }}
