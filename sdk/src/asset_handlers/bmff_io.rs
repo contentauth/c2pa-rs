@@ -1293,8 +1293,14 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     let mut current = start;
     while current < end {
         // Get box header.
-        let header = BoxHeaderLite::read(reader)
-            .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {err}")))?;
+        let header = match BoxHeaderLite::read(reader) {
+            Ok(h) => h,
+            Err(_) => {
+                // if we can't read a header, just return what we have so far since some files have trailing data after the last box
+                skip_bytes_to(reader, end)?;
+                break;
+            }
+        };
 
         // Break if size zero BoxHeader
         let mut s = header.size;
