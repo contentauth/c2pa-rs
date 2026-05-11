@@ -1248,7 +1248,7 @@ impl Ingredient {
     pub(crate) fn add_to_claim(
         &self,
         claim: &mut Claim,
-        redactions: Option<Vec<String>>,
+        redactions: Option<&[String]>,
         resources: Option<&ResourceStore>, // use alternate resource store (for Builder model)
         context: &Context,
     ) -> Result<HashedUri> {

@@ -1459,7 +1459,7 @@ impl Builder {
             // add it to the claim
             let uri = ingredient.add_to_claim(
                 &mut claim,
-                definition.redactions.clone(),
+                definition.redactions.as_deref(),
                 Some(&self.resources),
                 &self.context,
             )?;

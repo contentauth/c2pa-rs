@@ -4110,7 +4110,7 @@ impl Store {
     pub fn load_ingredient_to_claim(
         claim: &mut Claim,
         data: &[u8],
-        redactions: Option<Vec<String>>,
+        redactions: Option<&[String]>,
         context: &Context,
     ) -> Result<Store> {
         // constants for ingredient conflict reasons
@@ -4178,7 +4178,8 @@ impl Store {
 
             if !potential_conflicts.is_empty() {
                 // get info about conflicting Claim from current claim
-                let mut claim_redactions: Vec<String> = redactions.clone().unwrap_or_default();
+                let mut claim_redactions: Vec<String> =
+                    redactions.unwrap_or_default().to_vec();
                 for c in claim.claim_ingredients() {
                     if let Some(r) = c.redactions() {
                         claim_redactions.append(&mut r.clone().into_iter().collect::<Vec<_>>());
