@@ -72,19 +72,6 @@ impl From<ThumbnailFormat> for ImageFormat {
     }
 }
 
-impl From<ThumbnailFormat> for serde_json::Value {
-    fn from(value: ThumbnailFormat) -> Self {
-        let variant = match value {
-            ThumbnailFormat::Png => "png",
-            ThumbnailFormat::Jpeg => "jpeg",
-            ThumbnailFormat::Gif => "gif",
-            ThumbnailFormat::WebP => "webp",
-            ThumbnailFormat::Tiff => "tiff",
-        };
-        serde_json::Value::String(variant.to_owned())
-    }
-}
-
 impl fmt::Display for ThumbnailFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", ImageFormat::from(*self).to_mime_type())

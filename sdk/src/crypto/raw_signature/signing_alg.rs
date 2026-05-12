@@ -68,8 +68,7 @@ impl FromStr for SigningAlg {
     }
 }
 
-// Manual implementation so that it works with case-insensitive strings. This is done for
-// backwards compatibility with behavior in the `config` crate.
+// Case-insensitive for backwards compatibility with the `config` crate.
 impl<'de> Deserialize<'de> for SigningAlg {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
