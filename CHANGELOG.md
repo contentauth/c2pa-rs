@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.84.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.84.0...c2pa-v0.84.1)
+_12 May 2026_
+
+### Fixed
+
+* Case-insensitive enums in settings to preserve backwards compatibility with `config` crate ([#2138](https://github.com/contentauth/c2pa-rs/pull/2138))
+
 ## [0.84.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.83.0...c2pa-v0.84.0)
 _11 May 2026_
 
