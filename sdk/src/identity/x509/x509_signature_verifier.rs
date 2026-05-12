@@ -167,12 +167,15 @@ mod tests {
         },
         identity::{
             builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
-            tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
+            tests::{
+                fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
+                read_manifest,
+            },
             x509::{X509CredentialHolder, X509SignatureVerifier},
             IdentityAssertion,
         },
         status_tracker::{LogKind, StatusTracker},
-        Builder, Reader, SigningAlg,
+        Builder, SigningAlg,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
@@ -219,7 +222,7 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
+        let manifest_store = read_manifest(format, &mut dest).await;
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();

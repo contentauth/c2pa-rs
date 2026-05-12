@@ -235,7 +235,8 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
+        let manifest_store =
+            crate::identity::tests::read_manifest(format, &mut dest).await;
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
@@ -392,7 +393,8 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
+        let manifest_store =
+            crate::identity::tests::read_manifest(format, &mut dest).await;
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
