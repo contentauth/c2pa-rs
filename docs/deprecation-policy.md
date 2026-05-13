@@ -12,6 +12,8 @@ We follow [Semantic Versioning (SemVer)](https://semver.org/). Version 1.0.0 wil
 
 **Before 1.0:** Major version zero (`0.y.z`) is for initial development — anything may change at any time, and the public API should not be considered stable. In the Rust/Cargo ecosystem, this means that a change from `0.2.3` to `0.3.0` may include incompatible API changes. We will, however, make a good-faith effort to follow the deprecation process below even before 1.0, so that users have advance warning before breakage occurs.
 
+**After 1.0:** Breaking changes will only ship in major version bumps. Before completely removing functionality in a new major release, there should be at least one minor release that contains the deprecation so that users can smoothly transition to the new API. We will publish and retain historical documentation for at least each minor point release.
+
 ## What counts as a breaking change
 
 Not all changes are equal. Breaking changes are assumed to be major changes, but not all breaking changes are major. The goal is that the same code should be able to run against different minor revisions, and minor changes should require at most a few local annotations. (This document is Rust-specific; we will treat other languages as closely to this list as is feasible.)
