@@ -23,7 +23,7 @@ use std::{
     io::{BufRead, BufReader, Cursor},
 };
 
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use signer::SignerSettings;
 
@@ -1008,6 +1008,37 @@ fn get_settings_value<T: serde::de::DeserializeOwned>(value_path: &str) -> Resul
 // #[deprecated = "use `Settings::reset` instead"]
 pub fn reset_default_settings() -> Result<()> {
     Settings::reset()
+}
+
+// Used for backwards compatibility with the `config` crate.
+pub(crate) fn deserialize_case_insensitive<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = Value::deserialize(deserializer)?;
+    serde_json::from_value(normalize_enum_value(value)).map_err(serde::de::Error::custom)
+}
+
+// Used for backwards compatibility with the `config` crate.
+pub(crate) fn deserialize_case_insensitive_opt<'de, D, T>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    Option::<Value>::deserialize(deserializer)?
+        .map(|v| serde_json::from_value(normalize_enum_value(v)).map_err(serde::de::Error::custom))
+        .transpose()
+}
+
+// Used for backwards compatibility with the `config` crate.
+fn normalize_enum_value(value: Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(s.to_lowercase()),
+        other => other,
+    }
 }
 
 #[cfg(test)]
