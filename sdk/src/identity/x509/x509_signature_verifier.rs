@@ -46,7 +46,7 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
     type Error = CoseError;
     type Output = X509SignatureInfo;
 
-    async fn check_signature(
+    fn check_signature(
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],
@@ -56,6 +56,52 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
             log_current_item!(
                 "unsupported signature type",
                 "X509SignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.identity.sig_type.unknown")
+            .failure_no_throw(
+                status_tracker,
+                ValidationError::<CoseError>::UnknownSignatureType(signer_payload.sig_type.clone()),
+            );
+
+            return Err(ValidationError::UnknownSignatureType(
+                signer_payload.sig_type.clone(),
+            ));
+        }
+
+        let mut signer_payload_cbor: Vec<u8> = vec![];
+        c2pa_cbor::to_writer(&mut signer_payload_cbor, signer_payload)
+            .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
+
+        let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, status_tracker)?;
+
+        let cert_info = self
+            .cose_verifier
+            .verify_signature(signature, &signer_payload_cbor, &[], None, status_tracker)
+            .map_err(|e| match e {
+                CoseError::RawSignatureValidationError(
+                    RawSignatureValidationError::SignatureMismatch,
+                ) => ValidationError::SignatureMismatch,
+
+                e => ValidationError::SignatureError(e),
+            })?;
+
+        Ok(X509SignatureInfo {
+            signer_payload: signer_payload.clone(),
+            cose_sign1,
+            cert_info,
+        })
+    }
+
+    async fn check_signature_async(
+        &self,
+        signer_payload: &SignerPayload,
+        signature: &[u8],
+        status_tracker: &mut StatusTracker,
+    ) -> Result<Self::Output, ValidationError<Self::Error>> {
+        if signer_payload.sig_type != super::CAWG_X509_SIG_TYPE {
+            log_current_item!(
+                "unsupported signature type",
+                "X509SignatureVerifier::check_signature_async"
             )
             .validation_status("cawg.identity.sig_type.unknown")
             .failure_no_throw(

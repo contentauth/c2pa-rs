@@ -283,7 +283,7 @@ impl IdentityAssertion {
             .check_against_manifest(manifest, status_tracker)?;
 
         verifier
-            .check_signature(&self.signer_payload, &self.signature, status_tracker)
+            .check_signature_async(&self.signer_payload, &self.signature, status_tracker)
             .await
     }
 
@@ -395,35 +395,30 @@ impl IdentityAssertion {
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else if sig_type == "cawg.identity_claims_aggregation" {
-            if _sync {
-                // ICA verification requires async network I/O; skip in sync context.
-                log_current_item!(
-                    "identity_claims_aggregation validation skipped in sync context",
-                    "validate_partial_claim"
-                )
-                .validation_status("cawg.validation_skipped")
-                .informational(status_tracker);
-                Err(ValidationError::UnknownSignatureType(
-                    "cawg.identity_claims_aggregation requires async".to_string(),
-                ))
-            } else {
-                let verifier = IcaSignatureVerifier {};
-                let result = verifier
+            let verifier = IcaSignatureVerifier {};
+
+            let result = if _sync {
+                verifier
                     .check_signature(&self.signer_payload, &self.signature, status_tracker)
+                    .map(|v| v.to_summary())
+                    .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
+            } else {
+                verifier
+                    .check_signature_async(&self.signer_payload, &self.signature, status_tracker)
                     .await
                     .map(|v| v.to_summary())
-                    .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
-
-                log_current_item!(
-                    "CAWG identity_claims_aggregation signature valid",
-                    "validate_partial_claim"
-                )
-                .validation_status("cawg.ica.credential_valid")
-                .success(status_tracker);
-
-                serde_json::to_value(result)
                     .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
-            }
+            }?;
+
+            log_current_item!(
+                "CAWG identity_claims_aggregation signature valid",
+                "validate_partial_claim"
+            )
+            .validation_status("cawg.ica.credential_valid")
+            .success(status_tracker);
+
+            serde_json::to_value(result)
+                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else {
             Err(ValidationError::UnknownSignatureType(sig_type.to_string()))
         }

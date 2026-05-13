@@ -29,9 +29,8 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
-    format_from_path, identity::validator::CawgValidator, settings::Settings, Builder,
-    ClaimGeneratorInfo, Context as C2paContext, Error, Ingredient, ManifestDefinition, Reader,
-    Signer,
+    format_from_path, settings::Settings, Builder, ClaimGeneratorInfo, Context as C2paContext,
+    Error, Ingredient, ManifestDefinition, Reader, Signer,
 };
 use clap::{Parser, Subcommand};
 use env_logger::Env;
@@ -40,11 +39,7 @@ use log::debug;
 use serde::Deserialize;
 use signer::SignConfig;
 use tempfile::NamedTempFile;
-#[cfg(not(target_os = "wasi"))]
-use tokio::runtime::Runtime;
 use url::Url;
-#[cfg(target_os = "wasi")]
-use wstd::runtime::block_on;
 
 use crate::{
     callback_signer::{CallbackSigner, CallbackSignerConfig, ExternalProcessRunner},
@@ -723,20 +718,6 @@ fn verify_fragmented(
     Ok(readers)
 }
 
-// run cawg validation if supported
-fn validate_cawg(reader: &mut Reader) -> Result<()> {
-    #[cfg(not(target_os = "wasi"))]
-    {
-        Runtime::new()?
-            .block_on(reader.post_validate_async(&CawgValidator {}))
-            .map_err(anyhow::Error::from)
-    }
-    #[cfg(target_os = "wasi")]
-    {
-        block_on(reader.post_validate_async(&CawgValidator {})).map_err(anyhow::Error::from)
-    }
-}
-
 fn reader_from_args(
     asset_path: &Path,
     args: &CliArgs,
@@ -1033,10 +1014,9 @@ fn main() -> Result<()> {
                 }
 
                 // generate a report on the output file
-                let mut reader = Reader::from_shared_context(&context)
+                let reader = Reader::from_shared_context(&context)
                     .with_file(&output)
                     .map_err(special_errs)?;
-                validate_cawg(&mut reader)?;
                 print_reader(&reader, args.detailed, args.crjson)?;
             }
         } else {
@@ -1064,10 +1044,9 @@ fn main() -> Result<()> {
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
             println!("Ingredient report written to the directory {:?}", &output);
         } else {
-            let mut reader = Reader::from_shared_context(&context)
+            let reader = Reader::from_shared_context(&context)
                 .with_file(path)
                 .map_err(special_errs)?;
-            validate_cawg(&mut reader)?;
             reader.to_folder(&output)?;
             let report = reader.to_string();
             if args.detailed {
@@ -1087,19 +1066,14 @@ fn main() -> Result<()> {
         fragments_glob: Some(fg),
     }) = &args.command
     {
-        let mut stores = verify_fragmented(path, fg, &context)?;
+        let stores = verify_fragmented(path, fg, &context)?;
         if stores.len() == 1 {
-            validate_cawg(&mut stores[0])?;
             println!("{}", stores[0]);
         } else {
-            for store in &mut stores {
-                validate_cawg(store)?;
-            }
             println!("{} Init manifests validated", stores.len());
         }
     } else {
-        let mut reader = reader_from_args(path, &args, &context)?;
-        validate_cawg(&mut reader)?;
+        let reader = reader_from_args(path, &args, &context)?;
         print_reader(&reader, args.detailed, args.crjson)?;
     }
 
