@@ -1971,8 +1971,11 @@ impl Store {
                 .await?;
         }
 
-        // verify data hashes for provenance claims
-        Claim::verify_hash_binding(provenance_claim, asset_data, &svi, validation_log, context)
+        // Try the binding claim first for update manifests, if available. Otherwise, fallback to the provenance claim.
+        let binding_claim = store
+            .get_claim(&svi.binding_claim)
+            .unwrap_or(provenance_claim);
+        Claim::verify_hash_binding(binding_claim, asset_data, &svi, validation_log, context)
     }
 
     #[async_generic(async_signature(
