@@ -9,6 +9,14 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.84.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.84.1...c2pa-v0.84.2)
+_13 May 2026_
+
+### Fixed
+
+* Harden against Builder::base_path injection attack on archive deserialisation ([#2139](https://github.com/contentauth/c2pa-rs/pull/2139))
+* Harden against integer overflow attacks in hash_stream_by_alg_with_progress range validation ([#2140](https://github.com/contentauth/c2pa-rs/pull/2140))
+
 ## [0.84.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.84.0...c2pa-v0.84.1)
 _12 May 2026_
 
