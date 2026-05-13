@@ -3319,6 +3319,10 @@ mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_c2pa_sign_file_null_source_path() {
+        let settings = CString::new(r#"{"verify": {"verify_after_sign": false}}"#).unwrap();
+        let format = CString::new("json").unwrap();
+        let _ = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
+
         let dest_path = CString::new("/tmp/output.jpg").unwrap();
         let manifest = CString::new("{}").unwrap();
         let signer_info = C2paSignerInfo {
@@ -3347,12 +3351,17 @@ mod tests {
     fn test_c2pa_sign_file_success() {
         use std::{fs, path::PathBuf};
 
+        let settings = CString::new(r#"{"verify": {"verify_after_sign": false}}"#).unwrap();
+        let format = CString::new("json").unwrap();
+        let _ = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
+
         // Setup paths
         let base = env!("CARGO_MANIFEST_DIR");
         let source = format!("{base}/../sdk/tests/fixtures/IMG_0003.jpg");
         let temp_dir = PathBuf::from(base).join("../target/tmp");
         fs::create_dir_all(&temp_dir).unwrap();
         let dest = temp_dir.join("c2pa_sign_file_test_output.jpg");
+        fs::remove_file(&dest).ok();
 
         let source_path = CString::new(source).unwrap();
         let dest_path = CString::new(dest.to_str().unwrap()).unwrap();
@@ -3534,6 +3543,15 @@ mod tests {
         let mut dest_stream = TestStream::new(Vec::new());
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::Empty,
+            )
+        };
+        assert_eq!(result, 0);
 
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
@@ -4765,6 +4783,15 @@ verify_after_sign = true
         let mut dest_stream = TestStream::new(dest_vec);
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::Empty,
+            )
+        };
+        assert_eq!(result, 0);
 
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();

@@ -337,9 +337,7 @@ pub struct Verify {
     pub verify_after_reading: bool,
     /// Whether to verify the manifest after signing in the [`Builder`].
     ///
-    /// The default value is false.
-    /// There is a known bug related to this setting: [#1875](https://github.com/contentauth/c2pa-rs/issues/1875).
-    /// When the bug is fixed, the default value should be true.
+    /// The default value is true.
     ///
     /// <div class="warning">
     /// Disabling validation can improve signing performance, BUT it carries the risk of signing an invalid
@@ -406,7 +404,7 @@ impl Default for Verify {
     fn default() -> Self {
         Self {
             verify_after_reading: true,
-            verify_after_sign: false, // TODO: Update docs when #1875 is fixed.
+            verify_after_sign: true,
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,

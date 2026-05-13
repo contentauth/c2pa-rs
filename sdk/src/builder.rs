@@ -8731,14 +8731,17 @@ mod tests {
 
     #[test]
     fn test_to_archive_preserves_duplicate_label_assertions() -> Result<()> {
-        let mut builder = Builder::default();
+        let context = Context::new()
+            .with_settings(json!({"verify": {"verify_after_sign": false}}))?
+            .into_shared();
+        let mut builder = Builder::from_shared_context(&context);
         builder.add_assertion("org.contentauth.test", &json!({"v": 1}))?;
         builder.add_assertion("org.contentauth.test", &json!({"v": 2}))?;
 
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive)?;
         archive.rewind()?;
-        let mut builder = Builder::default().with_archive(archive)?;
+        let mut builder = Builder::from_shared_context(&context).with_archive(archive)?;
 
         let signer = test_signer(SigningAlg::Ps256);
         let mut output = Cursor::new(Vec::new());

@@ -65,8 +65,19 @@ fn test_bad_data_hash() -> Result<()> {
 
     let mut dest = Cursor::new(Vec::new());
 
-    let result = builder.sign(context.signer()?, format, &mut source, &mut dest);
-    assert!(matches!(result, Err(Error::HashMismatch(..))));
+    let err = builder
+        .sign(context.signer()?, format, &mut source, &mut dest)
+        .expect_err("expected validation error after sign");
+
+    let validation_results = match err {
+        Error::ValidationAfterSign(vr) => vr,
+        other => panic!("{other:?}"),
+    };
+
+    assert_eq!(
+        validation_results.active_manifest().unwrap().failure[0].code(),
+        validation_status::ASSERTION_DATAHASH_MISMATCH
+    );
 
     Ok(())
 }
