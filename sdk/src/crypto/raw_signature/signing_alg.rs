@@ -15,7 +15,7 @@ use std::{fmt, str::FromStr};
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Describes the digital signature algorithms allowed by the C2PA spec.
 ///
@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 /// > algorithms and key types listed as described in this section.
 ///
 /// [§13.2, “Digital Signatures”]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_digital_signatures
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub enum SigningAlg {
     /// ECDSA with SHA-256
@@ -65,6 +65,19 @@ impl FromStr for SigningAlg {
             "ed25519" => Ok(Self::Ed25519),
             _ => Err(UnknownAlgorithmError(alg.to_owned())),
         }
+    }
+}
+
+// Manual implementation so that it works with case-insensitive strings. This is done for
+// backwards compatibility with behavior in the `config` crate.
+impl<'de> Deserialize<'de> for SigningAlg {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.to_lowercase()
+            .parse()
+            .map_err(|UnknownAlgorithmError(name)| {
+                serde::de::Error::custom(format!("unknown signing algorithm: {name}"))
+            })
     }
 }
 

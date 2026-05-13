@@ -3814,8 +3814,7 @@ impl Store {
 
         // add in current redactions
         if let Some(c_redactions) = claim.redactions() {
-            svi.redactions
-                .append(&mut c_redactions.clone().into_iter().collect::<Vec<_>>());
+            svi.redactions.extend(c_redactions.iter().cloned());
         }
 
         // save the addressible claims for quicker lookup
@@ -3970,7 +3969,7 @@ impl Store {
                 let mut claim_redactions: Vec<String> = redactions.clone().unwrap_or_default();
                 for c in claim.claim_ingredients() {
                     if let Some(r) = c.redactions() {
-                        claim_redactions.append(&mut r.clone().into_iter().collect::<Vec<_>>());
+                        claim_redactions.extend(r.iter().cloned());
                     }
                 }
 
