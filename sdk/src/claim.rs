@@ -120,6 +120,20 @@ pub enum ClaimAssetData<'a> {
     StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
 }
 
+impl ClaimAssetData<'_> {
+    pub fn format(&self) -> Option<String> {
+        match self {
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::Path(path) => crate::format_from_path(path),
+            ClaimAssetData::Bytes(_, format) => Some(format.to_string()),
+            ClaimAssetData::Stream(_, format) => Some(format.to_string()),
+            ClaimAssetData::StreamFragment(_, _, format) => Some(format.to_string()),
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::StreamFragments(_, _, format) => Some(format.to_string()),
+        }
+    }
+}
+
 #[derive(PartialEq, Debug, Eq, Clone, Hash)]
 pub enum ClaimAssertionType {
     V1,       // V1 assertion
@@ -2630,6 +2644,13 @@ impl Claim {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<()> {
+        // If it's a C2PA manifest then there is no asset to verify the hashes against.
+        if asset_data.format().is_some_and(|format| {
+            crate::asset_handlers::c2pa_io::SUPPORTED_TYPES.contains(&format.as_str())
+        }) {
+            return Ok(());
+        }
+
         const UNNAMED: &str = "unnamed";
         let default_str = |s: &String| s.clone();
 

@@ -84,7 +84,7 @@ use crate::{
         ASSERTION_CBOR_INVALID, ASSERTION_JSON_INVALID, ASSERTION_MISSING, CLAIM_MALFORMED,
     },
     validation_status::{self, ALGORITHM_UNSUPPORTED},
-    AsyncSigner, Signer,
+    AsyncSigner, Signer, ValidationResults, ValidationState,
 };
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
@@ -3170,26 +3170,30 @@ impl Store {
                 context.check_progress(ProgressPhase::Embedding, 1, 1)?;
 
                 let verify_after_sign = settings.verify.verify_after_sign;
-                // Also catch the case where we may have written to io::empty() or similar
-                if verify_after_sign && output_stream.seek(SeekFrom::End(0))? > 0 {
-                    // verify the store
-                    let mut validation_log =
-                        StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+                if verify_after_sign {
+                    let mut validation_log = StatusTracker::default();
+                    let output_len = output_stream.seek(SeekFrom::End(0))?;
+                    let mut asset_data = if output_len > 0 {
+                        ClaimAssetData::Stream(output_stream, format)
+                    } else {
+                        // If there is no output stream (e.g. `io::empty`), let's only validate the manifest.
+                        ClaimAssetData::Bytes(&m, "application/c2pa")
+                    };
                     if _sync {
-                        Store::verify_store(
-                            self,
-                            &mut crate::claim::ClaimAssetData::Stream(output_stream, format),
-                            &mut validation_log,
-                            context,
-                        )?;
+                        Store::verify_store(self, &mut asset_data, &mut validation_log, context)?;
                     } else {
                         Store::verify_store_async(
                             self,
-                            &mut crate::claim::ClaimAssetData::Stream(output_stream, format),
+                            &mut asset_data,
                             &mut validation_log,
                             context,
                         )
                         .await?;
+                    }
+
+                    let validation_results = ValidationResults::from_store(self, &validation_log);
+                    if validation_results.validation_state() == ValidationState::Invalid {
+                        return Err(Error::ValidationAfterSign(validation_results));
                     }
                 }
                 Ok(m)

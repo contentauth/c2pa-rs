@@ -25,6 +25,7 @@ use crate::{
     },
     crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
     http::HttpResolverError,
+    ValidationResults,
 };
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
@@ -390,6 +391,9 @@ pub enum Error {
     // The string should be one of the C2PA validation codes
     #[error("C2PA Validation Error: {0}")]
     C2PAValidation(String),
+
+    #[error("manifest failed validation after signing")]
+    ValidationAfterSign(ValidationResults),
 
     #[error("error parsing BMFF: {0}")]
     BmffError(#[from] BmffError),
