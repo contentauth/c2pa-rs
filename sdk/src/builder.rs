@@ -407,6 +407,7 @@ pub struct Builder {
     /// Base path to search for resources.
     #[cfg(feature = "file_io")]
     #[deprecated(note = "Use set_base_path() instead")]
+    #[serde(skip)]
     pub base_path: Option<PathBuf>,
 
     /// A builder should construct a created, opened or updated manifest.
@@ -3360,7 +3361,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     #![allow(deprecated)]
     use std::{
-        io::{self, Cursor},
+        io::{self, Cursor, Write},
         vec,
     };
 
@@ -9414,6 +9415,62 @@ mod tests {
                 max: MAX_ASSERTIONS
             }
         ));
+    }
+
+    // Verify that `base_path` in manifest.json is ignored during archive deserialization.
+    // An attacker embedding "base_path": "/" must not be able to redirect resource
+    // resolution to an arbitrary filesystem root (file exfiltration via archive).
+    //
+    // Uses the legacy zip archive path (generate_c2pa_archive = false) so we can
+    // manipulate the manifest.json inside the zip before loading it back.
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_base_path_not_deserialized_from_archive() {
+        // Force the old zip format so we can manipulate manifest.json directly.
+        let settings = Settings::new()
+            .with_value("builder.generate_c2pa_archive", false)
+            .unwrap();
+        let builder = Builder::from_context(Context::new().with_settings(settings).unwrap());
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        archive.rewind().unwrap();
+
+        // Inject "base_path": "/" into manifest.json inside the zip.
+        let mut modified = Cursor::new(Vec::new());
+        {
+            let mut zip_in = ZipArchive::new(&mut archive).unwrap();
+            let mut zip_out = ZipWriter::new(&mut modified);
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+            for i in 0..zip_in.len() {
+                let mut entry = zip_in.by_index(i).unwrap();
+                let name = entry.name().to_string();
+                let mut buf = Vec::new();
+                entry.read_to_end(&mut buf).unwrap();
+
+                zip_out.start_file(&name, options).unwrap();
+                if name == "manifest.json" {
+                    let mut value: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+                    value["base_path"] = serde_json::Value::String("/".to_string());
+                    zip_out
+                        .write_all(&serde_json::to_vec(&value).unwrap())
+                        .unwrap();
+                } else {
+                    zip_out.write_all(&buf).unwrap();
+                }
+            }
+            zip_out.finish().unwrap();
+        }
+        modified.rewind().unwrap();
+
+        let loaded = Builder::from_archive(modified).unwrap();
+
+        assert!(
+            loaded.base_path.is_none(),
+            "base_path must not be populated from archive JSON"
+        );
     }
 
     // Ensures that the future returned by `Builder::sign_async` implements `Send`, thus making it
