@@ -365,10 +365,13 @@ fn test_sign_using_c2patool_as_subprocess_signer() -> Result<(), Box<dyn Error>>
 fn test_sign_cawg_using_c2patool_as_identity_signer() -> Result<(), Box<dyn Error>> {
     let output = temp_path("output_cawg_identity_signer.jpg");
     // Both --signer-path and --identity-signer-path point at c2patool itself.
-    // Both use the baked-in es256 DEFAULT_CERTS/DEFAULT_KEY, so the identity
-    // assertion is signed with a cert that matches the key — well-formed.
+    // The manifest (sample/test.json) provides sign_cert for the C2PA subprocess signer.
+    // The settings file provides [cawg_x509_signer.local] for the identity subprocess signer.
+    // Both use the baked-in es256 DEFAULT_CERTS/DEFAULT_KEY, so cert and signature match.
     Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE))
+        .arg("--settings")
+        .arg(fixture_path("trust/cawg_subprocess_settings.toml"))
         .arg("--signer-path")
         .arg(cargo::cargo_bin!("c2patool"))
         .arg("--identity-signer-path")

@@ -366,12 +366,14 @@ fn make_subprocess_signer(
 struct CawgIdentityInfo {
     /// Inline PEM cert bytes and signing algorithm from settings, or `None` when absent.
     cert_and_alg: Option<(Vec<u8>, SigningAlg)>,
+    tsa_url: Option<String>,
     referenced_assertions: Vec<String>,
     roles: Vec<String>,
 }
 
-/// Extract cert bytes, alg, referenced_assertions and roles from a `cawg_x509_signer` settings
-/// value.  `cert_and_alg` is `None` when no CAWG settings are present.
+/// Extract cert bytes, alg, tsa_url, referenced_assertions, and roles from a
+/// `cawg_x509_signer` settings value.  `cert_and_alg` is `None` when no CAWG settings
+/// are present.
 fn extract_cawg_identity_info(
     cawg_settings: Option<c2pa::settings::signer::SignerSettings>,
 ) -> CawgIdentityInfo {
@@ -379,6 +381,7 @@ fn extract_cawg_identity_info(
         Some(c2pa::settings::signer::SignerSettings::Local {
             alg,
             sign_cert,
+            tsa_url,
             referenced_assertions,
             roles,
             ..
@@ -386,16 +389,19 @@ fn extract_cawg_identity_info(
         | Some(c2pa::settings::signer::SignerSettings::Remote {
             alg,
             sign_cert,
+            tsa_url,
             referenced_assertions,
             roles,
             ..
         }) => CawgIdentityInfo {
             cert_and_alg: Some((sign_cert.into_bytes(), alg)),
+            tsa_url,
             referenced_assertions: referenced_assertions.unwrap_or_default(),
             roles: roles.unwrap_or_default(),
         },
         _ => CawgIdentityInfo {
             cert_and_alg: None,
+            tsa_url: None,
             referenced_assertions: vec![],
             roles: vec![],
         },
@@ -1095,7 +1101,11 @@ fn main() -> Result<()> {
                     let bytes = std::fs::read(&p).context(format!("Reading sign cert: {p:?}"))?;
                     (bytes, Some(p))
                 }
-                None => (signer::DEFAULT_CERTS.to_vec(), None),
+                None => {
+                    anyhow::bail!(
+                        "--signer-path requires sign_cert to be set in the manifest definition"
+                    )
+                }
             };
             let tsa_url = sign_config.ta_url.clone().or_else(signer::get_ta_url);
             make_subprocess_signer(
@@ -1115,42 +1125,25 @@ fn main() -> Result<()> {
 
         // Step 2: optionally wrap with a CAWG identity callback signer.
         let signer: Box<dyn Signer> = if let Some(identity_path) = args.identity_signer_path {
-            // Prefer cert/alg from cawg_x509_signer settings; fall back to the manifest's
-            // sign_cert / alg when no CAWG-specific settings are present.
             let CawgIdentityInfo {
                 cert_and_alg,
+                tsa_url,
                 referenced_assertions,
                 roles,
             } = extract_cawg_identity_info(settings.cawg_x509_signer.take());
 
-            let (cert_bytes, alg, sign_cert_arg) = if let Some((bytes, alg)) = cert_and_alg {
-                // Cert came from settings as inline PEM — no file path to pass to subprocess.
-                (bytes, alg, None)
-            } else {
-                let alg: SigningAlg = sign_config
-                    .alg
-                    .as_deref()
-                    .unwrap_or("es256")
-                    .to_lowercase()
-                    .parse()
-                    .context("Invalid signing algorithm")?;
-                let (bytes, cert_path) = match sign_config.sign_cert.clone() {
-                    Some(p) => {
-                        let bytes =
-                            std::fs::read(&p).context(format!("Reading sign cert: {p:?}"))?;
-                        (bytes, Some(p))
-                    }
-                    None => (signer::DEFAULT_CERTS.to_vec(), None),
-                };
-                (bytes, alg, cert_path)
-            };
+            let (cert_bytes, alg) = cert_and_alg.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--identity-signer-path requires [cawg_x509_signer] settings with sign_cert and alg"
+                )
+            })?;
 
-            let tsa_url = sign_config.ta_url.clone().or_else(signer::get_ta_url);
+            let tsa_url = tsa_url.or_else(signer::get_ta_url);
             let identity_signer = make_subprocess_signer(
                 identity_path,
                 alg,
                 cert_bytes,
-                sign_cert_arg,
+                None, // cert came from inline settings PEM, no file path for subprocess
                 args.reserve_size,
                 tsa_url,
                 "cawg",
@@ -1422,6 +1415,7 @@ pub mod tests {
         let (bytes, alg) = info.cert_and_alg.expect("cert info should be present");
         assert_eq!(bytes, cert_pem.as_bytes());
         assert_eq!(alg, SigningAlg::Ps256);
+        assert!(info.tsa_url.is_none());
         assert_eq!(info.referenced_assertions, ["c2pa.hash.data"]);
         assert_eq!(info.roles, ["creator"]);
     }
@@ -1430,6 +1424,7 @@ pub mod tests {
     fn extract_cawg_identity_info_returns_none_when_no_settings() {
         let info = extract_cawg_identity_info(None);
         assert!(info.cert_and_alg.is_none());
+        assert!(info.tsa_url.is_none());
         assert!(info.referenced_assertions.is_empty());
         assert!(info.roles.is_empty());
     }
