@@ -118,6 +118,153 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
 }
 
+impl StoreValidationInfo<'_> {
+    pub fn new<'a>(
+        store: &'a Store,
+        claim: &'a Claim,
+        validation_log: &mut StatusTracker,
+    ) -> Result<StoreValidationInfo<'a>> {
+        let mut svi = StoreValidationInfo::default();
+        Store::get_claim_referenced_manifests(claim, store, &mut svi, true, validation_log)?;
+
+        // find the manifest with the hash binding
+        svi.binding_claim = store.get_hash_binding_manifest(claim).ok_or_else(|| {
+            log_item!(
+                to_manifest_uri(claim.label()),
+                "could not find manifest with hard binding",
+                "get_store_validation_info"
+            )
+            .validation_status(validation_status::HARD_BINDINGS_MISSING)
+            .failure_as_err(validation_log, Error::ClaimMissingHardBinding)
+        })?;
+
+        // save the update manifest label if it exists
+        if claim.update_manifest() {
+            svi.update_manifest_label = Some(claim.label().to_owned());
+        }
+
+        for found_claim in svi.manifest_map.values() {
+            // get the timestamp assertions
+            let timestamp_assertions = found_claim.timestamp_assertions();
+            for ta in timestamp_assertions {
+                let timestamp_assertion =
+                    TimeStamp::from_assertion(ta.assertion()).map_err(|_e| {
+                        log_item!(
+                            ta.label(),
+                            "could not parse timestamp assertion",
+                            "get_claim_referenced_manifests"
+                        )
+                        .validation_status(validation_status::ASSERTION_TIMESTAMP_MALFORMED)
+                        .failure_as_err(
+                            validation_log,
+                            Error::ValidationRule("timestamp assertion malformed".into()),
+                        )
+                    })?;
+
+                // save the valid timestamps stored in the StoreValidationInfo
+                // we only use valid timestamps, otherwise just ignore
+                for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
+                    let mut tmp_log = StatusTracker::default();
+                    if let Some(rc) = svi.manifest_map.get(referenced_claim) {
+                        if let Ok(sign1) = rc.cose_sign1() {
+                            if let Ok(tst_info) = verify_time_stamp(
+                                time_stamp_token,
+                                &sign1.signature,
+                                &store.ctp,
+                                &mut tmp_log,
+                                // no trust checks for leagacy timestamps
+                                rc.version() != 1,
+                            ) {
+                                svi.timestamps.insert(rc.label().to_owned(), tst_info);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // get the certificate status assertions
+            let certificate_status_assertions = found_claim.certificate_status_assertions();
+            for csa in certificate_status_assertions {
+                let certificate_status_assertion =
+                    CertificateStatus::from_assertion(csa.assertion())?;
+
+                // save the ocsp_ders stored in the StoreValidationInfo
+                for ocsp_der in certificate_status_assertion.as_ref() {
+                    if let Ok(response) =
+                        OcspResponse::from_der_checked(ocsp_der, None, validation_log)
+                    {
+                        let ocsp_ders = svi
+                            .certificate_statuses
+                            .entry(response.certificate_serial_num)
+                            .or_insert(Vec::new());
+                        ocsp_ders.push(response.ocsp_der);
+                    }
+                }
+            }
+        }
+
+        Ok(svi)
+    }
+
+    pub fn with_asset<'a>(
+        store: &'a Store,
+        claim: &'a Claim,
+        validation_log: &mut StatusTracker,
+        asset_data: &mut ClaimAssetData<'_>,
+    ) -> Result<StoreValidationInfo<'a>> {
+        let mut svi = Self::new(store, claim, validation_log)?;
+        svi.parse_asset(asset_data)?;
+        Ok(svi)
+    }
+
+    pub fn parse_asset(&mut self, asset_data: &mut ClaimAssetData<'_>) -> Result<()> {
+        let locations = match asset_data {
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::Path(path) => {
+                let format = get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
+                let mut reader = std::fs::File::open(path)?;
+
+                object_locations_from_stream(&format, &mut reader)
+            }
+            ClaimAssetData::Bytes(items, typ) => {
+                let format = typ.to_owned();
+                let mut reader = Cursor::new(items);
+
+                object_locations_from_stream(&format, &mut reader)
+            }
+            ClaimAssetData::Stream(reader, typ) => {
+                let format = typ.to_owned();
+                let positions = object_locations_from_stream(&format, reader);
+                reader.rewind()?;
+                positions
+            }
+            ClaimAssetData::StreamFragment(reader, _read1, typ) => {
+                let format = typ.to_owned();
+                object_locations_from_stream(&format, reader)
+            }
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
+                let format = typ.to_owned();
+                object_locations_from_stream(&format, reader)
+            }
+        };
+
+        if let Ok(locations) = locations {
+            if let Some(manifest_loc) = locations
+                .iter()
+                .find(|o| o.htype == HashBlockObjectType::Cai)
+            {
+                self.manifest_store_range = Some(HashRange::new(
+                    manifest_loc.offset as u64,
+                    manifest_loc.length as u64,
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// A `Store` maintains a list of `Claim` structs.
 ///
 /// Typically, this list of `Claim`s represents all of the claims in an asset.
@@ -1534,7 +1681,6 @@ impl Store {
         store: &Store,
         claim: &Claim,
         svi: &StoreValidationInfo,
-        asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
         depth: usize,
         context: &Context,
@@ -1720,9 +1866,8 @@ impl Store {
                         }
                     }
 
-                    Claim::verify_claim(
+                    Claim::verify_claim_inner(
                         ingredient,
-                        asset_data,
                         svi,
                         check_ingredient_trust,
                         &store.ctp,
@@ -1735,7 +1880,6 @@ impl Store {
                         store,
                         ingredient,
                         svi,
-                        asset_data,
                         validation_log,
                         depth.saturating_add(1),
                         context,
@@ -1765,12 +1909,12 @@ impl Store {
         Ok(())
     }
 
+    // TODO: remove duplication
     // recursively walk the ingredients and validate
     async fn ingredient_checks_async(
         store: &Store,
         claim: &Claim,
         svi: &StoreValidationInfo<'_>,
-        asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
         depth: usize,
         context: &Context,
@@ -1959,9 +2103,8 @@ impl Store {
                         }
                     }
 
-                    Claim::verify_claim_async(
+                    Claim::verify_claim_inner_async(
                         ingredient,
-                        asset_data,
                         svi,
                         check_ingredient_trust,
                         &store.ctp,
@@ -1975,7 +2118,6 @@ impl Store {
                         store,
                         ingredient,
                         svi,
-                        asset_data,
                         validation_log,
                         depth.saturating_add(1),
                         context,
@@ -2006,138 +2148,6 @@ impl Store {
         Ok(())
     }
 
-    fn get_store_validation_info<'a>(
-        &'a self,
-        claim: &'a Claim,
-        asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut StatusTracker,
-    ) -> Result<StoreValidationInfo<'a>> {
-        let mut svi = StoreValidationInfo::default();
-        Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
-
-        // find the manifest with the hash binding
-        svi.binding_claim = self.get_hash_binding_manifest(claim).ok_or_else(|| {
-            log_item!(
-                to_manifest_uri(claim.label()),
-                "could not find manifest with hard binding",
-                "get_store_validation_info"
-            )
-            .validation_status(validation_status::HARD_BINDINGS_MISSING)
-            .failure_as_err(validation_log, Error::ClaimMissingHardBinding)
-        })?;
-
-        // save the update manifest label if it exists
-        if claim.update_manifest() {
-            svi.update_manifest_label = Some(claim.label().to_owned());
-        }
-
-        // get the manifest offset position
-        let locations = match asset_data {
-            #[cfg(feature = "file_io")]
-            ClaimAssetData::Path(path) => {
-                let format = get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
-                let mut reader = std::fs::File::open(path)?;
-
-                object_locations_from_stream(&format, &mut reader)
-            }
-            ClaimAssetData::Bytes(items, typ) => {
-                let format = typ.to_owned();
-                let mut reader = Cursor::new(items);
-
-                object_locations_from_stream(&format, &mut reader)
-            }
-            ClaimAssetData::Stream(reader, typ) => {
-                let format = typ.to_owned();
-                let positions = object_locations_from_stream(&format, reader);
-                reader.rewind()?;
-                positions
-            }
-            ClaimAssetData::StreamFragment(reader, _read1, typ) => {
-                let format = typ.to_owned();
-                object_locations_from_stream(&format, reader)
-            }
-            #[cfg(feature = "file_io")]
-            ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
-                let format = typ.to_owned();
-                object_locations_from_stream(&format, reader)
-            }
-        };
-
-        if let Ok(locations) = locations {
-            if let Some(manifest_loc) = locations
-                .iter()
-                .find(|o| o.htype == HashBlockObjectType::Cai)
-            {
-                svi.manifest_store_range = Some(HashRange::new(
-                    manifest_loc.offset as u64,
-                    manifest_loc.length as u64,
-                ));
-            }
-        }
-
-        for found_claim in svi.manifest_map.values() {
-            // get the timestamp assertions
-            let timestamp_assertions = found_claim.timestamp_assertions();
-            for ta in timestamp_assertions {
-                let timestamp_assertion =
-                    TimeStamp::from_assertion(ta.assertion()).map_err(|_e| {
-                        log_item!(
-                            ta.label(),
-                            "could not parse timestamp assertion",
-                            "get_claim_referenced_manifests"
-                        )
-                        .validation_status(validation_status::ASSERTION_TIMESTAMP_MALFORMED)
-                        .failure_as_err(
-                            validation_log,
-                            Error::ValidationRule("timestamp assertion malformed".into()),
-                        )
-                    })?;
-
-                // save the valid timestamps stored in the StoreValidationInfo
-                // we only use valid timestamps, otherwise just ignore
-                for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
-                    let mut tmp_log = StatusTracker::default();
-                    if let Some(rc) = svi.manifest_map.get(referenced_claim) {
-                        if let Ok(sign1) = rc.cose_sign1() {
-                            if let Ok(tst_info) = verify_time_stamp(
-                                time_stamp_token,
-                                &sign1.signature,
-                                &self.ctp,
-                                &mut tmp_log,
-                                // no trust checks for leagacy timestamps
-                                rc.version() != 1,
-                            ) {
-                                svi.timestamps.insert(rc.label().to_owned(), tst_info);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // get the certificate status assertions
-            let certificate_status_assertions = found_claim.certificate_status_assertions();
-            for csa in certificate_status_assertions {
-                let certificate_status_assertion =
-                    CertificateStatus::from_assertion(csa.assertion())?;
-
-                // save the ocsp_ders stored in the StoreValidationInfo
-                for ocsp_der in certificate_status_assertion.as_ref() {
-                    if let Ok(response) =
-                        OcspResponse::from_der_checked(ocsp_der, None, validation_log)
-                    {
-                        let ocsp_ders = svi
-                            .certificate_statuses
-                            .entry(response.certificate_serial_num)
-                            .or_insert(Vec::new());
-                        ocsp_ders.push(response.ocsp_der);
-                    }
-                }
-            }
-        }
-
-        Ok(svi)
-    }
-
     /// Verify Store
     /// store: Store to validate
     /// xmp_str: String containing entire XMP block of the asset
@@ -2148,7 +2158,6 @@ impl Store {
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
         context: &Context,
-
     ))]
     pub fn verify_store(
         store: &Store,
@@ -2156,59 +2165,53 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<()> {
-        context.check_progress(ProgressPhase::VerifyingManifest, 1, 1)?;
-        let claim = match store.provenance_claim() {
+        let provenance_claim = match store.provenance_claim() {
             Some(c) => c,
             None => {
                 log_item!("Unknown", "could not find active manifest", "verify_store")
                     .validation_status(validation_status::CLAIM_MISSING)
                     .failure_no_throw(validation_log, Error::ProvenanceMissing);
-
                 return Err(Error::ProvenanceMissing);
             }
         };
+        let svi =
+            StoreValidationInfo::with_asset(store, provenance_claim, validation_log, asset_data)?;
 
-        // get info needed to complete validation
-        let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
-
+        // verify the provenance claim structure, signatures and ingredients
         if _sync {
-            // verify the provenance claim
-            Claim::verify_claim(
-                claim,
-                asset_data,
-                &svi,
-                true,
-                &store.ctp,
-                validation_log,
-                context,
-            )?;
-
-            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log, 0, context)?;
+            Store::verify_store_inner(store, provenance_claim, &svi, validation_log, context)?;
         } else {
-            Claim::verify_claim_async(
-                claim,
-                asset_data,
-                &svi,
-                true,
-                &store.ctp,
-                validation_log,
-                context,
-            )
-            .await?;
-
-            Store::ingredient_checks_async(
-                store,
-                claim,
-                &svi,
-                asset_data,
-                validation_log,
-                0,
-                context,
-            )
-            .await?;
+            Store::verify_store_inner_async(store, provenance_claim, &svi, validation_log, context)
+                .await?;
         }
 
-        Ok(())
+        // verify data hashes for provenance claims
+        Claim::verify_hash_binding(provenance_claim, asset_data, &svi, validation_log, context)
+    }
+
+    #[async_generic(async_signature(
+        store: &Store,
+        claim: &Claim,
+        svi: &StoreValidationInfo<'_>,
+        validation_log: &mut StatusTracker,
+        context: &Context,
+    ))]
+    pub(crate) fn verify_store_inner(
+        store: &Store,
+        claim: &Claim,
+        svi: &StoreValidationInfo<'_>,
+        validation_log: &mut StatusTracker,
+        context: &Context,
+    ) -> Result<()> {
+        context.check_progress(ProgressPhase::VerifyingManifest, 1, 1)?;
+        if _sync {
+            Claim::verify_claim_inner(claim, svi, true, &store.ctp, validation_log, context)?;
+            Store::ingredient_checks(store, claim, svi, validation_log, 0, context)
+        } else {
+            Claim::verify_claim_inner_async(claim, svi, true, &store.ctp, validation_log, context)
+                .await?;
+            Store::ingredient_checks_async(store, claim, svi, validation_log, 0, context).await
+        }
     }
 
     // generate a list of AssetHashes based on the location of objects in the stream
@@ -8991,12 +8994,11 @@ pub mod tests {
 
     #[test]
     fn test_ingredient_depth_limit_ingredient_checks() {
-        use crate::{claim::ClaimAssetData, context::Context};
+        use crate::context::Context;
 
         let store = Store::new();
         let claim = Claim::new("depth_test", Some("contentauth"), 2);
         let svi = StoreValidationInfo::default();
-        let mut asset_data = ClaimAssetData::Bytes(&[], "image/jpeg");
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let context = Context::new();
@@ -9005,7 +9007,6 @@ pub mod tests {
             &store,
             &claim,
             &svi,
-            &mut asset_data,
             &mut validation_log,
             MAX_INGREDIENT_DEPTH,
             &context,

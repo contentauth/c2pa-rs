@@ -1869,7 +1869,7 @@ impl Claim {
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
-    #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)]
     #[async_generic]
     pub(crate) fn verify_claim(
         claim: &Claim,
@@ -1880,58 +1880,65 @@ impl Claim {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<()> {
+        if _sync {
+            Claim::verify_claim_inner(claim, svi, cert_check, ctp, validation_log, context)?;
+        } else {
+            Claim::verify_claim_inner_async(claim, svi, cert_check, ctp, validation_log, context)
+                .await?;
+        }
+
+        Claim::verify_hash_binding(claim, asset_data, svi, validation_log, context)?;
+
+        Ok(())
+    }
+
+    /// Verify claim signature, assertion store, actions, and metadata, without hash bindings.
+    #[async_generic]
+    pub(crate) fn verify_claim_inner(
+        claim: &Claim,
+        svi: &StoreValidationInfo<'_>,
+        cert_check: bool,
+        ctp: &CertificateTrustPolicy,
+        validation_log: &mut StatusTracker,
+        context: &Context,
+    ) -> Result<()> {
+        validation_log.push_current_uri(to_signature_uri(claim.label()));
+
+        if _sync {
+            Claim::verify_network(claim, svi, cert_check, ctp, validation_log, context)?;
+        } else {
+            Claim::verify_network_async(claim, svi, cert_check, ctp, validation_log, context)
+                .await?;
+        };
+
+        Claim::verify_structure(claim, svi, validation_log)?;
+        Claim::verify_actions(claim, svi, validation_log, context.settings())?;
+        Claim::verify_metadata(claim, validation_log)?;
+
+        validation_log.pop_current_uri();
+
+        Ok(())
+    }
+
+    #[async_generic]
+    fn verify_network(
+        claim: &Claim,
+        svi: &StoreValidationInfo<'_>,
+        cert_check: bool,
+        ctp: &CertificateTrustPolicy,
+        validation_log: &mut StatusTracker,
+        context: &Context,
+    ) -> Result<()> {
         // Parse COSE signed data (signature) and validate it.
         let sig = claim.signature_val();
         let additional_bytes: Vec<u8> = Vec::new();
 
-        let mut adjusted_settings = context.settings().clone();
-        if claim.version() == 1 {
-            adjusted_settings.verify.verify_timestamp_trust = false;
-        }
-
-        // use the signature uri as the current uri while validating the signature info
-        validation_log.push_current_uri(to_signature_uri(claim.label()));
-
-        // make sure signature manifest if present points to this manifest
-        let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
-            Some(signature_url) if signature_url != claim.label() => true,
-            _ => {
-                jumbf::labels::box_name_from_uri(&claim.signature).unwrap_or_default()
-                    != jumbf::labels::SIGNATURE
-            } // relative signature box
-        };
-
-        if sig_box_err {
-            log_item!(
-                to_signature_uri(claim.label()),
-                "signature missing",
-                "verify_claim"
-            )
-            .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
-            .failure(validation_log, Error::ClaimMissingSignatureBox)?;
-        }
-
-        // for V2 and greater claims the label must conform
-        if claim.version() > 1 && manifest_label_to_parts(claim.label()).is_none() {
-            log_item!(
-                to_manifest_uri(claim.label()),
-                "claim box label invalid",
-                "verify_claim"
-            )
-            .validation_status(validation_status::CLAIM_MALFORMED)
-            .failure(validation_log, Error::ClaimInvalidContent)?;
-        }
-
         // If we are validating a claim that has been loaded from a file
         // we need the original data but if we are signing, we generate the data
         // This avoids cloning the data when we are only referencing it.
-        let mut _generated_data = vec![];
         let data = match claim.original_bytes {
             Some(ref original_bytes) => original_bytes,
-            None => {
-                _generated_data = claim.data()?;
-                &_generated_data
-            }
+            None => &claim.data()?,
         };
 
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
@@ -1962,6 +1969,12 @@ impl Claim {
         }
 
         context.check_progress(ProgressPhase::VerifyingSignature, 1, 1)?;
+
+        let mut adjusted_settings = context.settings().clone();
+        if claim.version() == 1 {
+            adjusted_settings.verify.verify_timestamp_trust = false;
+        }
+
         let verified = if _sync {
             verify_cose(
                 sig,
@@ -1987,10 +2000,51 @@ impl Claim {
             .await
         };
 
-        let result =
-            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, context);
-        validation_log.pop_current_uri();
-        result
+        // TODO: move to verify_structure
+        // signature check
+        match verified {
+            Ok(vi) => {
+                if !vi.validated {
+                    log_item!(
+                        to_signature_uri(claim.label()),
+                        "claim signature is not valid",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
+                    .failure(validation_log, Error::CoseSignature)?;
+                } else {
+                    // signing cert has not expired
+                    log_item!(
+                        to_signature_uri(claim.label()),
+                        "claim signature valid",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                    .success(validation_log);
+
+                    // add signature validated status
+                    log_item!(
+                        to_signature_uri(claim.label()),
+                        "claim signature valid",
+                        "verify_internal"
+                    )
+                    .validation_status(validation_status::CLAIM_SIGNATURE_VALIDATED)
+                    .success(validation_log);
+                }
+            }
+            Err(parse_err) => {
+                // handle case where lower level failed to log
+                log_item!(
+                    to_signature_uri(claim.label()),
+                    "claim signature is not valid",
+                    "verify_internal"
+                )
+                .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
+                .failure_no_throw(validation_log, parse_err);
+            }
+        };
+
+        Ok(())
     }
 
     /// Get the signing certificate chain as PEM bytes
@@ -2925,56 +2979,40 @@ impl Claim {
         Ok(())
     }
 
-    fn verify_internal(
+    fn verify_structure(
         claim: &Claim,
-        asset_data: &mut ClaimAssetData<'_>,
         svi: &StoreValidationInfo,
-        verified: Result<CertificateInfo>,
         validation_log: &mut StatusTracker,
-        context: &Context,
     ) -> Result<()> {
-        // signature check
-        match verified {
-            Ok(vi) => {
-                if !vi.validated {
-                    log_item!(
-                        to_signature_uri(claim.label()),
-                        "claim signature is not valid",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
-                    .failure(validation_log, Error::CoseSignature)?;
-                } else {
-                    // signing cert has not expired
-                    log_item!(
-                        to_signature_uri(claim.label()),
-                        "claim signature valid",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY)
-                    .success(validation_log);
-
-                    // add signature validated status
-                    log_item!(
-                        to_signature_uri(claim.label()),
-                        "claim signature valid",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_VALIDATED)
-                    .success(validation_log);
-                }
-            }
-            Err(parse_err) => {
-                // handle case where lower level failed to log
-                log_item!(
-                    to_signature_uri(claim.label()),
-                    "claim signature is not valid",
-                    "verify_internal"
-                )
-                .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
-                .failure_no_throw(validation_log, parse_err);
-            }
+        // make sure signature manifest if present points to this manifest
+        let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
+            Some(signature_url) if signature_url != claim.label() => true,
+            _ => {
+                jumbf::labels::box_name_from_uri(&claim.signature).unwrap_or_default()
+                    != jumbf::labels::SIGNATURE
+            } // relative signature box
         };
+
+        if sig_box_err {
+            log_item!(
+                to_signature_uri(claim.label()),
+                "signature missing",
+                "verify_claim"
+            )
+            .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
+            .failure(validation_log, Error::ClaimMissingSignatureBox)?;
+        }
+
+        // for V2 and greater claims the label must conform
+        if claim.version() > 1 && manifest_label_to_parts(claim.label()).is_none() {
+            log_item!(
+                to_manifest_uri(claim.label()),
+                "claim box label invalid",
+                "verify_claim"
+            )
+            .validation_status(validation_status::CLAIM_MALFORMED)
+            .failure(validation_log, Error::ClaimInvalidContent)?;
+        }
 
         // if claim make sure we have a valid claim_generator_info
         // note that for 2.x claims this is a mandatory fields its presence
@@ -3251,23 +3289,16 @@ impl Claim {
             });
         }
 
-        // verify data hashes for provenance claims
-        Claim::verify_hash_binding(claim, asset_data, svi, validation_log, context)?;
-
-        // check action rules
-        Claim::verify_actions(claim, svi, validation_log, context.settings())?;
-
-        // check metadata rules
-        if claim.version() >= 2 {
-            // only for claim version 2 or greater
-            Claim::verify_metadata(claim, validation_log)?;
-        }
-
         Ok(())
     }
 
     // Perform metadata validation check
     fn verify_metadata(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
+        // only for claim version 2 or greater
+        if claim.version() == 1 {
+            return Ok(());
+        }
+
         for metadata_assertion in claim.metadata_assertions() {
             let metadata_assertion = Metadata::from_assertion(metadata_assertion.assertion())?;
             if !metadata_assertion.is_valid() {
