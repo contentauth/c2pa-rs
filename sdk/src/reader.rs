@@ -1642,7 +1642,7 @@ pub mod tests {
                     .to_string();
                 #[allow(clippy::single_match)]
                 match label {
-                    "c2pa.actions" => {
+                    "c2pa.actions.v2" | "c2pa.actions" => {
                         let actions = assertion.to_assertion::<crate::assertions::Actions>()?;
                         // build a comma separated string list of actions
                         let desc = actions
@@ -1669,8 +1669,44 @@ pub mod tests {
 
         reader.post_validate(&TestValidator {})?;
 
-        println!("{reader}");
-        //Err(Error::NotImplemented("foo".to_string()))
+        // Verify the validator replaced c2pa.actions assertion data in the JSON output.
+        let json: Value = serde_json::from_str(&reader.json()).unwrap();
+        let active_label = json["active_manifest"].as_str().unwrap();
+        let assertions = json["manifests"][active_label]["assertions"]
+            .as_array()
+            .unwrap();
+        let actions_assertion = assertions
+            .iter()
+            .find(|a| {
+                matches!(
+                    a["label"].as_str(),
+                    Some("c2pa.actions.v2") | Some("c2pa.actions")
+                )
+            })
+            .expect("c2pa.actions or c2pa.actions.v2 assertion not found");
+        assert!(
+            actions_assertion["data"].is_string(),
+            "c2pa.actions data should be replaced with a string by the validator, got: {}",
+            actions_assertion["data"]
+        );
+
+        // Verify validation results contain the success statuses logged by the validator.
+        let results = reader
+            .validation_results()
+            .expect("validation results should exist after post_validate");
+        let active = results
+            .active_manifest()
+            .expect("active manifest statuses should exist");
+        let success_codes: Vec<&str> = active.success().iter().map(|s| s.code()).collect();
+        assert!(
+            success_codes.contains(&"cai.test.action"),
+            "expected cai.test.action in success statuses, got: {success_codes:?}"
+        );
+        assert!(
+            success_codes.contains(&"cai.test.something"),
+            "expected cai.test.something in success statuses, got: {success_codes:?}"
+        );
+
         Ok(())
     }
 
