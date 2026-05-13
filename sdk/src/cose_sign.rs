@@ -177,7 +177,7 @@ fn signing_cert_valid(signing_cert: &[u8], settings: &Settings) -> Result<()> {
     )?)
 }
 
-pub(crate) struct SignerWrapper<'a>(pub(crate) &'a dyn Signer);
+struct SignerWrapper<'a>(&'a dyn Signer);
 
 impl RawSigner for SignerWrapper<'_> {
     fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
@@ -227,7 +227,7 @@ impl TimeStampProvider for SignerWrapper<'_> {
     }
 }
 
-pub(crate) struct AsyncSignerWrapper<'a>(pub(crate) &'a dyn AsyncSigner);
+struct AsyncSignerWrapper<'a>(&'a dyn AsyncSigner);
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
