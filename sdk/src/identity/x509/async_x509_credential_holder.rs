@@ -63,7 +63,7 @@ impl AsyncX509CredentialHolder {
     ///
     /// [`AsyncRawSigner`]: crate::crypto::raw_signature::AsyncRawSigner
     #[cfg(target_arch = "wasm32")]
-    pub fn from_async_signer(signer: Box<dyn AsyncRawSigner + 'static>) -> Self {
+    pub fn from_async_raw_signer(signer: Box<dyn AsyncRawSigner + 'static>) -> Self {
         Self(signer)
     }
 }
@@ -164,7 +164,7 @@ mod tests {
         )
         .unwrap();
 
-        let x509_holder = AsyncX509CredentialHolder::from_async_signer(cawg_raw_signer);
+        let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
         let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
         c2pa_signer.add_identity_assertion(iab);
 

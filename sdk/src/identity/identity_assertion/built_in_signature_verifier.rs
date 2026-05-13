@@ -223,7 +223,7 @@ mod tests {
         )
         .unwrap();
 
-        let x509_holder = AsyncX509CredentialHolder::from_async_signer(cawg_raw_signer);
+        let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
         let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
         c2pa_signer.add_identity_assertion(iab);
 
