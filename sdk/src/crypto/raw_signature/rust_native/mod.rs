@@ -20,6 +20,7 @@
 //! At the moment, does not offer support for all C2PA-supported cryptography
 //! algorithms.
 
+pub(super) mod cert_chain;
 pub(crate) mod check_certificate_trust;
 pub(crate) mod signers;
 pub(crate) mod validators;

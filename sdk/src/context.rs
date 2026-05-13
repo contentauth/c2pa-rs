@@ -798,6 +798,30 @@ impl Context {
     }
 }
 
+/// Creates a `context::Context` from `settings::Settings` for remote signing test cases
+///
+/// Testing remote signers created from test contexts requires `SignerState::FromSettings` as a state
+/// Note that, combining compilation flags for tests in Context:new() using default()
+/// cannot satisfy both  `settings::signer::tests` test cases and `builder::tests` test cases
+/// which require `Context::default()` with `SignerState::Custom` state
+#[cfg(all(test, feature = "remote_signing"))]
+impl From<Settings> for Context {
+    /// This is a utility implementation that creates a test context directly from settings and should
+    /// be the used by default when testing remote signers created from settings.
+    fn from(settings: Settings) -> Self {
+        Self {
+            settings,
+            sync_resolver: SyncResolverState::Default(OnceLock::new()),
+            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            // It always sets the signer to `SignerState::FromSettings'
+            signer: SignerState::FromSettings(OnceLock::new()),
+            async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
+            progress_callback: None,
+            cancel_flag: AtomicBool::new(false),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
