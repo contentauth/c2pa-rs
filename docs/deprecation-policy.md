@@ -77,7 +77,7 @@ pub fn old_builder() -> Builder { ... }
 
 ### Python
 
-Use `warnings.warn()` with `DeprecationWarning` (or the `@warnings.deprecated` decorator introduced in Python 3.13 / available via `typing_extensions`):
+Use `warnings.warn()` with `DeprecationWarning`:
 
 ```python
 import warnings
