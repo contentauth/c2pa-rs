@@ -161,8 +161,10 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        create_signer,
-        crypto::cose::{CertificateTrustPolicy, Verifier},
+        crypto::{
+            cose::{CertificateTrustPolicy, Verifier},
+            raw_signature,
+        },
         identity::{
             builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
             tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
@@ -198,7 +200,7 @@ mod tests {
         let (cawg_cert_chain, cawg_private_key) =
             cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
 
-        let cawg_signer = create_signer::from_keys(
+        let cawg_raw_signer = raw_signature::signer_from_cert_chain_and_private_key(
             &cawg_cert_chain,
             &cawg_private_key,
             SigningAlg::Ed25519,
@@ -206,7 +208,7 @@ mod tests {
         )
         .unwrap();
 
-        let x509_holder = X509CredentialHolder::from_signer(cawg_signer);
+        let x509_holder = X509CredentialHolder::from_raw_signer(cawg_raw_signer);
         let iab = IdentityAssertionBuilder::for_credential_holder(x509_holder);
         c2pa_signer.add_identity_assertion(iab);
 

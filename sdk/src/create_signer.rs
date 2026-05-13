@@ -69,3 +69,109 @@ pub fn from_files<P: AsRef<Path>>(
 
     from_keys(&cert_chain, &private_key, alg, tsa_url)
 }
+
+/// Creates a combined [`Signer`](crate::Signer) that signs the C2PA claim with
+/// `c2pa_signer` and embeds an X.509 identity assertion signed by `identity_signer`.
+///
+/// # Arguments
+///
+/// * `c2pa_signer` - Signs the C2PA claim
+/// * `identity_signer` - Signs the X.509 identity assertion (`cawg.x509.cose`)
+/// * `referenced_assertions` - Assertion labels to include in the identity assertion
+/// * `roles` - Named actor roles to attach to the identity assertion
+pub fn from_x509_identity(
+    c2pa_signer: BoxedSigner,
+    identity_signer: BoxedSigner,
+    referenced_assertions: &[&str],
+    roles: &[&str],
+) -> BoxedSigner {
+    Box::new(
+        crate::settings::signer::CawgX509IdentitySigner::from_signer(
+            c2pa_signer,
+            identity_signer,
+            referenced_assertions,
+            roles,
+        ),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::io::{Cursor, Seek};
+
+    use c2pa_macros::c2pa_test_async;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use crate::{
+        crypto::{cose::Verifier, raw_signature::SigningAlg},
+        identity::{
+            tests::fixtures::{manifest_json, parent_json},
+            x509::X509SignatureVerifier,
+            IdentityAssertion,
+        },
+        status_tracker::StatusTracker,
+        utils::test_signer::test_signer,
+        Builder, Reader,
+    };
+
+    const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
+
+    /// Verify that `from_x509_identity` produces a valid manifest containing
+    /// one X.509 identity assertion signed by the identity signer and
+    /// one valid C2PA claim signed by the C2PA signer.
+    #[c2pa_test_async]
+    async fn from_x509_identity_signs_and_validates() {
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let c2pa_signer = test_signer(SigningAlg::Ps256);
+        let identity_signer = test_signer(SigningAlg::Ed25519);
+
+        let signer =
+            super::from_x509_identity(c2pa_signer, identity_signer, &["c2pa.actions"], &[]);
+
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+
+        let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
+        assert_eq!(manifest_store.validation_status(), None);
+
+        let manifest = manifest_store.active_manifest().unwrap();
+        let mut st = StatusTracker::default();
+        let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+        let ia = ia_iter.next().unwrap().unwrap();
+        assert!(ia_iter.next().is_none());
+        drop(ia_iter);
+
+        let label = ia.label.as_ref().unwrap();
+        assert!(label.ends_with("cawg.identity"));
+        assert!(label.contains("/c2pa.assertions/"));
+
+        let x509_verifier = X509SignatureVerifier {
+            cose_verifier: Verifier::IgnoreProfileAndTrustPolicy,
+        };
+        let sig_info = ia
+            .validate(manifest, &mut st, &x509_verifier)
+            .await
+            .unwrap();
+
+        assert_eq!(sig_info.cert_info.alg.unwrap(), SigningAlg::Ed25519);
+    }
+}

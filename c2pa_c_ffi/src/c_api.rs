@@ -20,8 +20,7 @@ use std::{
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 use c2pa::{
-    assertions::DataHash,
-    identity::{builder::IdentityAssertionSigner, validator::CawgValidator},
+    assertions::DataHash, create_signer, identity::validator::CawgValidator,
     Builder as C2paBuilder, CallbackSigner, Context, ProgressPhase, Reader as C2paReader,
     Settings as C2paSettings, SigningAlg,
 };
@@ -2778,7 +2777,7 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
     let refs: Vec<&str> = referenced_assertions.iter().map(|s| s.as_str()).collect();
     let role_refs: Vec<&str> = roles.iter().map(|s| s.as_str()).collect();
 
-    let ia_signer = IdentityAssertionSigner::with_x509_identity(
+    let signer = create_signer::from_x509_identity(
         Box::new(c2pa_signer.signer),
         Box::new(identity_signer.signer),
         &refs,
@@ -2786,7 +2785,7 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
     );
 
     box_tracked!(C2paSigner {
-        signer: Box::new(ia_signer),
+        signer: Box::new(signer),
     })
 }
 

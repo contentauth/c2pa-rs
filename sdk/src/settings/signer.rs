@@ -11,16 +11,25 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::sync::Arc;
+
 use http::Request;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     create_signer,
+    crypto::{
+        raw_signature::{
+            signer_from_cert_chain_and_private_key, RawSigner, RawSignerError, SigningAlg,
+        },
+        time_stamp::{TimeStampError, TimeStampProvider},
+    },
     dynamic_assertion::DynamicAssertion,
     http::{SyncGenericResolver, SyncHttpResolver},
     identity::{builder::IdentityAssertionBuilder, x509::X509CredentialHolder},
     settings::{Settings, SettingsValidate},
-    BoxedSigner, Error, Result, Signer, SigningAlg,
+    signer::OwnedSignerWrapper,
+    BoxedSigner, Error, Result, Signer,
 };
 
 /// Settings for configuring a local or remote [`Signer`].
@@ -138,17 +147,16 @@ impl SignerSettings {
                 referenced_assertions: cawg_referenced_assertions,
                 roles: cawg_roles,
             } => {
-                let cawg_dual_signer = CawgX509IdentitySigner {
+                let signer = CawgX509IdentitySigner::from_settings(
                     c2pa_signer,
                     cawg_alg,
-                    cawg_sign_cert,
-                    cawg_private_key,
+                    cawg_sign_cert.as_bytes(),
+                    cawg_private_key.as_bytes(),
                     cawg_tsa_url,
-                    cawg_referenced_assertions: cawg_referenced_assertions.unwrap_or_default(),
-                    cawg_roles: cawg_roles.unwrap_or_default(),
-                };
-
-                Ok(Box::new(cawg_dual_signer))
+                    cawg_referenced_assertions.unwrap_or_default(),
+                    cawg_roles.unwrap_or_default(),
+                )?;
+                Ok(Box::new(signer))
             }
 
             SignerSettings::Remote {
@@ -169,17 +177,100 @@ impl SettingsValidate for SignerSettings {
     }
 }
 
-struct CawgX509IdentitySigner {
+/// Wraps an `Arc<dyn RawSigner>` so it can be passed as an owned `Box<dyn RawSigner>`.
+struct ArcRawSigner(Arc<dyn RawSigner + Send + Sync>);
+
+impl TimeStampProvider for ArcRawSigner {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.0.time_stamp_service_url()
+    }
+
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.0.time_stamp_request_headers()
+    }
+
+    fn time_stamp_request_body(
+        &self,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, TimeStampError> {
+        self.0.time_stamp_request_body(message)
+    }
+
+    fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+        self.0.send_time_stamp_request(message)
+    }
+}
+
+impl RawSigner for ArcRawSigner {
+    fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+        self.0.sign(data)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.0.alg()
+    }
+
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        self.0.cert_chain()
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
+    }
+
+    fn ocsp_response(&self) -> Option<Vec<u8>> {
+        self.0.ocsp_response()
+    }
+}
+
+pub(crate) struct CawgX509IdentitySigner {
     c2pa_signer: BoxedSigner,
-    cawg_alg: SigningAlg,
-    cawg_sign_cert: String,
-    cawg_private_key: String,
-    cawg_tsa_url: Option<String>,
-    cawg_referenced_assertions: Vec<String>,
-    cawg_roles: Vec<String>,
-    // NOTE: The CAWG signing settings are stored here because
-    // we can't clone or transfer ownership of an `X509CredentialHolder`
-    // inside the dynamic_assertions callback.
+    identity_signer: Arc<dyn RawSigner + Send + Sync>,
+    referenced_assertions: Vec<String>,
+    roles: Vec<String>,
+}
+
+impl CawgX509IdentitySigner {
+    /// Creates a combined signer from cert/key bytes for the identity signer.
+    pub(crate) fn from_settings(
+        c2pa_signer: BoxedSigner,
+        alg: SigningAlg,
+        sign_cert: &[u8],
+        private_key: &[u8],
+        tsa_url: Option<String>,
+        referenced_assertions: Vec<String>,
+        roles: Vec<String>,
+    ) -> Result<Self> {
+        let raw_signer =
+            signer_from_cert_chain_and_private_key(sign_cert, private_key, alg, tsa_url)?;
+        Ok(Self {
+            c2pa_signer,
+            identity_signer: Arc::from(raw_signer),
+            referenced_assertions,
+            roles,
+        })
+    }
+
+    /// Creates a combined signer from an already-constructed identity [`Signer`].
+    pub(crate) fn from_signer(
+        c2pa_signer: BoxedSigner,
+        identity_signer: BoxedSigner,
+        referenced_assertions: &[&str],
+        roles: &[&str],
+    ) -> Self {
+        Self {
+            c2pa_signer,
+            identity_signer: Arc::new(OwnedSignerWrapper(identity_signer)),
+            referenced_assertions: referenced_assertions
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            roles: roles.iter().map(|s| s.to_string()).collect(),
+        }
+    }
 }
 
 impl Signer for CawgX509IdentitySigner {
@@ -224,38 +315,31 @@ impl Signer for CawgX509IdentitySigner {
     }
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
-        let Ok(cawg_signer) = create_signer::from_keys(
-            self.cawg_sign_cert.as_bytes(),
-            self.cawg_private_key.as_bytes(),
-            self.cawg_alg,
-            self.cawg_tsa_url.clone(),
-        ) else {
-            // dynamic_assertions() API doesn't let us fail.
-            // from_keys rarely fails, so when it does, we do so silently.
-            return vec![];
-        };
-
-        let x509_credential_holder = X509CredentialHolder::from_signer(cawg_signer);
+        let identity_signer: Box<dyn RawSigner + Sync + Send + 'static> =
+            Box::new(ArcRawSigner(Arc::clone(&self.identity_signer)));
+        let x509_credential_holder = X509CredentialHolder::from_raw_signer(identity_signer);
 
         let mut iab = IdentityAssertionBuilder::for_credential_holder(x509_credential_holder);
 
-        // Add referenced assertions if configured
-        if !self.cawg_referenced_assertions.is_empty() {
-            let referenced_assertions: Vec<&str> = self
-                .cawg_referenced_assertions
+        if !self.referenced_assertions.is_empty() {
+            let refs: Vec<&str> = self
+                .referenced_assertions
                 .iter()
                 .map(|s| s.as_str())
                 .collect();
-            iab.add_referenced_assertions(&referenced_assertions);
+            iab.add_referenced_assertions(&refs);
         }
 
-        // Add roles if configured
-        if !self.cawg_roles.is_empty() {
-            let roles: Vec<&str> = self.cawg_roles.iter().map(|s| s.as_str()).collect();
+        if !self.roles.is_empty() {
+            let roles: Vec<&str> = self.roles.iter().map(|s| s.as_str()).collect();
             iab.add_roles(&roles);
         }
 
         vec![Box::new(iab)]
+    }
+
+    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
+        self.c2pa_signer.raw_signer()
     }
 }
 

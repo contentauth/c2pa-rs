@@ -15,8 +15,6 @@
 
 use async_trait::async_trait;
 
-#[cfg(feature = "file_io")]
-use crate::create_signer;
 use crate::{
     crypto::raw_signature::{
         async_signer_from_cert_chain_and_private_key, signer_from_cert_chain_and_private_key,
@@ -43,12 +41,14 @@ pub(crate) fn test_cawg_signer(
 ) -> Result<BoxedSigner> {
     let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
 
-    let c2pa_signer = create_signer::from_keys(cert_chain, private_key, alg, None)?;
-    let cawg_signer = create_signer::from_keys(cert_chain, private_key, alg, None)?;
+    let c2pa_raw_signer =
+        signer_from_cert_chain_and_private_key(cert_chain, private_key, alg, None).unwrap();
+    let cawg_raw_signer =
+        signer_from_cert_chain_and_private_key(cert_chain, private_key, alg, None).unwrap();
 
-    let mut ia_signer = crate::identity::builder::IdentityAssertionSigner::new(c2pa_signer);
+    let mut ia_signer = crate::identity::builder::IdentityAssertionSigner::new(c2pa_raw_signer);
 
-    let x509_holder = crate::identity::x509::X509CredentialHolder::from_signer(cawg_signer);
+    let x509_holder = crate::identity::x509::X509CredentialHolder::from_raw_signer(cawg_raw_signer);
     let mut iab =
         crate::identity::builder::IdentityAssertionBuilder::for_credential_holder(x509_holder);
     iab.add_referenced_assertions(referenced_assertions);

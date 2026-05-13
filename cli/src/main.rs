@@ -29,9 +29,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
-    format_from_path,
-    identity::{builder::IdentityAssertionSigner, validator::CawgValidator},
-    settings::Settings,
+    create_signer, format_from_path, identity::validator::CawgValidator, settings::Settings,
     BoxedSigner, Builder, CallbackSigner, ClaimGeneratorInfo, Context as C2paContext, Error,
     Ingredient, ManifestDefinition, Reader, Signer, SigningAlg,
 };
@@ -1161,12 +1159,7 @@ fn main() -> Result<()> {
             let refs: Vec<&str> = referenced_assertions.iter().map(String::as_str).collect();
             let roles_refs: Vec<&str> = roles.iter().map(String::as_str).collect();
 
-            Box::new(IdentityAssertionSigner::with_x509_identity(
-                c2pa_signer,
-                identity_signer,
-                &refs,
-                &roles_refs,
-            ))
+            create_signer::from_x509_identity(c2pa_signer, identity_signer, &refs, &roles_refs)
         } else if let Some(cawg_cfg) = settings.cawg_x509_signer.take() {
             cawg_cfg.cawg_signer(c2pa_signer)?
         } else {
