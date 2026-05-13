@@ -171,6 +171,7 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
+        crypto::raw_signature,
         identity::{
             builder::{
                 AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner,
@@ -179,8 +180,8 @@ mod tests {
             claim_aggregation::{IdentityProvider, VerifiedIdentity},
             identity_assertion::built_in_signature_verifier::BuiltInCredential,
             tests::fixtures::{
-                default_built_in_signature_verifier, manifest_json, parent_json,
-                NaiveCredentialHolder,
+                cert_chain_and_private_key_for_alg, default_built_in_signature_verifier,
+                manifest_json, parent_json, NaiveCredentialHolder,
             },
             x509::AsyncX509CredentialHolder,
             IdentityAssertion, SignerPayload, ValidationError,
@@ -211,9 +212,18 @@ mod tests {
         let mut c2pa_signer =
             AsyncIdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
 
-        let cawg_signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ed25519);
+        let (cawg_cert_chain, cawg_private_key) =
+            cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
 
-        let x509_holder = AsyncX509CredentialHolder::from_async_signer(cawg_signer);
+        let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
+            &cawg_cert_chain,
+            &cawg_private_key,
+            SigningAlg::Ed25519,
+            None,
+        )
+        .unwrap();
+
+        let x509_holder = AsyncX509CredentialHolder::from_async_signer(cawg_raw_signer);
         let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
         c2pa_signer.add_identity_assertion(iab);
 
