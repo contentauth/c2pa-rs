@@ -233,11 +233,10 @@ impl MakeTestImages {
             .into_owned();
         let format = extension_to_mime(&extension).unwrap_or("image/jpeg");
 
-        let rel_value = serde_json::to_value(&relationship).unwrap_or(serde_json::Value::Null);
         let ingredient = builder.add_ingredient_from_stream(
             json!({
                 "title": name,
-                "relationship": rel_value
+                "relationship": relationship
             })
             .to_string(),
             format,
