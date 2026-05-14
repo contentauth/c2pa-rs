@@ -2,10 +2,12 @@ use std::{
     fs,
     io::{self, Cursor},
     path::Path,
+    sync::Arc,
 };
 
-use c2pa::{Builder, CallbackSigner, SigningAlg};
+use c2pa::{Builder, CallbackSigner, Context, SigningAlg};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use serde_json::json;
 
 const CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
 const PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
@@ -19,6 +21,18 @@ fn create_signer() -> CallbackSigner {
     CallbackSigner::new(ed_signer, SigningAlg::Ed25519, CERTS)
 }
 
+fn context() -> Arc<Context> {
+    Arc::new(
+        Context::new()
+            .with_settings(json!({
+                "verify": {
+                    "verify_after_sign": false
+                }
+            }))
+            .unwrap(),
+    )
+}
+
 fn load(label: &str, ext: &str) -> Option<Vec<u8>> {
     let fixtures_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/fixtures");
     let path = fixtures_dir.join(format!("{label}-{ext}.{ext}"));
@@ -28,7 +42,10 @@ fn load(label: &str, ext: &str) -> Option<Vec<u8>> {
 fn sign_jpeg(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign jpeg");
     let signer = create_signer();
-    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
+    let ctx = context();
+    let mut builder = Builder::from_shared_context(&ctx)
+        .with_definition(MANIFEST_JSON)
+        .unwrap();
 
     for label in SIZES {
         let Some(data) = load(label, "jpg") else {
@@ -48,7 +65,10 @@ fn sign_jpeg(c: &mut Criterion) {
 fn sign_png(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign png");
     let signer = create_signer();
-    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
+    let ctx = context();
+    let mut builder = Builder::from_shared_context(&ctx)
+        .with_definition(MANIFEST_JSON)
+        .unwrap();
 
     for label in SIZES {
         let Some(data) = load(label, "png") else {
@@ -70,7 +90,10 @@ fn sign_png(c: &mut Criterion) {
 fn sign_gif(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign gif");
     let signer = create_signer();
-    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
+    let ctx = context();
+    let mut builder = Builder::from_shared_context(&ctx)
+        .with_definition(MANIFEST_JSON)
+        .unwrap();
 
     for label in SIZES {
         let Some(data) = load(label, "gif") else {
@@ -90,7 +113,10 @@ fn sign_gif(c: &mut Criterion) {
 fn sign_tiff(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign tiff");
     let signer = create_signer();
-    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
+    let ctx = context();
+    let mut builder = Builder::from_shared_context(&ctx)
+        .with_definition(MANIFEST_JSON)
+        .unwrap();
 
     for label in SIZES {
         let Some(data) = load(label, "tiff") else {
@@ -110,7 +136,10 @@ fn sign_tiff(c: &mut Criterion) {
 fn sign_wav(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign wav");
     let signer = create_signer();
-    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
+    let ctx = context();
+    let mut builder = Builder::from_shared_context(&ctx)
+        .with_definition(MANIFEST_JSON)
+        .unwrap();
 
     for label in SIZES {
         let Some(data) = load(label, "wav") else {
@@ -130,7 +159,10 @@ fn sign_wav(c: &mut Criterion) {
 fn sign_svg(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign svg");
     let signer = create_signer();
-    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
+    let ctx = context();
+    let mut builder = Builder::from_shared_context(&ctx)
+        .with_definition(MANIFEST_JSON)
+        .unwrap();
 
     // TODO: add back large SVG when optimized, CI takes ~2 hours otherwise
     for label in &["small", "medium"] {
@@ -151,7 +183,10 @@ fn sign_svg(c: &mut Criterion) {
 fn sign_mp3(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign mp3");
     let signer = create_signer();
-    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
+    let ctx = context();
+    let mut builder = Builder::from_shared_context(&ctx)
+        .with_definition(MANIFEST_JSON)
+        .unwrap();
 
     for label in SIZES {
         let Some(data) = load(label, "mp3") else {
@@ -171,7 +206,10 @@ fn sign_mp3(c: &mut Criterion) {
 fn sign_mp4(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign mp4");
     let signer = create_signer();
-    let mut builder = Builder::default().with_definition(MANIFEST_JSON).unwrap();
+    let ctx = context();
+    let mut builder = Builder::from_shared_context(&ctx)
+        .with_definition(MANIFEST_JSON)
+        .unwrap();
 
     for label in SIZES {
         let Some(data) = load(label, "mp4") else {
