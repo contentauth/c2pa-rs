@@ -1,7 +1,5 @@
 {
   "claim_version": 1,
-  "alg": "es256",
-  "sign_cert": "es256_certs.pem",
   "ta_url": "http://timestamp.digicert.com",
   "claim_generator_info":[{
     "name": "TestApp",

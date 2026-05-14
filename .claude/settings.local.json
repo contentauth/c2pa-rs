@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(CARGO_BUILD_TARGET=\"wasm32-unknown-unknown\" cargo build --no-default-features --features=\"rust_native_crypto, fetch_remote_manifests, http_reqwest\")",
+      "Bash(xargs cat)",
+      "Bash(cargo check *)",
+      "Bash(cargo clippy *)"
+    ]
+  }
+}

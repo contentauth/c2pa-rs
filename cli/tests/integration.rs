@@ -344,13 +344,13 @@ fn tool_sign_to_same_file_no_force() -> Result<(), Box<dyn Error>> {
 #[test]
 fn test_sign_using_c2patool_as_subprocess_signer() -> Result<(), Box<dyn Error>> {
     let output = temp_path("output_subprocess_signer.jpg");
-    // Point --signer-path at the c2patool binary itself. make_subprocess_signer sets
-    // C2PATOOL_SIGN_MODE=1 on the child process, which causes it to read bytes from
-    // stdin, sign with the baked-in es256 test key, and write the signature to stdout.
+    // "c2patool test-signer" implements the subprocess signing protocol:
+    // --signer-info returns the baked-in es256 cert; default mode signs stdin bytes.
+    let signer_cmd = format!("{} test-signer", cargo::cargo_bin!("c2patool").display());
     Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE))
         .arg("--signer-path")
-        .arg(cargo::cargo_bin!("c2patool"))
+        .arg(&signer_cmd)
         .arg("--manifest")
         .arg("sample/test.json")
         .arg("-o")
@@ -364,18 +364,15 @@ fn test_sign_using_c2patool_as_subprocess_signer() -> Result<(), Box<dyn Error>>
 #[test]
 fn test_sign_cawg_using_c2patool_as_identity_signer() -> Result<(), Box<dyn Error>> {
     let output = temp_path("output_cawg_identity_signer.jpg");
-    // Both --signer-path and --identity-signer-path point at c2patool itself.
-    // The manifest (sample/test.json) provides sign_cert for the C2PA subprocess signer.
-    // The settings file provides [cawg_x509_signer.local] for the identity subprocess signer.
-    // Both use the baked-in es256 DEFAULT_CERTS/DEFAULT_KEY, so cert and signature match.
+    // Both --signer-path and --identity-signer-path use "c2patool test-signer".
+    // --signer-info is called for each to discover the baked-in es256 cert and alg.
+    let signer_cmd = format!("{} test-signer", cargo::cargo_bin!("c2patool").display());
     Command::new(cargo::cargo_bin!("c2patool"))
         .arg(fixture_path(TEST_IMAGE))
-        .arg("--settings")
-        .arg(fixture_path("trust/cawg_subprocess_settings.toml"))
         .arg("--signer-path")
-        .arg(cargo::cargo_bin!("c2patool"))
+        .arg(&signer_cmd)
         .arg("--identity-signer-path")
-        .arg(cargo::cargo_bin!("c2patool"))
+        .arg(&signer_cmd)
         .arg("--manifest")
         .arg("sample/test.json")
         .arg("-o")
@@ -401,20 +398,22 @@ fn test_fails_for_not_found_external_signer() -> Result<(), Box<dyn Error>> {
         .arg("-f")
         .assert()
         .failure()
-        .stderr(str::contains("Failed to run command at"));
+        .stderr(str::contains("Failed to run"));
     Ok(())
 }
 
 #[test]
 fn test_fails_for_external_signer_failure() -> Result<(), Box<dyn Error>> {
     let output = temp_path("output_failing_signer.jpg");
-    // C2PATOOL_FORCE_SIGN_MODE=fail overrides the sign mode forwarded to the subprocess,
-    // causing the subprocess to exit nonzero. c2patool should surface the error.
+    // "c2patool test-signer --fail" exits with an error, exercising the failure path.
+    let signer_cmd = format!(
+        "{} test-signer --fail",
+        cargo::cargo_bin!("c2patool").display()
+    );
     Command::new(cargo::cargo_bin!("c2patool"))
-        .env("C2PATOOL_FORCE_SIGN_MODE", "fail")
         .arg(fixture_path(TEST_IMAGE))
         .arg("--signer-path")
-        .arg(cargo::cargo_bin!("c2patool"))
+        .arg(&signer_cmd)
         .arg("--manifest")
         .arg("sample/test.json")
         .arg("-o")
@@ -422,7 +421,7 @@ fn test_fails_for_external_signer_failure() -> Result<(), Box<dyn Error>> {
         .arg("-f")
         .assert()
         .failure()
-        .stderr(str::contains("signer process failed"));
+        .stderr(str::contains("deliberately failed"));
     Ok(())
 }
 

@@ -146,21 +146,27 @@ struct CliArgs {
     #[clap(long)]
     info: bool,
 
-    /// Path to an executable that will sign the claim bytes.
+    /// Command (binary and optional args) that will sign the claim bytes.
+    ///
+    /// The process receives bytes via stdin and must write the signature to stdout.
+    /// Cert and algorithm come from the manifest's `sign_cert`/`alg` fields; if absent,
+    /// the subprocess is queried via `--signer-info`.
+    /// Example: --signer-path "c2patool sign-mode"
     #[clap(long)]
-    signer_path: Option<PathBuf>,
+    signer_path: Option<String>,
 
-    /// Path to an executable that will sign the CAWG identity assertion bytes.
+    /// Command (binary and optional args) that will sign the CAWG identity assertion bytes.
     ///
     /// The process receives bytes via stdin and must write the signature to stdout,
-    /// identical to `--signer-path`. The cert and algorithm are taken from
-    /// `cawg_x509_signer` in the settings file; if absent, the C2PA signer's
-    /// cert and algorithm are used.
+    /// identical to `--signer-path`. Cert and algorithm come from `[cawg_x509_signer]`
+    /// settings; if absent, the subprocess is queried via `--signer-info`.
+    /// Example: --identity-signer-path "c2patool sign-mode"
     #[clap(long)]
-    identity_signer_path: Option<PathBuf>,
+    identity_signer_path: Option<String>,
 
-    /// Reserved buffer size for `--signer-path` signing only.
-    #[clap(long, default_value("20000"))]
+    /// Reserved buffer size for the signature. Deprecated: the subprocess signer should
+    /// declare this via `--signer-info` instead.
+    #[clap(long, hide = true, default_value("20000"))]
     reserve_size: usize,
 
     // TODO: ideally this would be called config, not to be confused with the other config arg
@@ -248,6 +254,20 @@ enum Commands {
         #[arg(long = "fragments_glob", verbatim_doc_comment)]
         fragments_glob: Option<PathBuf>,
     },
+    /// Hidden test-only subcommand implementing the subprocess signing protocol.
+    ///
+    /// Signs using the baked-in es256 test key — not for production use.
+    ///   --signer-info  outputs {"alg","sign_cert","tsa_url"} JSON and exits
+    ///   (default)      reads bytes from stdin, writes raw signature to stdout
+    #[command(hide = true, name = "test-signer")]
+    SignMode {
+        /// Output signer info (cert, alg, tsa_url) as JSON and exit.
+        #[arg(long)]
+        signer_info: bool,
+        /// Exit with an error (for testing failure paths).
+        #[arg(long)]
+        fail: bool,
+    },
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -274,52 +294,81 @@ fn special_errs(e: c2pa::Error) -> anyhow::Error {
     }
 }
 
+/// Signer identity advertised by a subprocess via `--signer-info`.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+struct SignerInfo {
+    alg: SigningAlg,
+    /// PEM certificate chain.
+    sign_cert: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tsa_url: Option<String>,
+    /// Bytes to reserve in the asset for this signer's signature.
+    /// The signer knows its own maximum signature size; if absent, a default is used.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reserve_size: Option<usize>,
+}
+
+/// Split a command string (e.g. `"c2patool sign-mode"`) into a binary path and base args.
+/// Paths containing spaces are not supported.
+fn parse_command(cmd: &str) -> (PathBuf, Vec<String>) {
+    let mut parts = cmd.split_whitespace();
+    let binary = PathBuf::from(parts.next().unwrap_or_default());
+    let args: Vec<String> = parts.map(str::to_string).collect();
+    (binary, args)
+}
+
+/// Call `binary base_args --signer-info`, parse the JSON response, and return it.
+fn query_subprocess_info(binary: &Path, base_args: &[String]) -> Result<SignerInfo> {
+    use std::process::Command;
+    let output = Command::new(binary)
+        .args(base_args)
+        .arg("--signer-info")
+        .output()
+        .with_context(|| format!("Failed to run {binary:?} --signer-info"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Subprocess --signer-info failed for {binary:?}: {stderr}");
+    }
+    serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("Parsing --signer-info JSON from {binary:?}"))
+}
+
 // Normalize extensions so we can compare them.
 /// Spawn an external signing process, pipe `data` to its stdin, and return the signature bytes
-/// written to stdout.  The process receives `--reserve-size N --alg ALG` and, when a cert path
-/// is available, `--sign-cert PATH`.
-/// `sign_mode` should be `"c2pa"` or `"cawg"`.  It is forwarded to the subprocess as
-/// `C2PATOOL_SIGN_MODE` so the subprocess can select the appropriate key.  Tests may
-/// set `C2PATOOL_FORCE_SIGN_MODE` in the parent environment to override this value
-/// (e.g. to `"fail"` to exercise error-handling paths).
+/// written to stdout.  When `compat_mode` is true (cert/alg came from settings rather than
+/// `--signer-info`), the process also receives `--reserve-size N --alg ALG` for back-compat.
 fn make_subprocess_signer(
-    signer_path: PathBuf,
+    signer_binary: PathBuf,
+    signer_base_args: Vec<String>,
     alg: SigningAlg,
     cert_bytes: Vec<u8>,
-    sign_cert_arg: Option<PathBuf>,
-    reserve_size: usize,
+    reserve_size: Option<usize>,
     tsa_url: Option<String>,
-    sign_mode: &'static str,
+    compat_mode: bool,
 ) -> Result<BoxedSigner> {
     use std::{
         io::Write,
         process::{Command, Stdio},
     };
 
+    let effective_reserve = reserve_size.unwrap_or(10000 + cert_bytes.len());
     let alg_str = alg.to_string();
-    let reserve_str = reserve_size.to_string();
-    let effective_mode =
-        std::env::var("C2PATOOL_FORCE_SIGN_MODE").unwrap_or_else(|_| sign_mode.to_string());
+    let reserve_str = effective_reserve.to_string();
 
     let mut signer = CallbackSigner::new(
         move |_ctx: *const (), data: &[u8]| {
-            let mut cmd = Command::new(&signer_path);
-            cmd.stdin(Stdio::piped())
+            let mut cmd = Command::new(&signer_binary);
+            cmd.args(&signer_base_args)
+                .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .env("C2PATOOL_SIGN_MODE", &effective_mode)
-                .env("C2PATOOL_SIGN_ALG", &alg_str)
-                .args(["--reserve-size", &reserve_str])
-                .args(["--alg", &alg_str]);
-
-            if let Some(ref p) = sign_cert_arg {
-                if let Some(s) = p.to_str() {
-                    cmd.args(["--sign-cert", s]);
-                }
+                .stderr(Stdio::piped());
+            if compat_mode {
+                cmd.args(["--reserve-size", &reserve_str])
+                    .args(["--alg", &alg_str]);
             }
 
             let mut child = cmd.spawn().map_err(|e| {
-                Error::BadParam(format!("Failed to run command at {signer_path:?}: {e}"))
+                Error::BadParam(format!("Failed to run command at {signer_binary:?}: {e}"))
             })?;
 
             child
@@ -354,7 +403,7 @@ fn make_subprocess_signer(
         cert_bytes,
     );
 
-    signer.reserve_size = reserve_size;
+    signer.reserve_size = effective_reserve;
     if let Some(url) = tsa_url {
         signer = signer.set_tsa_url(url);
     }
@@ -927,16 +976,6 @@ pub(crate) fn folder_mode_output_path_ok(path: &Path) -> bool {
 }
 
 fn main() -> Result<()> {
-    // Must check BEFORE clap parsing: the subprocess signer receives args
-    // (--alg, --reserve-size, --sign-cert) that are not registered with clap.
-    if let Ok(mode) = std::env::var("C2PATOOL_SIGN_MODE") {
-        let alg: SigningAlg = std::env::var("C2PATOOL_SIGN_ALG")
-            .unwrap_or_else(|_| "es256".to_string())
-            .parse()
-            .context("Invalid C2PATOOL_SIGN_ALG value")?;
-        return signer::sign_bytes_from_stdin(&mode, alg);
-    }
-
     let args = CliArgs::parse();
 
     // default to error logging, RUST_LOG=debug to get detailed debug logging
@@ -946,6 +985,16 @@ fn main() -> Result<()> {
         return match cmd {
             InitCmd::Trust { legacy } => run_trust_init(*legacy, &args.settings),
         };
+    }
+
+    if let Some(Commands::SignMode { signer_info, fail }) = args.command {
+        if fail {
+            anyhow::bail!("Subprocess signer deliberately failed (--fail)");
+        }
+        if signer_info {
+            return signer::output_signer_info(&args.settings);
+        }
+        return signer::sign_from_stdin();
     }
 
     let path = args
@@ -1088,34 +1137,43 @@ fn main() -> Result<()> {
         }
 
         // Step 1: build the base C2PA signer.
-        let c2pa_signer: BoxedSigner = if let Some(signer_process_name) = args.signer_path {
-            let alg: SigningAlg = sign_config
-                .alg
-                .as_deref()
-                .unwrap_or("es256")
-                .to_lowercase()
-                .parse()
-                .context("Invalid signing algorithm")?;
-            let (cert_bytes, cert_path) = match sign_config.sign_cert.clone() {
-                Some(p) => {
-                    let bytes = std::fs::read(&p).context(format!("Reading sign cert: {p:?}"))?;
-                    (bytes, Some(p))
-                }
-                None => {
-                    anyhow::bail!(
-                        "--signer-path requires sign_cert to be set in the manifest definition"
-                    )
-                }
-            };
-            let tsa_url = sign_config.ta_url.clone().or_else(signer::get_ta_url);
+        let c2pa_signer: BoxedSigner = if let Some(ref signer_cmd) = args.signer_path {
+            let (signer_binary, signer_base_args) = parse_command(signer_cmd);
+            let (cert_bytes, alg, tsa_url, reserve_size, compat_mode) =
+                match sign_config.sign_cert.clone() {
+                    Some(p) => {
+                        let bytes =
+                            std::fs::read(&p).context(format!("Reading sign cert: {p:?}"))?;
+                        let alg: SigningAlg = sign_config
+                            .alg
+                            .as_deref()
+                            .unwrap_or("es256")
+                            .to_lowercase()
+                            .parse()
+                            .context("Invalid signing algorithm")?;
+                        let tsa_url = sign_config.ta_url.clone().or_else(signer::get_ta_url);
+                        (bytes, alg, tsa_url, None, true)
+                    }
+                    None => {
+                        let info = query_subprocess_info(&signer_binary, &signer_base_args)?;
+                        let tsa_url = info.tsa_url.or_else(signer::get_ta_url);
+                        (
+                            info.sign_cert.into_bytes(),
+                            info.alg,
+                            tsa_url,
+                            info.reserve_size,
+                            false,
+                        )
+                    }
+                };
             make_subprocess_signer(
-                signer_process_name,
+                signer_binary,
+                signer_base_args,
                 alg,
                 cert_bytes,
-                cert_path,
-                args.reserve_size,
+                reserve_size,
                 tsa_url,
-                "c2pa",
+                compat_mode,
             )?
         } else if let Some(signer_cfg) = settings.signer.take() {
             signer_cfg.c2pa_signer()?
@@ -1124,29 +1182,41 @@ fn main() -> Result<()> {
         };
 
         // Step 2: optionally wrap with a CAWG identity callback signer.
-        let signer: Box<dyn Signer> = if let Some(identity_path) = args.identity_signer_path {
+        let signer: Box<dyn Signer> = if let Some(ref identity_cmd) = args.identity_signer_path {
+            let (identity_binary, identity_base_args) = parse_command(identity_cmd);
             let CawgIdentityInfo {
                 cert_and_alg,
-                tsa_url,
+                tsa_url: cawg_tsa_url,
                 referenced_assertions,
                 roles,
             } = extract_cawg_identity_info(settings.cawg_x509_signer.take());
 
-            let (cert_bytes, alg) = cert_and_alg.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "--identity-signer-path requires [cawg_x509_signer] settings with sign_cert and alg"
-                )
-            })?;
+            let (cert_bytes, alg, tsa_url, reserve_size, compat_mode) = match cert_and_alg {
+                Some((bytes, alg)) => {
+                    let tsa_url = cawg_tsa_url.or_else(signer::get_ta_url);
+                    (bytes, alg, tsa_url, None, true)
+                }
+                None => {
+                    let info = query_subprocess_info(&identity_binary, &identity_base_args)?;
+                    let tsa_url = info.tsa_url.or_else(signer::get_ta_url);
+                    (
+                        info.sign_cert.into_bytes(),
+                        info.alg,
+                        tsa_url,
+                        info.reserve_size,
+                        false,
+                    )
+                }
+            };
 
-            let tsa_url = tsa_url.or_else(signer::get_ta_url);
             let identity_signer = make_subprocess_signer(
-                identity_path,
+                identity_binary,
+                identity_base_args,
                 alg,
                 cert_bytes,
-                None, // cert came from inline settings PEM, no file path for subprocess
-                args.reserve_size,
+                reserve_size,
                 tsa_url,
-                "cawg",
+                compat_mode,
             )?;
 
             let refs: Vec<&str> = referenced_assertions.iter().map(String::as_str).collect();
@@ -1434,12 +1504,12 @@ pub mod tests {
     fn make_subprocess_signer_fails_when_signer_path_not_found() {
         let signer = make_subprocess_signer(
             PathBuf::from("./nonexistent-signer-binary"),
+            vec![],
             SigningAlg::Es256,
             b"cert-bytes".to_vec(),
             None,
-            20000,
             None,
-            "c2pa",
+            false,
         )
         .unwrap();
 
