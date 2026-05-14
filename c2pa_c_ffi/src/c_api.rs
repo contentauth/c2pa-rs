@@ -3319,12 +3319,14 @@ mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_c2pa_sign_file_null_source_path() {
-        let settings = CString::new(r#"{"verify": {"verify_after_sign": false}}"#).unwrap();
-        let format = CString::new("json").unwrap();
-        let _ = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
-
         let dest_path = CString::new("/tmp/output.jpg").unwrap();
-        let manifest = CString::new("{}").unwrap();
+        let manifest = CString::new(
+            serde_json::json!({
+                "intent": {"create": "http://c2pa.org/digitalsourcetype/empty"}
+            })
+            .to_string(),
+        )
+        .unwrap();
         let signer_info = C2paSignerInfo {
             alg: std::ptr::null(),
             sign_cert: std::ptr::null(),
@@ -3351,10 +3353,6 @@ mod tests {
     fn test_c2pa_sign_file_success() {
         use std::{fs, path::PathBuf};
 
-        let settings = CString::new(r#"{"verify": {"verify_after_sign": false}}"#).unwrap();
-        let format = CString::new("json").unwrap();
-        let _ = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
-
         // Setup paths
         let base = env!("CARGO_MANIFEST_DIR");
         let source = format!("{base}/../sdk/tests/fixtures/IMG_0003.jpg");
@@ -3365,7 +3363,21 @@ mod tests {
 
         let source_path = CString::new(source).unwrap();
         let dest_path = CString::new(dest.to_str().unwrap()).unwrap();
-        let manifest = CString::new("{}").unwrap();
+        let manifest = CString::new(
+            serde_json::json!({
+                "assertions": [{
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                        }]
+                    }
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
 
         // Setup signer info
         let alg = CString::new("es256").unwrap();
