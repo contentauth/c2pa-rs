@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::fmt::{self, Display};
+
 use chrono::Utc;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -211,6 +213,9 @@ impl ValidationResults {
     /// See [Validation states - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_validation_states).
     pub fn validation_state(&self) -> ValidationState {
         if let Some(active_manifest) = self.active_manifest.as_ref() {
+            // NOTE: Changes here may impact the impl of [`ValidationFailureSummary::Display`].
+            //       Ensure changes are reciprocated in both locations.
+            //
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
             let is_valid = active_manifest
                 // First check if the claim is valid and the certificate hasn't expired.
@@ -358,6 +363,104 @@ impl ValidationResults {
             self.ingredient_deltas = Some(vec![idv]);
         }
         self
+    }
+
+    /// Returns a summary of why validation failed.
+    ///
+    /// The `Display` impl outputs a human-readable view of the failures, suitable for error messages.
+    /// If there are no failures, an empty string is output.
+    pub fn failure_summary(&self) -> ValidationFailureSummary<'_> {
+        ValidationFailureSummary(self)
+    }
+}
+
+impl Display for ValidationResults {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let state = self.validation_state();
+        writeln!(f, "state: {state:?}")?;
+
+        if let Some(active_manifest) = self.active_manifest.as_ref() {
+            if !active_manifest.success.is_empty() {
+                let codes: Vec<&str> = active_manifest.success.iter().map(|s| s.code()).collect();
+                writeln!(f, "  success: {}", codes.join(", "))?;
+            }
+            if !active_manifest.informational.is_empty() {
+                let codes: Vec<&str> = active_manifest
+                    .informational
+                    .iter()
+                    .map(|s| s.code())
+                    .collect();
+                writeln!(f, "  informational: {}", codes.join(", "))?;
+            }
+            if !active_manifest.failure.is_empty() {
+                let codes: Vec<&str> = active_manifest.failure.iter().map(|s| s.code()).collect();
+                writeln!(f, "  failure: {}", codes.join(", "))?;
+            }
+        }
+
+        if let Some(deltas) = self.ingredient_deltas.as_ref() {
+            for delta in deltas {
+                let d = delta.validation_deltas();
+                writeln!(f, "  ingredient [{}]:", delta.ingredient_assertion_uri())?;
+                if !d.success.is_empty() {
+                    let codes: Vec<&str> = d.success.iter().map(|s| s.code()).collect();
+                    writeln!(f, "    success: {}", codes.join(", "))?;
+                }
+                if !d.informational.is_empty() {
+                    let codes: Vec<&str> = d.informational.iter().map(|s| s.code()).collect();
+                    writeln!(f, "    informational: {}", codes.join(", "))?;
+                }
+                if !d.failure.is_empty() {
+                    let codes: Vec<&str> = d.failure.iter().map(|s| s.code()).collect();
+                    writeln!(f, "    failure: {}", codes.join(", "))?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Concise display of why a [`ValidationResults`] is invalid (impls `Display`).
+pub struct ValidationFailureSummary<'a>(&'a ValidationResults);
+
+impl Display for ValidationFailureSummary<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let results = self.0;
+        let mut output_lines: Vec<String> = Vec::new();
+
+        if let Some(active_manifest) = results.active_manifest.as_ref() {
+            let failures: Vec<&ValidationStatus> = active_manifest
+                .failure
+                .iter()
+                .filter(|s| s.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+                .collect();
+            if !failures.is_empty() {
+                let codes: Vec<&str> = failures.iter().map(|s| s.code()).collect();
+                output_lines.push(format!("failures: {}", codes.join(", ")));
+            }
+        }
+
+        if let Some(deltas) = results.ingredient_deltas.as_ref() {
+            for delta in deltas {
+                let delta_codes = delta.validation_deltas();
+                let failures: Vec<&ValidationStatus> = delta_codes
+                    .failure
+                    .iter()
+                    .filter(|s| s.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+                    .collect();
+                if !failures.is_empty() {
+                    let codes: Vec<&str> = failures.iter().map(|s| s.code()).collect();
+                    output_lines.push(format!(
+                        "ingredient [{}] failures: {}",
+                        delta.ingredient_assertion_uri(),
+                        codes.join(", ")
+                    ));
+                }
+            }
+        }
+
+        write!(f, "{}", output_lines.join("\n"))
     }
 }
 
@@ -1193,6 +1296,102 @@ pub mod tests {
         assert_eq!(
             validation_results.validation_state(),
             ValidationState::Invalid
+        );
+    }
+
+    #[test]
+    fn failure_summary_active_manifest_failure() {
+        let mut validation_results = ValidationResults::default();
+        validation_results.add_status(ValidationStatus::new_failure(ASSERTION_DATAHASH_MISMATCH));
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Invalid
+        );
+        assert_eq!(
+            validation_results.failure_summary().to_string(),
+            "failures: assertion.dataHash.mismatch"
+        );
+    }
+
+    #[test]
+    fn failure_summary_ingredient_failure() {
+        let mut validation_results = ValidationResults::default();
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new_failure(ASSERTION_DATAHASH_MISMATCH)
+                .set_ingredient_uri("urn:uuid:1234"),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Invalid
+        );
+        assert_eq!(
+            validation_results.failure_summary().to_string(),
+            "ingredient [urn:uuid:1234] failures: assertion.dataHash.mismatch"
+        );
+    }
+
+    #[test]
+    fn failure_summary_filters_untrusted_ingredient() {
+        let mut validation_results = ValidationResults::default();
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new_failure(SIGNING_CREDENTIAL_UNTRUSTED)
+                .set_ingredient_uri("urn:uuid:1234"),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Valid
+        );
+        assert_eq!(validation_results.failure_summary().to_string(), "");
+    }
+
+    #[test]
+    fn validation_results_display() {
+        let mut validation_results = ValidationResults::default();
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(validation_status::TIMESTAMP_MALFORMED)
+                .set_kind(LogKind::Informational),
+        );
+        validation_results.add_status(ValidationStatus::new_failure(CLAIM_MALFORMED));
+        validation_results.add_status(
+            ValidationStatus::new_failure(ASSERTION_DATAHASH_MISMATCH)
+                .set_ingredient_uri("urn:uuid:abcd"),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Invalid
+        );
+        assert_eq!(
+            validation_results.to_string(),
+            concat!(
+                "state: Invalid\n",
+                "  success: claimSignature.validated, claimSignature.insideValidity\n",
+                "  informational: timeStamp.malformed\n",
+                "  failure: claim.malformed\n",
+                "  ingredient [urn:uuid:abcd]:\n",
+                "    failure: assertion.dataHash.mismatch\n",
+            )
         );
     }
 }

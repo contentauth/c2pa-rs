@@ -70,7 +70,7 @@ fn test_bad_data_hash() -> Result<()> {
         .expect_err("expected validation error after sign");
 
     let validation_results = match err {
-        Error::ValidationAfterSign(vr) => vr,
+        Error::InvalidManifest(validation_results) => validation_results,
         other => panic!("{other:?}"),
     };
 

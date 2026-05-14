@@ -3193,7 +3193,7 @@ impl Store {
 
                     let validation_results = ValidationResults::from_store(self, &validation_log);
                     if validation_results.validation_state() == ValidationState::Invalid {
-                        return Err(Error::ValidationAfterSign(validation_results));
+                        return Err(Error::InvalidManifest(validation_results));
                     }
                 }
                 Ok(m)
