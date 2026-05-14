@@ -8740,10 +8740,9 @@ mod tests {
 
     #[test]
     fn test_to_archive_preserves_duplicate_label_assertions() -> Result<()> {
-        let context = Context::new()
-            .with_settings(json!({"verify": {"verify_after_sign": false}}))?
-            .into_shared();
+        let context = Context::new().into_shared();
         let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         builder.add_assertion("org.contentauth.test", &json!({"v": 1}))?;
         builder.add_assertion("org.contentauth.test", &json!({"v": 2}))?;
 
