@@ -219,7 +219,9 @@ pub mod tests {
 
         let signer = test_signer(SigningAlg::Ps256);
 
-        let manifest2 = store.to_jumbf(signer.as_ref()).expect("to_jumbf");
+        let manifest2 = store
+            .to_jumbf_internal(signer.reserve_size())
+            .expect("to_jumbf");
         assert_eq!(&manifest, &manifest2);
     }
 
