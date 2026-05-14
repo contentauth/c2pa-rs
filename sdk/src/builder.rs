@@ -39,7 +39,7 @@ use crate::{
         DigitalSourceType, EmbeddedData, ExclusionsMap, Exif, MerkleMap, Metadata, SoftwareAgent,
         SubsetMap, Thumbnail, TimeStamp, User, UserCbor,
     },
-    claim::Claim,
+    claim::{Claim, ClaimAssetData},
     context::{Context, ProgressPhase},
     crypto::cose,
     error::{Error, Result},
@@ -2818,6 +2818,14 @@ impl Builder {
                 .get_box_hashed_embeddable_manifest_async(signer, &self.context)
                 .await
         }?;
+        let mut asset_data = ClaimAssetData::Bytes(&bytes, "application/c2pa");
+        if _sync {
+            store.verify_store_after_sign(&mut asset_data, &self.context)?;
+        } else {
+            store
+                .verify_store_after_sign_async(&mut asset_data, &self.context)
+                .await?;
+        }
         // get composed version for embedding to JPEG
         Store::get_composed_manifest(&bytes, format)
     }

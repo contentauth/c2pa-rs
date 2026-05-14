@@ -2211,6 +2211,37 @@ impl Store {
         Ok(())
     }
 
+    /// Verifies the store against `asset_data` after signing, if [`Verify::verify_after_sign`] is
+    /// enabled. Returns [`Error::InvalidManifest`] if the manifest fails validation.
+    #[async_generic(async_signature(
+        &mut self,
+        asset_data: &mut ClaimAssetData<'_>,
+        context: &Context,
+    ))]
+    pub(crate) fn verify_store_after_sign(
+        &mut self,
+        asset_data: &mut ClaimAssetData<'_>,
+        context: &Context,
+    ) -> Result<()> {
+        if !context.settings().verify.verify_after_sign {
+            return Ok(());
+        }
+
+        let mut validation_log = StatusTracker::default();
+        if _sync {
+            Store::verify_store(self, asset_data, &mut validation_log, context)?;
+        } else {
+            Store::verify_store_async(self, asset_data, &mut validation_log, context).await?;
+        }
+
+        let validation_results = ValidationResults::from_store(self, &validation_log);
+        if validation_results.validation_state() == ValidationState::Invalid {
+            return Err(Error::InvalidManifest(validation_results));
+        }
+
+        Ok(())
+    }
+
     // generate a list of AssetHashes based on the location of objects in the stream
     fn generate_data_hashes_for_stream<R, F>(
         stream: &mut R,
@@ -2461,7 +2492,12 @@ impl Store {
                 let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc.set_signature_val(sig);
 
-                return self.to_jumbf_internal(signer.reserve_size());
+                let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+                let mut asset_data = ClaimAssetData::Bytes(&jumbf_bytes, "application/c2pa");
+                self.verify_store_after_sign(&mut asset_data, context)?;
+
+                return Ok(jumbf_bytes);
             }
         }
 
@@ -2472,7 +2508,12 @@ impl Store {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.set_signature_val(sig);
 
-        self.to_jumbf_internal(signer.reserve_size())
+        let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        let mut asset_data = ClaimAssetData::Bytes(&jumbf_bytes, "application/c2pa");
+        self.verify_store_after_sign(&mut asset_data, context)?;
+
+        Ok(jumbf_bytes)
     }
 
     fn prep_embeddable_store(
@@ -2574,6 +2615,9 @@ impl Store {
 
         let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
+        let mut asset_data = ClaimAssetData::Bytes(&jumbf_bytes, "application/c2pa");
+        self.verify_store_after_sign(&mut asset_data, context)?;
+
         self.finish_embeddable_store(&jumbf_bytes, format)
     }
 
@@ -2637,6 +2681,9 @@ impl Store {
         pc.set_signature_val(sig);
 
         let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+        let mut asset_data = ClaimAssetData::Bytes(&jumbf_bytes, "application/c2pa");
+        self.verify_store_after_sign_async(&mut asset_data, context)
+            .await?;
 
         self.finish_embeddable_store(&jumbf_bytes, format)
     }
@@ -2671,7 +2718,8 @@ impl Store {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.set_signature_val(sig);
 
-        self.to_jumbf_internal(signer.reserve_size())
+        let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+        Ok(jumbf_bytes)
     }
 
     /// Returns a finalized, signed manifest.  The client is required to have
@@ -2706,7 +2754,8 @@ impl Store {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.set_signature_val(sig);
 
-        self.to_jumbf_internal(signer.reserve_size())
+        let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+        Ok(jumbf_bytes)
     }
 
     /// Returns the supplied manifest composed to be directly compatible with the desired format.
@@ -3169,32 +3218,18 @@ impl Store {
 
                 context.check_progress(ProgressPhase::Embedding, 1, 1)?;
 
-                let verify_after_sign = settings.verify.verify_after_sign;
-                if verify_after_sign {
-                    let mut validation_log = StatusTracker::default();
-                    let output_len = output_stream.seek(SeekFrom::End(0))?;
-                    let mut asset_data = if output_len > 0 {
-                        ClaimAssetData::Stream(output_stream, format)
-                    } else {
-                        // If there is no output stream (e.g. `io::empty`), let's only validate the manifest.
-                        ClaimAssetData::Bytes(&m, "application/c2pa")
-                    };
-                    if _sync {
-                        Store::verify_store(self, &mut asset_data, &mut validation_log, context)?;
-                    } else {
-                        Store::verify_store_async(
-                            self,
-                            &mut asset_data,
-                            &mut validation_log,
-                            context,
-                        )
+                let output_len = output_stream.seek(SeekFrom::End(0))?;
+                let mut asset_data = if output_len > 0 {
+                    ClaimAssetData::Stream(output_stream, format)
+                } else {
+                    // If there is no output stream (e.g. `io::empty`), fall back to validating the manifest only.
+                    ClaimAssetData::Bytes(&m, "application/c2pa")
+                };
+                if _sync {
+                    self.verify_store_after_sign(&mut asset_data, context)?;
+                } else {
+                    self.verify_store_after_sign_async(&mut asset_data, context)
                         .await?;
-                    }
-
-                    let validation_results = ValidationResults::from_store(self, &validation_log);
-                    if validation_results.validation_state() == ValidationState::Invalid {
-                        return Err(Error::InvalidManifest(validation_results));
-                    }
                 }
                 Ok(m)
             }
