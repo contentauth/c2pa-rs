@@ -39,6 +39,7 @@ use crate::{
         Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash,
         Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
+    asset_handlers::c2pa_io,
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
     context::{Context, ProgressPhase},
@@ -2645,9 +2646,10 @@ impl Claim {
         context: &Context,
     ) -> Result<()> {
         // If it's a C2PA manifest then there is no asset to verify the hashes against.
-        if asset_data.format().is_some_and(|format| {
-            crate::asset_handlers::c2pa_io::SUPPORTED_TYPES.contains(&format.as_str())
-        }) {
+        if asset_data
+            .format()
+            .is_some_and(|format| c2pa_io::SUPPORTED_TYPES.contains(&format.as_str()))
+        {
             return Ok(());
         }
 
