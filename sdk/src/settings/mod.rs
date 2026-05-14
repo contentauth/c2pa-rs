@@ -346,6 +346,13 @@ pub struct Verify {
     ///
     /// [`Builder`]: crate::Builder
     pub verify_after_sign: bool,
+    /// Whether to include asset hash validation when verifying after signing.
+    ///
+    /// When `true`, the full asset is re-hashed to confirm the hard binding assertion matches.
+    /// When `false` (default), only the signature and manifest structure are verified.
+    ///
+    /// Has no effect when `verify_after_sign` is `false`.
+    pub verify_after_sign_hash: bool,
     /// Whether to verify certificates against the trust lists specified in [`Trust`]. To configure
     /// timestamp certificate verification, see [`Verify::verify_timestamp_trust`].
     ///
@@ -405,6 +412,7 @@ impl Default for Verify {
         Self {
             verify_after_reading: true,
             verify_after_sign: true,
+            verify_after_sign_hash: false,
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,

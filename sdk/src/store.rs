@@ -3219,10 +3219,11 @@ impl Store {
                 context.check_progress(ProgressPhase::Embedding, 1, 1)?;
 
                 let output_len = output_stream.seek(SeekFrom::End(0))?;
-                let mut asset_data = if output_len > 0 {
+                let validate_hash = context.settings().verify.verify_after_sign_hash;
+                let mut asset_data = if output_len > 0 && validate_hash {
                     ClaimAssetData::Stream(output_stream, format)
                 } else {
-                    // If there is no output stream (e.g. `io::empty`), fall back to validating the manifest only.
+                    // Without hash validation (or when output is empty, e.g. `io::empty`), verify the manifest only.
                     ClaimAssetData::Bytes(&m, "application/c2pa")
                 };
                 if _sync {
