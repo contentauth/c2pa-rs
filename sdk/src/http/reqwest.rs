@@ -17,7 +17,10 @@
     not(feature = "http_ureq")
 ))]
 pub mod sync_impl {
-    use std::io::{Cursor, Read};
+    use std::{
+        io::{Cursor, Read},
+        sync::OnceLock,
+    };
 
     use http::{Request, Response};
 
@@ -25,18 +28,29 @@ pub mod sync_impl {
 
     pub type Impl = reqwest::blocking::Client;
 
+    static SYNC_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    static SYNC_CLIENT_REDIRECTS: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+
     pub fn new() -> Impl {
-        // By default `reqwest::blocking::Client::new()` unwraps if the TLS backend cannot be initialized.
-        // The behavior here is equivalent, except with a custom configuration.
-        #[allow(clippy::unwrap_used)]
-        reqwest::blocking::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap()
+        SYNC_CLIENT
+            .get_or_init(|| {
+                // By default `reqwest::blocking::Client::new()` unwraps if the TLS backend cannot be initialized.
+                // The behavior here is equivalent, except with a custom configuration.
+                #[allow(clippy::unwrap_used)]
+                reqwest::blocking::Client::builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .unwrap()
+            })
+            .clone()
     }
 
     pub fn with_redirects() -> Option<Impl> {
-        Some(reqwest::blocking::Client::new())
+        Some(
+            SYNC_CLIENT_REDIRECTS
+                .get_or_init(reqwest::blocking::Client::new)
+                .clone(),
+        )
     }
 
     impl SyncHttpResolver for reqwest::blocking::Client {
@@ -80,7 +94,10 @@ pub mod sync_impl {
 
 #[cfg(all(feature = "http_reqwest", not(target_os = "wasi")))]
 pub mod async_impl {
-    use std::io::{Cursor, Read};
+    use std::{
+        io::{Cursor, Read},
+        sync::OnceLock,
+    };
 
     use async_trait::async_trait;
     use http::{Request, Response};
@@ -89,19 +106,26 @@ pub mod async_impl {
 
     pub type Impl = reqwest::Client;
 
+    static ASYNC_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    static ASYNC_CLIENT_REDIRECTS: OnceLock<reqwest::Client> = OnceLock::new();
+
     pub fn new() -> Impl {
-        let builder = reqwest::Client::builder();
-        // `reqwest::redirect` isn't compiled on WASM.
-        #[cfg(not(target_arch = "wasm32"))]
-        let builder = builder.redirect(reqwest::redirect::Policy::none());
-        // By default `reqwest::Client::new()` unwraps if the TLS backend cannot be initialized.
-        // The behavior here is equivalent, except with a custom configuration.
-        #[allow(clippy::unwrap_used)]
-        builder.build().unwrap()
+        ASYNC_CLIENT
+            .get_or_init(|| {
+                let builder = reqwest::Client::builder();
+                // `reqwest::redirect` isn't compiled on WASM.
+                #[cfg(not(target_arch = "wasm32"))]
+                let builder = builder.redirect(reqwest::redirect::Policy::none());
+                // By default `reqwest::Client::new()` unwraps if the TLS backend cannot be initialized.
+                // The behavior here is equivalent, except with a custom configuration.
+                #[allow(clippy::unwrap_used)]
+                builder.build().unwrap()
+            })
+            .clone()
     }
 
     pub fn with_redirects() -> Option<Impl> {
-        Some(reqwest::Client::new())
+        Some(ASYNC_CLIENT_REDIRECTS.get_or_init(reqwest::Client::new).clone())
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]

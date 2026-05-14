@@ -13,7 +13,7 @@
 
 use std::{
     os::raw::{c_char, c_int, c_uchar, c_void},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 // C has no namespace so we prefix things with C2PA to make them unique (as namespace)
@@ -24,7 +24,7 @@ use c2pa::{
     CallbackSigner, Context, ProgressPhase, Reader as C2paReader, Settings as C2paSettings,
     SigningAlg,
 };
-use tokio::runtime::Builder;
+use tokio::runtime::{Builder, Runtime};
 
 #[cfg(feature = "file_io")]
 use crate::json_api::{read_file, sign_file};
@@ -1145,21 +1145,25 @@ pub unsafe extern "C" fn c2pa_free_string_array(ptr: *const *const c_char, count
     Vec::from_raw_parts(mut_ptr, count, count);
 }
 
+static TOKIO_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
+pub(crate) fn get_runtime() -> Result<&'static Runtime, c2pa::Error> {
+    TOKIO_RUNTIME
+        .get_or_try_init(|| {
+            #[cfg(target_arch = "wasm32")]
+            let rt = Builder::new_current_thread().enable_all().build();
+            #[cfg(not(target_arch = "wasm32"))]
+            let rt = Builder::new_multi_thread().enable_all().build();
+            rt
+        })
+        .map_err(|e| c2pa::Error::OtherError(Box::new(e)))
+}
+
 // Run CAWG post-validation - this is async and requires a runtime.
 fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, c2pa::Error> {
     match result {
         Ok(mut reader) => {
-            #[cfg(target_arch = "wasm32")]
-            let runtime = Builder::new_current_thread().enable_all().build();
-
-            #[cfg(not(target_arch = "wasm32"))]
-            let runtime = Builder::new_multi_thread().enable_all().build();
-
-            let runtime = match runtime {
-                Ok(runtime) => runtime,
-                Err(err) => return Err(c2pa::Error::OtherError(Box::new(err))),
-            };
-
+            let runtime = get_runtime()?;
             match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
                 Ok(_) => Ok(reader),
                 Err(err) => Err(err),
