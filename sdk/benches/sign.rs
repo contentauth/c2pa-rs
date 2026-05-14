@@ -42,8 +42,8 @@ fn load(label: &str, ext: &str) -> Option<Vec<u8>> {
 fn sign_jpeg(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign jpeg");
     let signer = create_signer();
-    let ctx = context();
-    let mut builder = Builder::from_shared_context(&ctx)
+    let context = context();
+    let mut builder = Builder::from_shared_context(&context)
         .with_definition(MANIFEST_JSON)
         .unwrap();
 
@@ -65,8 +65,8 @@ fn sign_jpeg(c: &mut Criterion) {
 fn sign_png(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign png");
     let signer = create_signer();
-    let ctx = context();
-    let mut builder = Builder::from_shared_context(&ctx)
+    let context = context();
+    let mut builder = Builder::from_shared_context(&context)
         .with_definition(MANIFEST_JSON)
         .unwrap();
 
@@ -90,8 +90,8 @@ fn sign_png(c: &mut Criterion) {
 fn sign_gif(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign gif");
     let signer = create_signer();
-    let ctx = context();
-    let mut builder = Builder::from_shared_context(&ctx)
+    let context = context();
+    let mut builder = Builder::from_shared_context(&context)
         .with_definition(MANIFEST_JSON)
         .unwrap();
 
@@ -113,8 +113,8 @@ fn sign_gif(c: &mut Criterion) {
 fn sign_tiff(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign tiff");
     let signer = create_signer();
-    let ctx = context();
-    let mut builder = Builder::from_shared_context(&ctx)
+    let context = context();
+    let mut builder = Builder::from_shared_context(&context)
         .with_definition(MANIFEST_JSON)
         .unwrap();
 
@@ -136,8 +136,8 @@ fn sign_tiff(c: &mut Criterion) {
 fn sign_wav(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign wav");
     let signer = create_signer();
-    let ctx = context();
-    let mut builder = Builder::from_shared_context(&ctx)
+    let context = context();
+    let mut builder = Builder::from_shared_context(&context)
         .with_definition(MANIFEST_JSON)
         .unwrap();
 
@@ -159,8 +159,8 @@ fn sign_wav(c: &mut Criterion) {
 fn sign_svg(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign svg");
     let signer = create_signer();
-    let ctx = context();
-    let mut builder = Builder::from_shared_context(&ctx)
+    let context = context();
+    let mut builder = Builder::from_shared_context(&context)
         .with_definition(MANIFEST_JSON)
         .unwrap();
 
@@ -183,8 +183,8 @@ fn sign_svg(c: &mut Criterion) {
 fn sign_mp3(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign mp3");
     let signer = create_signer();
-    let ctx = context();
-    let mut builder = Builder::from_shared_context(&ctx)
+    let context = context();
+    let mut builder = Builder::from_shared_context(&context)
         .with_definition(MANIFEST_JSON)
         .unwrap();
 
@@ -206,8 +206,8 @@ fn sign_mp3(c: &mut Criterion) {
 fn sign_mp4(c: &mut Criterion) {
     let mut group = c.benchmark_group("sign mp4");
     let signer = create_signer();
-    let ctx = context();
-    let mut builder = Builder::from_shared_context(&ctx)
+    let context = context();
+    let mut builder = Builder::from_shared_context(&context)
         .with_definition(MANIFEST_JSON)
         .unwrap();
 
