@@ -67,7 +67,7 @@ fn test_bad_data_hash() -> Result<()> {
 
     let err = builder
         .sign(context.signer()?, format, &mut source, &mut dest)
-        .expect_err("expected validation error after sign");
+        .unwrap_err();
 
     let validation_results = match err {
         Error::InvalidManifest(validation_results) => validation_results,
