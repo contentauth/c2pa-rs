@@ -14,7 +14,7 @@
 #![deny(missing_docs)]
 #[cfg(feature = "file_io")]
 use std::path::{Path, PathBuf};
-use std::{borrow::Cow, io::Cursor};
+use std::{borrow::Cow, io::Cursor, sync::Arc};
 
 use async_generic::async_generic;
 use log::{debug, error};
@@ -139,6 +139,11 @@ pub struct Ingredient {
     /// [`ManifestStore`]: crate::ManifestStore
     #[serde(skip_serializing_if = "Option::is_none")]
     manifest_data: Option<ResourceRef>,
+
+    /// When set, [`Ingredient::manifest_data`] is resolved on demand from this store
+    /// (see [`Reader`](crate::Reader) construction) instead of from [`Ingredient::resources`].
+    #[serde(skip)]
+    source_store: Option<Arc<Store>>,
 
     /// The ingredient's label as assigned in the manifest.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -322,9 +327,25 @@ impl Ingredient {
     ///
     /// manifest_data is the binary form of a manifest store in .c2pa format.
     pub fn manifest_data(&self) -> Option<Cow<'_, Vec<u8>>> {
-        self.manifest_data
-            .as_ref()
-            .and_then(|r| self.resources.get(&r.identifier).ok())
+        let r = self.manifest_data.as_ref()?;
+        match self.resources.get(&r.identifier) {
+            Ok(cow) => Some(cow),
+            Err(_) => self
+                .try_get_deferred_manifest_data(&r.identifier)
+                .ok()
+                .map(Cow::Owned),
+        }
+    }
+
+    fn try_get_deferred_manifest_data(&self, id: &str) -> Result<Vec<u8>> {
+        let mdr = self.manifest_data.as_ref().ok_or_else(|| Error::NotFound)?;
+        if mdr.identifier != id {
+            return Err(Error::NotFound);
+        }
+        let source_store = self.source_store.as_ref().ok_or_else(|| Error::NotFound)?;
+        let claim = source_store.get_claim(id).ok_or_else(|| Error::NotFound)?;
+        let sub = Store::build_flat_ingredient_store(source_store.as_ref(), claim)?;
+        sub.to_jumbf_internal(0)
     }
 
     /// Returns a reference to ingredient data if it exists.
@@ -475,18 +496,35 @@ impl Ingredient {
 
     /// Sets a reference to Manifest C2PA data.
     pub fn set_manifest_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
+        self.source_store = None;
         self.manifest_data = Some(data_ref);
         Ok(self)
     }
 
     /// Sets the Manifest C2PA data for this ingredient with bytes.
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
+        self.source_store = None;
         let base_id = "manifest_data".to_string();
         self.manifest_data = Some(
             self.resources
                 .add_with(&base_id, "application/c2pa", data)?,
         );
         Ok(self)
+    }
+
+    /// Lazily resolve [`Ingredient::manifest_data`] from `source_store` using
+    /// [`Ingredient::active_manifest`] as the provenance claim label.
+    pub(crate) fn set_deferred_manifest_data(&mut self, source_store: Arc<Store>) -> Result<()> {
+        let active = self
+            .active_manifest()
+            .map(str::to_owned)
+            .ok_or_else(|| Error::NotFound)?;
+        if source_store.get_claim(&active).is_none() {
+            return Ok(());
+        }
+        self.source_store = Some(source_store);
+        self.manifest_data = Some(ResourceRef::new("application/c2pa", active));
+        Ok(())
     }
 
     /// Sets a reference to Ingredient data.
@@ -1153,6 +1191,8 @@ impl Ingredient {
                 Some(label) => label,           // use the manifest from the thumbnail uri
                 None => claim_label.to_owned(), /* relative so use the whole url from the thumbnail assertion */
             };
+            let absolute_uri =
+                jumbf::labels::to_absolute_uri(&target_claim_label, &hashed_uri.url());
             let maybe_resource_ref = match hashed_uri.url() {
                 uri if uri.contains(jumbf::labels::ASSERTIONS) => {
                     // Get the bits of the thumbnail and convert it to a resource
@@ -1161,16 +1201,14 @@ impl Ingredient {
                         .get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_claim_label)
                         .map(|assertion| {
                             let (format, image) = Self::thumbnail_from_assertion(assertion);
-                            ingredient
-                                .resources
-                                .add_uri(&hashed_uri.url(), format, image)
+                            ingredient.resources.add_uri(&absolute_uri, format, image)
                         })
                 }
                 uri if uri.contains(jumbf::labels::DATABOXES) => store
                     .get_data_box_from_uri_and_claim(hashed_uri, &target_claim_label)
                     .map(|data_box| {
                         ingredient.resources.add_uri(
-                            &hashed_uri.url(),
+                            &absolute_uri,
                             &data_box.format,
                             data_box.data.clone(),
                         )
@@ -1255,11 +1293,14 @@ impl Ingredient {
         let mut thumbnail = None;
         // for Builder model, ingredient resources may be in the manifest
         let get_resource = |id: &str| {
-            self.resources.get(id).or_else(|_| {
-                resources
-                    .ok_or_else(|| Error::NotFound)
-                    .and_then(|r| r.get(id))
-            })
+            self.resources
+                .get(id)
+                .or_else(|_| {
+                    resources
+                        .ok_or_else(|| Error::NotFound)
+                        .and_then(|r| r.get(id))
+                })
+                .or_else(|_| self.try_get_deferred_manifest_data(id).map(Cow::Owned))
         };
 
         // Collect the redacted thumbnail URIs, use them for comparison.
@@ -1347,9 +1388,17 @@ impl Ingredient {
             // Ingredients without manifest_data may also carry relative self#jumbf= thumbnail
             // identifiers (e.g. written by the archive format for freshly-generated thumbnails),
             // those are valid resources in the builder's resource store and must be kept.
+            // A thumbnail is also "stale" when it comes from the outer archive manifest rather
+            // than the ingredient's own manifest chain. URIs are absolute but may
+            // still point to a different (outer) manifest, not the ingredient's active_manifest,
+            // which also makes them stale and should not be added in this case.
             let is_stale_outer_ref = self.manifest_data_ref().is_some()
                 && thumb_ref.identifier.starts_with("self#jumbf=")
-                && !thumb_ref.identifier.starts_with("self#jumbf=/");
+                && (!thumb_ref.identifier.starts_with("self#jumbf=/")
+                    || self
+                        .active_manifest
+                        .as_deref()
+                        .is_some_and(|label| !thumb_ref.identifier.contains(label)));
 
             // Resolve the thumbnail identifier to an absolute JUMBF URI using the ingredient's
             // own manifest label (self.active_manifest), then check directly against the
@@ -1746,6 +1795,7 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
+    use crate::{utils::test_signer::test_signer, Builder, Reader, SigningAlg};
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -1976,6 +2026,37 @@ mod tests {
         assert_eq!(ingredient.validation_status(), None);
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.provenance().is_some());
+    }
+
+    #[test]
+    fn test_ingredient_thumbnail_uri_is_absolute() {
+        let mut ingredient = Ingredient::new_v2("Test Ingredient", "image/jpeg");
+        ingredient
+            .set_thumbnail("image/jpeg", b"a super real thumbnail".to_vec())
+            .unwrap();
+
+        let mut builder = Builder::default()
+            .with_definition(r#"{"title": "Test Image"}"#)
+            .unwrap();
+        builder.add_ingredient(ingredient);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut source = Cursor::new(include_bytes!("../tests/fixtures/C.jpg").as_slice());
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(&signer, "image/jpeg", &mut source, &mut output)
+            .unwrap();
+
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+        let manifest = reader.active_manifest().unwrap();
+        let manifest_label = manifest.label().unwrap();
+        let ingredient = manifest.ingredients().first().unwrap();
+        let thumb_ref = ingredient.thumbnail_ref().unwrap();
+
+        let expected_prefix = format!("self#jumbf=/c2pa/{manifest_label}/");
+        assert!(thumb_ref.identifier.starts_with(&expected_prefix),);
     }
 }
 

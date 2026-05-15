@@ -4,8 +4,8 @@
 
 During multi-step long-running operations (such as signing, reading, and verification), the SDK reports progress via an optional callback registered on a `Context`. The primary purposes of the callback are:
 
-- **Liveness** — confirming to the caller that the SDK is still making forward progress and is not hung.
-- **Cancellation** — giving the caller a safe opportunity to stop the operation at any phase boundary.
+- **Liveness**: confirming to the caller that the SDK is still making forward progress and is not hung.
+- **Cancellation**: giving the caller a safe opportunity to stop the operation at any phase boundary.
 
 The callback receives the current phase, a step counter, and an optional total. Returning `false` from the callback requests cancellation; the SDK will stop at the next safe checkpoint and return `Error::OperationCancelled`.
 
@@ -52,12 +52,12 @@ The SDK reports progress as a sequence of named phases, each represented by the 
 fn(phase: ProgressPhase, step: u32, total: u32) -> bool
 ```
 
-- `phase` — the current phase (see table above). Callers should derive user-visible text from this value; no localized string is provided by the SDK.
-- `step` — monotonically increasing counter within the current phase, starting at `1`. Resets to `1` at the start of each new phase. Use it as a liveness heartbeat: as long as `step` keeps rising, the SDK is making progress. Do not assume any particular unit; for example, `Hashing` uses chunk index and `VerifyingIngredient` uses ingredient index. The unit is phase-specific and may change between SDK versions.
-- `total` — interpreted as follows:
-  - `0` — indeterminate; the total is not known in advance. Display a spinner and use the rising `step` value as a liveness signal.
-  - `1` — single-shot phase; the callback itself is the notification. No subdivision is meaningful.
-  - `> 1` — determinate; `step / total` gives a completion fraction suitable for a progress bar.
+- `phase`: the current phase (see table above). Callers should derive user-visible text from this value; no localized string is provided by the SDK.
+- `step`: monotonically increasing counter within the current phase, starting at `1`. Resets to `1` at the start of each new phase. Use it as a liveness heartbeat: as long as `step` keeps rising, the SDK is making progress. Do not assume any particular unit; for example, `Hashing` uses chunk index and `VerifyingIngredient` uses ingredient index. The unit is phase-specific and may change between SDK versions.
+- `total`: interpreted as follows:
+  - `0`: indeterminate; the total is not known in advance. Display a spinner and use the rising `step` value as a liveness signal.
+  - `1`: single-shot phase; the callback itself is the notification. No subdivision is meaningful.
+  - `> 1`: determinate; `step / total` gives a completion fraction suitable for a progress bar.
 - Return `true` to continue, `false` to cancel.
 
 The closure must be `Send + Sync` on non-WASM targets. On WASM (single-threaded) those bounds are not required.
