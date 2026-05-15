@@ -21,11 +21,19 @@ use tokio::runtime::{Builder, Runtime};
 // Callers must ensure the library lifetime exceeds all FFI call lifetimes.
 //
 // If the caller's thread already owns a tokio runtime (e.g. the host is a
-// tokio application), any FFI function that calls block_on will panic with
-// "Cannot start a runtime from within a runtime." There is no escape hatch
-// from the C API; callers in that situation must invoke the FFI from a
-// dedicated non-async thread.
+// tokio application), call set_runtime() before the first FFI operation to
+// install the existing runtime. FFI functions that call block_on must be
+// invoked from outside any async context even when using a provided runtime.
 static TOKIO_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+
+/// Installs `runtime` as the FFI's shared tokio runtime.
+///
+/// Must be called before the first FFI operation that requires async execution.
+/// Returns `Err(runtime)` if a runtime is already installed (either by a prior
+/// call to this function or by a lazy [`get_runtime`] call).
+pub fn set_runtime(runtime: Runtime) -> Result<(), Runtime> {
+    TOKIO_RUNTIME.set(runtime)
+}
 
 pub(crate) fn get_runtime() -> &'static Runtime {
     TOKIO_RUNTIME.get_or_init(|| {

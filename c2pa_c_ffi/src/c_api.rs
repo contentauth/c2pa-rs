@@ -16,12 +16,6 @@ use std::{
     sync::Arc,
 };
 
-// C has no namespace so we prefix things with C2PA to make them unique (as namespace)
-#[cfg(feature = "file_io")]
-use crate::json_api::{read_file, sign_file};
-use crate::runtime::get_runtime;
-#[cfg(test)]
-use crate::safe_slice_from_raw_parts;
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 use c2pa::{
@@ -29,6 +23,13 @@ use c2pa::{
     CallbackSigner, Context, ProgressPhase, Reader as C2paReader, Settings as C2paSettings,
     SigningAlg,
 };
+
+// C has no namespace so we prefix things with C2PA to make them unique (as namespace)
+#[cfg(feature = "file_io")]
+use crate::json_api::{read_file, sign_file};
+use crate::runtime::get_runtime;
+#[cfg(test)]
+use crate::safe_slice_from_raw_parts;
 // Import macros and utilities from cimpl
 #[allow(unused_imports)] // Usage varies by feature flags and test/non-test builds
 use crate::{

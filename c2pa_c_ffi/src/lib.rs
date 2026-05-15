@@ -32,4 +32,5 @@ pub use c_api::*;
 pub use cimpl::cimpl_error::CimplError;
 pub use cimpl::*;
 pub use error::{Error, Result};
+pub use runtime::set_runtime;
 pub use signer_info::SignerInfo;
