@@ -19,6 +19,7 @@ mod error;
 #[cfg(feature = "file_io")]
 mod json_api;
 mod maybe_send_sync;
+mod runtime;
 mod signer_info;
 
 pub use c2pa::{
@@ -31,4 +32,5 @@ pub use c_api::*;
 pub use cimpl::cimpl_error::CimplError;
 pub use cimpl::*;
 pub use error::{Error, Result};
+pub use runtime::set_runtime;
 pub use signer_info::SignerInfo;
