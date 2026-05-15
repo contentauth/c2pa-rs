@@ -11,8 +11,9 @@
 // each license.
 
 use c2pa::{identity::validator::CawgValidator, Ingredient, Reader, Relationship};
+use tokio::runtime::Builder;
 
-use crate::{runtime::get_runtime, Error, Result, SignerInfo};
+use crate::{Error, Result, SignerInfo};
 
 /// Returns ManifestStore JSON string from a file path.
 ///
@@ -23,7 +24,19 @@ pub fn read_file(path: &str, data_dir: Option<String>) -> Result<String> {
     // Legacy JSON API: inherits thread-local settings set by c2pa_load_settings.
     let mut reader = Reader::from_file(path).map_err(Error::from_c2pa_error)?;
 
-    get_runtime()
+    #[cfg(target_arch = "wasm32")]
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::Other(e.to_string()))?;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let runtime = Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| Error::Other(e.to_string()))?;
+
+    runtime
         .block_on(reader.post_validate_async(&CawgValidator {}))
         .map_err(Error::from_c2pa_error)?;
 
