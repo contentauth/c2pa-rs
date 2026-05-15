@@ -30,7 +30,7 @@ static TOKIO_RUNTIME: OnceLock<Arc<Runtime>> = OnceLock::new();
 ///
 /// Must be called before the first FFI operation that requires async execution.
 /// Returns `Err(runtime)` if a runtime is already installed (either by a prior
-/// call to this function or by a lazy [`get_runtime`] call).
+/// call to this function or by a lazy `get_runtime` call).
 pub fn set_runtime(runtime: Arc<Runtime>) -> Result<(), Arc<Runtime>> {
     TOKIO_RUNTIME.set(runtime)
 }

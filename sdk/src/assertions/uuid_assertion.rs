@@ -26,7 +26,7 @@ pub struct Uuid {
 }
 
 impl Uuid {
-    /// Create new Identity instance
+    #[allow(dead_code)]
     pub fn new(label: &str, uuid: String, data: Vec<u8>) -> Uuid {
         Uuid {
             label: label.to_owned(),

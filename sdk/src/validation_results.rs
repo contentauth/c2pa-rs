@@ -220,13 +220,10 @@ impl ValidationResults {
                 && active_manifest.success().iter().any(|status| {
                     status.code() == validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY
                 })
-                // Then check if the manifest contains either no failures or only failures that
-                // do not invalidate the manifest (untrusted credential, or DID unavailable which
-                // is a MAY-continue condition per the CAWG spec).
+                // Then check if the manifest contains either no failures or that it's only untrusted.
                 && (active_manifest.failure().is_empty()
                     || active_manifest.failure().iter().all(|status| {
                         status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
-                            || status.code() == validation_status::CAWG_ICA_DID_UNAVAILABLE
                     }))
                 // Finally check if the ingredients contain either no failures or the only failure is
                 // that the ingredient is untrusted.
@@ -642,13 +639,6 @@ pub mod validation_codes {
     ///
     /// Any corresponding URL should point to a C2PA claim signature box.
     pub const SIGNING_CREDENTIAL_UNTRUSTED: &str = "signingCredential.untrusted";
-
-    /// The CAWG ICA issuer DID could not be resolved (e.g. network unavailable).
-    ///
-    /// Per the CAWG spec this is a MAY-continue condition: validation proceeds
-    /// and the overall state is not downgraded to `Invalid` solely because of
-    /// this failure.
-    pub const CAWG_ICA_DID_UNAVAILABLE: &str = "cawg.ica.did_unavailable";
 
     /// The signing credential is not valid for signing.
     ///
