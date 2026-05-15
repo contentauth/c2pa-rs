@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use tokio::runtime::{Builder, Runtime};
 
@@ -24,14 +24,14 @@ use tokio::runtime::{Builder, Runtime};
 // tokio application), call set_runtime() before the first FFI operation to
 // install the existing runtime. FFI functions that call block_on must be
 // invoked from outside any async context even when using a provided runtime.
-static TOKIO_RUNTIME: OnceLock<Runtime> = OnceLock::new();
+static TOKIO_RUNTIME: OnceLock<Arc<Runtime>> = OnceLock::new();
 
 /// Installs `runtime` as the FFI's shared tokio runtime.
 ///
 /// Must be called before the first FFI operation that requires async execution.
 /// Returns `Err(runtime)` if a runtime is already installed (either by a prior
 /// call to this function or by a lazy [`get_runtime`] call).
-pub fn set_runtime(runtime: Runtime) -> Result<(), Runtime> {
+pub fn set_runtime(runtime: Arc<Runtime>) -> Result<(), Arc<Runtime>> {
     TOKIO_RUNTIME.set(runtime)
 }
 
@@ -40,9 +40,11 @@ pub(crate) fn get_runtime() -> &'static Runtime {
         // current_thread is sufficient: all call sites do a single block_on
         // and return. A multi-thread pool would spawn num_cpus threads
         // permanently for no benefit.
-        Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("c2pa FFI: failed to initialise tokio runtime")
+        Arc::new(
+            Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("c2pa FFI: failed to initialise tokio runtime"),
+        )
     })
 }
