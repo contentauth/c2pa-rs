@@ -1021,18 +1021,6 @@ impl Store {
         }
     }
 
-    /// Convert this claims store to a JUMBF box.
-    #[allow(unused)] // used in tests
-    pub fn to_jumbf(&self, signer: &dyn Signer) -> Result<Vec<u8>> {
-        self.to_jumbf_internal(signer.reserve_size())
-    }
-
-    /// Convert this claims store to a JUMBF box.
-    #[allow(unused)]
-    pub fn to_jumbf_async(&self, signer: &dyn AsyncSigner) -> Result<Vec<u8>> {
-        self.to_jumbf_internal(signer.reserve_size())
-    }
-
     pub(crate) fn to_jumbf_internal(&self, min_reserve_size: usize) -> Result<Vec<u8>> {
         // Create the CAI block.
         let mut cai_block = Cai::new();
@@ -1586,10 +1574,11 @@ impl Store {
     }
 
     // recursively walk the ingredients and validate
+    #[async_generic]
     fn ingredient_checks(
         store: &Store,
         claim: &Claim,
-        svi: &StoreValidationInfo,
+        svi: &StoreValidationInfo<'_>,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
         depth: usize,
@@ -1776,267 +1765,52 @@ impl Store {
                         }
                     }
 
-                    Claim::verify_claim(
-                        ingredient,
-                        asset_data,
-                        svi,
-                        check_ingredient_trust,
-                        &store.ctp,
-                        validation_log,
-                        context,
-                    )?;
-
-                    // recurse nested ingredients
-                    Store::ingredient_checks(
-                        store,
-                        ingredient,
-                        svi,
-                        asset_data,
-                        validation_log,
-                        depth.saturating_add(1),
-                        context,
-                    )?;
-                } else {
-                    log_item!(label.clone(), "ingredient not found", "ingredient_checks")
-                        .validation_status(validation_status::INGREDIENT_MANIFEST_MISSING)
-                        .failure(
+                    if _sync {
+                        Claim::verify_claim(
+                            ingredient,
+                            asset_data,
+                            svi,
+                            check_ingredient_trust,
+                            &store.ctp,
                             validation_log,
-                            Error::ClaimVerification(format!("ingredient: {label} is missing")),
+                            context,
                         )?;
-                }
-            } else {
-                let title = ingredient_assertion.title.unwrap_or("no title".into());
-                let description = format!("{title}: ingredient does not have provenance");
-                log_item!(
-                    jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
-                    description,
-                    "ingredient_checks"
-                )
-                .validation_status(validation_status::INGREDIENT_PROVENANCE_UNKNOWN)
-                .informational(validation_log);
-            }
-            validation_log.pop_ingredient_uri();
-        }
-
-        Ok(())
-    }
-
-    // recursively walk the ingredients and validate
-    async fn ingredient_checks_async(
-        store: &Store,
-        claim: &Claim,
-        svi: &StoreValidationInfo<'_>,
-        asset_data: &mut ClaimAssetData<'_>,
-        validation_log: &mut StatusTracker,
-        depth: usize,
-        context: &Context,
-    ) -> Result<()> {
-        if depth >= MAX_INGREDIENT_DEPTH {
-            return Err(Error::InvalidAsset(format!(
-                "ingredient chain depth ({depth}) exceeds maximum ({MAX_INGREDIENT_DEPTH})"
-            )));
-        }
-
-        let settings = context.settings();
-
-        let total_ingredients = claim
-            .ingredient_assertions()
-            .iter()
-            .filter(|i| !is_zero(i.assertion().data()))
-            .count() as u32;
-        let mut ingredient_step = 0u32;
-
-        // walk the ingredients
-        for i in claim.ingredient_assertions() {
-            // allow for zero out ingredient assertions
-            if is_zero(i.assertion().data()) {
-                continue;
-            }
-
-            let ingredient_assertion = Ingredient::from_assertion(i.assertion()).map_err(|e| {
-                log_item!(
-                    i.label().clone(),
-                    "ingredient assertion could not be parsed",
-                    "ingredient_checks"
-                )
-                .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
-                .failure_as_err(validation_log, e)
-            })?;
-
-            // we don't care about InputTo ingredients
-            if ingredient_assertion.relationship == Relationship::InputTo {
-                continue;
-            }
-
-            ingredient_step += 1;
-            context.check_progress(
-                ProgressPhase::VerifyingIngredient,
-                ingredient_step,
-                total_ingredients,
-            )?;
-
-            validation_log
-                .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
-
-            // is this an ingredient
-            if let Some(c2pa_manifest) = ingredient_assertion.c2pa_manifest() {
-                // if this is a v3 ingredient then it must have validation report indicating it was validated
-                if let Some(ingredient_version) = ingredient_assertion.version() {
-                    if ingredient_version >= 3 && ingredient_assertion.validation_results.is_none()
-                    {
-                        log_item!(
-                            jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
-                            "ingredient V3 must have validation results",
-                            "ingredient_checks"
-                        )
-                        .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
-                        .failure(
-                            validation_log,
-                            Error::HashMismatch(
-                                "ingredient V3 missing validation status".to_string(),
-                            ),
-                        )?;
-                    }
-                }
-
-                let label = Store::manifest_label_from_path(&c2pa_manifest.url());
-
-                if let Some(ingredient) = store.get_claim(&label) {
-                    let alg = match c2pa_manifest.alg() {
-                        Some(a) => a,
-                        None => ingredient.alg().to_owned(),
-                    };
-
-                    // are we evaluating a 2.x manifest, then use those rule
-                    let ingredient_version = ingredient.version();
-                    let has_redactions = svi.redactions.iter().any(|r| r.contains(&label));
-
-                    // allow the extra ingredient trust checks
-                    // these checks are to prevent the trust spoofing
-                    let check_ingredient_trust = settings.verify.verify_trust;
-
-                    // get the 1.1-1.2 box hash
-                    let ingredient_hashes = store.get_manifest_box_hashes(ingredient);
-
-                    // since no redactions we can try manifest match method
-                    let mut pre_v1_3_hash = false;
-                    let manifests_match = if !has_redactions {
-                        // test for 1.1 hash then 1.0 version
-                        if !vec_compare(&c2pa_manifest.hash(), &ingredient_hashes.manifest_box_hash)
-                        {
-                            // try legacy hash
-                            pre_v1_3_hash = true;
-                            verify_by_alg(&alg, &c2pa_manifest.hash(), &ingredient.data()?, None)
-                        } else {
-                            true
-                        }
                     } else {
-                        false
-                    };
-
-                    // since the manifest hashes are equal we can short circuit the rest of the validation
-                    // we can only do this for post 1.3 Claims since manfiest box hashing was not available
-                    if manifests_match && !pre_v1_3_hash {
-                        log_item!(
-                            c2pa_manifest.url(),
-                            "ingredient hash matched",
-                            "ingredient_checks"
-                        )
-                        .validation_status(validation_status::INGREDIENT_MANIFEST_VALIDATED)
-                        .success(validation_log);
-                    }
-
-                    // if mismatch is not because of a redaction this is a hard error
-                    if !manifests_match && !has_redactions {
-                        log_item!(
-                            c2pa_manifest.url(),
-                            "ingredient hash incorrect",
-                            "ingredient_checks"
-                        )
-                        .validation_status(validation_status::INGREDIENT_MANIFEST_MISMATCH)
-                        .failure(
+                        Claim::verify_claim_async(
+                            ingredient,
+                            asset_data,
+                            svi,
+                            check_ingredient_trust,
+                            &store.ctp,
                             validation_log,
-                            Error::HashMismatch(
-                                "ingredient hash does not match found ingredient".to_string(),
-                            ),
-                        )?;
+                            context,
+                        )
+                        .await?;
                     }
-
-                    // if manifest hash did not match and this is a V2 or greater claim then we
-                    // must try the signature validation method before proceeding
-                    if !manifests_match && has_redactions && ingredient_version > 1 {
-                        let claim_signature =
-                            ingredient_assertion.signature().ok_or_else(|| {
-                                log_item!(
-                                    c2pa_manifest.url(),
-                                    "ingredient claimSignature missing",
-                                    "ingredient_checks"
-                                )
-                                .validation_status(
-                                    validation_status::INGREDIENT_CLAIM_SIGNATURE_MISSING,
-                                )
-                                .failure_as_err(
-                                    validation_log,
-                                    Error::HashMismatch(
-                                        "ingredient claimSignature missing".to_string(),
-                                    ),
-                                )
-                            })?;
-
-                        // compare the signature box hashes
-                        if vec_compare(
-                            &claim_signature.hash(),
-                            &ingredient_hashes.signature_box_hash,
-                        ) {
-                            log_item!(
-                                c2pa_manifest.url(),
-                                "ingredient claimSignature validated",
-                                "ingredient_checks"
-                            )
-                            .validation_status(
-                                validation_status::INGREDIENT_CLAIM_SIGNATURE_VALIDATED,
-                            )
-                            .informational(validation_log);
-                        } else {
-                            log_item!(
-                                c2pa_manifest.url(),
-                                "ingredient claimSignature mismatch",
-                                "ingredient_checks"
-                            )
-                            .validation_status(
-                                validation_status::INGREDIENT_CLAIM_SIGNATURE_MISMATCH,
-                            )
-                            .failure(
-                                validation_log,
-                                Error::HashMismatch(
-                                    "ingredient claimSignature mismatch".to_string(),
-                                ),
-                            )?;
-                        }
-                    }
-
-                    Claim::verify_claim_async(
-                        ingredient,
-                        asset_data,
-                        svi,
-                        check_ingredient_trust,
-                        &store.ctp,
-                        validation_log,
-                        context,
-                    )
-                    .await?;
 
                     // recurse nested ingredients
-                    Box::pin(Store::ingredient_checks_async(
-                        store,
-                        ingredient,
-                        svi,
-                        asset_data,
-                        validation_log,
-                        depth.saturating_add(1),
-                        context,
-                    ))
-                    .await?;
+                    if _sync {
+                        Store::ingredient_checks(
+                            store,
+                            ingredient,
+                            svi,
+                            asset_data,
+                            validation_log,
+                            depth.saturating_add(1),
+                            context,
+                        )?;
+                    } else {
+                        Box::pin(Store::ingredient_checks_async(
+                            store,
+                            ingredient,
+                            svi,
+                            asset_data,
+                            validation_log,
+                            depth.saturating_add(1),
+                            context,
+                        ))
+                        .await?;
+                    }
                 } else {
                     log_item!(label.clone(), "ingredient not found", "ingredient_checks")
                         .validation_status(validation_status::INGREDIENT_MANIFEST_MISSING)
@@ -2584,6 +2358,14 @@ impl Store {
     /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
     /// as this call inserts the DataHash placeholder assertion to reserve space for the
     /// actual hash values not required when using BoxHashes.
+    #[async_generic(async_signature(
+        &mut self,
+        dh: &DataHash,
+        signer: &dyn AsyncSigner,
+        format: &str,
+        asset_reader: Option<&mut dyn CAIRead>,
+        context: &Context,
+    ))]
     pub fn get_data_hashed_embeddable_manifest(
         &mut self,
         dh: &DataHash,
@@ -2615,69 +2397,15 @@ impl Store {
                         preliminary_claim.add_assertion(assertion);
                     }
                 }
-                self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-            }
-        }
-
-        context.check_progress(ProgressPhase::Signing, 1, 1)?;
-
-        // sign contents
-        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
-
-        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-        pc.set_signature_val(sig);
-
-        let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-
-        self.finish_embeddable_store(&jumbf_bytes, format)
-    }
-
-    /// Returns a finalized, signed manifest.  The manifest are only supported
-    /// for cases when the client has provided a data hash content hash binding.  Note,
-    /// this function will not work for cases like BMFF where the position
-    /// of the content is also encoded.  This function is not compatible with
-    /// BMFF hash binding.  If a BMFF data hash or box hash is detected that is
-    /// an error.  The DataHash placeholder assertion will be  adjusted to the contain
-    /// the correct values.  If the asset_reader value is supplied it will also perform
-    /// the hash calculations, otherwise the function uses the caller supplied values.
-    /// It is an error if `get_data_hashed_manifest_placeholder` was not called first
-    /// as this call inserts the DataHash placeholder assertion to reserve space for the
-    /// actual hash values not required when using BoxHashes.
-    pub async fn get_data_hashed_embeddable_manifest_async(
-        &mut self,
-        dh: &DataHash,
-        signer: &dyn AsyncSigner,
-        format: &str,
-        asset_reader: Option<&mut dyn CAIRead>,
-        context: &Context,
-    ) -> Result<Vec<u8>> {
-        self.prep_embeddable_store(dh, asset_reader, context)?;
-
-        // Write dynamic assertions only if placeholders were added during placeholder generation.
-        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
-        // weren't added and we should skip writing to avoid size mismatches.
-        let dynamic_assertions = signer.dynamic_assertions();
-        if !dynamic_assertions.is_empty() {
-            // Check if placeholders exist for these dynamic assertions
-            let has_placeholders = {
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                dynamic_assertions
-                    .iter()
-                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
-            };
-
-            if has_placeholders {
-                let mut preliminary_claim = PartialClaim::default();
-                {
-                    let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                    for assertion in pc.assertions() {
-                        preliminary_claim.add_assertion(assertion);
-                    }
-                }
-
-                self.write_dynamic_assertions_async(&dynamic_assertions, &mut preliminary_claim)
+                if _sync {
+                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+                } else {
+                    self.write_dynamic_assertions_async(
+                        &dynamic_assertions,
+                        &mut preliminary_claim,
+                    )
                     .await?;
+                }
             }
         }
 
@@ -2685,9 +2413,12 @@ impl Store {
 
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self
-            .sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
-            .await?;
+        let sig = if _sync {
+            self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?
+        } else {
+            self.sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
+                .await?
+        };
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.set_signature_val(sig);
@@ -2699,6 +2430,11 @@ impl Store {
 
     /// Returns a finalized, signed manifest.  The client is required to have
     /// included the necessary box hash assertion with the pregenerated hashes.
+    #[async_generic(async_signature(
+        &mut self,
+        signer: &dyn AsyncSigner,
+        context: &Context,
+    ))]
     pub fn get_box_hashed_embeddable_manifest(
         &mut self,
         signer: &dyn Signer,
@@ -2721,42 +2457,12 @@ impl Store {
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
 
         // sign contents
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
-
-        // save the signature back to the provenance claim so it gets included in the manifest
-        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-        pc.set_signature_val(sig);
-
-        self.to_jumbf_internal(signer.reserve_size())
-    }
-
-    /// Returns a finalized, signed manifest.  The client is required to have
-    /// included the necessary box hash assertion with the pregenerated hashes.
-    pub async fn get_box_hashed_embeddable_manifest_async(
-        &mut self,
-        signer: &dyn AsyncSigner,
-        context: &Context,
-    ) -> Result<Vec<u8>> {
-        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-
-        // make sure there is only one
-        if pc.hash_assertions().len() != 1 {
-            return Err(Error::BadParam(
-                "Claim must have exactly one hash binding assertion".to_string(),
-            ));
-        }
-
-        // only allow box hash assertions to be present
-        if pc.box_hash_assertions().is_empty() {
-            return Err(Error::BadParam("Missing box hash assertion".to_string()));
-        }
-
-        context.check_progress(ProgressPhase::Signing, 1, 1)?;
-
-        // sign contents
-        let sig = self
-            .sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
-            .await?;
+        let sig = if _sync {
+            self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?
+        } else {
+            self.sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
+                .await?
+        };
 
         // save the signature back to the provenance claim so it gets included in the manifest
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -4081,8 +3787,7 @@ impl Store {
 
         // add in current redactions
         if let Some(c_redactions) = claim.redactions() {
-            svi.redactions
-                .append(&mut c_redactions.clone().into_iter().collect::<Vec<_>>());
+            svi.redactions.extend(c_redactions.iter().cloned());
         }
 
         // save the addressible claims for quicker lookup
@@ -4237,7 +3942,7 @@ impl Store {
                 let mut claim_redactions: Vec<String> = redactions.clone().unwrap_or_default();
                 for c in claim.claim_ingredients() {
                     if let Some(r) = c.redactions() {
-                        claim_redactions.append(&mut r.clone().into_iter().collect::<Vec<_>>());
+                        claim_redactions.extend(r.iter().cloned());
                     }
                 }
 

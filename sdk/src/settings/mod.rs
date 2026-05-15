@@ -23,8 +23,8 @@ use std::{
     io::{BufRead, BufReader, Cursor},
 };
 
-use config::{Config, FileFormat};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use signer::SignerSettings;
 
 use crate::{
@@ -34,14 +34,18 @@ use crate::{
 
 const VERSION: u32 = 1;
 
+/// Maximum recursion depth for JSON merging.
+const MERGE_MAX_DEPTH: usize = 64;
+
 /// Default maximum number of assertions allowed per manifest.
 /// Shared by [`BuilderSettings`], [`Verify`], [`crate::Claim`], and [`crate::Store`] so that
 /// all enforcement points use the same value.
 pub(crate) const MAX_ASSERTIONS: usize = 100_000;
 
 thread_local!(
-    static SETTINGS: RefCell<Config> =
-        RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default());
+    static SETTINGS: RefCell<Value> = RefCell::new(
+        serde_json::to_value(Settings::default()).unwrap_or(Value::Object(Map::new())),
+    );
 );
 
 // trait used to validate user input to make sure user supplied configurations are valid
@@ -483,40 +487,16 @@ impl Settings {
         note = "Use `Settings::new().with_json(str)` or `Settings::new().with_toml(str)` instead, which do not modify thread-local state."
     )]
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
-        let f = match format.to_lowercase().as_str() {
-            "json" => FileFormat::Json,
-            "toml" => FileFormat::Toml,
-            _ => return Err(Error::UnsupportedType),
-        };
+        let overlay = parse_to_value(settings_str, format)?;
+        let mut merged = SETTINGS.with_borrow(Value::clone);
+        merge_json(&mut merged, overlay);
 
-        let new_config = Config::builder()
-            .add_source(config::File::from_str(settings_str, f))
-            .build()
-            .map_err(|_e| Error::BadParam("could not parse configuration file".into()))?;
+        let settings: Settings =
+            serde_json::from_value(merged.clone()).map_err(|e| Error::BadParam(e.to_string()))?;
+        settings.validate()?;
 
-        let update_config = SETTINGS.with_borrow(|current_settings| {
-            Config::builder()
-                .add_source(current_settings.clone())
-                .add_source(new_config)
-                .build() // merge overrides, allows for partial changes
-        });
-
-        match update_config {
-            Ok(update_config) => {
-                // sanity check the values before committing
-                let settings = update_config
-                    .clone()
-                    .try_deserialize::<Settings>()
-                    .map_err(|e| Error::BadParam(e.to_string()))?;
-
-                settings.validate()?;
-
-                SETTINGS.set(update_config.clone());
-
-                Ok(settings)
-            }
-            Err(_) => Err(Error::OtherError("could not update configuration".into())),
-        }
+        SETTINGS.set(merged);
+        Ok(settings)
     }
 
     /// Set the thread-local [Settings] from a toml string.
@@ -575,31 +555,7 @@ impl Settings {
     /// assert!(settings.verify.verify_after_sign);
     /// ```
     pub fn update_from_str(&mut self, settings_str: &str, format: &str) -> Result<()> {
-        let file_format = match format.to_lowercase().as_str() {
-            "json" => FileFormat::Json,
-            "toml" => FileFormat::Toml,
-            _ => return Err(Error::UnsupportedType),
-        };
-
-        // Convert current settings to Config
-        let current_config = Config::try_from(&*self)
-            .map_err(|e| Error::BadParam(format!("could not convert settings: {e}")))?;
-
-        // Build new config with the source
-        let merged_config = Config::builder()
-            .add_source(current_config)
-            .add_source(config::File::from_str(settings_str, file_format))
-            .build()
-            .map_err(|e| Error::BadParam(format!("could not merge configuration: {e}")))?;
-
-        // Deserialize and validate
-        let updated_settings = merged_config
-            .try_deserialize::<Settings>()
-            .map_err(|e| Error::BadParam(e.to_string()))?;
-
-        updated_settings.validate()?;
-
-        *self = updated_settings;
+        *self = self.with_string(settings_str, format)?;
         Ok(())
     }
 
@@ -609,34 +565,16 @@ impl Settings {
     /// For example "core.hash_alg" would set settings.core.hash_alg value. The nesting can be arbitrarily
     /// deep based on the [Settings] definition.
     #[allow(unused)]
-    pub(crate) fn set_thread_local_value<T: Into<config::Value>>(
-        value_path: &str,
-        value: T,
-    ) -> Result<()> {
-        let c = SETTINGS.take();
+    pub(crate) fn set_thread_local_value<T: Into<Value>>(value_path: &str, value: T) -> Result<()> {
+        let mut merged = SETTINGS.with_borrow(Value::clone);
+        set_at_path(&mut merged, value_path, value.into())?;
 
-        let update_config = Config::builder()
-            .add_source(c.clone())
-            .set_override(value_path, value);
+        let settings: Settings =
+            serde_json::from_value(merged.clone()).map_err(|e| Error::BadParam(e.to_string()))?;
+        settings.validate()?;
 
-        if let Ok(updated) = update_config {
-            let update_config = updated
-                .build()
-                .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
-
-            let settings = update_config
-                .clone()
-                .try_deserialize::<Settings>()
-                .map_err(|e| Error::BadParam(e.to_string()))?;
-            settings.validate()?;
-
-            SETTINGS.set(update_config);
-
-            Ok(())
-        } else {
-            SETTINGS.set(c);
-            Err(Error::OtherError("could not save settings".into()))
-        }
+        SETTINGS.set(merged);
+        Ok(())
     }
 
     /// Get a [Settings] value by path reference from the thread-local settings.
@@ -646,16 +584,12 @@ impl Settings {
     /// For example "core.hash_alg" would get the settings.core.hash_alg value. The nesting can be arbitrarily
     /// deep based on the [Settings] definition.
     #[allow(unused)]
-    fn get_thread_local_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
-        SETTINGS.with_borrow(|current_settings| {
-            let update_config = Config::builder()
-                .add_source(current_settings.clone())
-                .build()
-                .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
-
-            update_config
-                .get::<T>(value_path)
-                .map_err(|_| Error::BadParam("could not get settings value".into()))
+    fn get_thread_local_value<T: serde::de::DeserializeOwned>(value_path: &str) -> Result<T> {
+        SETTINGS.with_borrow(|current| {
+            let leaf = get_at_path(current, value_path)
+                .ok_or_else(|| Error::BadParam("could not get settings value".into()))?;
+            serde_json::from_value(leaf.clone())
+                .map_err(|err| Error::BadParam(format!("could not get settings value: {err}")))
         })
     }
 
@@ -663,12 +597,10 @@ impl Settings {
     /// to be deprecated
     #[allow(unused)]
     pub(crate) fn reset() -> Result<()> {
-        if let Ok(default_settings) = Config::try_from(&Settings::default()) {
-            SETTINGS.set(default_settings);
-            Ok(())
-        } else {
-            Err(Error::OtherError("could not reset settings".into()))
-        }
+        let value = serde_json::to_value(Settings::default())
+            .map_err(|err| Error::OtherError(format!("could not reset settings: {err}").into()))?;
+        SETTINGS.set(value);
+        Ok(())
     }
 
     /// Creates a new Settings instance with default values.
@@ -710,7 +642,7 @@ impl Settings {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_json(self, json: &str) -> Result<Self> {
+    pub fn with_json(&self, json: &str) -> Result<Self> {
         self.with_string(json, "json")
     }
 
@@ -738,7 +670,7 @@ impl Settings {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_toml(self, toml: &str) -> Result<Self> {
+    pub fn with_toml(&self, toml: &str) -> Result<Self> {
         self.with_string(toml, "toml")
     }
 
@@ -761,7 +693,7 @@ impl Settings {
     /// # }
     /// ```
     #[cfg(feature = "file_io")]
-    pub fn with_file<P: AsRef<Path>>(self, path: P) -> Result<Self> {
+    pub fn with_file<P: AsRef<Path>>(&self, path: P) -> Result<Self> {
         let path = path.as_ref();
         let ext = path
             .extension()
@@ -778,29 +710,14 @@ impl Settings {
     ///
     /// This overlays the parsed configuration on top of the current Settings
     /// instance without touching thread-local state.
-    fn with_string(self, settings_str: &str, format: &str) -> Result<Self> {
-        let f = match format.to_lowercase().as_str() {
-            "json" => FileFormat::Json,
-            "toml" => FileFormat::Toml,
-            _ => return Err(Error::UnsupportedType),
-        };
+    fn with_string(&self, settings_str: &str, format: &str) -> Result<Self> {
+        let overlay = parse_to_value(settings_str, format)?;
+        let mut merged =
+            serde_json::to_value(self).map_err(|err| Error::OtherError(Box::new(err)))?;
+        merge_json(&mut merged, overlay);
 
-        // Convert current settings to Config
-        let current_config = Config::try_from(&self).map_err(|e| Error::OtherError(Box::new(e)))?;
-
-        // Parse new config and overlay it on current
-        let updated_config = Config::builder()
-            .add_source(current_config)
-            .add_source(config::File::from_str(settings_str, f))
-            .build()
-            .map_err(|_e| Error::BadParam("could not parse configuration".into()))?;
-
-        // Deserialize back to Settings
-        let settings = updated_config
-            .try_deserialize::<Settings>()
-            .map_err(|e| Error::BadParam(e.to_string()))?;
-
-        // Validate
+        let settings: Settings =
+            serde_json::from_value(merged).map_err(|err| Error::BadParam(err.to_string()))?;
         settings.validate()?;
 
         Ok(settings)
@@ -852,7 +769,7 @@ impl Settings {
     /// # Arguments
     ///
     /// * `path` - A dot-separated path to the setting (e.g., "verify.verify_trust")
-    /// * `value` - Any value that can be converted into a config::Value
+    /// * `value` - Any value that can be converted into a `serde_json::Value`
     ///
     /// # Returns
     ///
@@ -877,24 +794,14 @@ impl Settings {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_value<T: Into<config::Value>>(self, path: &str, value: T) -> Result<Self> {
-        // Convert self to Config
-        let config = Config::try_from(&self).map_err(|e| Error::OtherError(Box::new(e)))?;
+    pub fn with_value<T: Into<Value>>(&self, path: &str, value: T) -> Result<Self> {
+        let mut merged =
+            serde_json::to_value(self).map_err(|err| Error::OtherError(Box::new(err)))?;
+        set_at_path(&mut merged, path, value.into())
+            .map_err(|err| Error::BadParam(format!("invalid path '{path}': {err}")))?;
 
-        // Apply the override
-        let updated_config = Config::builder()
-            .add_source(config)
-            .set_override(path, value)
-            .map_err(|e| Error::BadParam(format!("Invalid path '{path}': {e}")))?
-            .build()
-            .map_err(|e| Error::OtherError(Box::new(e)))?;
-
-        // Deserialize back to Settings
-        let updated_settings = updated_config
-            .try_deserialize::<Settings>()
-            .map_err(|e| Error::BadParam(format!("Invalid value for '{path}': {e}")))?;
-
-        // Validate the updated settings
+        let updated_settings: Settings = serde_json::from_value(merged)
+            .map_err(|err| Error::BadParam(format!("invalid value for '{path}': {err}")))?;
         updated_settings.validate()?;
 
         Ok(updated_settings)
@@ -907,7 +814,7 @@ impl Settings {
     /// # Arguments
     ///
     /// * `path` - A dot-separated path to the setting
-    /// * `value` - Any value that can be converted into a config::Value
+    /// * `value` - Any value that can be converted into a `serde_json::Value`
     ///
     /// # Errors
     ///
@@ -927,8 +834,8 @@ impl Settings {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn set_value<T: Into<config::Value>>(&mut self, path: &str, value: T) -> Result<()> {
-        *self = std::mem::take(self).with_value(path, value)?;
+    pub fn set_value<T: Into<Value>>(&mut self, path: &str, value: T) -> Result<()> {
+        *self = self.with_value(path, value)?;
         Ok(())
     }
 
@@ -970,12 +877,12 @@ impl Settings {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn get_value<'de, T: serde::de::Deserialize<'de>>(&self, path: &str) -> Result<T> {
-        let config = Config::try_from(self).map_err(|e| Error::OtherError(Box::new(e)))?;
-
-        config
-            .get::<T>(path)
-            .map_err(|e| Error::BadParam(format!("Failed to get value at '{path}': {e}")))
+    pub fn get_value<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let value = serde_json::to_value(self).map_err(|err| Error::OtherError(Box::new(err)))?;
+        let leaf = get_at_path(&value, path)
+            .ok_or_else(|| Error::BadParam(format!("value at '{path}' not found")))?;
+        serde_json::from_value(leaf.clone())
+            .map_err(|err| Error::BadParam(format!("failed to get value at '{path}': {err}")))
     }
 }
 
@@ -1014,29 +921,87 @@ impl SettingsValidate for Settings {
     }
 }
 
+/// Overlays `overlay` onto `target`. Objects are merged key-by-key, and any
+/// other value (e.g. `null` and arrays) replaces the target value.
+fn merge_json(target: &mut Value, overlay: Value) {
+    merge_json_depth(target, overlay, 0);
+}
+
+fn merge_json_depth(target: &mut Value, overlay: Value, depth: usize) {
+    match (target, overlay) {
+        (Value::Object(target_map), Value::Object(overlay_map)) if depth < MERGE_MAX_DEPTH => {
+            for (key, overlay_value) in overlay_map {
+                merge_json_depth(
+                    target_map.entry(key).or_insert(Value::Null),
+                    overlay_value,
+                    depth + 1,
+                );
+            }
+        }
+        (target, overlay) => *target = overlay,
+    }
+}
+
+fn parse_to_value(settings_str: &str, format: &str) -> Result<Value> {
+    match format.to_lowercase().as_str() {
+        "json" => serde_json::from_str(settings_str)
+            .map_err(|err| Error::BadParam(format!("could not parse configuration: {err}"))),
+        "toml" => {
+            let toml_value: toml::Value = toml::from_str(settings_str)
+                .map_err(|err| Error::BadParam(format!("could not parse configuration: {err}")))?;
+            serde_json::to_value(toml_value)
+                .map_err(|err| Error::BadParam(format!("could not parse configuration: {err}")))
+        }
+        _ => Err(Error::UnsupportedType),
+    }
+}
+
+fn set_at_path(target: &mut Value, path: &str, value: Value) -> Result<()> {
+    let mut segments = path.split('.').peekable();
+    let mut current = target;
+    while let Some(segment) = segments.next() {
+        if !current.is_object() {
+            *current = Value::Object(Map::new());
+        }
+        let Some(map) = current.as_object_mut() else {
+            // Unreachable, but to be safe...
+            return Err(Error::BadParam("expected object at path segment".into()));
+        };
+        if segments.peek().is_none() {
+            map.insert(segment.to_string(), value);
+            return Ok(());
+        }
+        current = map
+            .entry(segment.to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+    }
+    Err(Error::BadParam("empty path".into()))
+}
+
+fn get_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = current.as_object()?.get(segment)?;
+    }
+    Some(current)
+}
+
 /// Get a snapshot of the thread-local Settings, always returns a valid Settings object.
 /// If the thread-local settings cannot be deserialized, returns default Settings.
 #[allow(unused)]
 pub(crate) fn get_thread_local_settings() -> Settings {
-    SETTINGS.with_borrow(|config| {
-        config
-            .clone()
-            .try_deserialize::<Settings>()
-            .unwrap_or_default()
-    })
+    SETTINGS.with_borrow(|value| serde_json::from_value(value.clone()).unwrap_or_default())
 }
-
-// Save the current configuration to a json file.
 
 /// See [Settings::set_thread_local_value] for more information.
 #[cfg(test)]
-pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value: T) -> Result<()> {
+pub(crate) fn set_settings_value<T: Into<Value>>(value_path: &str, value: T) -> Result<()> {
     Settings::set_thread_local_value(value_path, value)
 }
 
 /// See [Settings::get_thread_local_value] for more information.
 #[cfg(test)]
-fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
+fn get_settings_value<T: serde::de::DeserializeOwned>(value_path: &str) -> Result<T> {
     Settings::get_thread_local_value(value_path)
 }
 
@@ -1045,6 +1010,37 @@ fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> 
 // #[deprecated = "use `Settings::reset` instead"]
 pub fn reset_default_settings() -> Result<()> {
     Settings::reset()
+}
+
+// Used for backwards compatibility with the `config` crate.
+pub(crate) fn deserialize_case_insensitive<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = Value::deserialize(deserializer)?;
+    serde_json::from_value(normalize_enum_value(value)).map_err(serde::de::Error::custom)
+}
+
+// Used for backwards compatibility with the `config` crate.
+pub(crate) fn deserialize_case_insensitive_opt<'de, D, T>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    Option::<Value>::deserialize(deserializer)?
+        .map(|v| serde_json::from_value(normalize_enum_value(v)).map_err(serde::de::Error::custom))
+        .transpose()
+}
+
+// Used for backwards compatibility with the `config` crate.
+fn normalize_enum_value(value: Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(s.to_lowercase()),
+        other => other,
+    }
 }
 
 #[cfg(test)]
