@@ -15,28 +15,27 @@ use std::sync::{Arc, OnceLock};
 
 use tokio::runtime::{Builder, Runtime};
 
-// SAFETY: This library must not be dynamically unloaded (dlclose). The
-// runtime's worker thread holds a reference into this static allocation;
-// unloading the library while it is alive causes undefined behavior.
-// Callers must ensure the library lifetime exceeds all FFI call lifetimes.
+// SAFETY: This library must not be dynamically unloaded. The
+// runtime's worker thread holds a reference into this allocation.
+// Unloading the library while it is alive may cause undefined behavior.
 //
 // If the caller's thread already owns a tokio runtime,
-// call set_runtime() before the first FFI operation to get the existing runtime.
+// call set_runtime() before the first FFI operation.
 static TOKIO_RUNTIME: OnceLock<Arc<Runtime>> = OnceLock::new();
 
 /// Creates a `runtime` as the FFI's shared tokio runtime.
 ///
 /// Must be called before the first FFI operation that requires async execution.
 /// Returns `Err(runtime)` if a runtime is already running (either by a prior
-/// call to this function or by a lazy `get_runtime` call).
+/// call to this function or by a `get_runtime` call).
 pub fn set_runtime(runtime: Arc<Runtime>) -> Result<(), Arc<Runtime>> {
     TOKIO_RUNTIME.set(runtime)
 }
 
 pub(crate) fn get_runtime() -> &'static Runtime {
     TOKIO_RUNTIME.get_or_init(|| {
-        // FFI: current_thread is enough: FFI call sites do a block_on
-        // and return.
+        // FFI: current_thread is enough:
+        // FFI call sites do a block_on and return.
         Arc::new(
             Builder::new_current_thread()
                 .enable_all()
