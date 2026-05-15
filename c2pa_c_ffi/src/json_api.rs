@@ -12,7 +12,7 @@
 
 use c2pa::{identity::validator::CawgValidator, Ingredient, Reader, Relationship};
 
-use crate::{c_api::get_runtime, Error, Result, SignerInfo};
+use crate::{runtime::get_runtime, Error, Result, SignerInfo};
 
 /// Returns ManifestStore JSON string from a file path.
 ///
@@ -24,7 +24,6 @@ pub fn read_file(path: &str, data_dir: Option<String>) -> Result<String> {
     let mut reader = Reader::from_file(path).map_err(Error::from_c2pa_error)?;
 
     get_runtime()
-        .map_err(|e| Error::Other(e.to_string()))?
         .block_on(reader.post_validate_async(&CawgValidator {}))
         .map_err(Error::from_c2pa_error)?;
 
