@@ -36,6 +36,7 @@ pub mod sync_impl {
             .get_or_init(|| {
                 // By default `reqwest::blocking::Client::new()` unwraps if the TLS backend cannot be initialized.
                 // The behavior here is equivalent, except with a custom configuration.
+                #[allow(clippy::expect_used)]
                 reqwest::blocking::Client::builder()
                     .redirect(reqwest::redirect::Policy::none())
                     .build()
@@ -117,6 +118,7 @@ pub mod async_impl {
                 let builder = builder.redirect(reqwest::redirect::Policy::none());
                 // By default `reqwest::Client::new()` unwraps if the TLS backend cannot be initialized.
                 // The behavior here is equivalent, except with a custom configuration.
+                #[allow(clippy::expect_used)]
                 builder
                     .build()
                     .expect("failed to build reqwest async client")
