@@ -41,7 +41,7 @@ impl AsyncPostValidator for CawgValidator {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
             tracker.push_current_uri(uri.to_string());
             let result = identity_assertion
-                .validate_partial_claim(partial_claim, tracker)
+                .validate_partial_claim_async(partial_claim, tracker)
                 .await
                 .ok();
             tracker.pop_current_uri();

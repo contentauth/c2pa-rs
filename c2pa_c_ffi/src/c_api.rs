@@ -20,12 +20,11 @@ use std::{
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 use c2pa::{
-    assertions::DataHash, create_signer, identity::validator::CawgValidator,
-    Builder as C2paBuilder, CallbackSigner, Context, ProgressPhase, Reader as C2paReader,
-    Settings as C2paSettings, SigningAlg,
+    assertions::DataHash, Builder as C2paBuilder, CallbackSigner, Context, ProgressPhase,
+    Reader as C2paReader, Settings as C2paSettings, SigningAlg,
 };
-use tokio::runtime::Builder;
 
+//use tokio::runtime::Builder;
 #[cfg(feature = "file_io")]
 use crate::json_api::{read_file, sign_file};
 #[cfg(test)]
@@ -1145,30 +1144,6 @@ pub unsafe extern "C" fn c2pa_free_string_array(ptr: *const *const c_char, count
     Vec::from_raw_parts(mut_ptr, count, count);
 }
 
-// Run CAWG post-validation - this is async and requires a runtime.
-fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, c2pa::Error> {
-    match result {
-        Ok(mut reader) => {
-            #[cfg(target_arch = "wasm32")]
-            let runtime = Builder::new_current_thread().enable_all().build();
-
-            #[cfg(not(target_arch = "wasm32"))]
-            let runtime = Builder::new_multi_thread().enable_all().build();
-
-            let runtime = match runtime {
-                Ok(runtime) => runtime,
-                Err(err) => return Err(c2pa::Error::OtherError(Box::new(err))),
-            };
-
-            match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
-                Ok(_) => Ok(reader),
-                Err(err) => Err(err),
-            }
-        }
-        Err(err) => Err(err),
-    }
-}
-
 /// Creates a new C2paReader from a default context.
 ///
 /// # Safety
@@ -1228,9 +1203,8 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
     // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
     // Prefer c2pa_reader_from_context for new C API usage.
     #[allow(deprecated)]
-    let result = C2paReader::from_stream(&format, stream);
-    let result = ok_or_return_null!(post_validate(result));
-    box_tracked!(result)
+    let reader = ok_or_return_null!(C2paReader::from_stream(&format, stream));
+    box_tracked!(reader)
 }
 
 /// Configures an existing reader with a stream.
@@ -1261,9 +1235,8 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     // Now safe to take ownership - all validations passed
     untrack_or_return_null!(reader, C2paReader);
     let reader = Box::from_raw(reader);
-    let result = (*reader).with_stream(&format, stream);
-    let result = ok_or_return_null!(post_validate(result));
-    box_tracked!(result)
+    let reader = ok_or_return_null!((*reader).with_stream(&format, stream));
+    box_tracked!(reader)
 }
 
 /// Configures an existing passed in Reader with manifest data and a stream.
@@ -1300,11 +1273,13 @@ pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
     // Take ownership of the Reader (needs to remove it from tracking to take it)
     untrack_or_return_null!(reader, C2paReader);
     let reader = Box::from_raw(reader);
-    let result = (*reader).with_manifest_data_and_stream(manifest_bytes, &format, stream);
-    let result = ok_or_return_null!(post_validate(result));
-
+    let reader = ok_or_return_null!((*reader).with_manifest_data_and_stream(
+        manifest_bytes,
+        &format,
+        stream
+    ));
     // New reader, will be tracked now too
-    box_tracked!(result)
+    box_tracked!(reader)
 }
 
 /// Configures an existing reader with a fragment stream.
@@ -1347,9 +1322,8 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
     // Now safe to take ownership - all validations passed
     untrack_or_return_null!(reader, C2paReader);
     let reader = Box::from_raw(reader);
-    let result = (*reader).with_fragment(&format, stream, fragment);
-    let result = ok_or_return_null!(post_validate(result));
-    box_tracked!(result)
+    let reader = ok_or_return_null!((*reader).with_fragment(&format, stream, fragment));
+    box_tracked!(reader)
 }
 
 /// Creates a new C2paReader from a shared Context.
@@ -1396,7 +1370,7 @@ pub unsafe fn c2pa_reader_from_file(path: *const c_char) -> *mut C2paReader {
     let path = cstr_or_return_null!(path);
     // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
     let result = C2paReader::from_file(&path);
-    box_tracked!(ok_or_return_null!(post_validate(result)))
+    box_tracked!(ok_or_return_null!(result))
 }
 
 /// Creates and verifies a C2paReader from an asset stream with the given format and manifest data.
@@ -1432,8 +1406,12 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
 
     // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
     #[allow(deprecated)]
-    let result = C2paReader::from_manifest_data_and_stream(manifest_bytes, &format, stream);
-    box_tracked!(ok_or_return_null!(post_validate(result)))
+    let reader = ok_or_return_null!(C2paReader::from_manifest_data_and_stream(
+        manifest_bytes,
+        &format,
+        stream
+    ));
+    box_tracked!(reader)
 }
 
 /// Frees a C2paReader allocated by Rust.

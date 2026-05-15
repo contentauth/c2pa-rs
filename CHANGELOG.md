@@ -9,6 +9,40 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.84.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.84.0...c2pa-v0.84.1)
+_12 May 2026_
+
+### Fixed
+
+* Case-insensitive enums in settings to preserve backwards compatibility with `config` crate ([#2138](https://github.com/contentauth/c2pa-rs/pull/2138))
+
+## [0.84.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.83.0...c2pa-v0.84.0)
+_11 May 2026_
+
+### Fixed
+
+* Archive preserves duplicate label assertions ([#2135](https://github.com/contentauth/c2pa-rs/pull/2135))
+
+### Other
+
+* [**breaking**] Remove `config` crate and use `serde_json` directly ([#2132](https://github.com/contentauth/c2pa-rs/pull/2132))
+
+## [0.83.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.82.1...c2pa-v0.83.0)
+_11 May 2026_
+
+### Added
+
+* Large and complex benchmark suite ([#2116](https://github.com/contentauth/c2pa-rs/pull/2116))
+
+### Fixed
+
+* Reduce allocations in redactions ([#2127](https://github.com/contentauth/c2pa-rs/pull/2127))
+* Allow boxes with incomplete content to succeed. ([#2125](https://github.com/contentauth/c2pa-rs/pull/2125))
+
+### Other
+
+* Update `cargo-udeps` setup ([#2047](https://github.com/contentauth/c2pa-rs/pull/2047))
+
 ## [0.82.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.82.0...c2pa-v0.82.1)
 _04 May 2026_
 
