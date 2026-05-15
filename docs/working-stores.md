@@ -254,7 +254,7 @@ Yes. JSON properties passed to `add_ingredient_from_stream()` override archived 
 
 **Where should I store archives?**
 
-Anywhere&mdash;Local files, S3, databases, and in-memory all work.
+Anywhere: local files, S3, databases, and in-memory all work.
 
 **Can I have multiple parent ingredients?**
 

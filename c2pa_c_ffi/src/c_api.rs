@@ -2009,6 +2009,87 @@ pub unsafe extern "C" fn c2pa_builder_to_archive(
     0 // returns 0 on success
 }
 
+/// Adds an ingredient to the C2paBuilder from a C2PA ingredient archive stream.
+///
+/// The stream must contain a C2PA ingredient archive produced by
+/// `c2pa_builder_write_ingredient_archive`. Use
+/// `c2pa_builder_add_ingredient_from_stream` for regular asset streams.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * stream: pointer to a readable, seekable C2paStream containing the ingredient archive.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// Pointers must be valid and non-NULL.
+///
+/// # Example
+/// ```c
+/// // Write the ingredient archive first
+/// C2paStream* archive = c2pa_create_stream(...);
+/// int result = c2pa_builder_write_ingredient_archive(ingredient_builder, "ingredient-id", archive);
+///
+/// // Rewind and add it to the parent builder
+/// c2pa_stream_seek(archive, 0, C2PA_SEEK_START);
+/// result = c2pa_builder_add_ingredient_from_archive(parent_builder, archive);
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_archive(
+    builder_ptr: *mut C2paBuilder,
+    stream: *mut C2paStream,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let stream = deref_mut_or_return_int!(stream, C2paStream);
+    let result = builder.add_ingredient_from_archive(&mut *stream);
+    ok_or_return_int!(result);
+    0 // returns 0 on success
+}
+
+/// Writes a single-ingredient C2PA archive to the destination stream.
+///
+/// The archive can later be loaded with `c2pa_builder_add_ingredient_from_archive`.
+/// This requires the `generate_c2pa_archive` builder setting to be enabled via
+/// `c2pa_builder_with_settings` / `c2pa_context_with_settings` before calling.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * ingredient_id: pointer to a C string identifying the ingredient within the builder.
+/// * stream: pointer to a writable C2paStream.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings. Pointers must be valid and non-NULL.
+///
+/// # Example
+/// ```c
+/// C2paStream* archive = c2pa_create_stream(...);
+/// int result = c2pa_builder_write_ingredient_archive(builder, "my-ingredient", archive);
+/// if (result < 0) {
+///     char* error = c2pa_error();
+///     printf("Error: %s\n", error);
+///     c2pa_string_free(error);
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_write_ingredient_archive(
+    builder_ptr: *mut C2paBuilder,
+    ingredient_id: *const c_char,
+    stream: *mut C2paStream,
+) -> c_int {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let ingredient_id = cstr_or_return_int!(ingredient_id);
+    let stream = deref_mut_or_return_int!(stream, C2paStream);
+    let result = builder.write_ingredient_archive(&ingredient_id, &mut *stream);
+    ok_or_return_int!(result);
+    0 // returns 0 on success
+}
+
 /// Creates and writes signed manifest from the C2paBuilder to the destination stream.
 ///
 /// # Parameters
@@ -2452,7 +2533,7 @@ pub unsafe extern "C" fn c2pa_builder_set_fixed_size_merkle(
 /// # Example
 /// ```c
 ///  auto data = std::vector<std::uint8_t> buffer(1024);
-///  
+///
 ///  c2pa_builder_hash_mdat_bytes(builder, 1, (const uint8_t*)data.data(), 1024, true);
 /// ```
 #[no_mangle]
@@ -3340,6 +3421,7 @@ mod tests {
         assert!(!remote_url.is_null());
         let remote_url = unsafe { std::ffi::CStr::from_ptr(remote_url) };
         assert_eq!(remote_url, c"https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391");
+        unsafe { c2pa_reader_free(result) };
     }
 
     // cargo test test_reader_file_with_wrong_label -- --nocapture
@@ -3353,6 +3435,7 @@ mod tests {
         let result: *mut C2paReader =
             unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         assert!(!result.is_null());
+        unsafe { c2pa_reader_free(result) };
     }
 
     #[test]
@@ -3383,6 +3466,7 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("cawg.ica.credential_valid"));
+        unsafe { c2pa_reader_free(reader) };
     }
 
     #[test]
@@ -3550,6 +3634,67 @@ mod tests {
     }
 
     #[test]
+    fn test_c2pa_builder_add_ingredient_from_archive_null_stream() {
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+        let result =
+            unsafe { c2pa_builder_add_ingredient_from_archive(builder, std::ptr::null_mut()) };
+        assert_eq!(result, -1);
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
+        unsafe { c2pa_builder_free(builder) };
+    }
+
+    #[test]
+    fn test_c2pa_builder_add_ingredient_from_archive_null_builder() {
+        let archive_bytes = include_bytes!(fixture_path!("cloud.jpg"));
+        let mut stream = TestStream::new(archive_bytes.to_vec());
+        let result = unsafe {
+            c2pa_builder_add_ingredient_from_archive(std::ptr::null_mut(), stream.as_ptr())
+        };
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn test_c2pa_builder_write_ingredient_archive_null_stream() {
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+        let ingredient_id = CString::new("test-ingredient").unwrap();
+        let result = unsafe {
+            c2pa_builder_write_ingredient_archive(
+                builder,
+                ingredient_id.as_ptr(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(result, -1);
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
+        unsafe { c2pa_builder_free(builder) };
+    }
+
+    #[test]
+    fn test_c2pa_builder_write_ingredient_archive_null_ingredient_id() {
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+        let archive_bytes = vec![0u8; 0];
+        let mut stream = TestStream::new(archive_bytes);
+        let result = unsafe {
+            c2pa_builder_write_ingredient_archive(builder, std::ptr::null(), stream.as_ptr())
+        };
+        assert_eq!(result, -1);
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: ingredient_id");
+        unsafe { c2pa_builder_free(builder) };
+    }
+
+    #[test]
     fn test_c2pa_builder_read_supported_mime_types() {
         let mut count = 0;
         let mime_types = unsafe { c2pa_builder_supported_mime_types(&mut count) };
@@ -3579,10 +3724,9 @@ mod tests {
 
     #[test]
     fn test_c2pa_free_string_array_with_count_1() {
-        let strings = vec![CString::new("image/jpeg").unwrap()];
-        let ptrs: Vec<*mut c_char> = strings.into_iter().map(|s| s.into_raw()).collect();
-        let ptr = ptrs.as_ptr() as *const *const c_char;
+        let mut ptrs = vec![to_c_string("image/jpeg".to_string())];
         let count = ptrs.len();
+        let ptr = ptrs.as_mut_ptr() as *const *const c_char;
         std::mem::forget(ptrs);
 
         // Assert the function doesn't panic
@@ -3791,6 +3935,7 @@ mod tests {
         let json_report = json_str.to_str().unwrap();
         assert!(json_report.contains("cawg.identity"));
         assert!(json_report.contains("cawg.identity.well-formed"));
+        unsafe { c2pa_reader_free(reader) };
     }
 
     #[test]
@@ -4108,7 +4253,7 @@ verify_after_sign = true
     fn test_c2pa_reader_detailed_json() {
         use std::ffi::CStr;
 
-        let source_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let source_image = include_bytes!(fixture_path!("C.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
 
@@ -4136,7 +4281,7 @@ verify_after_sign = true
     #[test]
     fn test_c2pa_reader_is_embedded() {
         // Test with embedded manifest
-        let source_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let source_image = include_bytes!(fixture_path!("C.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
 
@@ -4193,6 +4338,9 @@ verify_after_sign = true
 
         // Function should execute without crashing - that's the main test
         // The result value depends on whether the placeholder is valid
+        if !result_ptr.is_null() {
+            unsafe { c2pa_free(result_ptr as *const c_void) };
+        }
     }
 
     #[test]
@@ -4202,7 +4350,7 @@ verify_after_sign = true
         assert!(!builder.is_null());
 
         // Create ingredient stream
-        let ingredient_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let ingredient_image = include_bytes!(fixture_path!("C.jpg"));
         let mut ingredient_stream = TestStream::new(ingredient_image.to_vec());
 
         let ingredient_json = CString::new(r#"{"title": "Test Ingredient"}"#).unwrap();
@@ -4272,7 +4420,7 @@ verify_after_sign = true
         assert!(!builder.is_null());
 
         // Create archive stream (using a simple image as placeholder)
-        let archive_bytes = include_bytes!(fixture_path!("cloud.jpg"));
+        let archive_bytes = include_bytes!(fixture_path!("C.jpg"));
         let mut archive_stream = TestStream::new(archive_bytes.to_vec());
 
         // Add archive to builder (this consumes the builder and returns a new one)
@@ -4311,7 +4459,7 @@ verify_after_sign = true
     #[test]
     fn test_c2pa_reader_with_fragment() {
         // Create initial reader
-        let source_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let source_image = include_bytes!(fixture_path!("C.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
 
@@ -4319,7 +4467,7 @@ verify_after_sign = true
         assert!(!reader.is_null());
 
         // Create fragment stream
-        let fragment_bytes = include_bytes!(fixture_path!("cloud.jpg"));
+        let fragment_bytes = include_bytes!(fixture_path!("C.jpg"));
         let mut fragment_stream = TestStream::new(fragment_bytes.to_vec());
         let mut main_stream = TestStream::new(source_image.to_vec());
 
@@ -4347,7 +4495,7 @@ verify_after_sign = true
     #[test]
     fn test_c2pa_reader_with_fragment_null_format() {
         // Create initial reader
-        let source_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let source_image = include_bytes!(fixture_path!("C.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
 
@@ -4556,7 +4704,7 @@ verify_after_sign = true
     #[test]
     fn test_c2pa_reader_json_better_coverage() {
         // The existing test only tests null, let's test with valid reader
-        let source_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let source_image = include_bytes!(fixture_path!("C.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
 
@@ -4674,7 +4822,7 @@ verify_after_sign = true
 
     #[test]
     fn test_c2pa_reader_from_manifest_data_and_stream_null_format() {
-        let source_image = include_bytes!(fixture_path!("cloud.jpg"));
+        let source_image = include_bytes!(fixture_path!("C.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
         let manifest_data = [0u8; 100];
 

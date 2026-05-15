@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.84.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.84.0...c2pa-c-ffi-v0.84.1)
+_12 May 2026_
+
+## [0.83.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.83.0...c2pa-c-ffi-v0.83.1)
+_11 May 2026_
+
+## [0.82.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.82.1...c2pa-c-ffi-v0.82.2)
+_11 May 2026_
+
+## [0.82.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.82.0...c2pa-c-ffi-v0.82.1)
+_04 May 2026_
+
+## [0.81.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.81.0...c2pa-c-ffi-v0.81.1)
+_01 May 2026_
+
+## [0.80.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.3...c2pa-c-ffi-v0.80.4)
+_01 May 2026_
+
+## [0.80.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.2...c2pa-c-ffi-v0.80.3)
+_29 April 2026_
+
+## [0.80.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.1...c2pa-c-ffi-v0.80.2)
+_28 April 2026_
+
+### Fixed
+
+* `c2pa-c-ffi` UB detected by miri ([#2089](https://github.com/contentauth/c2pa-rs/pull/2089))
+
+## [0.80.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.0...c2pa-c-ffi-v0.80.1)
+_27 April 2026_
+
+## [0.80.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.5...c2pa-c-ffi-v0.80.0)
+_16 April 2026_
+
+### Added
+
+* Add ingredient archive FFI functions and relax Builder mutability ([#2061](https://github.com/contentauth/c2pa-rs/pull/2061))
+
+### Documented
+
+* Separate out C docs ([#2052](https://github.com/contentauth/c2pa-rs/pull/2052))
+
+## [0.79.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.4...c2pa-c-ffi-v0.79.5)
+_15 April 2026_
+
+## [0.79.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.3...c2pa-c-ffi-v0.79.4)
+_14 April 2026_
+
 ## [0.79.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.2...c2pa-c-ffi-v0.79.3)
 _09 April 2026_
 
