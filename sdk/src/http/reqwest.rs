@@ -125,7 +125,11 @@ pub mod async_impl {
     }
 
     pub fn with_redirects() -> Option<Impl> {
-        Some(ASYNC_CLIENT_REDIRECTS.get_or_init(reqwest::Client::new).clone())
+        Some(
+            ASYNC_CLIENT_REDIRECTS
+                .get_or_init(reqwest::Client::new)
+                .clone(),
+        )
     }
 
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
