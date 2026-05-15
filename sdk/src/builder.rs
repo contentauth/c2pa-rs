@@ -3361,7 +3361,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     #![allow(deprecated)]
     use std::{
-        io::{self, Cursor, Write},
+        io::{self, Cursor},
         vec,
     };
 

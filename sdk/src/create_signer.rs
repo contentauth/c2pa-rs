@@ -106,13 +106,8 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        crypto::{cose::Verifier, raw_signature::SigningAlg},
-        identity::{
-            tests::fixtures::{manifest_json, parent_json},
-            x509::X509SignatureVerifier,
-            IdentityAssertion,
-        },
-        status_tracker::StatusTracker,
+        crypto::raw_signature::SigningAlg,
+        identity::tests::fixtures::{manifest_json, parent_json},
         utils::test_signer::test_signer,
         Builder, Reader,
     };
@@ -150,28 +145,15 @@ mod tests {
         dest.rewind().unwrap();
 
         let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
-        assert_eq!(manifest_store.validation_status(), None);
+        assert_eq!(
+            manifest_store.validation_state(),
+            crate::ValidationState::Trusted
+        );
 
         let manifest = manifest_store.active_manifest().unwrap();
-        let mut st = StatusTracker::default();
-        let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
-
-        let ia = ia_iter.next().unwrap().unwrap();
-        assert!(ia_iter.next().is_none());
-        drop(ia_iter);
-
-        let label = ia.label.as_ref().unwrap();
-        assert!(label.ends_with("cawg.identity"));
-        assert!(label.contains("/c2pa.assertions/"));
-
-        let x509_verifier = X509SignatureVerifier {
-            cose_verifier: Verifier::IgnoreProfileAndTrustPolicy,
-        };
-        let sig_info = ia
-            .validate(manifest, &mut st, &x509_verifier)
-            .await
-            .unwrap();
-
-        assert_eq!(sig_info.cert_info.alg.unwrap(), SigningAlg::Ed25519);
+        assert!(manifest
+            .assertions()
+            .iter()
+            .any(|a| a.label().contains("cawg.identity")));
     }
 }

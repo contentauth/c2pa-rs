@@ -391,7 +391,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
     #![allow(clippy::expect_used)]
 
-    use crate::{settings::Settings, utils::test_signer, SigningAlg};
+    use crate::{settings::Settings, utils::test_signer, Signer, SigningAlg};
 
     #[cfg(not(target_arch = "wasm32"))]
     fn remote_signer_mock_server<'a>(
@@ -435,6 +435,85 @@ pub mod tests {
         assert_eq!(signer.alg(), alg);
         assert_eq!(signer.time_authority_url(), None);
         assert!(signer.sign(&[1, 2, 3]).is_ok());
+    }
+
+    #[test]
+    fn test_make_cawg_local_signer_from_settings() {
+        let alg = SigningAlg::Ed25519;
+        let (sign_cert, private_key) = test_signer::cert_chain_and_private_key_for_alg(alg);
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [signer.local]
+                    alg = (alg.to_string())
+                    sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
+                    private_key = (String::from_utf8(private_key.to_vec()).unwrap())
+
+                    [cawg_x509_signer.local]
+                    alg = (alg.to_string())
+                    sign_cert = (String::from_utf8(sign_cert.to_vec()).unwrap())
+                    private_key = (String::from_utf8(private_key.to_vec()).unwrap())
+                    referenced_assertions = ["c2pa.actions"]
+                    roles = ["creator"]
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let c2pa_settings = settings.signer.expect("signer settings should be present");
+        let c2pa_signer = c2pa_settings.c2pa_signer().unwrap();
+
+        let cawg_settings = settings
+            .cawg_x509_signer
+            .expect("cawg signer settings should be present");
+        let combined = cawg_settings.cawg_signer(c2pa_signer).unwrap();
+
+        // Verify the combined signer delegates alg/certs to the underlying c2pa signer.
+        assert_eq!(combined.alg(), alg);
+        assert!(!combined.certs().unwrap().is_empty());
+        // The combined signer produces dynamic assertions (the identity assertion builder).
+        assert_eq!(combined.dynamic_assertions().len(), 1);
+    }
+
+    #[test]
+    fn test_cawg_identity_signer_from_signer_path() {
+        use crate::{create_signer, settings::signer::CawgX509IdentitySigner, Signer};
+
+        let alg = SigningAlg::Ps256;
+        let (sign_cert, private_key) = test_signer::cert_chain_and_private_key_for_alg(alg);
+
+        let c2pa_signer = create_signer::from_keys(sign_cert, private_key, alg, None).unwrap();
+        let identity_signer = create_signer::from_keys(sign_cert, private_key, alg, None).unwrap();
+
+        let combined = CawgX509IdentitySigner::from_signer(
+            c2pa_signer,
+            identity_signer,
+            &["c2pa.actions"],
+            &["creator"],
+        );
+
+        assert_eq!(combined.alg(), alg);
+        assert!(!combined.certs().unwrap().is_empty());
+        assert_eq!(combined.dynamic_assertions().len(), 1);
+        // Sign delegates to c2pa_signer, so it should succeed with valid data.
+        assert!(combined.sign(b"test data").is_ok());
+    }
+
+    #[test]
+    fn test_cawg_signer_no_referenced_assertions_or_roles() {
+        use crate::{create_signer, settings::signer::CawgX509IdentitySigner};
+
+        let alg = SigningAlg::Ps256;
+        let (sign_cert, private_key) = test_signer::cert_chain_and_private_key_for_alg(alg);
+
+        let c2pa_signer = create_signer::from_keys(sign_cert, private_key, alg, None).unwrap();
+        let identity_signer = create_signer::from_keys(sign_cert, private_key, alg, None).unwrap();
+
+        let combined = CawgX509IdentitySigner::from_signer(c2pa_signer, identity_signer, &[], &[]);
+
+        // dynamic_assertions still returns one builder even with empty refs/roles.
+        assert_eq!(combined.dynamic_assertions().len(), 1);
     }
 
     #[cfg(not(target_arch = "wasm32"))]
