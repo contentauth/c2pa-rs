@@ -580,6 +580,42 @@ impl Ingredient {
         }
     }
 
+    /// Creates an Ingredient from manifest bytes and an asset stream.
+    /// Validates the provided manifest bytes against the stream, similar to `from_stream()`
+    /// but using pre-existing manifest data instead of loading it from the stream.
+    pub(crate) fn from_manifest_and_stream(
+        relationship: Relationship,
+        manifest_bytes: &[u8],
+        format: &str,
+        mut stream: impl Read + Seek + Send,
+        context: &Context,
+    ) -> Result<(Self, Option<Vec<u8>>)> {
+        let mut validation_log = StatusTracker::default();
+        let mut ingredient = Self::new_v3(relationship);
+        ingredient.format = Some(format.to_owned());
+
+        stream.rewind()?;
+        let xmp_info = XmpInfo::from_source(&mut stream, format);
+        stream.rewind()?;
+
+        ingredient.instance_id = xmp_info.instance_id;
+        ingredient.document_id = xmp_info.document_id;
+
+        match Store::from_manifest_data_and_stream(
+            manifest_bytes,
+            format,
+            &mut stream,
+            &mut validation_log,
+            context,
+        ) {
+            Ok(store) => {
+                ingredient.with_store(&store, &validation_log)?;
+                Ok((ingredient, Some(manifest_bytes.to_vec())))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Add store information to the ingredient assertion
     pub(crate) fn with_store(
         &mut self,

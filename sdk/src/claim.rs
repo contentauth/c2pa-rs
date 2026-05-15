@@ -142,7 +142,7 @@ pub struct ClaimAssertion {
 }
 
 impl ClaimAssertion {
-    pub fn new(
+    pub(crate) fn new(
         assertion: Assertion,
         instance: usize,
         hashval: &[u8],
@@ -160,13 +160,13 @@ impl ClaimAssertion {
         }
     }
 
-    pub fn update_assertion(&mut self, assertion: Assertion, hash: Vec<u8>) -> Result<()> {
+    pub(crate) fn update_assertion(&mut self, assertion: Assertion, hash: Vec<u8>) -> Result<()> {
         self.hash_val = hash;
         self.assertion = assertion;
         Ok(())
     }
 
-    pub fn label(&self) -> String {
+    pub(crate) fn label(&self) -> String {
         let al_ref = self.assertion.label();
         if self.instance > 0 {
             if get_thumbnail_type(&al_ref) == assertions::labels::INGREDIENT_THUMBNAIL {
@@ -184,44 +184,44 @@ impl ClaimAssertion {
         }
     }
 
-    pub fn instance(&self) -> usize {
+    pub(crate) fn instance(&self) -> usize {
         self.instance
     }
 
-    pub fn instance_string(&self) -> String {
+    pub(crate) fn instance_string(&self) -> String {
         format!("{}", self.instance)
     }
 
-    pub fn label_raw(&self) -> String {
+    pub(crate) fn label_raw(&self) -> String {
         self.assertion.label()
     }
 
-    pub fn assertion(&self) -> &Assertion {
+    pub(crate) fn assertion(&self) -> &Assertion {
         &self.assertion
     }
 
-    pub fn hash(&self) -> &[u8] {
+    pub(crate) fn hash(&self) -> &[u8] {
         &self.hash_val
     }
 
-    pub fn salt(&self) -> &Option<Vec<u8>> {
+    pub(crate) fn salt(&self) -> &Option<Vec<u8>> {
         &self.salt
     }
 
-    pub fn hash_alg(&self) -> &str {
+    pub(crate) fn hash_alg(&self) -> &str {
         &self.hash_alg
     }
 
     /// returns true if assertions are of the same enum variant
-    pub fn is_same_type(&self, input_assertion: &Assertion) -> bool {
+    pub(crate) fn is_same_type(&self, input_assertion: &Assertion) -> bool {
         Assertion::assertions_eq(&self.assertion, input_assertion)
     }
 
-    pub fn assertion_type(&self) -> ClaimAssertionType {
+    pub(crate) fn assertion_type(&self) -> ClaimAssertionType {
         self.typ.clone()
     }
 
-    pub fn set_assertion_type(&mut self, typ: ClaimAssertionType) {
+    pub(crate) fn set_assertion_type(&mut self, typ: ClaimAssertionType) {
         self.typ = typ;
     }
 }
@@ -466,7 +466,7 @@ impl Claim {
     /// user_guid: is user supplied guid conforming the C2PA spec for manifest names
     /// claim_generator: User agent see c2pa spec for format
     /// claim_version: the Claim version to generate
-    pub fn new_with_user_guid<S: Into<String>>(
+    pub(crate) fn new_with_user_guid<S: Into<String>>(
         claim_generator: S,
         user_guid: S,
         claim_version: usize,
@@ -565,14 +565,14 @@ impl Claim {
     /// Set the context for this claim, enabling access to settings.
     ///
     /// This is typically called by the Builder when creating a claim.
-    pub fn with_context(mut self, context: Arc<Context>) -> Self {
+    pub(crate) fn with_context(mut self, context: Arc<Context>) -> Self {
         self.context = Some(context);
         self
     }
 
     // Deserializer that maps V1/V2 Claim object into our internal Claim representation.  Note:  Our Claim
     // structure is not the Claim from the spec but an amalgamation that allows us to represent any version
-    pub fn from_value(claim_value: c2pa_cbor::Value, label: &str, data: &[u8]) -> Result<Self> {
+    pub(crate) fn from_value(claim_value: c2pa_cbor::Value, label: &str, data: &[u8]) -> Result<Self> {
         // populate claim from the map
         // parse possible fields to figure out which version of the claim is possible.
         let claim_version = if map_cbor_to_type::<Vec<HashedUri>>("assertions", &claim_value)
@@ -961,7 +961,7 @@ impl Claim {
     }
 
     /// Build a claim and verify its integrity.
-    pub fn build(&mut self) -> Result<()> {
+    pub(crate) fn build(&mut self) -> Result<()> {
         // A claim must have a signature box.
         if self.signature.is_empty() {
             self.add_signature_box_link();
@@ -1002,7 +1002,7 @@ impl Claim {
     }
 
     /// return max version this Claim supports
-    pub fn build_version_support() -> String {
+    pub(crate) fn build_version_support() -> String {
         format!("{CLAIM}.v{BUILD_VER_SUPPORT}")
     }
 
@@ -1016,45 +1016,45 @@ impl Claim {
     }
 
     /// Return the alternate JUMBF label for this claim have a conflicting reference.
-    pub fn conflict_label(&self) -> &Option<String> {
+    pub(crate) fn conflict_label(&self) -> &Option<String> {
         &self.conflict_label
     }
 
     /// Set new label for ingredient conflict resolution
-    pub fn set_conflict_label(&mut self, new_label: String) {
+    pub(crate) fn set_conflict_label(&mut self, new_label: String) {
         self.conflict_label = Some(new_label);
     }
 
     // Return vendor if part of manifest label
-    pub fn vendor(&self) -> Option<String> {
+    pub(crate) fn vendor(&self) -> Option<String> {
         let mp = manifest_label_to_parts(&self.uri())?;
         mp.cgi
     }
 
     // Return version if V2 claim and if part of manifest label
-    pub fn claim_instance_version(&self) -> Option<usize> {
+    pub(crate) fn claim_instance_version(&self) -> Option<usize> {
         let mp = manifest_label_to_parts(&self.uri())?;
         mp.version
     }
 
     // Return reason if V2 claim and if part of manifest label
-    pub fn claim_instance_reason(&self) -> Option<usize> {
+    pub(crate) fn claim_instance_reason(&self) -> Option<usize> {
         let mp = manifest_label_to_parts(&self.uri())?;
         mp.reason
     }
 
     /// Return the JUMBF URI for this claim.
-    pub fn uri(&self) -> String {
+    pub(crate) fn uri(&self) -> String {
         jumbf::labels::to_manifest_uri(self.label())
     }
 
     /// Return the JUMBF URI for an assertion on this claim.
-    pub fn assertion_uri(&self, assertion_label: &str) -> String {
+    pub(crate) fn assertion_uri(&self, assertion_label: &str) -> String {
         jumbf::labels::to_assertion_uri(self.label(), assertion_label)
     }
 
     /// Return the JUMBF Signature URI for this claim.
-    pub fn signature_uri(&self) -> String {
+    pub(crate) fn signature_uri(&self) -> String {
         jumbf::labels::to_signature_uri(self.label())
     }
 
@@ -1070,12 +1070,12 @@ impl Claim {
     }
 
     ///  get signature of the claim
-    pub fn signature_val(&self) -> &Vec<u8> {
+    pub(crate) fn signature_val(&self) -> &Vec<u8> {
         &self.signature_val
     }
 
     /// Returns the `COSE_Sign1_Tagged` structure found in the claim signature box.
-    pub fn cose_sign1(&self) -> Result<CoseSign1> {
+    pub(crate) fn cose_sign1(&self) -> Result<CoseSign1> {
         let sig = self.signature_val();
         let data = self.data()?;
         let mut validation_log =
@@ -1086,7 +1086,7 @@ impl Claim {
     }
 
     /// get claim generator
-    pub fn claim_generator(&self) -> Option<&str> {
+    pub(crate) fn claim_generator(&self) -> Option<&str> {
         self.claim_generator.as_deref()
     }
 
@@ -1111,12 +1111,12 @@ impl Claim {
     }
 
     /// order for which to generate the JUMBF boxes with writing manifest
-    pub fn set_box_order(&mut self, box_order: Vec<&'static str>) {
+    pub(crate) fn set_box_order(&mut self, box_order: Vec<&'static str>) {
         self.original_box_order = Some(box_order);
     }
 
     /// order to process
-    pub fn get_box_order(&self) -> &[&str] {
+    pub(crate) fn get_box_order(&self) -> &[&str] {
         const DEFAULT_MANIFEST_ORDER: [&str; 5] =
             [ASSERTIONS, CLAIM, SIGNATURE, CREDENTIALS, DATABOXES];
 
@@ -1136,17 +1136,17 @@ impl Claim {
     }
 
     /// true algorithm
-    pub fn alg_raw(&self) -> Option<&str> {
+    pub(crate) fn alg_raw(&self) -> Option<&str> {
         self.alg.as_deref()
     }
 
     /// get soft algorithm
-    pub fn alg_soft(&self) -> Option<&String> {
+    pub(crate) fn alg_soft(&self) -> Option<&String> {
         self.alg_soft.as_ref()
     }
 
     /// Is this an update manifest
-    pub fn update_manifest(&self) -> bool {
+    pub(crate) fn update_manifest(&self) -> bool {
         self.update_manifest
     }
 
@@ -1156,7 +1156,7 @@ impl Claim {
     }
 
     // manifests compression enabled
-    pub fn compressed(&self) -> bool {
+    pub(crate) fn compressed(&self) -> bool {
         self.compressed
     }
 
@@ -1164,7 +1164,7 @@ impl Claim {
         self.compressed = compressed;
     }
 
-    pub fn set_remote_manifest<S: Into<String> + AsRef<str>>(
+    pub(crate) fn set_remote_manifest<S: Into<String> + AsRef<str>>(
         &mut self,
         remote_url: S,
     ) -> Result<()> {
@@ -1175,7 +1175,7 @@ impl Claim {
         Ok(())
     }
 
-    pub fn set_embed_remote_manifest<S: Into<String> + AsRef<str>>(
+    pub(crate) fn set_embed_remote_manifest<S: Into<String> + AsRef<str>>(
         &mut self,
         remote_url: S,
     ) -> Result<()> {
@@ -1186,7 +1186,7 @@ impl Claim {
         Ok(())
     }
 
-    pub fn set_external_manifest(&mut self) {
+    pub(crate) fn set_external_manifest(&mut self) {
         self.remote_manifest = RemoteManifest::SideCar;
     }
 
@@ -1228,11 +1228,11 @@ impl Claim {
         self
     }
 
-    pub fn claim_generator_info(&self) -> Option<&[ClaimGeneratorInfo]> {
+    pub(crate) fn claim_generator_info(&self) -> Option<&[ClaimGeneratorInfo]> {
         self.claim_generator_info.as_deref()
     }
 
-    pub fn add_claim_metadata(&mut self, md: AssertionMetadata) -> &mut Self {
+    pub(crate) fn add_claim_metadata(&mut self, md: AssertionMetadata) -> &mut Self {
         match self.metadata.as_mut() {
             Some(md_vec) => md_vec.push(md),
             None => self.metadata = Some([md].to_vec()),
@@ -1240,11 +1240,11 @@ impl Claim {
         self
     }
 
-    pub fn metadata(&self) -> Option<&[AssertionMetadata]> {
+    pub(crate) fn metadata(&self) -> Option<&[AssertionMetadata]> {
         self.metadata.as_deref()
     }
 
-    pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
+    pub(crate) fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
         if self.claim_generator_hints.is_none() {
             self.claim_generator_hints = Some(HashMap::new());
         }
@@ -1279,11 +1279,11 @@ impl Claim {
         }
     }
 
-    pub fn get_claim_generator_hint_map(&self) -> Option<&HashMap<String, Value>> {
+    pub(crate) fn get_claim_generator_hint_map(&self) -> Option<&HashMap<String, Value>> {
         self.claim_generator_hints.as_ref()
     }
 
-    pub fn calc_sig_box_hash(claim: &Claim, alg: &str) -> Result<Vec<u8>> {
+    pub(crate) fn calc_sig_box_hash(claim: &Claim, alg: &str) -> Result<Vec<u8>> {
         let mut hash_bytes = Vec::with_capacity(2048);
 
         // create a signature and add placeholder data to the CAI store.
@@ -1298,7 +1298,7 @@ impl Claim {
         Ok(hash_by_alg(alg, &hash_bytes, None))
     }
 
-    pub fn calc_assertion_box_hash(
+    pub(crate) fn calc_assertion_box_hash(
         label: &str,
         assertion: &Assertion,
         salt: Option<Vec<u8>>,
@@ -1358,7 +1358,7 @@ impl Claim {
     }
 
     /// Same as add_assertion but forces addition to created_assertions for Claims V2
-    pub fn add_created_assertion(
+    pub(crate) fn add_created_assertion(
         &mut self,
         assertion_builder: &impl AssertionBase,
     ) -> Result<C2PAAssertion> {
@@ -1501,7 +1501,7 @@ impl Claim {
     }
 
     // Add a new DataBox and return the HashedURI reference
-    pub fn add_databox(
+    pub(crate) fn add_databox(
         &mut self,
         format: &str,
         data: Vec<u8>,
@@ -1576,7 +1576,7 @@ impl Claim {
         Ok(())
     }
 
-    pub fn get_databox(&self, hr: &HashedUri) -> Option<&DataBox> {
+    pub(crate) fn get_databox(&self, hr: &HashedUri) -> Option<&DataBox> {
         // normalize uri
         let normalized_uri = if let Some(manifest) = manifest_label_from_uri(&hr.url()) {
             if manifest != self.label() {
@@ -1627,7 +1627,7 @@ impl Claim {
     ///    },
     /// ```
     // the "id" value will be used as the label in the vcstore
-    pub fn add_verifiable_credential(&mut self, vc_json: &str) -> Result<HashedUri> {
+    pub(crate) fn add_verifiable_credential(&mut self, vc_json: &str) -> Result<HashedUri> {
         if self.claim_version > 1 {
             // VC store is not supported post version 1
             return Err(Error::VersionCompatibility(
@@ -1681,11 +1681,11 @@ impl Claim {
         Ok(())
     }
 
-    pub fn get_verifiable_credentials(&self) -> Vec<&AssertionData> {
+    pub(crate) fn get_verifiable_credentials(&self) -> Vec<&AssertionData> {
         self.vc_store.iter().map(|t| &t.1).collect::<Vec<_>>()
     }
 
-    pub fn get_verifiable_credentials_store(&self) -> &Vec<(HashedUri, AssertionData)> {
+    pub(crate) fn get_verifiable_credentials_store(&self) -> &Vec<(HashedUri, AssertionData)> {
         &self.vc_store
     }
 
@@ -1844,7 +1844,7 @@ impl Claim {
     }
 
     /// Return a hash of this claim.
-    pub fn hash(&self) -> Vec<u8> {
+    pub(crate) fn hash(&self) -> Vec<u8> {
         match self.data() {
             Ok(claim_data) => hash_by_alg(self.alg(), &claim_data, None),
             Err(_) => Vec::new(), //  should never happen bug if it does just give no hash
@@ -1853,7 +1853,7 @@ impl Claim {
 
     /// Return information about the signature
     #[async_generic]
-    pub fn signature_info(&self) -> Option<CertificateInfo> {
+    pub(crate) fn signature_info(&self) -> Option<CertificateInfo> {
         let sig = self.signature_val();
         let data = self.data().ok()?;
         let mut validation_log =
@@ -1993,7 +1993,7 @@ impl Claim {
     }
 
     /// Get the signing certificate chain as PEM bytes
-    pub fn get_cert_chain(&self, settings: &Settings) -> Result<Vec<u8>> {
+    pub(crate) fn get_cert_chain(&self, settings: &Settings) -> Result<Vec<u8>> {
         let sig = self.signature_val();
         let data = self.data()?;
         let mut validation_log =
@@ -3287,7 +3287,7 @@ impl Claim {
     }
 
     ///Returns list of metadata assertions
-    pub fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
+    pub(crate) fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
         let mut mda: Vec<&ClaimAssertion> = self
             .assertion_store
             .iter()
@@ -3301,7 +3301,7 @@ impl Claim {
     }
 
     /// Return list of data hash assertions
-    pub fn hash_assertions(&self) -> Vec<&ClaimAssertion> {
+    pub(crate) fn hash_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_hash = Assertion::new(DataHash::LABEL, None, dummy_data);
         let mut data_hashes = self.assertions_by_type(&dummy_hash, None);
@@ -3322,21 +3322,21 @@ impl Claim {
         data_hashes
     }
 
-    pub fn bmff_hash_assertions(&self) -> Vec<&ClaimAssertion> {
+    pub(crate) fn bmff_hash_assertions(&self) -> Vec<&ClaimAssertion> {
         // add in an BMFF hashes
         let dummy_bmff_data = AssertionData::Cbor(Vec::new());
         let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
         self.assertions_by_type(&dummy_bmff_hash, None)
     }
 
-    pub fn data_hash_assertions(&self) -> Vec<&ClaimAssertion> {
+    pub(crate) fn data_hash_assertions(&self) -> Vec<&ClaimAssertion> {
         // add in an BMFF hashes
         let dummy_hash_data = AssertionData::Cbor(Vec::new());
         let dummy_data_hash = Assertion::new(assertions::labels::DATA_HASH, None, dummy_hash_data);
         self.assertions_by_type(&dummy_data_hash, None)
     }
 
-    pub fn box_hash_assertions(&self) -> Vec<&ClaimAssertion> {
+    pub(crate) fn box_hash_assertions(&self) -> Vec<&ClaimAssertion> {
         // add in an BMFF hashes
         let dummy_box_data = AssertionData::Cbor(Vec::new());
         let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
@@ -3346,21 +3346,21 @@ impl Claim {
     /// Return list of ingredient assertions. This function
     /// is only useful on committed or loaded claims since ingredients
     /// are resolved at commit time.
-    pub fn ingredient_assertions(&self) -> Vec<&ClaimAssertion> {
+    pub(crate) fn ingredient_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_ingredient = Assertion::new(assertions::labels::INGREDIENT, None, dummy_data);
         self.assertions_by_type(&dummy_ingredient, None)
     }
 
     /// Return list of timestamp assertions.
-    pub fn timestamp_assertions(&self) -> Vec<&ClaimAssertion> {
+    pub(crate) fn timestamp_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_timestamp = Assertion::new(assertions::labels::TIMESTAMP, None, dummy_data);
         self.assertions_by_type(&dummy_timestamp, None)
     }
 
     /// Returns list of certificate status assertions.
-    pub fn certificate_status_assertions(&self) -> Vec<&ClaimAssertion> {
+    pub(crate) fn certificate_status_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_certificate_status =
             Assertion::new(assertions::labels::CERTIFICATE_STATUS, None, dummy_data);
@@ -3369,46 +3369,46 @@ impl Claim {
 
     /// Return list of action assertions.
     /// Created assertions have higher priority than gathered assertions
-    pub fn action_assertions(&self) -> Vec<&ClaimAssertion> {
+    pub(crate) fn action_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_ingredient = Assertion::new(assertions::labels::ACTIONS, None, dummy_data);
         self.assertions_by_type(&dummy_ingredient, None)
     }
 
     /// Return list of gathered action assertions.
-    pub fn gathered_action_assertions(&self) -> Vec<&ClaimAssertion> {
+    pub(crate) fn gathered_action_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_ingredient = Assertion::new(assertions::labels::ACTIONS, None, dummy_data);
         self.assertions_by_type(&dummy_ingredient, Some(ClaimAssertionType::Gathered))
     }
 
     /// Return list of action assertions.
-    pub fn created_action_assertions(&self) -> Vec<&ClaimAssertion> {
+    pub(crate) fn created_action_assertions(&self) -> Vec<&ClaimAssertion> {
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_ingredient = Assertion::new(assertions::labels::ACTIONS, None, dummy_data);
         self.assertions_by_type(&dummy_ingredient, Some(ClaimAssertionType::Created))
     }
 
     /// Return reference to the internal claim assertion store.
-    pub fn claim_assertion_store(&self) -> &Vec<ClaimAssertion> {
+    pub(crate) fn claim_assertion_store(&self) -> &Vec<ClaimAssertion> {
         &self.assertion_store
     }
 
     /// Return reference to the internal claim ingredient store.
     /// Used during generation
-    pub fn claim_ingredient_store(&self) -> &HashMap<String, Claim> {
+    pub(crate) fn claim_ingredient_store(&self) -> &HashMap<String, Claim> {
         &self.ingredients_store
     }
 
     /// Return mutable reference to the internal claim ingredient store.
     /// Used during generation
-    pub fn claim_ingredient_store_mut(&mut self) -> &mut HashMap<String, Claim> {
+    pub(crate) fn claim_ingredient_store_mut(&mut self) -> &mut HashMap<String, Claim> {
         &mut self.ingredients_store
     }
 
     /// Return reference to the internal claim ingredients.
     /// Used during generation
-    pub fn claim_ingredients(&self) -> Vec<&Claim> {
+    pub(crate) fn claim_ingredients(&self) -> Vec<&Claim> {
         self.ingredients_list
             .iter()
             .filter_map(|l| self.ingredients_store.get(l))
@@ -3417,13 +3417,13 @@ impl Claim {
 
     /// Return reference to the internal claim ingredient store matching this guid.
     /// Used during generation
-    pub fn claim_ingredient(&self, claim_guid: &str) -> Option<&Claim> {
+    pub(crate) fn claim_ingredient(&self, claim_guid: &str) -> Option<&Claim> {
         self.ingredients_store.get(claim_guid)
     }
 
     /// Return mutable reference to the internal claim ingredient store matching this guid.
     /// Used during generation
-    pub fn claim_ingredient_mut(&mut self, claim_guid: &str) -> Option<&mut Claim> {
+    pub(crate) fn claim_ingredient_mut(&mut self, claim_guid: &str) -> Option<&mut Claim> {
         self.ingredients_store.get_mut(claim_guid)
     }
 
@@ -3496,12 +3496,12 @@ impl Claim {
     }
 
     /// List of redactions
-    pub fn redactions(&self) -> Option<&Vec<String>> {
+    pub(crate) fn redactions(&self) -> Option<&Vec<String>> {
         self.redacted_assertions.as_ref()
     }
 
     /// Return snapshot clone of the claim's assertions.
-    pub fn assertion_store(&self) -> Vec<Assertion> {
+    pub(crate) fn assertion_store(&self) -> Vec<Assertion> {
         self.assertion_store
             .iter()
             .map(|x| x.assertion.clone())
@@ -3509,7 +3509,7 @@ impl Claim {
     }
 
     // Return assertions matching pattern
-    pub fn assertions_by_type(
+    pub(crate) fn assertions_by_type(
         &self,
         assertion_proto: &Assertion,
         assertion_type: Option<ClaimAssertionType>,
@@ -3542,12 +3542,12 @@ impl Claim {
     }
 
     /// Returns list of created assertions for Claim V2
-    pub fn created_assertions(&self) -> &Vec<C2PAAssertion> {
+    pub(crate) fn created_assertions(&self) -> &Vec<C2PAAssertion> {
         &self.created_assertions
     }
 
     /// Returns list is Claim V2 gathered assertions if available
-    pub fn gathered_assertions(&self) -> Option<&Vec<C2PAAssertion>> {
+    pub(crate) fn gathered_assertions(&self) -> Option<&Vec<C2PAAssertion>> {
         self.gathered_assertions.as_ref()
     }
 
@@ -3556,7 +3556,7 @@ impl Claim {
     /// sequence that was read from the file. If this claim was
     /// constructed locally, contains the claim data that was/will be
     /// generated locally.
-    pub fn data(&self) -> Result<Vec<u8>> {
+    pub(crate) fn data(&self) -> Result<Vec<u8>> {
         match self.original_bytes {
             Some(ref ob) => Ok(ob.clone()),
             None => Ok(c2pa_cbor::ser::to_vec(&self).map_err(|_err| Error::ClaimEncoding)?),
@@ -3568,7 +3568,7 @@ impl Claim {
     }
 
     /// Create claim from binary data (not including assertions).
-    pub fn from_data(label: &str, data: &[u8]) -> Result<Claim> {
+    pub(crate) fn from_data(label: &str, data: &[u8]) -> Result<Claim> {
         let claim_value: c2pa_cbor::Value = c2pa_cbor::from_slice(data)
             .map_err(|err| Error::ClaimDecoding(format!("claim_cbor: {err}")))?;
 
@@ -3577,7 +3577,7 @@ impl Claim {
 
     /// Generate a JSON representation of the Claim
     /// returns Result as a String
-    pub fn to_json(
+    pub(crate) fn to_json(
         &self,
         assertion_store_format: AssertionStoreJsonFormat,
         pretty: bool,
@@ -3788,7 +3788,7 @@ impl Claim {
         }
     }
 
-    pub fn box_name_label_instance(box_name: &str) -> (String, usize) {
+    pub(crate) fn box_name_label_instance(box_name: &str) -> (String, usize) {
         if let Some((l, v)) = box_name.rsplit_once(".") {
             if v.len() == 2 && v.as_bytes()[0] == b'v' {
                 if let Some(i_str) = v.get(1..) {
@@ -3802,7 +3802,7 @@ impl Claim {
     }
 
     /// Return the label for this assertion given its link
-    pub fn assertion_label_from_link(assertion_link: &str) -> (String, usize) {
+    pub(crate) fn assertion_label_from_link(assertion_link: &str) -> (String, usize) {
         let v = jumbf::labels::to_normalized_uri(assertion_link);
 
         let v2: Vec<&str> = v.split('/').collect();
@@ -3834,7 +3834,7 @@ impl Claim {
     }
 
     /// generates label with instance if needed
-    pub fn label_with_instance(label: &str, instance: usize) -> String {
+    pub(crate) fn label_with_instance(label: &str, instance: usize) -> String {
         if instance == 0 {
             label.to_string()
         } else if get_thumbnail_type(label) == assertions::labels::INGREDIENT_THUMBNAIL {
@@ -3849,7 +3849,7 @@ impl Claim {
         }
     }
 
-    pub fn assertion_hashed_uri_from_label(
+    pub(crate) fn assertion_hashed_uri_from_label(
         &self,
         assertion_label: &str,
     ) -> Option<(&C2PAAssertion, ClaimAssertionType)> {
@@ -3886,7 +3886,7 @@ impl Claim {
     }
 
     /// returns first instance of an assertion whose label and instance match
-    pub fn get_assertion(&self, assertion_label: &str, instance: usize) -> Option<&Assertion> {
+    pub(crate) fn get_assertion(&self, assertion_label: &str, instance: usize) -> Option<&Assertion> {
         let mut iter = self.claim_assertion_store().iter().filter_map(|ca| {
             if ca.label_raw() == assertion_label && ca.instance() == instance {
                 Some(ca.assertion())
@@ -3899,7 +3899,7 @@ impl Claim {
     }
 
     /// returns instance of an assertion whose label and instance match
-    pub fn get_claim_assertion(
+    pub(crate) fn get_claim_assertion(
         &self,
         assertion_label: &str,
         instance: usize,
@@ -3910,13 +3910,13 @@ impl Claim {
     }
 
     /// returns hash of an assertion whose label and instance match
-    pub fn get_claim_assertion_hash(&self, assertion_label: &str) -> Option<Vec<u8>> {
+    pub(crate) fn get_claim_assertion_hash(&self, assertion_label: &str) -> Option<Vec<u8>> {
         let (l, i) = Claim::assertion_label_from_link(assertion_label);
         self.get_claim_assertion(&l, i).map(|a| a.hash().to_vec())
     }
 
     /// Returns how many assertions of this assertion type exist?
-    pub fn count_instances(&self, in_label: &str) -> usize {
+    pub(crate) fn count_instances(&self, in_label: &str) -> usize {
         let (l, i) = Claim::assertion_label_from_link(in_label);
         let label = Claim::label_with_instance(&l, i);
         self.assertions
@@ -3944,7 +3944,7 @@ impl Claim {
     }
 
     // Do any assertions of this type exist?
-    pub fn has_assertion_type(&self, in_label: &str) -> bool {
+    pub(crate) fn has_assertion_type(&self, in_label: &str) -> bool {
         let (label, _) = Claim::assertion_label_from_link(in_label);
 
         self.assertion_store
@@ -3964,7 +3964,7 @@ impl Claim {
     }
 
     /// Return the claim JUMBF URI of the ingredient with a ParentOf relationship.
-    pub fn parent_claim_uri(&self) -> Result<Option<String>> {
+    pub(crate) fn parent_claim_uri(&self) -> Result<Option<String>> {
         for i in self.ingredient_assertions() {
             let ingredient = Ingredient::from_assertion(i.assertion())?;
             if ingredient.relationship == Relationship::ParentOf {
@@ -3978,7 +3978,7 @@ impl Claim {
     }
 
     // Returns a HashedUri to the claim thumbnail assertion, if it exists.
-    pub fn thumbnail(&self) -> Option<HashedUri> {
+    pub(crate) fn thumbnail(&self) -> Option<HashedUri> {
         self.assertions()
             .iter()
             .find(|hashed_uri| hashed_uri.url().contains(CLAIM_THUMBNAIL))
@@ -3990,7 +3990,7 @@ impl Claim {
     }
 
     /// Checks whether or not ocsp values are present in claim
-    pub fn has_ocsp_vals(&self) -> bool {
+    pub(crate) fn has_ocsp_vals(&self) -> bool {
         if !self.certificate_status_assertions().is_empty() {
             return false;
         }

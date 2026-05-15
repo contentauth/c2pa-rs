@@ -87,6 +87,30 @@ pub struct BoxHash {
 impl BoxHash {
     pub const LABEL: &'static str = labels::BOX_HASH;
 
+    pub fn from_stream<R>(
+        stream: &mut R,
+        format: &str,
+        alg: &str,
+        minimal_form: bool,
+    ) -> Result<Self>
+    where
+        R: Read + Seek + MaybeSend,
+    {
+        use crate::jumbf_io::get_assetio_handler;
+
+        let bhp = get_assetio_handler(format)
+            .ok_or(Error::UnsupportedType)?
+            .asset_box_hash_ref()
+            .ok_or_else(|| {
+                Error::BadParam(format!("Box hash not supported for format: {}", format))
+            })?;
+
+        let mut box_hash = BoxHash { boxes: Vec::new() };
+        box_hash.generate_box_hash_from_stream(stream, alg, bhp, minimal_form)?;
+
+        Ok(box_hash)
+    }
+
     pub fn verify_hash(
         &self,
         asset_path: &Path,

@@ -160,7 +160,7 @@ impl Store {
     }
 
     /// Create a new, empty claims store with the specified settings.
-    pub fn from_context(context: &Context) -> Self {
+    pub(crate) fn from_context(context: &Context) -> Self {
         let mut store = Store::new();
         let settings = context.settings();
 
@@ -193,7 +193,7 @@ impl Store {
 
     /// Return label for the store
     #[allow(dead_code)] // doesn't harm to have this
-    pub fn label(&self) -> &str {
+    pub(crate) fn label(&self) -> &str {
         &self.label
     }
 
@@ -209,35 +209,35 @@ impl Store {
 
     /// Load set of trust anchors used for certificate validation. [u8] containing the
     /// trust anchors is passed in the trust_vec variable.
-    pub fn add_trust(&mut self, trust_vec: &[u8]) -> Result<()> {
+    pub(crate) fn add_trust(&mut self, trust_vec: &[u8]) -> Result<()> {
         Ok(self.ctp.add_trust_anchors(trust_vec)?)
     }
 
     // Load set of user trust anchors used for certificate validation. [u8] to the
     /// user trust anchors is passed in the trust_vec variable.  This can be called multiple times
     /// if there are additional trust stores.
-    pub fn add_user_trust_anchors(&mut self, trust_vec: &[u8]) -> Result<()> {
+    pub(crate) fn add_user_trust_anchors(&mut self, trust_vec: &[u8]) -> Result<()> {
         Ok(self.ctp.add_user_trust_anchors(trust_vec)?)
     }
 
-    pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
+    pub(crate) fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
         self.ctp.add_valid_ekus(trust_vec);
         Ok(())
     }
 
-    pub fn add_trust_allowed_list(&mut self, allowed_vec: &[u8]) -> Result<()> {
+    pub(crate) fn add_trust_allowed_list(&mut self, allowed_vec: &[u8]) -> Result<()> {
         Ok(self.ctp.add_end_entity_credentials(allowed_vec)?)
     }
 
     /// Get the provenance if available.
     /// If loaded from an existing asset it will be provenance from the last claim.
     /// If a new claim is committed that will be the provenance claim
-    pub fn provenance_path(&self) -> Option<String> {
+    pub(crate) fn provenance_path(&self) -> Option<String> {
         self.provenance_path.as_ref().cloned()
     }
 
     // set the path of the current provenance claim
-    pub fn set_provenance_path(&mut self, claim: &Claim) {
+    pub(crate) fn set_provenance_path(&mut self, claim: &Claim) {
         let path = claim.to_claim_uri();
         self.provenance_path = Some(path);
     }
@@ -314,7 +314,7 @@ impl Store {
     /// if there are conflicting label names.  The function
     /// will return the label of the claim used
     #[allow(unused)]
-    pub fn update_manifest_test(&mut self, claim: &Claim) -> Result<()> {
+    pub(crate) fn update_manifest_test(&mut self, claim: &Claim) -> Result<()> {
         use crate::{
             assertions::{labels::CLAIM_THUMBNAIL, Actions},
             claim::ALLOWED_UPDATE_MANIFEST_ACTIONS,
@@ -390,7 +390,7 @@ impl Store {
     /// if there are conflicting label names.  The function
     /// will return the label of the claim used
     #[allow(unused)]
-    pub fn commit_update_manifest(&mut self, mut claim: Claim) -> Result<String> {
+    pub(crate) fn commit_update_manifest(&mut self, mut claim: Claim) -> Result<String> {
         self.update_manifest_test(&claim)?;
 
         claim.set_update_manifest(true);
@@ -416,12 +416,12 @@ impl Store {
 
     /// Get Claim by label
     // Returns Option<&Claim>
-    pub fn get_claim_mut(&mut self, label: &str) -> Option<&mut Claim> {
+    pub(crate) fn get_claim_mut(&mut self, label: &str) -> Option<&mut Claim> {
         self.claims_map.get_mut(label)
     }
 
     /// returns a Claim given a jumbf uri
-    pub fn get_claim_from_uri(&self, uri: &str) -> Result<&Claim> {
+    pub(crate) fn get_claim_from_uri(&self, uri: &str) -> Result<&Claim> {
         let claim_label = Store::manifest_label_from_path(uri);
         self.get_claim(&claim_label)
             .ok_or_else(|| Error::ClaimMissing {
@@ -430,7 +430,7 @@ impl Store {
     }
 
     /// returns a ClaimAssertion given a jumbf uri, resolving to the right claim in the store
-    pub fn get_claim_assertion_from_uri(&self, uri: &str) -> Result<&ClaimAssertion> {
+    pub(crate) fn get_claim_assertion_from_uri(&self, uri: &str) -> Result<&ClaimAssertion> {
         // first find the right claim and then look for the assertion there
         let claim = self.get_claim_from_uri(uri)?;
         let (label, instance) = Claim::assertion_label_from_link(uri);
@@ -445,7 +445,7 @@ impl Store {
     /// the desired Claim in the path. If you need to specify the Claim for this URI use
     /// get_assertion_from_uri_and_claim.
     /// uri - The JUMBF URI for desired Assertion.
-    pub fn get_assertion_from_uri(&self, uri: &str) -> Option<&Assertion> {
+    pub(crate) fn get_assertion_from_uri(&self, uri: &str) -> Option<&Assertion> {
         let claim_label = Store::manifest_label_from_path(uri);
         let (assertion_label, instance) = Claim::assertion_label_from_link(uri);
 
@@ -460,7 +460,7 @@ impl Store {
     /// will be searched.  The target_claim_label can be a Claim label or JUMBF URI.
     /// uri - The JUMBF URI for desired Assertion.
     /// target_claim_label - Label or URI of the Claim to search for the case when the URI is a relative path.
-    pub fn get_assertion_from_uri_and_claim(
+    pub(crate) fn get_assertion_from_uri_and_claim(
         &self,
         uri: &str,
         target_claim_label: &str,
@@ -479,7 +479,7 @@ impl Store {
     /// Returns a DataBox referenced by JUMBF URI if it exists.
     ///
     /// Relative paths will use the provenance claim to resolve the DataBox.d
-    pub fn get_data_box_from_uri_and_claim(
+    pub(crate) fn get_data_box_from_uri_and_claim(
         &self,
         hr: &HashedUri,
         target_claim_label: &str,
@@ -508,7 +508,7 @@ impl Store {
     // anywhere so allow dead code here for future uses to compile
     #[allow(dead_code)]
     #[async_generic]
-    pub fn get_ocsp_status(&self, context: &Context) -> Option<String> {
+    pub(crate) fn get_ocsp_status(&self, context: &Context) -> Option<String> {
         let claim = self
             .provenance_claim()
             .ok_or(Error::ProvenanceMissing)
@@ -566,7 +566,7 @@ impl Store {
         box_size: usize,
         settings: &Settings,
     ))]
-    pub fn sign_claim(
+    pub(crate) fn sign_claim(
         &self,
         claim: &Claim,
         signer: &dyn Signer,
@@ -647,7 +647,7 @@ impl Store {
     }
 
     /// Retrieves all manifest labels that need to fetch ocsp responses.
-    pub fn get_manifest_labels_for_ocsp(&self, settings: &Settings) -> Vec<String> {
+    pub(crate) fn get_manifest_labels_for_ocsp(&self, settings: &Settings) -> Vec<String> {
         let labels = match settings.builder.certificate_status_fetch {
             Some(ocsp_fetch) => match ocsp_fetch {
                 OcspFetchScope::All => self.claims.clone(),
@@ -699,7 +699,7 @@ impl Store {
     }
 
     /// return the current provenance claim as mutable if available
-    pub fn provenance_claim_mut(&mut self) -> Option<&mut Claim> {
+    pub(crate) fn provenance_claim_mut(&mut self) -> Option<&mut Claim> {
         match self.provenance_path() {
             Some(provenance) => {
                 let claim_label = Store::manifest_label_from_path(&provenance);
@@ -1094,7 +1094,7 @@ impl Store {
     }
 
     // calculate the hash of the manifest JUMBF box
-    pub fn calc_manifest_box_hash(
+    pub(crate) fn calc_manifest_box_hash(
         claim: &Claim,
         salt: Option<Vec<u8>>,
         alg: &str,
@@ -1140,12 +1140,12 @@ impl Store {
     }
 
     #[inline]
-    pub fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
+    pub(crate) fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
         Self::from_jumbf_impl(Store::new(), buffer, validation_log)
     }
 
     #[inline]
-    pub fn from_jumbf_with_context(
+    pub(crate) fn from_jumbf_with_context(
         buffer: &[u8],
         validation_log: &mut StatusTracker,
         context: &Context,
@@ -1509,7 +1509,7 @@ impl Store {
     }
 
     // Get the store label from jumbf path
-    pub fn manifest_label_from_path(claim_path: &str) -> String {
+    pub(crate) fn manifest_label_from_path(claim_path: &str) -> String {
         if let Some(s) = jumbf::labels::manifest_label_from_uri(claim_path) {
             s
         } else {
@@ -1924,7 +1924,7 @@ impl Store {
         context: &Context,
 
     ))]
-    pub fn verify_store(
+    pub(crate) fn verify_store(
         store: &Store,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
@@ -2125,7 +2125,7 @@ impl Store {
     /// from `get_data_hashed_embeddable_manifest` will have a size that matches this function.
     /// Note: This function does not support dynamic assertions. Use `get_placeholder`
     /// if you need dynamic assertion support.
-    pub fn get_data_hashed_manifest_placeholder(
+    pub(crate) fn get_data_hashed_manifest_placeholder(
         &mut self,
         reserve_size: usize,
         format: &str,
@@ -2164,7 +2164,7 @@ impl Store {
     /// * The bytes of the `c2pa_manifest` placeholder.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be created.
-    pub fn get_placeholder(&mut self, _format: &str, context: &Context) -> Result<Vec<u8>> {
+    pub(crate) fn get_placeholder(&mut self, _format: &str, context: &Context) -> Result<Vec<u8>> {
         let signer = context.signer()?;
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
@@ -2310,7 +2310,7 @@ impl Store {
         asset_reader: Option<&mut dyn CAIRead>,
         context: &Context,
     ))]
-    pub fn get_data_hashed_embeddable_manifest(
+    pub(crate) fn get_data_hashed_embeddable_manifest(
         &mut self,
         dh: &DataHash,
         signer: &dyn Signer,
@@ -2379,7 +2379,7 @@ impl Store {
         signer: &dyn AsyncSigner,
         context: &Context,
     ))]
-    pub fn get_box_hashed_embeddable_manifest(
+    pub(crate) fn get_box_hashed_embeddable_manifest(
         &mut self,
         signer: &dyn Signer,
         context: &Context,
@@ -2418,7 +2418,7 @@ impl Store {
     /// Returns the supplied manifest composed to be directly compatible with the desired format.
     /// For example, if format is JPEG function will return the set of APP11 segments that contains
     /// the manifest.  Similarly for PNG it would be the PNG chunk complete with header and  CRC.
-    pub fn get_composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
+    pub(crate) fn get_composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         if let Some(h) = get_assetio_handler(format) {
             if let Some(composed_data_handler) = h.composed_data_ref() {
                 return composed_data_handler.compose_manifest(manifest_bytes, format);
@@ -2594,7 +2594,7 @@ impl Store {
 
     /// Embed the claims store as jumbf into fragmented assets.
     #[cfg(feature = "file_io")]
-    pub fn save_to_bmff_fragmented<P: AsRef<Path>>(
+    pub(crate) fn save_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,
         init_paths: &[PathBuf],
         fragment_glob: P,
@@ -3244,7 +3244,7 @@ impl Store {
     /// asset_path: path to input asset
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
     #[cfg(feature = "file_io")]
-    pub fn verify_from_path(
+    pub(crate) fn verify_from_path(
         &mut self,
         asset_path: &'_ Path,
         validation_log: &mut StatusTracker,
@@ -3348,7 +3348,7 @@ impl Store {
         stream: &mut dyn CAIRead,
         context: &Context
     ))]
-    pub fn load_jumbf_from_stream(
+    pub(crate) fn load_jumbf_from_stream(
         asset_type: &str,
         stream: &mut dyn CAIRead,
         context: &Context,
@@ -3382,7 +3382,7 @@ impl Store {
     /// in_path -  path to source file
     /// validation_log - optional vec to contain addition info about the asset
     #[cfg(feature = "file_io")]
-    pub fn load_jumbf_from_path(in_path: &Path, context: &Context) -> Result<Vec<u8>> {
+    pub(crate) fn load_jumbf_from_path(in_path: &Path, context: &Context) -> Result<Vec<u8>> {
         let external_manifest = in_path.with_extension(MANIFEST_STORE_EXT);
         let external_exists = external_manifest.exists();
 
@@ -3422,7 +3422,7 @@ impl Store {
     /// asset_type: extensions or mime type of the data
     /// data: byte array containing the asset
     #[allow(unused)] // we don't use this anywhere now, but we should!
-    pub fn get_remote_manifest_url(asset_type: &str, data: &[u8]) -> Option<String> {
+    pub(crate) fn get_remote_manifest_url(asset_type: &str, data: &[u8]) -> Option<String> {
         let mut buf_reader = Cursor::new(data);
 
         if let Some(ext_ref) =
@@ -3438,7 +3438,7 @@ impl Store {
     }
 
     /// check the input url to see if it is a supported remotes URI
-    pub fn is_valid_remote_url(url: &str) -> bool {
+    pub(crate) fn is_valid_remote_url(url: &str) -> bool {
         match url::Url::parse(url) {
             Ok(u) => u.scheme() == "http" || u.scheme() == "https",
             Err(_) => false,
@@ -3812,7 +3812,7 @@ impl Store {
     /// data: jumbf data block
     /// returns new Store with ingredients loaded, claim is modified to include resolved
     /// ingredients conflicts
-    pub fn load_ingredient_to_claim(
+    pub(crate) fn load_ingredient_to_claim(
         claim: &mut Claim,
         data: &[u8],
         redactions: Option<Vec<String>>,
@@ -4014,7 +4014,7 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ))]
-    pub fn get_ocsp_response_ders(
+    pub(crate) fn get_ocsp_response_ders(
         &self,
         manifest_labels: Vec<String>,
         validation_log: &mut StatusTracker,

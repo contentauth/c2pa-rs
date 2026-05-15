@@ -194,6 +194,8 @@ pub const NAME: &str = "c2pa-rs";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Public modules
+pub mod content_credential;
+
 /// The `assertions` module contains the definitions for the assertions that are part of the C2PA specification.
 pub mod assertions;
 
