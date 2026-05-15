@@ -20,8 +20,8 @@ use std::{
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 use c2pa::{
-    assertions::DataHash, Builder as C2paBuilder, CallbackSigner, Context, ProgressPhase,
-    Reader as C2paReader, Settings as C2paSettings, SigningAlg,
+    assertions::DataHash, create_signer, Builder as C2paBuilder, CallbackSigner, Context,
+    ProgressPhase, Reader as C2paReader, Settings as C2paSettings, SigningAlg,
 };
 
 //use tokio::runtime::Builder;
