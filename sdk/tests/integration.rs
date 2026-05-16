@@ -333,15 +333,7 @@ mod integration_1 {
 
         // Read back the new file with embedded manifest.
         let mut file = std::fs::File::open(&output_path)?;
-        let mut reader =
-            Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
-
-        reader
-            .post_validate_async(&c2pa::identity::validator::CawgValidator {})
-            .await
-            .unwrap();
-
-        dbg!(&reader);
+        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
 
         // The test credentials are currently flagged as untrusted.
         // This will be fixed when https://github.com/contentauth/c2pa-rs/pull/1356

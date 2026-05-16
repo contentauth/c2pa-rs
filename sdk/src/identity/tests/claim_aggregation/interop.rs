@@ -27,24 +27,36 @@ use crate::{
     },
     settings::Settings,
     status_tracker::StatusTracker,
-    Context, HashedUri, Reader,
+    Context, HashedUri,
 };
+
+async fn read_manifest_no_trust<R: std::io::Read + std::io::Seek + Send>(
+    format: &str,
+    source: &mut R,
+) -> crate::Reader {
+    let settings = Settings::new()
+        .with_value("verify.verify_trust", false)
+        .unwrap()
+        .with_value("core.decode_identity_assertions", false)
+        .unwrap();
+    let context = Context::new()
+        .with_settings(settings)
+        .unwrap()
+        .into_shared();
+    crate::Reader::from_shared_context(&context)
+        .with_stream_async(format, source)
+        .await
+        .unwrap()
+}
 
 #[c2pa_test_async]
 async fn adobe_connected_identities() {
-    let settings = Settings::new()
-        .with_value("verify.verify_trust", false)
-        .unwrap();
-    let context = Context::new().with_settings(settings).unwrap();
-
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/adobe_connected_identities.jpg");
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_context(context)
-        .with_stream(format, &mut test_image)
-        .unwrap();
+    let reader = read_manifest_no_trust(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -123,19 +135,12 @@ async fn adobe_connected_identities() {
 
 #[c2pa_test_async]
 async fn ims_multiple_manifests() {
-    let settings = Settings::new()
-        .with_value("verify.verify_trust", false)
-        .unwrap();
-    let context = Context::new().with_settings(settings).unwrap();
-
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/ims_multiple_manifests.jpg");
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_context(context)
-        .with_stream(format, &mut test_image)
-        .unwrap();
+    let reader = read_manifest_no_trust(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     // Check the summary report for the entire manifest store.
