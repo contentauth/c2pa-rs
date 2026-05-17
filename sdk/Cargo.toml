@@ -89,6 +89,9 @@ name = "progress"
 [[example]]
 name = "redaction"
 
+[[example]]
+name = "subprocess_signer"
+
 [lib]
 crate-type = ["lib"]
 

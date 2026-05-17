@@ -15,6 +15,11 @@
 
 pub(crate) mod oids;
 
+mod sig_size;
+pub use sig_size::{
+    cert_chain_der_len, cose_reserve_size, raw_sig_len, COSE_OVERHEAD, TIMESTAMP_RESERVE,
+};
+
 #[cfg(all(
     feature = "openssl",
     not(all(feature = "rust_native_crypto", target_arch = "wasm32"))

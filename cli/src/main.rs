@@ -29,9 +29,12 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
-    create_signer, format_from_path, settings::Settings, BoxedSigner, Builder, CallbackSigner,
-    ClaimGeneratorInfo, Context as C2paContext, Error, Ingredient, ManifestDefinition, Reader,
-    Signer, SigningAlg,
+    create_signer,
+    crypto::raw_signature::{cose_reserve_size, TIMESTAMP_RESERVE},
+    format_from_path,
+    settings::Settings,
+    BoxedSigner, Builder, CallbackSigner, ClaimGeneratorInfo, Context as C2paContext, Error,
+    Ingredient, ManifestDefinition, Reader, Signer, SigningAlg,
 };
 use clap::{Parser, Subcommand};
 use env_logger::Env;
@@ -347,7 +350,19 @@ fn make_subprocess_signer(
         process::{Command, Stdio},
     };
 
-    let effective_reserve = reserve_size.unwrap_or(10000 + cert_bytes.len());
+    // The subprocess's `reserve_size` field represents only the timestamp token
+    // component — the caller's estimate of the TSA response size.  Everything
+    // else (raw signature, cert chain DER, COSE framing) is computed exactly
+    // from the algorithm and certificate chain.  When `reserve_size` is absent:
+    //   - no TSA URL → timestamp component is 0 (no timestamp will be requested)
+    //   - TSA URL present → use TIMESTAMP_RESERVE as a conservative default
+    let timestamp_len = match (reserve_size, &tsa_url) {
+        (Some(n), _) => n,
+        (None, Some(_)) => TIMESTAMP_RESERVE,
+        (None, None) => 0,
+    };
+    let effective_reserve = cose_reserve_size(alg, &cert_bytes, timestamp_len)
+        .unwrap_or(10000 + cert_bytes.len() + timestamp_len);
     let alg_str = alg.to_string();
     let reserve_str = effective_reserve.to_string();
 

@@ -15,7 +15,7 @@ use std::io::{Cursor, Seek};
 
 use c2pa::{
     assertions::{self, TimeStamp},
-    Builder, BuilderIntent, Context, Reader, Result, Signer,
+    Builder, BuilderIntent, Context, Reader,
 };
 
 mod common;
@@ -24,29 +24,8 @@ use common::test_settings;
 const TEST_IMAGE: &[u8] = include_bytes!("fixtures/no_manifest.jpg");
 const FORMAT: &str = "image/jpeg";
 
-// Basic wrapper around a Signer to include a time authority URL.
-struct WrappedTsaSigner(Box<dyn Signer>);
-
-impl Signer for WrappedTsaSigner {
-    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        self.0.sign(data)
-    }
-
-    fn alg(&self) -> c2pa::SigningAlg {
-        self.0.alg()
-    }
-
-    fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        self.0.certs()
-    }
-
-    fn reserve_size(&self) -> usize {
-        self.0.reserve_size()
-    }
-
-    fn time_authority_url(&self) -> Option<String> {
-        Some("http://timestamp.digicert.com".to_owned())
-    }
+fn tsa_signer() -> impl c2pa::Signer {
+    common::test_signer().set_tsa_url("http://timestamp.digicert.com")
 }
 
 // Sign a manifest with a child ingredient and add the parent manifest
@@ -61,7 +40,7 @@ fn timestamp_assertion_parent_scope() {
     let mut builder = Builder::from_context(child_context);
     builder
         .sign(
-            &WrappedTsaSigner(Box::new(common::test_signer())),
+            &tsa_signer(),
             FORMAT,
             &mut Cursor::new(TEST_IMAGE),
             &mut child_image,
@@ -90,12 +69,7 @@ fn timestamp_assertion_parent_scope() {
     let mut builder = Builder::from_context(parent_context);
     builder.set_intent(BuilderIntent::Update);
     builder
-        .sign(
-            &WrappedTsaSigner(Box::new(common::test_signer())),
-            FORMAT,
-            &mut child_image,
-            &mut parent_image,
-        )
+        .sign(&tsa_signer(), FORMAT, &mut child_image, &mut parent_image)
         .unwrap();
 
     parent_image.rewind().unwrap();
@@ -127,7 +101,7 @@ fn timestamp_assertion_all_scope() {
     let mut builder = Builder::from_context(child_context);
     builder
         .sign(
-            &WrappedTsaSigner(Box::new(common::test_signer())),
+            &tsa_signer(),
             FORMAT,
             &mut Cursor::new(TEST_IMAGE),
             &mut child_image,
@@ -156,12 +130,7 @@ fn timestamp_assertion_all_scope() {
     let mut builder = Builder::from_context(parent_context);
     builder.set_intent(BuilderIntent::Update);
     builder
-        .sign(
-            &WrappedTsaSigner(Box::new(common::test_signer())),
-            FORMAT,
-            &mut child_image,
-            &mut parent_image,
-        )
+        .sign(&tsa_signer(), FORMAT, &mut child_image, &mut parent_image)
         .unwrap();
 
     parent_image.rewind().unwrap();
@@ -197,7 +166,7 @@ fn timestamp_assertion_explicit_builder() {
     let mut builder = Builder::from_context(context);
     builder
         .sign(
-            &WrappedTsaSigner(Box::new(common::test_signer())),
+            &tsa_signer(),
             FORMAT,
             &mut Cursor::new(TEST_IMAGE),
             &mut child_image,
@@ -217,12 +186,7 @@ fn timestamp_assertion_explicit_builder() {
     child_image.rewind().unwrap();
 
     builder
-        .sign(
-            &WrappedTsaSigner(Box::new(common::test_signer())),
-            FORMAT,
-            &mut child_image,
-            &mut parent_image,
-        )
+        .sign(&tsa_signer(), FORMAT, &mut child_image, &mut parent_image)
         .unwrap();
 
     parent_image.rewind().unwrap();
@@ -254,7 +218,7 @@ fn timestamp_assertion_skip_existing() {
         Builder::from_context(Context::new().with_settings(settings.clone()).unwrap());
     builder
         .sign(
-            &WrappedTsaSigner(Box::new(common::test_signer())),
+            &tsa_signer(),
             FORMAT,
             &mut Cursor::new(TEST_IMAGE),
             &mut child_image,
@@ -299,7 +263,7 @@ fn timestamp_assertion_skip_existing() {
     builder.set_intent(BuilderIntent::Update);
     builder
         .sign(
-            &WrappedTsaSigner(Box::new(common::test_signer())),
+            &tsa_signer(),
             FORMAT,
             &mut parent_image,
             &mut parent_parent_image,
