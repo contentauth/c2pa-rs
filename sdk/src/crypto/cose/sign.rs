@@ -23,10 +23,13 @@ use serde_bytes::ByteBuf;
 use x509_parser::prelude::X509Certificate;
 
 use super::cert_chain_from_sign1;
-use crate::crypto::{
-    cose::{add_sigtst_header, add_sigtst_header_async, CoseError, TimeStampStorage},
-    ec_utils::{der_to_p1363, ec_curve_from_public_key_der, parse_ec_der_sig},
-    raw_signature::{AsyncRawSigner, RawSigner, SigningAlg},
+use crate::{
+    crypto::{
+        cose::{add_sigtst_header, add_sigtst_header_async, CoseError, TimeStampStorage},
+        ec_utils::{der_to_p1363, ec_curve_from_public_key_der, parse_ec_der_sig},
+        raw_signature::{AsyncRawSigner, RawSigner, SigningAlg},
+    },
+    http::{AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver},
 };
 
 /// Given an arbitrary block of data and a [`RawSigner`] or [`AsyncRawSigner`]
@@ -76,6 +79,7 @@ use crate::crypto::{
 ///
 /// [§14.5, X.509 Certificates]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#x509_certificates
 /// [RFC 9360]: https://datatracker.ietf.org/doc/html/rfc9360
+/// Public entry point — uses the default HTTP resolver for timestamp requests.
 #[async_generic(async_signature(
     signer: &dyn AsyncRawSigner,
     data: &[u8],
@@ -89,14 +93,38 @@ pub fn sign(
     tss: TimeStampStorage,
 ) -> Result<Vec<u8>, CoseError> {
     if _sync {
+        let resolver = SyncGenericResolver::with_redirects().unwrap_or_default();
+        sign_with_resolver(signer, data, box_size, tss, &resolver)
+    } else {
+        let resolver = AsyncGenericResolver::with_redirects().unwrap_or_default();
+        sign_with_resolver_async(signer, data, box_size, tss, &resolver).await
+    }
+}
+
+/// Internal entry point that accepts a caller-provided HTTP resolver for timestamp requests.
+#[async_generic(async_signature(
+    signer: &dyn AsyncRawSigner,
+    data: &[u8],
+    box_size: Option<usize>,
+    tss: TimeStampStorage,
+    resolver: &dyn AsyncHttpResolver,
+))]
+pub(crate) fn sign_with_resolver(
+    signer: &dyn RawSigner,
+    data: &[u8],
+    box_size: Option<usize>,
+    tss: TimeStampStorage,
+    resolver: &dyn SyncHttpResolver,
+) -> Result<Vec<u8>, CoseError> {
+    if _sync {
         match tss {
-            TimeStampStorage::V1_sigTst => sign_v1(signer, data, box_size, tss),
-            TimeStampStorage::V2_sigTst2_CTT => sign_v2(signer, data, box_size, tss),
+            TimeStampStorage::V1_sigTst => sign_v1(signer, data, box_size, tss, resolver),
+            TimeStampStorage::V2_sigTst2_CTT => sign_v2(signer, data, box_size, tss, resolver),
         }
     } else {
         match tss {
-            TimeStampStorage::V1_sigTst => sign_v1_async(signer, data, box_size, tss).await,
-            TimeStampStorage::V2_sigTst2_CTT => sign_v2_async(signer, data, box_size, tss).await,
+            TimeStampStorage::V1_sigTst => sign_v1_async(signer, data, box_size, tss, resolver).await,
+            TimeStampStorage::V2_sigTst2_CTT => sign_v2_async(signer, data, box_size, tss, resolver).await,
         }
     }
 }
@@ -105,13 +133,15 @@ pub fn sign(
     signer: &dyn AsyncRawSigner,
     data: &[u8],
     box_size: Option<usize>,
-    tss: TimeStampStorage
+    tss: TimeStampStorage,
+    resolver: &dyn AsyncHttpResolver,
 ))]
 pub fn sign_v1(
     signer: &dyn RawSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
+    resolver: &dyn SyncHttpResolver,
 ) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
 
@@ -126,9 +156,9 @@ pub fn sign_v1(
 
     // V1: Generate time stamp then sign.
     let unprotected_header = if _sync {
-        build_unprotected_header(signer, data, &protected_header, tss)?
+        build_unprotected_header(signer, data, &protected_header, tss, resolver)?
     } else {
-        build_unprotected_header_async(signer, data, &protected_header, tss).await?
+        build_unprotected_header_async(signer, data, &protected_header, tss, resolver).await?
     };
 
     let sign1_builder = CoseSign1Builder::new()
@@ -192,18 +222,20 @@ pub fn sign_v1(
     signer: &dyn AsyncRawSigner,
     data: &[u8],
     box_size: Option<usize>,
-    tss: TimeStampStorage
+    tss: TimeStampStorage,
+    resolver: &dyn AsyncHttpResolver,
 ))]
 pub fn sign_v2(
     signer: &dyn RawSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
+    resolver: &dyn SyncHttpResolver,
 ) -> Result<Vec<u8>, CoseError> {
     if _sync {
-        sign_v2_embedded(signer, data, box_size, CosePayload::Detached, None, tss)
+        sign_v2_embedded(signer, data, box_size, CosePayload::Detached, None, tss, resolver)
     } else {
-        sign_v2_embedded_async(signer, data, box_size, CosePayload::Detached, None, tss).await
+        sign_v2_embedded_async(signer, data, box_size, CosePayload::Detached, None, tss, resolver).await
     }
 }
 
@@ -279,7 +311,8 @@ pub enum CosePayload {
     box_size: Option<usize>,
     payload: CosePayload,
     content_type: Option<ContentType>,
-    tss: TimeStampStorage
+    tss: TimeStampStorage,
+    resolver: &dyn AsyncHttpResolver,
 ))]
 pub fn sign_v2_embedded(
     signer: &dyn RawSigner,
@@ -288,6 +321,7 @@ pub fn sign_v2_embedded(
     payload: CosePayload,
     content_type: Option<ContentType>,
     tss: TimeStampStorage,
+    resolver: &dyn SyncHttpResolver,
 ) -> Result<Vec<u8>, CoseError> {
     let alg = signer.alg();
 
@@ -363,9 +397,9 @@ pub fn sign_v2_embedded(
 
     // Fill in the unprotected header with time stamp data.
     let unprotected_header = if _sync {
-        build_unprotected_header(signer, &sig_data_cbor, &protected_header, tss)?
+        build_unprotected_header(signer, &sig_data_cbor, &protected_header, tss, resolver)?
     } else {
-        build_unprotected_header_async(signer, &sig_data_cbor, &protected_header, tss).await?
+        build_unprotected_header_async(signer, &sig_data_cbor, &protected_header, tss, resolver).await?
     };
 
     sign1.unprotected = unprotected_header;
@@ -424,23 +458,20 @@ fn build_protected_header(
     Ok(ph2)
 }
 
-#[async_generic(async_signature(signer: &dyn AsyncRawSigner, data: &[u8], p_header: &ProtectedHeader, tss: TimeStampStorage,))]
+#[async_generic(async_signature(signer: &dyn AsyncRawSigner, data: &[u8], p_header: &ProtectedHeader, tss: TimeStampStorage, resolver: &dyn AsyncHttpResolver,))]
 fn build_unprotected_header(
     signer: &dyn RawSigner,
     data: &[u8],
     p_header: &ProtectedHeader,
     tss: TimeStampStorage,
+    resolver: &dyn SyncHttpResolver,
 ) -> Result<Header, CoseError> {
-    // signed_data_from_time_stamp_response
-
-    // TO DO: Continue with diff here ... (let maybe_cts etc)
-
     let unprotected_h = HeaderBuilder::new();
 
     let mut unprotected_h = if _sync {
-        add_sigtst_header(signer, data, p_header, unprotected_h, tss)?
+        add_sigtst_header(signer, data, p_header, unprotected_h, tss, resolver)?
     } else {
-        add_sigtst_header_async(signer, data, p_header, unprotected_h, tss).await?
+        add_sigtst_header_async(signer, data, p_header, unprotected_h, tss, resolver).await?
     };
 
     // Set the OCSP responder response if available.

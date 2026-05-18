@@ -26,10 +26,11 @@ use crate::{
         cose::{CertificateTrustPolicy, CoseError, TimeStampStorage},
         raw_signature::{AsyncRawSigner, RawSigner},
         time_stamp::{
-            verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampError,
-            TimeStampResponse,
+            default_rfc3161_request, default_rfc3161_request_async, verify_time_stamp,
+            verify_time_stamp_async, ContentInfo, TimeStampError, TimeStampResponse,
         },
     },
+    http::{AsyncHttpResolver, SyncHttpResolver},
     log_item,
     status_tracker::StatusTracker,
     validation_status, Result,
@@ -221,6 +222,9 @@ impl TstContainer {
 /// provided [`TimeStampProvider`] or [`AsyncTimeStampProvider`] to request a
 /// timestamp for that block of data.
 ///
+/// If the provider's `send_time_stamp_request` returns `None` but a TSA URL is
+/// configured, the `resolver` is used to make the HTTP request directly.
+///
 /// [`TimeStampProvider`]: crate::crypto::time_stamp::TimeStampProvider
 /// [`AsyncTimeStampProvider`]: crate::crypto::time_stamp::AsyncTimeStampProvider
 #[async_generic(
@@ -230,6 +234,7 @@ impl TstContainer {
         p_header: &ProtectedHeader,
         mut header_builder: HeaderBuilder,
         tss: TimeStampStorage,
+        resolver: &dyn AsyncHttpResolver,
     ))]
 pub(crate) fn add_sigtst_header(
     ts_provider: &dyn RawSigner,
@@ -237,13 +242,38 @@ pub(crate) fn add_sigtst_header(
     p_header: &ProtectedHeader,
     mut header_builder: HeaderBuilder,
     tss: TimeStampStorage,
+    resolver: &dyn SyncHttpResolver,
 ) -> Result<HeaderBuilder, CoseError> {
     let sd = cose_countersign_data(data, p_header);
 
     let maybe_cts = if _sync {
-        ts_provider.send_time_stamp_request(&sd)
+        match ts_provider.send_time_stamp_request(&sd) {
+            Some(result) => Some(result),
+            None => match ts_provider.time_stamp_service_url() {
+                Some(url) => match ts_provider.time_stamp_request_body(&sd) {
+                    Ok(body) => {
+                        let headers = ts_provider.time_stamp_request_headers();
+                        Some(default_rfc3161_request(&url, headers, &body, &sd, resolver))
+                    }
+                    Err(_) => None,
+                },
+                None => None,
+            },
+        }
     } else {
-        ts_provider.send_time_stamp_request(&sd).await
+        match ts_provider.send_time_stamp_request(&sd).await {
+            Some(result) => Some(result),
+            None => match ts_provider.time_stamp_service_url() {
+                Some(url) => match ts_provider.time_stamp_request_body(&sd) {
+                    Ok(body) => {
+                        let headers = ts_provider.time_stamp_request_headers();
+                        Some(default_rfc3161_request_async(&url, headers, &body, &sd, resolver).await)
+                    }
+                    Err(_) => None,
+                },
+                None => None,
+            },
+        }
     };
 
     if let Some(cts) = maybe_cts {

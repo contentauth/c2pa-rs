@@ -19,7 +19,6 @@ use crate::{
         time_stamp::{TimeStampError, TimeStampProvider},
     },
     dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
-    http::SyncGenericResolver,
     maybe_send_sync::{MaybeSend, MaybeSync},
     Result,
 };
@@ -85,25 +84,10 @@ pub trait Signer {
     ///
     /// `message` is a preliminary hash of the claim
     ///
-    /// The default implementation will send the request to the URL
-    /// provided by [`Self::time_authority_url()`], if any.
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        if let Some(url) = self.time_authority_url() {
-            if let Ok(body) = self.timestamp_request_body(message) {
-                let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-                return Some(
-                    crate::crypto::time_stamp::default_rfc3161_request(
-                        &url,
-                        headers,
-                        &body,
-                        message,
-                        &SyncGenericResolver::with_redirects().unwrap_or_default(),
-                    )
-                    .map_err(|e| e.into()),
-                );
-            }
-        }
-
+    /// The default implementation returns `None`, which causes the COSE signing
+    /// layer to make the HTTP request using the caller's configured HTTP resolver.
+    /// Override this method to provide a custom timestamp response.
+    fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
 
@@ -214,28 +198,10 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
     ///
     /// `message` is a preliminary hash of the claim
     ///
-    /// The default implementation will send the request to the URL
-    /// provided by [`Self::time_authority_url()`], if any.
-    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        if let Some(url) = self.time_authority_url() {
-            if let Ok(body) = self.timestamp_request_body(message) {
-                use crate::http::AsyncGenericResolver;
-
-                let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-                return Some(
-                    crate::crypto::time_stamp::default_rfc3161_request_async(
-                        &url,
-                        headers,
-                        &body,
-                        message,
-                        &AsyncGenericResolver::with_redirects().unwrap_or_default(),
-                    )
-                    .await
-                    .map_err(|e| e.into()),
-                );
-            }
-        }
-
+    /// The default implementation returns `None`, which causes the COSE signing
+    /// layer to make the HTTP request using the caller's configured HTTP resolver.
+    /// Override this method to provide a custom timestamp response.
+    async fn send_timestamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>>> {
         None
     }
 

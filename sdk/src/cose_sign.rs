@@ -23,11 +23,14 @@ use crate::{
     cose_validator::verify_cose,
     crypto::{
         cose::{
-            check_end_entity_certificate_profile, sign, sign_async, CertificateTrustPolicy,
-            TimeStampStorage,
+            check_end_entity_certificate_profile, sign_with_resolver, sign_with_resolver_async,
+            CertificateTrustPolicy, TimeStampStorage,
         },
         raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
         time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
+    },
+    http::{
+        AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
     },
     settings::Settings,
     status_tracker::{ErrorBehavior, StatusTracker},
@@ -74,9 +77,11 @@ pub fn sign_claim(
     };
 
     let signed_bytes = if _sync {
-        cose_sign(signer, claim_bytes, box_size, tss, settings)
+        let resolver = SyncGenericResolver::with_redirects().unwrap_or_default();
+        cose_sign(signer, claim_bytes, box_size, tss, settings, &resolver)
     } else {
-        cose_sign_async(signer, claim_bytes, box_size, tss, settings).await
+        let resolver = AsyncGenericResolver::with_redirects().unwrap_or_default();
+        cose_sign_async(signer, claim_bytes, box_size, tss, settings, &resolver).await
     };
 
     match signed_bytes {
@@ -117,6 +122,7 @@ pub fn sign_claim(
     box_size: usize,
     time_stamp_storage: TimeStampStorage,
     settings: &Settings,
+    resolver: &dyn AsyncHttpResolver,
 ))]
 pub(crate) fn cose_sign(
     signer: &dyn Signer,
@@ -124,6 +130,7 @@ pub(crate) fn cose_sign(
     box_size: usize,
     time_stamp_storage: TimeStampStorage,
     settings: &Settings,
+    resolver: &dyn SyncHttpResolver,
 ) -> Result<Vec<u8>> {
     // Make sure the signing cert is valid.
     let certs = signer.certs()?;
@@ -135,20 +142,22 @@ pub(crate) fn cose_sign(
 
     if _sync {
         match signer.raw_signer() {
-            Some(raw_signer) => Ok(sign(*raw_signer, data, Some(box_size), time_stamp_storage)?),
+            Some(raw_signer) => {
+                Ok(sign_with_resolver(*raw_signer, data, Some(box_size), time_stamp_storage, resolver)?)
+            }
             None => {
                 let wrapper = SignerWrapper(signer);
-                Ok(sign(&wrapper, data, Some(box_size), time_stamp_storage)?)
+                Ok(sign_with_resolver(&wrapper, data, Some(box_size), time_stamp_storage, resolver)?)
             }
         }
     } else {
         match signer.async_raw_signer() {
             Some(raw_signer) => {
-                Ok(sign_async(*raw_signer, data, Some(box_size), time_stamp_storage).await?)
+                Ok(sign_with_resolver_async(*raw_signer, data, Some(box_size), time_stamp_storage, resolver).await?)
             }
             None => {
                 let wrapper = AsyncSignerWrapper(signer);
-                Ok(sign_async(&wrapper, data, Some(box_size), time_stamp_storage).await?)
+                Ok(sign_with_resolver_async(&wrapper, data, Some(box_size), time_stamp_storage, resolver).await?)
             }
         }
     }

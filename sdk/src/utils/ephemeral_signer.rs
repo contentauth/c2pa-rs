@@ -200,6 +200,7 @@ mod tests {
         crypto::cose::{
             cert_chain_from_sign1, parse_cose_sign1, CertificateTrustPolicy, TimeStampStorage,
         },
+        http::SyncGenericResolver,
         settings::Settings,
         status_tracker::StatusTracker,
         Signer,
@@ -221,7 +222,8 @@ mod tests {
 
         let tss = TimeStampStorage::V1_sigTst;
 
-        let cose_bytes = cose_sign(&signer, &claim_bytes, signer.reserve_size(), tss, &settings)
+        let resolver = SyncGenericResolver::with_redirects().unwrap_or_default();
+        let cose_bytes = cose_sign(&signer, &claim_bytes, signer.reserve_size(), tss, &settings, &resolver)
             .expect("cose_sign with EphemeralSigner");
 
         let mut log = StatusTracker::default();
@@ -258,7 +260,8 @@ mod tests {
 
         let tss = TimeStampStorage::V1_sigTst;
 
-        let cose_bytes = cose_sign(&signer, &claim_bytes, signer.reserve_size(), tss, &settings)
+        let resolver = SyncGenericResolver::with_redirects().unwrap_or_default();
+        let cose_bytes = cose_sign(&signer, &claim_bytes, signer.reserve_size(), tss, &settings, &resolver)
             .expect("cose_sign with EphemeralSigner");
 
         let mut log = StatusTracker::default();

@@ -611,7 +611,9 @@ impl Context {
             SignerState::FromSettings(once_lock) => {
                 let result = once_lock.get_or_init(|| {
                     if let Some(signer_settings) = &self.settings.signer {
-                        let c2pa_signer = signer_settings.clone().c2pa_signer()?;
+                        let c2pa_signer = signer_settings
+                            .clone()
+                            .c2pa_signer_with_resolver(self.resolver())?;
 
                         if let Some(cawg_settings) = &self.settings.cawg_x509_signer {
                             cawg_settings.clone().cawg_signer(c2pa_signer)

@@ -22,7 +22,6 @@ use crate::{
         raw_signature::oids::{ans1_oid_bcder_oid, SHA256_OID},
         time_stamp::TimeStampError,
     },
-    http::SyncGenericResolver,
     maybe_send_sync::MaybeSync,
 };
 
@@ -53,26 +52,12 @@ pub trait TimeStampProvider {
 
     /// Request a [RFC 3161] time stamp over an arbitrary data packet.
     ///
-    /// The default implementation will send the request to the URL
-    /// provided by [`Self::time_stamp_service_url()`], if any.
+    /// The default implementation returns `None`, which causes the COSE signing
+    /// layer to make the HTTP request using the caller's configured HTTP resolver.
+    /// Override this to provide a custom timestamp response.
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
-    ///
-    /// todo: THIS CODE IS NOT COMPATIBLE WITH C2PA 2.x sigTst2
-    fn send_time_stamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>, TimeStampError>> {
-        if let Some(url) = self.time_stamp_service_url() {
-            if let Ok(body) = self.time_stamp_request_body(message) {
-                let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
-                return Some(super::http_request::default_rfc3161_request(
-                    &url,
-                    headers,
-                    &body,
-                    message,
-                    &SyncGenericResolver::with_redirects().unwrap_or_default(),
-                ));
-            }
-        }
-
+    fn send_time_stamp_request(&self, _message: &[u8]) -> Option<Result<Vec<u8>, TimeStampError>> {
         None
     }
 }
@@ -109,32 +94,15 @@ pub trait AsyncTimeStampProvider: MaybeSync {
 
     /// Request a [RFC 3161] time stamp over an arbitrary data packet.
     ///
-    /// The default implementation will send the request to the URL
-    /// provided by [`Self::time_stamp_service_url()`], if any.
+    /// The default implementation returns `None`, which causes the COSE signing
+    /// layer to make the HTTP request using the caller's configured HTTP resolver.
+    /// Override this to provide a custom timestamp response.
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     async fn send_time_stamp_request(
         &self,
-        message: &[u8],
+        _message: &[u8],
     ) -> Option<Result<Vec<u8>, TimeStampError>> {
-        if let Some(url) = self.time_stamp_service_url() {
-            if let Ok(body) = self.time_stamp_request_body(message) {
-                use crate::http::AsyncGenericResolver;
-
-                let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
-                return Some(
-                    super::http_request::default_rfc3161_request_async(
-                        &url,
-                        headers,
-                        &body,
-                        message,
-                        &AsyncGenericResolver::with_redirects().unwrap_or_default(),
-                    )
-                    .await,
-                );
-            }
-        }
-
         None
     }
 }

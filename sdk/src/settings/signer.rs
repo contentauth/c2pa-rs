@@ -106,8 +106,18 @@ impl SignerSettings {
         }
     }
 
-    /// Returns a c2pa signer using the provided signer settings.
+    /// Returns a c2pa signer using the provided signer settings and default HTTP resolver.
     pub fn c2pa_signer(self) -> Result<BoxedSigner> {
+        let resolver = Arc::new(SyncGenericResolver::with_redirects().unwrap_or_default())
+            as Arc<dyn SyncHttpResolver>;
+        self.c2pa_signer_with_resolver(resolver)
+    }
+
+    /// Returns a c2pa signer using the provided signer settings and a caller-supplied HTTP resolver.
+    pub fn c2pa_signer_with_resolver(
+        self,
+        resolver: Arc<dyn SyncHttpResolver>,
+    ) -> Result<BoxedSigner> {
         match self {
             SignerSettings::Local {
                 alg,
@@ -132,6 +142,7 @@ impl SignerSettings {
                 reserve_size: 10000 + sign_cert.len(),
                 certs: vec![sign_cert.into_bytes()],
                 tsa_url,
+                resolver,
             })),
         }
     }
@@ -343,13 +354,13 @@ impl Signer for CawgX509IdentitySigner {
     }
 }
 
-#[derive(Debug)]
 pub(crate) struct RemoteSigner {
     url: String,
     alg: SigningAlg,
     certs: Vec<Vec<u8>>,
     reserve_size: usize,
     tsa_url: Option<String>,
+    resolver: Arc<dyn SyncHttpResolver>,
 }
 
 impl Signer for RemoteSigner {
@@ -357,8 +368,8 @@ impl Signer for RemoteSigner {
         use std::io::Read;
 
         let request = Request::post(&self.url).body(data.to_vec())?;
-        let response = SyncGenericResolver::with_redirects()
-            .unwrap_or_default()
+        let response = self
+            .resolver
             .http_resolve(request)
             .map_err(|_| Error::FailedToRemoteSign)?;
         let mut bytes: Vec<u8> = Vec::with_capacity(self.reserve_size);

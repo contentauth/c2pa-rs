@@ -41,6 +41,7 @@ use crate::{
     },
     context::{Context, ProgressPhase},
     cose_sign::{cose_sign, cose_sign_async},
+    http::{AsyncHttpResolver, SyncHttpResolver},
     cose_validator::{verify_cose, verify_cose_async},
     crypto::{
         asn1::rfc3161::TstInfo,
@@ -565,6 +566,7 @@ impl Store {
         signer: &dyn AsyncSigner,
         box_size: usize,
         settings: &Settings,
+        resolver: &dyn AsyncHttpResolver,
     ))]
     pub fn sign_claim(
         &self,
@@ -572,6 +574,7 @@ impl Store {
         signer: &dyn Signer,
         box_size: usize,
         settings: &Settings,
+        resolver: &dyn SyncHttpResolver,
     ) -> Result<Vec<u8>> {
         let claim_bytes = claim.data()?;
 
@@ -590,7 +593,7 @@ impl Store {
                 // Let the signer do all the COSE processing and return the structured COSE data.
                 return signer.sign(&claim_bytes); // do not verify remote signers (we never did)
             } else {
-                cose_sign(signer, &claim_bytes, box_size, tss, &adjusted_settings)
+                cose_sign(signer, &claim_bytes, box_size, tss, &adjusted_settings, resolver)
             }
         } else {
             if signer.direct_cose_handling() {
@@ -598,7 +601,7 @@ impl Store {
                 return signer.sign(claim_bytes.clone()).await;
             // do not verify remote signers (we never did)
             } else {
-                cose_sign_async(signer, &claim_bytes, box_size, tss, settings).await
+                cose_sign_async(signer, &claim_bytes, box_size, tss, settings, resolver).await
             }
         };
         match result {
@@ -2286,7 +2289,8 @@ impl Store {
 
                 // Get pc again
                 let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+                let resolver = context.resolver();
+                let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings, resolver.as_ref())?;
 
                 let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc.set_signature_val(sig);
@@ -2298,7 +2302,8 @@ impl Store {
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
 
         // No dynamic assertions - sign directly
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+        let resolver = context.resolver();
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings, resolver.as_ref())?;
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.set_signature_val(sig);
 
@@ -2414,9 +2419,11 @@ impl Store {
         // sign contents
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
-            self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?
+            let resolver = context.resolver();
+            self.sign_claim(pc, signer, signer.reserve_size(), context.settings(), resolver.as_ref())?
         } else {
-            self.sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
+            let resolver = context.resolver_async();
+            self.sign_claim_async(pc, signer, signer.reserve_size(), context.settings(), resolver.as_ref())
                 .await?
         };
 
@@ -2458,9 +2465,11 @@ impl Store {
 
         // sign contents
         let sig = if _sync {
-            self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?
+            let resolver = context.resolver();
+            self.sign_claim(pc, signer, signer.reserve_size(), context.settings(), resolver.as_ref())?
         } else {
-            self.sign_claim_async(pc, signer, signer.reserve_size(), context.settings())
+            let resolver = context.resolver_async();
+            self.sign_claim_async(pc, signer, signer.reserve_size(), context.settings(), resolver.as_ref())
                 .await?
         };
 
@@ -2816,7 +2825,8 @@ impl Store {
 
         // sign the claim
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?;
+        let resolver = context.resolver();
+        let sig = self.sign_claim(pc, signer, signer.reserve_size(), context.settings(), resolver.as_ref())?;
 
         // update the provenance claim with the signature so it gets saved in the manifest
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -2908,9 +2918,11 @@ impl Store {
 
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let sig = if _sync {
-            self.sign_claim(pc, signer, signer.reserve_size(), settings)
+            let resolver = context.resolver();
+            self.sign_claim(pc, signer, signer.reserve_size(), settings, resolver.as_ref())
         } else {
-            self.sign_claim_async(pc, signer, signer.reserve_size(), settings)
+            let resolver = context.resolver_async();
+            self.sign_claim_async(pc, signer, signer.reserve_size(), settings, resolver.as_ref())
                 .await
         }?;
 

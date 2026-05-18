@@ -37,6 +37,7 @@ pub(crate) use ocsp::{fetch_and_check_ocsp_response, fetch_and_check_ocsp_respon
 
 mod sign;
 pub use sign::{sign, sign_async, sign_v2_embedded, sign_v2_embedded_async, CosePayload};
+pub(crate) use sign::{sign_with_resolver, sign_with_resolver_async};
 
 mod sign1;
 pub use sign1::{
