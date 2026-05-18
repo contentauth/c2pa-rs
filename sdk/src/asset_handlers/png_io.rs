@@ -355,13 +355,24 @@ impl CAIWriter for PngIO {
             let file_end = input_stream.seek(SeekFrom::End(0))? as usize;
             (ps, file_end)
         } else {
-            let mut output_stream = Cursor::new(Vec::new());
-            self.write_cai(input_stream, &mut output_stream, &[])?;
+            let ihdr_index = ps
+                .iter()
+                .position(|c| c.name == IMG_HDR)
+                .ok_or(Error::EmbeddingError)?;
 
-            output_stream.rewind()?;
-            let ps = get_png_chunk_positions(&mut output_stream)?;
-            let file_end = output_stream.seek(SeekFrom::End(0))? as usize;
-            (ps, file_end)
+            let mut ps = ps;
+            ps.insert(
+                ihdr_index + 1,
+                PngChunkPos {
+                    start: ps[ihdr_index].end(),
+                    length: 0,
+                    name: CAI_CHUNK,
+                    name_str: String::from_utf8_lossy(&CAI_CHUNK).into_owned(),
+                },
+            );
+
+            let file_end = input_stream.seek(SeekFrom::End(0))? as usize;
+            (ps, file_end + PNG_HDR_LEN as usize)
         };
 
         let pcp = ps
