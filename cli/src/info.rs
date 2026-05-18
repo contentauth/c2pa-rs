@@ -23,6 +23,7 @@ pub fn info(path: &Path) -> Result<()> {
             None
         }
     }
+    #[allow(deprecated)]
     let ingredient = c2pa::Ingredient::from_file_with_options(path, &Options {})?;
     println!("Information for {}", ingredient.title().unwrap_or_default());
     let mut is_cloud_manifest = false;
@@ -60,7 +61,7 @@ pub fn info(path: &Path) -> Result<()> {
         } else {
             println!("Validated");
         }
-        let reader = Reader::from_file(path)?;
+        let reader = Reader::default().with_file(path)?;
 
         let manifests: Vec<_> = reader.iter_manifests().collect();
         match manifests.len() {

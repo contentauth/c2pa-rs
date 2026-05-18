@@ -1,6 +1,6 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://contentcredentials.org/crjson/crJSON-schema.json",
+    "$id": "https://c2pa.org/crjson/crJSON-schema.json",
     "title": "Content Credential JSON (CrJSON) Document Schema",
     "description": "JSON Schema for Content Credential JSON (CrJSON) documents. CrJSON does not include asset_info, content, or metadata.",
     "type": "object",
@@ -43,7 +43,7 @@
             }
         },
         "jsonGenerator": {
-            "description": "Information about the tool used to generate this JSON, and when it was generated",
+            "description": "Information about the tool used to generate this JSON",
             "$ref": "#/definitions/jsonGenerator"
         }
     },
@@ -51,7 +51,7 @@
     "definitions": {
         "jsonGenerator": {
             "type": "object",
-            "description": "Information about the claim generator (generator-info fields) plus date stamp. CrJSON document-level; name/version align with claim.cddl generator-info-map; date is CrJSON-specific.",
+            "description": "Information about the claim generator (generator-info fields); name/version align with claim.cddl generator-info-map;",
             "properties": {
                 "name": {
                     "type": "string",
@@ -208,7 +208,7 @@
                 },
                 "hash": {
                     "type": "string",
-                    "description": "Hash value (Base64-encoded)"
+                    "description": "Hash value (Base64-encoded with b64' prefix)"
                 },
                 "alg": {
                     "type": "string",
@@ -469,7 +469,7 @@
                 },
                 "hash": {
                     "type": "string",
-                    "description": "Base64-encoded hash value"
+                    "description": "Base64-encoded hash value with b64' prefix"
                 },
                 "pad": {
                     "type": "string",
@@ -557,7 +557,7 @@
                 },
                 "hash": {
                     "type": "string",
-                    "description": "Hash value (byte string; in JSON typically Base64-encoded)"
+                    "description": "Hash value (byte string; in JSON typically Base64-encoded with b64' prefix)"
                 },
                 "excluded": {
                     "type": "boolean",
@@ -573,11 +573,11 @@
                 },
                 "pad": {
                     "type": "string",
-                    "description": "Zero-filled byte string used for filling up space (typically Base64 in JSON)"
+                    "description": "Zero-filled byte string used for filling up space (typically Base64-encoded with b64' prefix in JSON)"
                 },
                 "pad2": {
                     "type": "string",
-                    "description": "Zero-filled byte string used for filling up space (typically Base64 in JSON)"
+                    "description": "Zero-filled byte string used for filling up space (typically Base64-encoded with b64' prefix in JSON)"
                 }
             },
             "additionalProperties": false
@@ -1481,7 +1481,7 @@
                 },
                 "hash": {
                     "type": "string",
-                    "description": "Base64-encoded hash value of the external data"
+                    "description": "Base64-encoded with b64' prefix hash value of the external data"
                 },
                 "dc:format": {
                     "type": "string",
@@ -1560,7 +1560,7 @@
                 },
                 "flags": {
                     "type": "string",
-                    "description": "24-bit flags (3-byte byte string, e.g. Base64-encoded in JSON). Only for FullBox when version is specified."
+                    "description": "24-bit flags (3-byte byte string, e.g. Base64-encoded with b64' prefix in JSON). Only for FullBox when version is specified."
                 },
                 "exact": {
                     "type": "boolean",

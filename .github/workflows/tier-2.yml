@@ -87,7 +87,7 @@ jobs:
 
       - name: Cache emsdk
         if: matrix.target == 'wasm32-unknown-emscripten'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: emsdk
           key: emsdk-${{ runner.os }}-latest

@@ -77,7 +77,7 @@ fn assert_schema_valid(value: &serde_json::Value) {
 /// The full crJSON output must pass JSON Schema validation.
 #[test]
 fn test_crjson_passes_schema_validation() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
     maybe_write_crjson_output(
         "CA.jpg.json",
@@ -90,7 +90,7 @@ fn test_crjson_passes_schema_validation() -> Result<()> {
 /// Root document must have exactly the required top-level fields.
 #[test]
 fn test_root_required_fields() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
     assert!(json_value.get("@context").is_some(), "@context is required");
@@ -127,7 +127,7 @@ fn test_root_required_fields() -> Result<()> {
 /// `jsonGenerator` must have `name` and `version` (SemVer) but not `date`.
 #[test]
 fn test_json_generator_fields() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
     let jg = json_value
@@ -157,7 +157,7 @@ fn test_json_generator_fields() -> Result<()> {
 /// `manifests` must be an array; active manifest must be first.
 #[test]
 fn test_manifests_is_array_active_first() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
     let manifests = json_value["manifests"]
@@ -170,7 +170,7 @@ fn test_manifests_is_array_active_first() -> Result<()> {
 /// Every manifest must have the required fields and exactly one of `claim` / `claim.v2`.
 #[test]
 fn test_manifest_required_fields() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
     for manifest in json_value["manifests"].as_array().unwrap() {
@@ -229,7 +229,7 @@ fn test_manifest_required_fields() -> Result<()> {
 /// Assertion keys must use `__N` double-underscore instance notation (not `_N`).
 #[test]
 fn test_assertion_instance_labeling() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
     for manifest in json_value["manifests"].as_array().unwrap() {
@@ -251,7 +251,7 @@ fn test_assertion_instance_labeling() -> Result<()> {
 /// Binary assertions (thumbnails, embedded data) must use the reference object form.
 #[test]
 fn test_binary_assertions_use_ref_format() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
     for manifest in json_value["manifests"].as_array().unwrap() {
@@ -282,7 +282,7 @@ fn test_binary_assertions_use_ref_format() -> Result<()> {
 /// Hash fields in assertions must be base64 strings, not integer arrays.
 #[test]
 fn test_hash_fields_are_base64_strings() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
     fn check_no_byte_array_hashes(value: &serde_json::Value, path: &str) {
@@ -344,7 +344,7 @@ fn test_hash_fields_are_base64_strings() -> Result<()> {
 /// signature, assertions (array of hashedUriMap), dc:format, instanceID.
 #[test]
 fn test_claim_v1_required_fields() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
     for manifest in json_value["manifests"].as_array().unwrap() {
@@ -403,7 +403,7 @@ fn test_claim_v1_required_fields() -> Result<()> {
 /// signature, created_assertions (array of hashedUriMap).
 #[test]
 fn test_claim_v2_required_fields() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
     for manifest in json_value["manifests"].as_array().unwrap() {
@@ -467,7 +467,7 @@ fn test_claim_v2_required_fields() -> Result<()> {
 /// An empty object `{}` is permitted when signature data is unavailable.
 #[test]
 fn test_signature_structure() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
     for manifest in json_value["manifests"].as_array().unwrap() {
@@ -531,7 +531,7 @@ fn test_signature_structure() -> Result<()> {
 /// a `specVersion` of "2.3", and a required `validationTime` RFC 3339 string.
 #[test]
 fn test_validation_results_structure() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
     for manifest in json_value["manifests"].as_array().unwrap() {
@@ -582,7 +582,7 @@ fn test_validation_results_structure() -> Result<()> {
 /// `validationResults` must NOT contain unknown fields (negative test).
 #[test]
 fn test_validation_results_no_extra_fields() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json_value = reader.to_crjson_value()?;
 
     let allowed = [
@@ -610,7 +610,7 @@ fn test_validation_results_no_extra_fields() -> Result<()> {
 /// `specVersion` must not be absent or set to a wrong value (negative test).
 #[test]
 fn test_validation_results_spec_version_wrong_value() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let mut json_value = reader.to_crjson_value()?;
 
     // Mutate the first manifest's specVersion to something wrong and verify our
@@ -638,7 +638,7 @@ fn test_validation_results_spec_version_wrong_value() -> Result<()> {
 /// Ingredient assertions must use Dublin Core field names (`dc:title`, `dc:format`).
 #[test]
 fn test_ingredient_uses_dc_field_names() -> Result<()> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT))?;
     let json_value = reader.to_crjson_value()?;
 
     for manifest in json_value["manifests"].as_array().unwrap() {
