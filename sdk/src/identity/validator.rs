@@ -41,7 +41,7 @@ impl AsyncPostValidator for CawgValidator {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
             tracker.push_current_uri(uri.to_string());
             let result = identity_assertion
-                .validate_partial_claim(partial_claim, tracker)
+                .validate_partial_claim_async(partial_claim, tracker)
                 .await
                 .ok();
             tracker.pop_current_uri();
@@ -78,7 +78,8 @@ mod tests {
 
         let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
 
-        let reader = Reader::from_stream_async("image/jpeg", &mut stream)
+        let reader = Reader::default()
+            .with_stream_async("image/jpeg", &mut stream)
             .await
             .unwrap();
 
@@ -104,7 +105,8 @@ mod tests {
 
         let mut stream = Cursor::new(MULTIPLE_IDENTITIES_VALID);
 
-        let reader = Reader::from_stream_async("image/jpeg", &mut stream)
+        let reader = Reader::default()
+            .with_stream_async("image/jpeg", &mut stream)
             .await
             .unwrap();
 
@@ -126,7 +128,8 @@ mod tests {
     async fn test_cawg_validate_with_hard_binding_missing() {
         let mut stream = Cursor::new(NO_HARD_BINDING);
 
-        let reader = Reader::from_stream_async("image/jpeg", &mut stream)
+        let reader = Reader::default()
+            .with_stream_async("image/jpeg", &mut stream)
             .await
             .unwrap();
 

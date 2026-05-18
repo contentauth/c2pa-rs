@@ -26,7 +26,8 @@ use crate::{
     cbor_types::UriT,
     error::{Error, Result},
     utils::hash_utils::{
-        hash_stream_by_alg, verify_asset_by_alg, verify_by_alg, verify_stream_by_alg, HashRange,
+        hash_stream_by_alg, hash_stream_by_alg_with_progress, vec_compare, verify_asset_by_alg,
+        verify_by_alg, HashRange,
     },
 };
 
@@ -114,6 +115,37 @@ impl DataHash {
     {
         self.hash = self.hash_from_stream(stream)?;
         Ok(())
+    }
+
+    /// Like [`gen_hash_from_stream`] but fires `progress(step, total)` once per
+    /// hash range so callers with a [`Context`] can report `ProgressPhase::Hashing`
+    /// ticks and support cancellation.
+    pub(crate) fn gen_hash_from_stream_with_progress<R, F>(
+        &mut self,
+        stream: &mut R,
+        progress: &mut F,
+    ) -> Result<()>
+    where
+        R: Read + Seek + ?Sized,
+        F: FnMut(u32, u32) -> Result<()>,
+    {
+        if self.is_remote_hash() {
+            return Err(Error::BadParam(
+                "asset hash is remote, not yet supported".to_owned(),
+            ));
+        }
+
+        let alg = self.alg.as_deref().unwrap_or("sha256").to_string();
+        let exclusions = self.exclusions.clone();
+
+        let hash = hash_stream_by_alg_with_progress(&alg, stream, exclusions, true, progress)?;
+
+        if hash.is_empty() {
+            Err(Error::BadParam("could not generate data hash".to_string()))
+        } else {
+            self.hash = hash;
+            Ok(())
+        }
     }
 
     // add padding to match size
@@ -238,6 +270,22 @@ impl DataHash {
 
     // verify data using currently set algorithm or default alg is none currently set
     pub fn verify_stream_hash(&self, reader: &mut dyn CAIRead, alg: Option<&str>) -> Result<()> {
+        self.verify_stream_hash_with_progress(reader, alg, &mut |_, _| Ok(()))
+    }
+
+    /// Like [`verify_stream_hash`] but fires `progress(step, total)` once per hash
+    /// range so callers with a [`Context`] can report `ProgressPhase::VerifyingAssetHash`
+    /// ticks and support cancellation.
+    pub(crate) fn verify_stream_hash_with_progress<R, F>(
+        &self,
+        reader: &mut R,
+        alg: Option<&str>,
+        progress: &mut F,
+    ) -> Result<()>
+    where
+        R: Read + Seek + ?Sized,
+        F: FnMut(u32, u32) -> Result<()>,
+    {
         if self.is_remote_hash() {
             return Err(Error::BadParam("asset hash is remote".to_owned()));
         }
@@ -252,7 +300,10 @@ impl DataHash {
 
         let exclusions = self.exclusions.as_ref().cloned();
 
-        if verify_stream_by_alg(&curr_alg, &self.hash, reader, exclusions, true) {
+        let computed =
+            hash_stream_by_alg_with_progress(&curr_alg, reader, exclusions, true, progress)?;
+
+        if vec_compare(&self.hash, &computed) {
             Ok(())
         } else {
             Err(Error::HashMismatch("Hashes do not match".to_owned()))

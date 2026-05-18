@@ -24,7 +24,7 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 #[test]
 #[cfg(feature = "file_io")]
 fn test_reader_not_found() -> Result<()> {
-    let result = Reader::from_file("not_found.png");
+    let result = Reader::default().with_file("not_found.png");
     assert_err!(result, Err(Error::IoError(_)));
     Ok(())
 }
@@ -32,7 +32,7 @@ fn test_reader_not_found() -> Result<()> {
 #[test]
 fn test_reader_no_jumbf() -> Result<()> {
     let (format, mut stream) = fixture_stream("sample1.png")?;
-    let result = Reader::from_stream(&format, &mut stream);
+    let result = Reader::default().with_stream(&format, &mut stream);
     assert_err!(result, Err(Error::JumbfNotFound));
     Ok(())
 }
@@ -40,14 +40,14 @@ fn test_reader_no_jumbf() -> Result<()> {
 #[test]
 fn test_reader_ca_jpg() -> Result<()> {
     let (format, mut stream) = fixture_stream("CA.jpg")?;
-    let reader = Reader::from_stream(&format, &mut stream)?;
+    let reader = Reader::default().with_stream(&format, &mut stream)?;
     compare_to_known_good(&reader, "CA.json")
 }
 
 #[test]
 fn test_reader_c_jpg() -> Result<()> {
     let (format, mut stream) = fixture_stream("C.jpg")?;
-    let reader = Reader::from_stream(&format, &mut stream)?;
+    let reader = Reader::default().with_stream(&format, &mut stream)?;
     compare_to_known_good(&reader, "C.json")
 }
 
@@ -82,11 +82,12 @@ fn test_reader_xca_jpg() -> Result<()> {
 #[cfg(feature = "fetch_remote_manifests")]
 #[c2pa_test_async]
 async fn test_reader_remote_url_async() -> Result<()> {
-    let reader = Reader::from_stream_async(
-        "image/jpeg",
-        std::io::Cursor::new(include_bytes!("./fixtures/cloud.jpg")),
-    )
-    .await?;
+    let reader = Reader::default()
+        .with_stream_async(
+            "image/jpeg",
+            std::io::Cursor::new(include_bytes!("./fixtures/cloud.jpg")),
+        )
+        .await?;
     let remote_url = reader.remote_url();
     assert_eq!(remote_url, Some("https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391"));
     assert!(!reader.is_embedded());
@@ -114,9 +115,11 @@ fn test_reader_validation_state_uses_context_settings() -> Result<()> {
     use std::io::Cursor;
 
     let settings = Settings::new().with_json(include_str!("fixtures/test_settings.json"))?;
-    let context = Context::new().with_settings(settings)?.into_shared();
+    let context = Context::new()
+        .with_settings(settings)?
+        .with_signer(common::test_signer())
+        .into_shared();
 
-    // No embedding here
     let mut builder = Builder::from_shared_context(&context);
     builder.no_embed = true;
 
@@ -125,18 +128,16 @@ fn test_reader_validation_state_uses_context_settings() -> Result<()> {
     let mut source = Cursor::new(TEST_IMAGE);
     let mut dest = Cursor::new(Vec::new());
 
-    let manifest_data = builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+    let manifest_data = builder.save_to_stream(format, &mut source, &mut dest)?;
 
     dest.set_position(0);
 
-    // Create a contextualized Reader
     let reader = Reader::from_shared_context(&context).with_manifest_data_and_stream(
         &manifest_data,
         format,
         &mut dest,
     )?;
 
-    // Trust is configured, so this should return Trusted
     assert_eq!(
         reader.validation_state(),
         ValidationState::Trusted,

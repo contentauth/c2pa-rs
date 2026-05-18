@@ -97,7 +97,7 @@ pub trait Signer {
                         headers,
                         &body,
                         message,
-                        &SyncGenericResolver::new(),
+                        &SyncGenericResolver::with_redirects().unwrap_or_default(),
                     )
                     .map_err(|e| e.into()),
                 );
@@ -228,7 +228,7 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
                         headers,
                         &body,
                         message,
-                        &AsyncGenericResolver::new(),
+                        &AsyncGenericResolver::with_redirects().unwrap_or_default(),
                     )
                     .await
                     .map_err(|e| e.into()),
@@ -346,7 +346,6 @@ impl RawSigner for Box<dyn Signer> {
     }
 
     fn ocsp_response(&self) -> Option<Vec<u8>> {
-        eprintln!("HUH, A DIFFERENT I WANTED @ 397");
         self.as_ref().ocsp_val()
     }
 }
@@ -477,5 +476,66 @@ impl Signer for RawSignerWrapper {
 
     fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
         Some(Box::new(&*self.0))
+    }
+}
+
+/// Adapts an owned [`BoxedSigner`] to implement [`RawSigner`].
+///
+/// This is the reverse of [`RawSignerWrapper`]: it allows a `BoxedSigner` to be
+/// used wherever a `Box<dyn RawSigner + Send + Sync>` is expected.
+#[allow(dead_code)]
+pub(crate) struct OwnedSignerWrapper(pub(crate) BoxedSigner);
+
+// SAFETY: WASM is single-threaded; no concurrent access is possible.
+#[cfg(target_arch = "wasm32")]
+unsafe impl Send for OwnedSignerWrapper {}
+#[cfg(target_arch = "wasm32")]
+unsafe impl Sync for OwnedSignerWrapper {}
+
+impl RawSigner for OwnedSignerWrapper {
+    fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+        Ok(Signer::sign(self.0.as_ref(), data)?)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        Signer::alg(self.0.as_ref())
+    }
+
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        Ok(self.0.certs()?)
+    }
+
+    fn reserve_size(&self) -> usize {
+        Signer::reserve_size(self.0.as_ref())
+    }
+
+    fn ocsp_response(&self) -> Option<Vec<u8>> {
+        self.0.ocsp_val()
+    }
+}
+
+impl TimeStampProvider for OwnedSignerWrapper {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.0.time_authority_url()
+    }
+
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.0.timestamp_request_headers()
+    }
+
+    fn time_stamp_request_body(
+        &self,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, TimeStampError> {
+        Ok(self.0.timestamp_request_body(message)?)
+    }
+
+    fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+        self.0
+            .send_timestamp_request(message)
+            .map(|r| r.map_err(|e| e.into()))
     }
 }
