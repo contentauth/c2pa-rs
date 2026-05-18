@@ -235,8 +235,6 @@ impl Signer for CallbackSigner {
         self.tsa_url.clone()
     }
 
-    // TODO: consider threading the caller's resolver through here instead of
-    // constructing a new one; follow up once resolver plumbing is stabilised.
     fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         if let Some(ref callback) = self.timestamp_callback {
             return Some(callback(self.context, message));
