@@ -213,7 +213,7 @@ impl ValidationResults {
     /// See [Validation states - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_validation_states).
     pub fn validation_state(&self) -> ValidationState {
         if let Some(active_manifest) = self.active_manifest.as_ref() {
-            // NOTE: Changes here may impact the impl of [`ValidationFailureSummary::Display`].
+            // NOTE: Changes here may impact the impl of [`ValidationFailureSummary::fmt`].
             //       Ensure changes are reciprocated in both locations.
             //
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
