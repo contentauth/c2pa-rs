@@ -29,7 +29,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["openssl", "default_http"]
-add_thumbnails = ["image"]
+add_thumbnails = ["dep:image"]
 file_io = []
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
@@ -61,10 +61,6 @@ http_reqwest = ["dep:reqwest"]
 # It enables some low-overhead timing features used in our development cycle.
 diagnostics = []
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
-# Workaround for https://github.com/est31/cargo-udeps/issues/293.
-
 [[example]]
 name = "cawg_identity"
 required-features = ["file_io"]
@@ -90,6 +86,9 @@ required-features = ["file_io"]
 [[example]]
 name = "progress"
 
+[[example]]
+name = "redaction"
+
 [lib]
 crate-type = ["lib"]
 
@@ -97,7 +96,7 @@ crate-type = ["lib"]
 asn1-rs = "0.7.1"
 async-generic = "1.1"
 async-trait = "0.1.78"
-atree = "=0.5.2"
+atree = "0.5.4"
 base64 = "0.22.1"
 bcder = "0.7.3"
 bytes = "1.11.1"
@@ -106,10 +105,6 @@ byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
 c2pa_cbor = "0.77.2"
-config = { version = "0.14.0", default-features = false, features = [
-    "json",
-    "toml",
-] }
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
 coset = "0.4.0"
@@ -125,9 +120,7 @@ ed25519-dalek = { version = "2.1.1", features = [
     "pkcs8",
     "rand_core",
 ] }
-env_logger = "0.11.8"
 hex = "0.4.3"
-hex-literal = "1.0.0" # Might be only a dev dependency
 http = "1.3.1"
 id3 = "1.16.3"
 img-parts = "0.4.0"
@@ -206,7 +199,7 @@ reqwest = { version = "0.12.23", default-features = false, features = [
 ], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-openssl = { version = "0.10.72", features = ["vendored"], optional = true }
+openssl = { version = "0.10.78", features = ["vendored"], optional = true }
 ureq = { version = "3.1.0", default-features = false, features = [
     "rustls"
 ], optional = true }
@@ -291,6 +284,8 @@ web-sys = { version = "0.3.58", features = [
 
 [dev-dependencies]
 anyhow = "1.0.97"
+env_logger = "0.11.8"
+glob = "0.3.1"
 hex-literal = "1.0.0"
 jumbf = "0.7.0"
 c2pa_macros = { path = "../macros" }
@@ -304,6 +299,7 @@ wasm-bindgen-test = "0.3.55"
 httpmock = "0.8.2"
 tokio = { version = "1.44.2", features = ["full"] }
 criterion = { package = "codspeed-criterion-compat", version = "4.2.1" }
+dhat = "0.3.3"
 
 # WASM/WASI doesn't support default criterion features.
 # https://github.com/bheisler/criterion.rs/blob/4c19e913b84e6a7e4a8470cb0f766796886ed891/book/src/user_guide/wasi.md
@@ -316,4 +312,16 @@ harness = false
 
 [[bench]]
 name = "read"
+harness = false
+
+[[bench]]
+name = "complex_read"
+harness = false
+
+[[bench]]
+name = "settings"
+harness = false
+
+[[bench]]
+name = "settings_memory"
 harness = false
