@@ -97,7 +97,8 @@ Use the `/** @deprecated */` JSDoc tag for IDE/toolchain visibility, and option
 ### C / C++
 
 ```C++
-__attribute__((deprecated("message")))``[[deprecated("message")]]
+__attribute__((deprecated("message")))
+[[deprecated("message")]]
 ```
 
 Also use `__declspec(deprecated)` to ensure deprecations are visible on Windows platforms.
