@@ -184,3 +184,121 @@ impl AsyncSigner for CallbackSigner {
         self.tsa_url.clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use c2pa_macros::c2pa_test_async;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+    use crate::{AsyncSigner, Signer, SigningAlg};
+
+    const ED25519_CERTS: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pub");
+    const ED25519_PRIVATE_KEY: &[u8] = include_bytes!("../tests/fixtures/certs/ed25519.pem");
+
+    fn make_ed25519_signer() -> CallbackSigner {
+        let callback =
+            |_ctx: *const (), data: &[u8]| CallbackSigner::ed25519_sign(data, ED25519_PRIVATE_KEY);
+        CallbackSigner::new(callback, SigningAlg::Ed25519, ED25519_CERTS)
+    }
+
+    #[test]
+    fn new_sets_expected_defaults() {
+        let signer = make_ed25519_signer();
+        assert_eq!(signer.alg, SigningAlg::Ed25519);
+        assert_eq!(signer.tsa_url, None);
+        assert!(signer.context.is_null());
+        assert!(!signer.certs.is_empty());
+        assert!(signer.reserve_size >= 10000);
+    }
+
+    #[test]
+    fn set_tsa_url_stores_url() {
+        let signer = make_ed25519_signer().set_tsa_url("http://timestamp.example.com");
+        assert_eq!(
+            signer.tsa_url,
+            Some("http://timestamp.example.com".to_string())
+        );
+        assert_eq!(
+            Signer::time_authority_url(&signer),
+            Some("http://timestamp.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn set_context_stores_pointer() {
+        let value: u32 = 42;
+        let ptr = &value as *const u32 as *const ();
+        let signer = make_ed25519_signer().set_context(ptr);
+        assert_eq!(signer.context, ptr);
+    }
+
+    #[test]
+    fn ed25519_sign_produces_valid_signature() {
+        let data = b"test data to sign";
+        let sig = CallbackSigner::ed25519_sign(data, ED25519_PRIVATE_KEY).unwrap();
+        assert_eq!(sig.len(), 64); // Ed25519 signatures are always 64 bytes
+    }
+
+    #[test]
+    fn signer_trait_sign_and_alg() {
+        let signer = make_ed25519_signer();
+        assert_eq!(Signer::alg(&signer), SigningAlg::Ed25519);
+        let sig = Signer::sign(&signer, b"hello").unwrap();
+        assert_eq!(sig.len(), 64);
+    }
+
+    #[test]
+    fn signer_trait_certs_parses_pem() {
+        let signer = make_ed25519_signer();
+        let certs = Signer::certs(&signer).unwrap();
+        assert!(!certs.is_empty());
+    }
+
+    #[test]
+    fn signer_trait_reserve_size_is_reasonable() {
+        let signer = make_ed25519_signer();
+        assert!(Signer::reserve_size(&signer) >= 10000);
+    }
+
+    #[test]
+    fn default_callback_returns_unsupported_type() {
+        let signer = CallbackSigner::default();
+        assert!(matches!(
+            Signer::sign(&signer, b"data"),
+            Err(crate::Error::UnsupportedType)
+        ));
+    }
+
+    #[c2pa_test_async]
+    async fn async_signer_sign_produces_same_result() {
+        let signer = make_ed25519_signer();
+        let data = b"async test data".to_vec();
+        let sig = AsyncSigner::sign(&signer, data.clone()).await.unwrap();
+        assert_eq!(sig.len(), 64);
+        // Verify async and sync produce identical signatures (Ed25519 is deterministic)
+        let sync_sig = Signer::sign(&signer, &data).unwrap();
+        assert_eq!(sig, sync_sig);
+    }
+
+    #[c2pa_test_async]
+    async fn async_signer_alg_and_certs_match_sync() {
+        let signer = make_ed25519_signer();
+        assert_eq!(AsyncSigner::alg(&signer), Signer::alg(&signer));
+        assert_eq!(
+            AsyncSigner::certs(&signer).unwrap(),
+            Signer::certs(&signer).unwrap()
+        );
+        assert_eq!(
+            AsyncSigner::reserve_size(&signer),
+            Signer::reserve_size(&signer)
+        );
+        assert_eq!(
+            AsyncSigner::time_authority_url(&signer),
+            Signer::time_authority_url(&signer)
+        );
+    }
+}
