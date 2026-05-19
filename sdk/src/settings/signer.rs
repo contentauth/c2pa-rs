@@ -147,8 +147,19 @@ impl SignerSettings {
         }
     }
 
-    /// Returns a CAWG X.509 identity signer that wraps the provided c2pa signer.
+    /// Returns a CAWG X.509 identity signer using the default HTTP resolver.
     pub fn cawg_signer(self, c2pa_signer: BoxedSigner) -> Result<BoxedSigner> {
+        let resolver = Arc::new(SyncGenericResolver::with_redirects().unwrap_or_default())
+            as Arc<dyn SyncHttpResolver>;
+        self.cawg_signer_with_resolver(c2pa_signer, resolver)
+    }
+
+    /// Returns a CAWG X.509 identity signer with a caller-supplied HTTP resolver.
+    pub fn cawg_signer_with_resolver(
+        self,
+        c2pa_signer: BoxedSigner,
+        resolver: Arc<dyn SyncHttpResolver>,
+    ) -> Result<BoxedSigner> {
         match self {
             SignerSettings::Local {
                 alg: cawg_alg,
@@ -158,7 +169,7 @@ impl SignerSettings {
                 referenced_assertions: cawg_referenced_assertions,
                 roles: cawg_roles,
             } => {
-                let signer = CawgX509IdentitySigner::from_settings(
+                let signer = CawgX509IdentitySigner::from_settings_with_resolver(
                     c2pa_signer,
                     cawg_alg,
                     cawg_sign_cert.as_bytes(),
@@ -166,6 +177,7 @@ impl SignerSettings {
                     cawg_tsa_url,
                     cawg_referenced_assertions.unwrap_or_default(),
                     cawg_roles.unwrap_or_default(),
+                    resolver,
                 )?;
                 Ok(Box::new(signer))
             }
@@ -242,6 +254,7 @@ pub(crate) struct CawgX509IdentitySigner {
     identity_signer: Arc<dyn RawSigner + Send + Sync>,
     referenced_assertions: Vec<String>,
     roles: Vec<String>,
+    resolver: Arc<dyn SyncHttpResolver>,
 }
 
 impl CawgX509IdentitySigner {
@@ -255,6 +268,31 @@ impl CawgX509IdentitySigner {
         referenced_assertions: Vec<String>,
         roles: Vec<String>,
     ) -> Result<Self> {
+        let resolver = Arc::new(SyncGenericResolver::with_redirects().unwrap_or_default())
+            as Arc<dyn SyncHttpResolver>;
+        Self::from_settings_with_resolver(
+            c2pa_signer,
+            alg,
+            sign_cert,
+            private_key,
+            tsa_url,
+            referenced_assertions,
+            roles,
+            resolver,
+        )
+    }
+
+    /// Creates a combined signer from cert/key bytes with a caller-supplied HTTP resolver.
+    pub(crate) fn from_settings_with_resolver(
+        c2pa_signer: BoxedSigner,
+        alg: SigningAlg,
+        sign_cert: &[u8],
+        private_key: &[u8],
+        tsa_url: Option<String>,
+        referenced_assertions: Vec<String>,
+        roles: Vec<String>,
+        resolver: Arc<dyn SyncHttpResolver>,
+    ) -> Result<Self> {
         let raw_signer =
             signer_from_cert_chain_and_private_key(sign_cert, private_key, alg, tsa_url)?;
         Ok(Self {
@@ -262,6 +300,7 @@ impl CawgX509IdentitySigner {
             identity_signer: Arc::from(raw_signer),
             referenced_assertions,
             roles,
+            resolver,
         })
     }
 
@@ -272,6 +311,8 @@ impl CawgX509IdentitySigner {
         referenced_assertions: &[&str],
         roles: &[&str],
     ) -> Self {
+        let resolver = Arc::new(SyncGenericResolver::with_redirects().unwrap_or_default())
+            as Arc<dyn SyncHttpResolver>;
         Self {
             c2pa_signer,
             identity_signer: Arc::new(OwnedSignerWrapper(identity_signer)),
@@ -280,6 +321,7 @@ impl CawgX509IdentitySigner {
                 .map(|s| s.to_string())
                 .collect(),
             roles: roles.iter().map(|s| s.to_string()).collect(),
+            resolver,
         }
     }
 }
@@ -328,7 +370,10 @@ impl Signer for CawgX509IdentitySigner {
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         let identity_signer: Box<dyn RawSigner + Sync + Send + 'static> =
             Box::new(ArcRawSigner(Arc::clone(&self.identity_signer)));
-        let x509_credential_holder = X509CredentialHolder::from_raw_signer(identity_signer);
+        let x509_credential_holder = X509CredentialHolder::from_raw_signer_with_resolver(
+            identity_signer,
+            Arc::clone(&self.resolver),
+        );
 
         let mut iab = IdentityAssertionBuilder::for_credential_holder(x509_credential_holder);
 

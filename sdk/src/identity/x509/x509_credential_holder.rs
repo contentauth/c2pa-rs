@@ -11,11 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::sync::Arc;
+
 use crate::{
     crypto::{
-        cose::{sign, TimeStampStorage},
+        cose::{sign_with_resolver, TimeStampStorage},
         raw_signature::RawSigner,
     },
+    http::{SyncGenericResolver, SyncHttpResolver},
     identity::{
         builder::{CredentialHolder, IdentityBuilderError},
         SignerPayload,
@@ -28,18 +31,30 @@ use crate::{
 ///
 /// [`SignatureVerifier`]: crate::identity::SignatureVerifier
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
-pub struct X509CredentialHolder(Box<dyn RawSigner + Sync + Send + 'static>);
+pub struct X509CredentialHolder {
+    signer: Box<dyn RawSigner + Sync + Send + 'static>,
+    resolver: Arc<dyn SyncHttpResolver>,
+}
 
 impl X509CredentialHolder {
     /// Create an `X509CredentialHolder` instance by wrapping an instance of
     /// [`RawSigner`].
     ///
-    /// The [`RawSigner`] implementation actually holds (or has access to)
-    /// the relevant certificates and private key material.
+    /// Uses the default HTTP resolver for any timestamp requests.
     ///
     /// [`RawSigner`]: crate::crypto::raw_signature::RawSigner
     pub fn from_raw_signer(signer: Box<dyn RawSigner + Sync + Send + 'static>) -> Self {
-        Self(signer)
+        let resolver = Arc::new(SyncGenericResolver::with_redirects().unwrap_or_default())
+            as Arc<dyn SyncHttpResolver>;
+        Self { signer, resolver }
+    }
+
+    /// Create an `X509CredentialHolder` with a caller-supplied HTTP resolver.
+    pub(crate) fn from_raw_signer_with_resolver(
+        signer: Box<dyn RawSigner + Sync + Send + 'static>,
+        resolver: Arc<dyn SyncHttpResolver>,
+    ) -> Self {
+        Self { signer, resolver }
     }
 }
 
@@ -49,7 +64,7 @@ impl CredentialHolder for X509CredentialHolder {
     }
 
     fn reserve_size(&self) -> usize {
-        self.0.reserve_size()
+        self.signer.reserve_size()
     }
 
     fn sign(&self, signer_payload: &SignerPayload) -> Result<Vec<u8>, IdentityBuilderError> {
@@ -59,11 +74,12 @@ impl CredentialHolder for X509CredentialHolder {
         c2pa_cbor::to_writer(&mut sp_cbor, signer_payload)
             .map_err(|e| IdentityBuilderError::CborGenerationError(e.to_string()))?;
 
-        sign(
-            self.0.as_ref(),
+        sign_with_resolver(
+            self.signer.as_ref(),
             &sp_cbor,
             None,
             TimeStampStorage::V2_sigTst2_CTT,
+            self.resolver.as_ref(),
         )
         .map_err(|e| IdentityBuilderError::SignerError(e.to_string()))
     }
