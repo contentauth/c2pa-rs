@@ -257,8 +257,8 @@ impl CAIWriter for JpegIO {
         let mut buf = Vec::new();
         // read the whole asset
         input_stream.rewind()?;
-        // TODO: optimize this by implementing a streaming parser
         input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        // TODO: optimize this by implementing a streaming parser
         let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
         // remove existing CAI segments
@@ -352,23 +352,18 @@ impl CAIWriter for JpegIO {
             return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
         }
 
-        let jpeg_with_dummy = if get_cai_segments(&jpeg)?.is_empty() {
-            // create dummy JUMBF seg
-            let mut no_bytes = vec![0; 50]; // enough bytes to be valid
-            no_bytes.splice(16..20, C2PA_MARKER); // cai UUID signature
-            input_stream.rewind()?;
-            let mut output_stream = Cursor::new(Vec::new());
-            self.write_cai(input_stream, &mut output_stream, &no_bytes)?;
-            let buf = output_stream.into_inner();
-            Some(
-                Jpeg::from_bytes(buf.into())
-                    .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?,
-            )
+        let placeholder = if get_cai_segments(&jpeg)?.is_empty() {
+            let app0_index = jpeg.segments().iter().rposition(|s| s.marker() == APP0);
+
+            let placeholder_index = app0_index.map_or(0, |i| i + 1);
+            // len computed as done in wire_cai
+            // marker + length_field + CI + EN + Z + data
+            let placeholder_len = 2 + 2 + 2 + 2 + 4 + 50;
+
+            Some((placeholder_index, placeholder_len))
         } else {
             None
         };
-
-        let jpeg = jpeg_with_dummy.as_ref().unwrap_or(&jpeg);
 
         let mut cai_loc = HashObjectPositions {
             offset: 0,
@@ -376,7 +371,15 @@ impl CAIWriter for JpegIO {
             htype: HashBlockObjectType::Cai,
         };
 
-        for seg in jpeg.segments() {
+        for (index, seg) in jpeg.segments().iter().enumerate() {
+            if let Some((placeholder_index, placeholder_len)) = placeholder {
+                if index == placeholder_index {
+                    cai_loc.offset = curr_offset;
+                    cai_loc.length = placeholder_len;
+                    curr_offset += placeholder_len;
+                }
+            }
+
             match seg.marker() {
                 markers::APP11 => {
                     // JUMBF marker
@@ -442,6 +445,13 @@ impl CAIWriter for JpegIO {
                 }
             }
             curr_offset += seg.len_with_entropy();
+        }
+
+        if let Some((placeholder_index, placeholder_len)) = placeholder {
+            if placeholder_index >= jpeg.segments().len() {
+                cai_loc.offset = curr_offset;
+                cai_loc.length = placeholder_len;
+            }
         }
 
         if cai_loc.length > 0 {
