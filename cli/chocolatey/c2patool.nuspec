@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>c2patool</id>
+    <version>__VERSION__</version>
+    <title>c2patool</title>
+    <authors>Adobe Content Authenticity Initiative</authors>
+    <owners>Adobe Content Authenticity Initiative</owners>
+    <projectUrl>https://contentauthenticity.org</projectUrl>
+    <licenseUrl>https://github.com/contentauth/c2pa-rs/blob/main/LICENSE-MIT</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>c2patool is a command line tool for working with C2PA manifests and media asset provenance.
+
+Use it to read a summary JSON report of C2PA manifests, inspect low-level manifest data, or add a C2PA manifest to a media file.</description>
+    <summary>Command line tool for working with C2PA manifests and media asset provenance.</summary>
+    <tags>c2pa xmp metadata content-authenticity provenance cli commandline</tags>
+    <docsUrl>https://opensource.contentauthenticity.org/docs/c2patool</docsUrl>
+    <bugTrackerUrl>https://github.com/contentauth/c2pa-rs/issues</bugTrackerUrl>
+    <packageSourceUrl>https://github.com/contentauth/c2pa-rs/tree/main/cli/chocolatey</packageSourceUrl>
+    <releaseNotes>https://github.com/contentauth/c2pa-rs/blob/main/cli/CHANGELOG.md</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>
