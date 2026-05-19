@@ -356,7 +356,7 @@ impl CAIWriter for JpegIO {
             let app0_index = jpeg.segments().iter().rposition(|s| s.marker() == APP0);
 
             let placeholder_index = app0_index.map_or(0, |i| i + 1);
-            // len computed as done in wire_cai
+            // len computed as done in write_cai
             // marker + length_field + CI + EN + Z + data
             let placeholder_len = 2 + 2 + 2 + 2 + 4 + 50;
 
