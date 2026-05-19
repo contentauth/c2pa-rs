@@ -95,6 +95,8 @@ pub(super) fn biguint_val(ber_object: &BerObject) -> BigUint {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
     use crate::crypto::raw_signature::RawSignatureValidator;
 

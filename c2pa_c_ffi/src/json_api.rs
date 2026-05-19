@@ -10,8 +10,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::{identity::validator::CawgValidator, Ingredient, Reader, Relationship};
-use tokio::runtime::Builder;
+use c2pa::{Ingredient, Reader, Relationship};
 
 use crate::{Error, Result, SignerInfo};
 
@@ -22,23 +21,7 @@ use crate::{Error, Result, SignerInfo};
 #[allow(deprecated)]
 pub fn read_file(path: &str, data_dir: Option<String>) -> Result<String> {
     // Legacy JSON API: inherits thread-local settings set by c2pa_load_settings.
-    let mut reader = Reader::from_file(path).map_err(Error::from_c2pa_error)?;
-
-    #[cfg(target_arch = "wasm32")]
-    let runtime = Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| Error::Other(e.to_string()))?;
-
-    #[cfg(not(target_arch = "wasm32"))]
-    let runtime = Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| Error::Other(e.to_string()))?;
-
-    runtime
-        .block_on(reader.post_validate_async(&CawgValidator {}))
-        .map_err(Error::from_c2pa_error)?;
+    let reader = Reader::from_file(path).map_err(Error::from_c2pa_error)?;
 
     Ok(if let Some(dir) = data_dir {
         let json = reader.json();
