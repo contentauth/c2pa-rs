@@ -12,7 +12,7 @@ members = [
 
 # members in this workspace can share this version setting
 [workspace.package]
-version = "0.80.3"
+version = "0.84.1"
 
 [workspace.dependencies]
 c2pa = { path = "sdk", default-features = false }
@@ -25,3 +25,4 @@ debug = 2              # symbols for debugging - switch to 1 to disable debug sy
 strip = true  # Automatically strip symbols from the binary.
 opt-level = 3
 lto = "thin"  # Link time optimization.
+

@@ -6,13 +6,9 @@ license = "MIT OR Apache-2.0"
 edition = "2021"
 rust-version = "1.88.0"
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
-# Workaround for https://github.com/est31/cargo-udeps/issues/293.
-
 [dependencies]
 anyhow = "1.0.40"
-c2pa = { path = "../sdk", version = "0.80.3", features = [
+c2pa = { path = "../sdk", version = "0.84.1", features = [
 	"fetch_remote_manifests",
 	"file_io",
 	"add_thumbnails",

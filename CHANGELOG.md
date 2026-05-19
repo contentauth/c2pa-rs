@@ -9,6 +9,69 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.84.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.84.0...c2pa-v0.84.1)
+_12 May 2026_
+
+### Fixed
+
+* Case-insensitive enums in settings to preserve backwards compatibility with `config` crate ([#2138](https://github.com/contentauth/c2pa-rs/pull/2138))
+
+## [0.84.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.83.0...c2pa-v0.84.0)
+_11 May 2026_
+
+### Fixed
+
+* Archive preserves duplicate label assertions ([#2135](https://github.com/contentauth/c2pa-rs/pull/2135))
+
+### Other
+
+* [**breaking**] Remove `config` crate and use `serde_json` directly ([#2132](https://github.com/contentauth/c2pa-rs/pull/2132))
+
+## [0.83.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.82.1...c2pa-v0.83.0)
+_11 May 2026_
+
+### Added
+
+* Large and complex benchmark suite ([#2116](https://github.com/contentauth/c2pa-rs/pull/2116))
+
+### Fixed
+
+* Reduce allocations in redactions ([#2127](https://github.com/contentauth/c2pa-rs/pull/2127))
+* Allow boxes with incomplete content to succeed. ([#2125](https://github.com/contentauth/c2pa-rs/pull/2125))
+
+### Other
+
+* Update `cargo-udeps` setup ([#2047](https://github.com/contentauth/c2pa-rs/pull/2047))
+
+## [0.82.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.82.0...c2pa-v0.82.1)
+_04 May 2026_
+
+### Fixed
+
+* Harden against integer underflow attack in GIF XMP validation ([#2099](https://github.com/contentauth/c2pa-rs/pull/2099))
+* Harden error code mapping for hash mismatch in validator ([#2101](https://github.com/contentauth/c2pa-rs/pull/2101))
+* Update logic for stale thumbnails detection in redaction ([#2107](https://github.com/contentauth/c2pa-rs/pull/2107))
+
+## [0.82.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.81.0...c2pa-v0.82.0)
+_01 May 2026_
+
+### Fixed
+
+* Harden against unbounded HTTP response body read in DID web server ([#2070](https://github.com/contentauth/c2pa-rs/pull/2070))
+
+## [0.81.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.3...c2pa-v0.81.0)
+_01 May 2026_
+
+### Added
+
+* Make `c2pa_reason` an enum ([#2100](https://github.com/contentauth/c2pa-rs/pull/2100))
+
+### Fixed
+
+* Harden against integer underflow attacks in parsing purpose field in BMFF UUID box ([#2097](https://github.com/contentauth/c2pa-rs/pull/2097))
+* Harden against integer overflow attack in png chunk hashing for 32 bit WASM architecture ([#2102](https://github.com/contentauth/c2pa-rs/pull/2102))
+* [**breaking**] Use absolute URIs for ingredient thumbnails ([#2098](https://github.com/contentauth/c2pa-rs/pull/2098))
+
 ## [0.80.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.80.2...c2pa-v0.80.3)
 _29 April 2026_
 
