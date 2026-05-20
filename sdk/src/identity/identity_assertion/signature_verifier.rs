@@ -43,11 +43,27 @@ pub trait SignatureVerifier: Sync {
     /// [`ValidationError`]: crate::identity::ValidationError
     type Error: Debug;
 
-    /// Verify the signature, returning an instance of [`Output`] if the
-    /// signature is valid.
+    /// Verify the signature synchronously, returning an instance of [`Output`]
+    /// if the signature is valid.
+    ///
+    /// Implementations that require network I/O (e.g. `did:web` resolution)
+    /// must return an error from this method; use [`check_signature_async`]
+    /// instead for those cases.
     ///
     /// [`Output`]: Self::Output
-    async fn check_signature(
+    /// [`check_signature_async`]: Self::check_signature_async
+    fn check_signature(
+        &self,
+        signer_payload: &SignerPayload,
+        signature: &[u8],
+        status_tracker: &mut StatusTracker,
+    ) -> Result<Self::Output, ValidationError<Self::Error>>;
+
+    /// Verify the signature asynchronously, returning an instance of [`Output`]
+    /// if the signature is valid.
+    ///
+    /// [`Output`]: Self::Output
+    async fn check_signature_async(
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],

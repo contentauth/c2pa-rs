@@ -20,12 +20,11 @@ use std::{
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 use c2pa::{
-    assertions::DataHash, identity::validator::CawgValidator, Builder as C2paBuilder,
-    CallbackSigner, Context, ProgressPhase, Reader as C2paReader, Settings as C2paSettings,
-    SigningAlg,
+    assertions::DataHash, create_signer, Builder as C2paBuilder, CallbackSigner, Context,
+    ProgressPhase, Reader as C2paReader, Settings as C2paSettings, SigningAlg,
 };
-use tokio::runtime::Builder;
 
+//use tokio::runtime::Builder;
 #[cfg(feature = "file_io")]
 use crate::json_api::{read_file, sign_file};
 #[cfg(test)]
@@ -1145,30 +1144,6 @@ pub unsafe extern "C" fn c2pa_free_string_array(ptr: *const *const c_char, count
     Vec::from_raw_parts(mut_ptr, count, count);
 }
 
-// Run CAWG post-validation - this is async and requires a runtime.
-fn post_validate(result: Result<C2paReader, c2pa::Error>) -> Result<C2paReader, c2pa::Error> {
-    match result {
-        Ok(mut reader) => {
-            #[cfg(target_arch = "wasm32")]
-            let runtime = Builder::new_current_thread().enable_all().build();
-
-            #[cfg(not(target_arch = "wasm32"))]
-            let runtime = Builder::new_multi_thread().enable_all().build();
-
-            let runtime = match runtime {
-                Ok(runtime) => runtime,
-                Err(err) => return Err(c2pa::Error::OtherError(Box::new(err))),
-            };
-
-            match runtime.block_on(reader.post_validate_async(&CawgValidator {})) {
-                Ok(_) => Ok(reader),
-                Err(err) => Err(err),
-            }
-        }
-        Err(err) => Err(err),
-    }
-}
-
 /// Creates a new C2paReader from a default context.
 ///
 /// # Safety
@@ -1228,9 +1203,8 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
     // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
     // Prefer c2pa_reader_from_context for new C API usage.
     #[allow(deprecated)]
-    let result = C2paReader::from_stream(&format, stream);
-    let result = ok_or_return_null!(post_validate(result));
-    box_tracked!(result)
+    let reader = ok_or_return_null!(C2paReader::from_stream(&format, stream));
+    box_tracked!(reader)
 }
 
 /// Configures an existing reader with a stream.
@@ -1261,9 +1235,8 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     // Now safe to take ownership - all validations passed
     untrack_or_return_null!(reader, C2paReader);
     let reader = Box::from_raw(reader);
-    let result = (*reader).with_stream(&format, stream);
-    let result = ok_or_return_null!(post_validate(result));
-    box_tracked!(result)
+    let reader = ok_or_return_null!((*reader).with_stream(&format, stream));
+    box_tracked!(reader)
 }
 
 /// Configures an existing passed in Reader with manifest data and a stream.
@@ -1300,11 +1273,13 @@ pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
     // Take ownership of the Reader (needs to remove it from tracking to take it)
     untrack_or_return_null!(reader, C2paReader);
     let reader = Box::from_raw(reader);
-    let result = (*reader).with_manifest_data_and_stream(manifest_bytes, &format, stream);
-    let result = ok_or_return_null!(post_validate(result));
-
+    let reader = ok_or_return_null!((*reader).with_manifest_data_and_stream(
+        manifest_bytes,
+        &format,
+        stream
+    ));
     // New reader, will be tracked now too
-    box_tracked!(result)
+    box_tracked!(reader)
 }
 
 /// Configures an existing reader with a fragment stream.
@@ -1347,9 +1322,8 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
     // Now safe to take ownership - all validations passed
     untrack_or_return_null!(reader, C2paReader);
     let reader = Box::from_raw(reader);
-    let result = (*reader).with_fragment(&format, stream, fragment);
-    let result = ok_or_return_null!(post_validate(result));
-    box_tracked!(result)
+    let reader = ok_or_return_null!((*reader).with_fragment(&format, stream, fragment));
+    box_tracked!(reader)
 }
 
 /// Creates a new C2paReader from a shared Context.
@@ -1396,7 +1370,7 @@ pub unsafe fn c2pa_reader_from_file(path: *const c_char) -> *mut C2paReader {
     let path = cstr_or_return_null!(path);
     // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
     let result = C2paReader::from_file(&path);
-    box_tracked!(ok_or_return_null!(post_validate(result)))
+    box_tracked!(ok_or_return_null!(result))
 }
 
 /// Creates and verifies a C2paReader from an asset stream with the given format and manifest data.
@@ -1432,8 +1406,12 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
 
     // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
     #[allow(deprecated)]
-    let result = C2paReader::from_manifest_data_and_stream(manifest_bytes, &format, stream);
-    box_tracked!(ok_or_return_null!(post_validate(result)))
+    let reader = ok_or_return_null!(C2paReader::from_manifest_data_and_stream(
+        manifest_bytes,
+        &format,
+        stream
+    ));
+    box_tracked!(reader)
 }
 
 /// Frees a C2paReader allocated by Rust.
@@ -2714,6 +2692,76 @@ pub unsafe extern "C" fn c2pa_signer_create(
     if let Some(tsa_url) = tsa_url.as_ref() {
         signer = signer.set_tsa_url(tsa_url);
     }
+    box_tracked!(C2paSigner {
+        signer: Box::new(signer),
+    })
+}
+
+/// Creates a C2paSigner that handles both C2PA claim signing and X.509 identity assertion signing
+/// by combining two existing [`C2paSigner`] instances.
+///
+/// The resulting signer will embed one X.509 identity assertion (using `cawg.x509.cose`)
+/// into every manifest it signs.
+///
+/// Both input signers are **consumed** by this call — ownership transfers to the returned
+/// signer and the caller MUST NOT free them afterward.
+///
+/// # Parameters
+/// * `c2pa_signer`: A `C2paSigner` used to sign the C2PA claim. Consumed by this call.
+/// * `identity_signer`: A `C2paSigner` used to sign the X.509 identity assertion. Consumed by
+///   this call.
+/// * `referenced_assertions`: A NULL-terminated array of NULL-terminated UTF-8 strings naming
+///   assertions to reference in the identity assertion, or NULL if none.
+/// * `roles`: A NULL-terminated array of NULL-terminated UTF-8 strings specifying the named
+///   actor's roles, or NULL if none.
+///
+/// # Errors
+/// Returns NULL if either signer pointer is NULL; call `c2pa_error` to retrieve the error string.
+///
+/// # Safety
+/// Both signer pointers must have been created by a `c2pa_signer_*` function and not yet freed.
+/// After this call they are invalid — do NOT pass them to `c2pa_free`.
+/// The returned value MUST be released by calling `c2pa_free`.
+/// `referenced_assertions` and `roles`, if non-NULL, must each point to a NULL-terminated array
+/// of NULL-terminated UTF-8 strings that remain valid for the duration of this call.
+///
+/// # Example
+/// ```c
+/// C2paSigner* c2pa = c2pa_signer_create(c2pa_ctx, c2pa_sign_cb, C2PA_SIGNING_ALG_ES256, c2pa_certs, NULL);
+/// C2paSigner* identity = c2pa_signer_create(id_ctx, id_sign_cb, C2PA_SIGNING_ALG_ES256, id_certs, NULL);
+/// const char* refs[] = { "c2pa.actions", NULL };
+/// C2paSigner* signer = c2pa_identity_signer_create(c2pa, identity, refs, NULL);
+/// if (signer == NULL) {
+///     char* error = c2pa_error();
+///     printf("Error: %s\n", error);
+///     c2pa_string_free(error);
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_identity_signer_create(
+    c2pa_signer_ptr: *mut C2paSigner,
+    identity_signer_ptr: *mut C2paSigner,
+    referenced_assertions: *const *const c_char,
+    roles: *const *const c_char,
+) -> *mut C2paSigner {
+    untrack_or_return_null!(c2pa_signer_ptr, C2paSigner);
+    untrack_or_return_null!(identity_signer_ptr, C2paSigner);
+    let c2pa_signer = Box::from_raw(c2pa_signer_ptr);
+    let identity_signer = Box::from_raw(identity_signer_ptr);
+
+    let referenced_assertions = cstr_array_or_return_null!(referenced_assertions);
+    let roles = cstr_array_or_return_null!(roles);
+
+    let refs: Vec<&str> = referenced_assertions.iter().map(|s| s.as_str()).collect();
+    let role_refs: Vec<&str> = roles.iter().map(|s| s.as_str()).collect();
+
+    let signer = create_signer::from_x509_identity(
+        Box::new(c2pa_signer.signer),
+        Box::new(identity_signer.signer),
+        &refs,
+        &role_refs,
+    );
+
     box_tracked!(C2paSigner {
         signer: Box::new(signer),
     })
@@ -5291,5 +5339,123 @@ verify_after_sign = true
         assert_eq!(result, 0, "cancel should work on a built context");
 
         unsafe { c2pa_free(context as *mut c_void) };
+    }
+
+    /// Verify that `c2pa_identity_signer_create` produces a combined signer
+    /// that embeds a valid X.509 identity assertion in the signed manifest.
+    #[test]
+    fn test_c2pa_identity_signer_create() {
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let dest_vec = Vec::new();
+        let mut dest_stream = TestStream::new(dest_vec);
+
+        // Build two independent signers from the test Ed25519 credentials:
+        // one for the C2PA claim signature, one for the identity assertion.
+        let make_signer = || {
+            let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+            let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+            let alg = CString::new("Ed25519").unwrap();
+            let sign_cert = CString::new(certs).unwrap();
+            let private_key = CString::new(private_key).unwrap();
+            let signer_info = C2paSignerInfo {
+                alg: alg.as_ptr(),
+                sign_cert: sign_cert.as_ptr(),
+                private_key: private_key.as_ptr(),
+                ta_url: std::ptr::null(),
+            };
+            let signer = unsafe { c2pa_signer_from_info(&signer_info) };
+            assert!(!signer.is_null());
+            signer
+        };
+
+        let c2pa_signer = make_signer();
+        let identity_signer = make_signer();
+
+        // NULL-terminated arrays of referenced assertions and roles.
+        let ref_c2pa_actions = CString::new("c2pa.actions").unwrap();
+        let refs: [*const c_char; 2] = [ref_c2pa_actions.as_ptr(), std::ptr::null()];
+        let roles: [*const c_char; 1] = [std::ptr::null()];
+
+        // Consume both signers and produce a combined identity signer.
+        let combined = unsafe {
+            c2pa_identity_signer_create(c2pa_signer, identity_signer, refs.as_ptr(), roles.as_ptr())
+        };
+        assert!(
+            !combined.is_null(),
+            "c2pa_identity_signer_create returned NULL: {:?}",
+            CimplError::last_message()
+        );
+
+        let manifest_def = CString::new("{}").unwrap();
+        let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
+        assert!(!builder.is_null());
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                combined,
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert!(
+            result > 0,
+            "signing failed (result={}): {:?}",
+            result,
+            CimplError::last_message()
+        );
+        unsafe { c2pa_manifest_bytes_free(manifest_bytes_ptr) };
+
+        // Read the signed output back and verify a cawg.identity assertion is present.
+        dest_stream.stream_mut().rewind().unwrap();
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
+        assert!(
+            !reader.is_null(),
+            "reader creation failed: {:?}",
+            CimplError::last_message()
+        );
+
+        let json_ptr = unsafe { c2pa_reader_json(reader) };
+        assert!(!json_ptr.is_null());
+        let json_str = unsafe { CString::from_raw(json_ptr) };
+        let json = json_str.to_str().unwrap();
+
+        assert!(
+            json.contains("cawg.identity"),
+            "expected 'cawg.identity' assertion in manifest JSON"
+        );
+
+        unsafe {
+            c2pa_builder_free(builder);
+            c2pa_signer_free(combined);
+            c2pa_reader_free(reader);
+        }
+    }
+
+    /// Verify that `c2pa_identity_signer_create` fails gracefully when either
+    /// signer pointer is NULL and that the error string is set correctly.
+    #[test]
+    fn test_c2pa_identity_signer_create_null_signers() {
+        let refs: [*const c_char; 1] = [std::ptr::null()];
+        let roles: [*const c_char; 1] = [std::ptr::null()];
+
+        let result = unsafe {
+            c2pa_identity_signer_create(
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                refs.as_ptr(),
+                roles.as_ptr(),
+            )
+        };
+        assert!(result.is_null(), "expected NULL for null c2pa_signer_ptr");
+
+        let error = unsafe { c2pa_error() };
+        assert!(!error.is_null());
+        let _ = unsafe { CString::from_raw(error) };
     }
 }
