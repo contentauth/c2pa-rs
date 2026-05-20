@@ -2958,8 +2958,8 @@ impl Store {
 
                 context.check_progress(ProgressPhase::Embedding, 1, 1)?;
 
-                let output_len = output_stream.seek(SeekFrom::End(0))?;
                 if context.settings().verify.verify_after_sign {
+                    let output_len = output_stream.seek(SeekFrom::End(0))?;
                     let validate_hash = context.settings().verify.verify_after_sign_hash;
                     let mut asset_data = if output_len > 0 && validate_hash {
                         Some(ClaimAssetData::Stream(output_stream, format))

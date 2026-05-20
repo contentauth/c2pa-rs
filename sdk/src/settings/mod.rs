@@ -350,10 +350,9 @@ pub struct Verify {
     pub verify_after_sign: bool,
     /// Whether to include asset hash validation when verifying after signing.
     ///
-    /// When `true`, the full asset is re-hashed to confirm the hard binding assertion matches.
-    /// When `false` (default), only the signature and manifest structure are verified.
+    /// The default value is false.
     ///
-    /// Has no effect when `verify_after_sign` is `false`.
+    /// Has no effect when [`Verify::verify_after_sign`] is false.
     pub verify_after_sign_hash: bool,
     /// Whether to verify certificates against the trust lists specified in [`Trust`]. To configure
     /// timestamp certificate verification, see [`Verify::verify_timestamp_trust`].
