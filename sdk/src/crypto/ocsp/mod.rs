@@ -13,13 +13,17 @@
 
 //! Tools for working with OCSP responses.
 
+use std::str::FromStr;
+
 use chrono::{DateTime, NaiveDateTime, Utc};
 use rasn_ocsp::{BasicOcspResponse, CertStatus, OcspResponseStatus};
 use rasn_pkix::CrlReason;
 use thiserror::Error;
 
 use crate::{
-    crypto::internal::time, log_item, status_tracker::StatusTracker,
+    crypto::{internal::time, raw_signature::RawSignatureValidationError},
+    log_item,
+    status_tracker::StatusTracker,
     validation_results::validation_codes,
 };
 
@@ -102,9 +106,51 @@ impl OcspResponse {
                 cert_der_vec.push(cert_der);
             }
 
-            if output.ocsp_certs.is_none() {
+            // make sure the certificate was correctly signed
+
+            // alg used for signature
+            let Ok(sig_alg) =
+                bcder::Oid::from_str(&basic_response.signature_algorithm.algorithm.to_string())
+            else {
+                return Ok(output);
+            };
+
+            let Some(hash_alg) =
+                hash_alg_for_sig_alg(&basic_response.signature_algorithm.algorithm)
+            else {
+                return Ok(output);
+            };
+
+            // grab signature value.
+            let sig_val = bcder::OctetString::new(bytes::Bytes::copy_from_slice(
+                basic_response.signature.as_raw_slice(),
+            ));
+
+            // grab the to be signed data
+            let Ok(tbs) = rasn::der::encode(&basic_response.tbs_response_data) else {
+                return Ok(output);
+            };
+
+            // grab the signing key from the first cert; reject if certs is empty
+            let Some(first_cert) = ocsp_certs.first() else {
+                return Ok(output);
+            };
+            let Ok(signing_key_der) =
+                rasn::der::encode(&first_cert.tbs_certificate.subject_public_key_info)
+            else {
+                return Ok(output);
+            };
+
+            // if not valid we will not add the cert to list to be checked for trust later
+            if validate_ocsp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der).is_ok() {
                 output.ocsp_certs = Some(cert_der_vec);
+            } else {
+                // signature failed so don't use
+                return Ok(OcspResponse::default());
             }
+        } else {
+            // we cannot validate the OCSP response signature, so treat as unknown
+            return Ok(OcspResponse::default());
         }
 
         for single_response in &response_data.responses {
@@ -293,6 +339,38 @@ impl OcspResponse {
     }
 }
 
+fn validate_ocsp_sig(
+    sig_alg: &bcder::Oid,
+    hash_alg: &bcder::Oid,
+    sig_val: &bcder::OctetString,
+    tbs: &[u8],
+    signing_key_der: &[u8],
+) -> Result<(), RawSignatureValidationError> {
+    if let Some(validator) =
+        crate::crypto::raw_signature::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
+    {
+        validator
+            .validate(&sig_val.to_bytes(), tbs, signing_key_der)
+            .map_err(|e| RawSignatureValidationError::CryptoLibraryError(e.to_string()))
+    } else {
+        Err(RawSignatureValidationError::UnsupportedAlgorithm)
+    }
+}
+
+/// Return the hash algorithm oid for the given signature algorithm.
+fn hash_alg_for_sig_alg(sig_alg: &rasn::types::ObjectIdentifier) -> Option<bcder::Oid> {
+    match sig_alg.to_string().as_ref() {
+        "1.2.840.10045.4.3.2" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.1").ok()?),
+        "1.2.840.10045.4.3.3" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.2").ok()?),
+        "1.2.840.10045.4.3.4" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.3").ok()?),
+        "1.2.840.113549.1.1.11" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.1").ok()?),
+        "1.2.840.113549.1.1.12" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.2").ok()?),
+        "1.2.840.113549.1.1.13" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.3").ok()?),
+        "1.3.101.112" => Some(bcder::Oid::from_str("2.16.840.1.101.3.4.2.3").ok()?),
+        _ => None,
+    }
+}
+
 /// Describes errors that can be identified when parsing an OCSP response.
 #[derive(Debug, Eq, Error, PartialEq)]
 #[allow(unused)] // InvalidSystemTime may not exist on all platforms.
@@ -396,6 +474,60 @@ mod tests {
         assert!(ocsp_data.revoked_at.is_none());
         assert!(validation_log.has_any_error());
         assert!(validation_log.has_status(SIGNING_CREDENTIAL_OCSP_UNKNOWN));
+    }
+
+    /// Crafted OcspResponse DER with `certs = Some([])` (present but empty).
+    ///
+    /// Structure:
+    ///   OcspResponse { status=successful, responseBytes = BasicOcspResponse {
+    ///     tbs_response_data = ResponseData { responderID=byKey(zeros),
+    ///                                        producedAt="20230101000000Z",
+    ///                                        responses=[] },
+    ///     signature_algorithm = sha256WithRSA,
+    ///     signature = dummy bytes,
+    ///     certs = [0] EXPLICIT SEQUENCE OF Certificate {}  ← empty
+    ///   }}
+    ///
+    /// This is syntactically valid DER.  The old code panicked at `ocsp_certs[0]`
+    /// when `basic_response.certs = Some([])` and all earlier guards passed.
+    /// The fix uses `.first()` and returns early when the vec is empty.
+    const OCSP_EMPTY_CERTS_DER: &[u8] = &[
+        0x30, 0x5d, // OcspResponse SEQUENCE (93 bytes)
+        0x0a, 0x01, 0x00, // status ENUMERATED 0 (successful)
+        0xa0, 0x58, // [0] EXPLICIT responseBytes (88 bytes)
+        0x30, 0x56, // ResponseBytes SEQUENCE (86 bytes)
+        0x06, 0x09, 0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x01,
+        0x01, // id-pkix-ocsp-basic
+        0x04, 0x49, // OCTET STRING — BasicOcspResponse DER (73 bytes)
+        0x30, 0x47, // BasicOcspResponse SEQUENCE (71 bytes)
+        0x30, 0x2b, // ResponseData SEQUENCE (43 bytes)
+        0xa2, 0x16, // responderID [2] EXPLICIT byKey (22 bytes)
+        0x04, 0x14, // KeyHash OCTET STRING (20 bytes)
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 20-byte placeholder
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18,
+        0x0f, // producedAt GeneralizedTime (15 bytes)
+        0x32, 0x30, 0x32, 0x33, 0x30, 0x31, 0x30, 0x31, // "20230101"
+        0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x5a, // "000000Z"
+        0x30, 0x00, // responses SEQUENCE OF SingleResponse (empty)
+        0x30, 0x0d, // AlgorithmIdentifier sha256WithRSA (15 bytes)
+        0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b, // OID
+        0x05, 0x00, // NULL params
+        0x03, 0x05, // BIT STRING signature (5 bytes content)
+        0x00, 0xde, 0xad, 0xbe, 0xef, // 0 unused bits + 4 dummy bytes
+        0xa0, 0x02, // certs [0] EXPLICIT (2 bytes content)
+        0x30, 0x00, // SEQUENCE OF Certificate — empty
+    ];
+
+    #[test]
+    fn from_der_checked_empty_certs_returns_default_not_panic() {
+        // Regression: old code panicked at `ocsp_certs[0]` when
+        // `basic_response.certs = Some([])`.  The fix uses `.first()` and
+        // returns Ok(output) (with ocsp_certs = None) instead of panicking.
+        let mut log = StatusTracker::default();
+        let result = OcspResponse::from_der_checked(OCSP_EMPTY_CERTS_DER, None, &mut log);
+        assert!(result.is_ok());
+        // certs were empty so no cert data flows through
+        assert!(result.unwrap().ocsp_certs.is_none());
     }
 
     #[test]

@@ -7,6 +7,127 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.84.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.84.0...c2pa-c-ffi-v0.84.1)
+_12 May 2026_
+
+## [0.83.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.83.0...c2pa-c-ffi-v0.83.1)
+_11 May 2026_
+
+## [0.82.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.82.1...c2pa-c-ffi-v0.82.2)
+_11 May 2026_
+
+## [0.82.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.82.0...c2pa-c-ffi-v0.82.1)
+_04 May 2026_
+
+## [0.81.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.81.0...c2pa-c-ffi-v0.81.1)
+_01 May 2026_
+
+## [0.80.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.3...c2pa-c-ffi-v0.80.4)
+_01 May 2026_
+
+## [0.80.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.2...c2pa-c-ffi-v0.80.3)
+_29 April 2026_
+
+## [0.80.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.1...c2pa-c-ffi-v0.80.2)
+_28 April 2026_
+
+### Fixed
+
+* `c2pa-c-ffi` UB detected by miri ([#2089](https://github.com/contentauth/c2pa-rs/pull/2089))
+
+## [0.80.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.0...c2pa-c-ffi-v0.80.1)
+_27 April 2026_
+
+## [0.80.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.5...c2pa-c-ffi-v0.80.0)
+_16 April 2026_
+
+### Added
+
+* Add ingredient archive FFI functions and relax Builder mutability ([#2061](https://github.com/contentauth/c2pa-rs/pull/2061))
+
+### Documented
+
+* Separate out C docs ([#2052](https://github.com/contentauth/c2pa-rs/pull/2052))
+
+## [0.79.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.4...c2pa-c-ffi-v0.79.5)
+_15 April 2026_
+
+## [0.79.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.3...c2pa-c-ffi-v0.79.4)
+_14 April 2026_
+
+## [0.79.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.2...c2pa-c-ffi-v0.79.3)
+_09 April 2026_
+
+## [0.79.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.1...c2pa-c-ffi-v0.79.2)
+_08 April 2026_
+
+## [0.79.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.79.0...c2pa-c-ffi-v0.79.1)
+_07 April 2026_
+
+## [0.78.9](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.8...c2pa-c-ffi-v0.78.9)
+_03 April 2026_
+
+## [0.78.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.7...c2pa-c-ffi-v0.78.8)
+_31 March 2026_
+
+### Added
+
+* Expose a C FFI API to help determine the hashtype a Builder uses with embeddable APIs ([#1992](https://github.com/contentauth/c2pa-rs/pull/1992))
+
+### Fixed
+
+* Set release flags for emscripten to default use case ([#1993](https://github.com/contentauth/c2pa-rs/pull/1993))
+
+## [0.78.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.6...c2pa-c-ffi-v0.78.7)
+_27 March 2026_
+
+### Added
+
+* Allow emscripten users to define HTTP handler ([#1936](https://github.com/contentauth/c2pa-rs/pull/1936))
+* Adds a progress/cancel feature to Context for the c2pa-rs sdk ([#1927](https://github.com/contentauth/c2pa-rs/pull/1927))
+
+## [0.78.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.5...c2pa-c-ffi-v0.78.6)
+_23 March 2026_
+
+## [0.78.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.4...c2pa-c-ffi-v0.78.5)
+_23 March 2026_
+
+## [0.78.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.3...c2pa-c-ffi-v0.78.4)
+_16 March 2026_
+
+## [0.78.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.2...c2pa-c-ffi-v0.78.3)
+_13 March 2026_
+
+## [0.78.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.1...c2pa-c-ffi-v0.78.2)
+_12 March 2026_
+
+### Fixed
+
+* Windows Build flags ([#1930](https://github.com/contentauth/c2pa-rs/pull/1930))
+
+## [0.78.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.78.0...c2pa-c-ffi-v0.78.1)
+_12 March 2026_
+
+## [0.78.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.77.1...c2pa-c-ffi-v0.78.0)
+_11 March 2026_
+
+### Added
+
+* Emscripten ([#1886](https://github.com/contentauth/c2pa-rs/pull/1886))
+
+### Fixed
+
+* Merkle api integration ([#1902](https://github.com/contentauth/c2pa-rs/pull/1902))
+* X86_64 Linux CI build failure ([#1906](https://github.com/contentauth/c2pa-rs/pull/1906))
+
+## [0.77.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.77.0...c2pa-c-ffi-v0.77.1)
+_10 March 2026_
+
+### Fixed
+
+* Add API to read manifest bytes using reader+context ([#1904](https://github.com/contentauth/c2pa-rs/pull/1904))
+* Return -1 on settings failure ([#1905](https://github.com/contentauth/c2pa-rs/pull/1905))
+
 ## [0.77.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.76.2...c2pa-c-ffi-v0.77.0)
 _04 March 2026_
 

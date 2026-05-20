@@ -54,6 +54,17 @@ pub(crate) fn get_cose_tst_info(sign1: &coset::CoseSign1) -> Option<(&Value, Tim
         })
 }
 
+/// Given a COSE Sign1, return the raw bytes of the first timestamp token in
+/// sigTst/sigTst2 if present.
+pub(crate) fn timestamp_token_bytes_from_sign1(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
+    let (sigtst, _tss) = get_cose_tst_info(sign1)?;
+    let mut time_cbor: Vec<u8> = vec![];
+    coset::cbor::into_writer(sigtst, &mut time_cbor).ok()?;
+    let tst_container: TstContainer = coset::cbor::from_reader(time_cbor.as_slice()).ok()?;
+    let token = tst_container.tst_tokens.first()?;
+    Some(token.val.clone())
+}
+
 /// Given a COSE signature, retrieve the `sigTst` header from it and validate
 /// the information within it.
 ///

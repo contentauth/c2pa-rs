@@ -29,7 +29,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = ["openssl", "default_http"]
-add_thumbnails = ["image"]
+add_thumbnails = ["dep:image"]
 file_io = []
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
@@ -61,10 +61,6 @@ http_reqwest = ["dep:reqwest"]
 # It enables some low-overhead timing features used in our development cycle.
 diagnostics = []
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(test)'] }
-# Workaround for https://github.com/est31/cargo-udeps/issues/293.
-
 [[example]]
 name = "cawg_identity"
 required-features = ["file_io"]
@@ -87,6 +83,12 @@ name = "api"
 name = "fragmented_bmff"
 required-features = ["file_io"]
 
+[[example]]
+name = "progress"
+
+[[example]]
+name = "redaction"
+
 [lib]
 crate-type = ["lib"]
 
@@ -94,24 +96,22 @@ crate-type = ["lib"]
 asn1-rs = "0.7.1"
 async-generic = "1.1"
 async-trait = "0.1.78"
-atree = "0.5.2"
+atree = "0.5.4"
 base64 = "0.22.1"
 bcder = "0.7.3"
 bytes = "1.11.1"
+brotli = "7.0.0"
 byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
 c2pa_cbor = "0.77.2"
-config = { version = "0.14.0", default-features = false, features = [
-    "json",
-    "toml",
-] }
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
 coset = "0.4.0"
 der = { version = "0.7.9", features = ["alloc"] }
 extfmt = "0.2.0"
 getrandom = { version = "0.3.4", default-features = false, features = ["std"] }
+glob = "0.3.1"
 ecdsa = { version = "0.16.9", features = ["digest", "sha2"], optional = true }
 ed25519-dalek = { version = "2.1.1", features = [
     "alloc",
@@ -120,9 +120,7 @@ ed25519-dalek = { version = "2.1.1", features = [
     "pkcs8",
     "rand_core",
 ] }
-env_logger = "0.11.8"
 hex = "0.4.3"
-hex-literal = "1.0.0" # Might be only a dev dependency
 http = "1.3.1"
 id3 = "1.16.3"
 img-parts = "0.4.0"
@@ -201,7 +199,7 @@ reqwest = { version = "0.12.23", default-features = false, features = [
 ], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-openssl = { version = "0.10.72", features = ["vendored"], optional = true }
+openssl = { version = "0.10.78", features = ["vendored"], optional = true }
 ureq = { version = "3.1.0", default-features = false, features = [
     "rustls"
 ], optional = true }
@@ -251,7 +249,19 @@ version = "0.4.39"
 default-features = false
 features = ["now"]
 
+[target.'cfg(all(target_arch = "wasm32", target_os = "emscripten"))'.dependencies.chrono]
+version = "0.4.39"
+default-features = false
+features = ["clock", "serde"]
+
 [target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dependencies]
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+# Also enable getrandom 0.2 with js feature for other dependencies (rand, tempfile, config)
+# This is needed until all dependencies migrate to getrandom 0.3
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+uuid = { version = "1.18.0", features = ["serde", "v4", "js"] }
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 chrono = { version = "0.4.39", default-features = false, features = [
     "clock",
     "serde",
@@ -259,13 +269,8 @@ chrono = { version = "0.4.39", default-features = false, features = [
 ] }
 console_log = { version = "1.0.0", features = ["color"] }
 # Enable getrandom with wasm_js feature for WASM support
-getrandom = { version = "0.3.4", features = ["wasm_js"] }
-# Also enable getrandom 0.2 with js feature for other dependencies (rand, tempfile, config)
-# This is needed until all dependencies migrate to getrandom 0.3
-getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 js-sys = "0.3.89"
 serde-wasm-bindgen = "0.6.5"
-uuid = { version = "1.18.0", features = ["serde", "v4", "js"] }
 wasm-bindgen = "0.2.112"
 wasm-bindgen-futures = "0.4.31"
 web-sys = { version = "0.3.58", features = [
@@ -279,19 +284,22 @@ web-sys = { version = "0.3.58", features = [
 
 [dev-dependencies]
 anyhow = "1.0.97"
+env_logger = "0.11.8"
 glob = "0.3.1"
 hex-literal = "1.0.0"
 jumbf = "0.7.0"
 c2pa_macros = { path = "../macros" }
 mockall = "0.14.0"
+jsonschema = { version = "0.45.0", default-features = false }
 
-[target.'cfg(all(target_arch = "wasm32", not(target_os = "wasi")))'.dev-dependencies]
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
 wasm-bindgen-test = "0.3.55"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 httpmock = "0.8.2"
 tokio = { version = "1.44.2", features = ["full"] }
 criterion = { package = "codspeed-criterion-compat", version = "4.2.1" }
+dhat = "0.3.3"
 
 # WASM/WASI doesn't support default criterion features.
 # https://github.com/bheisler/criterion.rs/blob/4c19e913b84e6a7e4a8470cb0f766796886ed891/book/src/user_guide/wasi.md
@@ -304,4 +312,16 @@ harness = false
 
 [[bench]]
 name = "read"
+harness = false
+
+[[bench]]
+name = "complex_read"
+harness = false
+
+[[bench]]
+name = "settings"
+harness = false
+
+[[bench]]
+name = "settings_memory"
 harness = false

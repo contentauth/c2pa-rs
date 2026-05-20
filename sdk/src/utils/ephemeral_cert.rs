@@ -467,7 +467,7 @@ pub fn generate_ephemeral_chain(ee_cert_name: &str) -> Result<EphemeralCertChain
 /// Like `generate_ephemeral_chain` but omits the given EE extensions
 /// (test-only). Used to find which extension causes OpenSSL 3.x to reject the
 /// cert.
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 pub(crate) fn generate_ephemeral_chain_with_ee_skip(
     ee_cert_name: &str,
     skip_extensions: &[&str],
@@ -530,10 +530,12 @@ mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     use std::process::Command;
 
     use rasn_pkix::BasicConstraints;
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{der_to_pem, generate_ephemeral_chain};
 
     /// Documents why OpenSSL 3.x rejects rasn's BasicConstraints for EE certs.

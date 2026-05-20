@@ -351,6 +351,11 @@ impl CertificateTrustPolicy {
         }
     }
 
+    /// Remove the current EKUs
+    pub fn clear_ekus(&mut self) {
+        self.additional_ekus.clear();
+    }
+
     /// Set whether we only want to use system trust_achors and ignores user_anchors,
     /// returns last trust_anchors_value
     pub fn set_trust_anchors_only(&mut self, trust_anchors_only: bool) -> bool {

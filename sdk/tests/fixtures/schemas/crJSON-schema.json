@@ -1,0 +1,1818 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$id": "https://c2pa.org/crjson/crJSON-schema.json",
+    "title": "Content Credential JSON (CrJSON) Document Schema",
+    "description": "JSON Schema for Content Credential JSON (CrJSON) documents. CrJSON does not include asset_info, content, or metadata.",
+    "type": "object",
+    "required": [
+        "@context",
+        "manifests",
+        "jsonGenerator"
+    ],
+    "properties": {
+        "@context": {
+            "description": "JSON-LD context defining namespaces and vocabularies",
+            "oneOf": [
+                {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "format": "uri"
+                    },
+                    "minItems": 1
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "@vocab": {
+                            "type": "string",
+                            "format": "uri"
+                        }
+                    },
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                }
+            ]
+        },
+        "manifests": {
+            "description": "Array of C2PA manifests embedded in the asset",
+            "type": "array",
+            "items": {
+                "$ref": "#/definitions/manifest"
+            }
+        },
+        "jsonGenerator": {
+            "description": "Information about the tool used to generate this JSON",
+            "$ref": "#/definitions/jsonGenerator"
+        }
+    },
+    "additionalProperties": true,
+    "definitions": {
+        "jsonGenerator": {
+            "type": "object",
+            "description": "Information about the claim generator (generator-info fields); name/version align with claim.cddl generator-info-map;",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the software"
+                },
+                "version": {
+                    "type": "string",
+                    "description": "Version of the software (SemVer 2.0: major.minor.patch with optional pre-release and build)",
+                    "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+                }
+            },
+            "required": [
+                "name",
+                "version"
+            ],
+            "additionalProperties": true
+        },
+        "manifest": {
+            "type": "object",
+            "description": "CrJSON manifest wrapper containing label, assertions, claim or claim.v2, signature, and validationResults. Claim content: claim.cddl claim-map or claim-map-v2.",
+            "required": [
+                "label",
+                "assertions",
+                "signature",
+                "validationResults"
+            ],
+            "oneOf": [
+                {
+                    "required": [
+                        "claim"
+                    ]
+                },
+                {
+                    "required": [
+                        "claim.v2"
+                    ]
+                }
+            ],
+            "properties": {
+                "label": {
+                    "type": "string",
+                    "description": "Manifest label or URN identifier"
+                },
+                "assertions": {
+                    "type": "object",
+                    "description": "Assertions contained within the manifest, keyed by the assertion's label",
+                    "additionalProperties": true
+                },
+                "claim": {
+                    "$ref": "#/definitions/claimV1",
+                    "description": "Claim map (v1) per C2PA CDDL claim-map; alternative to claim.v2. A manifest SHALL contain either claim or claim.v2."
+                },
+                "claim.v2": {
+                    "$ref": "#/definitions/claim",
+                    "description": "Normalized claim (v2) per C2PA CDDL claim-map-v2; alternative to claim. A manifest SHALL contain either claim or claim.v2."
+                },
+                "signature": {
+                    "$ref": "#/definitions/signature"
+                },
+                "validationResults": {
+                    "$ref": "#/definitions/manifestValidationResults",
+                    "description": "Validation status codes for this manifest (success, informational, failure) and when validation was performed"
+                },
+                "ingredientDeltas": {
+                    "type": "array",
+                    "description": "Validation deltas for this manifest's ingredient assertions. Present when ingredients are C2PA assets.",
+                    "items": {
+                        "$ref": "#/definitions/ingredientDeltaValidationResult"
+                    }
+                }
+            },
+            "additionalProperties": false
+        },
+        "claimV1": {
+            "type": "object",
+            "description": "Claim map (v1). CDDL: claim.cddl claim-map. Alternative to claim.v2; each manifest may contain either claim or claim.v2.",
+            "required": [
+                "claim_generator",
+                "claim_generator_info",
+                "signature",
+                "assertions",
+                "dc:format",
+                "instanceID"
+            ],
+            "properties": {
+                "claim_generator": {
+                    "type": "string",
+                    "description": "User-Agent string for the claim generator that created the claim (RFC 7231 §5.5.3)"
+                },
+                "claim_generator_info": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/softwareAgent"
+                    },
+                    "description": "Detailed information about the claim generator (one or more generator-info maps)"
+                },
+                "signature": {
+                    "type": "string",
+                    "description": "JUMBF URI reference to the signature of this claim"
+                },
+                "assertions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/hashedUriMap"
+                    },
+                    "description": "Hashed URI references to assertions in this claim"
+                },
+                "dc:format": {
+                    "type": "string",
+                    "description": "Media type of the asset"
+                },
+                "instanceID": {
+                    "type": "string",
+                    "description": "Uniquely identifies a specific version of an asset"
+                },
+                "dc:title": {
+                    "type": "string",
+                    "description": "Name of the asset (Dublin Core)"
+                },
+                "redacted_assertions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "JUMBF URI references to redacted ingredient manifest assertions"
+                },
+                "alg": {
+                    "type": "string",
+                    "description": "Cryptographic hash algorithm for data hash assertions in this claim (C2PA data hash algorithm identifier registry)"
+                },
+                "alg_soft": {
+                    "type": "string",
+                    "description": "Algorithm for soft binding assertions in this claim (C2PA soft binding algorithm identifier registry)"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/assertionMetadataMap"
+                }
+            },
+            "additionalProperties": false
+        },
+        "hashedUriMap": {
+            "type": "object",
+            "description": "Hashed URI reference (url and hash). CDDL: hashed-uri.cddl $hashed-uri-map.",
+            "required": [
+                "url",
+                "hash"
+            ],
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "JUMBF URI reference"
+                },
+                "hash": {
+                    "type": "string",
+                    "description": "Hash value (Base64-encoded with b64' prefix)"
+                },
+                "alg": {
+                    "type": "string",
+                    "description": "Hash algorithm identifier; if absent, taken from enclosing structure"
+                }
+            },
+            "additionalProperties": false
+        },
+        "assertionMetadataMap": {
+            "type": "object",
+            "description": "Additional information about an assertion. CDDL: assertion-metadata-common.cddl $assertion-metadata-map.",
+            "properties": {
+                "dateTime": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "RFC 3339 date-time when the assertion was created/generated (tdate)"
+                },
+                "reviewRatings": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/ratingMap"
+                    },
+                    "description": "Ratings given to the assertion"
+                },
+                "reference": {
+                    "$ref": "#/definitions/hashedUriMap",
+                    "description": "Hashed URI reference to another assertion that this review is about"
+                },
+                "dataSource": {
+                    "$ref": "#/definitions/sourceMap",
+                    "description": "Description of the source of the assertion data"
+                },
+                "localizations": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/localizationDataEntry"
+                    },
+                    "description": "Localizations for strings in the assertion"
+                },
+                "regionOfInterest": {
+                    "$ref": "#/definitions/regionMap",
+                    "description": "Region of the asset where this assertion is relevant ($region-map)"
+                }
+            },
+            "additionalProperties": true
+        },
+        "sourceMap": {
+            "type": "object",
+            "description": "Source of assertion data. CDDL: assertion-metadata-common.cddl source-map.",
+            "required": [
+                "type"
+            ],
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "description": "Source type; $source-type",
+                    "enum": [
+                        "signer",
+                        "claimGenerator.REE",
+                        "claimGenerator.TEE",
+                        "localProvider.REE",
+                        "localProvider.TEE",
+                        "remoteProvider.1stParty",
+                        "remoteProvider.3rdParty",
+                        "humanEntry",
+                        "humanEntry.anonymous",
+                        "humanEntry.identified"
+                    ]
+                },
+                "details": {
+                    "type": "string",
+                    "description": "Human-readable details about the source, e.g. URL of the remote server"
+                }
+            },
+            "additionalProperties": false
+        },
+        "ratingMap": {
+            "type": "object",
+            "description": "Rating of an assertion item. CDDL: assertion-metadata-common.cddl rating-map.",
+            "required": [
+                "value"
+            ],
+            "properties": {
+                "value": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5,
+                    "description": "Rating from 1 (worst) to 5 (best)"
+                },
+                "code": {
+                    "type": "string",
+                    "description": "Label-formatted reason for the rating; $review-code",
+                    "enum": [
+                        "actions.unknownActionsPerformed",
+                        "actions.missing",
+                        "actions.possiblyMissing",
+                        "depthMap.sceneMismatch",
+                        "ingredient.modified",
+                        "ingredient.possiblyModified",
+                        "thumbnail.primaryMismatch",
+                        "stds.iptc.location.inaccurate",
+                        "stds.schema-org.CreativeWork.misattributed",
+                        "stds.schema-org.CreativeWork.missingAttribution"
+                    ]
+                },
+                "explanation": {
+                    "type": "string",
+                    "description": "Human-readable explanation for the rating"
+                }
+            },
+            "additionalProperties": false
+        },
+        "localizationDataEntry": {
+            "type": "object",
+            "description": "Localization dictionary (language keys to string). CDDL: assertion-metadata-common.cddl $localization-data-entry.",
+            "additionalProperties": {
+                "type": "string"
+            }
+        },
+        "claim": {
+            "type": "object",
+            "description": "Claim (v2). CDDL: claim.cddl claim-map-v2.",
+            "required": [
+                "instanceID",
+                "claim_generator_info",
+                "signature",
+                "created_assertions"
+            ],
+            "properties": {
+                "instanceID": {
+                    "type": "string",
+                    "description": "Uniquely identifies a specific version of an asset"
+                },
+                "claim_generator_info": {
+                    "$ref": "#/definitions/softwareAgent",
+                    "description": "The claim generator of this claim (single generator-info map)"
+                },
+                "signature": {
+                    "type": "string",
+                    "description": "JUMBF URI reference to the signature of this claim"
+                },
+                "created_assertions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/hashedUriMap"
+                    },
+                    "description": "Hashed URI references to created assertions"
+                },
+                "gathered_assertions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/hashedUriMap"
+                    },
+                    "description": "Hashed URI references to gathered assertions"
+                },
+                "dc:title": {
+                    "type": "string",
+                    "description": "Name of the asset (Dublin Core)"
+                },
+                "redacted_assertions": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "JUMBF URI references to the assertions of ingredient manifests being redacted"
+                },
+                "alg": {
+                    "type": "string",
+                    "description": "Cryptographic hash algorithm for data hash assertions in this claim (C2PA data hash algorithm identifier registry)"
+                },
+                "alg_soft": {
+                    "type": "string",
+                    "description": "Algorithm for soft binding assertions in this claim (C2PA soft binding algorithm identifier registry)"
+                },
+                "specVersion": {
+                    "type": "string",
+                    "description": "The version of the specification used to produce this claim (SemVer)"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/assertionMetadataMap",
+                    "description": "Additional information about the assertion (DEPRECATED)"
+                }
+            },
+            "additionalProperties": false
+        },
+        "assertions": {
+            "type": "object",
+            "description": "Container of assertion objects keyed by assertion label. Each key (e.g. c2pa.hash.data, c2pa.actions) corresponds to a C2PA assertion type; see definitions and INTERNAL/cddl for data-hash, boxes-hash, actions, ingredient, etc.",
+            "properties": {
+                "c2pa.hash.data": {
+                    "$ref": "#/definitions/hashDataAssertion"
+                },
+                "c2pa.hash.bmff.v2": {
+                    "$ref": "#/definitions/hashBmffAssertion"
+                },
+                "c2pa.hash.boxes": {
+                    "$ref": "#/definitions/hashBoxesAssertion"
+                },
+                "c2pa.hash.multi-asset": {
+                    "$ref": "#/definitions/hashMultiAssetAssertion"
+                },
+                "c2pa.actions": {
+                    "$ref": "#/definitions/actionsAssertionV1"
+                },
+                "c2pa.actions.v2": {
+                    "$ref": "#/definitions/actionsAssertionV2"
+                },
+                "c2pa.ingredient": {
+                    "$ref": "#/definitions/ingredientAssertionV1"
+                },
+                "c2pa.ingredient.v2": {
+                    "$ref": "#/definitions/ingredientAssertionV2"
+                },
+                "c2pa.ingredient.v3": {
+                    "$ref": "#/definitions/ingredientAssertionV3"
+                },
+                "c2pa.thumbnail.claim.jpeg": {
+                    "$ref": "#/definitions/thumbnailAssertion"
+                },
+                "c2pa.thumbnail.ingredient.jpeg": {
+                    "$ref": "#/definitions/thumbnailAssertion"
+                },
+                "c2pa.soft-binding": {
+                    "$ref": "#/definitions/softBindingAssertion"
+                }
+            },
+            "patternProperties": {
+                "^c2pa\\.thumbnail\\.ingredient": {
+                    "$ref": "#/definitions/thumbnailAssertion"
+                },
+                "^c2pa\\.hash\\.(data|bmff\\.v2|boxes)\\.part(__[0-9]+)?$": {
+                    "description": "Part hash assertion: standard hard binding assertion with .part and optional multiple instance identifier (e.g. c2pa.hash.data.part, c2pa.hash.data.part__2). Byte offsets in the assertion are relative to the part.",
+                    "oneOf": [
+                        {
+                            "$ref": "#/definitions/hashDataAssertion"
+                        },
+                        {
+                            "$ref": "#/definitions/hashBmffAssertion"
+                        },
+                        {
+                            "$ref": "#/definitions/hashBoxesAssertion"
+                        }
+                    ]
+                }
+            },
+            "additionalProperties": true
+        },
+        "hashDataAssertion": {
+            "type": "object",
+            "description": "Data hash assertion (c2pa.hash.data). CDDL: data-hash.cddl data-hash-map, EXCLUSION_RANGE-map.",
+            "properties": {
+                "alg": {
+                    "type": "string",
+                    "description": "Hash algorithm"
+                },
+                "hash": {
+                    "type": "string",
+                    "description": "Base64-encoded hash value with b64' prefix"
+                },
+                "pad": {
+                    "type": "string",
+                    "description": "Padding bytes"
+                },
+                "pad2": {
+                    "type": "string",
+                    "description": "Secondary padding bytes"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Name of the hashed data"
+                },
+                "exclusions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start": {
+                                "type": "integer",
+                                "description": "Starting byte position of exclusion"
+                            },
+                            "length": {
+                                "type": "integer",
+                                "description": "Length of exclusion in bytes"
+                            }
+                        },
+                        "required": [
+                            "start",
+                            "length"
+                        ]
+                    }
+                }
+            },
+            "required": [
+                "hash",
+                "pad"
+            ],
+            "additionalProperties": false
+        },
+        "hashBoxesAssertion": {
+            "type": "object",
+            "description": "Boxes hash assertion (c2pa.hash.boxes). CDDL: boxes-hash.cddl box-map.",
+            "required": [
+                "boxes"
+            ],
+            "properties": {
+                "boxes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/boxHashMap"
+                    },
+                    "description": "Array of box-hash-map entries"
+                },
+                "alg": {
+                    "type": "string",
+                    "description": "Cryptographic hash algorithm (C2PA hash algorithm identifier). If absent, taken from enclosing structure."
+                }
+            },
+            "additionalProperties": false
+        },
+        "boxHashMap": {
+            "type": "object",
+            "description": "Single box hash entry. CDDL: boxes-hash.cddl box-hash-map.",
+            "required": [
+                "names",
+                "hash"
+            ],
+            "properties": {
+                "names": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 10,
+                        "description": "Box identifier in order of appearance (e.g. APP0, IHDR); box-name"
+                    },
+                    "description": "Box identifiers in order of appearance"
+                },
+                "alg": {
+                    "type": "string",
+                    "description": "Hash algorithm for this box; if absent, from enclosing structure"
+                },
+                "hash": {
+                    "type": "string",
+                    "description": "Hash value (byte string; in JSON typically Base64-encoded with b64' prefix)"
+                },
+                "excluded": {
+                    "type": "boolean",
+                    "description": "If true, a validator can ignore this box (and associated hash) during validation"
+                },
+                "exclusions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/boxExclusionsMap"
+                    },
+                    "description": "Hash exclusion ranges; ranges have monotonically increasing start values and do not overlap"
+                },
+                "pad": {
+                    "type": "string",
+                    "description": "Zero-filled byte string used for filling up space (typically Base64-encoded with b64' prefix in JSON)"
+                },
+                "pad2": {
+                    "type": "string",
+                    "description": "Zero-filled byte string used for filling up space (typically Base64-encoded with b64' prefix in JSON)"
+                }
+            },
+            "additionalProperties": false
+        },
+        "boxExclusionsMap": {
+            "type": "object",
+            "description": "Exclusion range for a box. CDDL: boxes-hash.cddl box-exclusions-map.",
+            "required": [
+                "start",
+                "length"
+            ],
+            "properties": {
+                "start": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Starting byte offset from the start of the box (uint)"
+                },
+                "length": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Number of bytes of data to exclude (uint)"
+                },
+                "boxIndex": {
+                    "type": "integer",
+                    "description": "0-based index into the names array in the box-hash-map; can be omitted if the number of boxes is one"
+                }
+            },
+            "additionalProperties": false
+        },
+        "hashMultiAssetAssertion": {
+            "type": "object",
+            "description": "Multi-asset hash assertion (c2pa.hash.multi-asset). CDDL: multi-asset-hash.cddl multi-asset-hash-map.",
+            "required": [
+                "parts"
+            ],
+            "properties": {
+                "parts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/partHashMap"
+                    },
+                    "description": "Array of hashes for individual parts of the multi-part file"
+                }
+            },
+            "additionalProperties": false
+        },
+        "partHashMap": {
+            "type": "object",
+            "description": "Part hash entry. CDDL: multi-asset-hash.cddl part-hash-map.",
+            "required": [
+                "location",
+                "hashAssertion"
+            ],
+            "properties": {
+                "location": {
+                    "$ref": "#/definitions/locatorMap",
+                    "description": "Location of the part within the file (byte range or BMFF box path)"
+                },
+                "hashAssertion": {
+                    "$ref": "#/definitions/hashedUriMap",
+                    "description": "Hashed URI to the hash assertion for the part (e.g. c2pa.hash.data.part, c2pa.hash.data.part__2). Byte offsets in that assertion are relative to the part."
+                },
+                "optional": {
+                    "type": "boolean",
+                    "description": "If true, the part is optional and can be discarded"
+                }
+            },
+            "additionalProperties": false
+        },
+        "locatorMap": {
+            "type": "object",
+            "description": "Location of a part (byte range or BMFF box path). CDDL: multi-asset-hash.cddl locator-map.",
+            "oneOf": [
+                {
+                    "required": [
+                        "byteOffset",
+                        "length"
+                    ],
+                    "properties": {
+                        "byteOffset": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Byte offset of the part within the file (uint)"
+                        },
+                        "length": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Length of the part in bytes (uint)"
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                {
+                    "required": [
+                        "bmffBox"
+                    ],
+                    "properties": {
+                        "bmffBox": {
+                            "type": "string",
+                            "description": "XPath to the BMFF box of the part"
+                        }
+                    },
+                    "additionalProperties": false
+                }
+            ]
+        },
+        "softBindingAssertion": {
+            "type": "object",
+            "description": "Soft binding assertion (c2pa.soft-binding). CDDL: soft-binding.cddl soft-binding-map.",
+            "required": [
+                "alg",
+                "blocks"
+            ],
+            "properties": {
+                "alg": {
+                    "type": "string",
+                    "description": "Soft binding algorithm and version from C2PA soft binding algorithm list. If absent, taken from enclosing alg_soft."
+                },
+                "blocks": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/softBindingBlockMap"
+                    },
+                    "description": "One or more soft bindings across some or all of the asset's content"
+                },
+                "pad": {
+                    "type": "string",
+                    "description": "Zero-filled byte string for filling space (typically Base64 in JSON)"
+                },
+                "pad2": {
+                    "type": "string",
+                    "description": "Zero-filled byte string for filling space (typically Base64 in JSON)"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Human-readable description of what this hash covers"
+                },
+                "alg-params": {
+                    "type": "string",
+                    "description": "CBOR byte string (e.g. Base64 in JSON) describing parameters of the soft binding algorithm"
+                },
+                "bindingMetadata": {
+                    "$ref": "#/definitions/softBindingMetadataMap",
+                    "description": "Additional metadata of the soft binding"
+                },
+                "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Unused and deprecated"
+                }
+            },
+            "additionalProperties": false
+        },
+        "softBindingBlockMap": {
+            "type": "object",
+            "description": "Single soft binding block. CDDL: soft-binding.cddl soft-binding-block-map.",
+            "required": [
+                "scope",
+                "value"
+            ],
+            "properties": {
+                "scope": {
+                    "$ref": "#/definitions/softBindingScopeMap",
+                    "description": "Scope of the digital content over which the soft binding is computed"
+                },
+                "value": {
+                    "type": "string",
+                    "description": "CBOR byte string (e.g. Base64 in JSON), in algorithm-specific format, for the soft binding value over this block"
+                }
+            },
+            "additionalProperties": false
+        },
+        "softBindingScopeMap": {
+            "type": "object",
+            "description": "Scope of content for a soft binding block. CDDL: soft-binding.cddl soft-binding-scope-map.",
+            "properties": {
+                "extent": {
+                    "type": "string",
+                    "description": "Deprecated. CBOR byte string (e.g. Base64) describing the part of content over which the binding was computed"
+                },
+                "timespan": {
+                    "$ref": "#/definitions/softBindingTimespanMap",
+                    "description": "Time range over which the soft binding value has been computed"
+                },
+                "region": {
+                    "$ref": "#/definitions/regionMap",
+                    "description": "Region of interest (region-map)"
+                }
+            },
+            "additionalProperties": false
+        },
+        "softBindingTimespanMap": {
+            "type": "object",
+            "description": "Time range for soft binding. CDDL: soft-binding.cddl soft-binding-timespan-map.",
+            "required": [
+                "start",
+                "end"
+            ],
+            "properties": {
+                "start": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Start of the time range in milliseconds from media start (uint)"
+                },
+                "end": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "End of the time range in milliseconds from media start (uint)"
+                }
+            },
+            "additionalProperties": false
+        },
+        "softBindingMetadataMap": {
+            "type": "object",
+            "description": "Additional metadata for soft binding. CDDL: soft-binding.cddl soft-binding-metadata-map.",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "description": "Additional description of the implementation or author of the binding or algorithm"
+                },
+                "contact": {
+                    "type": "string",
+                    "description": "Contact information for the implementation or author of the binding or algorithm"
+                },
+                "informationalUrl": {
+                    "type": "string",
+                    "description": "Web page with more details about the implementation or author of the binding or algorithm"
+                }
+            },
+            "additionalProperties": true
+        },
+        "actionsAssertionV1": {
+            "type": "object",
+            "description": "Actions assertion (v1) (c2pa.actions). CDDL: actions.cddl actions-map.",
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/actionItemV1"
+                    },
+                    "description": "List of actions (action-items-map)"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/assertionMetadataMap"
+                }
+            },
+            "required": [
+                "actions"
+            ],
+            "additionalProperties": false
+        },
+        "actionItemV1": {
+            "type": "object",
+            "description": "Single action (v1). CDDL: actions.cddl action-items-map.",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "Action type (e.g., c2pa.created, c2pa.edited, c2pa.converted); $action-choice"
+                },
+                "when": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Timestamp when the action occurred (tdate)"
+                },
+                "softwareAgent": {
+                    "type": "string",
+                    "description": "The software agent that performed the action"
+                },
+                "changed": {
+                    "type": "string",
+                    "description": "Semicolon-delimited list of parts of the resource that were changed since the previous event history"
+                },
+                "instanceID": {
+                    "type": "string",
+                    "description": "xmpMM:InstanceID for the modified (output) resource (buuid)"
+                },
+                "parameters": {
+                    "$ref": "#/definitions/parametersMapV1",
+                    "description": "Additional parameters of the action"
+                },
+                "digitalSourceType": {
+                    "type": "string",
+                    "description": "One of the defined source types at https://cv.iptc.org/newscodes/digitalsourcetype/"
+                }
+            },
+            "required": [
+                "action"
+            ],
+            "additionalProperties": false
+        },
+        "parametersMapV1": {
+            "type": "object",
+            "description": "Action parameters (v1). CDDL: actions.cddl parameters-map.",
+            "properties": {
+                "ingredient": {
+                    "$ref": "#/definitions/hashedUriMap",
+                    "description": "Hashed URI to the ingredient assertion this action acts on"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Additional description of the action"
+                }
+            },
+            "additionalProperties": true
+        },
+        "actionsAssertionV2": {
+            "type": "object",
+            "description": "Actions assertion (v2) (c2pa.actions.v2). CDDL: actions.cddl actions-map-v2.",
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/actionItemV2"
+                    },
+                    "description": "List of actions (action-item-map-v2)"
+                },
+                "templates": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/actionTemplateV2"
+                    },
+                    "description": "List of templates for the actions"
+                },
+                "softwareAgents": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/softwareAgent"
+                    },
+                    "description": "List of software/hardware that performed the actions (generator-info maps)"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/assertionMetadataMap"
+                },
+                "allActionsIncluded": {
+                    "type": "boolean",
+                    "description": "If true, indicates that all actions performed are included in this assertion"
+                }
+            },
+            "required": [
+                "actions"
+            ],
+            "additionalProperties": false
+        },
+        "actionItemV2": {
+            "type": "object",
+            "description": "Single action (v2). CDDL: actions.cddl action-item-map-v2.",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "Action type; $action-choice"
+                },
+                "softwareAgent": {
+                    "$ref": "#/definitions/softwareAgent",
+                    "description": "Description of the software/hardware that did the action (generator-info map)"
+                },
+                "softwareAgentIndex": {
+                    "type": "integer",
+                    "description": "0-based index into the softwareAgents array in the actions assertion"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Additional description of the action, important for custom actions"
+                },
+                "digitalSourceType": {
+                    "type": "string",
+                    "description": "One of the defined source types at https://cv.iptc.org/newscodes/digitalsourcetype/"
+                },
+                "when": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Timestamp when the action occurred (tdate)"
+                },
+                "changes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/regionMap"
+                    },
+                    "description": "Regions of interest of the resource that were changed"
+                },
+                "related": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/actionItemV2"
+                    },
+                    "description": "List of related actions"
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason the action was performed (required when action is c2pa.redacted); $action-reason"
+                },
+                "parameters": {
+                    "$ref": "#/definitions/parametersMapV2",
+                    "description": "Additional parameters of the action"
+                }
+            },
+            "required": [
+                "action"
+            ],
+            "additionalProperties": false
+        },
+        "actionTemplateV2": {
+            "type": "object",
+            "description": "Action template (v2). CDDL: actions.cddl action-template-map-v2.",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "Action type or \"*\" for templates; $action-choice / \"*\""
+                },
+                "softwareAgent": {
+                    "$ref": "#/definitions/softwareAgent",
+                    "description": "Description of the software/hardware (generator-info map)"
+                },
+                "softwareAgentIndex": {
+                    "type": "integer",
+                    "description": "0-based index into the softwareAgents array"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Additional description of the action"
+                },
+                "digitalSourceType": {
+                    "type": "string",
+                    "description": "Digital source type URI"
+                },
+                "icon": {
+                    "$ref": "#/definitions/hashedUriMap",
+                    "description": "Hashed URI reference to an embedded data assertion"
+                },
+                "templateParameters": {
+                    "type": "object",
+                    "description": "Additional parameters of the template (parameters-common-map-v2)",
+                    "additionalProperties": true
+                }
+            },
+            "required": [
+                "action"
+            ],
+            "additionalProperties": false
+        },
+        "regionMap": {
+            "type": "object",
+            "description": "Region of interest. CDDL: regions-of-interest.cddl region-map.",
+            "additionalProperties": true
+        },
+        "parametersMapV2": {
+            "type": "object",
+            "description": "Action parameters (v2). CDDL: actions.cddl parameters-map-v2.",
+            "properties": {
+                "redacted": {
+                    "type": "string",
+                    "description": "JUMBF URI to the redacted assertion (required when action is c2pa.redacted)"
+                },
+                "ingredients": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/hashedUriMap"
+                    },
+                    "description": "List of hashed JUMBF URIs to ingredient (v2 or v3) assertion(s) this action acts on"
+                },
+                "sourceLanguage": {
+                    "type": "string",
+                    "description": "BCP-47 code of the source language for c2pa.translated"
+                },
+                "targetLanguage": {
+                    "type": "string",
+                    "description": "BCP-47 code of the target language for c2pa.translated"
+                },
+                "multipleInstances": {
+                    "type": "boolean",
+                    "description": "Whether this action was performed multiple times"
+                }
+            },
+            "additionalProperties": true
+        },
+        "softwareAgent": {
+            "type": "object",
+            "description": "Generator/software agent info. CDDL: claim.cddl generator-info-map.",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the software"
+                },
+                "version": {
+                    "type": "string",
+                    "description": "Version of the software"
+                },
+                "icon": {
+                    "$ref": "#/definitions/hashedUriMap",
+                    "description": "Icon representing the software/hardware"
+                },
+                "operating_system": {
+                    "type": "string",
+                    "description": "Operating system the software runs on"
+                }
+            },
+            "required": [
+                "name"
+            ],
+            "additionalProperties": true
+        },
+        "certificateInfo": {
+            "type": "object",
+            "description": "Certificate details (serial number, issuer, subject, validity). CrJSON decoding of signing certificate; no CDDL rule in INTERNAL/cddl.",
+            "properties": {
+                "serialNumber": {
+                    "type": "string",
+                    "description": "Certificate serial number"
+                },
+                "issuer": {
+                    "$ref": "#/definitions/distinguishedName"
+                },
+                "subject": {
+                    "$ref": "#/definitions/distinguishedName"
+                },
+                "validity": {
+                    "type": "object",
+                    "properties": {
+                        "notBefore": {
+                            "type": "string",
+                            "format": "date-time"
+                        },
+                        "notAfter": {
+                            "type": "string",
+                            "format": "date-time"
+                        }
+                    }
+                }
+            },
+            "required": [
+                "serialNumber",
+                "issuer",
+                "subject",
+                "validity"
+            ],
+            "additionalProperties": true
+        },
+        "signature": {
+            "type": "object",
+            "description": "Decoded claim signature (algorithm, certificate, optional timestamp). CrJSON decoding of Claim Signature box; no CDDL rule in INTERNAL/cddl.",
+            "properties": {
+                "algorithm": {
+                    "type": "string",
+                    "description": "Algorithm used for signing (e.g., SHA256withECDSA)"
+                },
+                "certificateInfo": {
+                    "$ref": "#/definitions/certificateInfo"
+                },
+                "timeStampInfo": {
+                    "type": "object",
+                    "description": "Timestamp information (e.g. from TSA), when present",
+                    "properties": {
+                        "timestamp": {
+                            "type": "string",
+                            "format": "date-time",
+                            "description": "Time at which the time-stamp was created; RFC 3339 format"
+                        },
+                        "certificateInfo": {
+                            "$ref": "#/definitions/certificateInfo"
+                        }
+                    },
+                    "required": [
+                        "timestamp",
+                        "certificateInfo"
+                    ]
+                }
+            },
+            "required": [
+                "algorithm",
+                "certificateInfo"
+            ],
+            "additionalProperties": false
+        },
+        "distinguishedName": {
+            "type": "object",
+            "description": "X.509 Distinguished Name components. Used in signature/certificate decoding; no CDDL rule in INTERNAL/cddl.",
+            "properties": {
+                "C": {
+                    "type": "string",
+                    "description": "Country"
+                },
+                "ST": {
+                    "type": "string",
+                    "description": "State or province"
+                },
+                "L": {
+                    "type": "string",
+                    "description": "Locality"
+                },
+                "O": {
+                    "type": "string",
+                    "description": "Organization"
+                },
+                "OU": {
+                    "type": "string",
+                    "description": "Organizational unit"
+                },
+                "CN": {
+                    "type": "string",
+                    "description": "Common name"
+                },
+                "E": {
+                    "type": "string",
+                    "description": "Email address"
+                },
+                "2.5.4.97": {
+                    "type": "string",
+                    "description": "Organization identifier OID"
+                }
+            },
+            "additionalProperties": false
+        },
+        "manifestValidationResults": {
+            "type": "object",
+            "description": "Per-manifest validation status codes and validation time. Used in each manifest's validationResults.",
+            "properties": {
+                "success": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/validationStatusEntry"
+                    }
+                },
+                "informational": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/validationStatusEntry"
+                    }
+                },
+                "failure": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/validationStatusEntry"
+                    }
+                },
+                "specVersion": {
+                    "type": "string",
+                    "description": "The version of the specification against which the validation was performed (SemVer formatted string)",
+                    "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+                },
+                "validationTime": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Time when the validation was performed; RFC 3339 format"
+                }
+            },
+            "required": [
+                "success",
+                "informational",
+                "failure",
+                "specVersion",
+                "validationTime"
+            ],
+            "additionalProperties": false
+        },
+        "ingredientAssertionV1": {
+            "type": "object",
+            "description": "Ingredient assertion (v1) (c2pa.ingredient). CDDL: ingredient.cddl ingredient-map.",
+            "required": [
+                "dc:title",
+                "dc:format",
+                "instanceID",
+                "relationship"
+            ],
+            "properties": {
+                "dc:title": {
+                    "type": "string",
+                    "description": "Name of the ingredient (Dublin Core)"
+                },
+                "dc:format": {
+                    "type": "string",
+                    "description": "Media type of the ingredient (format-string)"
+                },
+                "documentID": {
+                    "type": "string",
+                    "description": "Value of the ingredient's xmpMM:DocumentID"
+                },
+                "instanceID": {
+                    "type": "string",
+                    "description": "Unique identifier, e.g. value of the ingredient's xmpMM:InstanceID"
+                },
+                "relationship": {
+                    "type": "string",
+                    "description": "Relationship of this ingredient to the asset; $relation-choice (parentOf, componentOf, inputTo)"
+                },
+                "c2pa_manifest": {
+                    "$ref": "#/definitions/hashedUriMap",
+                    "description": "Hashed URI reference to the C2PA Manifest of the ingredient"
+                },
+                "thumbnail": {
+                    "$ref": "#/definitions/hashedUriMap",
+                    "description": "Hashed URI reference to an ingredient thumbnail"
+                },
+                "validationStatus": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "description": "Status map per C2PA CDDL $status-map",
+                        "additionalProperties": true
+                    },
+                    "description": "Validation status of the ingredient"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/assertionMetadataMap"
+                }
+            },
+            "additionalProperties": false
+        },
+        "ingredientAssertionV2": {
+            "type": "object",
+            "description": "Ingredient assertion (v2) (c2pa.ingredient.v2). CDDL: ingredient.cddl ingredient-map-v2.",
+            "required": [
+                "dc:title",
+                "dc:format",
+                "relationship"
+            ],
+            "properties": {
+                "dc:title": {
+                    "type": "string",
+                    "description": "Name of the ingredient (Dublin Core)"
+                },
+                "dc:format": {
+                    "type": "string",
+                    "description": "Media type of the ingredient (format-string)"
+                },
+                "relationship": {
+                    "type": "string",
+                    "description": "Relationship of this ingredient to the asset; $relation-choice"
+                },
+                "documentID": {
+                    "type": "string",
+                    "description": "Value of the ingredient's xmpMM:DocumentID"
+                },
+                "instanceID": {
+                    "type": "string",
+                    "description": "Unique identifier, e.g. value of the ingredient's xmpMM:InstanceID"
+                },
+                "data": {
+                    "description": "Hashed URI to embedded data assertion or hashed_ext_uri to external data",
+                    "oneOf": [
+                        {
+                            "$ref": "#/definitions/hashedUriMap"
+                        },
+                        {
+                            "$ref": "#/definitions/hashedExtUriMap"
+                        }
+                    ]
+                },
+                "data_types": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "description": "Asset type per C2PA CDDL $asset-type-map",
+                        "additionalProperties": true
+                    },
+                    "description": "Additional information about the data's type"
+                },
+                "c2pa_manifest": {
+                    "$ref": "#/definitions/hashedUriMap",
+                    "description": "Hashed URI reference to the C2PA Manifest of the ingredient"
+                },
+                "thumbnail": {
+                    "$ref": "#/definitions/hashedUriMap",
+                    "description": "Hashed URI reference to a thumbnail in an embedded data assertion"
+                },
+                "validationStatus": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "description": "Status map per C2PA CDDL $status-map",
+                        "additionalProperties": true
+                    },
+                    "description": "Validation status of the ingredient"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Additional description of the ingredient"
+                },
+                "informational_URI": {
+                    "type": "string",
+                    "description": "URI to an informational page about the ingredient or its data"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/assertionMetadataMap"
+                }
+            },
+            "additionalProperties": false
+        },
+        "ingredientAssertionV3": {
+            "type": "object",
+            "description": "Ingredient assertion (v3) (c2pa.ingredient.v3). CDDL: ingredient.cddl ingredient-map-v3. When the ingredient is a C2PA asset, activeManifest and validationResults are both required (validation is performed to determine the active manifest).",
+            "required": [
+                "relationship"
+            ],
+            "dependentRequired": {
+                "activeManifest": ["validationResults"],
+                "validationResults": ["activeManifest"]
+            },
+            "properties": {
+                "dc:title": {
+                    "type": "string",
+                    "description": "Name of the ingredient (Dublin Core)"
+                },
+                "dc:format": {
+                    "type": "string",
+                    "description": "Media type of the ingredient (format-string)"
+                },
+                "relationship": {
+                    "type": "string",
+                    "description": "Relationship of this ingredient to the asset; $relation-choice"
+                },
+                "validationResults": {
+                    "$ref": "#/definitions/validationResults",
+                    "description": "Results from the claim generator performing full validation on the ingredient asset ($validation-results-map)"
+                },
+                "instanceID": {
+                    "type": "string",
+                    "description": "Unique identifier, e.g. value of the ingredient's xmpMM:InstanceID"
+                },
+                "data": {
+                    "description": "Hashed URI to embedded data assertion or hashed_ext_uri to external data",
+                    "oneOf": [
+                        {
+                            "$ref": "#/definitions/hashedUriMap"
+                        },
+                        {
+                            "$ref": "#/definitions/hashedExtUriMap"
+                        }
+                    ]
+                },
+                "dataTypes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "description": "Asset type per C2PA CDDL $asset-type-map",
+                        "additionalProperties": true
+                    },
+                    "description": "Additional information about the data's type (v3 camelCase)"
+                },
+                "activeManifest": {
+                    "$ref": "#/definitions/hashedUriMap",
+                    "description": "Hashed URI to the box corresponding to the active manifest of the ingredient"
+                },
+                "claimSignature": {
+                    "$ref": "#/definitions/hashedUriMap",
+                    "description": "Hashed URI to the Claim Signature box in the C2PA Manifest of the ingredient"
+                },
+                "thumbnail": {
+                    "$ref": "#/definitions/hashedUriMap",
+                    "description": "Hashed URI reference to a thumbnail in an embedded data assertion"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Additional description of the ingredient"
+                },
+                "informationalURI": {
+                    "type": "string",
+                    "description": "URI to an informational page about the ingredient or its data (v3 camelCase)"
+                },
+                "softBindingsMatched": {
+                    "type": "boolean",
+                    "description": "Whether soft bindings were matched"
+                },
+                "softBindingAlgorithmsMatched": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Array of algorithm names used for discovering the active manifest"
+                },
+                "metadata": {
+                    "$ref": "#/definitions/assertionMetadataMap"
+                }
+            },
+            "additionalProperties": false
+        },
+        "hashedExtUriMap": {
+            "type": "object",
+            "description": "Reference to an external URL and its hash. CDDL: hashed-ext-uri.cddl $hashed-ext-uri-map. Used in ingredient v2/v3 data field.",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "HTTP/HTTPS URI reference to external data",
+                    "format": "uri"
+                },
+                "alg": {
+                    "type": "string",
+                    "description": "String identifying the cryptographic hash algorithm used to compute the hash on this URI's data, taken from the C2PA hash algorithm identifier list."
+                },
+                "hash": {
+                    "type": "string",
+                    "description": "Base64-encoded with b64' prefix hash value of the external data"
+                },
+                "dc:format": {
+                    "type": "string",
+                    "description": "IANA media type of the data (optional)"
+                },
+                "size": {
+                    "type": "integer",
+                    "description": "Number of bytes of data (optional)"
+                },
+                "data_types": {
+                    "type": "array",
+                    "description": "Additional information about the data's type (optional)",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                    }
+                }
+            },
+            "required": [
+                "url",
+                "alg",
+                "hash"
+            ],
+            "additionalProperties": false
+        },
+        "thumbnailAssertion": {
+            "type": "object",
+            "description": "Thumbnail assertion (e.g. c2pa.thumbnail.claim.jpeg, c2pa.thumbnail.ingredient.jpeg). No CDDL in INTERNAL/cddl; structure is CrJSON/schema-defined.",
+            "properties": {
+                "thumbnailType": {
+                    "type": "integer",
+                    "description": "Thumbnail type (0=claim, 1=ingredient)"
+                },
+                "mimeType": {
+                    "type": "string",
+                    "description": "MIME type of thumbnail"
+                }
+            },
+            "additionalProperties": false
+        },
+        "bmffExclusionsMap": {
+            "type": "object",
+            "description": "Exclusion entry for BMFF hash. CDDL: bmff-hash.cddl exclusions-map.",
+            "required": [
+                "xpath"
+            ],
+            "properties": {
+                "xpath": {
+                    "type": "string",
+                    "description": "Location of box(es) to exclude (XPath from root node)"
+                },
+                "length": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Length that a leafmost box must have to be excluded"
+                },
+                "data": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/bmffDataMap"
+                    },
+                    "description": "Data at relative byte offset that must match for box to be excluded"
+                },
+                "subset": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/bmffSubsetMap"
+                    },
+                    "description": "Portion of the excluded box that is excluded from the hash"
+                },
+                "version": {
+                    "type": "integer",
+                    "description": "Version that must be set in a leafmost FullBox for the box to be excluded"
+                },
+                "flags": {
+                    "type": "string",
+                    "description": "24-bit flags (3-byte byte string, e.g. Base64-encoded with b64' prefix in JSON). Only for FullBox when version is specified."
+                },
+                "exact": {
+                    "type": "boolean",
+                    "description": "If true, flags must be an exact match (default true). Only for FullBox when flags is specified."
+                }
+            },
+            "additionalProperties": false
+        },
+        "bmffDataMap": {
+            "type": "object",
+            "description": "CDDL: bmff-hash.cddl data-map.",
+            "required": [
+                "offset",
+                "value"
+            ],
+            "properties": {
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Relative byte offset in the leafmost box"
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Byte string (e.g. Base64 in JSON) that must match at the offset"
+                }
+            },
+            "additionalProperties": false
+        },
+        "bmffSubsetMap": {
+            "type": "object",
+            "description": "CDDL: bmff-hash.cddl subset-map.",
+            "required": [
+                "offset",
+                "length"
+            ],
+            "properties": {
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Relative byte offset within the excluded box"
+                },
+                "length": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Number of bytes in this subset"
+                }
+            },
+            "additionalProperties": false
+        },
+        "bmffMerkleMap": {
+            "type": "object",
+            "description": "Merkle tree row for mdat verification. CDDL: bmff-hash.cddl merkle-map.",
+            "required": [
+                "uniqueId",
+                "localId",
+                "count",
+                "hashes"
+            ],
+            "properties": {
+                "uniqueId": {
+                    "type": "integer",
+                    "description": "1-based unique id to determine which Merkle tree validates a given mdat box"
+                },
+                "localId": {
+                    "type": "integer",
+                    "description": "Local id indicating Merkle tree"
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "Number of leaf nodes in the Merkle tree (null nodes not included)"
+                },
+                "alg": {
+                    "type": "string",
+                    "description": "Hash algorithm for this Merkle tree; if absent, from enclosing structure"
+                },
+                "initHash": {
+                    "type": "string",
+                    "description": "Hash of init segment or bytes before first moof (fragmented MP4); absent for non-fragmented"
+                },
+                "hashes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Ordered array representing a single row of the Merkle tree (e.g. Base64 in JSON)"
+                },
+                "fixedBlockSize": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Size in bytes of a leaf node (non-fragmented MP4, piecewise mdat validation)"
+                },
+                "variableBlockSizes": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "integer",
+                        "minimum": 0
+                    },
+                    "description": "Size in bytes of each leaf node (non-fragmented MP4); length equals count"
+                }
+            },
+            "additionalProperties": false
+        },
+        "hashBmffAssertion": {
+            "type": "object",
+            "description": "BMFF hash assertion (c2pa.hash.bmff.v2). CDDL: bmff-hash.cddl bmff-hash-map, exclusions-map, merkle-map.",
+            "required": [
+                "exclusions"
+            ],
+            "properties": {
+                "exclusions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/bmffExclusionsMap"
+                    },
+                    "description": "Box(es) to exclude from the hash"
+                },
+                "alg": {
+                    "type": "string",
+                    "description": "Hash algorithm; if absent, from enclosing structure (C2PA hash algorithm identifier list)"
+                },
+                "hash": {
+                    "type": "string",
+                    "description": "Hash of BMFF/segment excluding exclusions (e.g. Base64 in JSON)"
+                },
+                "merkle": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "$ref": "#/definitions/bmffMerkleMap"
+                    },
+                    "description": "Merkle tree rows for verification of mdat box(es) or fragment files"
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Human-readable description of what this hash covers"
+                },
+                "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Unused and deprecated"
+                },
+                "sequenceNumber": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "In a live video workflow, the monotonically increasing sequence number for each segment"
+                }
+            },
+            "additionalProperties": false
+        },
+        "validationResults": {
+            "type": "object",
+            "description": "Validation results (active manifest and optional ingredient deltas). CDDL: validation-results.cddl validation-results-map. Used in ingredient assertions (e.g. c2pa.ingredient.v3).",
+            "properties": {
+                "activeManifest": {
+                    "$ref": "#/definitions/statusCodes",
+                    "description": "Validation status codes for the active manifest. Present when ingredient is a C2PA asset."
+                },
+                "ingredientDeltas": {
+                    "type": "array",
+                    "description": "Validation deltas per ingredient assertion. Present when the ingredient is a C2PA asset.",
+                    "items": {
+                        "$ref": "#/definitions/ingredientDeltaValidationResult"
+                    }
+                },
+                "specVersion": {
+                    "type": "string",
+                    "description": "The version of the specification against which the validation was performed (SemVer formatted string)",
+                    "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+                },
+                "trustListUri": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "URI to the trust list that was used to validate certificates"
+                }
+            },
+            "required": [
+                "activeManifest"
+            ],
+            "additionalProperties": false
+        },
+        "statusCodes": {
+            "type": "object",
+            "description": "Success, informational, and failure validation status codes. CDDL: validation-results.cddl status-codes-map.",
+            "properties": {
+                "success": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/validationStatusEntry"
+                    }
+                },
+                "informational": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/validationStatusEntry"
+                    }
+                },
+                "failure": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/validationStatusEntry"
+                    }
+                }
+            },
+            "required": [
+                "success",
+                "informational",
+                "failure"
+            ],
+            "additionalProperties": false
+        },
+        "validationStatusEntry": {
+            "type": "object",
+            "description": "Single validation status (code, optional url and explanation). CDDL: validation-results.cddl status-map.",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "Validation status code"
+                },
+                "url": {
+                    "type": "string",
+                    "description": "JUMBF URI where status applies"
+                },
+                "explanation": {
+                    "type": "string",
+                    "description": "Human-readable explanation"
+                }
+            },
+            "required": [
+                "code"
+            ],
+            "additionalProperties": false
+        },
+        "ingredientDeltaValidationResult": {
+            "type": "object",
+            "description": "Validation deltas for one ingredient's manifest. CDDL: validation-results.cddl ingredient-delta-validation-result-map.",
+            "properties": {
+                "ingredientAssertionURI": {
+                    "type": "string",
+                    "description": "JUMBF URI to the ingredient assertion"
+                },
+                "validationDeltas": {
+                    "$ref": "#/definitions/statusCodes"
+                }
+            },
+            "required": [
+                "ingredientAssertionURI",
+                "validationDeltas"
+            ],
+            "additionalProperties": false
+        }
+    }
+}

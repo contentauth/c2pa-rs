@@ -86,11 +86,17 @@ pub fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
        .all(|(a,b)| a == b)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Hasher {
     SHA256(Sha256),
     SHA384(Sha384),
     SHA512(Sha512),
+}
+
+impl Default for Hasher {
+    fn default() -> Self {
+        Hasher::SHA256(Sha256::new())
+    }
 }
 
 impl Hasher {
@@ -209,15 +215,20 @@ pub fn hash_asset_by_alg_with_inclusions(
 
     The data is again split into range sets breaking at the exclusion points and now also the markers.
 */
-/// May be used to generate hashes in combination with embeddable APIs.
-pub fn hash_stream_by_alg<R>(
+/// Internal implementation of [`hash_stream_by_alg`] with an optional per-range
+/// progress/cancellation callback.  SDK internals that have a [`Context`] available
+/// pass a closure that calls [`Context::check_progress`]; the public wrapper supplies
+/// `None` so external callers are unaffected.
+pub(crate) fn hash_stream_by_alg_with_progress<R, F>(
     alg: &str,
     data: &mut R,
     hash_range: Option<Vec<HashRange>>,
     is_exclusion: bool,
+    progress: &mut F,
 ) -> Result<Vec<u8>>
 where
     R: Read + Seek + ?Sized,
+    F: FnMut(u32, u32) -> Result<()>,
 {
     let mut bmff_v2_starts: Vec<u64> = Vec::new();
 
@@ -246,7 +257,10 @@ where
 
             // verify structure of blocks
             let num_blocks = hr.len();
-            let range_end = hr[num_blocks - 1].start() + hr[num_blocks - 1].length();
+            let range_end = hr[num_blocks - 1]
+                .start()
+                .checked_add(hr[num_blocks - 1].length())
+                .ok_or(Error::BadParam("hash range overflow".to_string()))?;
             let data_end = data_len - 1;
 
             // range extends past end of file so fail
@@ -344,7 +358,11 @@ where
                         continue;
                     }
 
-                    let end = inclusion.start() + inclusion.length() - 1;
+                    let end = inclusion
+                        .start()
+                        .checked_add(inclusion.length())
+                        .ok_or(Error::BadParam("inclusion range overflow".to_string()))?
+                        - 1;
                     let inclusion_start = inclusion.start();
 
                     // add new BMFF V2 offset as a new range to be included so that we can
@@ -369,9 +387,23 @@ where
         }
     };
 
+    // Total callbacks = one per 256 MB chunk across all ranges (BMFF V2 single-byte offsets
+    // each contribute exactly one tick regardless of MAX_HASH_BUF).
+    let total: u32 = ranges
+        .iter()
+        .map(|r| {
+            let len = r.end() - r.start() + 1;
+            (len as usize).div_ceil(MAX_HASH_BUF) as u32
+        })
+        .sum();
+    let mut step: u32 = 0;
+
     if cfg!(target_arch = "wasm32") {
         // hash the data for ranges
         for r in ranges {
+            step += 1;
+            progress(step, total)?;
+
             let start = r.start();
             let end = r.end();
             let mut chunk_left = end - start + 1;
@@ -396,11 +428,18 @@ where
                 if chunk_left == 0 {
                     break;
                 }
+
+                // fire after each non-final chunk so large ranges report sub-range progress
+                step += 1;
+                progress(step, total)?;
             }
         }
     } else {
         // hash the data for ranges
         for r in ranges {
+            step += 1;
+            progress(step, total)?;
+
             let start = r.start();
             let end = r.end();
             let mut chunk_left = end - start + 1;
@@ -445,6 +484,10 @@ where
                     Err(_) => return Err(Error::ThreadReceiveError),
                 };
 
+                // fire after each completed pipeline stage so large ranges report sub-range progress
+                step += 1;
+                progress(step, total)?;
+
                 chunk = next_chunk;
             }
         }
@@ -452,6 +495,19 @@ where
 
     // return the hash
     Ok(Hasher::finalize(hasher_enum))
+}
+
+/// May be used to generate hashes in combination with embeddable APIs.
+pub fn hash_stream_by_alg<R>(
+    alg: &str,
+    data: &mut R,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+) -> Result<Vec<u8>>
+where
+    R: Read + Seek + ?Sized,
+{
+    hash_stream_by_alg_with_progress(alg, data, hash_range, is_exclusion, &mut |_, _| Ok(()))
 }
 
 // verify the hash using the specified algorithm
@@ -545,4 +601,64 @@ pub fn hash_to_b64(mut value: Value) -> Value {
         }
     }
     value
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::io::Cursor;
+
+    use super::*;
+
+    // Attacker-controlled HashRange with start+length > u64::MAX must return Err,
+    // not panic, in both the exclusion and inclusion paths.
+    #[test]
+    fn test_exclusion_range_overflow_returns_error() {
+        let data = vec![0u8; 64];
+        let mut reader = Cursor::new(&data);
+        let hr = vec![HashRange::new(u64::MAX - 10, 20)]; // start + length overflows u64
+        let result = hash_stream_by_alg("sha256", &mut reader, Some(hr), true);
+        assert!(
+            result.is_err(),
+            "exclusion range overflow must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn test_inclusion_range_overflow_returns_error() {
+        let data = vec![0u8; 64];
+        let mut reader = Cursor::new(&data);
+        let hr = vec![HashRange::new(u64::MAX, 1)]; // start + length overflows u64
+        let result = hash_stream_by_alg("sha256", &mut reader, Some(hr), false);
+        assert!(
+            result.is_err(),
+            "inclusion range overflow must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn progress_callback_is_called() {
+        let data = vec![0u8; 64];
+        let mut called = false;
+        let mut reader = Cursor::new(&data);
+        let mut cb = |_step, _total| {
+            called = true;
+            Ok(())
+        };
+        hash_stream_by_alg_with_progress("sha256", &mut reader, None, true, &mut cb).unwrap();
+        assert!(called, "progress callback should have been invoked");
+    }
+
+    #[test]
+    fn progress_callback_can_cancel() {
+        let data = vec![0u8; 64];
+        let mut reader = Cursor::new(&data);
+        let mut cb = |_step, _total| Err(Error::OperationCancelled);
+        let result = hash_stream_by_alg_with_progress("sha256", &mut reader, None, true, &mut cb);
+        assert!(
+            matches!(result, Err(Error::OperationCancelled)),
+            "expected OperationCancelled, got {result:?}"
+        );
+    }
 }

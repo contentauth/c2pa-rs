@@ -135,7 +135,7 @@ impl Read for C2paStream {
         }
 
         let bytes_read =
-            unsafe { (self.reader)(&mut (*self.context), buf.as_mut_ptr(), buf.len() as isize) };
+            unsafe { (self.reader)(self.context, buf.as_mut_ptr(), buf.len() as isize) };
 
         // Returns a negative number for errors.
         if bytes_read < 0 {
@@ -173,7 +173,7 @@ impl Seek for C2paStream {
             std::io::SeekFrom::End(pos) => (pos, C2paSeekMode::End),
         };
 
-        let new_pos = unsafe { (self.seeker)(&mut (*self.context), pos as isize, mode) };
+        let new_pos = unsafe { (self.seeker)(self.context, pos as isize, mode) };
         if new_pos < 0 {
             return Err(CimplError::last_message()
                 .map(|msg| {
@@ -207,7 +207,7 @@ impl Write for C2paStream {
             ));
         }
         let bytes_written =
-            unsafe { (self.writer)(&mut (*self.context), buf.as_ptr(), buf.len() as isize) };
+            unsafe { (self.writer)(self.context, buf.as_ptr(), buf.len() as isize) };
         if bytes_written < 0 {
             return Err(CimplError::last_message()
                 .map(|msg| {
@@ -228,7 +228,7 @@ impl Write for C2paStream {
     /// # Errors
     /// * Returns an error if the underlying C callback returns an error too (negative value)
     fn flush(&mut self) -> std::io::Result<()> {
-        let err = unsafe { (self.flusher)(&mut (*self.context)) };
+        let err = unsafe { (self.flusher)(self.context) };
         if err < 0 {
             return Err(std::io::Error::last_os_error());
         }
@@ -269,7 +269,9 @@ impl TestStream {
 #[cfg(test)]
 impl Drop for TestStream {
     fn drop(&mut self) {
-        TestC2paStream::drop_c_stream(self.0);
+        unsafe {
+            TestC2paStream::drop_c_stream(self.0);
+        }
     }
 }
 
@@ -401,7 +403,16 @@ impl TestC2paStream {
         test_stream.into_c_stream()
     }
 
-    pub fn drop_c_stream(c_stream: *mut C2paStream) {
+    /// # Safety
+    ///
+    /// - `c_stream` must be a pointer allocated via `box_tracked!`.
+    /// - If non-null, `c_stream.context` must also be a tracked pointer allocated via `box_tracked!`.
+    /// - Must not be called more than once for the same pointer.
+    pub unsafe fn drop_c_stream(c_stream: *mut C2paStream) {
+        if !c_stream.is_null() {
+            let context = unsafe { (*c_stream).context };
+            cimpl_free(context as *mut std::ffi::c_void);
+        }
         cimpl_free(c_stream as *mut std::ffi::c_void);
     }
 }
@@ -566,5 +577,6 @@ mod tests {
         assert_eq!(buf, [1, 2, 3]);
 
         unsafe { c2pa_release_stream(c2pa_stream) };
+        cimpl_free(context as *mut std::ffi::c_void);
     }
 }

@@ -98,7 +98,7 @@ jobs:
           github.event.pull_request.author_association == 'COLLABORATOR' ||
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
@@ -154,7 +154,7 @@ jobs:
           github.event.pull_request.author_association == 'COLLABORATOR' ||
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
@@ -204,7 +204,7 @@ jobs:
           github.event.pull_request.author_association == 'COLLABORATOR' ||
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
@@ -368,7 +368,7 @@ jobs:
       #     github.event.pull_request.author_association == 'COLLABORATOR' ||
       #     github.event.pull_request.author_association == 'MEMBER' ||
       #     github.event.pull_request.user.login == 'dependabot[bot]'
-      #   uses: codecov/codecov-action@v5
+      #   uses: codecov/codecov-action@v6
       #   with:
       #     token: ${{ secrets.CODECOV_TOKEN }}
       #     fail_ci_if_error: true
@@ -399,6 +399,28 @@ jobs:
       - name: "`cargo check` with default features"
         run: cargo check
 
+  cargo-lock:
+    name: Cargo.lock is up to date
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+      contains(github.event.pull_request.labels.*.name, 'check-release')
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check that Cargo.lock is up to date
+        run: cargo check --locked
+
   tests-wasm:
     name: Unit tests (Wasm)
     needs: get-features
@@ -419,12 +441,6 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up Chrome
-        uses: browser-actions/setup-chrome@v2
-        with:
-          chrome-version: 144
-          install-chromedriver: true
-
       - name: Add wasm web target
         run: rustup target add wasm32-unknown-unknown
 
@@ -434,7 +450,7 @@ jobs:
       - name: Extract wasm-bindgen version from Cargo.lock
         id: wasm-bindgen-version
         run: |
-          VERSION=$(cargo metadata --format-version 1 --locked | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
+          VERSION=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Using wasm-bindgen version: $VERSION"
 
@@ -445,45 +461,8 @@ jobs:
         run: cargo test -p c2pa --no-default-features --features rust_native_crypto,fetch_remote_manifests,http_reqwest --target wasm32-unknown-unknown
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+          GECKODRIVER: geckodriver
           WASM_BINDGEN_TEST_TIMEOUT: 60
-
-  benchmarks:
-    name: Run benchmarks on signing and reading
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
-
-      - name: Install cargo-codspeed
-        run: cargo binstall --no-confirm cargo-codspeed
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build the benchmark target(s)
-        run: cargo codspeed build -p c2pa --no-default-features --features rust_native_crypto
-
-      - name: Run the benchmarks
-        uses: CodSpeedHQ/action@v4
-        with:
-          mode: instrumentation
-          run: cargo codspeed run
-          token: ${{ secrets.CODSPEED_TOKEN }}
 
   tests-wasi:
     name: Unit tests (WASI)

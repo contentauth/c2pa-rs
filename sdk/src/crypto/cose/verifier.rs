@@ -84,23 +84,19 @@ impl Verifier<'_> {
             return Err(CoseError::UnsupportedSigningAlgorithm);
         };
 
-        match alg {
-            SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
-                if parse_ec_der_sig(&sign1.signature).is_ok() {
-                    // Should have been in P1363 format, not DER.
-                    log_item!(
-                        "Cose_Sign1",
-                        "unsupported signature format (EC signature should be in P1363 r|s format)",
-                        "verify_cose"
-                    )
-                    .validation_status(SIGNING_CREDENTIAL_INVALID)
-                    .failure_no_throw(validation_log, CoseError::InvalidEcdsaSignature);
+        if let (SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512, true) =
+            (alg, parse_ec_der_sig(&sign1.signature).is_ok())
+        {
+            // Should have been in P1363 format, not DER.
+            log_item!(
+                "Cose_Sign1",
+                "unsupported signature format (EC signature should be in P1363 r|s format)",
+                "verify_cose"
+            )
+            .validation_status(SIGNING_CREDENTIAL_INVALID)
+            .failure_no_throw(validation_log, CoseError::InvalidEcdsaSignature);
 
-                    // validation_log.log(log_item, CoseError::InvalidEcdsaSignature)?;
-                    return Err(CoseError::InvalidEcdsaSignature);
-                }
-            }
-            _ => (),
+            return Err(CoseError::InvalidEcdsaSignature);
         }
 
         if _sync {

@@ -471,7 +471,8 @@ fn write_xmp_box<W: Write>(w: &mut W, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn _write_free_box<W: Write>(w: &mut W, size: usize) -> Result<()> {
+#[allow(unused_imports)]
+fn write_free_box<W: Write>(w: &mut W, size: usize) -> Result<()> {
     if size < 8 {
         return Err(Error::BadParam("cannot adjust free space".to_string()));
     }
@@ -1292,19 +1293,34 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     let mut current = start;
     while current < end {
         // Get box header.
-        let header = BoxHeaderLite::read(reader)
-            .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {err}")))?;
+        let header = match BoxHeaderLite::read(reader) {
+            Ok(h) => h,
+            Err(_) => {
+                // if we can't read a header, just return what we have so far since some files have trailing data after the last box
+                skip_bytes_to(reader, end)?;
+                break;
+            }
+        };
 
         // Break if size zero BoxHeader
-        let s = header.size;
+        let mut s = header.size;
         if s == 0 {
             break;
         }
 
-        if current + s > end {
-            return Err(Error::InvalidAsset(
-                "Box size extends beyond asset bounds".to_string(),
-            ));
+        let box_end = current
+            .checked_add(s)
+            .ok_or_else(|| Error::InvalidAsset("BMFF box size overflow".to_string()))?;
+        if box_end > end {
+            if BoxType::MdatBox == header.name {
+                // for mdat boxes that extend beyond the end of the file we will just set the size to the remaining bytes in the file since
+                // some files have malformed mdat sizes but we can still hash the content by treating it as a truncated box
+                s = end - current;
+            } else {
+                return Err(Error::InvalidAsset(
+                    "Box size extends beyond asset bounds".to_string(),
+                ));
+            }
         }
 
         // Match and parse the supported atom boxes.
@@ -1475,26 +1491,40 @@ fn get_uuid_box_purpose<R: Read + Seek + ?Sized>(
     box_info: &atree::Node<BoxInfo>,
 ) -> Result<(String, u64)> {
     if box_info.data.box_type == BoxType::UuidBox {
-        let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
+        let mut data_len = box_info
+            .data
+            .size
+            .checked_sub(HEADER_SIZE)
+            .and_then(|n| n.checked_sub(16))
+            .ok_or_else(|| Error::InvalidAsset("UUID box too small".to_string()))?;
 
         // set reader to start of box contents
         skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
 
         // Fullbox => 8 bits for version 24 bits for flags
         let (_version, _flags) = read_box_header_ext(reader)?;
-        data_len -= 4;
+        data_len = data_len.checked_sub(4).ok_or_else(|| {
+            Error::InvalidAsset("UUID box too small for FullBox header".to_string())
+        })?;
 
-        // get the purpose
+        // get the purpose (null-terminated string bounded by the box)
         let mut purpose_bytes = Vec::with_capacity(64);
         loop {
+            // Guard prevents reading past the box boundary, which would cause
+            // data_len to underflow (wrapping to u64::MAX) and the caller to
+            // attempt a u64::MAX-byte allocation.
+            if data_len == 0 {
+                return Err(Error::InvalidAsset(
+                    "UUID box purpose field missing null terminator".to_string(),
+                ));
+            }
             let mut buf = [0; 1];
             reader.read_exact(&mut buf)?;
             data_len -= 1;
             if buf[0] == 0x00 {
                 break;
-            } else {
-                purpose_bytes.push(buf[0]);
             }
+            purpose_bytes.push(buf[0]);
         }
 
         let purpose = String::from_utf8_lossy(&purpose_bytes);
@@ -1603,7 +1633,11 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             // offset to first aux uuid with purpose merkle
                             let mut buf = [0u8; 8];
                             reader.read_exact(&mut buf)?;
-                            data_len -= 8;
+                            data_len = data_len.checked_sub(8).ok_or_else(|| {
+                                Error::InvalidAsset(
+                                    "UUID box too small for merkle offset field".to_string(),
+                                )
+                            })?;
 
                             // read the manifest box contents
                             let manifest = reader.read_to_vec(data_len)?;
@@ -1651,7 +1685,14 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             });
                         }
                     } else if vec_compare(&XMP_UUID, uuid) {
-                        let data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
+                        let data_len = box_info
+                            .data
+                            .size
+                            .checked_sub(HEADER_SIZE)
+                            .and_then(|n| n.checked_sub(16))
+                            .ok_or_else(|| {
+                                Error::InvalidAsset("XMP UUID box too small".to_string())
+                            })?;
 
                         // set reader to start of box contents
                         skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
@@ -1670,7 +1711,7 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
 
     // get position ordered list of boxes
     let mut box_infos: Vec<BoxInfoLite> = get_top_level_boxes(bmff_tree, bmff_map);
-    box_infos.sort_by(|a, b| a.offset.cmp(&b.offset));
+    box_infos.sort_by_key(|a| a.offset);
 
     Ok(C2PABmffBoxes {
         manifest_bytes,
@@ -2541,6 +2582,226 @@ impl RemoteRefEmbed for BmffIO {
     }
 }
 
+// inject a placeholder free box of free_size at the end of the ftyp box. This is used to reserve
+// space for a manifest box when one does not already exist in the file.
+// Returns the location of the injected placeholder box.  This function assumes the file does not have
+// an existing manifest store and that the placeholder box will be replaced with the manifest store during the first update pass.
+#[allow(dead_code)]
+pub(crate) fn inject_placeholder(
+    input_stream: &mut dyn CAIRead,
+    output_stream: &mut dyn CAIReadWrite,
+    free_size: usize,
+) -> Result<u64> {
+    let size = stream_len(input_stream)?;
+    input_stream.rewind()?;
+
+    let ftyp = read_ftyp_box(input_stream)?;
+    input_stream.rewind()?;
+
+    // create root node
+    let root_box = BoxInfo {
+        path: "".to_string(),
+        offset: 0,
+        size,
+        box_type: BoxType::Empty,
+        parent: None,
+        user_type: None,
+        version: None,
+        flags: None,
+    };
+
+    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+    // build layout of the BMFF structure
+    let mut rl = 0usize;
+    build_bmff_tree(
+        input_stream,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+        &ftyp,
+    )?;
+
+    // figure out what state we are in
+    let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
+    let has_manifest = c2pa_boxes.manifest_bytes.is_some();
+    let has_original = c2pa_boxes.original_bytes.is_some();
+    let has_update = c2pa_boxes.update_bytes.is_some();
+
+    if has_manifest || has_original || has_update {
+        return Err(Error::InvalidAsset(
+            "inject_placeholder should only be called on files without existing manifest stores"
+                .to_string(),
+        ));
+    }
+
+    // since we reached this point we must have an ordinary manifest store so we may need to truncate off
+    // the update manifest
+    // get ftyp location
+    // start after ftyp
+    let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+    let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+    let ftyp_offset = ftyp_info.offset;
+    let ftyp_size = ftyp_info.size;
+
+    // create free box bytes
+    let mut free_box_bytes = Vec::with_capacity(free_size + 8);
+    write_free_box(&mut free_box_bytes, free_size)?;
+
+    // insertion point
+    let start = ftyp_offset + ftyp_size;
+
+    // write content before free box
+    input_stream.rewind()?;
+    let mut before_free = input_stream.take(start);
+    std::io::copy(&mut before_free, output_stream)?;
+
+    // write free box
+    output_stream.write_all(&free_box_bytes)?;
+
+    // write content after free box
+    std::io::copy(input_stream, output_stream)?;
+
+    // calc offset adjustments
+    let offset_adjust: i32 = free_box_bytes.len() as i32;
+
+    // Manipulating the free box means we may need some patch offsets if they are file absolute offsets.
+    if offset_adjust != 0 {
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
+
+        // map box layout of current output file
+        let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
+        let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+        let size = stream_len(output_stream)?;
+        output_stream.rewind()?;
+        let mut rl = 0usize;
+        build_bmff_tree(
+            output_stream,
+            size,
+            &mut output_bmff_tree,
+            &root_token,
+            &mut output_bmff_map,
+            &mut rl,
+            &ftyp,
+        )?;
+
+        // adjust offsets based on current layout
+        output_stream.rewind()?;
+        adjust_known_offsets(
+            output_stream,
+            &output_bmff_tree,
+            &output_bmff_map,
+            offset_adjust,
+        )?;
+    }
+
+    Ok(start)
+}
+
+// write manifest into free box location.  Used inconjunction with inject_placeholder to first
+// inject a free box to reserve space for the manifest and then write the manifest into the
+// free box during the first update pass. This function assumes the manifest box will be the
+// same size or smaller than the placeholder free box. If the manifest box is smaller than the
+// placeholder free box then the remaining free space will be converted to a smaller free box.
+// If the manifest box is larger than the placeholder free box then an error will be returned.
+// manifest_bytes should be the bytes of the manifest box including the header. free_box_start is
+// the file offset of the beginning of the free box to be replaced by the manifest box.
+#[allow(dead_code)]
+pub(crate) fn inject_manifest_into_free_box(
+    stream: &mut dyn CAIReadWrite,
+    manifest_bytes: &[u8],
+    free_box_start: u64,
+) -> Result<()> {
+    let size = stream_len(stream)?;
+    stream.rewind()?;
+
+    let ftyp = read_ftyp_box(stream)?;
+    stream.rewind()?;
+
+    // create root node
+    let root_box = BoxInfo {
+        path: "".to_string(),
+        offset: 0,
+        size,
+        box_type: BoxType::Empty,
+        parent: None,
+        user_type: None,
+        version: None,
+        flags: None,
+    };
+
+    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+    // build layout of the BMFF structure
+    let mut rl = 0usize;
+    build_bmff_tree(
+        stream,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+        &ftyp,
+    )?;
+
+    // get the matching free box
+    let free_tokens = bmff_map.get("/free").ok_or(Error::BadParam(
+        "Did not find free box to inject manifest".to_string(),
+    ))?;
+
+    // find the free box that starts at the expected location
+    let free_token = free_tokens
+        .iter()
+        .find(|token| {
+            let free_info = &bmff_tree[**token].data;
+            free_info.offset == free_box_start
+        })
+        .ok_or(Error::BadParam(
+            "Did not find free box to inject manifest at expected location".to_string(),
+        ))?;
+
+    let free_info = &bmff_tree[*free_token].data;
+
+    if manifest_bytes.len() as u64 > free_info.size {
+        return Err(Error::BadParam(
+            "Manifest size is larger than free box".to_string(),
+        ));
+    }
+
+    // write manifest into free box location
+    stream.seek(SeekFrom::Start(free_info.offset))?;
+    stream.write_all(manifest_bytes)?;
+
+    // convert remaining free space to a smaller free box if needed
+    let remaining_free_space = free_info.size - manifest_bytes.len() as u64;
+    if remaining_free_space > 8 {
+        // need at least 8 bytes to write another free box
+        let mut new_free_box = Vec::with_capacity(remaining_free_space as usize);
+        write_free_box(&mut new_free_box, remaining_free_space as usize)?;
+        stream.write_all(&new_free_box)?;
+    } else {
+        Err(Error::BadParam(
+            "Not enough space to create new free box".to_string(),
+        ))?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum BmffError {
     #[error("invalid file signature: {reason}")]
@@ -2706,5 +2967,92 @@ pub mod tests {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn test_bmff_large_size_overflow_does_not_panic() {
+        // Craft a 32-byte MP4: 16-byte ftyp box followed by a 16-byte large-size box
+        // that claims 0xFFFFFFFFFFFFFFF0 bytes. When current=16 (after ftyp), the
+        // unchecked addition 16 + 0xFFFFFFFFFFFFFFF0 overflows u64 in debug mode
+        // (panic exit 101) and silently wraps to bypass the bounds check in release mode.
+        let mut data: Vec<u8> = Vec::new();
+        // ftyp box (16 bytes): size=16, type='ftyp', major_brand='mp41', minor_version=0
+        data.extend_from_slice(&16u32.to_be_bytes());
+        data.extend_from_slice(b"ftyp");
+        data.extend_from_slice(b"mp41");
+        data.extend_from_slice(&0u32.to_be_bytes());
+        // large-size box (16 bytes): size=1 signals largesize, type='mdat', largesize=MAX-15
+        data.extend_from_slice(&1u32.to_be_bytes());
+        data.extend_from_slice(b"mdat");
+        data.extend_from_slice(&0xfffffffffffffff0u64.to_be_bytes());
+
+        let bmff_io = BmffIO::new("mp4");
+        let mut source = Cursor::new(data);
+        assert!(matches!(
+            bmff_io.read_cai(&mut source),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    // Regression tests for the UUID box purpose field u64 underflow vulnerability.
+    // Without the data_len == 0 guard, reading past the end of the box would decrement
+    // data_len from 0 to u64::MAX (wrapping), causing the caller to attempt a
+    // u64::MAX-byte allocation (OOM crash).
+
+    #[test]
+    fn test_uuid_purpose_missing_null_terminator_rejected() {
+        // Box layout: HEADER(8) + UUID(16) + FullBox(4) + payload(8) = 36 bytes total.
+        // Payload is 8 non-null bytes — no null terminator — so the parser must hit
+        // data_len == 0 and return an error instead of underflowing.
+        let size: u64 = 36;
+        let (arena, token) = Arena::with_data(BoxInfo {
+            path: "/uuid".to_string(),
+            parent: None,
+            offset: 0,
+            size,
+            box_type: BoxType::UuidBox,
+            user_type: Some(C2PA_UUID.to_vec()),
+            version: None,
+            flags: None,
+        });
+        let node = &arena[token];
+
+        // Reader bytes starting at offset 0:
+        //   [0..7]   HEADER (8 bytes) — skipped by skip_bytes_to(offset + 8 + 16)
+        //   [8..23]  UUID extension (16 bytes)
+        //   [24..27] FullBox version(1)+flags(3) = 0x00000000
+        //   [28..35] purpose bytes — 8 non-null bytes, no terminator
+        let mut bytes = vec![0u8; 8 + 16]; // header + UUID
+        bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // FullBox
+        bytes.extend_from_slice(b"manifest"); // 8 bytes, no null terminator
+
+        let mut reader = Cursor::new(bytes);
+        assert!(matches!(
+            get_uuid_box_purpose(&mut reader, node),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    #[test]
+    fn test_uuid_purpose_box_too_small_rejected() {
+        // size = 20 < HEADER_SIZE(8) + UUID(16) = 24; the checked_sub chain must return
+        // Err(InvalidAsset) before any read occurs.
+        let (arena, token) = Arena::with_data(BoxInfo {
+            path: "/uuid".to_string(),
+            parent: None,
+            offset: 0,
+            size: 20,
+            box_type: BoxType::UuidBox,
+            user_type: Some(C2PA_UUID.to_vec()),
+            version: None,
+            flags: None,
+        });
+        let node = &arena[token];
+
+        let mut reader = Cursor::new(vec![0u8; 20]);
+        assert!(matches!(
+            get_uuid_box_purpose(&mut reader, node),
+            Err(Error::InvalidAsset(_))
+        ));
     }
 }
