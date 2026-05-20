@@ -1225,33 +1225,14 @@ impl Reader {
         Ok(builder)
     }
 
-    /// Returns the [`ArchiveType`] from the active manifest's `org.contentauth.archive.metadata` assertion, if present.
-    pub(crate) fn active_archive_type(&self) -> Option<crate::assertions::labels::ArchiveType> {
+    /// Returns the archive kind from the active manifest's `org.contentauth.archive.metadata` assertion, when the archive was created by [`Builder::write_archive`].
+    /// None if the assertion is missing or malformed.
+    pub(crate) fn active_archive_kind(&self) -> Option<crate::builder::ArchiveKind> {
         let manifest = self.active_manifest()?;
         let metadata: Metadata = manifest
             .find_assertion(crate::assertions::labels::ARCHIVE_METADATA)
             .ok()?;
-        metadata
-            .value
-            .get("archive:type")
-            .and_then(|v: &Value| v.as_str())
-            .map(crate::assertions::labels::ArchiveType::from_str)
-    }
-
-    /// Returns the caller-supplied `ingredient_id` from the active manifest's
-    /// `org.contentauth.archive.metadata` assertion, when the archive was created
-    /// by [`Builder::write_ingredient_archive`].
-    pub(crate) fn active_archive_ingredient_id(&self) -> Option<String> {
-        let manifest = self.active_manifest()?;
-        let metadata: Metadata = manifest
-            .find_assertion(crate::assertions::labels::ARCHIVE_METADATA)
-            .ok()?;
-        metadata
-            .value
-            .get("archive:ingredient_id")
-            .and_then(|v: &Value| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
+        crate::builder::ArchiveKind::from_metadata(&metadata)
     }
 
     /// Convert a Reader into an [`Ingredient`] using the parent ingredient from the active manifest.

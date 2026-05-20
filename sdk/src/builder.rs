@@ -58,6 +58,12 @@ use crate::{
     ManifestAssertionKind, Reader, Relationship, Signer,
 };
 
+/// Label for the `archive:type` field in working-store archive metadata.
+const ARCHIVE_TYPE: &str = "archive:type";
+
+/// Label for the `archive::ingredient_id` field in working-store archive metadata.
+const ARCHIVE_INGREDIENT_ID: &str = "archive::ingredient_id";
+
 /// The hash binding type that a [`Builder`] will use for embeddable signing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HashType {
@@ -85,10 +91,19 @@ pub(crate) enum ArchiveKind {
 }
 
 impl ArchiveKind {
-    fn archive_type_str(&self) -> &'static str {
-        match self {
-            ArchiveKind::Builder => labels::ARCHIVE_TYPE_BUILDER,
-            ArchiveKind::Ingredient { .. } => labels::ARCHIVE_TYPE_INGREDIENT,
+    pub fn from_metadata(metadata: &Metadata) -> Option<Self> {
+        let archive_type = metadata.value.get(ARCHIVE_TYPE)?.as_str()?;
+        match archive_type {
+            labels::ARCHIVE_TYPE_BUILDER => Some(ArchiveKind::Builder),
+            labels::ARCHIVE_TYPE_INGREDIENT => {
+                let ingredient_id = metadata
+                    .value
+                    .get(ARCHIVE_INGREDIENT_ID)?
+                    .as_str()?
+                    .to_string();
+                Some(ArchiveKind::Ingredient { ingredient_id })
+            }
+            _ => None,
         }
     }
 }
@@ -938,6 +953,7 @@ impl Builder {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
         if format == "c2pa" || format == "application/c2pa" {
+            //let parent_ingredient = self.add_ingredient_from_archive(stream)?;
             let reader = Reader::from_shared_context(&self.context).with_stream(format, stream)?;
             let parent_ingredient = self.add_ingredient_from_reader(&reader)?;
             parent_ingredient.merge(&ingredient);
@@ -3244,21 +3260,26 @@ impl Builder {
                 .await?
         };
 
-        match reader.active_archive_type() {
-            Some(labels::ArchiveType::Ingredient) => {}
-            Some(other) => {
-                return Err(Error::BadParam(format!(
-                    "expected an ingredient archive (archive:type {:?}), found {other:?}",
-                    labels::ARCHIVE_TYPE_INGREDIENT
-                )));
+        let ingredient_id = match reader.active_archive_kind() {
+            Some(ArchiveKind::Ingredient { ingredient_id }) => Some(ingredient_id),
+            // we should return an error here, but be tolerant in the transition if this has a parent.
+            Some(ArchiveKind::Builder) if reader.active_manifest().is_some() => None,
+            _ => {
+                // early examples of ingredient archives may have been created without the correct archive metadata
+                // if it has an active manifest with a an ingredient store, allow it.
+                if let Some(manifest) = reader.active_manifest() {
+                    if !manifest.ingredients().is_empty() {
+                        None
+                    } else {
+                        return Err(Error::BadParam(
+                            "expected an ingredient archive (org.contentauth.archive.metadata with archive:type ingredient)".to_string()));
+                    }
+                } else {
+                    return Err(Error::BadParam(
+                        "expected an ingredient archive (org.contentauth.archive.metadata with archive:type ingredient)".to_string()));
+                }
             }
-            None => {
-                return Err(Error::BadParam(format!(
-                    "expected a C2PA ingredient archive (org.contentauth.archive.metadata with archive:type {:?}); use add_ingredient_from_reader or add_ingredient_from_stream for other stores",
-                    labels::ARCHIVE_TYPE_INGREDIENT
-                )));
-            }
-        }
+        };
 
         if let Some(m) = reader.active_manifest() {
             self.merge_resources_from_store(m.resources())?;
@@ -3267,9 +3288,8 @@ impl Builder {
             }
         }
 
-        let archive_ingredient_id = reader.active_archive_ingredient_id();
         let mut ingredient = reader.to_ingredient()?;
-        if let Some(id) = archive_ingredient_id {
+        if let Some(id) = ingredient_id {
             ingredient.set_label(id);
         }
         self.add_ingredient(ingredient);
@@ -3310,22 +3330,23 @@ impl Builder {
                 .to_claim()?,
         };
 
-        let archive_type = kind.archive_type_str();
-        let mut metadata_json = json!(
-            {
-                "@context":
-                {
-                    "archive": "https://contentauth.org/ns/archive#",
-                },
-                "archive:type": archive_type
-            }
-        );
-        if let ArchiveKind::Ingredient { ingredient_id } = &kind {
-            if !ingredient_id.is_empty() {
-                metadata_json["archive:ingredient_id"] = json!(ingredient_id);
+        let json = match &kind {
+            ArchiveKind::Ingredient { ingredient_id } if !ingredient_id.is_empty() => json!({
+                "@context": { "archive": "https://contentauth.org/ns/archive#" },
+                ARCHIVE_TYPE: labels::ARCHIVE_TYPE_INGREDIENT,
+                ARCHIVE_INGREDIENT_ID: ingredient_id
+            }),
+            ArchiveKind::Builder => json!({
+                "@context": { "archive": "https://contentauth.org/ns/archive#" },
+                ARCHIVE_TYPE: labels::ARCHIVE_TYPE_BUILDER
+            }),
+            _ => {
+                return Err(Error::BadParam(
+                    "ingredient_id is required for ingredient archives".to_string(),
+                ))
             }
         }
-        let json = metadata_json.to_string();
+        .to_string();
 
         let archive_metadata = Metadata::new(labels::ARCHIVE_METADATA, &json)?;
         claim.add_created_assertion(&archive_metadata)?;
@@ -9025,6 +9046,7 @@ mod tests {
 
         dest.rewind()?;
         let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut dest)?;
+        print!("reader JSON: {}", reader.json());
         let manifest = reader.active_manifest().expect("active manifest present");
         let actions_value: serde_json::Value = manifest
             .assertions()
@@ -9073,28 +9095,6 @@ mod tests {
             "Ingredient B",
             "second placed action must link Ingredient B; got url {}",
             placed_urls[1]
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_active_archive_ingredient_id_absent_on_non_ingredient_archive() -> Result<()> {
-        // Caller set ingredient_id only appears in single-ingredient archives.
-        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
-        let context = Context::new().with_settings(settings)?.into_shared();
-
-        let producer_builder = Builder::from_shared_context(&context)
-            .with_definition(r#"{"title": "Full builder archive"}"#)?;
-        let mut full_archive = Cursor::new(Vec::new());
-        producer_builder.to_archive(&mut full_archive)?;
-
-        let mut archive_stream = Cursor::new(full_archive.into_inner());
-        let reader = Reader::from_shared_context(&context)
-            .with_stream("application/c2pa", &mut archive_stream)?;
-        assert!(
-            reader.active_archive_ingredient_id().is_none(),
-            "non-ingredient archives must not surface archive:ingredient_id"
         );
 
         Ok(())
