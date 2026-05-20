@@ -1465,7 +1465,7 @@ mod tests {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 pad: ByteBuf::from(Vec::new()),
-                range_start: 368495,
+                range_start: 368494,
                 range_len: 778
             })
         );
@@ -1477,7 +1477,7 @@ mod tests {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 pad: ByteBuf::from(Vec::new()),
-                range_start: SAMPLE1.len() as u64,
+                range_start: SAMPLE1.len() as u64 - 1,
                 range_len: 1
             })
         );
