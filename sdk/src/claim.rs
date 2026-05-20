@@ -39,7 +39,6 @@ use crate::{
         Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash,
         Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
-    asset_handlers::c2pa_io,
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
     context::{Context, ProgressPhase},
@@ -1887,7 +1886,6 @@ impl Claim {
     #[async_generic]
     pub(crate) fn verify_claim(
         claim: &Claim,
-        asset_data: &mut ClaimAssetData<'_>,
         svi: &StoreValidationInfo<'_>,
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
@@ -2002,7 +2000,7 @@ impl Claim {
         };
 
         let result =
-            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, context);
+            Claim::verify_internal(claim, svi, verified, validation_log, context);
         validation_log.pop_current_uri();
         result
     }
@@ -2588,14 +2586,6 @@ impl Claim {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<()> {
-        // If it's a C2PA manifest then there is no asset to verify the hashes against.
-        if asset_data
-            .format()
-            .is_some_and(|format| c2pa_io::SUPPORTED_TYPES.contains(&format.as_str()))
-        {
-            return Ok(());
-        }
-
         const UNNAMED: &str = "unnamed";
         let default_str = |s: &String| s.clone();
 
@@ -2949,7 +2939,6 @@ impl Claim {
 
     fn verify_internal(
         claim: &Claim,
-        asset_data: &mut ClaimAssetData<'_>,
         svi: &StoreValidationInfo,
         verified: Result<CertificateInfo>,
         validation_log: &mut StatusTracker,
@@ -3272,9 +3261,6 @@ impl Claim {
                 url: ca_tracking_list[0].label(),
             });
         }
-
-        // verify data hashes for provenance claims
-        Claim::verify_hash_binding(claim, asset_data, svi, validation_log, context)?;
 
         // check action rules
         Claim::verify_actions(claim, svi, validation_log, context.settings())?;

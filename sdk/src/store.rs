@@ -32,6 +32,7 @@ use crate::{
         BmffHash, BoxHash, CertificateStatus, DataBox, DataHash, Ingredient, Relationship,
         TimeStamp, User, UserCbor,
     },
+    asset_handlers::c2pa_io,
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
@@ -1712,7 +1713,6 @@ impl Store {
                     if _sync {
                         Claim::verify_claim(
                             ingredient,
-                            asset_data,
                             svi,
                             check_ingredient_trust,
                             &store.ctp,
@@ -1722,7 +1722,6 @@ impl Store {
                     } else {
                         Claim::verify_claim_async(
                             ingredient,
-                            asset_data,
                             svi,
                             check_ingredient_trust,
                             &store.ctp,
@@ -1922,13 +1921,14 @@ impl Store {
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
         context: &Context,
-
+        verify_hash: bool,
     ))]
     pub fn verify_store(
         store: &Store,
         asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
         context: &Context,
+        verify_hash: bool,
     ) -> Result<()> {
         context.check_progress(ProgressPhase::VerifyingManifest, 1, 1)?;
         let claim = match store.provenance_claim() {
@@ -1947,28 +1947,12 @@ impl Store {
 
         if _sync {
             // verify the provenance claim
-            Claim::verify_claim(
-                claim,
-                asset_data,
-                &svi,
-                true,
-                &store.ctp,
-                validation_log,
-                context,
-            )?;
+            Claim::verify_claim(claim, &svi, true, &store.ctp, validation_log, context)?;
 
             Store::ingredient_checks(store, claim, &svi, asset_data, validation_log, 0, context)?;
         } else {
-            Claim::verify_claim_async(
-                claim,
-                asset_data,
-                &svi,
-                true,
-                &store.ctp,
-                validation_log,
-                context,
-            )
-            .await?;
+            Claim::verify_claim_async(claim, &svi, true, &store.ctp, validation_log, context)
+                .await?;
 
             Store::ingredient_checks_async(
                 store,
@@ -1980,6 +1964,19 @@ impl Store {
                 context,
             )
             .await?;
+        }
+
+        // verify the asset hash binding once for the whole store, on the binding manifest
+        if verify_hash {
+            if let Some(binding_claim) = store.get_claim(&svi.binding_claim) {
+                Claim::verify_hash_binding(
+                    binding_claim,
+                    asset_data,
+                    &svi,
+                    validation_log,
+                    context,
+                )?;
+            }
         }
 
         Ok(())
@@ -2001,11 +1998,18 @@ impl Store {
             return Ok(());
         }
 
+        // if it's a C2PA manifest then there is no asset to verify the hashes against
+        let is_c2pa_manifest = asset_data
+            .format()
+            .is_some_and(|format| c2pa_io::SUPPORTED_TYPES.contains(&format.as_str()));
+        let verify_hash = !is_c2pa_manifest && context.settings().verify.verify_after_sign_hash;
+
         let mut validation_log = StatusTracker::default();
         if _sync {
-            Store::verify_store(self, asset_data, &mut validation_log, context)?;
+            Store::verify_store(self, asset_data, &mut validation_log, context, verify_hash)?;
         } else {
-            Store::verify_store_async(self, asset_data, &mut validation_log, context).await?;
+            Store::verify_store_async(self, asset_data, &mut validation_log, context, verify_hash)
+                .await?;
         }
 
         let validation_results = ValidationResults::from_store(self, &validation_log);
@@ -3296,6 +3300,7 @@ impl Store {
             &mut ClaimAssetData::Path(asset_path),
             validation_log,
             context,
+            true,
         )
     }
 
@@ -3555,9 +3560,10 @@ impl Store {
             stream.rewind()?;
             let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
             if _sync {
-                Store::verify_store(&store, &mut asset_data, validation_log, context)
+                Store::verify_store(&store, &mut asset_data, validation_log, context, true)
             } else {
-                Store::verify_store_async(&store, &mut asset_data, validation_log, context).await
+                Store::verify_store_async(&store, &mut asset_data, validation_log, context, true)
+                    .await
             }?;
         }
         Ok(store)
@@ -3590,6 +3596,7 @@ impl Store {
                 &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
                 validation_log,
                 context,
+                true,
             )?;
         }
 
@@ -3630,9 +3637,10 @@ impl Store {
         if verify {
             let mut fragment = ClaimAssetData::StreamFragment(&mut stream, &mut fragment, format);
             if _sync {
-                Store::verify_store(&store, &mut fragment, validation_log, context)
+                Store::verify_store(&store, &mut fragment, validation_log, context, true)
             } else {
-                Store::verify_store_async(&store, &mut fragment, validation_log, context).await
+                Store::verify_store_async(&store, &mut fragment, validation_log, context, true)
+                    .await
             }?;
         };
         Ok(store)
@@ -8170,6 +8178,7 @@ pub mod tests {
             &mut ClaimAssetData::Bytes(&result, "jpg"),
             &mut report,
             &context,
+            true,
         )
         .await
         .unwrap();

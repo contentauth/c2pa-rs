@@ -1060,6 +1060,7 @@ impl Ingredient {
                                     &mut ClaimAssetData::Stream(stream, format),
                                     &mut validation_log,
                                     context,
+                                    true,
                                 )
                                 .await
                                 .map(|_| store)
@@ -1585,6 +1586,7 @@ impl Ingredient {
                         &mut ClaimAssetData::Stream(stream, format),
                         &mut validation_log,
                         &context,
+                        true,
                     )
                     .await
                     .map(|_| store)
