@@ -120,19 +120,6 @@ pub enum ClaimAssetData<'a> {
     StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
 }
 
-impl ClaimAssetData<'_> {
-    pub fn format(&self) -> Option<String> {
-        match self {
-            #[cfg(feature = "file_io")]
-            ClaimAssetData::Path(path) => crate::format_from_path(path),
-            ClaimAssetData::Bytes(_, format) => Some(format.to_string()),
-            ClaimAssetData::Stream(_, format) => Some(format.to_string()),
-            ClaimAssetData::StreamFragment(_, _, format) => Some(format.to_string()),
-            #[cfg(feature = "file_io")]
-            ClaimAssetData::StreamFragments(_, _, format) => Some(format.to_string()),
-        }
-    }
-}
 
 #[derive(PartialEq, Debug, Eq, Clone, Hash)]
 pub enum ClaimAssertionType {

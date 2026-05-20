@@ -1095,10 +1095,9 @@ impl Ingredient {
                                 // verify the store
                                 Store::verify_store_async(
                                     &store,
-                                    &mut ClaimAssetData::Stream(stream, format),
+                                    Some(&mut ClaimAssetData::Stream(stream, format)),
                                     &mut validation_log,
                                     context,
-                                    true,
                                 )
                                 .await
                                 .map(|_| store)
@@ -1624,10 +1623,9 @@ impl Ingredient {
 
                     Store::verify_store_async(
                         &store,
-                        &mut ClaimAssetData::Stream(stream, format),
+                        Some(&mut ClaimAssetData::Stream(stream, format)),
                         &mut validation_log,
                         &context,
-                        true,
                     )
                     .await
                     .map(|_| store)

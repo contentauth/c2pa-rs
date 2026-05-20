@@ -32,7 +32,6 @@ use crate::{
         BmffHash, BoxHash, CertificateStatus, DataBox, DataHash, Ingredient, Relationship,
         TimeStamp, User, UserCbor,
     },
-    asset_handlers::c2pa_io,
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
     },
@@ -1835,7 +1834,7 @@ impl Store {
     fn get_store_validation_info<'a>(
         &'a self,
         claim: &'a Claim,
-        asset_data: &mut ClaimAssetData<'_>,
+        asset_data: Option<&mut ClaimAssetData<'_>>,
         validation_log: &mut StatusTracker,
     ) -> Result<StoreValidationInfo<'a>> {
         let mut svi = StoreValidationInfo::default();
@@ -1858,46 +1857,49 @@ impl Store {
         }
 
         // get the manifest offset position
-        let locations = match asset_data {
-            #[cfg(feature = "file_io")]
-            ClaimAssetData::Path(path) => {
-                let format = get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
-                let mut reader = std::fs::File::open(path)?;
+        if let Some(asset_data) = asset_data {
+            let locations = match asset_data {
+                #[cfg(feature = "file_io")]
+                ClaimAssetData::Path(path) => {
+                    let format =
+                        get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
+                    let mut reader = std::fs::File::open(path)?;
 
-                object_locations_from_stream(&format, &mut reader)
-            }
-            ClaimAssetData::Bytes(items, typ) => {
-                let format = typ.to_owned();
-                let mut reader = Cursor::new(items);
+                    object_locations_from_stream(&format, &mut reader)
+                }
+                ClaimAssetData::Bytes(items, typ) => {
+                    let format = typ.to_owned();
+                    let mut reader = Cursor::new(items);
 
-                object_locations_from_stream(&format, &mut reader)
-            }
-            ClaimAssetData::Stream(reader, typ) => {
-                let format = typ.to_owned();
-                let positions = object_locations_from_stream(&format, reader);
-                reader.rewind()?;
-                positions
-            }
-            ClaimAssetData::StreamFragment(reader, _read1, typ) => {
-                let format = typ.to_owned();
-                object_locations_from_stream(&format, reader)
-            }
-            #[cfg(feature = "file_io")]
-            ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
-                let format = typ.to_owned();
-                object_locations_from_stream(&format, reader)
-            }
-        };
+                    object_locations_from_stream(&format, &mut reader)
+                }
+                ClaimAssetData::Stream(reader, typ) => {
+                    let format = typ.to_owned();
+                    let positions = object_locations_from_stream(&format, reader);
+                    reader.rewind()?;
+                    positions
+                }
+                ClaimAssetData::StreamFragment(reader, _read1, typ) => {
+                    let format = typ.to_owned();
+                    object_locations_from_stream(&format, reader)
+                }
+                #[cfg(feature = "file_io")]
+                ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
+                    let format = typ.to_owned();
+                    object_locations_from_stream(&format, reader)
+                }
+            };
 
-        if let Ok(locations) = locations {
-            if let Some(manifest_loc) = locations
-                .iter()
-                .find(|o| o.htype == HashBlockObjectType::Cai)
-            {
-                svi.manifest_store_range = Some(HashRange::new(
-                    manifest_loc.offset as u64,
-                    manifest_loc.length as u64,
-                ));
+            if let Ok(locations) = locations {
+                if let Some(manifest_loc) = locations
+                    .iter()
+                    .find(|o| o.htype == HashBlockObjectType::Cai)
+                {
+                    svi.manifest_store_range = Some(HashRange::new(
+                        manifest_loc.offset as u64,
+                        manifest_loc.length as u64,
+                    ));
+                }
             }
         }
 
@@ -1971,17 +1973,15 @@ impl Store {
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned
     #[async_generic(async_signature(
         store: &Store,
-        asset_data: &mut ClaimAssetData<'_>,
+        mut asset_data: Option<&mut ClaimAssetData<'_>>,
         validation_log: &mut StatusTracker,
         context: &Context,
-        verify_hash: bool,
     ))]
     pub fn verify_store(
         store: &Store,
-        asset_data: &mut ClaimAssetData<'_>,
+        mut asset_data: Option<&mut ClaimAssetData<'_>>,
         validation_log: &mut StatusTracker,
         context: &Context,
-        verify_hash: bool,
     ) -> Result<()> {
         context.check_progress(ProgressPhase::VerifyingManifest, 1, 1)?;
         let claim = match store.provenance_claim() {
@@ -1996,7 +1996,8 @@ impl Store {
         };
 
         // get info needed to complete validation
-        let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
+        let svi =
+            store.get_store_validation_info(claim, asset_data.as_deref_mut(), validation_log)?;
 
         if _sync {
             // verify the provenance claim
@@ -2011,49 +2012,32 @@ impl Store {
         }
 
         // verify the asset hash binding once for the whole store, on the binding manifest
-        if verify_hash {
+        if let Some(data) = asset_data {
             if let Some(binding_claim) = store.get_claim(&svi.binding_claim) {
-                Claim::verify_hash_binding(
-                    binding_claim,
-                    asset_data,
-                    &svi,
-                    validation_log,
-                    context,
-                )?;
+                Claim::verify_hash_binding(binding_claim, data, &svi, validation_log, context)?;
             }
         }
 
         Ok(())
     }
 
-    /// Verifies the store against `asset_data` after signing, if [`Verify::verify_after_sign`] is
-    /// enabled. Returns [`Error::InvalidManifest`] if the manifest fails validation.
+    /// Verifies the store and returns [`Error::InvalidManifest`] if the validation state is
+    /// invalid. Pass `asset_data` to also verify hash bindings against the asset.
     #[async_generic(async_signature(
         &mut self,
-        asset_data: &mut ClaimAssetData<'_>,
+        asset_data: Option<&mut ClaimAssetData<'_>>,
         context: &Context,
     ))]
-    pub(crate) fn verify_store_after_sign(
+    pub(crate) fn validate_manifest(
         &mut self,
-        asset_data: &mut ClaimAssetData<'_>,
+        asset_data: Option<&mut ClaimAssetData<'_>>,
         context: &Context,
     ) -> Result<()> {
-        if !context.settings().verify.verify_after_sign {
-            return Ok(());
-        }
-
-        // if it's a C2PA manifest then there is no asset to verify the hashes against
-        let is_c2pa_manifest = asset_data
-            .format()
-            .is_some_and(|format| c2pa_io::SUPPORTED_TYPES.contains(&format.as_str()));
-        let verify_hash = !is_c2pa_manifest && context.settings().verify.verify_after_sign_hash;
-
         let mut validation_log = StatusTracker::default();
         if _sync {
-            Store::verify_store(self, asset_data, &mut validation_log, context, verify_hash)?;
+            Store::verify_store(self, asset_data, &mut validation_log, context)?;
         } else {
-            Store::verify_store_async(self, asset_data, &mut validation_log, context, verify_hash)
-                .await?;
+            Store::verify_store_async(self, asset_data, &mut validation_log, context).await?;
         }
 
         let validation_results = ValidationResults::from_store(self, &validation_log);
@@ -2316,8 +2300,9 @@ impl Store {
 
                 let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-                let mut asset_data = ClaimAssetData::Bytes(&jumbf_bytes, "application/c2pa");
-                self.verify_store_after_sign(&mut asset_data, context)?;
+                if context.settings().verify.verify_after_sign {
+                    self.validate_manifest(None, context)?;
+                }
 
                 return Ok(jumbf_bytes);
             }
@@ -2332,8 +2317,9 @@ impl Store {
 
         let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-        let mut asset_data = ClaimAssetData::Bytes(&jumbf_bytes, "application/c2pa");
-        self.verify_store_after_sign(&mut asset_data, context)?;
+        if context.settings().verify.verify_after_sign {
+            self.validate_manifest(None, context)?;
+        }
 
         Ok(jumbf_bytes)
     }
@@ -2458,12 +2444,12 @@ impl Store {
 
         let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-        let mut asset_data = ClaimAssetData::Bytes(&jumbf_bytes, "application/c2pa");
-        if _sync {
-            self.verify_store_after_sign(&mut asset_data, context)?;
-        } else {
-            self.verify_store_after_sign_async(&mut asset_data, context)
-                .await?;
+        if context.settings().verify.verify_after_sign {
+            if _sync {
+                self.validate_manifest(None, context)?;
+            } else {
+                self.validate_manifest_async(None, context).await?;
+            }
         }
 
         self.finish_embeddable_store(&jumbf_bytes, format)
@@ -2510,6 +2496,15 @@ impl Store {
         pc.set_signature_val(sig);
 
         let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        if context.settings().verify.verify_after_sign {
+            if _sync {
+                self.validate_manifest(None, context)?;
+            } else {
+                self.validate_manifest_async(None, context).await?;
+            }
+        }
+
         Ok(jumbf_bytes)
     }
 
@@ -2974,18 +2969,19 @@ impl Store {
                 context.check_progress(ProgressPhase::Embedding, 1, 1)?;
 
                 let output_len = output_stream.seek(SeekFrom::End(0))?;
-                let validate_hash = context.settings().verify.verify_after_sign_hash;
-                let mut asset_data = if output_len > 0 && validate_hash {
-                    ClaimAssetData::Stream(output_stream, format)
-                } else {
-                    // Without hash validation (or when output is empty, e.g. `io::empty`), verify the manifest only.
-                    ClaimAssetData::Bytes(&m, "application/c2pa")
-                };
-                if _sync {
-                    self.verify_store_after_sign(&mut asset_data, context)?;
-                } else {
-                    self.verify_store_after_sign_async(&mut asset_data, context)
-                        .await?;
+                if context.settings().verify.verify_after_sign {
+                    let validate_hash = context.settings().verify.verify_after_sign_hash;
+                    let mut asset_data = if output_len > 0 && validate_hash {
+                        Some(ClaimAssetData::Stream(output_stream, format))
+                    } else {
+                        None
+                    };
+                    if _sync {
+                        self.validate_manifest(asset_data.as_mut(), context)?;
+                    } else {
+                        self.validate_manifest_async(asset_data.as_mut(), context)
+                            .await?;
+                    }
                 }
                 Ok(m)
             }
@@ -3341,10 +3337,9 @@ impl Store {
     ) -> Result<()> {
         Store::verify_store(
             self,
-            &mut ClaimAssetData::Path(asset_path),
+            Some(&mut ClaimAssetData::Path(asset_path)),
             validation_log,
             context,
-            true,
         )
     }
 
@@ -3604,9 +3599,9 @@ impl Store {
             stream.rewind()?;
             let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
             if _sync {
-                Store::verify_store(&store, &mut asset_data, validation_log, context, true)
+                Store::verify_store(&store, Some(&mut asset_data), validation_log, context)
             } else {
-                Store::verify_store_async(&store, &mut asset_data, validation_log, context, true)
+                Store::verify_store_async(&store, Some(&mut asset_data), validation_log, context)
                     .await
             }?;
         }
@@ -3637,10 +3632,13 @@ impl Store {
             // verify store and claims
             Store::verify_store(
                 &store,
-                &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
+                Some(&mut ClaimAssetData::StreamFragments(
+                    init_segment,
+                    fragments,
+                    asset_type,
+                )),
                 validation_log,
                 context,
-                true,
             )?;
         }
 
@@ -3681,9 +3679,9 @@ impl Store {
         if verify {
             let mut fragment = ClaimAssetData::StreamFragment(&mut stream, &mut fragment, format);
             if _sync {
-                Store::verify_store(&store, &mut fragment, validation_log, context, true)
+                Store::verify_store(&store, Some(&mut fragment), validation_log, context)
             } else {
-                Store::verify_store_async(&store, &mut fragment, validation_log, context, true)
+                Store::verify_store_async(&store, Some(&mut fragment), validation_log, context)
                     .await
             }?;
         };
@@ -8219,10 +8217,9 @@ pub mod tests {
 
         Store::verify_store_async(
             &new_store,
-            &mut ClaimAssetData::Bytes(&result, "jpg"),
+            Some(&mut ClaimAssetData::Bytes(&result, "jpg")),
             &mut report,
             &context,
-            true,
         )
         .await
         .unwrap();
