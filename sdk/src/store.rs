@@ -1524,7 +1524,6 @@ impl Store {
         store: &Store,
         claim: &Claim,
         svi: &StoreValidationInfo<'_>,
-        asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
         depth: usize,
         context: &Context,
@@ -1737,7 +1736,6 @@ impl Store {
                             store,
                             ingredient,
                             svi,
-                            asset_data,
                             validation_log,
                             depth.saturating_add(1),
                             context,
@@ -1747,7 +1745,6 @@ impl Store {
                             store,
                             ingredient,
                             svi,
-                            asset_data,
                             validation_log,
                             depth.saturating_add(1),
                             context,
@@ -1949,21 +1946,12 @@ impl Store {
             // verify the provenance claim
             Claim::verify_claim(claim, &svi, true, &store.ctp, validation_log, context)?;
 
-            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log, 0, context)?;
+            Store::ingredient_checks(store, claim, &svi, validation_log, 0, context)?;
         } else {
             Claim::verify_claim_async(claim, &svi, true, &store.ctp, validation_log, context)
                 .await?;
 
-            Store::ingredient_checks_async(
-                store,
-                claim,
-                &svi,
-                asset_data,
-                validation_log,
-                0,
-                context,
-            )
-            .await?;
+            Store::ingredient_checks_async(store, claim, &svi, validation_log, 0, context).await?;
         }
 
         // verify the asset hash binding once for the whole store, on the binding manifest
@@ -8746,12 +8734,11 @@ pub mod tests {
 
     #[test]
     fn test_ingredient_depth_limit_ingredient_checks() {
-        use crate::{claim::ClaimAssetData, context::Context};
+        use crate::context::Context;
 
         let store = Store::new();
         let claim = Claim::new("depth_test", Some("contentauth"), 2);
         let svi = StoreValidationInfo::default();
-        let mut asset_data = ClaimAssetData::Bytes(&[], "image/jpeg");
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let context = Context::new();
@@ -8760,7 +8747,6 @@ pub mod tests {
             &store,
             &claim,
             &svi,
-            &mut asset_data,
             &mut validation_log,
             MAX_INGREDIENT_DEPTH,
             &context,

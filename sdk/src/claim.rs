@@ -1999,8 +1999,7 @@ impl Claim {
             .await
         };
 
-        let result =
-            Claim::verify_internal(claim, svi, verified, validation_log, context);
+        let result = Claim::verify_internal(claim, svi, verified, validation_log, context);
         validation_log.pop_current_uri();
         result
     }
