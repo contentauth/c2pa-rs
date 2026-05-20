@@ -337,7 +337,9 @@ pub struct Verify {
     pub verify_after_reading: bool,
     /// Whether to verify the manifest after signing in the [`Builder`].
     ///
-    /// The default value is true.
+    /// The default value is false.
+    ///
+    /// In the future, this setting will default to true.
     ///
     /// <div class="warning">
     /// Disabling validation can improve signing performance, BUT it carries the risk of signing an invalid
@@ -411,7 +413,7 @@ impl Default for Verify {
     fn default() -> Self {
         Self {
             verify_after_reading: true,
-            verify_after_sign: true,
+            verify_after_sign: false,
             verify_after_sign_hash: false,
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
