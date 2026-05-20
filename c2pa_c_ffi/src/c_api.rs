@@ -2933,7 +2933,6 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use std::{ffi::CString, io::Seek, panic::catch_unwind};
 
@@ -2964,6 +2963,7 @@ mod tests {
         assert!(!signer.is_null());
 
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
@@ -2978,7 +2978,10 @@ mod tests {
         let signature =
             unsafe { c2pa_ed25519_sign(bytes.as_ptr(), bytes.len(), private_key.as_ptr()) };
         assert!(!signature.is_null());
-        unsafe { c2pa_signature_free(signature) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_signature_free(signature)
+        };
     }
 
     #[test]
@@ -2996,7 +2999,10 @@ mod tests {
         };
         let signer = unsafe { c2pa_signer_from_info(&signer_info) };
         assert!(!signer.is_null());
-        unsafe { c2pa_signer_free(signer) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_signer_free(signer)
+        };
     }
 
     #[test]
@@ -3042,11 +3048,18 @@ mod tests {
         // let error = unsafe { CString::from_raw(error) };
         // assert_eq!(error.to_str().unwrap(), "Other Invalid signing algorithm");
         // assert_eq!(result, 65485);
+        #[allow(deprecated)]
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
         }
-        unsafe { c2pa_builder_free(builder) };
-        unsafe { c2pa_signer_free(signer) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_builder_free(builder)
+        };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_signer_free(signer)
+        };
     }
 
     #[test]
@@ -3089,6 +3102,7 @@ mod tests {
         // Verify we can read the signed data back
         dest_stream.stream_mut().rewind().unwrap();
 
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
         if reader.is_null() {
             if let Some(msg) = CimplError::last_message() {
@@ -3105,6 +3119,7 @@ mod tests {
         assert!(json_content.contains("manifest"));
         assert!(json_content.contains("com.example.test-action"));
 
+        #[allow(deprecated)]
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
             c2pa_builder_free(builder);
@@ -3149,6 +3164,7 @@ mod tests {
         dest_stream.stream_mut().rewind().unwrap();
         let format = CString::new("image/jpeg").unwrap();
 
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
         assert!(!reader.is_null());
 
@@ -3168,6 +3184,7 @@ mod tests {
             1
         );
 
+        #[allow(deprecated)]
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
             c2pa_builder_free(builder);
@@ -3212,6 +3229,7 @@ mod tests {
         dest_stream.stream_mut().rewind().unwrap();
         let format = CString::new("image/jpeg").unwrap();
 
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
         assert!(!reader.is_null());
 
@@ -3225,6 +3243,7 @@ mod tests {
         // Verify the digital source type we picked was used
         assert!(json_content.contains("digitalsourcetype/empty"));
 
+        #[allow(deprecated)]
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
             c2pa_builder_free(builder);
@@ -3271,6 +3290,7 @@ mod tests {
         dest_stream.stream_mut().rewind().unwrap();
         let format = CString::new("image/jpeg").unwrap();
 
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
         assert!(!reader.is_null());
 
@@ -3284,6 +3304,7 @@ mod tests {
         // and no "empty" source type appears in the JSON
         assert!(!json_content.contains("digitalsourcetype/empty"));
 
+        #[allow(deprecated)]
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
             c2pa_builder_free(builder);
@@ -3312,10 +3333,14 @@ mod tests {
     #[test]
     fn test_c2pa_builder_no_embed() {
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
         unsafe { c2pa_builder_set_no_embed(builder) };
-        unsafe { c2pa_builder_free(builder) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_builder_free(builder)
+        };
     }
 
     #[test]
@@ -3338,6 +3363,7 @@ mod tests {
     fn test_c2pa_load_settings() {
         let settings = CString::new("{}").unwrap();
         let format = CString::new("json").unwrap();
+        #[allow(deprecated)]
         let result = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
         assert_eq!(result, 0);
     }
@@ -3346,6 +3372,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     fn test_c2pa_read_file_null_path() {
         let data_dir = CString::new("/tmp").unwrap();
+        #[allow(deprecated)]
         let result = unsafe { c2pa_read_file(std::ptr::null(), data_dir.as_ptr()) };
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
@@ -3357,6 +3384,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     fn test_c2pa_read_ingredient_file_null_path() {
         let data_dir = CString::new("/tmp").unwrap();
+        #[allow(deprecated)]
         let result = unsafe { c2pa_read_ingredient_file(std::ptr::null(), data_dir.as_ptr()) };
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
@@ -3375,6 +3403,7 @@ mod tests {
             private_key: std::ptr::null(),
             ta_url: std::ptr::null(),
         };
+        #[allow(deprecated)]
         let result = unsafe {
             c2pa_sign_file(
                 std::ptr::null(),
@@ -3420,6 +3449,7 @@ mod tests {
         };
 
         // Call c2pa_sign_file
+        #[allow(deprecated)]
         let result = unsafe {
             c2pa_sign_file(
                 source_path.as_ptr(),
@@ -3456,6 +3486,7 @@ mod tests {
         let mut stream = TestStream::new(include_bytes!(fixture_path!("cloud.jpg")).to_vec());
 
         let format = CString::new("image/jpeg").unwrap();
+        #[allow(deprecated)]
         let result = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         if result.is_null() {
             if let Some(msg) = CimplError::last_message() {
@@ -3469,7 +3500,10 @@ mod tests {
         assert!(!remote_url.is_null());
         let remote_url = unsafe { std::ffi::CStr::from_ptr(remote_url) };
         assert_eq!(remote_url, c"https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391");
-        unsafe { c2pa_reader_free(result) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_reader_free(result)
+        };
     }
 
     // cargo test test_reader_file_with_wrong_label -- --nocapture
@@ -3480,16 +3514,21 @@ mod tests {
         );
 
         let format = CString::new("image/jpeg").unwrap();
+        #[allow(deprecated)]
         let result: *mut C2paReader =
             unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         assert!(!result.is_null());
-        unsafe { c2pa_reader_free(result) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_reader_free(result)
+        };
     }
 
     #[test]
     fn test_c2pa_reader_from_stream_null_format() {
         let mut stream = TestStream::new(Vec::new());
 
+        #[allow(deprecated)]
         let result = unsafe { c2pa_reader_from_stream(std::ptr::null(), stream.as_ptr()) };
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
@@ -3504,6 +3543,7 @@ mod tests {
         );
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         assert!(!reader.is_null());
         let json = unsafe { c2pa_reader_json(reader) };
@@ -3514,7 +3554,10 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("cawg.ica.credential_valid"));
-        unsafe { c2pa_reader_free(reader) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_reader_free(reader)
+        };
     }
 
     #[test]
@@ -3656,6 +3699,7 @@ mod tests {
     #[test]
     fn test_c2pa_builder_add_resource_null_uri() {
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
         let mut stream = TestStream::new(Vec::new());
@@ -3665,12 +3709,16 @@ mod tests {
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: uri");
-        unsafe { c2pa_builder_free(builder) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_builder_free(builder)
+        };
     }
 
     #[test]
     fn test_c2pa_builder_to_archive_null_stream() {
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
         let result = unsafe { c2pa_builder_to_archive(builder, std::ptr::null_mut()) };
@@ -3678,12 +3726,16 @@ mod tests {
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
-        unsafe { c2pa_builder_free(builder) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_builder_free(builder)
+        };
     }
 
     #[test]
     fn test_c2pa_builder_add_ingredient_from_archive_null_stream() {
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
         let result =
@@ -3692,7 +3744,10 @@ mod tests {
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
-        unsafe { c2pa_builder_free(builder) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_builder_free(builder)
+        };
     }
 
     #[test]
@@ -3708,6 +3763,7 @@ mod tests {
     #[test]
     fn test_c2pa_builder_write_ingredient_archive_null_stream() {
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
         let ingredient_id = CString::new("test-ingredient").unwrap();
@@ -3722,12 +3778,16 @@ mod tests {
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
-        unsafe { c2pa_builder_free(builder) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_builder_free(builder)
+        };
     }
 
     #[test]
     fn test_c2pa_builder_write_ingredient_archive_null_ingredient_id() {
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
         let archive_bytes = vec![0u8; 0];
@@ -3739,7 +3799,10 @@ mod tests {
         let error = unsafe { c2pa_error() };
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: ingredient_id");
-        unsafe { c2pa_builder_free(builder) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_builder_free(builder)
+        };
     }
 
     #[test]
@@ -3815,7 +3878,10 @@ mod tests {
         // verify signer is not null (aka could be created)
         assert!(!signer.is_null());
 
-        unsafe { c2pa_signer_free(signer) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_signer_free(signer)
+        };
     }
 
     #[test]
@@ -3845,7 +3911,10 @@ mod tests {
             let signature_len = 64;
             if signed_len < signature_len {
                 // This should not happen either, but in a real callback implementation we should check
-                unsafe { c2pa_signature_free(signature) };
+                #[allow(deprecated)]
+                unsafe {
+                    c2pa_signature_free(signature)
+                };
                 return -1;
             }
 
@@ -3854,14 +3923,20 @@ mod tests {
                 match unsafe { safe_slice_from_raw_parts(signature, signature_len, "signature") } {
                     Ok(slice) => slice,
                     Err(_) => {
-                        unsafe { c2pa_signature_free(signature) };
+                        #[allow(deprecated)]
+                        unsafe {
+                            c2pa_signature_free(signature)
+                        };
                         return -1;
                     }
                 };
 
             // Validate signed_bytes bounds
             if !unsafe { is_safe_buffer_size(signed_len, signed_bytes) } {
-                unsafe { c2pa_signature_free(signature) };
+                #[allow(deprecated)]
+                unsafe {
+                    c2pa_signature_free(signature)
+                };
                 return -1;
             }
 
@@ -3870,11 +3945,17 @@ mod tests {
             if signature_len <= signed_slice.len() {
                 signed_slice[..signature_len].copy_from_slice(signature_slice);
             } else {
-                unsafe { c2pa_signature_free(signature) };
+                #[allow(deprecated)]
+                unsafe {
+                    c2pa_signature_free(signature)
+                };
                 return -1;
             }
 
-            unsafe { c2pa_signature_free(signature) };
+            #[allow(deprecated)]
+            unsafe {
+                c2pa_signature_free(signature)
+            };
             signature_len as isize
         }
 
@@ -3900,6 +3981,7 @@ mod tests {
         assert!(!signer.is_null());
 
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
@@ -3932,6 +4014,7 @@ mod tests {
         dest_stream.stream_mut().rewind().unwrap();
         let format = CString::new("image/jpeg").unwrap();
 
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
         if reader.is_null() {
             if let Some(msg) = CimplError::last_message() {
@@ -3947,12 +4030,19 @@ mod tests {
 
         assert!(json_content.contains("manifest"));
 
+        #[allow(deprecated)]
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
             c2pa_reader_free(reader);
         }
-        unsafe { c2pa_builder_free(builder) };
-        unsafe { c2pa_signer_free(signer) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_builder_free(builder)
+        };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_signer_free(signer)
+        };
     }
 
     #[test]
@@ -3963,12 +4053,14 @@ mod tests {
         ))
         .unwrap();
         let format = CString::new("toml").unwrap();
+        #[allow(deprecated)]
         let result = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
         assert_eq!(result, 0);
 
         let base = env!("CARGO_MANIFEST_DIR");
         let path =
             CString::new(format!("{base}/../sdk/tests/fixtures/C_with_CAWG_data.jpg")).unwrap();
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_file(path.as_ptr()) };
         if reader.is_null() {
             let error = unsafe { c2pa_error() };
@@ -3983,7 +4075,10 @@ mod tests {
         let json_report = json_str.to_str().unwrap();
         assert!(json_report.contains("cawg.identity"));
         assert!(json_report.contains("cawg.identity.well-formed"));
-        unsafe { c2pa_reader_free(reader) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_reader_free(reader)
+        };
     }
 
     #[test]
@@ -3991,11 +4086,16 @@ mod tests {
         const SETTINGS: &str = include_str!("../../sdk/tests/fixtures/test_settings.json");
         let settings = CString::new(SETTINGS).unwrap();
         let format = CString::new("json").unwrap();
+        #[allow(deprecated)]
         let result = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
         assert_eq!(result, 0);
+        #[allow(deprecated)]
         let signer = unsafe { c2pa_signer_from_settings() };
         assert!(!signer.is_null());
-        unsafe { c2pa_signer_free(signer) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_signer_free(signer)
+        };
     }
 
     #[test]
@@ -4305,6 +4405,7 @@ verify_after_sign = true
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
 
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         assert!(!reader.is_null());
 
@@ -4333,6 +4434,7 @@ verify_after_sign = true
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
 
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         assert!(!reader.is_null());
 
@@ -4394,6 +4496,7 @@ verify_after_sign = true
     #[test]
     fn test_c2pa_builder_add_ingredient_from_stream() {
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
@@ -4424,6 +4527,7 @@ verify_after_sign = true
     fn test_c2pa_builder_with_definition() {
         // Create initial builder
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
@@ -4445,6 +4549,7 @@ verify_after_sign = true
     fn test_c2pa_builder_with_definition_null_json() {
         // Create initial builder
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
@@ -4464,6 +4569,7 @@ verify_after_sign = true
     fn test_c2pa_builder_with_archive() {
         // Create initial builder
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
@@ -4489,6 +4595,7 @@ verify_after_sign = true
     fn test_c2pa_builder_with_archive_null_stream() {
         // Create initial builder
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
@@ -4511,6 +4618,7 @@ verify_after_sign = true
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
 
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         assert!(!reader.is_null());
 
@@ -4547,6 +4655,7 @@ verify_after_sign = true
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
 
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         assert!(!reader.is_null());
 
@@ -4621,6 +4730,7 @@ verify_after_sign = true
     #[test]
     fn test_c2pa_builder_add_action_null_action() {
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
@@ -4673,6 +4783,7 @@ verify_after_sign = true
         assert!(!c_str.is_null());
 
         // Should not crash
+        #[allow(deprecated)]
         unsafe {
             c2pa_string_free(c_str);
         }
@@ -4681,6 +4792,7 @@ verify_after_sign = true
     #[test]
     fn test_c2pa_string_free_null() {
         // Should handle null gracefully
+        #[allow(deprecated)]
         unsafe {
             c2pa_string_free(std::ptr::null_mut());
         }
@@ -4695,6 +4807,7 @@ verify_after_sign = true
         assert!(!c_str.is_null());
 
         // Should not crash
+        #[allow(deprecated)]
         unsafe {
             c2pa_release_string(c_str);
         }
@@ -4712,6 +4825,7 @@ verify_after_sign = true
 
         assert!(!signature.is_null(), "Should return signature");
 
+        #[allow(deprecated)]
         unsafe {
             c2pa_signature_free(signature);
         }
@@ -4738,6 +4852,7 @@ verify_after_sign = true
         // Verify error was set
         let error = unsafe { c2pa_error() };
         assert!(!error.is_null());
+        #[allow(deprecated)]
         unsafe {
             c2pa_string_free(error);
         }
@@ -4756,6 +4871,7 @@ verify_after_sign = true
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
 
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         assert!(!reader.is_null());
 
@@ -4840,6 +4956,7 @@ verify_after_sign = true
         // Reset the source stream for validation
         let mut validation_stream = TestStream::new(source_image.to_vec());
 
+        #[allow(deprecated)]
         let reader = unsafe {
             c2pa_reader_from_manifest_data_and_stream(
                 format.as_ptr(),
@@ -4874,6 +4991,7 @@ verify_after_sign = true
         let mut stream = TestStream::new(source_image.to_vec());
         let manifest_data = [0u8; 100];
 
+        #[allow(deprecated)]
         let reader = unsafe {
             c2pa_reader_from_manifest_data_and_stream(
                 std::ptr::null(),
@@ -4896,6 +5014,7 @@ verify_after_sign = true
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
 
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         assert!(
             !reader.is_null(),
@@ -4950,6 +5069,7 @@ verify_after_sign = true
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
 
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
         assert!(!reader.is_null());
 
@@ -5349,6 +5469,7 @@ verify_after_sign = true
         );
 
         let manifest_def = CString::new("{}").unwrap();
+        #[allow(deprecated)]
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
@@ -5370,10 +5491,14 @@ verify_after_sign = true
             result,
             CimplError::last_message()
         );
-        unsafe { c2pa_manifest_bytes_free(manifest_bytes_ptr) };
+        #[allow(deprecated)]
+        unsafe {
+            c2pa_manifest_bytes_free(manifest_bytes_ptr)
+        };
 
         // Read the signed output back and verify a cawg.identity assertion is present.
         dest_stream.stream_mut().rewind().unwrap();
+        #[allow(deprecated)]
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
         assert!(
             !reader.is_null(),
@@ -5391,6 +5516,7 @@ verify_after_sign = true
             "expected 'cawg.identity' assertion in manifest JSON"
         );
 
+        #[allow(deprecated)]
         unsafe {
             c2pa_builder_free(builder);
             c2pa_signer_free(combined);
