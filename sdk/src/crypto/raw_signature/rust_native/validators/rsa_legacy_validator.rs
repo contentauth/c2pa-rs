@@ -85,6 +85,8 @@ impl RawSignatureValidator for RsaLegacyValidator {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
     use crate::crypto::raw_signature::RawSignatureValidator;
 
