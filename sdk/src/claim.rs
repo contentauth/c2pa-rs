@@ -120,7 +120,6 @@ pub enum ClaimAssetData<'a> {
     StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
 }
 
-
 #[derive(PartialEq, Debug, Eq, Clone, Hash)]
 pub enum ClaimAssertionType {
     V1,       // V1 assertion
