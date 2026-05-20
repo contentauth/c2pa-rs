@@ -413,8 +413,9 @@ impl Default for Verify {
     fn default() -> Self {
         Self {
             verify_after_reading: true,
-            verify_after_sign: false,
-            verify_after_sign_hash: false,
+            // TODO: set this to true [#1875](https://github.com/contentauth/c2pa-rs/issues/1875)
+            verify_after_sign: cfg!(test),
+            verify_after_sign_hash: cfg!(test),
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,

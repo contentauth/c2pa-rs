@@ -2497,14 +2497,6 @@ impl Store {
 
         let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-        if context.settings().verify.verify_after_sign {
-            if _sync {
-                self.validate_manifest(None, context)?;
-            } else {
-                self.validate_manifest_async(None, context).await?;
-            }
-        }
-
         Ok(jumbf_bytes)
     }
 
