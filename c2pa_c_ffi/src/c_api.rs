@@ -5387,7 +5387,21 @@ verify_after_sign = true
             CimplError::last_message()
         );
 
-        let manifest_def = CString::new("{}").unwrap();
+        let manifest_def = CString::new(
+            serde_json::json!({
+                "assertions": [{
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                        }]
+                    }
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
