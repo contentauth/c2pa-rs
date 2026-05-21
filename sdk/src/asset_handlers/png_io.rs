@@ -349,7 +349,7 @@ impl CAIWriter for PngIO {
         let mut positions: Vec<HashObjectPositions> = Vec::new();
 
         input_stream.rewind()?;
-        let ps = get_png_chunk_positions(input_stream)?;
+        let mut ps = get_png_chunk_positions(input_stream)?;
 
         let (ps, file_end) = if ps.iter().any(|chunk| chunk.name == CAI_CHUNK) {
             let file_end = input_stream.seek(SeekFrom::End(0))? as usize;
@@ -360,7 +360,6 @@ impl CAIWriter for PngIO {
                 .position(|c| c.name == IMG_HDR)
                 .ok_or(Error::EmbeddingError)?;
 
-            let mut ps = ps;
             ps.insert(
                 ihdr_index + 1,
                 PngChunkPos {
