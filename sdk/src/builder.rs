@@ -953,9 +953,7 @@ impl Builder {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
         if format == "c2pa" || format == "application/c2pa" {
-            //let parent_ingredient = self.add_ingredient_from_archive(stream)?;
-            let reader = Reader::from_shared_context(&self.context).with_stream(format, stream)?;
-            let parent_ingredient = self.add_ingredient_from_reader(&reader)?;
+            let parent_ingredient = self.add_ingredient_from_archive(stream)?;
             parent_ingredient.merge(&ingredient);
             return self
                 .definition
