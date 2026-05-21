@@ -148,19 +148,23 @@ impl ValidationResults {
             let get_statuses = |i: Ingredient| {
                 // Get a flat list of validation statuses from the ingredient.
                 // If validation_results are present, use them, otherwise use the ingredient's validation_status.
-                let validation_status = match i.validation_results {
-                    Some(v) => Some(v.validation_status()),
-                    None => i.validation_status.map(|s| {
-                        s.iter()
+                //
+                // the `kind` field is `#[serde(skip)]` so it doesn't survive serialization
+                // of the ingredient. we also need to fix up `kind` since the older validation
+                // statuses don't have it set.
+                let validation_status: Option<Vec<ValidationStatus>> = i
+                    .validation_results
+                    .map(|v| v.validation_status())
+                    .or(i.validation_status)
+                    .map(|statuses| {
+                        statuses
+                            .into_iter()
                             .map(|s| {
-                                let status = s.to_owned();
-                                // We need to fix up kind since the older validation statuses don't have it set.
-                                let kind = log_kind(status.code());
-                                status.set_kind(kind)
+                                let kind = log_kind(s.code());
+                                s.set_kind(kind)
                             })
                             .collect()
-                    }),
-                };
+                    });
 
                 // Convert any relative manifest urls found in ingredient validation statuses to absolute.
                 validation_status.map(|mut statuses| {
