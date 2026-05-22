@@ -2194,6 +2194,24 @@ impl Claim {
                     )?;
                 }
 
+                if action.action() == c2pa_action::CREATED {
+                    //2.a created action must have a digitalSourceType fiele
+                    if action.source_type.is_none() {
+                        log_item!(
+                            label.clone(),
+                            "created action must have a digitalSourceType",
+                            "verify_actions"
+                        )
+                        .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                        .failure(
+                            validation_log,
+                            Error::ValidationRule(
+                                "created action must have a digitalSourceType".into(),
+                            ),
+                        )?;
+                    }
+                }
+
                 // 2.b rules
                 if action.action() == c2pa_action::OPENED
                     || action.action() == c2pa_action::PLACED
