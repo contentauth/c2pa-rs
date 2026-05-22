@@ -52,7 +52,7 @@ use crate::{
     store::Store,
     utils::{
         hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime,
-        path_utils::sanitize_archive_path,
+        path_utils::sanitize_archive_path, xmp_inmemory_utils::XmpInfo,
     },
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
@@ -2867,8 +2867,10 @@ impl Builder {
     {
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
-        // todo:: read instance_id from xmp from stream ?
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        if let Some(instance_id) = XmpInfo::from_source(source, &format).instance_id {
+            self.definition.instance_id = instance_id;
+        }
+        source.rewind()?;
 
         #[cfg(feature = "file_io")]
         #[allow(deprecated)]
@@ -2967,8 +2969,10 @@ impl Builder {
     {
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
-        // todo:: read instance_id from xmp from stream ?
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        if let Some(instance_id) = XmpInfo::from_source(source, &format).instance_id {
+            self.definition.instance_id = instance_id;
+        }
+        source.rewind()?;
 
         #[cfg(feature = "file_io")]
         #[allow(deprecated)]
