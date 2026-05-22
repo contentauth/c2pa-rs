@@ -112,6 +112,7 @@
 //! ## Input Validation (from C)
 //! - **Pointer from C**: `deref_or_return_null!(ptr, Type)` → validates & dereferences to `&Type`
 //! - **String from C**: `cstr_or_return_null!(c_str)` → converts C string to Rust `String`
+//! - **String array from C**: `cstr_array_or_return_null!(ptr)` → converts NULL-terminated `*const *const c_char` to `Vec<String>`
 //! - **Byte array from C**: `bytes_or_return_null!(ptr, len, "name")` → validates & converts to `&[u8]`
 //! - **Check not null**: `ptr_or_return_null!(ptr)` → just null check, no deref (for output params)
 //!
@@ -404,6 +405,10 @@ macro_rules! untrack_or_return_null {
 
 /// Maximum length for C strings when using bounded conversion (64KB)
 pub const MAX_CSTRING_LEN: usize = 1048576;
+
+/// Maximum number of entries accepted from a NULL-terminated C string array.
+/// Guards against runaway iteration when a caller omits the NULL terminator.
+pub const MAX_STRING_ARRAY_LEN: usize = 256;
 
 /// Convert C string with bounded length check or early-return with error value.
 /// Errors if the string exceeds MAX_CSTRING_LEN bytes.
@@ -764,6 +769,88 @@ macro_rules! bytes_or_return_int {
     ($ptr:expr, $len:expr, $name:expr) => {{
         $crate::bytes_or_return!($ptr, $len, $name, -1)
     }};
+}
+
+// ============================================================================
+// NULL-Terminated C String Array Macros
+// ============================================================================
+
+/// Convert a NULL-terminated C string array (`*const *const c_char`) to a
+/// `Vec<String>`, or early-return with a custom error value.
+///
+/// * A NULL outer pointer is treated as an empty list (not an error).
+/// * Returns early if the array exceeds [`MAX_STRING_ARRAY_LEN`] entries
+///   (likely a missing NULL terminator).
+/// * Returns early if any individual string is not valid UTF-8.
+///
+/// # Examples
+/// ```rust,ignore
+/// let refs = cstr_array_or_return!(refs_ptr, std::ptr::null_mut());
+/// ```
+#[macro_export]
+macro_rules! cstr_array_or_return {
+    ($ptr:expr, $err_val:expr) => {{
+        let ptr = $ptr;
+        if ptr.is_null() {
+            Vec::<String>::new()
+        } else {
+            let mut result = Vec::<String>::new();
+            let mut i = 0usize;
+            loop {
+                if i >= $crate::macros::MAX_STRING_ARRAY_LEN {
+                    $crate::CimplError::new(
+                        2,
+                        concat!(
+                            stringify!($ptr),
+                            ": array exceeds maximum length or missing NULL terminator"
+                        ),
+                    )
+                    .set_last();
+                    return $err_val;
+                }
+                // SAFETY: caller guarantees ptr points to a valid NULL-terminated array.
+                let entry = unsafe { *ptr.add(i) };
+                if entry.is_null() {
+                    break;
+                }
+                // SAFETY: caller guarantees each entry is a valid NULL-terminated C string.
+                let cstr = unsafe { std::ffi::CStr::from_ptr(entry) };
+                match cstr.to_str() {
+                    Ok(s) => result.push(s.to_owned()),
+                    Err(_) => {
+                        $crate::CimplError::new(
+                            2,
+                            concat!(stringify!($ptr), ": non-UTF-8 string in array"),
+                        )
+                        .set_last();
+                        return $err_val;
+                    }
+                }
+                i += 1;
+            }
+            result
+        }
+    }};
+}
+
+/// Convert a NULL-terminated C string array to a `Vec<String>`, returning NULL on error.
+///
+/// See [`cstr_array_or_return`] for full documentation.
+#[macro_export]
+macro_rules! cstr_array_or_return_null {
+    ($ptr:expr) => {
+        $crate::cstr_array_or_return!($ptr, std::ptr::null_mut())
+    };
+}
+
+/// Convert a NULL-terminated C string array to a `Vec<String>`, returning -1 on error.
+///
+/// See [`cstr_array_or_return`] for full documentation.
+#[macro_export]
+macro_rules! cstr_array_or_return_int {
+    ($ptr:expr) => {
+        $crate::cstr_array_or_return!($ptr, -1)
+    };
 }
 
 /// Free a pointer that was allocated by cimpl.
