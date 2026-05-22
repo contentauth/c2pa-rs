@@ -977,10 +977,20 @@ pub mod validation_codes {
 
 #[cfg(test)]
 pub mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
-    use crate::validation_status::{
-        ASSERTION_DATAHASH_MISMATCH, CLAIM_MALFORMED, CLAIM_SIGNATURE_INSIDE_VALIDITY,
-        CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
+    use crate::{
+        assertions,
+        claim::Claim,
+        jumbf::labels,
+        log_item,
+        validation_status::{
+            ASSERTION_DATAHASH_MISMATCH, ASSERTION_HASHEDURI_MISMATCH, CLAIM_MALFORMED,
+            CLAIM_SIGNATURE_INSIDE_VALIDITY, CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED,
+            SIGNING_CREDENTIAL_UNTRUSTED,
+        },
+        HashedUri, Relationship,
     };
 
     #[test]
@@ -1198,5 +1208,61 @@ pub mod tests {
             validation_results.validation_state(),
             ValidationState::Invalid
         );
+    }
+
+    #[test]
+    fn from_store_attested_ingredient_failure_after_serde_roundtrip() {
+        let inner_label = "urn:uuid:inner-test";
+        let inner_manifest_uri = labels::to_manifest_uri(inner_label);
+        let assertion_url = format!("{inner_manifest_uri}/c2pa.assertions/org.test.data");
+
+        let mut attested = ValidationResults::default();
+        attested.add_status(
+            ValidationStatus::new_failure(ASSERTION_HASHEDURI_MISMATCH).set_url(&assertion_url),
+        );
+
+        let ingredient = Ingredient {
+            relationship: Relationship::ComponentOf,
+            version: 3,
+            validation_results: Some(attested),
+            ..Default::default()
+        };
+
+        let mut outer_claim = Claim::new("test-generator", None, 2);
+        outer_claim.add_assertion(&ingredient).unwrap();
+        let outer_label = outer_claim.label().to_string();
+
+        let mut store = Store::new();
+        store.insert_restored_claim(outer_label.clone(), outer_claim);
+
+        let mut tracker = StatusTracker::default();
+        tracker.push_ingredient_uri(labels::to_assertion_uri(
+            &outer_label,
+            assertions::labels::INGREDIENT,
+        ));
+        let _ = log_item!(
+            assertion_url.clone(),
+            "hash does not match assertion data",
+            "verify_internal"
+        )
+        .validation_status(ASSERTION_HASHEDURI_MISMATCH)
+        .failure(&mut tracker, "hash mismatch");
+        tracker.pop_ingredient_uri();
+
+        let results = ValidationResults::from_store(&store, &tracker);
+
+        let delta_failures: Vec<_> = results
+            .ingredient_deltas
+            .as_ref()
+            .map(|deltas| {
+                deltas
+                    .iter()
+                    .flat_map(|deltas| deltas.validation_deltas().failure().iter())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // check that there are no failures since they were attested to
+        assert!(delta_failures.is_empty());
     }
 }
