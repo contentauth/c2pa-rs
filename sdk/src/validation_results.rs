@@ -1224,6 +1224,11 @@ pub mod tests {
         let ingredient = Ingredient {
             relationship: Relationship::ComponentOf,
             version: 3,
+            active_manifest: Some(HashedUri::new(
+                inner_manifest_uri.clone(),
+                Some("sha256".into()),
+                &[0u8; 32],
+            )),
             validation_results: Some(attested),
             ..Default::default()
         };
