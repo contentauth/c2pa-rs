@@ -716,6 +716,62 @@ impl Store {
         self.claims.push(label);
     }
 
+    /// Build a flat ingredient [`Store`] for `claim` by walking nested ingredient assertions.
+    ///
+    /// Used to materialize the JUMBF bytes for a single ingredient's provenance chain without
+    /// eagerly serializing every ingredient when constructing a [`Reader`](crate::Reader).
+    pub(crate) fn build_flat_ingredient_store(store: &Store, claim: &Claim) -> Result<Store> {
+        let mut ingredient_store = Store::new();
+        let mut visited = HashSet::new();
+        let mut path = Vec::new();
+
+        fn collect_flat(
+            store: &Store,
+            claim: &Claim,
+            ingredient_store: &mut Store,
+            visited: &mut HashSet<String>,
+            path: &mut Vec<String>,
+        ) -> Result<()> {
+            let claim_label = claim.label().to_string();
+
+            if visited.contains(&claim_label) {
+                return Ok(());
+            }
+
+            // Cycle detection
+            if path.iter().any(|p| p == &claim_label) {
+                return Ok(());
+            }
+
+            path.push(claim_label.clone());
+
+            for ing_assertion in claim.ingredient_assertions() {
+                let ingredient = Ingredient::from_assertion(ing_assertion.assertion())?;
+                let manifest_uri = ingredient
+                    .active_manifest
+                    .as_ref()
+                    .or(ingredient.c2pa_manifest.as_ref());
+                if let Some(manifest_uri) = manifest_uri {
+                    let ingredient_label = Store::manifest_label_from_path(&manifest_uri.url());
+                    if let Some(ingredient_claim) = store.get_claim(&ingredient_label) {
+                        collect_flat(store, ingredient_claim, ingredient_store, visited, path)?;
+                    }
+                }
+            }
+
+            // Post-order: add after all children
+            ingredient_store.insert_restored_claim(claim_label.clone(), claim.clone());
+            visited.insert(claim_label);
+            path.pop();
+
+            Ok(())
+        }
+
+        collect_flat(store, claim, &mut ingredient_store, &mut visited, &mut path)?;
+
+        Ok(ingredient_store)
+    }
+
     // replace a claim if it already exists
     pub(crate) fn replace_claim_or_insert(&mut self, label: String, claim: Claim) {
         if self.get_claim(&label).is_some() {
@@ -2932,6 +2988,11 @@ impl Store {
 
         let io_handler = get_assetio_handler(format);
 
+        let is_bmff = is_bmff_format(format);
+        // fast_path applies to all formats: when there is no XMP embed and no manifest removal,
+        // we can pass input_stream directly to the write/hash steps, skipping one full-file copy.
+        let fast_path = url.is_none() && !remove_manifests;
+
         context.check_progress(ProgressPhase::Writing, 1, 2)?;
 
         if let Some(io_handler) = &io_handler {
@@ -2971,8 +3032,10 @@ impl Store {
 
                 manifest_writer
                     .remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
-            } else {
-                // just clone stream
+            } else if !fast_path {
+                // XMP or manifest-removal was NOT the trigger — but fast_path is false,
+                // which can only happen if remove_manifests is true (already handled above).
+                // This branch is a safety net; in practice it should be unreachable here.
                 input_stream.rewind()?;
                 std::io::copy(input_stream, &mut intermediate_stream)?;
             }
@@ -2991,7 +3054,11 @@ impl Store {
             std::io::copy(input_stream, &mut intermediate_stream)?;
         }
 
-        let is_bmff = is_bmff_format(format);
+        // `source_is_intermediate` tracks whether intermediate_stream (true) or
+        // input_stream (false) should be used as the asset source for this call.
+        // When fast_path is true we skip the intermediate copy for ALL formats, not
+        // just BMFF, saving one full-file read+write pass.
+        let mut source_is_intermediate = !fast_path;
 
         let mut data;
         let jumbf_size;
@@ -3007,6 +3074,15 @@ impl Store {
                     if pc.box_hash_assertions().is_empty() {
                         // no user box hash assertion, so use box hashing
                         let mut bh = BoxHash { boxes: Vec::new() };
+
+                        if !source_is_intermediate {
+                            // Box-hash generation requires a seekable intermediate; populate it
+                            // from input_stream so generate_box_hash_from_stream_with_progress
+                            // can make multiple passes over the data.
+                            input_stream.rewind()?;
+                            std::io::copy(input_stream, &mut intermediate_stream)?;
+                            source_is_intermediate = true;
+                        }
 
                         let mut cb = |step, total| {
                             context.check_progress(ProgressPhase::Hashing, step, total)
@@ -3038,7 +3114,11 @@ impl Store {
             // 2) Get hash ranges if needed, do not generate for update manifests
             let mut needs_hash = false;
             if !pc.update_manifest() && pc.bmff_hash_assertions().is_empty() {
-                intermediate_stream.rewind()?;
+                if source_is_intermediate {
+                    intermediate_stream.rewind()?;
+                } else {
+                    input_stream.rewind()?;
+                }
                 let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(pc.alg())?;
 
                 if pc.version() < 2 {
@@ -3046,17 +3126,29 @@ impl Store {
                 }
 
                 // add Merkle mdats if requested
-                Store::generate_bmff_mdat_hashes(
-                    &mut intermediate_stream,
-                    &mut bmff_hash,
-                    settings,
-                )?;
+                if source_is_intermediate {
+                    Store::generate_bmff_mdat_hashes(
+                        &mut intermediate_stream,
+                        &mut bmff_hash,
+                        settings,
+                    )?;
+                } else {
+                    Store::generate_bmff_mdat_hashes(input_stream, &mut bmff_hash, settings)?;
+                }
 
                 // insert Merkle UUID boxes at the correct location if required
                 if let Some(merkle_uuid_boxes) = &bmff_hash.merkle_uuid_boxes {
                     let mut temp_stream = io_utils::stream_with_fs_fallback(threshold);
-                    intermediate_stream.rewind()?;
 
+                    if !source_is_intermediate {
+                        // Merkle insertion requires a writable source; populate intermediate
+                        // from input_stream so we can call insert_data_at on it.
+                        input_stream.rewind()?;
+                        std::io::copy(input_stream, &mut intermediate_stream)?;
+                        source_is_intermediate = true;
+                    }
+
+                    intermediate_stream.rewind()?;
                     insert_data_at(
                         &mut intermediate_stream,
                         &mut temp_stream,
@@ -3080,10 +3172,16 @@ impl Store {
             jumbf_size = data.len();
             // write the jumbf to the output stream if we are embedding the manifest
             if !remove_manifests {
-                intermediate_stream.rewind()?;
-                save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                if source_is_intermediate {
+                    intermediate_stream.rewind()?;
+                    save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                } else {
+                    input_stream.rewind()?;
+                    save_jumbf_to_stream(format, input_stream, output_stream, &data)?;
+                }
             } else {
                 // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
+                // remove_manifests → fast_path is false → source_is_intermediate is true
                 intermediate_stream.rewind()?;
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }
@@ -3112,18 +3210,28 @@ impl Store {
             let mut needs_hashing = false;
             if pc.hash_assertions().is_empty() {
                 // 2) Get hash ranges if needed, do not generate for update manifests.
-                // When there is no format handler the asset is opaque to us, so we hash
-                // the entire stream with no exclusions.
-                let mut hash_ranges = if io_handler.is_some() {
+                // When fast_path is true, source_is_intermediate is false and we read
+                // input_stream directly, skipping the intermediate copy pass.
+                let mut hash_ranges = if io_handler.is_none() {
+                    Vec::new()
+                } else if source_is_intermediate {
                     object_locations_from_stream(format, &mut intermediate_stream)?
                 } else {
-                    Vec::new()
+                    object_locations_from_stream(format, input_stream)?
                 };
                 let hashes: Vec<DataHash> = if pc.update_manifest() {
                     Vec::new()
-                } else {
+                } else if source_is_intermediate {
                     Store::generate_data_hashes_for_stream(
                         &mut intermediate_stream,
+                        pc.alg(),
+                        &mut hash_ranges,
+                        false,
+                        &mut |_, _| Ok(()),
+                    )?
+                } else {
+                    Store::generate_data_hashes_for_stream(
+                        input_stream,
                         pc.alg(),
                         &mut hash_ranges,
                         false,
@@ -3150,10 +3258,16 @@ impl Store {
             // Without a handler the output is always a verbatim copy of the asset and
             // the manifest is returned as sidecar data.
             if !remove_manifests && io_handler.is_some() {
-                intermediate_stream.rewind()?;
-                save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                if source_is_intermediate {
+                    intermediate_stream.rewind()?;
+                    save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                } else {
+                    input_stream.rewind()?;
+                    save_jumbf_to_stream(format, input_stream, output_stream, &data)?;
+                }
             } else {
                 // just copy the asset to the output stream without an embedded manifest
+                // remove_manifests → fast_path is false → source_is_intermediate is true
                 intermediate_stream.rewind()?;
                 std::io::copy(&mut intermediate_stream, output_stream)?;
             }
@@ -3168,6 +3282,10 @@ impl Store {
             // replace the source with correct asset hashes so that the claim hash will be correct
             if needs_hashing {
                 let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+
+                // Flush before seeking: FFI-backed streams (and any stream that
+                // buffers writes) must be flushed before seeking back to read.
+                output_stream.flush()?;
 
                 // get the final hash ranges, but not for update manifests.
                 // When there is no handler use empty ranges so the whole stream is hashed.
