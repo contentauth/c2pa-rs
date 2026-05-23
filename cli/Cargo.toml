@@ -51,6 +51,9 @@ tokio = { version = "1.44.2", features = ["rt", "rt-multi-thread"] }
 wasi = "0.14"
 wstd = "0.5"
 
+[package.metadata.cargo-udeps.ignore]
+development = ["mockall"]
+
 [dev-dependencies]
 mockall = "0.14.0"
 
