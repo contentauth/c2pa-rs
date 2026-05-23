@@ -1748,10 +1748,8 @@ pub mod tests {
     /// that is lazily deferred in `source_store`.
     #[test]
     fn test_resource_to_stream_retrieve_deferred_manifest_data() -> Result<()> {
-        let reader = Reader::default().with_stream(
-            "image/jpeg",
-            Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST),
-        )?;
+        let reader = Reader::default()
+            .with_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST))?;
 
         let active = reader.active_manifest().unwrap();
         let ingredient = active
