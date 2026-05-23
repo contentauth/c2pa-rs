@@ -934,7 +934,7 @@ impl Reader {
                                         let bytes = cow.into_owned();
                                         let len = bytes.len();
                                         stream.write_all(&bytes).map_err(Error::IoError)?;
-                                        return Ok(len as usize);
+                                        return Ok(len);
                                     }
                                 }
                             }
@@ -1750,7 +1750,7 @@ pub mod tests {
     fn test_resource_to_stream_retrieve_deferred_manifest_data() -> Result<()> {
         let reader = Reader::default().with_stream(
             "image/jpeg",
-            &mut Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST),
+            Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST),
         )?;
 
         let active = reader.active_manifest().unwrap();
