@@ -108,6 +108,92 @@ jobs:
         if: matrix.os != 'windows-latest' && matrix.os != 'windows-11-arm' && matrix.target != 'wasm32-unknown-emscripten'
         run: make release TARGET=${{ matrix.target }}
 
+      - name: Build Linux .deb and .rpm packages
+        if: contains(matrix.target, 'unknown-linux-gnu')
+        run: |
+          sudo apt-get install -y rpm ruby-dev build-essential
+          sudo gem install fpm --no-document
+
+          VERSION=$(cargo metadata --format-version 1 --no-deps | \
+            python3 -c "import sys,json; d=json.load(sys.stdin); \
+            print([p for p in d['packages'] if p['name']=='c2pa-c-ffi'][0]['version'])")
+
+          TARGET=${{ matrix.target }}
+          LIB=$PWD/target/$TARGET/release/libc2pa_c.so
+          HDR=$PWD/target/$TARGET/release/c2pa.h
+
+          if [[ "$TARGET" == aarch64* ]]; then
+            DEB_ARCH=arm64
+            RPM_ARCH=aarch64
+          else
+            DEB_ARCH=amd64
+            RPM_ARCH=x86_64
+          fi
+
+          # Generate pkg-config file (no leading whitespace)
+          cat > /tmp/c2pa.pc << 'PCEOF'
+prefix=/usr
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: c2pa
+Description: C2PA content authenticity library
+Version: PKGVER
+Libs: -L${libdir} -lc2pa_c
+Cflags: -I${includedir}
+PCEOF
+          sed -i "s/PKGVER/$VERSION/" /tmp/c2pa.pc
+
+          mkdir -p target/artifacts
+
+          COMMON_ARGS=(
+            --maintainer "CAI Open Source <caiopensrc@adobe.com>"
+            --url "https://contentauthenticity.org"
+            --license "MIT OR Apache-2.0"
+          )
+
+          # libc2pa (runtime) — shared library only
+          fpm -s dir -t deb "${COMMON_ARGS[@]}" \
+            --name libc2pa \
+            --version "$VERSION" \
+            --architecture "$DEB_ARCH" \
+            --description "C2PA content authenticity shared library" \
+            --package "target/artifacts/libc2pa_${VERSION}_${DEB_ARCH}.deb" \
+            "$LIB=/usr/lib/libc2pa_c.so"
+
+          # libc2pa-dev — header, linker .so, and pkg-config; depends on runtime
+          fpm -s dir -t deb "${COMMON_ARGS[@]}" \
+            --name libc2pa-dev \
+            --version "$VERSION" \
+            --architecture "$DEB_ARCH" \
+            --description "C2PA content authenticity library - development files" \
+            --depends "libc2pa (= $VERSION)" \
+            --package "target/artifacts/libc2pa-dev_${VERSION}_${DEB_ARCH}.deb" \
+            "$LIB=/usr/lib/libc2pa_c.so" \
+            "$HDR=/usr/include/c2pa.h" \
+            "/tmp/c2pa.pc=/usr/lib/pkgconfig/c2pa.pc"
+
+          # libc2pa (runtime) .rpm
+          fpm -s dir -t rpm "${COMMON_ARGS[@]}" \
+            --name libc2pa \
+            --version "$VERSION" \
+            --architecture "$RPM_ARCH" \
+            --description "C2PA content authenticity shared library" \
+            --package "target/artifacts/libc2pa-${VERSION}-1.${RPM_ARCH}.rpm" \
+            "$LIB=/usr/lib/libc2pa_c.so"
+
+          # libc2pa-dev .rpm
+          fpm -s dir -t rpm "${COMMON_ARGS[@]}" \
+            --name libc2pa-dev \
+            --version "$VERSION" \
+            --architecture "$RPM_ARCH" \
+            --description "C2PA content authenticity library - development files" \
+            --depends "libc2pa = $VERSION" \
+            --package "target/artifacts/libc2pa-dev-${VERSION}-1.${RPM_ARCH}.rpm" \
+            "$LIB=/usr/lib/libc2pa_c.so" \
+            "$HDR=/usr/include/c2pa.h" \
+            "/tmp/c2pa.pc=/usr/lib/pkgconfig/c2pa.pc"
+
       - name: Upload build artifacts (Android)
         if: contains(matrix.target, 'android')
         uses: actions/upload-artifact@v7
