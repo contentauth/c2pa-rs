@@ -75,7 +75,7 @@ During the grace period, the deprecated API will continue to work without functi
 
 ### Stage 3: Removal
 
-After the announced grace period:
+After the grace period:
 
 - The deprecated item is removed in the next major release. **Exception:** A minor release may be used for these cases:
     -  The item was marked as deprecated prior to the 1.0.0 release.
@@ -89,7 +89,7 @@ Deprecation warnings are expressed using each language's idiomatic mechanism so 
 ### Rust
 
 ```rust
-#[deprecated(since = "0.5.0", note = "Use `Builder::new_v2()` instead. Will be removed in 0.7.0.")]
+#[deprecated(since = "0.5.0", note = "Use `Builder::new_v2()` instead. Will be removed in a future major release.")]
 pub fn old_builder() -> Builder { ... }
 ```
 
