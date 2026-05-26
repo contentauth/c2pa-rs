@@ -18,10 +18,12 @@ use chrono::{DateTime, Utc};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
 use crate::{
+    context::Context,
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustPolicy},
     },
+    http::AsyncHttpResolver,
     identity::{
         claim_aggregation::{
             w3c_vc::{
@@ -79,7 +81,8 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
         let mut ica_credential = self.parse_ica_vc_v2(payload_bytes, status_tracker)?;
 
-        self.check_issuer_signature(&sign1, &ica_credential)
+        let _resolver = Context::new().resolver_async();
+        self.check_issuer_signature(&sign1, &ica_credential, _resolver.as_ref())
             .or_else(|err| {
                 ok = false;
                 self.handle_signature_error(err, status_tracker)
@@ -154,7 +157,8 @@ impl SignatureVerifier for IcaSignatureVerifier {
         // TO DO (CAI-7970): Add support for VC version 1.
         let mut ica_credential = self.parse_ica_vc_v2(payload_bytes, status_tracker)?;
 
-        self.check_issuer_signature_async(&sign1, &ica_credential)
+        let _resolver = Context::new().resolver_async();
+        self.check_issuer_signature_async(&sign1, &ica_credential, _resolver.as_ref())
             .await
             .or_else(|err| {
                 ok = false;
@@ -434,6 +438,7 @@ impl IcaSignatureVerifier {
         &self,
         sign1: &CoseSign1,
         ica_credential: &IcaCredential,
+        _resolver: &dyn AsyncHttpResolver,
     ) -> Result<(), ValidationError<IcaValidationError>> {
         let issuer_id = Did::new(&ica_credential.issuer)?;
         let (primary_did, _fragment) = issuer_id.split_fragment();
@@ -465,7 +470,7 @@ impl IcaSignatureVerifier {
                         ),
                     ));
                 } else {
-                    let did_doc = did_web::resolve(&primary_did).await?;
+                    let did_doc = did_web::resolve(&primary_did, _resolver).await?;
 
                     let Some(vm1) = did_doc.verification_relationships.assertion_method.first()
                     else {
