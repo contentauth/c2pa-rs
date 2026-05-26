@@ -22,7 +22,7 @@ We follow [Semantic Versioning (SemVer)](https://semver.org/). Version 1.0.0 wil
 
 Not all changes are equal. 
 
-A breaking change always results in a major version increment, but a major version increment does not strictly require a breaking change. A major version can also be used to release a rewritten API or significant new features: It primarily serves as a signal that the update requires careful review for compatibility. 
+A breaking change always results in a major version increment, but a major version increment does not alwasy require a breaking change. A major version can also be used to release a rewritten API or significant new features: It primarily serves as a signal that the update requires careful review for compatibility. 
 
 The goal is that the same code should be able to run against different minor revisions, and minor changes require at most a few local annotations. (This document is Rust-specific; we will treat other languages as closely to this list as is feasible.)
 
