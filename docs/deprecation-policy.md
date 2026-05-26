@@ -58,7 +58,7 @@ When we decide to remove or replace part of the public API, we follow a three-st
     - What is deprecated
     - Why it is being deprecated
     - What to use instead
-    - If possible, the planned removal timeline (see stage 2)
+    - If possible, the planned removal timeline (see stage 2). In any case, removal must not occur until after the minimum grace period.
 1. The change is documented in the CHANGELOG under a `### Deprecated` heading, along with additional [migration documentation](#migration-guides).
 1. An announcement is posted in the project's Discord and, where applicable, linked from the relevant GitHub issue or PR.
 
