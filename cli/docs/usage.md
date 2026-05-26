@@ -28,6 +28,7 @@ The following options are available with any (or no) subcommand.  Additional opt
 |-----|----|----|----|
 | `--certs` | | N/A | Extract a certificate chain to standard output (stdout). See [Extracting a certificate chain](#extracting-a-certificate-chain). |
 | `--config` | `-c` | `<config>` | Specify a [manifest definition](manifest.md) as a JSON string. See [Providing a manifest definition on the command line](#providing-a-manifest-definition-on-the-command-line). |
+| `--create` | | `<source_type>` | Create a new manifest with the specified [C2PA digital source type](https://cv.iptc.org/newscodes/digitalsourcetype/) (e.g. `digitalCapture`, `trainedAlgorithmicMedia`). Mutually exclusive with `--update` and `--parent`. See [Specifying manifest intent](#specifying-manifest-intent). |
 | `--detailed` | `-d` | N/A | Display detailed C2PA-formatted manifest data. See [Displaying a detailed manifest report](#detailed-manifest-report). |
 | `--external-manifest` | N/A | `<c2pa_file>` | Path to the binary `.c2pa` (sidecar) manifest to use for validation against the input asset. See [Using an external manifest](#using-an-external-manifest). |
 | `--force` | `-f` | N/A | Force overwriting output file. See [Forced overwrite](#forced-overwrite). |
@@ -45,6 +46,7 @@ The following options are available with any (or no) subcommand.  Additional opt
 | `--sidecar` | `-s` | N/A | Put manifest in external "sidecar" file with `.c2pa` extension. See [Generating an external manifest](#generating-an-external-manifest). |
 | `--signer-path` | N/A | `<command>` | Command for signing the C2PA claim. See [Signing assets](signing.md). |
 | `--tree` | | N/A | Create a tree diagram of the manifest store. See [Displaying a tree diagram](#displaying-a-tree-diagram). |
+| `--update` | | N/A | Create an [update manifest](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_update_manifests) (non-editorial changes to an already-signed parent asset). Mutually exclusive with `--create`. See [Specifying manifest intent](#specifying-manifest-intent). |
 | `--version` | `-V` | N/A | Display version information. |
 
 ## Displaying manifest data
@@ -168,6 +170,63 @@ c2patool sample/C.jpg --ingredient --output ./ingredient
 
 c2patool sample/image.jpg -m sample/test.json -p ./ingredient -o signed_image.jpg
 ```
+
+### Specifying manifest intent
+
+Every C2PA manifest records an _intent_ that describes how the content was produced. C2PA Tool supports three intents, controlled by the `--create` and `--update` flags:
+
+| Intent | Flag | When to use |
+|--------|------|-------------|
+| **Create** | `--create <source-type>` | The output is a new original creation with no prior editing history. |
+| **Edit** | _(default — no flag needed)_ | The output is derived from one or more source assets through an editorial process. |
+| **Update** | `--update` | Non-editorial technical changes were applied to an already-signed asset (e.g., re-encoding or format conversion). |
+
+#### Create intent (`--create`)
+
+Use `--create <source-type>` to declare that the output is a new creation. Provide one of the [IPTC digital source type](https://cv.iptc.org/newscodes/digitalsourcetype/) values:
+
+```shell
+c2patool new_image.jpg \
+  -c '{"assertions":[]}' \
+  --create digitalCapture \
+  -o signed_image.jpg
+```
+
+The tool automatically adds a `c2pa.created` action. `--create` is mutually exclusive with `--update` and `--parent`.
+
+Some common source-type values:
+
+| Value | Meaning |
+|-------|---------|
+| `digitalCapture` | Original capture from a camera or microphone |
+| `algorithmicMedia` | Produced entirely by an algorithm |
+| `trainedAlgorithmicMedia` | Produced by a trained AI model |
+| `compositeWithTrainedAlgorithmicMedia` | Composite that includes AI-generated elements |
+
+See the [IPTC digital source type vocabulary](https://cv.iptc.org/newscodes/digitalsourcetype/) for the full list.
+
+#### Edit intent (default)
+
+When neither `--create` nor `--update` is given, the tool applies **Edit** intent. The source asset is automatically added as a parent ingredient and a `c2pa.opened` action is injected into the manifest:
+
+```shell
+c2patool source_image.jpg -m sample/test.json -o signed_image.jpg
+```
+
+Use `--parent` / `-p` when the parent asset is a different file from the source (see [Specifying a parent file](#specifying-a-parent-file)).
+
+#### Update intent (`--update`)
+
+Use `--update` to declare that non-editorial changes were applied to an already-signed asset. The source asset **must already contain a C2PA manifest**.
+
+```shell
+c2patool source_with_manifest.jpg \
+  -c '{"assertions":[]}' \
+  --update \
+  -o updated_image.jpg
+```
+
+The tool automatically adds a `c2pa.opened` action and sets the source asset as the parent ingredient. `--update` is mutually exclusive with `--create`.
 
 ### Generating an external manifest
 
