@@ -89,12 +89,35 @@ pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
     parse_did_doc(bytes, &url)
 }
 
-async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
-    let request = http::Request::get(url)
+fn build_request(url: &str) -> Result<http::Request<Vec<u8>>, DidWebError> {
+    http::Request::get(url)
         .header(header::USER_AGENT, USER_AGENT)
         .header(header::ACCEPT, "application/did+json")
         .body(Vec::new())
-        .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))?;
+        .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))
+}
+
+fn check_response_status(status: http::StatusCode, url: &str) -> Result<(), DidWebError> {
+    match status {
+        http::StatusCode::OK => Ok(()),
+        http::StatusCode::NOT_FOUND => Err(DidWebError::NotFound(url.to_string())),
+        _ => Err(DidWebError::Server(status.to_string())),
+    }
+}
+
+fn read_body_with_limit(body: Box<dyn Read>, url: &str) -> Result<Vec<u8>, DidWebError> {
+    let mut document = Vec::new();
+    body.take(MAX_DID_DOC_SIZE + 1)
+        .read_to_end(&mut document)
+        .map_err(|e| DidWebError::Response(e.into()))?;
+    if document.len() as u64 > MAX_DID_DOC_SIZE {
+        return Err(DidWebError::ResponseTooLarge);
+    }
+    Ok(document)
+}
+
+async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
+    let request = build_request(url)?;
     let response = AsyncGenericResolver::with_redirects()
         .unwrap_or_default()
         .with_max_response_body_size(MAX_DID_DOC_SIZE)
@@ -104,19 +127,9 @@ async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
             HttpResolverError::ResponseTooLarge => DidWebError::ResponseTooLarge,
             e => DidWebError::Request(url.to_owned(), e),
         })?;
-
-    let (parts, mut body) = response.into_parts();
-    match parts.status {
-        http::StatusCode::OK => (),
-        http::StatusCode::NOT_FOUND => return Err(DidWebError::NotFound(url.to_string())),
-        _ => return Err(DidWebError::Server(parts.status.to_string())),
-    };
-
-    let mut document = Vec::new();
-    body.read_to_end(&mut document)
-        .map_err(|e| DidWebError::Response(e.into()))?;
-
-    Ok(document)
+    let (parts, body) = response.into_parts();
+    check_response_status(parts.status, url)?;
+    read_body_with_limit(body, url)
 }
 
 pub(crate) fn resolve_sync(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
@@ -127,12 +140,7 @@ pub(crate) fn resolve_sync(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
 }
 
 fn get_did_doc_sync(url: &str) -> Result<Vec<u8>, DidWebError> {
-    let request = http::Request::get(url)
-        .header(header::USER_AGENT, USER_AGENT)
-        .header(header::ACCEPT, "application/did+json")
-        .body(Vec::new())
-        .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))?;
-
+    let request = build_request(url)?;
     let response = SyncGenericResolver::with_redirects()
         .unwrap_or_default()
         .http_resolve(request)
@@ -140,24 +148,9 @@ fn get_did_doc_sync(url: &str) -> Result<Vec<u8>, DidWebError> {
             HttpResolverError::ResponseTooLarge => DidWebError::ResponseTooLarge,
             e => DidWebError::Request(url.to_owned(), e),
         })?;
-
-    let (parts, mut body) = response.into_parts();
-    match parts.status {
-        http::StatusCode::OK => (),
-        http::StatusCode::NOT_FOUND => return Err(DidWebError::NotFound(url.to_string())),
-        _ => return Err(DidWebError::Server(parts.status.to_string())),
-    };
-
-    let mut document = Vec::new();
-    // Read one byte past the limit so we can detect an oversized response.
-    body.take(MAX_DID_DOC_SIZE + 1)
-        .read_to_end(&mut document)
-        .map_err(|e| DidWebError::Response(e.into()))?;
-    if document.len() as u64 > MAX_DID_DOC_SIZE {
-        return Err(DidWebError::ResponseTooLarge);
-    }
-
-    Ok(document)
+    let (parts, body) = response.into_parts();
+    check_response_status(parts.status, url)?;
+    read_body_with_limit(body, url)
 }
 
 pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
