@@ -1308,13 +1308,11 @@ impl Ingredient {
         let mut thumbnail = None;
         // for Builder model, ingredient resources may be in the manifest
         let get_resource = |id: &str| {
-            self.resources
-                .get(id)
-                .or_else(|_| {
-                    resources
-                        .ok_or_else(|| Error::NotFound)
-                        .and_then(|r| r.get(id))
-                })
+            self.resources.get(id).or_else(|_| {
+                resources
+                    .ok_or_else(|| Error::NotFound)
+                    .and_then(|r| r.get(id))
+            })
         };
 
         // Collect the redacted thumbnail URIs, use them for comparison.
