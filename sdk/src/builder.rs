@@ -26,7 +26,9 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
-use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
+use zip::ZipArchive;
+#[cfg(test)]
+use zip::{write::SimpleFileOptions, ZipWriter};
 
 #[allow(deprecated)]
 use crate::assertions::CreativeWork;
@@ -107,9 +109,6 @@ impl ArchiveKind {
         }
     }
 }
-
-/// Version of the Builder Archive file
-const ARCHIVE_VERSION: &str = "1";
 
 /// Use a ManifestDefinition to define a manifest and to build a `ManifestStore`.
 /// A manifest is a collection of ingredients and assertions
@@ -1014,68 +1013,6 @@ impl Builder {
         Ok(self)
     }
 
-    /// Convert the Builder into a archive formatted stream.
-    ///
-    /// The archive is a stream in zip format containing the manifest JSON, resources, and ingredients.
-    /// # Arguments
-    /// * `stream` - A stream to write the zip into.
-    /// # Errors
-    /// * Returns an [`Error`] if the archive cannot be written.
-    fn old_to_archive(&self, stream: impl Write + Seek) -> Result<()> {
-        drop(
-            // this drop seems to be required to force a flush before reading back.
-            {
-                let mut zip = ZipWriter::new(stream);
-                let options =
-                    SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-                // write a version file
-                zip.start_file("version.txt", options)
-                    .map_err(|e| Error::OtherError(Box::new(e)))?;
-                zip.write_all(ARCHIVE_VERSION.as_bytes())?;
-                // write the manifest.json file
-                zip.start_file("manifest.json", options)
-                    .map_err(|e| Error::OtherError(Box::new(e)))?;
-                zip.write_all(&serde_json::to_vec(self)?)?;
-                // add resource files to a resources folder
-                zip.start_file("resources/", options)
-                    .map_err(|e| Error::OtherError(Box::new(e)))?;
-                for (id, data) in self.resources.resources() {
-                    let sanitized_id = sanitize_archive_path(id)?;
-                    zip.start_file(format!("resources/{sanitized_id}"), options)
-                        .map_err(|e| Error::OtherError(Box::new(e)))?;
-                    zip.write_all(data)?;
-                }
-                // Write the manifest_data files
-                // The filename is filesystem safe version of the associated manifest_label
-                // with a .c2pa extension inside a "manifests" folder.
-                zip.start_file("manifests/", options)
-                    .map_err(|e| Error::OtherError(Box::new(e)))?;
-                for ingredient in self.definition.ingredients.iter() {
-                    for (id, data) in ingredient.resources().resources() {
-                        let sanitized_id = sanitize_archive_path(id)?;
-                        zip.start_file(format!("resources/{sanitized_id}"), options)
-                            .map_err(|e| Error::OtherError(Box::new(e)))?;
-                        zip.write_all(data)?;
-                    }
-
-                    if let Some(manifest_label) = ingredient.active_manifest() {
-                        if let Some(manifest_data) = ingredient.manifest_data() {
-                            // Convert to valid archive / file path name
-                            let manifest_name = manifest_label.replace([':'], "_") + ".c2pa";
-                            let sanitized_manifest_name = sanitize_archive_path(&manifest_name)?;
-                            zip.start_file(format!("manifests/{sanitized_manifest_name}"), options)
-                                .map_err(|e| Error::OtherError(Box::new(e)))?;
-                            zip.write_all(&manifest_data)?;
-                        }
-                    }
-                }
-                zip.finish()
-            }
-            .map_err(|e| Error::OtherError(Box::new(e)))?,
-        );
-        Ok(())
-    }
-
     /// Unpacks an archive stream into a Builder.
     ///
     /// # Arguments
@@ -1186,23 +1123,20 @@ impl Builder {
 
     /// Creates a builder archive from the builder and writes it to a stream.
     ///
-    /// This will be stored in the standard application/c2pa .c2pa JUMBF format
-    /// The legacy zip format will be written if `builder.generate_c2pa_archive` is set to `false`
-    /// See docs/working-stores.md for more information.
-    ///
     /// # Arguments
-    /// * `stream` - A stream to write the C2PA archive or ZIP file into.
+    /// * `stream` - A stream to write the C2PA archive into.
     ///
     /// # Errors
     /// * Returns an [`Error`] if the archive cannot be written.
     pub fn to_archive(&self, mut stream: impl Write + Seek) -> Result<()> {
-        if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
-            let c2pa_data = self.working_store_sign(ArchiveKind::Builder)?;
-            stream.write_all(&c2pa_data)?;
-            return Ok(());
+        if self.context.settings().builder.generate_c2pa_archive == Some(false) {
+            return Err(Error::NotImplemented(
+                "ZIP archive format is no longer supported; remove the generate_c2pa_archive=false setting".to_string(),
+            ));
         }
-
-        self.old_to_archive(stream)
+        let c2pa_data = self.working_store_sign(ArchiveKind::Builder)?;
+        stream.write_all(&c2pa_data)?;
+        Ok(())
     }
 
     /// Writes a JUMBF working-store archive that contains a single ingredient from this builder.
@@ -1235,17 +1169,6 @@ impl Builder {
             ingredient_id: ingredient_id.to_string(),
         })?;
         stream.write_all(&c2pa_data)?;
-        Ok(())
-    }
-
-    /// Copies binary resources from `store` into this builder when the id is not already present.
-    fn merge_resources_from_store(&mut self, store: &ResourceStore) -> Result<()> {
-        for (id, data) in store.resources() {
-            let sanitized_id = sanitize_archive_path(id)?;
-            if !self.resources.exists(&sanitized_id) {
-                self.resources.add(sanitized_id, data.clone())?;
-            }
-        }
         Ok(())
     }
 
@@ -3282,13 +3205,6 @@ impl Builder {
                 }
             }
         };
-
-        if let Some(m) = reader.active_manifest() {
-            self.merge_resources_from_store(m.resources())?;
-            for ing in m.ingredients() {
-                self.merge_resources_from_store(ing.resources())?;
-            }
-        }
 
         let mut ingredient = reader.to_ingredient()?;
         if let Some(id) = ingredient_id {
