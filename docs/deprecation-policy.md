@@ -27,7 +27,7 @@ The goal is that the same code should be able to run against different minor rev
 Changes considered **breaking** (requiring a major version increment post-1.0):
 
 - Moving a public type, function, method, trait, or constant from one parent module to another
-    - **EXCEPTION:** APIs that are not publicly _documents_ may be removed prior to 1.0 without following this policy.
+    - **EXCEPTION:** APIs that are not _publicly documented_ may be removed prior to 1.0 without following this policy.
 - Removing or renaming a public type, function, method, trait, or constant
 - Changing the signature of a public function (parameter types, return types, or generics) except to the extent such changes are generally considered non-breaking (e.g. changing a `&mut Type` to `&Type`)
 - Changing the behavior of a public API in a way that violates previously documented contracts
