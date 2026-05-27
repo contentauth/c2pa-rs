@@ -131,7 +131,9 @@ impl<'a> ContentCredential<'a> {
         stream.rewind()?;
         let ingredient_uri =
             self.add_ingredient_from_stream(Relationship::ParentOf, format, &mut stream)?;
-        self.add_action(Action::new(c2pa_action::OPENED).add_ingredient_id(&ingredient_uri.url())?)?;
+        self.add_action(
+            Action::new(c2pa_action::OPENED).add_ingredient_id(&ingredient_uri.url())?,
+        )?;
         Ok(self)
     }
 
@@ -158,7 +160,9 @@ impl<'a> ContentCredential<'a> {
             self.add_ingredient_assertion(&ingredient, manifest_bytes.as_deref())?;
 
         // Add OPENED action
-        self.add_action(Action::new(c2pa_action::OPENED).add_ingredient_id(&ingredient_uri.url())?)?;
+        self.add_action(
+            Action::new(c2pa_action::OPENED).add_ingredient_id(&ingredient_uri.url())?,
+        )?;
 
         Ok(self)
     }
