@@ -68,23 +68,25 @@ pub enum DidWebError {
     ResponseTooLarge,
 }
 
-pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+fn prepare_url(did: &Did<'_>) -> Result<String, DidWebError> {
     let method = did.method_name();
     #[allow(clippy::panic)] // TEMPORARY while refactoring
     if method != "web" {
         panic!("Unexpected DID method {method}");
     }
+    to_url(did.method_specific_id())
+}
 
-    let method_specific_id = did.method_specific_id();
+fn parse_did_doc(bytes: Vec<u8>, url: &str) -> Result<DidDocument, DidWebError> {
+    let json = String::from_utf8(bytes).map_err(|_| DidWebError::InvalidData(url.to_owned()))?;
+    DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url.to_owned()))
+}
 
-    let url = to_url(method_specific_id)?;
+pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+    let url = prepare_url(did)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
-
-    let did_doc = get_did_doc(&url).await?;
-
-    let json = String::from_utf8(did_doc).map_err(|_| DidWebError::InvalidData(url.clone()))?;
-
-    DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url))
+    let bytes = get_did_doc(&url).await?;
+    parse_did_doc(bytes, &url)
 }
 
 async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
@@ -118,22 +120,10 @@ async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
 }
 
 pub(crate) fn resolve_sync(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
-    let method = did.method_name();
-    #[allow(clippy::panic)] // TEMPORARY while refactoring
-    if method != "web" {
-        panic!("Unexpected DID method {method}");
-    }
-
-    let method_specific_id = did.method_specific_id();
-
-    let url = to_url(method_specific_id)?;
+    let url = prepare_url(did)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
-
-    let did_doc = get_did_doc_sync(&url)?;
-
-    let json = String::from_utf8(did_doc).map_err(|_| DidWebError::InvalidData(url.clone()))?;
-
-    DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url))
+    let bytes = get_did_doc_sync(&url)?;
+    parse_did_doc(bytes, &url)
 }
 
 fn get_did_doc_sync(url: &str) -> Result<Vec<u8>, DidWebError> {
