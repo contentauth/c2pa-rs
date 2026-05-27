@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.26.59](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.58...c2patool-v0.26.59)
+### Added
+
+* `--create <source-type>` flag to sign an asset as a new original creation with the specified [C2PA digital source type](https://cv.iptc.org/newscodes/digitalsourcetype/) (e.g. `digitalCapture`, `trainedAlgorithmicMedia`). Automatically injects a `c2pa.created` action. Mutually exclusive with `--update` and `--parent`.
+* `--update` flag to generate an [update manifest](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_update_manifests) for non-editorial changes applied to an already-signed asset. Automatically injects a `c2pa.opened` action and sets the source asset as the parent ingredient. The source asset must already contain a C2PA manifest. Mutually exclusive with `--create`.
+
+### Changed
+
+* Default signing behavior now applies **Edit** intent: the source asset is automatically added as a parent ingredient and a `c2pa.opened` action is injected. Previously no intent or parent was set automatically.
+* Signature validation after signing is now enabled by default in all builds (previously only in test builds). Use `--no_signing_verify` to skip it.(https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.58...c2patool-v0.26.59)
 _12 May 2026_
 
 ## [0.26.58](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.57...c2patool-v0.26.58)
