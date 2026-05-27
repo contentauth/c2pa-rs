@@ -999,14 +999,10 @@ impl Reader {
             match result {
                 Ok(mut manifest) => {
                     for ingredient in manifest.ingredients_mut() {
-                        if ingredient.manifest_data_ref().is_some() {
-                            continue;
-                        }
-                        if let Some(active_label) = ingredient.active_manifest() {
-                            if arc_store.get_claim(active_label).is_some() {
-                                ingredient.set_deferred_manifest_data(Arc::clone(&arc_store))?;
-                            }
-                        }
+                        // Wire up the store resolver so ingredient resources can be
+                        // resolved on demand from claims without eager byte copies.
+                        // This also sets the deferred manifest_data ref when needed.
+                        ingredient.set_store_resolver(Arc::clone(&arc_store));
                     }
                     manifests.insert(manifest_label.to_owned(), manifest);
                 }
@@ -1205,13 +1201,7 @@ impl Reader {
                 builder.definition.redactions = manifest.redactions.take();
                 let ingredients = std::mem::take(&mut manifest.ingredients);
                 for mut ingredient in ingredients {
-                    if let Some(active_manifest) = ingredient.active_manifest() {
-                        if ingredient.manifest_data_ref().is_none()
-                            && self.store.get_claim(active_manifest).is_some()
-                        {
-                            ingredient.set_deferred_manifest_data(Arc::clone(&self.store))?;
-                        }
-                    }
+                    ingredient.set_store_resolver(Arc::clone(&self.store));
                     builder.add_ingredient(ingredient);
                 }
                 for assertion in manifest.assertions.iter() {
@@ -1246,13 +1236,7 @@ impl Reader {
             .to_owned();
 
         // populate manifest_data on demand for ingredients with an active manifest
-        if let Some(active_manifest) = ingredient.active_manifest() {
-            if ingredient.manifest_data_ref().is_none()
-                && self.store.get_claim(active_manifest).is_some()
-            {
-                ingredient.set_deferred_manifest_data(Arc::clone(&self.store))?;
-            }
-        }
+        ingredient.set_store_resolver(Arc::clone(&self.store));
 
         Ok(ingredient)
     }

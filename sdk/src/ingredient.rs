@@ -140,11 +140,6 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     manifest_data: Option<ResourceRef>,
 
-    /// When set, [`Ingredient::manifest_data`] is resolved on demand from this store
-    /// (see [`Reader`](crate::Reader) construction) instead of from [`Ingredient::resources`].
-    #[serde(skip)]
-    source_store: Option<Arc<Store>>,
-
     /// The ingredient's label as assigned in the manifest.
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
@@ -328,24 +323,7 @@ impl Ingredient {
     /// manifest_data is the binary form of a manifest store in .c2pa format.
     pub fn manifest_data(&self) -> Option<Cow<'_, Vec<u8>>> {
         let r = self.manifest_data.as_ref()?;
-        match self.resources.get(&r.identifier) {
-            Ok(cow) => Some(cow),
-            Err(_) => self
-                .try_get_deferred_manifest_data(&r.identifier)
-                .ok()
-                .map(Cow::Owned),
-        }
-    }
-
-    fn try_get_deferred_manifest_data(&self, id: &str) -> Result<Vec<u8>> {
-        let mdr = self.manifest_data.as_ref().ok_or_else(|| Error::NotFound)?;
-        if mdr.identifier != id {
-            return Err(Error::NotFound);
-        }
-        let source_store = self.source_store.as_ref().ok_or_else(|| Error::NotFound)?;
-        let claim = source_store.get_claim(id).ok_or_else(|| Error::NotFound)?;
-        let sub = Store::build_flat_ingredient_store(source_store.as_ref(), claim)?;
-        sub.to_jumbf_internal(0)
+        self.resources.get(&r.identifier).ok()
     }
 
     /// Returns a reference to ingredient data if it exists.
@@ -502,14 +480,12 @@ impl Ingredient {
 
     /// Sets a reference to Manifest C2PA data.
     pub fn set_manifest_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
-        self.source_store = None;
         self.manifest_data = Some(data_ref);
         Ok(self)
     }
 
     /// Sets the Manifest C2PA data for this ingredient with bytes.
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
-        self.source_store = None;
         let base_id = "manifest_data".to_string();
         self.manifest_data = Some(
             self.resources
@@ -518,19 +494,52 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Lazily resolve [`Ingredient::manifest_data`] from `source_store` using
-    /// [`Ingredient::active_manifest`] as the provenance claim label.
-    pub(crate) fn set_deferred_manifest_data(&mut self, source_store: Arc<Store>) -> Result<()> {
-        let active = self
-            .active_manifest()
-            .map(str::to_owned)
-            .ok_or_else(|| Error::NotFound)?;
-        if source_store.get_claim(&active).is_none() {
-            return Ok(());
+    /// Installs a resolver on this ingredient's [`ResourceStore`] that looks up
+    /// assertion, databox, and manifest bytes from `store` by URI on demand.
+    ///
+    /// Also sets the deferred `manifest_data` ref when `active_manifest` names a
+    /// claim that exists in `store`, replacing the former `set_deferred_manifest_data`
+    /// mechanism.
+    ///
+    /// This allows the resource store to remain empty at read time while still
+    /// satisfying calls to `resources().get(uri)` / `resources().exists(uri)`.
+    pub(crate) fn set_store_resolver(&mut self, store: Arc<Store>) {
+        // Set the deferred manifest_data ref when the active manifest label is
+        // present in this store and no explicit ref was already provided.
+        if self.manifest_data.is_none() {
+            if let Some(active) = self.active_manifest().map(str::to_owned) {
+                if store.get_claim(&active).is_some() {
+                    self.manifest_data = Some(ResourceRef::new("application/c2pa", active));
+                }
+            }
         }
-        self.source_store = Some(source_store);
-        self.manifest_data = Some(ResourceRef::new("application/c2pa", active));
-        Ok(())
+        self.resources
+            .set_resolver(std::sync::Arc::new(move |uri: &str| {
+                use crate::jumbf::labels::{manifest_label_from_uri, ASSERTIONS, DATABOXES};
+                if uri.contains(DATABOXES) {
+                    let label = manifest_label_from_uri(uri)?;
+                    let hashed_uri = crate::hashed_uri::HashedUri::new(uri.to_owned(), None, &[]);
+                    return store
+                        .get_data_box_from_uri_and_claim(&hashed_uri, &label)
+                        .map(|db| db.data.clone());
+                }
+                if uri.contains(ASSERTIONS) {
+                    let assertion = store.get_assertion_from_uri(uri)?;
+                    // Try EmbeddedData first (claim thumbnails, data assertions).
+                    // Fall back to raw assertion bytes (ingredient thumbnails stored as binary).
+                    if let Ok(embedded) = EmbeddedData::from_assertion(assertion) {
+                        return Some(embedded.data);
+                    }
+                    return Some(assertion.data().to_vec());
+                }
+                // Manifest: uri is a bare claim label (set by manifest_data ref above).
+                if let Some(claim) = store.get_claim(uri) {
+                    return Store::build_flat_ingredient_store(&store, claim)
+                        .and_then(|s| s.to_jumbf_internal(0))
+                        .ok();
+                }
+                None
+            }));
     }
 
     /// Sets a reference to Ingredient data.
@@ -1306,7 +1315,6 @@ impl Ingredient {
                         .ok_or_else(|| Error::NotFound)
                         .and_then(|r| r.get(id))
                 })
-                .or_else(|_| self.try_get_deferred_manifest_data(id).map(Cow::Owned))
         };
 
         // Collect the redacted thumbnail URIs, use them for comparison.
