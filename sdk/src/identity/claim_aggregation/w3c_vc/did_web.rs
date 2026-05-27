@@ -21,7 +21,7 @@
 use std::io::Read;
 
 use super::{did::Did, did_doc::DidDocument};
-use crate::http::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
+use crate::http::{AsyncHttpResolver, HttpResolverError};
 
 /// Maximum number of bytes accepted from a DID Web server response body.
 pub(crate) const MAX_DID_DOC_SIZE: u64 = 1024 * 1024; // 1 MiB
@@ -65,7 +65,10 @@ pub enum DidWebError {
     ResponseTooLarge,
 }
 
-pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+pub(crate) async fn resolve(
+    did: &Did<'_>,
+    resolver: &dyn AsyncHttpResolver,
+) -> Result<DidDocument, DidWebError> {
     let method = did.method_name();
     #[allow(clippy::panic)] // TEMPORARY while refactoring
     if method != "web" {
@@ -77,39 +80,52 @@ pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
     let url = to_url(method_specific_id)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
 
-    let did_doc = get_did_doc(&url).await?;
+    let did_doc = get_did_doc(&url, resolver).await?;
 
     let json = String::from_utf8(did_doc).map_err(|_| DidWebError::InvalidData(url.clone()))?;
 
     DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url))
 }
 
-async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
+async fn get_did_doc(url: &str, resolver: &dyn AsyncHttpResolver) -> Result<Vec<u8>, DidWebError> {
     let request = http::Request::get(url)
         .header(header::USER_AGENT, USER_AGENT)
         .header(header::ACCEPT, "application/did+json")
         .body(Vec::new())
         .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))?;
-    let response = AsyncGenericResolver::with_redirects()
-        .unwrap_or_default()
-        .with_max_response_body_size(MAX_DID_DOC_SIZE)
+
+    let response = resolver
         .http_resolve_async(request)
         .await
-        .map_err(|e| match e {
-            HttpResolverError::ResponseTooLarge => DidWebError::ResponseTooLarge,
-            e => DidWebError::Request(url.to_owned(), e),
-        })?;
+        .map_err(|e| DidWebError::Request(url.to_owned(), e))?;
 
-    let (parts, mut body) = response.into_parts();
+    // Fast-fail if Content-Length exceeds the limit before reading any body bytes.
+    let reported_len = response
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
+    if let Some(len) = reported_len {
+        if len > MAX_DID_DOC_SIZE {
+            return Err(DidWebError::ResponseTooLarge);
+        }
+    }
+
+    let (parts, body) = response.into_parts();
     match parts.status {
         http::StatusCode::OK => (),
         http::StatusCode::NOT_FOUND => return Err(DidWebError::NotFound(url.to_string())),
         _ => return Err(DidWebError::Server(parts.status.to_string())),
     };
 
+    // Hard cap for chunked/streaming bodies that omit or lie about Content-Length.
     let mut document = Vec::new();
-    body.read_to_end(&mut document)
+    body.take(MAX_DID_DOC_SIZE + 1)
+        .read_to_end(&mut document)
         .map_err(|e| DidWebError::Response(e.into()))?;
+    if document.len() as u64 > MAX_DID_DOC_SIZE {
+        return Err(DidWebError::ResponseTooLarge);
+    }
 
     Ok(document)
 }
@@ -121,21 +137,32 @@ pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
         .ok_or_else(|| DidWebError::InvalidWebDid(did.to_owned()))?;
 
     // TODO:
-    // - Validate domain name: alphanumeric, hyphen, dot. no IP address.
     // - Ensure domain name matches TLS certificate common name
     // - Support punycode?
     // - Support query strings?
+
+    // Reject bare IPv4/IPv6 literals — did:web requires a DNS domain name.
+    // Domain may include a %3A-encoded port (e.g. "192.168.1.1%3A8080"), so
+    // strip the port suffix before checking.
+    let host_part = domain_name.split("%3A").next().unwrap_or(domain_name);
+    if host_part.parse::<std::net::IpAddr>().is_ok() {
+        return Err(DidWebError::InvalidWebDid(did.to_owned()));
+    }
+
     let path = match parts.peek() {
         Some(_) => parts.collect::<Vec<&str>>().join("/"),
         None => ".well-known".to_string(),
     };
 
-    // Use http for localhost, for testing purposes.
+    // Use http for localhost in tests only — production always requires HTTPS.
+    #[cfg(test)]
     let proto = if domain_name.starts_with("localhost") {
         "http"
     } else {
         "https"
     };
+    #[cfg(not(test))]
+    let proto = "https";
 
     #[allow(unused_mut)]
     let mut url = format!(
@@ -193,6 +220,25 @@ mod tests {
             did_web::to_url(did("did:web:example.com%3A443:u:bob").method_specific_id()).unwrap(),
             "https://example.com:443/u/bob/did.json"
         );
+
+        // IPv4 literals must be rejected (SSRF: CAI-10364)
+        assert!(
+            did_web::to_url(did("did:web:192.168.1.1").method_specific_id()).is_err(),
+            "RFC-1918 IPv4 must be rejected"
+        );
+        assert!(
+            did_web::to_url(did("did:web:169.254.169.254").method_specific_id()).is_err(),
+            "link-local IPv4 (AWS metadata) must be rejected"
+        );
+        assert!(
+            did_web::to_url(did("did:web:127.0.0.1").method_specific_id()).is_err(),
+            "loopback IPv4 must be rejected"
+        );
+        // IPv4 with %3A-encoded port must also be rejected
+        assert!(
+            did_web::to_url(did("did:web:192.168.1.1%3A8080:path").method_specific_id()).is_err(),
+            "RFC-1918 IPv4 with port must be rejected"
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -200,9 +246,12 @@ mod tests {
         use httpmock::prelude::*;
 
         use super::did;
-        use crate::identity::claim_aggregation::w3c_vc::{
-            did_doc::DidDocument,
-            did_web::{self, DidWebError, MAX_DID_DOC_SIZE, PROXY},
+        use crate::{
+            http::AsyncGenericResolver,
+            identity::claim_aggregation::w3c_vc::{
+                did_doc::DidDocument,
+                did_web::{self, DidWebError, MAX_DID_DOC_SIZE, PROXY},
+            },
         };
 
         #[tokio::test]
@@ -237,7 +286,10 @@ mod tests {
                     .body(DID_JSON);
             });
 
-            let doc = did_web::resolve(&did("did:web:localhost")).await.unwrap();
+            let resolver = AsyncGenericResolver::new();
+            let doc = did_web::resolve(&did("did:web:localhost"), &resolver)
+                .await
+                .unwrap();
             let doc_expected = DidDocument::from_json(DID_JSON).unwrap();
             assert_eq!(doc, doc_expected);
 
@@ -269,7 +321,8 @@ mod tests {
                     .body(oversized_body);
             });
 
-            let result = did_web::resolve(&did("did:web:localhost")).await;
+            let resolver = AsyncGenericResolver::new();
+            let result = did_web::resolve(&did("did:web:localhost"), &resolver).await;
 
             PROXY.with(|proxy| {
                 proxy.replace(None);
@@ -299,7 +352,8 @@ mod tests {
                     .body(oversized_body);
             });
 
-            let result = did_web::resolve(&did("did:web:localhost")).await;
+            let resolver = AsyncGenericResolver::new();
+            let result = did_web::resolve(&did("did:web:localhost"), &resolver).await;
 
             PROXY.with(|proxy| {
                 proxy.replace(None);
@@ -308,6 +362,91 @@ mod tests {
             assert!(
                 matches!(result, Err(did_web::DidWebError::ResponseTooLarge)),
                 "expected ResponseTooLarge, got {result:?}"
+            );
+        }
+
+        // --- CAI-10364 regression tests ---
+        //
+        // Before the fix, both of these tests would have demonstrated live SSRF:
+        //
+        // 1. ip_literal_no_network_request: `did:web:169.254.169.254` reached the
+        //    AWS EC2 metadata service.  The PanicResolver proves no outbound call
+        //    is made; before Fix 2 (IP literal rejection in to_url) it would have
+        //    panicked because the resolver was invoked.
+        //
+        // 2. restricted_resolver_is_honoured: the old get_did_doc() created its
+        //    own AsyncGenericResolver internally, discarding whatever resolver the
+        //    caller supplied.  A RestrictedResolver with an empty allowlist was
+        //    silently bypassed.  After Fix 1 the passed resolver is used, so the
+        //    empty allowlist correctly blocks the request.
+
+        #[tokio::test]
+        async fn ip_literal_no_network_request() {
+            use async_trait::async_trait;
+            use http::{Request, Response};
+
+            use crate::http::HttpResolverError;
+
+            struct PanicResolver;
+
+            #[async_trait]
+            impl crate::http::AsyncHttpResolver for PanicResolver {
+                async fn http_resolve_async(
+                    &self,
+                    _request: Request<Vec<u8>>,
+                ) -> Result<Response<Box<dyn std::io::Read>>, HttpResolverError> {
+                    panic!(
+                        "outbound HTTP request must not be made for IP-literal DIDs (CAI-10364)"
+                    );
+                }
+            }
+
+            let resolver = PanicResolver;
+
+            // AWS EC2 metadata endpoint — the canonical SSRF target from the report.
+            let result = did_web::resolve(&did("did:web:169.254.169.254"), &resolver).await;
+            assert!(
+                matches!(result, Err(DidWebError::InvalidWebDid(_))),
+                "expected InvalidWebDid for link-local IP, got {result:?}"
+            );
+
+            let result = did_web::resolve(&did("did:web:192.168.1.1"), &resolver).await;
+            assert!(
+                matches!(result, Err(DidWebError::InvalidWebDid(_))),
+                "expected InvalidWebDid for RFC-1918 IP, got {result:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn restricted_resolver_is_honoured() {
+            use crate::http::{
+                restricted::{HostPattern, RestrictedResolver},
+                AsyncGenericResolver,
+            };
+
+            let server = MockServer::start();
+
+            PROXY.with(|proxy| {
+                let server_url = server.url("/").replace("127.0.0.1", "localhost");
+                proxy.replace(Some(server_url));
+            });
+
+            // Empty allowlist — every host blocked.
+            // Before Fix 1, get_did_doc() ignored this and created its own resolver.
+            let inner = AsyncGenericResolver::new();
+            let restricted =
+                RestrictedResolver::with_allowed_hosts(inner, vec![] as Vec<HostPattern>);
+
+            let result = did_web::resolve(&did("did:web:localhost"), &restricted).await;
+
+            PROXY.with(|proxy| {
+                proxy.replace(None);
+            });
+
+            // The request must be blocked — UriDisallowed surfaces as DidWebError::Request.
+            assert!(
+                matches!(result, Err(DidWebError::Request(_, _))),
+                "expected Request(UriDisallowed) from RestrictedResolver, got {result:?}"
             );
         }
 
