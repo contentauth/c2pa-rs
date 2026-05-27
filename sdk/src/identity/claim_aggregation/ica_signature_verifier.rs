@@ -459,9 +459,9 @@ impl IcaSignatureVerifier {
 
             "web" => {
                 let did_doc = if _sync {
-                    did_web::resolve_sync(&primary_did)?
+                    did_web::resolve(&primary_did)?
                 } else {
-                    did_web::resolve(&primary_did).await?
+                    did_web::resolve_async(&primary_did).await?
                 };
 
                 let Some(vm1) = did_doc.verification_relationships.assertion_method.first() else {

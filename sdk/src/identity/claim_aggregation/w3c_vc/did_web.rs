@@ -82,7 +82,7 @@ fn parse_did_doc(bytes: Vec<u8>, url: &str) -> Result<DidDocument, DidWebError> 
     DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url.to_owned()))
 }
 
-pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+pub(crate) async fn resolve_async(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
     let url = prepare_url(did)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
     let bytes = get_did_doc(&url).await?;
@@ -132,7 +132,7 @@ async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
     read_body_with_limit(body, url)
 }
 
-pub(crate) fn resolve_sync(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+pub(crate) fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
     let url = prepare_url(did)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
     let bytes = get_did_doc_sync(&url)?;
@@ -276,7 +276,7 @@ mod tests {
                     .body(DID_JSON);
             });
 
-            let doc = did_web::resolve(&did("did:web:localhost")).await.unwrap();
+            let doc = did_web::resolve_async(&did("did:web:localhost")).await.unwrap();
             let doc_expected = DidDocument::from_json(DID_JSON).unwrap();
             assert_eq!(doc, doc_expected);
 
@@ -308,7 +308,7 @@ mod tests {
                     .body(oversized_body);
             });
 
-            let result = did_web::resolve(&did("did:web:localhost")).await;
+            let result = did_web::resolve_async(&did("did:web:localhost")).await;
 
             PROXY.with(|proxy| {
                 proxy.replace(None);
@@ -338,7 +338,7 @@ mod tests {
                     .body(oversized_body);
             });
 
-            let result = did_web::resolve(&did("did:web:localhost")).await;
+            let result = did_web::resolve_async(&did("did:web:localhost")).await;
 
             PROXY.with(|proxy| {
                 proxy.replace(None);
