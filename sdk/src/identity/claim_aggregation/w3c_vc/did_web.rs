@@ -21,7 +21,10 @@
 use std::io::Read;
 
 use super::{did::Did, did_doc::DidDocument};
-use crate::http::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
+use crate::http::{
+    AsyncGenericResolver, AsyncHttpResolver, HttpResolverError, SyncGenericResolver,
+    SyncHttpResolver,
+};
 
 /// Maximum number of bytes accepted from a DID Web server response body.
 pub(crate) const MAX_DID_DOC_SIZE: u64 = 1024 * 1024; // 1 MiB
@@ -65,31 +68,56 @@ pub enum DidWebError {
     ResponseTooLarge,
 }
 
-pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+fn prepare_url(did: &Did<'_>) -> Result<String, DidWebError> {
     let method = did.method_name();
     #[allow(clippy::panic)] // TEMPORARY while refactoring
     if method != "web" {
         panic!("Unexpected DID method {method}");
     }
-
-    let method_specific_id = did.method_specific_id();
-
-    let url = to_url(method_specific_id)?;
-    // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
-
-    let did_doc = get_did_doc(&url).await?;
-
-    let json = String::from_utf8(did_doc).map_err(|_| DidWebError::InvalidData(url.clone()))?;
-
-    DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url))
+    to_url(did.method_specific_id())
 }
 
-async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
-    let request = http::Request::get(url)
+fn parse_did_doc(bytes: Vec<u8>, url: &str) -> Result<DidDocument, DidWebError> {
+    let json = String::from_utf8(bytes).map_err(|_| DidWebError::InvalidData(url.to_owned()))?;
+    DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url.to_owned()))
+}
+
+pub(crate) async fn resolve_async(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+    let url = prepare_url(did)?;
+    // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
+    let bytes = get_did_doc(&url).await?;
+    parse_did_doc(bytes, &url)
+}
+
+fn build_request(url: &str) -> Result<http::Request<Vec<u8>>, DidWebError> {
+    http::Request::get(url)
         .header(header::USER_AGENT, USER_AGENT)
         .header(header::ACCEPT, "application/did+json")
         .body(Vec::new())
-        .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))?;
+        .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))
+}
+
+fn check_response_status(status: http::StatusCode, url: &str) -> Result<(), DidWebError> {
+    match status {
+        http::StatusCode::OK => Ok(()),
+        http::StatusCode::NOT_FOUND => Err(DidWebError::NotFound(url.to_string())),
+        _ => Err(DidWebError::Server(status.to_string())),
+    }
+}
+
+fn read_body_with_limit(body: Box<dyn Read>, url: &str) -> Result<Vec<u8>, DidWebError> {
+    let mut document = Vec::new();
+    body.take(MAX_DID_DOC_SIZE + 1)
+        .read_to_end(&mut document)
+        .map_err(|e| DidWebError::Response(e.into()))?;
+    if document.len() as u64 > MAX_DID_DOC_SIZE {
+        return Err(DidWebError::ResponseTooLarge);
+    }
+    Ok(document)
+}
+
+async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
+    let request = build_request(url)?;
     let response = AsyncGenericResolver::with_redirects()
         .unwrap_or_default()
         .with_max_response_body_size(MAX_DID_DOC_SIZE)
@@ -99,19 +127,30 @@ async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
             HttpResolverError::ResponseTooLarge => DidWebError::ResponseTooLarge,
             e => DidWebError::Request(url.to_owned(), e),
         })?;
+    let (parts, body) = response.into_parts();
+    check_response_status(parts.status, url)?;
+    read_body_with_limit(body, url)
+}
 
-    let (parts, mut body) = response.into_parts();
-    match parts.status {
-        http::StatusCode::OK => (),
-        http::StatusCode::NOT_FOUND => return Err(DidWebError::NotFound(url.to_string())),
-        _ => return Err(DidWebError::Server(parts.status.to_string())),
-    };
+pub(crate) fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+    let url = prepare_url(did)?;
+    // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
+    let bytes = get_did_doc_sync(&url)?;
+    parse_did_doc(bytes, &url)
+}
 
-    let mut document = Vec::new();
-    body.read_to_end(&mut document)
-        .map_err(|e| DidWebError::Response(e.into()))?;
-
-    Ok(document)
+fn get_did_doc_sync(url: &str) -> Result<Vec<u8>, DidWebError> {
+    let request = build_request(url)?;
+    let response = SyncGenericResolver::with_redirects()
+        .unwrap_or_default()
+        .http_resolve(request)
+        .map_err(|e| match e {
+            HttpResolverError::ResponseTooLarge => DidWebError::ResponseTooLarge,
+            e => DidWebError::Request(url.to_owned(), e),
+        })?;
+    let (parts, body) = response.into_parts();
+    check_response_status(parts.status, url)?;
+    read_body_with_limit(body, url)
 }
 
 pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
@@ -237,7 +276,9 @@ mod tests {
                     .body(DID_JSON);
             });
 
-            let doc = did_web::resolve(&did("did:web:localhost")).await.unwrap();
+            let doc = did_web::resolve_async(&did("did:web:localhost"))
+                .await
+                .unwrap();
             let doc_expected = DidDocument::from_json(DID_JSON).unwrap();
             assert_eq!(doc, doc_expected);
 
@@ -269,7 +310,7 @@ mod tests {
                     .body(oversized_body);
             });
 
-            let result = did_web::resolve(&did("did:web:localhost")).await;
+            let result = did_web::resolve_async(&did("did:web:localhost")).await;
 
             PROXY.with(|proxy| {
                 proxy.replace(None);
@@ -299,7 +340,7 @@ mod tests {
                     .body(oversized_body);
             });
 
-            let result = did_web::resolve(&did("did:web:localhost")).await;
+            let result = did_web::resolve_async(&did("did:web:localhost")).await;
 
             PROXY.with(|proxy| {
                 proxy.replace(None);
