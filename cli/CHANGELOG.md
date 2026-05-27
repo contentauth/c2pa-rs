@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.60](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.59...c2patool-v0.26.60)
+_27 May 2026_
+
+### Added
+
+* Add Intent support to c2patool ([#2171](https://github.com/contentauth/c2pa-rs/pull/2171))
+* Support CAWG callback signing via c_ffi ([#2118](https://github.com/contentauth/c2pa-rs/pull/2118))
+
+### Fixed
+
+* Share reqwest HTTP clients ([#2152](https://github.com/contentauth/c2pa-rs/pull/2152))
+
 ### Added
 
 * `--create <source-type>` flag to sign an asset as a new original creation with the specified [C2PA digital source type](https://cv.iptc.org/newscodes/digitalsourcetype/) (e.g. `digitalCapture`, `trainedAlgorithmicMedia`). Automatically injects a `c2pa.created` action. Mutually exclusive with `--update` and `--parent`.
