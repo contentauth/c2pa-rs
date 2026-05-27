@@ -1,7 +1,5 @@
 # Deprecation policy
 
-## Preamble
-
 The Content Authenticity Initiative SDK is an evolving project. Prior to their 1.0 release, the APIs may change as we refine our design. That said, we are committed to making those changes in a transparent, predictable way so that developers can plan accordingly.
 
 This policy applies to the Rust SDK and all language bindings (JavaScript, Node.js, C, C++, Swift, Kotlin, and Python).
