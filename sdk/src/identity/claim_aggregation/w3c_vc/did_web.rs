@@ -21,7 +21,10 @@
 use std::io::Read;
 
 use super::{did::Did, did_doc::DidDocument};
-use crate::http::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
+use crate::http::{
+    AsyncGenericResolver, AsyncHttpResolver, HttpResolverError, SyncGenericResolver,
+    SyncHttpResolver,
+};
 
 /// Maximum number of bytes accepted from a DID Web server response body.
 pub(crate) const MAX_DID_DOC_SIZE: u64 = 1024 * 1024; // 1 MiB
@@ -110,6 +113,59 @@ async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
     let mut document = Vec::new();
     body.read_to_end(&mut document)
         .map_err(|e| DidWebError::Response(e.into()))?;
+
+    Ok(document)
+}
+
+pub(crate) fn resolve_sync(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+    let method = did.method_name();
+    #[allow(clippy::panic)] // TEMPORARY while refactoring
+    if method != "web" {
+        panic!("Unexpected DID method {method}");
+    }
+
+    let method_specific_id = did.method_specific_id();
+
+    let url = to_url(method_specific_id)?;
+    // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
+
+    let did_doc = get_did_doc_sync(&url)?;
+
+    let json = String::from_utf8(did_doc).map_err(|_| DidWebError::InvalidData(url.clone()))?;
+
+    DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url))
+}
+
+fn get_did_doc_sync(url: &str) -> Result<Vec<u8>, DidWebError> {
+    let request = http::Request::get(url)
+        .header(header::USER_AGENT, USER_AGENT)
+        .header(header::ACCEPT, "application/did+json")
+        .body(Vec::new())
+        .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))?;
+
+    let response = SyncGenericResolver::with_redirects()
+        .unwrap_or_default()
+        .http_resolve(request)
+        .map_err(|e| match e {
+            HttpResolverError::ResponseTooLarge => DidWebError::ResponseTooLarge,
+            e => DidWebError::Request(url.to_owned(), e),
+        })?;
+
+    let (parts, mut body) = response.into_parts();
+    match parts.status {
+        http::StatusCode::OK => (),
+        http::StatusCode::NOT_FOUND => return Err(DidWebError::NotFound(url.to_string())),
+        _ => return Err(DidWebError::Server(parts.status.to_string())),
+    };
+
+    let mut document = Vec::new();
+    // Read one byte past the limit so we can detect an oversized response.
+    body.take(MAX_DID_DOC_SIZE + 1)
+        .read_to_end(&mut document)
+        .map_err(|e| DidWebError::Response(e.into()))?;
+    if document.len() as u64 > MAX_DID_DOC_SIZE {
+        return Err(DidWebError::ResponseTooLarge);
+    }
 
     Ok(document)
 }
