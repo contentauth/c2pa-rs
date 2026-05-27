@@ -15,6 +15,7 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     io::{Read, Seek, Write},
+    sync::Arc,
 };
 
 #[cfg(feature = "json_schema")]
@@ -170,6 +171,46 @@ pub struct ResourceStore {
     base_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
+    /// Optional resolver that can look up resource bytes by URI from an external source
+    /// (e.g. a `Store`). Used to defer materialization of bytes during reading.
+    #[serde(skip)]
+    #[cfg_attr(feature = "json_schema", schemars(skip))]
+    resolver: Option<StoreResolver>,
+}
+
+/// Type alias for the resolver closure stored in [`StoreResolver`].
+/// On wasm32 the store is not `Sync`, so we omit the `Send + Sync` bounds.
+#[cfg(not(target_arch = "wasm32"))]
+type ResolverFn = Arc<dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync>;
+#[cfg(target_arch = "wasm32")]
+type ResolverFn = Arc<dyn Fn(&str) -> Option<Vec<u8>>>;
+
+/// Newtype wrapping the resolver closure so that `ResourceStore` can derive `Debug`.
+#[derive(Clone)]
+struct StoreResolver(ResolverFn);
+
+impl std::fmt::Debug for StoreResolver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "StoreResolver")
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl std::ops::Deref for StoreResolver {
+    type Target = dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl std::ops::Deref for StoreResolver {
+    type Target = dyn Fn(&str) -> Option<Vec<u8>>;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
 }
 
 impl ResourceStore {
@@ -180,7 +221,16 @@ impl ResourceStore {
             #[cfg(feature = "file_io")]
             base_path: None,
             label: None,
+            resolver: None,
         }
+    }
+
+    /// Sets a resolver closure that looks up resource bytes by URI.
+    ///
+    /// Used by the reading path to defer materialization — the closure is called
+    /// as a fallback when a resource is not present in memory or on disk.
+    pub(crate) fn set_resolver(&mut self, resolver: ResolverFn) {
+        self.resolver = Some(StoreResolver(resolver));
     }
 
     /// Set a manifest label for this store used to resolve relative JUMBF URIs.
@@ -320,11 +370,22 @@ impl ResourceStore {
                     })?;
                     return Ok(Cow::Owned(value));
                 }
-                None => return Err(Error::ResourceNotFound(id.to_string())),
+                None => {
+                    if let Some(data) = self.resolver.as_ref().and_then(|r| r(id)) {
+                        return Ok(Cow::Owned(data));
+                    }
+                    return Err(Error::ResourceNotFound(id.to_string()));
+                }
             }
         }
         self.resources.get(id).map_or_else(
-            || Err(Error::ResourceNotFound(id.to_string())),
+            || {
+                self.resolver
+                    .as_ref()
+                    .and_then(|r| r(id))
+                    .map(Cow::Owned)
+                    .ok_or_else(|| Error::ResourceNotFound(id.to_string()))
+            },
             |v| Ok(Cow::Borrowed(v)),
         )
     }
@@ -343,7 +404,13 @@ impl ResourceStore {
                     let mut file = std::fs::File::open(path)?;
                     return std::io::copy(&mut file, &mut stream).map_err(Error::IoError);
                 }
-                None => return Err(Error::ResourceNotFound(id.to_string())),
+                None => {
+                    if let Some(data) = self.resolver.as_ref().and_then(|r| r(id)) {
+                        stream.write_all(&data).map_err(Error::IoError)?;
+                        return Ok(data.len() as u64);
+                    }
+                    return Err(Error::ResourceNotFound(id.to_string()));
+                }
             }
         }
         match self.resources().get(id) {
@@ -351,7 +418,13 @@ impl ResourceStore {
                 stream.write_all(data).map_err(Error::IoError)?;
                 Ok(data.len() as u64)
             }
-            None => Err(Error::ResourceNotFound(id.to_string())),
+            None => {
+                if let Some(data) = self.resolver.as_ref().and_then(|r| r(id)) {
+                    stream.write_all(&data).map_err(Error::IoError)?;
+                    return Ok(data.len() as u64);
+                }
+                Err(Error::ResourceNotFound(id.to_string()))
+            }
         }
     }
 
@@ -364,7 +437,15 @@ impl ResourceStore {
         #[cfg(feature = "file_io")]
         if let Some(base) = self.base_path.as_ref() {
             let path = base.join(id);
-            return path.exists();
+            if path.exists() {
+                return true;
+            }
+        }
+
+        if let Some(resolver) = &self.resolver {
+            if resolver(id).is_some() {
+                return true;
+            }
         }
 
         false

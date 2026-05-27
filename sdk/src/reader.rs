@@ -999,6 +999,9 @@ impl Reader {
             match result {
                 Ok(mut manifest) => {
                     for ingredient in manifest.ingredients_mut() {
+                        // Wire up the store resolver so ingredient resources can be
+                        // resolved on demand from claims without eager byte copies.
+                        ingredient.set_store_resolver(Arc::clone(&arc_store));
                         if ingredient.manifest_data_ref().is_some() {
                             continue;
                         }

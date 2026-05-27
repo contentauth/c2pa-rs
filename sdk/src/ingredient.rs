@@ -533,6 +533,35 @@ impl Ingredient {
         Ok(())
     }
 
+    /// Installs a resolver on this ingredient's [`ResourceStore`] that looks up
+    /// assertion and databox bytes from `store` by JUMBF URI on demand.
+    ///
+    /// This allows the resource store to remain empty at read time while still
+    /// satisfying calls to `resources().get(uri)` / `resources().exists(uri)`.
+    pub(crate) fn set_store_resolver(&mut self, store: Arc<Store>) {
+        self.resources
+            .set_resolver(std::sync::Arc::new(move |uri: &str| {
+                use crate::jumbf::labels::{manifest_label_from_uri, ASSERTIONS, DATABOXES};
+                if uri.contains(DATABOXES) {
+                    let label = manifest_label_from_uri(uri)?;
+                    let hashed_uri = crate::hashed_uri::HashedUri::new(uri.to_owned(), None, &[]);
+                    return store
+                        .get_data_box_from_uri_and_claim(&hashed_uri, &label)
+                        .map(|db| db.data.clone());
+                }
+                if uri.contains(ASSERTIONS) {
+                    let assertion = store.get_assertion_from_uri(uri)?;
+                    // Try EmbeddedData first (claim thumbnails, data assertions).
+                    // Fall back to raw assertion bytes (ingredient thumbnails stored as binary).
+                    if let Ok(embedded) = EmbeddedData::from_assertion(assertion) {
+                        return Some(embedded.data);
+                    }
+                    return Some(assertion.data().to_vec());
+                }
+                None
+            }));
+    }
+
     /// Sets a reference to Ingredient data.
     pub fn set_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
         // verify the resource referenced exists
