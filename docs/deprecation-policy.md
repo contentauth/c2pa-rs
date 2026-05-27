@@ -1,22 +1,30 @@
 # Deprecation policy
 
-The Content Authenticity Initiative SDKs are evolving projects. Prior to their 1.0 release, the APIs may change as we refine our design. That said, we are committed to making those changes in a transparent, predictable way so that developers can plan accordingly.
+The Content Authenticity Initiative SDK is an evolving project. Prior to our 1.0 release, the APIs may change as we refine our design. That said, we are committed to making those changes in a transparent, predictable way so that developers can plan accordingly.
 
 This policy applies to the Rust library and all language bindings (JavaScript, Node.js, C, C++, Swift, Kotlin, and Python).
 
 ## Versioning and stability guarantees
 
-We follow [Semantic Versioning (SemVer)](https://semver.org/). Version 1.0.0 will define the public API; subsequent version numbers are incremented will be based on how the public API changes in each release.
+We follow [Semantic Versioning (SemVer)](https://semver.org/). Version 1.0.0 will define the public API; subsequent version numbers will be based on how the public API changes in the release: 
 
-**Before 1.0:** Major version zero (`0.y.z`) is for initial development — anything may change at any time, and the public API should not be considered stable. In the Rust/Cargo ecosystem, this means that a change from `0.2.3` to `0.3.0` may include incompatible API changes. We will, however, make a good-faith effort to follow the deprecation process below even before 1.0, so that users have advance warning before breakage occurs.
+- **Patch** release for backward-compatible bug fixes.
+- **Minor** release for backward-compatible additions.
+- **Major** release for incompatible changes.
+
+**Before 1.0:** Major version zero (`0.y.z`) is for initial development: Anything may change at any time, and the public API should not be considered stable. In the Rust/Cargo ecosystem, this means that a change from `0.2.3` to `0.3.0` may include incompatible API changes. We will, however, make a good-faith effort to follow the deprecation process below even before 1.0, so that users have advance warning before breakage occurs.
 
 **After 1.0:** Breaking changes will only ship in major version increments. Before completely removing functionality in a new major release, there will be at least one minor release that contains the deprecation so that API consumers can smoothly transition to the new API. We will publish and retain historical documentation for at least each minor point release.
 
 ## What counts as a breaking change
 
-Not all changes are equal. All breaking changes are major changes, but the reverse is not necessarily true. (In other words, there could be a conceptually "major" change that doesn't break API compatibility. Such a change would not warrant a major version increment.) The goal is that the same code should be able to run against different minor revisions, and minor changes should require at most a few local annotations. (This document is Rust-specific; we will treat other languages as closely to this list as is feasible.)
+Not all changes are equal. 
 
-Changes we consider **breaking** (requiring a major version bump post-1.0):
+A breaking change always results in a major version increment, but a major version increment does not alwasy require a breaking change. A major version can also be used to release a rewritten API or significant new features: It primarily serves as a signal that the update requires careful review for compatibility. 
+
+The goal is that the same code should be able to run against different minor revisions, and minor changes require at most a few local annotations. (This document is Rust-specific; we will treat other languages as closely to this list as is feasible.)
+
+Changes considered **breaking** (requiring a major version increment post-1.0):
 
 - Moving a public type, function, method, trait, or constant from one parent module to another
 - Removing or renaming a public type, function, method, trait, or constant
@@ -27,9 +35,9 @@ Changes we consider **breaking** (requiring a major version bump post-1.0):
 - Breaking changes to upstream or third-party libraries to the extent that those APIs are re-published by our library and thus break our own API compatibility
 - Any other change flagged by `cargo-server-checks` (or an equivalent tool for any other language) as breaking compatibility
 
-**Non-breaking** changes that would require a minor or patch version change:
+Changes considered **non-breaking** (minor or patch release):
 
-- Adding new public items (types, functions, trait impls)
+- Adding new public items (types, functions, trait implementation)
 - Deprecating a public item without removing it
 - Bug fixes that restore documented behavior
 
@@ -37,18 +45,26 @@ Changes we consider **breaking** (requiring a major version bump post-1.0):
 
 When we decide to remove or replace part of the public API, we follow a three-stage process:
 
+1. [Deprecation notice](#stage-1-deprecation-notice-minor-release)
+2. [Grace period](#stage-2-grace-period)
+3. [Removal](#stage-3-removal)
+
 ### Stage 1: Deprecation notice (minor release)
 
 The initial stage provides advance notice of the deprecation:
 
-1. The item is marked deprecated in source code using the appropriate language mechanism. (See "Language-specific deprecation annotations" below.)
-2. The deprecation message includes: what is deprecated, why, what to use instead, and the earliest planned removal timeline. (See stage 2.)
-3. The change is documented in the CHANGELOG under a `### Deprecated` heading.
-4. An announcement is posted in the project's Discord and, where applicable, linked from the relevant GitHub issue or PR.
+1. The item is marked deprecated in source code using the [appropriate language mechanism](#language-specific-deprecation-annotations).
+1. The deprecation message includes: 
+    - What is deprecated
+    - Why it is being deprecated
+    - What to use instead
+    - If possible, the planned removal timeline (see stage 2). In any case, removal must not occur until after the minimum grace period.
+1. The change is documented in the CHANGELOG under a `### Deprecated` heading, along with additional [migration documentation](#migration-guides).
+1. An announcement is posted in the project's Discord and, where applicable, linked from the relevant GitHub issue or PR.
 
 ### Stage 2: Grace period
 
-During the grace period, the deprecated API remains operational without functional regression before being retired. The _minimum_ grace periods are shown here.
+During the grace period, the deprecated API remains operational without functional regression before being retired. The _minimum_ grace periods are shown here:
 
 | SDK maturity | Minimum grace period |
 | -- | -- |
@@ -61,14 +77,16 @@ During the grace period, the deprecated API remains operational without function
 
 In the final stage, the item is actually removed from the API: 
 
-- The deprecated item is removed in the next major release after the announced grace period has elapsed. **Exception:** A minor release may be used for these cases:
+After the grace period:
+
+- The deprecated item is removed in the next major release. **Exception:** A minor release may be used for these cases:
     -  The item was marked as deprecated prior to the 1.0.0 release.
     -  The item was only ever made public via a non-default feature/build configuration.
-- The migration guide (see "Migration guides", below) is updated to reflect the removal as permanent.
+- The full [migration guide](#migration-guides) is provided and reflects the removal as permanent.
 
 ## Language-specific deprecation annotations
 
-Deprecation warnings will be expressed using each language's idiomatic mechanism so that developers are alerted by their compiler or toolchain.
+Deprecation warnings are expressed using each language's idiomatic mechanism so that developers are alerted by their compiler or toolchain.
 
 ### Rust
 
@@ -115,15 +133,15 @@ Use `@Deprecated(message = "...", replaceWith = ReplaceWith("newFunction()"))`.
 
 ## Migration guides
 
-Every deprecation will be accompanied by a migration guide. We will provide alternatives or newer versions for deprecated features — if an item is scheduled for removal, users should know the recommended replacement.
+Every deprecation will be accompanied by a migration guide. We will provide alternatives or newer versions for deprecated features: If an item is scheduled for removal, developers should know the recommended replacement.
 
-Migration guides will be published as:
+A migration guide includes:
 
 - A section in the CHANGELOG entry for the deprecating release
 - A page or section in the SDK documentation site (linking from the deprecated symbol's doc comment)
 - A note in any relevant GitHub issue or discussion thread
 
-Guides will include: the reason for the change, a before/after code comparison, any behavioral differences to be aware of, and the removal timeline.
+The migration guide includes: the reason for the change and any behavioral differences to be aware of. Ideally it also includes a before/after code comparison and the removal timeline, if available.
 
 ## Communication channels
 
