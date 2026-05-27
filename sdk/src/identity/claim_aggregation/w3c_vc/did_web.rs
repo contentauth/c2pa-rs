@@ -276,7 +276,9 @@ mod tests {
                     .body(DID_JSON);
             });
 
-            let doc = did_web::resolve_async(&did("did:web:localhost")).await.unwrap();
+            let doc = did_web::resolve_async(&did("did:web:localhost"))
+                .await
+                .unwrap();
             let doc_expected = DidDocument::from_json(DID_JSON).unwrap();
             assert_eq!(doc, doc_expected);
 
