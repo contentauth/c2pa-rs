@@ -2,7 +2,7 @@
 
 The Content Authenticity Initiative SDK is an evolving project. Prior to their 1.0 release, the APIs may change as we refine our design. That said, we are committed to making those changes in a transparent, predictable way so that developers can plan accordingly.
 
-This policy applies to the Rust SDK and all language bindings (JavaScript, Node.js, C, C++, Swift, Kotlin, and Python).
+This policy applies to the Rust library and all language bindings (JavaScript, Node.js, C, C++, Swift, Kotlin, and Python).
 
 ## Versioning and stability guarantees
 
@@ -51,6 +51,8 @@ When we decide to remove or replace part of the public API, we follow a three-st
 
 ### Stage 1: Deprecation notice (minor release)
 
+The initial stage provides advance notice of the deprecation:
+
 1. The item is marked deprecated in source code using the [appropriate language mechanism](#language-specific-deprecation-annotations).
 1. The deprecation message includes: 
     - What is deprecated
@@ -72,6 +74,8 @@ During the grace period, the deprecated API remains operational before being ret
 During the grace period, the deprecated API will continue to work without functional regression. **Exception:** We may remove deprecated APIs before this window expires if needed to address serious security issues or vulnerabilities.
 
 ### Stage 3: Removal
+
+In the final stage, the item is actually removed from the API: 
 
 After the grace period:
 
