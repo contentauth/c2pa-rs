@@ -998,6 +998,9 @@ impl Reader {
 
             match result {
                 Ok(mut manifest) => {
+                    // Wire up the store resolver so manifest resources (e.g. claim
+                    // thumbnails stored as JUMBF URIs) can be resolved lazily.
+                    manifest.set_store_resolver(Arc::clone(&arc_store));
                     for ingredient in manifest.ingredients_mut() {
                         // Wire up the store resolver so ingredient resources can be
                         // resolved on demand from claims without eager byte copies.

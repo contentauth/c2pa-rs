@@ -23,7 +23,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "file_io")]
 use {
-    crate::utils::{io_utils::uri_to_path, path_utils::sanitize_archive_path},
+    crate::utils::path_utils::sanitize_archive_path,
     std::{
         fs::{create_dir_all, read, write},
         path::{Path, PathBuf},
@@ -233,6 +233,24 @@ impl ResourceStore {
         self.resolver = Some(StoreResolver(resolver));
     }
 
+    /// Chains the resolver from `other` as an additional fallback on this store.
+    ///
+    /// When [`get`](Self::get) finds no local match it tries the existing resolver
+    /// chain first, then falls through to `other`'s resolver.  This allows a
+    /// builder's resource store to transparently serve bytes that live in an
+    /// ingredient's manifest store without eagerly copying them.
+    pub(crate) fn chain_resolver_from(&mut self, other: &ResourceStore) {
+        if let Some(new_resolver) = other.resolver.clone() {
+            let existing = self.resolver.take();
+            self.set_resolver(Arc::new(move |uri: &str| {
+                existing
+                    .as_ref()
+                    .and_then(|r| r(uri))
+                    .or_else(|| new_resolver(uri))
+            }));
+        }
+    }
+
     /// Set a manifest label for this store used to resolve relative JUMBF URIs.
     pub fn set_label<S: Into<String>>(&mut self, label: S) -> &Self {
         self.label = Some(label.into());
@@ -291,43 +309,6 @@ impl ResourceStore {
     {
         let id = self.id_from(key, format);
         self.add(&id, value)?;
-        Ok(ResourceRef::new(format, id))
-    }
-
-    /// Adds a resource from a URI, generating a [`ResourceRef`].
-    ///
-    /// The generated identifier may be different from the key.
-    pub(crate) fn add_uri<R>(
-        &mut self,
-        uri: &str,
-        format: &str,
-        value: R,
-    ) -> crate::Result<ResourceRef>
-    where
-        R: Into<Vec<u8>>,
-    {
-        #[cfg(feature = "file_io")]
-        let mut id = uri.to_string();
-        #[cfg(not(feature = "file_io"))]
-        let id = uri.to_string();
-
-        // if it isn't jumbf, assume it's an external uri and use it as is
-        if id.starts_with("self#jumbf=") {
-            #[cfg(feature = "file_io")]
-            if self.base_path.is_some() {
-                let mut path = uri_to_path(&id, self.label.as_deref());
-                // add a file extension if it doesn't have one
-                if !(id.ends_with(".jpeg") || id.ends_with(".png")) {
-                    if let Some(ext) = crate::utils::mime::format_to_extension(format) {
-                        path.set_extension(ext);
-                    }
-                }
-                id = path.display().to_string()
-            }
-            if !self.exists(&id) {
-                self.add(&id, value)?;
-            }
-        }
         Ok(ResourceRef::new(format, id))
     }
 

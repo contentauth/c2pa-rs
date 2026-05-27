@@ -503,6 +503,15 @@ impl Ingredient {
     ///
     /// This allows the resource store to remain empty at read time while still
     /// satisfying calls to `resources().get(uri)` / `resources().exists(uri)`.
+    /// Chains this ingredient's manifest-store resolver onto `target` as a fallback.
+    ///
+    /// After this call, `target.get(uri)` will delegate to this ingredient's
+    /// store for any URI not found locally — enabling lazy byte access without
+    /// copying the bytes into `target`.
+    pub(crate) fn chain_resolver_to(&self, target: &mut ResourceStore) {
+        target.chain_resolver_from(&self.resources);
+    }
+
     pub(crate) fn set_store_resolver(&mut self, store: Arc<Store>) {
         // Set the deferred manifest_data ref when the active manifest label is
         // present in this store and no explicit ref was already provided.
@@ -695,18 +704,6 @@ impl Ingredient {
                             let hash = base64::encode(&hashed_uri.hash());
                             thumb.hash = Some(hash);
                             self.set_thumbnail_ref(thumb)?;
-
-                            // add a resource to give clients access, but don't directly reference it.
-                            // this way a client can view the thumbnail without needing to load the manifest
-                            // but the the embedded thumbnail is still the primary reference
-                            let claim_assertion = store.get_claim_assertion_from_uri(&uri)?;
-                            let thumbnail =
-                                EmbeddedData::from_assertion(claim_assertion.assertion())?;
-                            self.resources.add_uri(
-                                &uri,
-                                &thumbnail.content_type,
-                                thumbnail.data,
-                            )?;
                         }
                     }
                     self.active_manifest = Some(claim.label().to_string());
@@ -1210,23 +1207,19 @@ impl Ingredient {
                 jumbf::labels::to_absolute_uri(&target_claim_label, &hashed_uri.url());
             let maybe_resource_ref = match hashed_uri.url() {
                 uri if uri.contains(jumbf::labels::ASSERTIONS) => {
-                    // Get the bits of the thumbnail and convert it to a resource
-                    // it may be in an assertion or a data box
+                    // Verify the assertion exists; record its format, but don't copy bytes —
+                    // the resolver will fetch them on demand.
                     store
                         .get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_claim_label)
                         .map(|assertion| {
-                            let (format, image) = Self::thumbnail_from_assertion(assertion);
-                            ingredient.resources.add_uri(&absolute_uri, format, image)
+                            let format = Self::thumbnail_from_assertion(assertion).0;
+                            Ok::<ResourceRef, Error>(ResourceRef::new(format, &absolute_uri))
                         })
                 }
                 uri if uri.contains(jumbf::labels::DATABOXES) => store
                     .get_data_box_from_uri_and_claim(hashed_uri, &target_claim_label)
                     .map(|data_box| {
-                        ingredient.resources.add_uri(
-                            &absolute_uri,
-                            &data_box.format,
-                            data_box.data.clone(),
-                        )
+                        Ok::<ResourceRef, Error>(ResourceRef::new(&data_box.format, &absolute_uri))
                     }),
                 _ => None,
             };
@@ -1252,24 +1245,21 @@ impl Ingredient {
         if let Some(data_uri) = ingredient_assertion.data.as_ref() {
             let maybe_data_ref = match data_uri.url() {
                 uri if uri.contains(jumbf::labels::ASSERTIONS) => {
-                    // if this is a claim data box, then use the label from the data uri
+                    // Verify the assertion exists; record its format, but don't copy bytes —
+                    // the resolver will fetch them on demand.
                     store
                         .get_assertion_from_uri_and_claim(&uri, claim_label)
                         .map(|assertion| {
-                            let embedded_data = EmbeddedData::from_assertion(assertion)?;
-                            ingredient.resources.add_uri(
-                                &data_uri.url(),
-                                &embedded_data.content_type,
-                                embedded_data.data,
-                            )
+                            Ok::<ResourceRef, Error>(ResourceRef::new(
+                                assertion.content_type(),
+                                &uri,
+                            ))
                         })
                 }
                 uri if uri.contains(jumbf::labels::DATABOXES) => store
                     .get_data_box_from_uri_and_claim(data_uri, claim_label)
                     .map(|data_box| {
-                        ingredient
-                            .resources
-                            .add_uri(&uri, &data_box.format, data_box.data.clone())
+                        Ok::<ResourceRef, Error>(ResourceRef::new(&data_box.format, &uri))
                     }),
                 _ => None,
             };

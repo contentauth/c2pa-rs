@@ -388,6 +388,23 @@ impl Manifest {
         Ok(self)
     }
 
+    /// Installs a store-backed resolver on this manifest's resources so that
+    /// JUMBF-URI identifiers (e.g. claim thumbnails) can be resolved lazily.
+    pub(crate) fn set_store_resolver(&mut self, store: std::sync::Arc<Store>) {
+        use crate::jumbf::labels::ASSERTIONS;
+        self.resources
+            .set_resolver(std::sync::Arc::new(move |uri: &str| {
+                if uri.contains(ASSERTIONS) {
+                    let assertion = store.get_assertion_from_uri(uri)?;
+                    if let Ok(embedded) = EmbeddedData::from_assertion(assertion) {
+                        return Some(embedded.data);
+                    }
+                    return Some(assertion.data().to_vec());
+                }
+                None
+            }));
+    }
+
     // Generates a Manifest given a store and a manifest label.
     #[async_generic]
     pub(crate) fn from_store(
@@ -569,12 +586,7 @@ impl Manifest {
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = EmbeddedData::from_assertion(assertion)?;
                     let id = to_assertion_uri(claim.label(), label);
-                    //let id = jumbf::labels::to_relative_uri(&id);
-                    manifest.thumbnail = Some(manifest.resources.add_uri(
-                        &id,
-                        &thumbnail.content_type,
-                        thumbnail.data,
-                    )?);
+                    manifest.thumbnail = Some(ResourceRef::new(&thumbnail.content_type, &id));
                 } // handle special case for AssertionMetadata
                 labels::ASSERTION_METADATA => {
                     let assertion_metadata = AssertionMetadata::from_assertion(assertion)?;
