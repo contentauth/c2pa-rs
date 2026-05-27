@@ -83,10 +83,17 @@ impl UriOrResource {
         match self {
             UriOrResource::ResourceRef(r) => Ok(UriOrResource::ResourceRef(r.clone())),
             UriOrResource::HashedUri(h) => {
-                let (format, data) = if h.url().contains(DATABOXES) {
+                let url = to_absolute_uri(claim.label(), &h.url());
+                if h.url().contains(DATABOXES) {
+                    // v1 databoxes: eagerly materialize; no store-level resolver for these yet.
                     let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
-                    (data_box.format.to_owned(), data_box.data.clone())
+                    let resource_ref =
+                        resources.add_with(&url, &data_box.format, data_box.data.clone())?;
+                    Ok(UriOrResource::ResourceRef(resource_ref))
                 } else {
+                    // Assertion-based icons: lazy — get only the format (no byte copy),
+                    // store the absolute JUMBF URI as the identifier, and let the manifest's
+                    // store resolver serve the bytes on demand via `ResourceStore::get`.
                     let (label, instance) = Claim::assertion_label_from_link(&h.url());
                     let assertion =
                         claim
@@ -94,14 +101,9 @@ impl UriOrResource {
                             .ok_or(Error::AssertionMissing {
                                 url: h.url().to_string(),
                             })?;
-                    (
-                        assertion.content_type().to_string(),
-                        assertion.data().to_vec(),
-                    )
-                };
-                let url = to_absolute_uri(claim.label(), &h.url());
-                let resource_ref = resources.add_with(&url, &format, data)?;
-                Ok(UriOrResource::ResourceRef(resource_ref))
+                    let format = assertion.content_type().to_string();
+                    Ok(UriOrResource::ResourceRef(ResourceRef::new(format, url)))
+                }
             }
         }
     }
