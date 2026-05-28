@@ -2822,7 +2822,7 @@ impl Builder {
             if _sync {
                 store.verify_store_strict(None, &self.context)?;
             } else {
-                store.validate_manifest_async(None, &self.context).await?;
+                store.verify_store_strict_async(None, &self.context).await?;
             }
         }
         // get composed version for embedding to JPEG

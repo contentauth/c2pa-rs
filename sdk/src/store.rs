@@ -2448,7 +2448,7 @@ impl Store {
             if _sync {
                 self.verify_store_strict(None, context)?;
             } else {
-                self.validate_manifest_async(None, context).await?;
+                self.verify_store_strict_async(None, context).await?;
             }
         }
 
@@ -2969,7 +2969,7 @@ impl Store {
                     if _sync {
                         self.verify_store_strict(asset_data.as_mut(), context)?;
                     } else {
-                        self.validate_manifest_async(asset_data.as_mut(), context)
+                        self.verify_store_strict_async(asset_data.as_mut(), context)
                             .await?;
                     }
                 }
