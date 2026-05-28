@@ -402,13 +402,10 @@ impl CAIWriter for PngIO {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
     ) -> Result<()> {
-        // get png byte
         let ps = get_png_chunk_positions(input_stream)?;
+        let existing_cai = ps.iter().find(|pcp| pcp.name == CAI_CHUNK);
 
-        // get image bytes
         input_stream.rewind()?;
-        let mut png_buf: Vec<u8> = Vec::new();
-        input_stream.read_to_end(&mut png_buf)?;
 
         /*  splice in new chunk.  Each PNG chunk has the following format:
                 chunk data length (4 bytes big endian)
@@ -417,22 +414,18 @@ impl CAIWriter for PngIO {
                 chunk crc (4 bytes in crc in format defined in PNG spec)
         */
 
-        // erase existing
-        let empty_buf = Vec::new();
-        let mut iter = ps.into_iter();
-        if let Some(existing_cai) = iter.find(|pcp| pcp.name == CAI_CHUNK) {
-            // replace existing CAI
-            let start = usize::try_from(existing_cai.start)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+        match existing_cai {
+            Some(cai) => {
+                // copy before manifest
+                io::copy(&mut input_stream.take(cai.start), output_stream)?;
 
-            let end = usize::try_from(existing_cai.end())
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-            png_buf.splice(start..end, empty_buf.iter().cloned());
+                input_stream.seek(SeekFrom::Start(cai.end()))?;
+                io::copy(input_stream, output_stream)?;
+            }
+            None => {
+                io::copy(input_stream, output_stream)?;
+            }
         }
-
-        // save png data
-        output_stream.write_all(&png_buf)?;
 
         Ok(())
     }
@@ -583,7 +576,6 @@ fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)>
     }
 }
 impl RemoteRefEmbed for PngIO {
-    #[allow(unused_variables)]
     fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
