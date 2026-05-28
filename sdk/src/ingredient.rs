@@ -2073,6 +2073,8 @@ mod tests {
         );
     }
 
+    // REVIEW: this test fails because Error::PrereleaseError isn't added to the validation log, it's a hard error.
+    //         should we change it to be added to the validation log?
     #[test]
     #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
     fn test_jpg_prerelease() {
