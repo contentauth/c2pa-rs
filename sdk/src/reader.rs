@@ -1749,9 +1749,11 @@ pub mod tests {
             .expect("ingredient has no manifest_data_ref");
 
         // Confirm the bytes are not already in the in-memory resource store
-        // (lazy path executed, no eager load anymore here, so nothing to see... yet!)
         assert!(
-            ingredient.resources().get(&md_ref.identifier).is_err(),
+            !ingredient
+                .resources()
+                .resources()
+                .contains_key(&md_ref.identifier),
             "expected deferred manifest_data — lazy load path not exercised"
         );
 
