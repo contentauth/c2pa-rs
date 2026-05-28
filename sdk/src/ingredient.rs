@@ -721,25 +721,7 @@ impl Ingredient {
                 self.validation_status = Some(vec![status]);
                 Ok(())
             }
-            Err(e) => {
-                // we can ignore the error here because it should have a log entry corresponding to it
-                debug!("ingredient {e:?}");
-
-                let mut results = ValidationResults::default();
-                // convert any other error to a validation status
-                let statuses: Vec<ValidationStatus> = validation_log
-                    .logged_items()
-                    .iter()
-                    .filter_map(ValidationStatus::from_log_item)
-                    .collect();
-
-                for status in statuses {
-                    results.add_status(status.clone());
-                }
-                self.validation_status = results.validation_errors();
-                self.validation_results = Some(results);
-                Ok(())
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -2229,6 +2211,8 @@ mod tests_file_io {
         );
     }
 
+    // REVIEW: this test fails because Error::PrereleaseError isn't added to the validation log, it's a hard error.
+    //         should we change it to be added to the validation log?
     #[test]
     #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
     fn test_jpg_prerelease() {
