@@ -30,7 +30,7 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::{tempfile_builder, ReaderUtils},
+        io_utils::{patch_stream, tempfile_builder, ReaderUtils},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -416,10 +416,13 @@ impl CAIWriter for PngIO {
 
         match existing_c2pa {
             Some(c2pa) => {
-                io::copy(&mut input_stream.take(c2pa.start), output_stream)?;
-
-                input_stream.seek(SeekFrom::Start(c2pa.end()))?;
-                io::copy(input_stream, output_stream)?;
+                patch_stream(
+                    input_stream,
+                    output_stream,
+                    c2pa.start,
+                    c2pa.end() - c2pa.start,
+                    &[],
+                )?;
             }
             None => {
                 io::copy(input_stream, output_stream)?;
@@ -635,19 +638,14 @@ impl RemoteRefEmbed for PngIO {
                     .map_err(|_| Error::EmbeddingError)?;
 
                 if let Some((xmp_start, xmp_len)) = get_xmp_insertion_point(source_stream) {
-                    let xmp_end = xmp_start + xmp_len as u64;
-
-                    // write everything before XMP
                     output_stream.rewind()?;
-                    source_stream.rewind()?;
-                    io::copy(&mut source_stream.take(xmp_start), output_stream)?;
-
-                    // write new XMP
-                    output_stream.write_all(&xmp_data)?;
-
-                    // write everything after XMP
-                    source_stream.seek(SeekFrom::Start(xmp_end))?;
-                    io::copy(source_stream, output_stream)?;
+                    patch_stream(
+                        source_stream,
+                        output_stream,
+                        xmp_start,
+                        xmp_len as u64,
+                        &xmp_data,
+                    )?;
 
                     Ok(())
                 } else {
