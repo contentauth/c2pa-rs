@@ -146,3 +146,58 @@ fn test_reader_validation_state_uses_context_settings() -> Result<()> {
 
     Ok(())
 }
+
+// ── format-detection tests ────────────────────────────────────────────────────
+
+/// with_stream should succeed even when the caller supplies the wrong MIME type,
+/// because content-based detection overrides the provided format string.
+#[test]
+fn test_reader_stream_wrong_format_overridden_by_detection() -> Result<()> {
+    // CA.jpg is a real JPEG; pass "image/png" as the format — detection must
+    // recognise the FF D8 FF magic and succeed anyway.
+    let (_correct_format, mut stream) = fixture_stream("CA.jpg")?;
+    let reader = Reader::default().with_stream("image/png", &mut stream)?;
+    compare_to_known_good(&reader, "CA.json")
+}
+
+/// with_file should succeed when the file has a wrong extension, because
+/// content-based detection takes priority over the extension.
+#[test]
+#[cfg(feature = "file_io")]
+fn test_reader_file_wrong_extension_overridden_by_detection() -> Result<()> {
+    use std::{fs, io::Write};
+
+    use tempfile::NamedTempFile;
+
+    // Copy CA.jpg bytes into a temp file whose name ends in ".png".
+    let jpeg_bytes = include_bytes!("fixtures/CA.jpg");
+    let mut tmp = NamedTempFile::with_suffix(".png").map_err(|e| c2pa::Error::IoError(e))?;
+    tmp.write_all(jpeg_bytes)
+        .map_err(|e| c2pa::Error::IoError(e))?;
+    tmp.flush().map_err(|e| c2pa::Error::IoError(e))?;
+
+    let reader = Reader::default().with_file(tmp.path())?;
+    compare_to_known_good(&reader, "CA.json")
+}
+
+/// with_file should succeed when the file has no extension at all, because
+/// content-based detection fills in the format.
+#[test]
+#[cfg(feature = "file_io")]
+fn test_reader_file_no_extension_overridden_by_detection() -> Result<()> {
+    use std::io::Write;
+
+    use tempfile::NamedTempFile;
+
+    let jpeg_bytes = include_bytes!("fixtures/CA.jpg");
+    // Builder::with_suffix("") gives a file with no extension.
+    let mut tmp = NamedTempFile::new().map_err(|e| c2pa::Error::IoError(e))?;
+    // Rename to strip the extension entirely.
+    let no_ext_path = tmp.path().with_extension("");
+    std::fs::write(&no_ext_path, jpeg_bytes).map_err(|e| c2pa::Error::IoError(e))?;
+
+    let reader = Reader::default().with_file(&no_ext_path)?;
+    // Clean up the extra file we created (tmp itself is cleaned up on drop).
+    let _ = std::fs::remove_file(&no_ext_path);
+    compare_to_known_good(&reader, "CA.json")
+}

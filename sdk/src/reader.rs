@@ -222,6 +222,17 @@ impl Reader {
         let mut validation_log = StatusTracker::default();
         stream.rewind()?; // Ensure stream is at the start
 
+        // Prefer content-based format detection; fall back to the caller-supplied
+        // format string (which may be an extension or MIME type).
+        let detected;
+        let format = match crate::utils::mime::format_from_stream(&mut stream) {
+            Some(f) => {
+                detected = f;
+                &detected as &str
+            }
+            None => format,
+        };
+
         self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
 
         let store = if _sync {
@@ -296,8 +307,12 @@ impl Reader {
     #[async_generic]
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
-        let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
         let mut file = File::open(path)?;
+        // Prefer content-based format detection; fall back to the file extension.
+        // format_from_stream rewinds, so `file` is at position 0 after detection.
+        let format = crate::utils::mime::format_from_stream(&mut file)
+            .or_else(|| crate::format_from_path(path))
+            .ok_or(crate::Error::UnsupportedType)?;
 
         // Try loading from stream first
         let mut validation_log = StatusTracker::default();
