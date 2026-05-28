@@ -2028,7 +2028,7 @@ impl Store {
         asset_data: Option<&mut ClaimAssetData<'_>>,
         context: &Context,
     ))]
-    pub(crate) fn validate_manifest(
+    pub(crate) fn verify_store_strict(
         &mut self,
         asset_data: Option<&mut ClaimAssetData<'_>>,
         context: &Context,
@@ -2301,7 +2301,7 @@ impl Store {
                 let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
                 if context.settings().verify.verify_after_sign {
-                    self.validate_manifest(None, context)?;
+                    self.verify_store_strict(None, context)?;
                 }
 
                 return Ok(jumbf_bytes);
@@ -2318,7 +2318,7 @@ impl Store {
         let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         if context.settings().verify.verify_after_sign {
-            self.validate_manifest(None, context)?;
+            self.verify_store_strict(None, context)?;
         }
 
         Ok(jumbf_bytes)
@@ -2446,7 +2446,7 @@ impl Store {
 
         if context.settings().verify.verify_after_sign {
             if _sync {
-                self.validate_manifest(None, context)?;
+                self.verify_store_strict(None, context)?;
             } else {
                 self.validate_manifest_async(None, context).await?;
             }
@@ -2967,7 +2967,7 @@ impl Store {
                         None
                     };
                     if _sync {
-                        self.validate_manifest(asset_data.as_mut(), context)?;
+                        self.verify_store_strict(asset_data.as_mut(), context)?;
                     } else {
                         self.validate_manifest_async(asset_data.as_mut(), context)
                             .await?;
