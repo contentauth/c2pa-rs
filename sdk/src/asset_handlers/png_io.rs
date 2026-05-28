@@ -403,7 +403,7 @@ impl CAIWriter for PngIO {
         output_stream: &mut dyn CAIReadWrite,
     ) -> Result<()> {
         let ps = get_png_chunk_positions(input_stream)?;
-        let existing_cai = ps.iter().find(|pcp| pcp.name == CAI_CHUNK);
+        let existing_c2pa = ps.iter().find(|pcp| pcp.name == CAI_CHUNK);
 
         input_stream.rewind()?;
 
@@ -414,11 +414,11 @@ impl CAIWriter for PngIO {
                 chunk crc (4 bytes in crc in format defined in PNG spec)
         */
 
-        match existing_cai {
-            Some(cai) => {
-                io::copy(&mut input_stream.take(cai.start), output_stream)?;
+        match existing_c2pa {
+            Some(c2pa) => {
+                io::copy(&mut input_stream.take(c2pa.start), output_stream)?;
 
-                input_stream.seek(SeekFrom::Start(cai.end()))?;
+                input_stream.seek(SeekFrom::Start(c2pa.end()))?;
                 io::copy(input_stream, output_stream)?;
             }
             None => {
