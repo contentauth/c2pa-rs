@@ -649,31 +649,23 @@ impl RemoteRefEmbed for PngIO {
                     .encode(&mut xmp_chunk)
                     .map_err(|_| Error::EmbeddingError)?;
 
-                // patch output stream
-                let mut png_buf = Vec::new();
-                source_stream.rewind()?;
-                source_stream
-                    .read_to_end(&mut png_buf)
-                    .map_err(Error::IoError)?;
+                if let Some((xmp_start, xmp_len)) = get_xmp_insertion_point(source_stream) {
+                    let xmp_end = xmp_start + xmp_len as u64;
 
-                if let Some((start, xmp_len)) = get_xmp_insertion_point(source_stream) {
-                    let mut png_buf = Vec::new();
-                    source_stream.rewind()?;
-                    source_stream
-                        .read_to_end(&mut png_buf)
-                        .map_err(Error::IoError)?;
-
-                    // replace existing XMP
-                    let xmp_start = usize::try_from(start)
-                        .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?; // get beginning of chunk which starts 4 bytes before label
-
-                    let xmp_end = usize::try_from(start + xmp_len as u64)
-                        .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
-
-                    png_buf.splice(xmp_start..xmp_end, xmp_data.iter().cloned());
-
+                    // write everything before XMP
                     output_stream.rewind()?;
-                    output_stream.write_all(&png_buf)?;
+                    source_stream.rewind()?;
+                    io::copy(
+                        &mut source_stream.take(xmp_start),
+                        output_stream,
+                    )?;
+
+                    // write new XMP
+                    output_stream.write_all(&xmp_data)?;
+
+                    // write everything after XMP
+                    source_stream.seek(SeekFrom::Start(xmp_end))?;
+                    io::copy(source_stream, output_stream)?;
 
                     Ok(())
                 } else {
