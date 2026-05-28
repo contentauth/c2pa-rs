@@ -416,7 +416,6 @@ impl CAIWriter for PngIO {
 
         match existing_cai {
             Some(cai) => {
-                // copy before manifest
                 io::copy(&mut input_stream.take(cai.start), output_stream)?;
 
                 input_stream.seek(SeekFrom::Start(cai.end()))?;
