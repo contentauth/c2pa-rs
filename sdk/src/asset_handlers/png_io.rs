@@ -125,18 +125,12 @@ fn get_png_chunk_positions<R: Read + Seek + ?Sized>(f: &mut R) -> Result<Vec<Png
 fn get_cai_data<R: Read + Seek + ?Sized>(mut f: &mut R) -> Result<Vec<u8>> {
     let ps = get_png_chunk_positions(f)?;
 
-    if ps
-        .clone()
-        .into_iter()
-        .filter(|pcp| pcp.name == CAI_CHUNK)
-        .count()
-        > 1
-    {
+    if ps.iter().filter(|pcp| pcp.name == CAI_CHUNK).count() > 1 {
         return Err(Error::TooManyManifestStores);
     }
 
     let pcp = ps
-        .into_iter()
+        .iter()
         .find(|pcp| pcp.name == CAI_CHUNK)
         .ok_or(Error::JumbfNotFound)?;
 
@@ -182,7 +176,7 @@ impl CAIReader for PngIO {
         let ps = get_png_chunk_positions(asset_reader).ok()?;
         let mut xmp_str: Option<String> = None;
 
-        ps.into_iter().find(|pcp| {
+        ps.iter().find(|pcp| {
             if pcp.name == ITXT_CHUNK {
                 // seek to start of chunk
                 if asset_reader.seek(SeekFrom::Start(pcp.start + 8)).is_err() {
@@ -655,10 +649,7 @@ impl RemoteRefEmbed for PngIO {
                     // write everything before XMP
                     output_stream.rewind()?;
                     source_stream.rewind()?;
-                    io::copy(
-                        &mut source_stream.take(xmp_start),
-                        output_stream,
-                    )?;
+                    io::copy(&mut source_stream.take(xmp_start), output_stream)?;
 
                     // write new XMP
                     output_stream.write_all(&xmp_data)?;
