@@ -3736,7 +3736,7 @@ mod tests {
 
         // pass incorrect format
         let result = builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut source);
-        assert!(result.is_err(),);
+        assert!(result.is_err());
     }
 
     // Ensure multiple `c2pa.placed` actions aren't created.
