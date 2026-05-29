@@ -19,7 +19,7 @@ use std::{
 };
 
 use quick_xml::{
-    events::{BytesText, Event},
+    events::{BytesStart, BytesText, Event},
     Reader, Writer,
 };
 
@@ -174,7 +174,6 @@ fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Event<'_>> {
             .write_inner_content(|writer| {
                 writer
                     .create_element(MANIFEST)
-                    .with_attribute((MANIFEST_NS, MANIFEST_NS_VAL))
                     .write_text_content(BytesText::from_escaped(&encoded))?;
                 Ok(())
             })
@@ -182,7 +181,6 @@ fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Event<'_>> {
     } else {
         writer
             .create_element(MANIFEST)
-            .with_attribute((MANIFEST_NS, MANIFEST_NS_VAL))
             .write_text_content(BytesText::from_escaped(&encoded))
             .map_err(|_e| Error::XmlWriteError)?;
     }
@@ -192,6 +190,16 @@ fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Event<'_>> {
     let event = Event::Text(BytesText::from_escaped(Cow::Owned(output_str)));
 
     Ok(event)
+}
+
+fn add_c2pa_namespace_if_missing(start: &mut BytesStart) {
+    let already_declared = start
+        .attributes()
+        .filter_map(|attr| attr.ok())
+        .any(|attr| attr.key.as_ref() == MANIFEST_NS.as_bytes());
+    if !already_declared {
+        start.push_attribute((MANIFEST_NS, MANIFEST_NS_VAL));
+    }
 }
 
 enum DetectedTagsDepth {
@@ -414,9 +422,14 @@ impl CAIWriter for SvgIO {
                 // add manifest case
                 loop {
                     match reader.read_event_into(&mut buf) {
-                        Ok(Event::Start(e)) => {
+                        Ok(Event::Start(mut e)) => {
                             let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                             xml_path.push(name);
+
+                            // Ensure xmlns:c2pa is declared in the SVG root.
+                            if xml_path.len() == 1 && xml_path[0] == SVG {
+                                add_c2pa_namespace_if_missing(&mut e);
+                            }
 
                             // writes the event to the writer
                             writer
@@ -450,9 +463,14 @@ impl CAIWriter for SvgIO {
 
                 loop {
                     match reader.read_event_into(&mut buf) {
-                        Ok(Event::Start(e)) => {
+                        Ok(Event::Start(mut e)) => {
                             let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                             xml_path.push(name);
+
+                            // Ensure xmlns:c2pa is declared in the SVG root.
+                            if xml_path.len() == 1 && xml_path[0] == SVG {
+                                add_c2pa_namespace_if_missing(&mut e);
+                            }
 
                             // writes the event to the writer
                             writer
@@ -492,9 +510,14 @@ impl CAIWriter for SvgIO {
                 //add metadata & manifest case
                 loop {
                     match reader.read_event_into(&mut buf) {
-                        Ok(Event::Start(e)) => {
+                        Ok(Event::Start(mut e)) => {
                             let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
                             xml_path.push(name);
+
+                            // Ensure xmlns:c2pa is declared in the SVG root.
+                            if xml_path.len() == 1 && xml_path[0] == SVG {
+                                add_c2pa_namespace_if_missing(&mut e);
+                            }
 
                             // writes the event to the writer
                             writer
@@ -772,6 +795,32 @@ pub mod tests {
         test::{fixture_path, temp_dir_path},
     };
 
+    fn assert_c2pa_namespace_on_svg_root(xml: &str) {
+        let svg_idx = xml.find("<svg").expect("SVG root tag missing");
+        let svg_open_end = svg_idx
+            + xml[svg_idx..]
+                .find('>')
+                .expect("malformed SVG: <svg> tag not closed");
+        let svg_open_tag = &xml[svg_idx..=svg_open_end];
+        assert!(
+            svg_open_tag.contains("xmlns:c2pa=\"http://c2pa.org/manifest\""),
+            "xmlns:c2pa should be on <svg> root, got: {svg_open_tag}"
+        );
+    }
+
+    fn assert_no_c2pa_namespace_on_manifest(xml: &str) {
+        let manifest_idx = xml.find("<c2pa:manifest").expect("manifest tag missing");
+        let manifest_open_end = manifest_idx
+            + xml[manifest_idx..]
+                .find('>')
+                .expect("malformed: <c2pa:manifest> tag not closed");
+        let manifest_open_tag = &xml[manifest_idx..=manifest_open_end];
+        assert!(
+            !manifest_open_tag.contains("xmlns:c2pa"),
+            "xmlns:c2pa should not be on <c2pa:manifest>, got: {manifest_open_tag}"
+        );
+    }
+
     #[test]
     fn test_write_svg_no_meta() {
         let more_data = "some more test data".as_bytes();
@@ -785,6 +834,9 @@ pub mod tests {
                 let svg_io = SvgIO::new("svg");
 
                 if let Ok(()) = svg_io.save_cai_store(&output, more_data) {
+                    let xml = std::fs::read_to_string(&output).unwrap();
+                    assert_c2pa_namespace_on_svg_root(&xml);
+                    assert_no_c2pa_namespace_on_manifest(&xml);
                     if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
@@ -808,6 +860,9 @@ pub mod tests {
                 let svg_io = SvgIO::new("svg");
 
                 if let Ok(()) = svg_io.save_cai_store(&output, more_data) {
+                    let xml = std::fs::read_to_string(&output).unwrap();
+                    assert_c2pa_namespace_on_svg_root(&xml);
+                    assert_no_c2pa_namespace_on_manifest(&xml);
                     if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
@@ -831,9 +886,80 @@ pub mod tests {
                 let svg_io = SvgIO::new("svg");
 
                 if let Ok(()) = svg_io.save_cai_store(&output, more_data) {
+                    let xml = std::fs::read_to_string(&output).unwrap();
+                    assert_c2pa_namespace_on_svg_root(&xml);
+                    // sample3's <c2pa:manifest> has inline xmlns:c2pa from a prior
+                    // signing. By design we don't strip it on resign.
+                    // This test intentionally omits the assert_no_c2pa_namespace_on_manifest check.
                     if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
+                    }
+                }
+            }
+        }
+        assert!(success)
+    }
+
+    #[test]
+    fn test_write_svg_no_metadata_element() {
+        let more_data = "some more test data".as_bytes();
+        let source = fixture_path("sample5.svg");
+
+        let mut success = false;
+        if let Ok(temp_dir) = tempdirectory() {
+            let output = temp_dir_path(&temp_dir, "sample5.svg");
+
+            if let Ok(_size) = std::fs::copy(source, &output) {
+                let svg_io = SvgIO::new("svg");
+
+                if let Ok(()) = svg_io.save_cai_store(&output, more_data) {
+                    let xml = std::fs::read_to_string(&output).unwrap();
+                    assert_c2pa_namespace_on_svg_root(&xml);
+                    assert_no_c2pa_namespace_on_manifest(&xml);
+                    if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
+                        assert!(vec_compare(more_data, &read_test_data));
+                        success = true;
+                    }
+                }
+            }
+        }
+        assert!(success)
+    }
+
+    #[test]
+    fn test_write_svg_namespace_idempotent() {
+        let more_data = "some more test data".as_bytes();
+        let new_manifest_data = "new manifest data".as_bytes();
+        let source = fixture_path("sample1.svg");
+
+        let mut success = false;
+        if let Ok(temp_dir) = tempdirectory() {
+            let output = temp_dir_path(&temp_dir, "sample1.svg");
+
+            if let Ok(_size) = std::fs::copy(source, &output) {
+                let svg_io = SvgIO::new("svg");
+
+                if let Ok(()) = svg_io.save_cai_store(&output, more_data) {
+                    if let Ok(()) = svg_io.save_cai_store(&output, new_manifest_data) {
+                        let xml = std::fs::read_to_string(&output).unwrap();
+
+                        let svg_idx = xml.find("<svg").expect("SVG root tag missing");
+                        let svg_open_end = svg_idx
+                            + xml[svg_idx..]
+                                .find('>')
+                                .expect("malformed SVG: <svg> tag not closed");
+                        let svg_open_tag = &xml[svg_idx..=svg_open_end];
+                        let count = svg_open_tag.matches("xmlns:c2pa").count();
+                        assert_eq!(
+                            count, 1,
+                            "expected xmlns:c2pa exactly once on <svg> root, got {count}: {svg_open_tag}"
+                        );
+
+                        if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
+                            assert!(vec_compare(new_manifest_data, &read_test_data));
+                            success = true;
+                        }
                     }
                 }
             }

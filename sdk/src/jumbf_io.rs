@@ -495,7 +495,7 @@ pub mod tests {
         let mut writer = Cursor::new(Vec::new());
         let store = create_test_store().unwrap();
         let signer = test_signer(SigningAlg::Ps256);
-        let jumbf = store.to_jumbf(&*signer).unwrap();
+        let jumbf = store.to_jumbf_internal(signer.reserve_size()).unwrap();
         save_jumbf_to_stream(asset_type, reader, &mut writer, &jumbf).unwrap();
         writer.set_position(0);
         let jumbf2 = load_jumbf_from_stream(asset_type, &mut writer).unwrap();

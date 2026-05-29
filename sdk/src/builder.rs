@@ -52,11 +52,17 @@ use crate::{
     store::Store,
     utils::{
         hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime,
-        path_utils::sanitize_archive_path,
+        path_utils::sanitize_archive_path, xmp_inmemory_utils::XmpInfo,
     },
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
 };
+
+/// Label for the `archive:type` field in working-store archive metadata.
+const ARCHIVE_TYPE: &str = "archive:type";
+
+/// Label for the `archive::ingredient_id` field in working-store archive metadata.
+const ARCHIVE_INGREDIENT_ID: &str = "archive::ingredient_id";
 
 /// The hash binding type that a [`Builder`] will use for embeddable signing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,10 +91,19 @@ pub(crate) enum ArchiveKind {
 }
 
 impl ArchiveKind {
-    fn archive_type_str(&self) -> &'static str {
-        match self {
-            ArchiveKind::Builder => labels::ARCHIVE_TYPE_BUILDER,
-            ArchiveKind::Ingredient { .. } => labels::ARCHIVE_TYPE_INGREDIENT,
+    pub fn from_metadata(metadata: &Metadata) -> Option<Self> {
+        let archive_type = metadata.value.get(ARCHIVE_TYPE)?.as_str()?;
+        match archive_type {
+            labels::ARCHIVE_TYPE_BUILDER => Some(ArchiveKind::Builder),
+            labels::ARCHIVE_TYPE_INGREDIENT => {
+                let ingredient_id = metadata
+                    .value
+                    .get(ARCHIVE_INGREDIENT_ID)?
+                    .as_str()?
+                    .to_string();
+                Some(ArchiveKind::Ingredient { ingredient_id })
+            }
+            _ => None,
         }
     }
 }
@@ -407,6 +422,7 @@ pub struct Builder {
     /// Base path to search for resources.
     #[cfg(feature = "file_io")]
     #[deprecated(note = "Use set_base_path() instead")]
+    #[serde(skip)]
     pub base_path: Option<PathBuf>,
 
     /// A builder should construct a created, opened or updated manifest.
@@ -937,8 +953,7 @@ impl Builder {
         let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
         if format == "c2pa" || format == "application/c2pa" {
-            let reader = Reader::from_shared_context(&self.context).with_stream(format, stream)?;
-            let parent_ingredient = self.add_ingredient_from_reader(&reader)?;
+            let parent_ingredient = self.add_ingredient_from_archive(stream)?;
             parent_ingredient.merge(&ingredient);
             return self
                 .definition
@@ -2852,8 +2867,10 @@ impl Builder {
     {
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
-        // todo:: read instance_id from xmp from stream ?
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        if let Some(instance_id) = XmpInfo::from_source(source, &format).instance_id {
+            self.definition.instance_id = instance_id;
+        }
+        source.rewind()?;
 
         #[cfg(feature = "file_io")]
         #[allow(deprecated)]
@@ -2952,8 +2969,10 @@ impl Builder {
     {
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
-        // todo:: read instance_id from xmp from stream ?
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        if let Some(instance_id) = XmpInfo::from_source(source, &format).instance_id {
+            self.definition.instance_id = instance_id;
+        }
+        source.rewind()?;
 
         #[cfg(feature = "file_io")]
         #[allow(deprecated)]
@@ -3243,21 +3262,26 @@ impl Builder {
                 .await?
         };
 
-        match reader.active_archive_type() {
-            Some(labels::ArchiveType::Ingredient) => {}
-            Some(other) => {
-                return Err(Error::BadParam(format!(
-                    "expected an ingredient archive (archive:type {:?}), found {other:?}",
-                    labels::ARCHIVE_TYPE_INGREDIENT
-                )));
+        let ingredient_id = match reader.active_archive_kind() {
+            Some(ArchiveKind::Ingredient { ingredient_id }) => Some(ingredient_id),
+            // we should return an error here, but be tolerant in the transition if this has a parent.
+            Some(ArchiveKind::Builder) if reader.active_manifest().is_some() => None,
+            _ => {
+                // early examples of ingredient archives may have been created without the correct archive metadata
+                // if it has an active manifest with a an ingredient store, allow it.
+                if let Some(manifest) = reader.active_manifest() {
+                    if !manifest.ingredients().is_empty() {
+                        None
+                    } else {
+                        return Err(Error::BadParam(
+                            "expected an ingredient archive (org.contentauth.archive.metadata with archive:type ingredient)".to_string()));
+                    }
+                } else {
+                    return Err(Error::BadParam(
+                        "expected an ingredient archive (org.contentauth.archive.metadata with archive:type ingredient)".to_string()));
+                }
             }
-            None => {
-                return Err(Error::BadParam(format!(
-                    "expected a C2PA ingredient archive (org.contentauth.archive.metadata with archive:type {:?}); use add_ingredient_from_reader or add_ingredient_from_stream for other stores",
-                    labels::ARCHIVE_TYPE_INGREDIENT
-                )));
-            }
-        }
+        };
 
         if let Some(m) = reader.active_manifest() {
             self.merge_resources_from_store(m.resources())?;
@@ -3266,7 +3290,10 @@ impl Builder {
             }
         }
 
-        let ingredient = reader.to_ingredient()?;
+        let mut ingredient = reader.to_ingredient()?;
+        if let Some(id) = ingredient_id {
+            ingredient.set_label(id);
+        }
         self.add_ingredient(ingredient);
         self.definition
             .ingredients
@@ -3305,16 +3332,22 @@ impl Builder {
                 .to_claim()?,
         };
 
-        let archive_type = kind.archive_type_str();
-        let json = json!(
-            {
-                "@context":
-                {
-                    "archive": "https://contentauth.org/ns/archive#",
-                },
-                "archive:type": archive_type
+        let json = match &kind {
+            ArchiveKind::Ingredient { ingredient_id } if !ingredient_id.is_empty() => json!({
+                "@context": { "archive": "https://contentauth.org/ns/archive#" },
+                ARCHIVE_TYPE: labels::ARCHIVE_TYPE_INGREDIENT,
+                ARCHIVE_INGREDIENT_ID: ingredient_id
+            }),
+            ArchiveKind::Builder => json!({
+                "@context": { "archive": "https://contentauth.org/ns/archive#" },
+                ARCHIVE_TYPE: labels::ARCHIVE_TYPE_BUILDER
+            }),
+            _ => {
+                return Err(Error::BadParam(
+                    "ingredient_id is required for ingredient archives".to_string(),
+                ))
             }
-        )
+        }
         .to_string();
 
         let archive_metadata = Metadata::new(labels::ARCHIVE_METADATA, &json)?;
@@ -8730,6 +8763,44 @@ mod tests {
     }
 
     #[test]
+    fn test_to_archive_preserves_duplicate_label_assertions() -> Result<()> {
+        let mut builder = Builder::default();
+        builder.add_assertion("org.contentauth.test", &json!({"v": 1}))?;
+        builder.add_assertion("org.contentauth.test", &json!({"v": 2}))?;
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+        archive.rewind()?;
+        let mut builder = Builder::default().with_archive(archive)?;
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        builder.sign(
+            &signer,
+            "image/jpeg",
+            &mut Cursor::new(TEST_IMAGE_CLEAN),
+            &mut output,
+        )?;
+
+        output.rewind()?;
+        let reader = Reader::default().with_stream("image/jpeg", &mut output)?;
+        let manifest = reader.active_manifest().expect("active manifest");
+        let values: Vec<u64> = manifest
+            .assertions()
+            .iter()
+            .filter(|a| crate::assertions::labels::base(a.label()) == "org.contentauth.test")
+            .map(|a| a.value().unwrap()["v"].as_u64().unwrap())
+            .collect();
+
+        assert_eq!(values.len(), 2, "expected two duplicate-label assertions");
+        assert!(
+            values.contains(&1) && values.contains(&2),
+            "expected both v=1 and v=2 to survive archive round-trip, got {values:?}",
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_write_ingredient_archive_and_add_ingredient_from_archive() -> Result<()> {
         let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
         let context = Context::new().with_settings(settings)?.into_shared();
@@ -8797,6 +8868,235 @@ mod tests {
                 .get(&thumb_ref.identifier)
                 .is_ok_and(|data| data.as_slice() == TEST_THUMBNAIL),
             "thumbnail resource bytes should match the original TEST_THUMBNAIL"
+        );
+        assert_eq!(
+            builder2.definition.ingredients[0].label(),
+            Some("ingredient_1"),
+            "producer-supplied ingredient label should survive the archive round-trip via archive:ingredient_id"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_two_ingredient_archives_link_distinctly_via_actions() -> Result<()> {
+        // Create two ingredient archives with distinct ids ("ing-a", "ing-b"),
+        // load both into a builder, then sign.
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context = Context::new().with_settings(settings)?.into_shared();
+
+        // Build two ingredient archives.
+        let make_archive = |id: &str, title: &str| -> Result<Vec<u8>> {
+            let mut builder = Builder::from_shared_context(&context)
+                .with_definition(r#"{"title": "Producer manifest"}"#)?;
+            let mut src = Cursor::new(TEST_IMAGE);
+            builder.add_ingredient_from_stream(
+                json!({
+                    "title": title,
+                    "format": "image/jpeg",
+                    "relationship": "componentOf",
+                    "label": id,
+                })
+                .to_string(),
+                "image/jpeg",
+                &mut src,
+            )?;
+            let mut archive = Cursor::new(Vec::new());
+            builder.write_ingredient_archive(id, &mut archive)?;
+            Ok(archive.into_inner())
+        };
+        let archive_a = make_archive("ing-a", "Ingredient A")?;
+        let archive_b = make_archive("ing-b", "Ingredient B")?;
+
+        // Builder: add both ingredient archives,
+        // then attach an action that links ing-b only.
+        let manifest_def = json!({
+            "claim_generator_info": [{ "name": "c2pa-test", "version": "1.0" }],
+            "title": "Two-ingredient signing manifest",
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": { "ingredientIds": ["ing-b"] }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+        let mut signing_builder =
+            Builder::from_shared_context(&context).with_definition(manifest_def.to_string())?;
+        signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_a))?;
+        signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_b))?;
+
+        assert_eq!(
+            signing_builder.definition.ingredients[0].label(),
+            Some("ing-a")
+        );
+        assert_eq!(
+            signing_builder.definition.ingredients[1].label(),
+            Some("ing-b")
+        );
+
+        // Sign...
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+        signing_builder.sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)?;
+
+        // Resolve the placed action's URL → ingredient.title and confirm it's "Ingredient B"
+        // (proves identity rather than relying on JUMBF slot ordering).
+        dest.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut dest)?;
+        let manifest = reader.active_manifest().expect("active manifest present");
+        let placed_url: &str = manifest
+            .assertions()
+            .iter()
+            .find(|a| a.label().contains("c2pa.actions"))
+            .and_then(|a| a.value().ok())
+            .and_then(|v: &serde_json::Value| {
+                v["actions"]
+                    .as_array()?
+                    .iter()
+                    .find(|act| act["action"] == "c2pa.placed")?
+                    .get("parameters")?
+                    .get("ingredients")?
+                    .as_array()?
+                    .first()?
+                    .get("url")?
+                    .as_str()
+            })
+            .expect("placed action references an ingredient URL");
+
+        let target_label = placed_url.trim_start_matches("self#jumbf=c2pa.assertions/");
+        let linked_title = manifest
+            .ingredients()
+            .iter()
+            .find(|i| i.label() == Some(target_label))
+            .and_then(Ingredient::title)
+            .expect("ingredient with title present for resolved URL");
+        assert_eq!(
+            linked_title, "Ingredient B",
+            "placed action must link Ingredient B; got url {placed_url}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_two_ingredient_archives_each_linked_componentof_placed() -> Result<()> {
+        // 2 ingredient archives are linked componentOf via two distinct c2pa.placed
+        // actions (one per ingredient).
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context = Context::new().with_settings(settings)?.into_shared();
+
+        let make_archive = |id: &str, title: &str| -> Result<Vec<u8>> {
+            let mut builder = Builder::from_shared_context(&context)
+                .with_definition(r#"{"title": "Producer manifest"}"#)?;
+            let mut src = Cursor::new(TEST_IMAGE);
+            builder.add_ingredient_from_stream(
+                json!({
+                    "title": title,
+                    "format": "image/jpeg",
+                    "relationship": "componentOf",
+                    "label": id,
+                })
+                .to_string(),
+                "image/jpeg",
+                &mut src,
+            )?;
+            let mut archive = Cursor::new(Vec::new());
+            builder.write_ingredient_archive(id, &mut archive)?;
+            Ok(archive.into_inner())
+        };
+        let archive_a = make_archive("ing-a", "Ingredient A")?;
+        let archive_b = make_archive("ing-b", "Ingredient B")?;
+
+        let manifest_def = json!({
+            "claim_generator_info": [{ "name": "c2pa-test", "version": "1.0" }],
+            "title": "Two-ingredient componentOf placed manifest",
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": { "ingredientIds": ["ing-a"] }
+                            },
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": { "ingredientIds": ["ing-b"] }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+        let mut signing_builder =
+            Builder::from_shared_context(&context).with_definition(manifest_def.to_string())?;
+        signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_a))?;
+        signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_b))?;
+
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+        signing_builder.sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)?;
+
+        dest.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut dest)?;
+        print!("reader JSON: {}", reader.json());
+        let manifest = reader.active_manifest().expect("active manifest present");
+        let actions_value: serde_json::Value = manifest
+            .assertions()
+            .iter()
+            .find(|a| a.label().contains("c2pa.actions"))
+            .and_then(|a| a.value().ok().cloned())
+            .expect("c2pa.actions assertion present");
+
+        // Verify ingredients and actions were properly linked
+        let placed_urls: Vec<&str> = actions_value["actions"]
+            .as_array()
+            .expect("actions array")
+            .iter()
+            .filter(|act| act["action"] == "c2pa.placed")
+            .filter_map(|act| {
+                act.get("parameters")?
+                    .get("ingredients")?
+                    .as_array()?
+                    .first()?
+                    .get("url")?
+                    .as_str()
+            })
+            .collect();
+        assert_eq!(
+            placed_urls.len(),
+            2,
+            "expected two placed actions each referencing one ingredient; got {placed_urls:?}"
+        );
+        let title_for_url = |url: &str| -> &str {
+            let target_label = url.trim_start_matches("self#jumbf=c2pa.assertions/");
+            manifest
+                .ingredients()
+                .iter()
+                .find(|i| i.label() == Some(target_label))
+                .and_then(Ingredient::title)
+                .expect("ingredient with title present for resolved URL")
+        };
+        assert_eq!(
+            title_for_url(placed_urls[0]),
+            "Ingredient A",
+            "first placed action must link Ingredient A; got url {}",
+            placed_urls[0]
+        );
+        assert_eq!(
+            title_for_url(placed_urls[1]),
+            "Ingredient B",
+            "second placed action must link Ingredient B; got url {}",
+            placed_urls[1]
         );
 
         Ok(())
@@ -9376,6 +9676,62 @@ mod tests {
                 max: MAX_ASSERTIONS
             }
         ));
+    }
+
+    // Verify that `base_path` in manifest.json is ignored during archive deserialization.
+    // An attacker embedding "base_path": "/" must not be able to redirect resource
+    // resolution to an arbitrary filesystem root (file exfiltration via archive).
+    //
+    // Uses the legacy zip archive path (generate_c2pa_archive = false) so we can
+    // manipulate the manifest.json inside the zip before loading it back.
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_base_path_not_deserialized_from_archive() {
+        // Force the old zip format so we can manipulate manifest.json directly.
+        let settings = Settings::new()
+            .with_value("builder.generate_c2pa_archive", false)
+            .unwrap();
+        let builder = Builder::from_context(Context::new().with_settings(settings).unwrap());
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        archive.rewind().unwrap();
+
+        // Inject "base_path": "/" into manifest.json inside the zip.
+        let mut modified = Cursor::new(Vec::new());
+        {
+            let mut zip_in = ZipArchive::new(&mut archive).unwrap();
+            let mut zip_out = ZipWriter::new(&mut modified);
+            let options =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+            for i in 0..zip_in.len() {
+                let mut entry = zip_in.by_index(i).unwrap();
+                let name = entry.name().to_string();
+                let mut buf = Vec::new();
+                entry.read_to_end(&mut buf).unwrap();
+
+                zip_out.start_file(&name, options).unwrap();
+                if name == "manifest.json" {
+                    let mut value: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+                    value["base_path"] = serde_json::Value::String("/".to_string());
+                    zip_out
+                        .write_all(&serde_json::to_vec(&value).unwrap())
+                        .unwrap();
+                } else {
+                    zip_out.write_all(&buf).unwrap();
+                }
+            }
+            zip_out.finish().unwrap();
+        }
+        modified.rewind().unwrap();
+
+        let loaded = Builder::from_archive(modified).unwrap();
+
+        assert!(
+            loaded.base_path.is_none(),
+            "base_path must not be populated from archive JSON"
+        );
     }
 
     // Ensures that the future returned by `Builder::sign_async` implements `Send`, thus making it

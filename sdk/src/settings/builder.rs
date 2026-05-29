@@ -25,7 +25,7 @@ use crate::{
     builder::BuilderIntent,
     cbor_types::DateT,
     resource_store::UriOrResource,
-    settings::SettingsValidate,
+    settings::{deserialize_case_insensitive, deserialize_case_insensitive_opt, SettingsValidate},
     ClaimGeneratorInfo, Error, ResourceRef, Result,
 };
 
@@ -93,7 +93,11 @@ pub struct ThumbnailSettings {
     /// input format.
     ///
     /// The default value is None.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "deserialize_case_insensitive_opt"
+    )]
     pub format: Option<ThumbnailFormat>,
     /// Whether or not to prefer a smaller sized media format for the thumbnail.
     ///
@@ -112,6 +116,7 @@ pub struct ThumbnailSettings {
     /// algorithms for various formats.
     ///
     /// The default value is [`ThumbnailQuality::Medium`].
+    #[serde(deserialize_with = "deserialize_case_insensitive")]
     pub quality: ThumbnailQuality,
 }
 
@@ -491,6 +496,7 @@ pub struct TimeStampSettings {
     /// Which manifests to fetch timestamps for.
     ///
     /// The default value is [`TimeStampFetchScope::All`].
+    #[serde(deserialize_with = "deserialize_case_insensitive")]
     pub fetch_scope: TimeStampFetchScope,
 }
 
@@ -534,6 +540,7 @@ pub struct BuilderSettings {
     /// For more information, see [Certificate status assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#certificate_status_assertion).
     ///
     /// [`CertificateStatus`]: crate::assertions::CertificateStatus
+    #[serde(default, deserialize_with = "deserialize_case_insensitive_opt")]
     pub(crate) certificate_status_fetch: Option<OcspFetchScope>,
     // TODO: this setting affects fetching and generation of the assertion; needs clarification
     /// Whether to only use [`CertificateStatus`] assertions to check certificate revocation status. If there
@@ -551,6 +558,7 @@ pub struct BuilderSettings {
     ///
     /// [`BuilderIntent`]: crate::BuilderIntent
     /// [`Builder`]: crate::Builder
+    #[serde(default, deserialize_with = "deserialize_case_insensitive_opt")]
     pub intent: Option<BuilderIntent>,
     /// Assertions with a base label included in this list will be automatically marked as a created assertion.
     /// Assertions not in this list will be automatically marked as gathered.
@@ -801,5 +809,32 @@ pub mod tests {
             Some(SoftwareAgent::ClaimGeneratorInfo(_))
         ));
         assert_eq!(action.reason, Some("Privacy concerns".to_string()));
+    }
+
+    // For backwards compatibility with the `config` crate.
+    #[test]
+    fn test_case_insensitive_enum_deserialization() {
+        use crate::settings::Settings;
+
+        let settings = Settings::new()
+            .with_json(r#"{"builder": {"thumbnail": {"format": "PNG", "quality": "HIGH"}, "intent": "EDIT"}}"#)
+            .unwrap();
+        assert_eq!(
+            settings.builder.thumbnail.format,
+            Some(ThumbnailFormat::Png)
+        );
+        assert_eq!(settings.builder.thumbnail.quality, ThumbnailQuality::High);
+        assert_eq!(settings.builder.intent, Some(BuilderIntent::Edit));
+
+        let settings = Settings::new()
+            .with_json(r#"{"builder": {"intent": {"create": "empty"}}}"#)
+            .unwrap();
+        assert_eq!(
+            settings.builder.intent,
+            Some(BuilderIntent::Create(DigitalSourceType::Empty))
+        );
+
+        let result = Settings::new().with_json(r#"{"builder": {"intent": {"Create": "empty"}}}"#);
+        assert!(result.is_err());
     }
 }
