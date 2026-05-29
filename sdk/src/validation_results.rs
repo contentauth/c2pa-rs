@@ -372,6 +372,17 @@ impl ValidationResults {
     pub fn failure_summary(&self) -> ValidationFailureSummary<'_> {
         ValidationFailureSummary(self)
     }
+
+    pub(crate) fn format_status(status: &ValidationStatus, indent: &str) -> String {
+        let mut line = format!("{indent}{}", status.code());
+        if let Some(explanation) = status.explanation() {
+            line.push_str(&format!(": {explanation}"));
+        }
+        if let Some(url) = status.url() {
+            line.push_str(&format!(" ({url})"));
+        }
+        line
+    }
 }
 
 impl Display for ValidationResults {
@@ -381,20 +392,24 @@ impl Display for ValidationResults {
 
         if let Some(active_manifest) = self.active_manifest.as_ref() {
             if !active_manifest.success.is_empty() {
-                let codes: Vec<&str> = active_manifest.success.iter().map(|s| s.code()).collect();
+                let codes = active_manifest
+                    .success
+                    .iter()
+                    .map(|status| status.code())
+                    .collect::<Vec<_>>();
                 writeln!(f, "  success: {}", codes.join(", "))?;
             }
             if !active_manifest.informational.is_empty() {
-                let codes: Vec<&str> = active_manifest
-                    .informational
-                    .iter()
-                    .map(|s| s.code())
-                    .collect();
-                writeln!(f, "  informational: {}", codes.join(", "))?;
+                writeln!(f, "  informational:")?;
+                for status in &active_manifest.informational {
+                    writeln!(f, "{}", ValidationResults::format_status(status, "    "))?;
+                }
             }
             if !active_manifest.failure.is_empty() {
-                let codes: Vec<&str> = active_manifest.failure.iter().map(|s| s.code()).collect();
-                writeln!(f, "  failure: {}", codes.join(", "))?;
+                writeln!(f, "  failure:")?;
+                for status in &active_manifest.failure {
+                    writeln!(f, "{}", ValidationResults::format_status(status, "    "))?;
+                }
             }
         }
 
@@ -403,16 +418,24 @@ impl Display for ValidationResults {
                 let d = delta.validation_deltas();
                 writeln!(f, "  ingredient [{}]:", delta.ingredient_assertion_uri())?;
                 if !d.success.is_empty() {
-                    let codes: Vec<&str> = d.success.iter().map(|s| s.code()).collect();
+                    let codes = d
+                        .success
+                        .iter()
+                        .map(|status| status.code())
+                        .collect::<Vec<_>>();
                     writeln!(f, "    success: {}", codes.join(", "))?;
                 }
                 if !d.informational.is_empty() {
-                    let codes: Vec<&str> = d.informational.iter().map(|s| s.code()).collect();
-                    writeln!(f, "    informational: {}", codes.join(", "))?;
+                    writeln!(f, "    informational:")?;
+                    for status in &d.informational {
+                        writeln!(f, "{}", ValidationResults::format_status(status, "      "))?;
+                    }
                 }
                 if !d.failure.is_empty() {
-                    let codes: Vec<&str> = d.failure.iter().map(|s| s.code()).collect();
-                    writeln!(f, "    failure: {}", codes.join(", "))?;
+                    writeln!(f, "    failure:")?;
+                    for status in &d.failure {
+                        writeln!(f, "{}", ValidationResults::format_status(status, "      "))?;
+                    }
                 }
             }
         }
@@ -427,35 +450,44 @@ pub struct ValidationFailureSummary<'a>(&'a ValidationResults);
 impl Display for ValidationFailureSummary<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let results = self.0;
-        let mut output_lines: Vec<String> = Vec::new();
+        let mut output_lines = Vec::new();
 
         if let Some(active_manifest) = results.active_manifest.as_ref() {
-            let failures: Vec<&ValidationStatus> = active_manifest
+            let failures = active_manifest
                 .failure
                 .iter()
-                .filter(|s| s.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
-                .collect();
+                .filter(|status| status.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+                .collect::<Vec<_>>();
             if !failures.is_empty() {
-                let codes: Vec<&str> = failures.iter().map(|s| s.code()).collect();
-                output_lines.push(format!("failures: {}", codes.join(", ")));
+                output_lines.push("failures:".to_string());
+                output_lines.extend(
+                    failures
+                        .iter()
+                        .map(|status| ValidationResults::format_status(status, "  ")),
+                );
             }
         }
 
         if let Some(deltas) = results.ingredient_deltas.as_ref() {
             for delta in deltas {
-                let delta_codes = delta.validation_deltas();
-                let failures: Vec<&ValidationStatus> = delta_codes
+                let failures = delta
+                    .validation_deltas()
                     .failure
                     .iter()
-                    .filter(|s| s.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
-                    .collect();
+                    .filter(|status| {
+                        status.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                    })
+                    .collect::<Vec<_>>();
                 if !failures.is_empty() {
-                    let codes: Vec<&str> = failures.iter().map(|s| s.code()).collect();
                     output_lines.push(format!(
-                        "ingredient [{}] failures: {}",
-                        delta.ingredient_assertion_uri(),
-                        codes.join(", ")
+                        "ingredient [{}] failures:",
+                        delta.ingredient_assertion_uri()
                     ));
+                    output_lines.extend(
+                        failures
+                            .iter()
+                            .map(|status| ValidationResults::format_status(status, "  ")),
+                    );
                 }
             }
         }
@@ -1310,7 +1342,7 @@ pub mod tests {
         );
         assert_eq!(
             validation_results.failure_summary().to_string(),
-            "failures: assertion.dataHash.mismatch"
+            "failures:\n  assertion.dataHash.mismatch"
         );
     }
 
@@ -1334,7 +1366,7 @@ pub mod tests {
         );
         assert_eq!(
             validation_results.failure_summary().to_string(),
-            "ingredient [urn:uuid:1234] failures: assertion.dataHash.mismatch"
+            "ingredient [urn:uuid:1234] failures:\n  assertion.dataHash.mismatch"
         );
     }
 
@@ -1372,7 +1404,11 @@ pub mod tests {
             ValidationStatus::new(validation_status::TIMESTAMP_MALFORMED)
                 .set_kind(LogKind::Informational),
         );
-        validation_results.add_status(ValidationStatus::new_failure(CLAIM_MALFORMED));
+        validation_results.add_status(
+            ValidationStatus::new_failure(CLAIM_MALFORMED)
+                .set_url("self#jumbf=c2pa/urn:uuid:abc/c2pa.claim")
+                .set_explanation("claim CBOR failed to decode".to_string()),
+        );
         validation_results.add_status(
             ValidationStatus::new_failure(ASSERTION_DATAHASH_MISMATCH)
                 .set_ingredient_uri("urn:uuid:abcd"),
@@ -1387,10 +1423,13 @@ pub mod tests {
             concat!(
                 "state: Invalid\n",
                 "  success: claimSignature.validated, claimSignature.insideValidity\n",
-                "  informational: timeStamp.malformed\n",
-                "  failure: claim.malformed\n",
+                "  informational:\n",
+                "    timeStamp.malformed\n",
+                "  failure:\n",
+                "    claim.malformed: claim CBOR failed to decode (self#jumbf=c2pa/urn:uuid:abc/c2pa.claim)\n",
                 "  ingredient [urn:uuid:abcd]:\n",
-                "    failure: assertion.dataHash.mismatch\n",
+                "    failure:\n",
+                "      assertion.dataHash.mismatch\n",
             )
         );
     }
