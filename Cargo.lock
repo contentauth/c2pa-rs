@@ -540,6 +540,7 @@ dependencies = [
  "byteorder",
  "byteordered",
  "bytes",
+ "c2pa-text",
  "c2pa_cbor",
  "c2pa_macros",
  "chrono",
@@ -642,6 +643,16 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+]
+
+[[package]]
+name = "c2pa-text"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2ffe242f102a2d4bdbf15102b6d21c7adbf5442309122895eb3c3efa4bdb0c0"
+dependencies = [
+ "base64",
+ "unicode-normalization",
 ]
 
 [[package]]
