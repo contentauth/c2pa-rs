@@ -8938,6 +8938,7 @@ mod tests {
         });
         let mut signing_builder =
             Builder::from_shared_context(&context).with_definition(manifest_def.to_string())?;
+        signing_builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_a))?;
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_b))?;
 
@@ -9047,6 +9048,7 @@ mod tests {
         });
         let mut signing_builder =
             Builder::from_shared_context(&context).with_definition(manifest_def.to_string())?;
+        signing_builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_a))?;
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_b))?;
 
