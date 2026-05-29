@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.85.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.84.1...c2pa-c-ffi-v0.85.0)
+_27 May 2026_
+
+### Added
+
+* Support CAWG callback signing via c_ffi ([#2118](https://github.com/contentauth/c2pa-rs/pull/2118))
+
+### Other
+
+* *(c2pa_c_ffi)* Move allow(deprecated) next to deprecated functions ([#2157](https://github.com/contentauth/c2pa-rs/pull/2157))
+
 ## [0.84.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.84.0...c2pa-c-ffi-v0.84.1)
 _12 May 2026_
 

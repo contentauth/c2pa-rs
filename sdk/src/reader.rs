@@ -882,7 +882,7 @@ impl Reader {
     pub fn resource_to_stream(
         &self,
         uri: &str,
-        stream: impl Write + Read + Seek + MaybeSend,
+        mut stream: impl Write + Read + Seek + MaybeSend,
     ) -> Result<usize> {
         // get the manifest referenced by the uri, or the active one if None
         // add logic to search for local or absolute uri identifiers
@@ -917,7 +917,30 @@ impl Reader {
                 Ok(resource) => resource.write_stream(&relative_uri, stream),
                 Err(_) => match find_resource(&absolute_uri) {
                     Ok(resource) => resource.write_stream(&absolute_uri, stream),
-                    Err(e) => Err(e),
+                    Err(_) => {
+                        // Fallback: ingredient manifest_data may be lazily loaded.
+                        // We must try to materialize it on cache miss/not loaded state...
+                        // This is to cover the case a resource was asked for, but the resource
+                        // may not have been loaded eagerly.
+                        // manifest_label_from_uri() extracts <claim-label>, which is
+                        // what set_deferred_manifest_data() stores in md_ref.identifier.
+                        for ingredient in manifest.ingredients() {
+                            if let Some(md_ref) = ingredient.manifest_data_ref() {
+                                if md_ref.identifier == label
+                                    || md_ref.identifier == relative_uri
+                                    || md_ref.identifier == absolute_uri
+                                {
+                                    if let Some(cow) = ingredient.manifest_data() {
+                                        let bytes = cow.into_owned();
+                                        let len = bytes.len();
+                                        stream.write_all(&bytes).map_err(Error::IoError)?;
+                                        return Ok(len);
+                                    }
+                                }
+                            }
+                        }
+                        Err(Error::ResourceNotFound(relative_uri.to_owned()))
+                    }
                 },
             }
         } else {
@@ -1225,17 +1248,14 @@ impl Reader {
         Ok(builder)
     }
 
-    /// Returns the [`ArchiveType`] from the active manifest's `org.contentauth.archive.metadata` assertion, if present.
-    pub(crate) fn active_archive_type(&self) -> Option<crate::assertions::labels::ArchiveType> {
+    /// Returns the archive kind from the active manifest's `org.contentauth.archive.metadata` assertion, when the archive was created by [`Builder::write_archive`].
+    /// None if the assertion is missing or malformed.
+    pub(crate) fn active_archive_kind(&self) -> Option<crate::builder::ArchiveKind> {
         let manifest = self.active_manifest()?;
         let metadata: Metadata = manifest
             .find_assertion(crate::assertions::labels::ARCHIVE_METADATA)
             .ok()?;
-        metadata
-            .value
-            .get("archive:type")
-            .and_then(|v: &Value| v.as_str())
-            .map(crate::assertions::labels::ArchiveType::from_str)
+        crate::builder::ArchiveKind::from_metadata(&metadata)
     }
 
     /// Convert a Reader into an [`Ingredient`] using the parent ingredient from the active manifest.
@@ -1723,6 +1743,39 @@ pub mod tests {
         let mut out2 = Cursor::new(Vec::new());
         reader.resource_to_stream(&uri2, &mut out2)?;
         assert_eq!(out2.into_inner(), thumbnail2);
+
+        Ok(())
+    }
+
+    /// Verify that `resource_to_stream` can load ingredient `manifest_data`
+    /// that is lazily deferred in `source_store`.
+    #[test]
+    fn test_resource_to_stream_retrieve_deferred_manifest_data() -> Result<()> {
+        let reader = Reader::default()
+            .with_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST))?;
+
+        let active = reader.active_manifest().unwrap();
+        let ingredient = active
+            .ingredients()
+            .first()
+            .expect("no ingredient in CACA.jpg");
+
+        let md_ref = ingredient
+            .manifest_data_ref()
+            .expect("ingredient has no manifest_data_ref");
+
+        // Confirm the bytes are not already in the in-memory resource store
+        // (lazy path executed, no eager load anymore here, so nothing to see... yet!)
+        assert!(
+            ingredient.resources().get(&md_ref.identifier).is_err(),
+            "expected deferred manifest_data — lazy load path not exercised"
+        );
+
+        // resource_to_stream must succeed no matter what, loading resources
+        let mut out = Cursor::new(Vec::new());
+        let n = reader.resource_to_stream(&md_ref.identifier, &mut out)?;
+        assert!(n > 0, "expected non-empty manifest_data bytes");
+        assert!(!out.into_inner().is_empty());
 
         Ok(())
     }
