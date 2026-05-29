@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.60](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.59...c2patool-v0.26.60)
+_27 May 2026_
+
+### Added
+
+* Add Intent support to c2patool ([#2171](https://github.com/contentauth/c2pa-rs/pull/2171))
+* Support CAWG callback signing via c_ffi ([#2118](https://github.com/contentauth/c2pa-rs/pull/2118))
+
+### Fixed
+
+* Share reqwest HTTP clients ([#2152](https://github.com/contentauth/c2pa-rs/pull/2152))
+
+### Added
+
+* `--create <source-type>` flag to sign an asset as a new original creation with the specified [C2PA digital source type](https://cv.iptc.org/newscodes/digitalsourcetype/) (e.g. `digitalCapture`, `trainedAlgorithmicMedia`). Automatically injects a `c2pa.created` action. Mutually exclusive with `--update` and `--parent`.
+* `--update` flag to generate an [update manifest](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_update_manifests) for non-editorial changes applied to an already-signed asset. Automatically injects a `c2pa.opened` action and sets the source asset as the parent ingredient. The source asset must already contain a C2PA manifest. Mutually exclusive with `--create`.
+
+### Changed
+
+* Default signing behavior now applies **Edit** intent: the source asset is automatically added as a parent ingredient and a `c2pa.opened` action is injected. Previously no intent or parent was set automatically.
+* Signature validation after signing is now enabled by default in all builds (previously only in test builds). Use `--no_signing_verify` to skip it.(https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.58...c2patool-v0.26.59)
+_12 May 2026_
+
+## [0.26.58](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.57...c2patool-v0.26.58)
+_11 May 2026_
+
+## [0.26.57](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.56...c2patool-v0.26.57)
+_11 May 2026_
+
+## [0.26.56](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.55...c2patool-v0.26.56)
+_04 May 2026_
+
+## [0.26.55](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.54...c2patool-v0.26.55)
+_01 May 2026_
+
+## [0.26.54](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.53...c2patool-v0.26.54)
+_01 May 2026_
+
+## [0.26.53](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.52...c2patool-v0.26.53)
+_29 April 2026_
+
+### Added
+
+* Add `init trust`, trust sidecars, and atomic sidecar writes, plus fixes ([#2093](https://github.com/contentauth/c2pa-rs/pull/2093))
+
+## [0.26.52](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.51...c2patool-v0.26.52)
+_28 April 2026_
+
+### Fixed
+
+* `c2pa-c-ffi` UB detected by miri ([#2089](https://github.com/contentauth/c2pa-rs/pull/2089))
+
 ## [0.26.51](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.50...c2patool-v0.26.51)
 _27 April 2026_
 

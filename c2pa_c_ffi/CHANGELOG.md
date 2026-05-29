@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.85.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.84.1...c2pa-c-ffi-v0.85.0)
+_27 May 2026_
+
+### Added
+
+* Support CAWG callback signing via c_ffi ([#2118](https://github.com/contentauth/c2pa-rs/pull/2118))
+
+### Other
+
+* *(c2pa_c_ffi)* Move allow(deprecated) next to deprecated functions ([#2157](https://github.com/contentauth/c2pa-rs/pull/2157))
+
+## [0.84.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.84.0...c2pa-c-ffi-v0.84.1)
+_12 May 2026_
+
+## [0.83.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.83.0...c2pa-c-ffi-v0.83.1)
+_11 May 2026_
+
+## [0.82.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.82.1...c2pa-c-ffi-v0.82.2)
+_11 May 2026_
+
+## [0.82.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.82.0...c2pa-c-ffi-v0.82.1)
+_04 May 2026_
+
+## [0.81.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.81.0...c2pa-c-ffi-v0.81.1)
+_01 May 2026_
+
+## [0.80.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.3...c2pa-c-ffi-v0.80.4)
+_01 May 2026_
+
+## [0.80.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.2...c2pa-c-ffi-v0.80.3)
+_29 April 2026_
+
+## [0.80.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.1...c2pa-c-ffi-v0.80.2)
+_28 April 2026_
+
+### Fixed
+
+* `c2pa-c-ffi` UB detected by miri ([#2089](https://github.com/contentauth/c2pa-rs/pull/2089))
+
 ## [0.80.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.80.0...c2pa-c-ffi-v0.80.1)
 _27 April 2026_
 
