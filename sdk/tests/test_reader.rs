@@ -201,9 +201,7 @@ fn test_reader_file_no_extension_overridden_by_detection() -> Result<()> {
         .tempfile_in("/")
         .map_err(c2pa::Error::IoError)?;
     #[cfg(not(target_os = "wasi"))]
-    let tmp = Builder::new()
-        .tempfile()
-        .map_err(c2pa::Error::IoError)?;
+    let tmp = Builder::new().tempfile().map_err(c2pa::Error::IoError)?;
     // Rename to strip the extension entirely.
     let no_ext_path = tmp.path().with_extension("");
     std::fs::write(&no_ext_path, jpeg_bytes).map_err(c2pa::Error::IoError)?;
