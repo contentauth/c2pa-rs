@@ -1448,6 +1448,7 @@ pub mod tests {
         );
     }
 
+    #[test]
     fn from_store_attested_ingredient_failure_after_serde_roundtrip() {
         let inner_label = "urn:uuid:inner-test";
         let inner_manifest_uri = labels::to_manifest_uri(inner_label);
