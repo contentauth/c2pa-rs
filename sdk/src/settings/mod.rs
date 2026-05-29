@@ -353,7 +353,7 @@ pub struct Verify {
     /// The default value is false.
     ///
     /// Has no effect when [`Verify::verify_after_sign`] is false.
-    pub verify_after_sign_hash: bool,
+    pub(crate) verify_after_sign_hash: bool,
     /// Whether to verify certificates against the trust lists specified in [`Trust`]. To configure
     /// timestamp certificate verification, see [`Verify::verify_timestamp_trust`].
     ///
