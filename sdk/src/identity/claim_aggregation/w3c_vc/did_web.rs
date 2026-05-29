@@ -32,11 +32,32 @@ pub(crate) const MAX_DID_DOC_SIZE: u64 = 1024 * 1024; // 1 MiB
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
 #[cfg(test)]
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashMap};
 
 #[cfg(test)]
 thread_local! {
-    pub(crate) static PROXY: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Maps a `did:web` domain name to a URL prefix (ending in `/`) that should
+    /// be used in place of the real `https://{domain}/` origin. Tests register
+    /// entries here to redirect DID document resolution to a local mock server,
+    /// keeping the suite hermetic.
+    pub(crate) static PROXIES: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+}
+
+/// Redirect `did:web` resolution for `domain` to `url_prefix` (a base URL
+/// ending in `/`, such as a mock server origin) for the current thread.
+#[cfg(test)]
+pub(crate) fn set_proxy(domain: &str, url_prefix: &str) {
+    PROXIES.with(|proxies| {
+        proxies
+            .borrow_mut()
+            .insert(domain.to_string(), url_prefix.to_string());
+    });
+}
+
+/// Remove all `did:web` resolution redirects for the current thread.
+#[cfg(test)]
+pub(crate) fn clear_proxies() {
+    PROXIES.with(|proxies| proxies.borrow_mut().clear());
 }
 
 use http::header;
@@ -183,12 +204,9 @@ pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
     );
 
     #[cfg(test)]
-    PROXY.with(|proxy| {
-        if let Some(ref proxy) = *proxy.borrow() {
-            if domain_name == "localhost" {
-                url = format!("{proxy}{path}/did.json");
-                dbg!(&url);
-            }
+    PROXIES.with(|proxies| {
+        if let Some(prefix) = proxies.borrow().get(domain_name) {
+            url = format!("{prefix}{path}/did.json");
         }
     });
 
@@ -241,7 +259,7 @@ mod tests {
         use super::did;
         use crate::identity::claim_aggregation::w3c_vc::{
             did_doc::DidDocument,
-            did_web::{self, DidWebError, MAX_DID_DOC_SIZE, PROXY},
+            did_web::{self, DidWebError, MAX_DID_DOC_SIZE},
         };
 
         #[tokio::test]
@@ -263,11 +281,8 @@ mod tests {
 
             let server = MockServer::start();
 
-            PROXY.with(|proxy| {
-                let server_url = server.url("/").replace("127.0.0.1", "localhost");
-                dbg!(&server_url);
-                proxy.replace(Some(server_url));
-            });
+            let server_url = server.url("/").replace("127.0.0.1", "localhost");
+            did_web::set_proxy("localhost", &server_url);
 
             let did_doc_mock = server.mock(|when, then| {
                 when.method(GET).path("/.well-known/did.json");
@@ -282,9 +297,7 @@ mod tests {
             let doc_expected = DidDocument::from_json(DID_JSON).unwrap();
             assert_eq!(doc, doc_expected);
 
-            PROXY.with(|proxy| {
-                proxy.replace(None);
-            });
+            did_web::clear_proxies();
 
             did_doc_mock.assert();
         }
@@ -293,10 +306,8 @@ mod tests {
         async fn content_length_above_limit_rejected() {
             let server = MockServer::start();
 
-            PROXY.with(|proxy| {
-                let server_url = server.url("/").replace("127.0.0.1", "localhost");
-                proxy.replace(Some(server_url));
-            });
+            let server_url = server.url("/").replace("127.0.0.1", "localhost");
+            did_web::set_proxy("localhost", &server_url);
 
             // Server explicitly advertises Content-Length above the limit.
             // The Content-Length pre-check in AsyncGenericResolver rejects the
@@ -312,9 +323,7 @@ mod tests {
 
             let result = did_web::resolve_async(&did("did:web:localhost")).await;
 
-            PROXY.with(|proxy| {
-                proxy.replace(None);
-            });
+            did_web::clear_proxies();
 
             assert!(
                 matches!(result, Err(did_web::DidWebError::ResponseTooLarge)),
@@ -326,10 +335,8 @@ mod tests {
         async fn oversized_response_returns_error() {
             let server = MockServer::start();
 
-            PROXY.with(|proxy| {
-                let server_url = server.url("/").replace("127.0.0.1", "localhost");
-                proxy.replace(Some(server_url));
-            });
+            let server_url = server.url("/").replace("127.0.0.1", "localhost");
+            did_web::set_proxy("localhost", &server_url);
 
             // Serve a body one byte larger than the allowed limit.
             let oversized_body = vec![b'X'; (MAX_DID_DOC_SIZE + 1) as usize];
@@ -342,9 +349,7 @@ mod tests {
 
             let result = did_web::resolve_async(&did("did:web:localhost")).await;
 
-            PROXY.with(|proxy| {
-                proxy.replace(None);
-            });
+            did_web::clear_proxies();
 
             assert!(
                 matches!(result, Err(did_web::DidWebError::ResponseTooLarge)),
