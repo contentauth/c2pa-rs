@@ -1,5 +1,7 @@
 # C2PA Rust library
 
+<!-- no-op change to trigger CI for Rust 1.96.0 rust-lld bus-error reproduction; do not merge -->
+
 [![Tier 1A](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-1a.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-1a.yml) [![Tier 1B](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-1b.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-1b.yml) [![Tier 2](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-2.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-2.yml) [![Latest Version](https://img.shields.io/crates/v/c2pa.svg)](https://crates.io/crates/c2pa) [![docs.rs](https://img.shields.io/docsrs/c2pa)](https://docs.rs/c2pa/) [![codecov](https://codecov.io/gh/contentauth/c2pa-rs/branch/main/graph/badge.svg?token=YVHWI19EGN)](https://codecov.io/gh/contentauth/c2pa-rs)
 
 For information on support tiers for CI tests, see [Support tiers for C2PA Rust SDK products](https://github.com/contentauth/c2pa-rs/blob/main/docs/support-tiers.md)
