@@ -1488,7 +1488,9 @@ impl Builder {
             let applied = claim.redactions().map(|r| r.as_slice()).unwrap_or_default();
             for redaction in redactions {
                 if !applied.contains(redaction) {
-                    return Err(Error::AssertionRedactionNotFound);
+                    log::warn!(
+                        "Redaction URI was not applied (assertion not found in any ingredient): {redaction}"
+                    );
                 }
             }
         }
@@ -3427,6 +3429,7 @@ mod tests {
         validation_results::ValidationState,
         Reader,
     };
+    use std::sync::{Arc, Mutex};
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
@@ -7722,7 +7725,9 @@ mod tests {
     }
 
     #[test]
-    fn test_redact_nonexistent_assertion_returns_not_found() {
+    fn test_redact_nonexistent_assertion_succeeds_with_warning() {
+        // A redaction URI that references a non-existent assertion label should
+        // not fail signing, and instead log a warning but otherwise succeed.
         let mut input = Cursor::new(TEST_IMAGE);
 
         let parent = Reader::default()
@@ -7743,7 +7748,7 @@ mod tests {
         let signer = test_signer(SigningAlg::Ps256);
         let mut output = Cursor::new(Vec::new());
         let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
-        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
     }
 
     #[test]
@@ -7912,7 +7917,9 @@ mod tests {
     }
 
     #[test]
-    fn test_redact_empty_uri_returns_not_found() {
+    fn test_redact_empty_uri_succeeds_with_warning() {
+        // An empty redaction URI cannot match any assertion. Signing should
+        // succeed and emit a warning rather than failing.
         let mut input = Cursor::new(TEST_IMAGE);
 
         let mut builder = Builder::default();
@@ -7922,11 +7929,13 @@ mod tests {
         let signer = test_signer(SigningAlg::Ps256);
         let mut output = Cursor::new(Vec::new());
         let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
-        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
     }
 
     #[test]
-    fn test_redact_malformed_uri_returns_not_found() {
+    fn test_redact_malformed_uri_succeeds_with_warning() {
+        // A malformed URI cannot match any assertion.
+        // Signing should succeed and emit a warning rather than failing.
         let mut input = Cursor::new(TEST_IMAGE);
 
         let mut builder = Builder::default();
@@ -7936,11 +7945,13 @@ mod tests {
         let signer = test_signer(SigningAlg::Ps256);
         let mut output = Cursor::new(Vec::new());
         let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
-        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
     }
 
     #[test]
-    fn test_redact_wrong_manifest_label_returns_not_found() {
+    fn test_redact_wrong_manifest_label_succeeds_with_warning() {
+        // A URI with a fabricated manifest label won't match any ingredient.
+        // Signing should succeed and emit a warning rather than failing.
         let mut input = Cursor::new(TEST_IMAGE);
 
         let _parent = Reader::default()
@@ -7960,7 +7971,7 @@ mod tests {
         let signer = test_signer(SigningAlg::Ps256);
         let mut output = Cursor::new(Vec::new());
         let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
-        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
     }
 
     #[test]
@@ -8039,21 +8050,22 @@ mod tests {
             .unwrap();
         final_builder.add_ingredient(parent);
 
+        // The URI belongs to an ingredient that wasn't included, so it cannot
+        // be applied — signing still succeeds, emitting a warning.
         let result = final_builder.sign(
             signer.as_ref(),
             "image/jpeg",
             &mut final_input,
             &mut final_output,
         );
-        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
     }
 
     #[test]
     fn test_redact_duplicate_uri_in_redactions() {
-        // Documents behavior when same URI appears twice in `redactions`.
-        // First pass redacts the assertion, second pass cannot find it but the
-        // post-sign check only verifies each requested redaction is present
-        // in `claim.redactions()`, which dedupes naturally, so succeeds.
+        // Duplicate URIs dedupe in claim.redactions(), so the post-sign check
+        // should always pass. Signing succeeds even if the assertion was only
+        // removed on the first pass.
         let mut input = Cursor::new(TEST_IMAGE);
 
         let parent = Reader::default()
@@ -8077,22 +8089,15 @@ mod tests {
 
         let signer = test_signer(SigningAlg::Ps256);
         let mut output = Cursor::new(Vec::new());
-        let result = builder.sign(signer.as_ref(), "image/jpeg", &mut input, &mut output);
-        // Either succeeds (dedupe-tolerant) or returns AssertionRedactionNotFound
-        // for the second pass.
-        match result {
-            Ok(_) => {
-                output.set_position(0);
-                let reader = Reader::default()
-                    .with_stream("image/jpeg", &mut output)
-                    .expect("from_bytes");
-                assert_eq!(reader.validation_state(), ValidationState::Trusted);
-            }
-            Err(Error::AssertionRedactionNotFound) => {
-                // Acceptable, second iteration could not re-redact.
-            }
-            Err(e) => unreachable!("unexpected error: {e:?}"),
-        }
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut input, &mut output)
+            .expect("sign");
+
+        output.set_position(0);
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .expect("from_bytes");
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
     }
 
     #[test]
@@ -8381,6 +8386,8 @@ mod tests {
             .expect("sign a");
 
         // Step 2: try to redact the same URI again with B taking A as ingredient.
+        // The assertion was already removed in step 1, so signing succeeds and
+        // emits a warning rather than failing.
         output_a.set_position(0);
         let mut builder_b = Builder::default();
         builder_b.set_intent(BuilderIntent::Edit);
@@ -8392,7 +8399,7 @@ mod tests {
         builder_b.add_action(redacted_action_b).unwrap();
         let mut output_b = Cursor::new(Vec::new());
         let result = builder_b.sign(signer.as_ref(), "image/jpeg", &mut output_a, &mut output_b);
-        assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
     }
 
     #[cfg(feature = "add_thumbnails")]

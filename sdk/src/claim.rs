@@ -3457,8 +3457,11 @@ impl Claim {
                     .iter_mut()
                     .find(|x| redaction.contains(x.label()))
                 {
-                    claim.redact_assertion(redaction)?;
-                    applied_redactions.push(redaction.clone());
+                    match claim.redact_assertion(redaction) {
+                        Ok(()) => applied_redactions.push(redaction.clone()),
+                        Err(Error::AssertionRedactionNotFound) => {}
+                        Err(e) => return Err(e),
+                    }
                 }
             }
         }
