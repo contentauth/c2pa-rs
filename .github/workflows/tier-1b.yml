@@ -54,6 +54,14 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
         rust_version: [stable, 1.88.0]
+        # PROBE (do not merge): on ubuntu-latest + stable (Rust 1.96.0) the
+        # doctest link crashes with SIGBUS inside rust-lld. Force the system
+        # `ld` on that matrix entry only, to confirm rust-lld is the cause.
+        # See PR investigation in #2184 CI run 26646459500.
+        include:
+          - os: ubuntu-latest
+            rust_version: stable
+            extra_rustflags: "-C link-arg=-fuse-ld=ld"
 
     steps:
       - name: Checkout repository
@@ -71,6 +79,8 @@ jobs:
         env:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
+          RUSTFLAGS: ${{ matrix.extra_rustflags }}
+          RUSTDOCFLAGS: ${{ matrix.extra_rustflags }}
         run: |
           cargo test --features "$FEATURES"
 
