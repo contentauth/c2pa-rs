@@ -19,7 +19,7 @@ env:
 
 jobs:
   build:
-    name: Build benchmarks
+    name: Build benchmarks (${{ matrix.build_mode }})
     if: |
       github.event_name != 'pull_request' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
@@ -30,10 +30,18 @@ jobs:
         contains(github.event.pull_request.labels.*.name, 'check-release') ||
         contains(github.event.pull_request.labels.*.name, 'benchmark')))
 
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            build_mode: simulation,memory
+          - runner: codspeed-macro
+            build_mode: walltime
+
+    runs-on: ${{ matrix.runner }}
 
     env:
-      BUILD_MODE: simulation,memory
+      BUILD_MODE: ${{ matrix.build_mode }}
 
     steps:
       - name: Checkout repository
@@ -44,7 +52,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: target/codspeed/
-          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
           lookup-only: true
 
       - name: Install Rust toolchain
@@ -72,13 +80,13 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: target/codspeed/
-          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
 
   benchmarks:
-    name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }} <${{ matrix.build_mode || 'simulation' }}>)
+    name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }} <${{ matrix.build_mode || 'walltime' }}>)
     needs: [build]
 
-    runs-on: ubuntu-latest
+    runs-on: ${{ (matrix.build_mode || 'walltime') == 'walltime' && 'codspeed-macro' || 'ubuntu-latest' }}
 
     strategy:
       matrix:
@@ -106,6 +114,9 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
 
@@ -116,11 +127,11 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: target/codspeed/
-          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
           fail-on-cache-miss: true
 
       - name: Set binary permissions
-        run: chmod +x target/codspeed/analysis/c2pa/*
+        run: chmod +x target/codspeed/${{ (matrix.build_mode || 'walltime') == 'walltime' && 'walltime' || 'analysis' }}/c2pa/*
 
       - name: Get asset ETag from S3
         id: s3-etag
@@ -174,6 +185,6 @@ jobs:
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@v4
         with:
-          mode: ${{ matrix.build_mode || 'simulation' }}
+          mode: ${{ matrix.build_mode || 'walltime' }}
           run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}{2}"', matrix.bench, matrix.format, steps.size.outputs.suffix) || '' }}
           token: ${{ secrets.CODSPEED_TOKEN }}
