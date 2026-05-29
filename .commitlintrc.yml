@@ -24,6 +24,7 @@ rules:
       - c2patool
       - export_schema
       - make_test_images
+      - c2pa_c_ffi
       - sdk
 
   # Subject line should exist

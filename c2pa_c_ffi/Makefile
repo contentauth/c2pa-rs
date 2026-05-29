@@ -160,6 +160,22 @@ release-ios-arm64-sim:
 	cargo build --target=aarch64-apple-ios-sim $(CARGO_BUILD_FLAGS)
 	@$(call make_zip,$(TARGET_DIR)/aarch64-apple-ios-sim/release,aarch64-apple-ios-sim)
 
+# Mac Catalyst on Apple Silicon
+release-ios-arm64-macabi:
+	rustup target add aarch64-apple-ios-macabi
+	SDKROOT=$$(xcrun -sdk macosx --show-sdk-path) \
+	IPHONEOS_DEPLOYMENT_TARGET=$(IPHONEOS_DEPLOYMENT_TARGET) \
+	cargo build --target=aarch64-apple-ios-macabi $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/aarch64-apple-ios-macabi/release,aarch64-apple-ios-macabi)
+
+# Mac Catalyst on Intel Macs
+release-ios-x86_64-macabi:
+	rustup target add x86_64-apple-ios-macabi
+	SDKROOT=$$(xcrun -sdk macosx --show-sdk-path) \
+	IPHONEOS_DEPLOYMENT_TARGET=$(IPHONEOS_DEPLOYMENT_TARGET) \
+	cargo build --target=x86_64-apple-ios-macabi $(CARGO_BUILD_FLAGS)
+	@$(call make_zip,$(TARGET_DIR)/x86_64-apple-ios-macabi/release,x86_64-apple-ios-macabi)
+
 # 64-bit Android devices
 release-android-arm64:
 	$(CROSS_INSTALL_RUSTFLAGS) cargo install cross --git https://github.com/cross-rs/cross
@@ -218,6 +234,10 @@ else ifeq ($(TARGET),x86_64-apple-ios)
 release: release-ios-x86_64
 else ifeq ($(TARGET),aarch64-apple-ios-sim)
 release: release-ios-arm64-sim
+else ifeq ($(TARGET),aarch64-apple-ios-macabi)
+release: release-ios-arm64-macabi
+else ifeq ($(TARGET),x86_64-apple-ios-macabi)
+release: release-ios-x86_64-macabi
 else ifeq ($(TARGET),aarch64-linux-android)
 release: release-android-arm64
 else ifeq ($(TARGET),armv7-linux-androideabi)
