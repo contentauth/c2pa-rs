@@ -87,9 +87,7 @@ impl C2paError {
         let err_str = err.to_string();
         match err {
             c2pa::Error::AssertionMissing { url } => Self::AssertionNotFound("".to_string()),
-            AssertionInvalidRedaction
-            | AssertionRedactionNotFound
-            | AssertionUnsupportedVersion => Self::Assertion(err_str),
+            AssertionInvalidRedaction | AssertionUnsupportedVersion => Self::Assertion(err_str),
             ClaimAlreadySigned
             | ClaimUnsigned
             | ClaimMissingSignatureBox

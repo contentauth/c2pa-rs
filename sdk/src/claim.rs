@@ -1810,8 +1810,9 @@ impl Claim {
     }
 
     /// Redact an assertion from a prior claim.
-    /// This will remove the assertion from the JUMBF
-    fn redact_assertion(&mut self, assertion_uri: &str) -> Result<()> {
+    /// This will remove the assertion from the JUMBF.
+    /// Returns `true` if the assertion was found and removed, `false` if not found.
+    fn redact_assertion(&mut self, assertion_uri: &str) -> Result<bool> {
         // cannot redact action assertions per the spec
         // cannot redact hash bindings
         let (label, _instance) = Claim::assertion_label_from_link(assertion_uri);
@@ -1827,7 +1828,7 @@ impl Claim {
                 .position(|x| assertion_uri.contains(&x.label()))
             {
                 self.assertion_store.remove(index);
-                return Ok(());
+                return Ok(true);
             }
         } else if assertion_uri.contains(DATABOX_STORE) {
             if let Some(index) = self
@@ -1836,11 +1837,11 @@ impl Claim {
                 .position(|(x, _d)| assertion_uri.contains(&x.url()))
             {
                 self.data_boxes.remove(index);
-                return Ok(());
+                return Ok(true);
             }
         }
 
-        Err(Error::AssertionRedactionNotFound)
+        Ok(false)
     }
 
     /// Return a hash of this claim.
@@ -3457,10 +3458,8 @@ impl Claim {
                     .iter_mut()
                     .find(|x| redaction.contains(x.label()))
                 {
-                    match claim.redact_assertion(redaction) {
-                        Ok(()) => applied_redactions.push(redaction.clone()),
-                        Err(Error::AssertionRedactionNotFound) => {}
-                        Err(e) => return Err(e),
+                    if claim.redact_assertion(redaction)? {
+                        applied_redactions.push(redaction.clone());
                     }
                 }
             }
