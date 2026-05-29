@@ -159,8 +159,7 @@ impl MakeTestImages {
     pub fn new(config: Config) -> Result<Self> {
         let output = config.output_path.to_owned();
         let context = c2pa::Context::new()
-            .with_settings(json!({"verify": {"verify_after_sign": false}}))
-            .unwrap()
+            .with_settings(json!({"verify": {"verify_after_sign": false}}))?
             .into_shared();
         Ok(Self {
             config,

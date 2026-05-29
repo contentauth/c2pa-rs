@@ -133,7 +133,9 @@ impl C2paError {
             NotFound | ResourceNotFound(_) | MissingDataBox => Self::ResourceNotFound(err_str),
             FileNotFound(_) => Self::FileNotFound(err_str),
             UnsupportedType => Self::NotSupported(err_str),
-            ClaimVerification(_) | InvalidClaim(_) | JumbfParseError(_) => Self::Verify(err_str),
+            ClaimVerification(_) | InvalidClaim(_) | InvalidManifest(_) | JumbfParseError(_) => {
+                Self::Verify(err_str)
+            }
             _ => Self::Other(err_str),
         }
     }

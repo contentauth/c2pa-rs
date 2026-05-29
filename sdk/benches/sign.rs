@@ -22,15 +22,14 @@ fn create_signer() -> CallbackSigner {
 }
 
 fn context() -> Arc<Context> {
-    Arc::new(
-        Context::new()
-            .with_settings(json!({
-                "verify": {
-                    "verify_after_sign": false
-                }
-            }))
-            .unwrap(),
-    )
+    Context::new()
+        .with_settings(json!({
+            "verify": {
+                "verify_after_sign": false
+            }
+        }))
+        .unwrap()
+        .into_shared()
 }
 
 fn load(label: &str, ext: &str) -> Option<Vec<u8>> {

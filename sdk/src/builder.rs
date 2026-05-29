@@ -2834,9 +2834,9 @@ impl Builder {
         }?;
         if self.context.settings().verify.verify_after_sign {
             if _sync {
-                store.validate_manifest(None, &self.context)?;
+                store.verify_store_strict(None, &self.context)?;
             } else {
-                store.validate_manifest_async(None, &self.context).await?;
+                store.verify_store_strict_async(None, &self.context).await?;
             }
         }
         // get composed version for embedding to JPEG
@@ -8938,6 +8938,7 @@ mod tests {
         });
         let mut signing_builder =
             Builder::from_shared_context(&context).with_definition(manifest_def.to_string())?;
+        signing_builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_a))?;
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_b))?;
 
@@ -9047,6 +9048,7 @@ mod tests {
         });
         let mut signing_builder =
             Builder::from_shared_context(&context).with_definition(manifest_def.to_string())?;
+        signing_builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_a))?;
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_b))?;
 
