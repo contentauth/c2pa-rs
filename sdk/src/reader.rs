@@ -43,7 +43,7 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     status_tracker::StatusTracker,
     store::Store,
-    utils::hash_utils::hash_to_b64,
+    utils::{hash_utils::hash_to_b64, mime::format_from_stream},
     validation_results::{ValidationResults, ValidationState},
     validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
     Ingredient, Manifest, ManifestAssertion,
@@ -224,14 +224,8 @@ impl Reader {
 
         // Prefer content-based format detection; fall back to the caller-supplied
         // format string (which may be an extension or MIME type).
-        let detected;
-        let format = match crate::utils::mime::format_from_stream(&mut stream) {
-            Some(f) => {
-                detected = f;
-                &detected as &str
-            }
-            None => format,
-        };
+        let detected = format_from_stream(&mut stream);
+        let format = detected.as_deref().unwrap_or(format);
 
         self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
 
@@ -310,7 +304,7 @@ impl Reader {
         let mut file = File::open(path)?;
         // Prefer content-based format detection; fall back to the file extension.
         // format_from_stream rewinds, so `file` is at position 0 after detection.
-        let format = crate::utils::mime::format_from_stream(&mut file)
+        let format = format_from_stream(&mut file)
             .or_else(|| crate::format_from_path(path))
             .ok_or(crate::Error::UnsupportedType)?;
 

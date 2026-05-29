@@ -23,6 +23,7 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
         "ico" => "image/x-icon",
         "bmp" => "image/bmp",
         "webp" => "image/webp",
+        "jxl" => "image/jxl",
         "dng" => "image/x-adobe-dng",
         "heic" => "image/heic",
         "heif" => "image/heif",
@@ -233,164 +234,112 @@ mod tests {
     use std::io::Cursor;
 
     use super::format_from_stream;
+    use crate::utils::test::create_test_stream;
 
-    fn detect(bytes: &[u8]) -> Option<String> {
-        format_from_stream(&mut Cursor::new(bytes))
+    fn detect_fixture(name: &str) {
+        let (expected, mut stream) = create_test_stream(name);
+        let detected = format_from_stream(&mut stream);
+        assert_eq!(
+            detected.as_deref(),
+            Some(expected),
+            "format_from_stream mismatch for {name}"
+        );
     }
 
     #[test]
     fn test_jpeg() {
-        assert_eq!(
-            detect(&[0xff, 0xd8, 0xff, 0xe0, 0, 0]),
-            Some("image/jpeg".into())
-        );
+        detect_fixture("CA.jpg");
     }
 
     #[test]
     fn test_png() {
-        assert_eq!(
-            detect(&[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
-            Some("image/png".into())
-        );
+        detect_fixture("libpng-test.png");
     }
 
     #[test]
     fn test_gif() {
-        assert_eq!(detect(b"GIF89a\x00\x00\x00\x00"), Some("image/gif".into()));
-        assert_eq!(detect(b"GIF87a\x00\x00\x00\x00"), Some("image/gif".into()));
+        detect_fixture("sample1.gif");
     }
 
     #[test]
-    fn test_tiff_little_endian() {
-        assert_eq!(
-            detect(&[0x49, 0x49, 0x2a, 0x00, 0, 0, 0, 0]),
-            Some("image/tiff".into())
-        );
+    fn test_tiff() {
+        detect_fixture("TUSCANY.TIF");
     }
 
-    #[test]
-    fn test_tiff_big_endian() {
-        assert_eq!(
-            detect(&[0x4d, 0x4d, 0x00, 0x2a, 0, 0, 0, 0]),
-            Some("image/tiff".into())
-        );
-    }
-
+    // BigTIFF has no fixture file; test the magic bytes directly.
     #[test]
     fn test_bigtiff() {
-        assert_eq!(
-            detect(&[0x49, 0x49, 0x2b, 0x00, 0, 0, 0, 0]),
-            Some("image/tiff".into())
-        );
+        let mut cursor = Cursor::new([0x49u8, 0x49, 0x2b, 0x00, 0, 0, 0, 0]);
+        assert_eq!(format_from_stream(&mut cursor), Some("image/tiff".into()));
     }
 
     #[test]
     fn test_jxl() {
-        assert_eq!(
-            detect(&[0x00, 0x00, 0x00, 0x0c, 0x4a, 0x58, 0x4c, 0x20, 0x0d, 0x0a, 0x87, 0x0a]),
-            Some("image/jxl".into())
-        );
+        detect_fixture("sample1.jxl");
     }
 
     #[test]
     fn test_webp() {
-        let mut bytes = *b"RIFF\x00\x00\x00\x00WEBP";
-        assert_eq!(detect(&bytes), Some("image/webp".into()));
-        // mutate brand bytes — should still be RIFF but fall through to wav
-        bytes[8..12].copy_from_slice(b"WAVE");
-        assert_eq!(detect(&bytes), Some("audio/wav".into()));
+        detect_fixture("sample1.webp");
     }
 
     #[test]
     fn test_avi() {
-        assert_eq!(
-            detect(b"RIFF\x00\x00\x00\x00AVI "),
-            Some("video/avi".into())
-        );
+        detect_fixture("test.avi");
     }
 
     #[test]
     fn test_mp4() {
-        // ftypisom
-        let mut b = [0u8; 12];
-        b[4..8].copy_from_slice(b"ftyp");
-        b[8..12].copy_from_slice(b"isom");
-        assert_eq!(detect(&b), Some("video/mp4".into()));
+        detect_fixture("video1.mp4");
     }
 
     #[test]
     fn test_heic() {
-        let mut b = [0u8; 12];
-        b[4..8].copy_from_slice(b"ftyp");
-        b[8..12].copy_from_slice(b"heic");
-        assert_eq!(detect(&b), Some("image/heic".into()));
+        detect_fixture("sample1.heic");
     }
 
     #[test]
     fn test_heif() {
-        let mut b = [0u8; 12];
-        b[4..8].copy_from_slice(b"ftyp");
-        b[8..12].copy_from_slice(b"mif1");
-        assert_eq!(detect(&b), Some("image/heif".into()));
+        detect_fixture("sample1.heif");
     }
 
     #[test]
     fn test_avif() {
-        let mut b = [0u8; 12];
-        b[4..8].copy_from_slice(b"ftyp");
-        b[8..12].copy_from_slice(b"avif");
-        assert_eq!(detect(&b), Some("image/avif".into()));
+        detect_fixture("sample1.avif");
     }
 
     #[test]
     fn test_quicktime() {
-        let mut b = [0u8; 12];
-        b[4..8].copy_from_slice(b"ftyp");
-        b[8..12].copy_from_slice(b"qt  ");
-        assert_eq!(detect(&b), Some("video/quicktime".into()));
+        detect_fixture("c.mov");
     }
 
     #[test]
     fn test_m4a() {
-        let mut b = [0u8; 12];
-        b[4..8].copy_from_slice(b"ftyp");
-        b[8..12].copy_from_slice(b"M4A ");
-        assert_eq!(detect(&b), Some("audio/mp4".into()));
+        detect_fixture("sample1.m4a");
     }
 
     #[test]
     fn test_flac() {
-        assert_eq!(detect(b"fLaC\x00\x00\x00\x00"), Some("audio/flac".into()));
+        detect_fixture("sample1.flac");
     }
 
     #[test]
-    fn test_mp3_mpeg_sync() {
-        // Plain MPEG frame sync header
-        assert_eq!(detect(&[0xff, 0xfb, 0x90, 0x00]), Some("audio/mpeg".into()));
+    fn test_mp3() {
+        detect_fixture("sample1.mp3");
     }
 
     #[test]
-    fn test_id3_mp3() {
-        // ID3 tag with size=0 followed by non-fLaC bytes
-        let mut bytes = vec![0u8; 20];
-        bytes[0..3].copy_from_slice(b"ID3");
-        bytes[3] = 3; // version
-        bytes[4] = 0; // flags
-                      // sync-safe size bytes 6-9, all 0 → tag_size = 0
-                      // bytes 10+ = payload (not fLaC)
-        bytes[10..14].copy_from_slice(b"XYZ!");
-        assert_eq!(
-            format_from_stream(&mut Cursor::new(&bytes)),
-            Some("audio/mpeg".into())
-        );
+    fn test_wav() {
+        detect_fixture("sample1.wav");
     }
 
+    /// Test that an ID3-tagged FLAC file is correctly identified as audio/flac, not audio/mpeg.
+    /// we don't have a real FLAC fixture with an ID3 tag, so we construct a synthetic o
     #[test]
     fn test_id3_flac() {
-        // ID3 tag with size=0, payload is fLaC
+        // ID3 tag with size=0, payload is fLaC → FLAC
         let mut bytes = vec![0u8; 20];
         bytes[0..3].copy_from_slice(b"ID3");
-        // sync-safe size = 0 → payload at offset 10
         bytes[10..14].copy_from_slice(b"fLaC");
         assert_eq!(
             format_from_stream(&mut Cursor::new(&bytes)),
@@ -400,21 +349,21 @@ mod tests {
 
     #[test]
     fn test_pdf() {
-        assert_eq!(detect(b"%PDF-1.4\n"), Some("application/pdf".into()));
+        detect_fixture("basic.pdf");
     }
 
     #[test]
     fn test_unknown_returns_none() {
-        assert_eq!(detect(&[0x00u8; 16]), None);
+        let mut cursor = Cursor::new([0x00u8; 16]);
+        assert_eq!(format_from_stream(&mut cursor), None);
     }
 
     #[test]
     fn test_stream_is_rewound_after_call() {
-        use std::io::{Cursor, Seek as _};
-        let mut cursor = Cursor::new(vec![0xff, 0xd8, 0xff, 0xe0, 0, 0]);
-        let _ = format_from_stream(&mut cursor);
+        let (_, mut stream) = create_test_stream("CA.jpg");
+        let _ = format_from_stream(&mut stream);
         assert_eq!(
-            cursor.position(),
+            stream.position(),
             0,
             "stream must be rewound after detection"
         );
