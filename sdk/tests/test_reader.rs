@@ -167,11 +167,20 @@ fn test_reader_stream_wrong_format_overridden_by_detection() -> Result<()> {
 fn test_reader_file_wrong_extension_overridden_by_detection() -> Result<()> {
     use std::io::Write;
 
-    use tempfile::NamedTempFile;
+    use tempfile::Builder;
 
     // Copy CA.jpg bytes into a temp file whose name ends in ".png".
     let jpeg_bytes = include_bytes!("fixtures/CA.jpg");
-    let mut tmp = NamedTempFile::with_suffix(".png").map_err(c2pa::Error::IoError)?;
+    #[cfg(target_os = "wasi")]
+    let mut tmp = Builder::new()
+        .suffix(".png")
+        .tempfile_in("/")
+        .map_err(c2pa::Error::IoError)?;
+    #[cfg(not(target_os = "wasi"))]
+    let mut tmp = Builder::new()
+        .suffix(".png")
+        .tempfile()
+        .map_err(c2pa::Error::IoError)?;
     tmp.write_all(jpeg_bytes).map_err(c2pa::Error::IoError)?;
     tmp.flush().map_err(c2pa::Error::IoError)?;
 
@@ -184,11 +193,17 @@ fn test_reader_file_wrong_extension_overridden_by_detection() -> Result<()> {
 #[test]
 #[cfg(feature = "file_io")]
 fn test_reader_file_no_extension_overridden_by_detection() -> Result<()> {
-    use tempfile::NamedTempFile;
+    use tempfile::Builder;
 
     let jpeg_bytes = include_bytes!("fixtures/CA.jpg");
-    // Builder::with_suffix("") gives a file with no extension.
-    let tmp = NamedTempFile::new().map_err(c2pa::Error::IoError)?;
+    #[cfg(target_os = "wasi")]
+    let tmp = Builder::new()
+        .tempfile_in("/")
+        .map_err(c2pa::Error::IoError)?;
+    #[cfg(not(target_os = "wasi"))]
+    let tmp = Builder::new()
+        .tempfile()
+        .map_err(c2pa::Error::IoError)?;
     // Rename to strip the extension entirely.
     let no_ext_path = tmp.path().with_extension("");
     std::fs::write(&no_ext_path, jpeg_bytes).map_err(c2pa::Error::IoError)?;
