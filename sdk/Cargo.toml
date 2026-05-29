@@ -105,14 +105,7 @@ byteorder = { version = "1.4.3", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
 c2pa_cbor = "0.77.2"
-<<<<<<< feat/text-io-handler
-c2pa-text = "1.1.0"
-config = { version = "0.14.0", default-features = false, features = [
-    "json",
-    "toml",
-] }
-=======
->>>>>>> main
+c2pa-text = "2.0.0"
 const-hex = "1.14"
 const-oid = { version = "0.9.6", optional = true }
 coset = "0.4.0"
