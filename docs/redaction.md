@@ -24,7 +24,6 @@ The C2PA specification imposes restrictions on what can be redacted:
 | **No self-redaction** | A manifest cannot redact its own assertions. |
 | **Cannot redact `c2pa.actions`** | Action assertions are protected. |
 | **Cannot redact `c2pa.hash.*`** | Hash binding assertions are protected. |
-| **URI must match** | Every URI in the redactions list must resolve to an assertion in an ingredient, or signing fails with `AssertionRedactionNotFound`. |
 
 ## JUMBF URI format
 
