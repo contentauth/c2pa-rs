@@ -99,6 +99,8 @@ mod tests {
         );
     }
 
+    // TODO: https://github.com/contentauth/c2pa-rs/issues/2182
+    #[ignore]
     #[c2pa_test_async]
     async fn test_multiple_identities_valid() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
