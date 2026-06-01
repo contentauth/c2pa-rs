@@ -9,6 +9,14 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.85.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.85.1...c2pa-v0.85.2)
+_01 June 2026_
+
+### Fixed
+
+* Make GIF box map C2PA placeholder len 0 rather than 1 ([#2156](https://github.com/contentauth/c2pa-rs/pull/2156))
+* Error with validation results on invalid manifest after verify after sign ([#2147](https://github.com/contentauth/c2pa-rs/pull/2147))
+
 ## [0.85.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.85.0...c2pa-v0.85.1)
 _01 June 2026_
 
