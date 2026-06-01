@@ -120,13 +120,14 @@ impl DataHash {
     /// Like [`gen_hash_from_stream`] but fires `progress(step, total)` once per
     /// hash range so callers with a [`Context`] can report `ProgressPhase::Hashing`
     /// ticks and support cancellation.
-    pub(crate) fn gen_hash_from_stream_with_progress<R>(
+    pub(crate) fn gen_hash_from_stream_with_progress<R, F>(
         &mut self,
         stream: &mut R,
-        progress: Option<&mut dyn FnMut(u32, u32) -> Result<()>>,
+        progress: &mut F,
     ) -> Result<()>
     where
         R: Read + Seek + ?Sized,
+        F: FnMut(u32, u32) -> Result<()>,
     {
         if self.is_remote_hash() {
             return Err(Error::BadParam(
@@ -269,20 +270,21 @@ impl DataHash {
 
     // verify data using currently set algorithm or default alg is none currently set
     pub fn verify_stream_hash(&self, reader: &mut dyn CAIRead, alg: Option<&str>) -> Result<()> {
-        self.verify_stream_hash_with_progress(reader, alg, None)
+        self.verify_stream_hash_with_progress(reader, alg, &mut |_, _| Ok(()))
     }
 
     /// Like [`verify_stream_hash`] but fires `progress(step, total)` once per hash
     /// range so callers with a [`Context`] can report `ProgressPhase::VerifyingAssetHash`
     /// ticks and support cancellation.
-    pub(crate) fn verify_stream_hash_with_progress<R>(
+    pub(crate) fn verify_stream_hash_with_progress<R, F>(
         &self,
         reader: &mut R,
         alg: Option<&str>,
-        progress: Option<&mut dyn FnMut(u32, u32) -> Result<()>>,
+        progress: &mut F,
     ) -> Result<()>
     where
         R: Read + Seek + ?Sized,
+        F: FnMut(u32, u32) -> Result<()>,
     {
         if self.is_remote_hash() {
             return Err(Error::BadParam("asset hash is remote".to_owned()));

@@ -244,6 +244,8 @@ trust_config = """
 verify_after_reading = true
 # Verify manifests after signing.
 verify_after_sign = true
+# Verify hashes after signing.
+verify_after_sign_hash = true
 # Fetch remote manifests.
 remote_manifest_fetch = true
 
@@ -435,6 +437,9 @@ operating_system = "auto"
 # Signifies if all the actions that ever happened on a particular asset are specified
 # or if some are missing.
 #all_actions_included = true
+
+# Assertions with a base label included in this list will be automatically marked as a created assertion.
+created_assertion_labels = ["c2pa.created", "c2pa.opened", "c2pa.placed"]
 
 # A template to use as the base values for a particular action.
 #[[builder.actions.templates]]

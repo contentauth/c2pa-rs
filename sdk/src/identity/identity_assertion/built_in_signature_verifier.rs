@@ -45,7 +45,7 @@ impl SignatureVerifier for BuiltInSignatureVerifier<'_> {
     type Error = BuiltInSignatureError;
     type Output = BuiltInCredential;
 
-    async fn check_signature(
+    fn check_signature(
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],
@@ -55,13 +55,36 @@ impl SignatureVerifier for BuiltInSignatureVerifier<'_> {
             crate::identity::claim_aggregation::CAWG_ICA_SIG_TYPE => self
                 .ica_verifier
                 .check_signature(signer_payload, signature, status_tracker)
-                .await
                 .map(BuiltInCredential::IdentityClaimsAggregationCredential)
                 .map_err(map_err_to_built_in),
 
             crate::identity::x509::CAWG_X509_SIG_TYPE => self
                 .x509_verifier
                 .check_signature(signer_payload, signature, status_tracker)
+                .map(BuiltInCredential::X509Signature)
+                .map_err(map_err_to_built_in),
+
+            sig_type => Err(ValidationError::UnknownSignatureType(sig_type.to_string())),
+        }
+    }
+
+    async fn check_signature_async(
+        &self,
+        signer_payload: &SignerPayload,
+        signature: &[u8],
+        status_tracker: &mut StatusTracker,
+    ) -> Result<Self::Output, ValidationError<Self::Error>> {
+        match signer_payload.sig_type.as_str() {
+            crate::identity::claim_aggregation::CAWG_ICA_SIG_TYPE => self
+                .ica_verifier
+                .check_signature_async(signer_payload, signature, status_tracker)
+                .await
+                .map(BuiltInCredential::IdentityClaimsAggregationCredential)
+                .map_err(map_err_to_built_in),
+
+            crate::identity::x509::CAWG_X509_SIG_TYPE => self
+                .x509_verifier
+                .check_signature_async(signer_payload, signature, status_tracker)
                 .await
                 .map(BuiltInCredential::X509Signature)
                 .map_err(map_err_to_built_in),
@@ -187,7 +210,7 @@ mod tests {
             IdentityAssertion, SignerPayload, ValidationError,
         },
         status_tracker::StatusTracker,
-        Builder, HashedUri, Reader, SigningAlg,
+        Builder, HashedUri, SigningAlg,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
@@ -199,7 +222,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
@@ -234,7 +257,7 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = crate::identity::tests::read_manifest(format, &mut dest).await;
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
@@ -266,15 +289,25 @@ mod tests {
 
     #[c2pa_test_async]
     async fn adobe_connected_identities() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
         let format = "image/jpeg";
         let test_image =
             include_bytes!("../tests/fixtures/claim_aggregation/adobe_connected_identities.jpg");
 
         let mut test_image = Cursor::new(test_image);
 
-        let reader = Reader::from_stream(format, &mut test_image).unwrap();
+        let settings = crate::settings::Settings::default()
+            .with_value("verify.verify_trust", false)
+            .unwrap()
+            .with_value("core.decode_identity_assertions", false)
+            .unwrap();
+        let context = crate::Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .into_shared();
+        let reader = crate::Reader::from_shared_context(&context)
+            .with_stream_async(format, &mut test_image)
+            .await
+            .unwrap();
         assert_eq!(reader.validation_status(), None);
 
         let manifest = reader.active_manifest().unwrap();
@@ -364,7 +397,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
@@ -386,7 +419,7 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = crate::identity::tests::read_manifest(format, &mut dest).await;
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();

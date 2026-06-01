@@ -23,7 +23,7 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 #[test]
 #[cfg(feature = "file_io")]
 fn test_reader_not_found() -> Result<()> {
-    let result = Reader::from_file("not_found.png");
+    let result = Reader::default().with_file("not_found.png");
     assert_err!(result, Err(Error::IoError(_)));
     Ok(())
 }
@@ -31,7 +31,7 @@ fn test_reader_not_found() -> Result<()> {
 #[test]
 fn test_reader_no_jumbf() -> Result<()> {
     let (format, mut stream) = fixture_stream("sample1.png")?;
-    let result = Reader::from_stream(&format, &mut stream);
+    let result = Reader::default().with_stream(&format, &mut stream);
     assert_err!(result, Err(Error::JumbfNotFound));
     Ok(())
 }
@@ -39,14 +39,14 @@ fn test_reader_no_jumbf() -> Result<()> {
 #[test]
 fn test_reader_ca_jpg() -> Result<()> {
     let (format, mut stream) = fixture_stream("CA.jpg")?;
-    let reader = Reader::from_stream(&format, &mut stream)?;
+    let reader = Reader::default().with_stream(&format, &mut stream)?;
     compare_to_known_good(&reader, "CA.json")
 }
 
 #[test]
 fn test_reader_c_jpg() -> Result<()> {
     let (format, mut stream) = fixture_stream("C.jpg")?;
-    let reader = Reader::from_stream(&format, &mut stream)?;
+    let reader = Reader::default().with_stream(&format, &mut stream)?;
     compare_to_known_good(&reader, "C.json")
 }
 
@@ -80,19 +80,12 @@ fn test_reader_xca_jpg() -> Result<()> {
 
 #[c2pa_test_async]
 async fn test_reader_remote_url_async() -> Result<()> {
-    Settings::from_toml(
-        &toml::toml! {
-            [verify]
-            remote_manifest_fetch = true
-        }
-        .to_string(),
-    )?;
-
-    let reader = Reader::from_stream_async(
-        "image/jpeg",
-        std::io::Cursor::new(include_bytes!("./fixtures/cloud.jpg")),
-    )
-    .await?;
+    let reader = Reader::default()
+        .with_stream_async(
+            "image/jpeg",
+            std::io::Cursor::new(include_bytes!("./fixtures/cloud.jpg")),
+        )
+        .await?;
     let remote_url = reader.remote_url();
     assert_eq!(remote_url, Some("https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391"));
     assert!(!reader.is_embedded());

@@ -25,6 +25,7 @@ use crate::{
     },
     crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
     http::HttpResolverError,
+    ValidationResults,
 };
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
@@ -119,6 +120,9 @@ pub enum Error {
 
     #[error("more than one manifest store detected")]
     TooManyManifestStores,
+
+    #[error("assertion limit exceeded: maximum allowed is {max}")]
+    TooManyAssertions { max: usize },
 
     #[error("manifest is not refernced by any ingredient")]
     UnreferencedManifest,
@@ -387,6 +391,9 @@ pub enum Error {
     // The string should be one of the C2PA validation codes
     #[error("C2PA Validation Error: {0}")]
     C2PAValidation(String),
+
+    #[error("manifest failed validation with: {}", .0.failure_summary())]
+    InvalidManifest(ValidationResults),
 
     #[error("error parsing BMFF: {0}")]
     BmffError(#[from] BmffError),

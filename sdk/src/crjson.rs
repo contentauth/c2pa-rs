@@ -839,7 +839,8 @@ mod tests {
 
     #[test]
     fn test_jpeg_trust_reader_from_stream() -> Result<()> {
-        let reader = Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
+        let reader = Reader::default()
+            .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
 
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         Ok(())
@@ -847,7 +848,8 @@ mod tests {
 
     #[test]
     fn test_jpeg_trust_format_json() -> Result<()> {
-        let reader = Reader::from_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
+        let reader = Reader::default()
+            .with_stream("image/jpeg", std::io::Cursor::new(IMAGE_WITH_MANIFEST))?;
 
         let json_value = reader.to_crjson_value()?;
 
@@ -906,7 +908,7 @@ mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_cr_json_reader_from_file() -> Result<()> {
-        let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
+        let reader = Reader::default().with_file("tests/fixtures/CA.jpg")?;
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         let json = reader.crjson();
@@ -920,7 +922,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     fn test_claim_signature_decoding() -> Result<()> {
         // Test that signature (manifest-level) is decoded with full certificate details
-        let reader = Reader::from_file("tests/fixtures/CA.jpg")?;
+        let reader = Reader::default().with_file("tests/fixtures/CA.jpg")?;
 
         let json_value = reader.to_crjson_value()?;
         let manifests = json_value["manifests"].as_array().unwrap();
@@ -974,7 +976,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     fn test_cawg_identity_x509_signature_decoding() -> Result<()> {
         // Test that cawg.identity with X.509 signature is fully decoded
-        let reader = Reader::from_file("tests/fixtures/C_with_CAWG_data.jpg")?;
+        let reader = Reader::default().with_file("tests/fixtures/C_with_CAWG_data.jpg")?;
 
         let json_value = reader.to_crjson_value()?;
         let manifests = json_value["manifests"].as_array().unwrap();
@@ -1051,7 +1053,8 @@ mod tests {
             "identity/tests/fixtures/claim_aggregation/adobe_connected_identities.jpg"
         );
 
-        let reader = Reader::from_stream("image/jpeg", std::io::Cursor::new(&test_image[..]))?;
+        let reader =
+            Reader::default().with_stream("image/jpeg", std::io::Cursor::new(&test_image[..]))?;
 
         let json_value = reader.to_crjson_value()?;
         let manifests = json_value["manifests"].as_array().unwrap();
@@ -1133,7 +1136,7 @@ mod tests {
             return Ok(());
         }
 
-        let reader = Reader::from_file(path)?;
+        let reader = Reader::default().with_file(path)?;
         let json_value = reader.to_crjson_value()?;
 
         let manifests = json_value["manifests"]
