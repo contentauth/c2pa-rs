@@ -384,11 +384,7 @@ pub struct Verify {
     /// - Constructing a [`Reader`]
     /// - Adding an [`Ingredient`] to the [`Builder`]
     ///
-    /// The default value is true.
-    ///
-    /// <div class="warning">
-    /// This setting is only applicable if the crate is compiled with the `fetch_remote_manifests` feature.
-    /// </div>
+    /// The default value is false.
     ///
     /// [`Reader`]: crate::Reader
     /// [`Ingredient`]: crate::Ingredient
@@ -418,7 +414,7 @@ impl Default for Verify {
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
-            remote_manifest_fetch: true,
+            remote_manifest_fetch: false,
             skip_ingredient_conflict_resolution: false,
             strict_v1_validation: false,
         }
@@ -1092,14 +1088,14 @@ pub mod tests {
 
         // Verify set/get round-trip via thread-local API
         Settings::set_thread_local_value("core.merkle_tree_chunk_size_in_kb", 10).unwrap();
-        Settings::set_thread_local_value("verify.remote_manifest_fetch", false).unwrap();
+        Settings::set_thread_local_value("verify.remote_manifest_fetch", true).unwrap();
         Settings::set_thread_local_value("builder.thumbnail.enabled", false).unwrap();
 
         assert_eq!(
             get_settings_value::<usize>("core.merkle_tree_chunk_size_in_kb").unwrap(),
             10
         );
-        assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
+        assert!(get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
         assert!(!get_settings_value::<bool>("builder.thumbnail.enabled").unwrap());
 
         reset_default_settings().unwrap();

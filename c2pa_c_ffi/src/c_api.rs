@@ -3488,6 +3488,19 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_c2pa_reader_remote_url() {
+        let settings = serde_json::json!({
+            "verify": {
+                "remote_manifest_fetch": true
+            }
+        });
+        let result = unsafe {
+            c2pa_load_settings(
+                CString::new(settings.to_string()).unwrap().as_ptr(),
+                c"json".as_ptr(),
+            )
+        };
+        assert_eq!(result, 0);
+
         let mut stream = TestStream::new(include_bytes!(fixture_path!("cloud.jpg")).to_vec());
 
         let format = CString::new("image/jpeg").unwrap();
