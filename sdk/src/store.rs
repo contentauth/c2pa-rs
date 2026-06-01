@@ -2876,7 +2876,8 @@ impl Store {
 
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
-        let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
+        let input_len = io_utils::stream_len(input_stream)?;
+        let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
 
         #[allow(unused_mut)] // Not mutable in the non-async case.
         self.start_save_stream(
@@ -2973,7 +2974,8 @@ impl Store {
         let settings = context.settings();
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
-        let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
+        let input_len = io_utils::stream_len(input_stream)?;
+        let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
@@ -3007,7 +3009,7 @@ impl Store {
                         .get_writer(format)
                         .ok_or(Error::UnsupportedType)?;
 
-                    let mut tmp_stream = io_utils::stream_with_fs_fallback(threshold);
+                    let mut tmp_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
                     manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
 
                     // add external ref if possible
@@ -3138,7 +3140,7 @@ impl Store {
 
                 // insert Merkle UUID boxes at the correct location if required
                 if let Some(merkle_uuid_boxes) = &bmff_hash.merkle_uuid_boxes {
-                    let mut temp_stream = io_utils::stream_with_fs_fallback(threshold);
+                    let mut temp_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
 
                     if !source_is_intermediate {
                         // Merkle insertion requires a writable source; populate intermediate
