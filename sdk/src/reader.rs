@@ -1330,6 +1330,8 @@ pub mod tests {
 
     use super::*;
     use crate::{
+        assertions::DigitalSourceType,
+        builder::BuilderIntent,
         utils::{test::test_context, test_signer::test_signer},
         Builder, SigningAlg,
     };
@@ -1716,6 +1718,7 @@ pub mod tests {
         let mut builder = Builder::default()
             .with_definition(r#"{"title": "Test Image"}"#)
             .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         builder.add_ingredient(ingredient1);
         builder.add_ingredient(ingredient2);
 
