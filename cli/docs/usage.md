@@ -28,6 +28,7 @@ The following options are available with any (or no) subcommand.  Additional opt
 |-----|----|----|----|
 | `--certs` | | N/A | Extract a certificate chain to standard output (stdout). See [Extracting a certificate chain](#extracting-a-certificate-chain). |
 | `--config` | `-c` | `<config>` | Specify a [manifest definition](manifest.md) as a JSON string. See [Providing a manifest definition on the command line](#providing-a-manifest-definition-on-the-command-line). |
+| `--create` | | `<source_type>` | Create a new manifest with the specified [C2PA digital source type](https://cv.iptc.org/newscodes/digitalsourcetype/) (e.g. `digitalCapture`, `trainedAlgorithmicMedia`). Mutually exclusive with `--update` and `--parent`. See [Specifying manifest intent](#specifying-manifest-intent). |
 | `--detailed` | `-d` | N/A | Display detailed C2PA-formatted manifest data. See [Displaying a detailed manifest report](#detailed-manifest-report). |
 | `--external-manifest` | N/A | `<c2pa_file>` | Path to the binary `.c2pa` (sidecar) manifest to use for validation against the input asset. See [Using an external manifest](#using-an-external-manifest). |
 | `--force` | `-f` | N/A | Force overwriting output file. See [Forced overwrite](#forced-overwrite). |
@@ -39,11 +40,13 @@ The following options are available with any (or no) subcommand.  Additional opt
 | `--output` | `-o` | `<output_file>` | Path to output folder or file. This option can be used in two ways:<br/>&bull;With the `-m` option to [add a manifest to the specified asset file](#adding-a-manifest-to-an-asset-file). The argument then specifies the name of the resulting asset file with Content Credentials added.<br/>&bull;Without the `-m` option to [write the manifest data to a directory](#saving-manifest-data-to-a-directory) (including assertion and ingredient thumbnails). The argument then specifies the output directory to use. |
 | `--parent` | `-p` | `<parent_file>` | Path to parent file. See [Specifying a parent file](#specifying-a-parent-file). |
 | `--remote` | `-r` | `<manifest_url>` | URL for remote manifest available over HTTP. See [Generating a remote manifest](#generating-a-remote-manifest). |
-| `--reserve-size` | N/A | `<size>` | Only valid with the `--signer-path` option. The amount of memory to reserve for signing. Default: 20000. See [Signing claim bytes with your own signer](#signing-claim-bytes-with-your-own-signer). |
+| `--identity-signer-path` | N/A | `<command>` | Command for signing the CAWG identity assertion. Same protocol as `--signer-path`. See [Signing assets](signing.md). |
+| `--reserve-size` | N/A | `<size>` | Space to reserve for signatures when using `--signer-path` or `--identity-signer-path`. Default: 20000. See [Signing assets](signing.md). |
 | `--settings` | N/A | `<settings_file>` | Path to the settings file. Default is the value of the `C2PATOOL_SETTINGS` environment variable. If not set, defaults to `~/.config/c2pa/c2pa.toml`. See [Configuring SDK settings](../../docs/context-settings.md). |
 | `--sidecar` | `-s` | N/A | Put manifest in external "sidecar" file with `.c2pa` extension. See [Generating an external manifest](#generating-an-external-manifest). |
-| `--signer-path` | N/A | `<signer_path>` | Path to a command-line executable for signing. See [Signing claim bytes with your own signer](#signing-claim-bytes-with-your-own-signer). |
+| `--signer-path` | N/A | `<command>` | Command for signing the C2PA claim. See [Signing assets](signing.md). |
 | `--tree` | | N/A | Create a tree diagram of the manifest store. See [Displaying a tree diagram](#displaying-a-tree-diagram). |
+| `--update` | | N/A | Create an [update manifest](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_update_manifests) (non-editorial changes to an already-signed parent asset). Mutually exclusive with `--create`. See [Specifying manifest intent](#specifying-manifest-intent). |
 | `--version` | `-V` | N/A | Display version information. |
 
 ## Displaying manifest data
@@ -145,10 +148,10 @@ The tool generates a new manifest using the values given in the file and display
 > [!WARNING]
 > If the output file is the same as the source file, the tool will overwrite the source file.
 
-If the manifest definition file has `private_key` and `sign_cert` fields, then the tool signs the manifest using the private key and certificate they specify, respectively.  Otherwise, the tool uses the built-in test certificate and key, which is suitable ONLY for development and testing.  You can also specify the private key and certificate using environment variables; for more information, see [Creating and using an X.509 certificate](x_509.md). To sign with a CAWG identity assertion, see [Using an X.509 certificate for CAWG signing](cawg_x509_signing.md).
+For full details on configuring signers — including how to write a subprocess signer, use a remote signing service, or add a CAWG identity assertion — see [Signing assets](signing.md).
 
 > [!WARNING]
-> Accessing the private key and signing certificate directly like this is fine during development, but doing so in production may be insecure. Instead, use a key management service (KMS) or a hardware security module (HSM) to access the certificate and key; for example, as shown in the [C2PA Python Example](https://github.com/contentauth/c2pa-python-example).
+> Providing a private key directly in a manifest file or settings file is suitable only for development and testing. In production, use a subprocess signer or remote signing service so that private key material never passes through c2patool.
 
 ### Specifying a parent file
 
@@ -167,6 +170,63 @@ c2patool sample/C.jpg --ingredient --output ./ingredient
 
 c2patool sample/image.jpg -m sample/test.json -p ./ingredient -o signed_image.jpg
 ```
+
+### Specifying manifest intent
+
+Every C2PA manifest records an _intent_ that describes how the content was produced. C2PA Tool supports three intents, controlled by the `--create` and `--update` flags:
+
+| Intent | Flag | When to use |
+|--------|------|-------------|
+| **Create** | `--create <source-type>` | The output is a new original creation with no prior editing history. |
+| **Edit** | _(default — no flag needed)_ | The output is derived from one or more source assets through an editorial process. |
+| **Update** | `--update` | Non-editorial technical changes were applied to an already-signed asset (e.g., re-encoding or format conversion). |
+
+#### Create intent (`--create`)
+
+Use `--create <source-type>` to declare that the output is a new creation. Provide one of the [IPTC digital source type](https://cv.iptc.org/newscodes/digitalsourcetype/) values:
+
+```shell
+c2patool new_image.jpg \
+  -c '{"assertions":[]}' \
+  --create digitalCapture \
+  -o signed_image.jpg
+```
+
+The tool automatically adds a `c2pa.created` action. `--create` is mutually exclusive with `--update` and `--parent`.
+
+Some common source-type values:
+
+| Value | Meaning |
+|-------|---------|
+| `digitalCapture` | Original capture from a camera or microphone |
+| `algorithmicMedia` | Produced entirely by an algorithm |
+| `trainedAlgorithmicMedia` | Produced by a trained AI model |
+| `compositeWithTrainedAlgorithmicMedia` | Composite that includes AI-generated elements |
+
+See the [IPTC digital source type vocabulary](https://cv.iptc.org/newscodes/digitalsourcetype/) for the full list.
+
+#### Edit intent (default)
+
+When neither `--create` nor `--update` is given, the tool applies **Edit** intent. The source asset is automatically added as a parent ingredient and a `c2pa.opened` action is injected into the manifest:
+
+```shell
+c2patool source_image.jpg -m sample/test.json -o signed_image.jpg
+```
+
+Use `--parent` / `-p` when the parent asset is a different file from the source (see [Specifying a parent file](#specifying-a-parent-file)).
+
+#### Update intent (`--update`)
+
+Use `--update` to declare that non-editorial changes were applied to an already-signed asset. The source asset **must already contain a C2PA manifest**.
+
+```shell
+c2patool source_with_manifest.jpg \
+  -c '{"assertions":[]}' \
+  --update \
+  -o updated_image.jpg
+```
+
+The tool automatically adds a `c2pa.opened` action and sets the source asset as the parent ingredient. `--update` is mutually exclusive with `--create`.
 
 ### Generating an external manifest
 
@@ -187,23 +247,19 @@ In the example above, the tool will embed the URL `http://my_server/myasset.c2pa
 
 If you use both the `-s` and `-r` options, the tool embeds a manifest in the output file and also adds the remote reference.
 
-### Signing claim bytes with your own signer
+### Signing with your own signer
 
-When generating a manifest, if the private key is not accessible on the system on which you are running the tool, use the `--signer-path` argument to specify the path to an executable that performs signing. 
-This executable receives the claim bytes (the bytes to be signed) from standard input (`stdin`) and outputs the signature bytes to standard output (`stdout`). 
- 
- For example, the following command signs the asset's claim bytes by using an executable named `custom-signer`:
+Use `--signer-path` to delegate C2PA claim signing to an external executable, and `--identity-signer-path` to additionally embed a CAWG identity assertion signed by a separate executable. Both accept a command string (binary path and optional arguments):
 
 ```shell
 c2patool sample/image.jpg            \
     --manifest sample/test.json      \
     --output sample/signed-image.jpg \
-    --signer-path ./custom-signer    \
-    --reserve-size 20248             \
+    --signer-path ./my-signer        \
     -f
 ```
 
-For information on calculating the value of the `--reserve-size` argument, see `c2patool --help`.
+The signer executable must implement the subprocess signing protocol: respond to `--signer-info` with a JSON object describing its certificate and algorithm, and sign bytes received on stdin by writing the raw signature to stdout. For the full protocol specification, error handling details, and guidance on writing your own signer, see [Signing assets](signing.md).
 
 ### Providing a manifest definition on the command line
 

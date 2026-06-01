@@ -17,15 +17,80 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use c2pa::{create_signer, Signer, SigningAlg};
+use c2pa::{create_signer, BoxedSigner, SigningAlg};
 use serde::Deserialize;
 
-// Pull in default certs so the binary can self config
 const DEFAULT_CERTS: &[u8] = include_bytes!("../sample/es256_certs.pem");
 const DEFAULT_KEY: &[u8] = include_bytes!("../sample/es256_private.key");
 
 pub fn get_ta_url() -> Option<String> {
     std::env::var("C2PA_TA_URL").ok()
+}
+
+/// Output signer info JSON for the `sign-mode --signer-info` subcommand.
+///
+/// Uses cert/alg from `[signer.local]` settings if configured, otherwise the
+/// baked-in es256 test cert.
+pub fn output_signer_info(settings_path: &std::path::Path) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    // Try to load cert/alg from settings; fall back to DEFAULT_CERTS.
+    let (cert_pem, alg, tsa_url) =
+        if let Ok(settings) = c2pa::settings::Settings::new().with_file(settings_path) {
+            match settings.signer {
+                Some(c2pa::settings::signer::SignerSettings::Local {
+                    alg,
+                    sign_cert,
+                    tsa_url,
+                    ..
+                }) => (sign_cert, alg, tsa_url),
+                _ => (
+                    String::from_utf8_lossy(DEFAULT_CERTS).into_owned(),
+                    SigningAlg::Es256,
+                    None,
+                ),
+            }
+        } else {
+            (
+                String::from_utf8_lossy(DEFAULT_CERTS).into_owned(),
+                SigningAlg::Es256,
+                None,
+            )
+        };
+
+    let info = crate::SignerInfo {
+        alg,
+        sign_cert: cert_pem,
+        tsa_url,
+        reserve_size: None,
+    };
+    let json = serde_json::to_string(&info).context("serializing signer info")?;
+    std::io::stdout()
+        .write_all(json.as_bytes())
+        .context("writing signer info to stdout")?;
+    Ok(())
+}
+
+/// Read raw bytes from stdin, sign them with the baked-in es256 test key, and write
+/// the raw signature bytes to stdout.  Used by the `sign-mode` subcommand.
+pub fn sign_from_stdin() -> anyhow::Result<()> {
+    use std::io::{Read, Write};
+
+    let mut data = Vec::new();
+    std::io::stdin()
+        .read_to_end(&mut data)
+        .context("reading bytes from stdin")?;
+
+    let signer = create_signer::from_keys(DEFAULT_CERTS, DEFAULT_KEY, SigningAlg::Es256, None)
+        .context("creating test signer")?;
+
+    let sig = c2pa::Signer::sign(signer.as_ref(), &data).context("signing")?;
+
+    std::io::stdout()
+        .write_all(&sig)
+        .context("writing signature to stdout")?;
+
+    Ok(())
 }
 #[derive(Debug, Default, Deserialize)]
 pub struct SignConfig {
@@ -62,7 +127,7 @@ impl SignConfig {
         self
     }
 
-    pub fn signer(&self) -> Result<Box<dyn Signer>> {
+    pub fn signer(&self) -> Result<BoxedSigner> {
         let alg = self.alg.as_deref().unwrap_or("es256").to_lowercase();
         let alg: SigningAlg = alg.parse().map_err(|_| c2pa::Error::UnsupportedType)?;
         let tsa_url = self.ta_url.clone().or_else(get_ta_url);

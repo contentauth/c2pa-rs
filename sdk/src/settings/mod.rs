@@ -23,7 +23,7 @@ use std::{
     io::{BufRead, BufReader, Cursor},
 };
 
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use signer::SignerSettings;
 
@@ -338,8 +338,8 @@ pub struct Verify {
     /// Whether to verify the manifest after signing in the [`Builder`].
     ///
     /// The default value is false.
-    /// There is a known bug related to this setting: [#1875](https://github.com/contentauth/c2pa-rs/issues/1875).
-    /// When the bug is fixed, the default value should be true.
+    ///
+    /// In the future, this setting will default to true.
     ///
     /// <div class="warning">
     /// Disabling validation can improve signing performance, BUT it carries the risk of signing an invalid
@@ -348,6 +348,12 @@ pub struct Verify {
     ///
     /// [`Builder`]: crate::Builder
     pub verify_after_sign: bool,
+    /// Whether to include asset hash validation when verifying after signing.
+    ///
+    /// The default value is false.
+    ///
+    /// Has no effect when [`Verify::verify_after_sign`] is false.
+    pub(crate) verify_after_sign_hash: bool,
     /// Whether to verify certificates against the trust lists specified in [`Trust`]. To configure
     /// timestamp certificate verification, see [`Verify::verify_timestamp_trust`].
     ///
@@ -406,7 +412,9 @@ impl Default for Verify {
     fn default() -> Self {
         Self {
             verify_after_reading: true,
-            verify_after_sign: false, // TODO: Update docs when #1875 is fixed.
+            // TODO: set this to true [#1875](https://github.com/contentauth/c2pa-rs/issues/1875)
+            verify_after_sign: cfg!(test),
+            verify_after_sign_hash: cfg!(test),
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
@@ -1010,6 +1018,37 @@ fn get_settings_value<T: serde::de::DeserializeOwned>(value_path: &str) -> Resul
 // #[deprecated = "use `Settings::reset` instead"]
 pub fn reset_default_settings() -> Result<()> {
     Settings::reset()
+}
+
+// Used for backwards compatibility with the `config` crate.
+pub(crate) fn deserialize_case_insensitive<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = Value::deserialize(deserializer)?;
+    serde_json::from_value(normalize_enum_value(value)).map_err(serde::de::Error::custom)
+}
+
+// Used for backwards compatibility with the `config` crate.
+pub(crate) fn deserialize_case_insensitive_opt<'de, D, T>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    Option::<Value>::deserialize(deserializer)?
+        .map(|v| serde_json::from_value(normalize_enum_value(v)).map_err(serde::de::Error::custom))
+        .transpose()
+}
+
+// Used for backwards compatibility with the `config` crate.
+fn normalize_enum_value(value: Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(s.to_lowercase()),
+        other => other,
+    }
 }
 
 #[cfg(test)]

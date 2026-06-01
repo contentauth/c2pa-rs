@@ -244,6 +244,8 @@ trust_config = """
 verify_after_reading = true
 # Verify manifests after signing.
 verify_after_sign = true
+# Verify hashes after signing.
+verify_after_sign_hash = true
 # Fetch remote manifests.
 remote_manifest_fetch = true
 

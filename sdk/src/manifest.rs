@@ -605,19 +605,14 @@ impl Manifest {
 
                     let uri = to_assertion_uri(manifest_label, label);
                     validation_log.push_current_uri(&uri);
+                    let identity_assertion: IdentityAssertion = ma.to_assertion()?;
                     let value: Option<serde_json::Value> = if _sync {
-                        crate::log_item!(
-                            uri,
-                            "decoding identity assertions not supported in sync",
-                            "from_store - validating cawg.identity"
-                        )
-                        .validation_status("cawg.validation_skipped")
-                        .informational(validation_log);
-                        None
-                    } else {
-                        let identity_assertion: IdentityAssertion = ma.to_assertion()?;
                         identity_assertion
                             .validate_partial_claim(&partial_claim, validation_log)
+                            .ok()
+                    } else {
+                        identity_assertion
+                            .validate_partial_claim_async(&partial_claim, validation_log)
                             .await
                             .ok()
                     };
@@ -634,7 +629,7 @@ impl Manifest {
                     match assertion.decode_data() {
                         AssertionData::Cbor(_) => {
                             let value = assertion.as_json_object()?;
-                            let ma = ManifestAssertion::new(label, value)
+                            let ma = ManifestAssertion::new(base_label.clone(), value)
                                 .set_instance(claim_assertion.instance())
                                 .set_created(created);
 
@@ -642,7 +637,7 @@ impl Manifest {
                         }
                         AssertionData::Json(_) => {
                             let value = assertion.as_json_object()?;
-                            let ma = ManifestAssertion::new(label, value)
+                            let ma = ManifestAssertion::new(base_label.clone(), value)
                                 .set_instance(claim_assertion.instance())
                                 .set_kind(ManifestAssertionKind::Json)
                                 .set_created(created);
