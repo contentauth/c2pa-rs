@@ -29,6 +29,17 @@ use crate::{
 };
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
+///
+/// # Stability
+///
+/// Prior to the 1.0 release of this SDK, this type is expected to undergo
+/// non-trivial refactoring: variants may be added, removed, renamed, or have
+/// their payloads reshaped between minor releases. The project's
+/// [deprecation policy](https://github.com/contentauth/c2pa-rs/blob/main/docs/deprecation-policy.md)
+/// is followed on a best-effort basis pre-1.0, and `Error` in particular is
+/// likely to see breaking changes ahead of 1.0 as the surface area is pared
+/// down. Downstream code matching on specific variants should expect churn
+/// until 1.0.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
