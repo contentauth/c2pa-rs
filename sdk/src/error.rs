@@ -37,10 +37,6 @@ pub enum Error {
     #[error("claim missing: label = {label}")]
     ClaimMissing { label: String },
 
-    /// An assertion has an unsupported version
-    #[error("Unsupported Assertion version")]
-    AssertionUnsupportedVersion,
-
     /// An assertion could not be found at the expected URL.
     #[error("assertion missing: url = {url}")]
     AssertionMissing { url: String },
@@ -68,9 +64,6 @@ pub enum Error {
     #[error("operation cancelled")]
     OperationCancelled,
 
-    #[error("required feature missing")]
-    MissingFeature(String),
-
     #[error("validation rule was violated: {0}")]
     ValidationRule(String),
 
@@ -85,17 +78,11 @@ pub enum Error {
     #[error("claim could not be converted from CBOR")]
     ClaimDecoding(String),
 
-    #[error("claim already signed, no further changes allowed")]
-    ClaimAlreadySigned,
-
     #[error("attempt to add new claim without signing last claim")]
     ClaimUnsigned,
 
     #[error("missing signature box link")]
     ClaimMissingSignatureBox,
-
-    #[error("identity required required with copyright assertion")]
-    ClaimMissingIdentity,
 
     #[error("incompatible claim version")]
     ClaimVersion,
@@ -124,23 +111,9 @@ pub enum Error {
     #[error("assertion limit exceeded: maximum allowed is {max}")]
     TooManyAssertions { max: usize },
 
-    #[error("manifest is not refernced by any ingredient")]
-    UnreferencedManifest,
-
-    /// The COSE Sign1 structure can not be parsed.
-    #[error("COSE Sign1 structure can not be parsed: {coset_error}")]
-    InvalidCoseSignature {
-        coset_error: coset::CoseError, /* NOTE: We can not use #[transparent] here because
-                                        * coset::CoseError does not implement std::Error::error
-                                        * and can't because coset is nostd. */
-    },
-
     /// The COSE signature uses an algorithm that is not supported by this crate.
     #[error("COSE signature algorithm is not supported")]
     CoseSignatureAlgorithmNotSupported,
-
-    #[error("COSE could not find verification key")]
-    CoseMissingKey,
 
     /// The COSE signature did not contain a signing certificate.
     #[error("could not find signing certificate chain in COSE signature")]
@@ -155,62 +128,15 @@ pub enum Error {
     #[error("COSE verifier failure")]
     CoseVerifier,
 
-    #[error("COSE certificate has expired")]
-    CoseCertExpiration,
-
-    #[error("COSE certificate has been revoked")]
-    CoseCertRevoked,
-
-    #[error("COSE certificate not trusted")]
-    CoseCertUntrusted,
-
-    /// Unable to parse the time stamp from this signature.
-    #[error("COSE time stamp could not be parsed")]
-    CoseInvalidTimeStamp,
-
-    #[error("COSE time stamp had expired cert")]
-    CoseTimeStampValidity,
-
-    /// The time stamp in the signature did not match the signed data.
-    #[error("COSE time stamp does not match data")]
-    CoseTimeStampMismatch,
-
     /// Unable to generate a trusted time stamp.
     #[error("could not generate a trusted time stamp")]
     CoseTimeStampGeneration,
-
-    #[error("COSE TimeStamp Authority failure")]
-    CoseTimeStampAuthority,
 
     #[error("COSE Signature too big for JUMBF box")]
     CoseSigboxTooSmall,
 
     #[error("COSE Signer does not contain signing certificate")]
     CoseNoCerts,
-
-    #[error("WASM verifier error")]
-    WasmVerifier,
-
-    #[error("WASM RSA-PSS key import error: {0}")]
-    WasmRsaKeyImport(String),
-
-    #[error("WASM RSA-PSS verification error")]
-    WasmRsaVerification,
-
-    #[error("WASM crypto key error")]
-    WasmKey,
-
-    #[error("WASM not called from window or worker global scope")]
-    WasmInvalidContext,
-
-    #[error("WASM could not load crypto library")]
-    WasmNoCrypto,
-
-    #[error("remote signers are not supported for WASM")]
-    WasmNoRemoteSigner,
-
-    #[error("feature unsupported on Wasm")]
-    WasmFeatureUnsupported,
 
     /// Unable to generate valid JUMBF for a claim.
     #[error("could not create valid JUMBF for claim")]
@@ -231,14 +157,8 @@ pub enum Error {
     #[error("must fetch remote manifests from url {0}")]
     RemoteManifestUrl(String),
 
-    #[error("failed to fetch the remote settings")]
-    FailedToFetchSettings,
-
     #[error("failed to remotely sign data")]
     FailedToRemoteSign,
-
-    #[error("stopped because of logged error")]
-    LogStop,
 
     #[error("not found")]
     NotFound,
@@ -360,9 +280,6 @@ pub enum Error {
 
     #[error("insufficient memory space for operation")]
     InsufficientMemory,
-
-    #[error("parameters out of range")]
-    OutOfRange,
 
     #[error(transparent)]
     TimeStampError(#[from] crate::crypto::time_stamp::TimeStampError),
