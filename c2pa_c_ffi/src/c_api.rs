@@ -3488,7 +3488,7 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_c2pa_reader_remote_url() {
-        let settings = serde_json::json!( {
+        let settings = serde_json::json!({
             "verify": {
                 "remote_manifest_fetch": true
             }

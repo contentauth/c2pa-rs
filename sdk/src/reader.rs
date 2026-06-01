@@ -1398,8 +1398,13 @@ pub mod tests {
 
     #[test]
     fn test_reader_remote_url() -> Result<()> {
-        let reader =
-            Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?;
+        let context = Context::new().with_settings(serde_json::json!({
+            "verify": {
+                "remote_manifest_fetch": true
+            }
+        }))?;
+        let reader = Reader::from_context(context)
+            .with_stream("image/jpeg", Cursor::new(IMAGE_WITH_REMOTE_MANIFEST))?;
         let remote_url = reader.remote_url();
         assert_eq!(remote_url, Some("https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391"));
         assert!(!reader.is_embedded());

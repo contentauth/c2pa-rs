@@ -80,7 +80,12 @@ fn test_reader_xca_jpg() -> Result<()> {
 
 #[c2pa_test_async]
 async fn test_reader_remote_url_async() -> Result<()> {
-    let reader = Reader::default()
+    let context = Context::new().with_settings(serde_json::json!({
+        "verify": {
+            "remote_manifest_fetch": true
+        }
+    }))?;
+    let reader = Reader::from_context(context)
         .with_stream_async(
             "image/jpeg",
             std::io::Cursor::new(include_bytes!("./fixtures/cloud.jpg")),
