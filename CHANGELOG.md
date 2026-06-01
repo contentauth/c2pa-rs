@@ -9,6 +9,19 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.85.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.85.0...c2pa-v0.85.1)
+_01 June 2026_
+
+### Fixed
+
+* Preserve validation status log kind after deserialization ([#2162](https://github.com/contentauth/c2pa-rs/pull/2162))
+* Declare c2pa XML namespace on SVG root, not manifest tag ([#2113](https://github.com/contentauth/c2pa-rs/pull/2113))
+
+### Other
+
+* Avoid buffering intermediate streams if stream len is greater than threshold ([#2178](https://github.com/contentauth/c2pa-rs/pull/2178))
+* Avoid buffering PNG when writing XMP and removing manifest ([#2177](https://github.com/contentauth/c2pa-rs/pull/2177))
+
 ## [0.85.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.84.1...c2pa-v0.85.0)
 _27 May 2026_
 
