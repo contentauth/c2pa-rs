@@ -172,7 +172,7 @@ jobs:
           fi
 
       - name: Run the benchmarks
-        uses: CodSpeedHQ/action@v4
+        uses: CodSpeedHQ/action@v4.15.1
         with:
           mode: ${{ matrix.build_mode || 'simulation' }}
           run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}{2}"', matrix.bench, matrix.format, steps.size.outputs.suffix) || '' }}
