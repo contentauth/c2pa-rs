@@ -1872,7 +1872,6 @@ impl Claim {
     #[async_generic]
     pub(crate) fn verify_claim(
         claim: &Claim,
-        asset_data: &mut ClaimAssetData<'_>,
         svi: &StoreValidationInfo<'_>,
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
@@ -1986,8 +1985,7 @@ impl Claim {
             .await
         };
 
-        let result =
-            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, context);
+        let result = Claim::verify_internal(claim, svi, verified, validation_log, context);
         validation_log.pop_current_uri();
         result
     }
@@ -2926,7 +2924,6 @@ impl Claim {
 
     fn verify_internal(
         claim: &Claim,
-        asset_data: &mut ClaimAssetData<'_>,
         svi: &StoreValidationInfo,
         verified: Result<CertificateInfo>,
         validation_log: &mut StatusTracker,
@@ -3249,9 +3246,6 @@ impl Claim {
                 url: ca_tracking_list[0].label(),
             });
         }
-
-        // verify data hashes for provenance claims
-        Claim::verify_hash_binding(claim, asset_data, svi, validation_log, context)?;
 
         // check action rules
         Claim::verify_actions(claim, svi, validation_log, context.settings())?;

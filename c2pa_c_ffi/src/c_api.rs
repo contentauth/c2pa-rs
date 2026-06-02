@@ -3380,7 +3380,13 @@ mod tests {
     #[allow(deprecated)]
     fn test_c2pa_sign_file_null_source_path() {
         let dest_path = CString::new("/tmp/output.jpg").unwrap();
-        let manifest = CString::new("{}").unwrap();
+        let manifest = CString::new(
+            serde_json::json!({
+                "intent": {"create": "http://c2pa.org/digitalsourcetype/empty"}
+            })
+            .to_string(),
+        )
+        .unwrap();
         let signer_info = C2paSignerInfo {
             alg: std::ptr::null(),
             sign_cert: std::ptr::null(),
@@ -3414,10 +3420,25 @@ mod tests {
         let temp_dir = PathBuf::from(base).join("../target/tmp");
         fs::create_dir_all(&temp_dir).unwrap();
         let dest = temp_dir.join("c2pa_sign_file_test_output.jpg");
+        fs::remove_file(&dest).ok();
 
         let source_path = CString::new(source).unwrap();
         let dest_path = CString::new(dest.to_str().unwrap()).unwrap();
-        let manifest = CString::new("{}").unwrap();
+        let manifest = CString::new(
+            serde_json::json!({
+                "assertions": [{
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                        }]
+                    }
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
 
         // Setup signer info
         let alg = CString::new("es256").unwrap();
@@ -3599,6 +3620,15 @@ mod tests {
         let mut dest_stream = TestStream::new(Vec::new());
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::Empty,
+            )
+        };
+        assert_eq!(result, 0);
 
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
@@ -4857,6 +4887,15 @@ verify_after_sign = true
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::Empty,
+            )
+        };
+        assert_eq!(result, 0);
+
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
 
@@ -5395,7 +5434,21 @@ verify_after_sign = true
             CimplError::last_message()
         );
 
-        let manifest_def = CString::new("{}").unwrap();
+        let manifest_def = CString::new(
+            serde_json::json!({
+                "assertions": [{
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                        }]
+                    }
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
