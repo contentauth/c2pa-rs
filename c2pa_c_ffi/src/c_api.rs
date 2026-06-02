@@ -20,8 +20,9 @@ use std::{
 #[cfg(feature = "file_io")]
 use c2pa::Ingredient;
 use c2pa::{
-    assertions::DataHash, create_signer, Builder as C2paBuilder, CallbackSigner, Context,
-    ProgressPhase, Reader as C2paReader, Settings as C2paSettings, SigningAlg,
+    assertions::DataHash, create_signer, dynamic_assertion::DynamicAssertion,
+    Builder as C2paBuilder, CallbackSigner, Context, ProgressPhase, Reader as C2paReader,
+    Settings as C2paSettings, Signer, SigningAlg,
 };
 
 //use tokio::runtime::Builder;
@@ -261,7 +262,138 @@ pub enum C2paHashType {
 
 #[repr(C)]
 pub struct C2paSigner {
-    pub signer: Box<dyn crate::maybe_send_sync::C2paSignerObject>,
+    pub signer: Option<Box<dyn crate::maybe_send_sync::C2paSignerObject>>,
+    pub ocsp_response: Option<Vec<u8>>,
+}
+
+impl C2paSigner {
+    fn new(signer: Box<dyn crate::maybe_send_sync::C2paSignerObject>) -> Self {
+        Self {
+            signer: Some(signer),
+            ocsp_response: None,
+        }
+    }
+
+    fn signer_ref(&self) -> c2pa::Result<&dyn crate::maybe_send_sync::C2paSignerObject> {
+        self.signer.as_deref().ok_or_else(|| {
+            c2pa::Error::OtherError("C2paSigner has no inner signer".to_string().into())
+        })
+    }
+
+    fn take_signer(&mut self) -> c2pa::Result<Box<dyn crate::maybe_send_sync::C2paSignerObject>> {
+        self.signer.take().ok_or_else(|| {
+            c2pa::Error::OtherError("C2paSigner has no inner signer".to_string().into())
+        })
+    }
+
+    /// Borrows the inner signer wrapped so any stapled OCSP response is returned
+    /// from `Signer::ocsp_val()`. Used for the by-reference signing paths.
+    fn ocsp_stapled_signer(
+        &self,
+    ) -> c2pa::Result<OcspStapledSigner<&dyn crate::maybe_send_sync::C2paSignerObject>> {
+        Ok(OcspStapledSigner {
+            inner: self.signer_ref()?,
+            ocsp_response: self.ocsp_response.clone(),
+        })
+    }
+
+    /// Takes ownership of the inner signer, wrapping it so any stapled OCSP
+    /// response is returned from `Signer::ocsp_val()`. Used for the paths that
+    /// move the signer into another owner (context builder, identity signer).
+    fn take_ocsp_stapled_signer(
+        &mut self,
+    ) -> c2pa::Result<Box<dyn crate::maybe_send_sync::C2paSignerObject>> {
+        let inner = self.take_signer()?;
+        Ok(match self.ocsp_response.take() {
+            Some(ocsp_response) => Box::new(OcspStapledSigner {
+                inner,
+                ocsp_response: Some(ocsp_response),
+            }),
+            None => inner,
+        })
+    }
+}
+
+/// Wraps a signer so that caller-provided OCSP DER is returned from
+/// `Signer::ocsp_val()`, while all other behavior delegates to the inner signer.
+///
+/// The generic inner type supports both borrowed and owned signer paths.
+///
+/// Stapling has no effect for signers using `direct_cose_handling()`, since
+/// those bypass `ocsp_val()`.
+struct OcspStapledSigner<S> {
+    inner: S,
+    ocsp_response: Option<Vec<u8>>,
+}
+
+impl<S> Signer for OcspStapledSigner<S>
+where
+    S: std::ops::Deref<Target = dyn crate::maybe_send_sync::C2paSignerObject>,
+{
+    fn sign(&self, data: &[u8]) -> c2pa::Result<Vec<u8>> {
+        self.inner.sign(data)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.inner.alg()
+    }
+
+    fn certs(&self) -> c2pa::Result<Vec<Vec<u8>>> {
+        self.inner.certs()
+    }
+
+    fn reserve_size(&self) -> usize {
+        let ocsp_reserve_size = self
+            .ocsp_response
+            .as_ref()
+            .filter(|_| !self.inner.direct_cose_handling())
+            .map(|ocsp| ocsp.len())
+            .unwrap_or_default();
+
+        self.inner.reserve_size().saturating_add(ocsp_reserve_size)
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        self.inner.time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.inner.timestamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> c2pa::Result<Vec<u8>> {
+        self.inner.timestamp_request_body(message)
+    }
+
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<c2pa::Result<Vec<u8>>> {
+        self.inner.send_timestamp_request(message)
+    }
+
+    fn ocsp_val(&self) -> Option<Vec<u8>> {
+        self.ocsp_response.clone().or_else(|| self.inner.ocsp_val())
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        self.inner.direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        self.inner.dynamic_assertions()
+    }
+
+    fn raw_signer(&self) -> Option<Box<&dyn c2pa::crypto::raw_signature::RawSigner>> {
+        // When an OCSP response is stapled, suppress raw_signer() so COSE
+        // signing routes through SignerWrapper and reads this wrapper's
+        // ocsp_val() instead of bypassing it through the inner signer.
+        //
+        // When nothing is stapled, delegate to the inner signer's raw path so
+        // the no-staple signing path stays unchanged.
+        if self.ocsp_response.is_some() {
+            None
+        } else {
+            self.inner.raw_signer()
+        }
+    }
 }
 
 /// Defines a callback to read from a stream.
@@ -717,11 +849,17 @@ pub unsafe extern "C" fn c2pa_context_builder_set_settings(
 /// Works with any C2paSigner pointer, whether created by
 /// `c2pa_signer_from_info` or `c2pa_signer_create`.
 ///
+/// If `c2pa_signer_set_ocsp_response` was called on `signer_ptr`, the stapled
+/// OCSP response is preserved when ownership transfers to the context and is
+/// used for signing through `c2pa_builder_sign_context` and other context-based
+/// signing APIs.
+///
 /// # Safety
 ///
 /// * `builder` must be a valid C2paContextBuilder pointer (not yet built).
 /// * `signer_ptr` must be a valid C2paSigner pointer. It is consumed by this
-///   call and must not be used or freed afterward.
+///   call and must not be used or freed afterward. Language bindings should
+///   mark or invalidate their managed wrapper after this call succeeds.
 ///
 /// # Returns
 ///
@@ -735,8 +873,9 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
     // Untrack the signer before taking ownership via Box::from_raw.
     // This prevents double-free if C code later calls c2pa_signer_free().
     untrack_or_return_int!(signer_ptr, C2paSigner);
-    let c2pa_signer = Box::from_raw(signer_ptr);
-    let result = builder.set_signer(c2pa_signer.signer);
+    let mut c2pa_signer = Box::from_raw(signer_ptr);
+    let signer = ok_or_return_int!(c2pa_signer.take_ocsp_stapled_signer());
+    let result = builder.set_signer(signer);
     ok_or_return_int!(result);
     0
 }
@@ -2102,12 +2241,8 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
     ptr_or_return_int!(manifest_bytes_ptr);
 
-    let result = builder.sign(
-        c2pa_signer.signer.as_ref(),
-        &format,
-        &mut *source,
-        &mut *dest,
-    );
+    let signer = ok_or_return_int!(c2pa_signer.ocsp_stapled_signer());
+    let result = builder.sign(&signer, &format, &mut *source, &mut *dest);
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
@@ -2258,8 +2393,8 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
             .map_err(Error::from_c2pa_error));
     }
 
-    let result =
-        builder.sign_data_hashed_embeddable(c2pa_signer.signer.as_ref(), &data_hash, &format);
+    let signer = ok_or_return_int!(c2pa_signer.ocsp_stapled_signer());
+    let result = builder.sign_data_hashed_embeddable(&signer, &data_hash, &format);
 
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
@@ -2692,9 +2827,7 @@ pub unsafe extern "C" fn c2pa_signer_create(
     if let Some(tsa_url) = tsa_url.as_ref() {
         signer = signer.set_tsa_url(tsa_url);
     }
-    box_tracked!(C2paSigner {
-        signer: Box::new(signer),
-    })
+    box_tracked!(C2paSigner::new(Box::new(signer)))
 }
 
 /// Creates a C2paSigner that handles both C2PA claim signing and X.509 identity assertion signing
@@ -2705,6 +2838,9 @@ pub unsafe extern "C" fn c2pa_signer_create(
 ///
 /// Both input signers are **consumed** by this call — ownership transfers to the returned
 /// signer and the caller MUST NOT free them afterward.
+///
+/// Any OCSP responses previously set with `c2pa_signer_set_ocsp_response` on
+/// either input signer are preserved in the combined signer.
 ///
 /// # Parameters
 /// * `c2pa_signer`: A `C2paSigner` used to sign the C2PA claim. Consumed by this call.
@@ -2721,6 +2857,8 @@ pub unsafe extern "C" fn c2pa_signer_create(
 /// # Safety
 /// Both signer pointers must have been created by a `c2pa_signer_*` function and not yet freed.
 /// After this call they are invalid — do NOT pass them to `c2pa_free`.
+/// Language bindings should mark or invalidate both managed signer wrappers
+/// after this call succeeds.
 /// The returned value MUST be released by calling `c2pa_free`.
 /// `referenced_assertions` and `roles`, if non-NULL, must each point to a NULL-terminated array
 /// of NULL-terminated UTF-8 strings that remain valid for the duration of this call.
@@ -2746,8 +2884,8 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
 ) -> *mut C2paSigner {
     untrack_or_return_null!(c2pa_signer_ptr, C2paSigner);
     untrack_or_return_null!(identity_signer_ptr, C2paSigner);
-    let c2pa_signer = Box::from_raw(c2pa_signer_ptr);
-    let identity_signer = Box::from_raw(identity_signer_ptr);
+    let mut c2pa_signer = Box::from_raw(c2pa_signer_ptr);
+    let mut identity_signer = Box::from_raw(identity_signer_ptr);
 
     let referenced_assertions = cstr_array_or_return_null!(referenced_assertions);
     let roles = cstr_array_or_return_null!(roles);
@@ -2755,16 +2893,17 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
     let refs: Vec<&str> = referenced_assertions.iter().map(|s| s.as_str()).collect();
     let role_refs: Vec<&str> = roles.iter().map(|s| s.as_str()).collect();
 
+    let c2pa_inner = ok_or_return_null!(c2pa_signer.take_ocsp_stapled_signer());
+    let identity_inner = ok_or_return_null!(identity_signer.take_ocsp_stapled_signer());
+
     let signer = create_signer::from_x509_identity(
-        Box::new(c2pa_signer.signer),
-        Box::new(identity_signer.signer),
+        Box::new(c2pa_inner),
+        Box::new(identity_inner),
         &refs,
         &role_refs,
     );
 
-    box_tracked!(C2paSigner {
-        signer: Box::new(signer),
-    })
+    box_tracked!(C2paSigner::new(Box::new(signer)))
 }
 
 /// Creates a C2paSigner from a SignerInfo.
@@ -2800,9 +2939,7 @@ pub unsafe extern "C" fn c2pa_signer_from_info(signer_info: &C2paSignerInfo) -> 
 
     let signer = signer_info.signer();
     match signer {
-        Ok(signer) => box_tracked!(C2paSigner {
-            signer: Box::new(signer),
-        }),
+        Ok(signer) => box_tracked!(C2paSigner::new(Box::new(signer))),
         Err(err) => {
             CimplError::from(err).set_last();
             std::ptr::null_mut()
@@ -2827,9 +2964,80 @@ pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
     // Legacy C API: reads signer configuration from thread-local settings (set by c2pa_load_settings).
     #[allow(deprecated)]
     let signer = ok_or_return_null!(C2paSettings::signer());
-    box_tracked!(C2paSigner {
-        signer: Box::new(signer),
-    })
+    box_tracked!(C2paSigner::new(Box::new(signer)))
+}
+
+/// Sets a stapled OCSP response on a signer.
+///
+/// Copies one DER-encoded OCSP response into Rust-owned memory. Calling this
+/// again replaces the previous response. Future signing operations with this
+/// signer will staple the response, including after it is transferred to a
+/// context or combined into an identity signer.
+///
+/// # Parameters
+/// * `signer_ptr` - pointer to a valid `C2paSigner`.
+/// * `ocsp_der` - pointer to DER-encoded OCSP response bytes.
+/// * `ocsp_der_len` - length of `ocsp_der` in bytes.
+///
+/// # Returns
+/// 0 on success, -1 on error. Retrieve details with `c2pa_error()`.
+///
+/// # Safety
+/// `signer_ptr` must be a valid `C2paSigner*`.
+/// `ocsp_der` must point to `ocsp_der_len` readable bytes and only needs to
+/// remain valid for this call.
+/// `ocsp_der_len` must be greater than zero.
+/// Stapling has no effect for signers using `direct_cose_handling()` and does
+/// increase `reserve_size()` for other signers.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_signer_set_ocsp_response(
+    signer_ptr: *mut C2paSigner,
+    ocsp_der: *const c_uchar,
+    ocsp_der_len: usize,
+) -> c_int {
+    let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
+
+    if ocsp_der_len == 0 {
+        CimplError::from(Error::Other(
+            "ocsp_der_len must be greater than zero".to_string(),
+        ))
+        .set_last();
+        return -1;
+    }
+
+    let ocsp_response = bytes_or_return_int!(ocsp_der, ocsp_der_len, "ocsp_der").to_vec();
+    // Require an inner signer to be present so this fails consistently with the
+    // other signer APIs rather than silently storing an orphaned response.
+    ok_or_return_int!(c2pa_signer.signer_ref());
+
+    c2pa_signer.ocsp_response = Some(ocsp_response);
+
+    0
+}
+
+/// Clears a stapled OCSP response from a signer.
+///
+/// Removes any OCSP response previously set with `c2pa_signer_set_ocsp_response`
+/// while preserving the inner signer. If no OCSP response was set, this is a
+/// no-op. Future signing operations with this signer will not use caller-
+/// provided OCSP bytes unless `c2pa_signer_set_ocsp_response` is called again.
+///
+/// # Parameters
+/// * `signer_ptr` - pointer to a `C2paSigner`.
+///
+/// # Returns
+/// 0 on success, -1 on error. Retrieve details with `c2pa_error()`.
+///
+/// # Safety
+/// `signer_ptr` must be a valid `C2paSigner*`.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_signer_clear_ocsp_response(signer_ptr: *mut C2paSigner) -> c_int {
+    let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
+    ok_or_return_int!(c2pa_signer.signer_ref());
+
+    c2pa_signer.ocsp_response = None;
+
+    0
 }
 
 /// Returns the size to reserve for the signature for this signer.
@@ -2846,7 +3054,8 @@ pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -> i64 {
     let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
-    c2pa_signer.signer.reserve_size() as i64
+    let signer = ok_or_return_int!(c2pa_signer.ocsp_stapled_signer());
+    signer.reserve_size() as i64
 }
 
 /// Frees a C2paSigner allocated by Rust.
@@ -2938,6 +3147,32 @@ mod tests {
 
     use super::*;
     use crate::TestStream;
+
+    struct InnerOcspSigner {
+        ocsp_response: Vec<u8>,
+    }
+
+    impl Signer for InnerOcspSigner {
+        fn sign(&self, _data: &[u8]) -> c2pa::Result<Vec<u8>> {
+            Ok(vec![0; 64])
+        }
+
+        fn alg(&self) -> SigningAlg {
+            SigningAlg::Ed25519
+        }
+
+        fn certs(&self) -> c2pa::Result<Vec<Vec<u8>>> {
+            Ok(Vec::new())
+        }
+
+        fn reserve_size(&self) -> usize {
+            1024
+        }
+
+        fn ocsp_val(&self) -> Option<Vec<u8>> {
+            Some(self.ocsp_response.clone())
+        }
+    }
 
     macro_rules! fixture_path {
         ($path:expr) => {
@@ -4726,9 +4961,252 @@ verify_after_sign = true
     }
 
     #[test]
+    fn test_c2pa_signer_reserve_size_includes_ocsp_response() {
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+        let ocsp = include_bytes!("../../sdk/tests/fixtures/ocsp_good.data");
+
+        let size_before = unsafe { c2pa_signer_reserve_size(signer) };
+        assert_eq!(
+            unsafe { c2pa_signer_set_ocsp_response(signer, ocsp.as_ptr(), ocsp.len()) },
+            0
+        );
+        let size_after = unsafe { c2pa_signer_reserve_size(signer) };
+
+        assert_eq!(
+            size_after,
+            size_before + ocsp.len() as i64,
+            "Reserve size should increase by only the stapled OCSP response length"
+        );
+
+        unsafe {
+            c2pa_free(signer as *mut c_void);
+            c2pa_free(builder as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_ocsp_stapled_signer_delegates_inner_ocsp_without_override() {
+        let ocsp = vec![1, 2, 3, 4];
+        let wrapped = OcspStapledSigner {
+            inner: Box::new(InnerOcspSigner {
+                ocsp_response: ocsp.clone(),
+            }) as Box<dyn crate::maybe_send_sync::C2paSignerObject>,
+            ocsp_response: None,
+        };
+
+        assert_eq!(wrapped.ocsp_val(), Some(ocsp));
+    }
+
+    #[test]
     fn test_c2pa_signer_reserve_size_null() {
         let size = unsafe { c2pa_signer_reserve_size(std::ptr::null_mut()) };
         assert_eq!(size, -1, "Null signer should return -1");
+    }
+
+    #[test]
+    fn test_c2pa_signer_set_ocsp_response_null_signer() {
+        let ocsp = include_bytes!("../../sdk/tests/fixtures/ocsp_good.data");
+        let result = unsafe {
+            c2pa_signer_set_ocsp_response(std::ptr::null_mut(), ocsp.as_ptr(), ocsp.len())
+        };
+        assert_eq!(result, -1);
+    }
+
+    #[test]
+    fn test_c2pa_signer_set_ocsp_response_null_ocsp() {
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let result = unsafe { c2pa_signer_set_ocsp_response(signer, std::ptr::null(), 42) };
+        assert_eq!(result, -1);
+
+        unsafe {
+            c2pa_free(signer as *mut c_void);
+            c2pa_free(builder as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_signer_set_ocsp_response_empty() {
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+        let ocsp = [0u8; 1];
+
+        let result = unsafe { c2pa_signer_set_ocsp_response(signer, ocsp.as_ptr(), 0) };
+        assert_eq!(result, -1);
+
+        unsafe {
+            c2pa_free(signer as *mut c_void);
+            c2pa_free(builder as *mut c_void);
+        }
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_c2pa_signer_set_ocsp_response_signs_successfully() {
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let mut dest_stream = TestStream::new(Vec::new());
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let ocsp = include_bytes!("../../sdk/tests/fixtures/ocsp_good.data");
+        let result = unsafe { c2pa_signer_set_ocsp_response(signer, ocsp.as_ptr(), ocsp.len()) };
+        assert_eq!(result, 0);
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+
+        assert!(
+            result > 0,
+            "signing failed: {:?}",
+            CimplError::last_message()
+        );
+        assert!(!manifest_bytes_ptr.is_null());
+
+        // The stapled OCSP DER is embedded verbatim in the COSE unprotected
+        // header (rVals/ocspVals), so it must appear in the manifest bytes.
+        let manifest_bytes =
+            unsafe { std::slice::from_raw_parts(manifest_bytes_ptr, result as usize) };
+        assert!(
+            manifest_bytes
+                .windows(ocsp.len())
+                .any(|window| window == ocsp.as_slice()),
+            "signed manifest does not contain the stapled OCSP response"
+        );
+
+        unsafe {
+            c2pa_free(manifest_bytes_ptr as *mut c_void);
+            c2pa_free(builder as *mut c_void);
+            c2pa_free(signer as *mut c_void);
+        }
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_c2pa_signer_clear_ocsp_response_removes_staple() {
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let mut dest_stream = TestStream::new(Vec::new());
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let ocsp = include_bytes!("../../sdk/tests/fixtures/ocsp_good.data");
+        // Set then clear: clearing must be idempotent and leave no stapled OCSP.
+        assert_eq!(
+            unsafe { c2pa_signer_set_ocsp_response(signer, ocsp.as_ptr(), ocsp.len()) },
+            0
+        );
+        assert_eq!(unsafe { c2pa_signer_clear_ocsp_response(signer) }, 0);
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+
+        assert!(
+            result > 0,
+            "signing failed: {:?}",
+            CimplError::last_message()
+        );
+        assert!(!manifest_bytes_ptr.is_null());
+
+        let manifest_bytes =
+            unsafe { std::slice::from_raw_parts(manifest_bytes_ptr, result as usize) };
+        assert!(
+            !manifest_bytes
+                .windows(ocsp.len())
+                .any(|window| window == ocsp.as_slice()),
+            "cleared OCSP response should not appear in the signed manifest"
+        );
+
+        unsafe {
+            c2pa_free(manifest_bytes_ptr as *mut c_void);
+            c2pa_free(builder as *mut c_void);
+            c2pa_free(signer as *mut c_void);
+        }
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_c2pa_signer_set_ocsp_response_replaces_previous() {
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let mut dest_stream = TestStream::new(Vec::new());
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let ocsp = include_bytes!("../../sdk/tests/fixtures/ocsp_good.data");
+        // A first response that must be fully replaced (not nested) by the second.
+        let stale = [0xAAu8; 64];
+        assert_eq!(
+            unsafe { c2pa_signer_set_ocsp_response(signer, stale.as_ptr(), stale.len()) },
+            0
+        );
+        assert_eq!(
+            unsafe { c2pa_signer_set_ocsp_response(signer, ocsp.as_ptr(), ocsp.len()) },
+            0
+        );
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+
+        assert!(
+            result > 0,
+            "signing failed: {:?}",
+            CimplError::last_message()
+        );
+        assert!(!manifest_bytes_ptr.is_null());
+
+        let manifest_bytes =
+            unsafe { std::slice::from_raw_parts(manifest_bytes_ptr, result as usize) };
+        assert!(
+            manifest_bytes
+                .windows(ocsp.len())
+                .any(|window| window == ocsp.as_slice()),
+            "latest OCSP response should be stapled"
+        );
+        assert!(
+            !manifest_bytes
+                .windows(stale.len())
+                .any(|window| window == stale.as_slice()),
+            "replaced OCSP response should not appear in the signed manifest"
+        );
+
+        unsafe {
+            c2pa_free(manifest_bytes_ptr as *mut c_void);
+            c2pa_free(builder as *mut c_void);
+            c2pa_free(signer as *mut c_void);
+        }
     }
 
     #[test]
