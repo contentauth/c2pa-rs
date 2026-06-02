@@ -6569,7 +6569,7 @@ pub mod tests {
             &context,
         )
         .unwrap();
-        // add redacted ingredient assertion as the parent
+        // add redacted ingredient assertion as component
         add_ingredient_assertion_to_claim(
             &redacted_store,
             &mut new_claim,
@@ -6606,6 +6606,8 @@ pub mod tests {
             &context,
         )
         .unwrap();
+
+        // make sure the redaction stuck
         let redacted_claim = resolved_store.get_claim(pc.label()).unwrap();
         assert!(redacted_claim
             .get_assertion(labels::SCHEMA_ORG, 0)
