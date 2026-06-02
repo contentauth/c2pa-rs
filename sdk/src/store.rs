@@ -4119,7 +4119,7 @@ impl Store {
         // make necessary changes to the incoming store
         let mut i_store_mut = Store::from_jumbf_with_context(data, &mut report, context)?;
         let mut final_redactions = HashSet::new();
-        if let Some(mut redactions) = redactions {
+        if let Some(redactions) = redactions {
             for r in redactions {
                 final_redactions.insert(r);
             }
@@ -6375,9 +6375,8 @@ pub mod tests {
         // create mandatory opened action (optional for update manifest)
         let ingredient = claim.ingredient_assertions()[0];
         let mut ingredient_uri = to_assertion_uri(claim.label(), &ingredient.label());
-        if instance.is_some() {
-            let instance_str = instance.unwrap().to_string();
-            ingredient_uri.push_str(&format!("__{}", instance_str));
+        if let Some(instance) = instance {
+            ingredient_uri.push_str(&format!("__{instance}"));
         }
         let ingredient_hashed_uri = HashedUri::new(
             ingredient_uri,
