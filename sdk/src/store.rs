@@ -4118,9 +4118,11 @@ impl Store {
 
         // make necessary changes to the incoming store
         let mut i_store_mut = Store::from_jumbf_with_context(data, &mut report, context)?;
-        let mut final_redactions = Vec::new();
+        let mut final_redactions = HashSet::new();
         if let Some(mut redactions) = redactions {
-            final_redactions.append(&mut redactions);
+            for r in redactions {
+                final_redactions.insert(r);
+            }
         }
 
         // remove the claims from the incoming store as to not overwrite the current claim
@@ -4130,7 +4132,9 @@ impl Store {
 
         // if there are redactions in both apply the current redaction to incoming claim
         if !to_both.is_empty() {
-            final_redactions.append(&mut to_both);
+            for r in to_both.iter() {
+                final_redactions.insert(r.to_owned());
+            }
 
             // copy the redactions differences from current to incoming claim
             final_redactions.retain(|f| !svi.redactions.contains(f));
@@ -4139,7 +4143,7 @@ impl Store {
         let claims_to_add: Vec<Claim> = i_store_mut.claims().into_iter().cloned().collect();
         claim.add_ingredient_data(
             claims_to_add,
-            Some(final_redactions),
+            Some(final_redactions.into_iter().collect()),
             &svi.ingredient_references,
         )?;
         Ok(i_store)
