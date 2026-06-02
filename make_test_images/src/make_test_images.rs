@@ -17,13 +17,14 @@ use std::{
     fs,
     io::{Cursor, Seek},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use anyhow::{Context, Result};
 use c2pa::{
     create_signer,
     jumbf_io::{load_jumbf_from_stream, save_jumbf_to_stream},
-    Builder, Error, Ingredient, Reader, Relationship, Signer, SigningAlg,
+    Builder, Error, Reader, Relationship, Signer, SigningAlg,
 };
 use memchr::memmem;
 use nom::AsBytes;
@@ -151,15 +152,20 @@ fn file_name(path: &Path) -> Option<&str> {
 pub struct MakeTestImages {
     config: Config,
     output_dir: PathBuf,
+    context: Arc<c2pa::Context>,
 }
 
 impl MakeTestImages {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config) -> Result<Self> {
         let output = config.output_path.to_owned();
-        Self {
+        let context = c2pa::Context::new()
+            .with_settings(json!({"verify": {"verify_after_sign": false}}))?
+            .into_shared();
+        Ok(Self {
             config,
             output_dir: PathBuf::from(output),
-        }
+            context,
+        })
     }
 
     /// Makes a full path from a filename or path
@@ -217,7 +223,8 @@ impl MakeTestImages {
         let name = path
             .file_name()
             .ok_or(Error::BadParam("no filename".to_string()))?
-            .to_string_lossy();
+            .to_string_lossy()
+            .into_owned();
         let extension = path
             .extension()
             .ok_or(Error::BadParam("no extension".to_owned()))?
@@ -225,25 +232,17 @@ impl MakeTestImages {
             .into_owned();
         let format = extension_to_mime(&extension).unwrap_or("image/jpeg");
 
-        // TODO: replace with a context-based Ingredient factory once one is available publicly
-        #[allow(deprecated)]
-        let mut parent = Ingredient::from_stream(format, &mut source)?;
-        parent.set_relationship(relationship);
-        parent.set_title(name);
-        if parent.thumbnail_ref().is_none() {
-            source.rewind()?;
-            let (format, thumbnail) =
-                make_thumbnail_from_stream(format, &mut source).context("making thumbnail")?;
-            parent.set_thumbnail(format, thumbnail)?;
-        }
+        let ingredient = builder.add_ingredient_from_stream(
+            json!({
+                "title": name,
+                "relationship": relationship
+            })
+            .to_string(),
+            format,
+            &mut source,
+        )?;
 
-        builder.add_ingredient(parent);
-
-        Ok(
-            builder.definition.ingredients[builder.definition.ingredients.len() - 1]
-                .instance_id()
-                .to_string(),
-        )
+        Ok(ingredient.instance_id().to_string())
     }
 
     fn make_image(&self, recipe: &Recipe) -> Result<PathBuf> {
@@ -276,7 +275,8 @@ impl MakeTestImages {
         })
         .to_string();
 
-        let mut builder = Builder::default().with_definition(&manifest_def)?;
+        let mut builder =
+            Builder::from_shared_context(&self.context).with_definition(&manifest_def)?;
 
         // keep track of ingredient instances so we don't duplicate them
         let mut ingredient_table = HashMap::new();
@@ -500,7 +500,7 @@ impl MakeTestImages {
         let src_path = &self.make_path(src);
         let mut source = fs::File::open(src_path).context("opening ingredient")?;
 
-        let mut builder = Builder::default().with_definition(&json)?;
+        let mut builder = Builder::from_shared_context(&self.context).with_definition(&json)?;
 
         let parent_name = file_name(&dst_path).ok_or(Error::BadParam("no filename".to_string()))?;
         builder.add_ingredient_from_stream(
@@ -619,8 +619,6 @@ impl MakeTestImages {
 
     /// Runs a list of recipes
     pub fn run(&self) -> Result<()> {
-        // verify_after_sign defaults to false in Settings::default(), so no override needed.
-
         if !self.output_dir.exists() {
             std::fs::create_dir_all(&self.output_dir).context("Can't create output folder")?;
         };
@@ -679,30 +677,15 @@ pub mod tests {
             { "op": "copy", "parent": "../sdk/tests/fixtures/IMG_0003.jpg", "output": "A.jpg" },
             { "op": "make", "parent": "A.jpg", "output": "C" },
             { "op": "ogp", "parent": "C", "output": "XC" },
-            { "op": "sig", "parent": "C", "output": "E-sig-C" } 
+            { "op": "sig", "parent": "C", "output": "E-sig-C" }
         ]
     }"#;
 
-    #[allow(deprecated)]
     #[test]
     fn test_make_images() {
-        use c2pa::settings::Settings;
-        Settings::from_toml(include_str!("../../sdk/tests/fixtures/test_settings.toml")).unwrap();
-
-        // Verify after sign is causing hash errors here, I don't know why yet.
-        // This is a temporary fix to allow the tests to run.
-        Settings::from_toml(
-            &toml::toml! {
-                [verify]
-                verify_after_sign = false
-            }
-            .to_string(),
-        )
-        .expect("failed to set verify settings");
-
         let config: Config = serde_json::from_str(TESTS)
             .context("Config file format")
             .expect("serde_json");
-        MakeTestImages::new(config).run().expect("running");
+        MakeTestImages::new(config).unwrap().run().expect("running");
     }
 }

@@ -14,7 +14,7 @@
 #![deny(missing_docs)]
 #[cfg(feature = "file_io")]
 use std::path::{Path, PathBuf};
-use std::{borrow::Cow, io::Cursor};
+use std::{borrow::Cow, io::Cursor, sync::Arc};
 
 use async_generic::async_generic;
 use log::{debug, error};
@@ -139,6 +139,11 @@ pub struct Ingredient {
     /// [`ManifestStore`]: crate::ManifestStore
     #[serde(skip_serializing_if = "Option::is_none")]
     manifest_data: Option<ResourceRef>,
+
+    /// When set, [`Ingredient::manifest_data`] is resolved on demand from this store
+    /// (see [`Reader`](crate::Reader) construction) instead of from [`Ingredient::resources`].
+    #[serde(skip)]
+    source_store: Option<Arc<Store>>,
 
     /// The ingredient's label as assigned in the manifest.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -322,9 +327,25 @@ impl Ingredient {
     ///
     /// manifest_data is the binary form of a manifest store in .c2pa format.
     pub fn manifest_data(&self) -> Option<Cow<'_, Vec<u8>>> {
-        self.manifest_data
-            .as_ref()
-            .and_then(|r| self.resources.get(&r.identifier).ok())
+        let r = self.manifest_data.as_ref()?;
+        match self.resources.get(&r.identifier) {
+            Ok(cow) => Some(cow),
+            Err(_) => self
+                .try_get_deferred_manifest_data(&r.identifier)
+                .ok()
+                .map(Cow::Owned),
+        }
+    }
+
+    fn try_get_deferred_manifest_data(&self, id: &str) -> Result<Vec<u8>> {
+        let mdr = self.manifest_data.as_ref().ok_or_else(|| Error::NotFound)?;
+        if mdr.identifier != id {
+            return Err(Error::NotFound);
+        }
+        let source_store = self.source_store.as_ref().ok_or_else(|| Error::NotFound)?;
+        let claim = source_store.get_claim(id).ok_or_else(|| Error::NotFound)?;
+        let sub = Store::build_flat_ingredient_store(source_store.as_ref(), claim)?;
+        sub.to_jumbf_internal(0)
     }
 
     /// Returns a reference to ingredient data if it exists.
@@ -473,20 +494,43 @@ impl Ingredient {
         self
     }
 
+    /// Sets the ingredient's label, used as the linking key for action `ingredientIds[]`.
+    pub fn set_label<S: Into<String>>(&mut self, label: S) -> &mut Self {
+        self.label = Some(label.into());
+        self
+    }
+
     /// Sets a reference to Manifest C2PA data.
     pub fn set_manifest_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
+        self.source_store = None;
         self.manifest_data = Some(data_ref);
         Ok(self)
     }
 
     /// Sets the Manifest C2PA data for this ingredient with bytes.
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
+        self.source_store = None;
         let base_id = "manifest_data".to_string();
         self.manifest_data = Some(
             self.resources
                 .add_with(&base_id, "application/c2pa", data)?,
         );
         Ok(self)
+    }
+
+    /// Lazily resolve [`Ingredient::manifest_data`] from `source_store` using
+    /// [`Ingredient::active_manifest`] as the provenance claim label.
+    pub(crate) fn set_deferred_manifest_data(&mut self, source_store: Arc<Store>) -> Result<()> {
+        let active = self
+            .active_manifest()
+            .map(str::to_owned)
+            .ok_or_else(|| Error::NotFound)?;
+        if source_store.get_claim(&active).is_none() {
+            return Ok(());
+        }
+        self.source_store = Some(source_store);
+        self.manifest_data = Some(ResourceRef::new("application/c2pa", active));
+        Ok(())
     }
 
     /// Sets a reference to Ingredient data.
@@ -1057,7 +1101,7 @@ impl Ingredient {
                                 // verify the store
                                 Store::verify_store_async(
                                     &store,
-                                    &mut ClaimAssetData::Stream(stream, format),
+                                    Some(&mut ClaimAssetData::Stream(stream, format)),
                                     &mut validation_log,
                                     context,
                                 )
@@ -1255,11 +1299,14 @@ impl Ingredient {
         let mut thumbnail = None;
         // for Builder model, ingredient resources may be in the manifest
         let get_resource = |id: &str| {
-            self.resources.get(id).or_else(|_| {
-                resources
-                    .ok_or_else(|| Error::NotFound)
-                    .and_then(|r| r.get(id))
-            })
+            self.resources
+                .get(id)
+                .or_else(|_| {
+                    resources
+                        .ok_or_else(|| Error::NotFound)
+                        .and_then(|r| r.get(id))
+                })
+                .or_else(|_| self.try_get_deferred_manifest_data(id).map(Cow::Owned))
         };
 
         // Collect the redacted thumbnail URIs, use them for comparison.
@@ -1582,7 +1629,7 @@ impl Ingredient {
 
                     Store::verify_store_async(
                         &store,
-                        &mut ClaimAssetData::Stream(stream, format),
+                        Some(&mut ClaimAssetData::Stream(stream, format)),
                         &mut validation_log,
                         &context,
                     )
@@ -1754,7 +1801,10 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::{utils::test_signer::test_signer, Builder, Reader, SigningAlg};
+    use crate::{
+        assertions::DigitalSourceType, builder::BuilderIntent, utils::test_signer::test_signer,
+        Builder, Reader, SigningAlg,
+    };
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -1997,6 +2047,7 @@ mod tests {
         let mut builder = Builder::default()
             .with_definition(r#"{"title": "Test Image"}"#)
             .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         builder.add_ingredient(ingredient);
 
         let signer = test_signer(SigningAlg::Ps256);
