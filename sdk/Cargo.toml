@@ -84,7 +84,7 @@ name = "redaction"
 crate-type = ["lib"]
 
 [dependencies]
-c2pa-raw-crypto = { workspace = true }
+c2pa-raw-crypto = { path = "../c2pa-raw-crypto", version = "0.1.0", default-features = false }
 asn1-rs = "0.7.2"
 async-generic = "1.1"
 async-trait = "0.1.89"
