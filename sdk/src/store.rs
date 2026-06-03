@@ -6611,8 +6611,6 @@ pub mod tests {
         assert!(redacted_claim
             .get_assertion(labels::SCHEMA_ORG, 0)
             .is_none());
-
-        // make sure if we redact again it does not cause issues
     }
 
     #[test]
