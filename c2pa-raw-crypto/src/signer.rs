@@ -127,7 +127,7 @@ pub fn signer_from_private_key(
 
     #[cfg(feature = "rust_native_crypto")]
     {
-        return crate::rust_native::signers::signer_from_private_key(&private_key, alg);
+        crate::rust_native::signers::signer_from_private_key(&private_key, alg)
     }
 
     #[cfg(all(feature = "openssl", not(feature = "rust_native_crypto")))]

@@ -42,7 +42,7 @@ pub trait RawSignatureValidator {
 pub fn validator_for_signing_alg(alg: SigningAlg) -> Option<Box<dyn RawSignatureValidator>> {
     #[cfg(feature = "rust_native_crypto")]
     {
-        return crate::rust_native::validators::validator_for_signing_alg(alg);
+        crate::rust_native::validators::validator_for_signing_alg(alg)
     }
 
     #[cfg(all(feature = "openssl", not(feature = "rust_native_crypto")))]
@@ -70,10 +70,10 @@ pub fn validator_for_sig_and_hash_algs(
 ) -> Option<Box<dyn RawSignatureValidator>> {
     #[cfg(feature = "rust_native_crypto")]
     {
-        return crate::rust_native::validators::validator_for_sig_and_hash_algs(
+        crate::rust_native::validators::validator_for_sig_and_hash_algs(
             sig_alg.as_bytes(),
             hash_alg.as_bytes(),
-        );
+        )
     }
 
     #[cfg(all(feature = "openssl", not(feature = "rust_native_crypto")))]
