@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::fmt::{self, Display};
+
 use chrono::Utc;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
@@ -215,6 +217,9 @@ impl ValidationResults {
     /// See [Validation states - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_validation_states).
     pub fn validation_state(&self) -> ValidationState {
         if let Some(active_manifest) = self.active_manifest.as_ref() {
+            // NOTE: Changes here may impact the impl of [`ValidationFailureSummary::fmt`].
+            //       Ensure changes are reciprocated in both locations.
+            //
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
             let is_valid = active_manifest
                 // First check if the claim is valid and the certificate hasn't expired.
@@ -362,6 +367,136 @@ impl ValidationResults {
             self.ingredient_deltas = Some(vec![idv]);
         }
         self
+    }
+
+    /// Returns a summary of why validation failed.
+    ///
+    /// The `Display` impl outputs a human-readable view of the failures, suitable for error messages.
+    /// If there are no failures, an empty string is output.
+    pub fn failure_summary(&self) -> ValidationFailureSummary<'_> {
+        ValidationFailureSummary(self)
+    }
+
+    pub(crate) fn format_status(status: &ValidationStatus, indent: &str) -> String {
+        let mut line = format!("{indent}{}", status.code());
+        if let Some(explanation) = status.explanation() {
+            line.push_str(&format!(": {explanation}"));
+        }
+        if let Some(url) = status.url() {
+            line.push_str(&format!(" ({url})"));
+        }
+        line
+    }
+}
+
+impl Display for ValidationResults {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let state = self.validation_state();
+        writeln!(f, "state: {state:?}")?;
+
+        if let Some(active_manifest) = self.active_manifest.as_ref() {
+            if !active_manifest.success.is_empty() {
+                let codes = active_manifest
+                    .success
+                    .iter()
+                    .map(|status| status.code())
+                    .collect::<Vec<_>>();
+                writeln!(f, "  success: {}", codes.join(", "))?;
+            }
+            if !active_manifest.informational.is_empty() {
+                writeln!(f, "  informational:")?;
+                for status in &active_manifest.informational {
+                    writeln!(f, "{}", ValidationResults::format_status(status, "    "))?;
+                }
+            }
+            if !active_manifest.failure.is_empty() {
+                writeln!(f, "  failure:")?;
+                for status in &active_manifest.failure {
+                    writeln!(f, "{}", ValidationResults::format_status(status, "    "))?;
+                }
+            }
+        }
+
+        if let Some(deltas) = self.ingredient_deltas.as_ref() {
+            for delta in deltas {
+                let d = delta.validation_deltas();
+                writeln!(f, "  ingredient [{}]:", delta.ingredient_assertion_uri())?;
+                if !d.success.is_empty() {
+                    let codes = d
+                        .success
+                        .iter()
+                        .map(|status| status.code())
+                        .collect::<Vec<_>>();
+                    writeln!(f, "    success: {}", codes.join(", "))?;
+                }
+                if !d.informational.is_empty() {
+                    writeln!(f, "    informational:")?;
+                    for status in &d.informational {
+                        writeln!(f, "{}", ValidationResults::format_status(status, "      "))?;
+                    }
+                }
+                if !d.failure.is_empty() {
+                    writeln!(f, "    failure:")?;
+                    for status in &d.failure {
+                        writeln!(f, "{}", ValidationResults::format_status(status, "      "))?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Concise display of why a [`ValidationResults`] is invalid (impls `Display`).
+pub struct ValidationFailureSummary<'a>(&'a ValidationResults);
+
+impl Display for ValidationFailureSummary<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let results = self.0;
+        let mut output_lines = Vec::new();
+
+        if let Some(active_manifest) = results.active_manifest.as_ref() {
+            let failures = active_manifest
+                .failure
+                .iter()
+                .filter(|status| status.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+                .collect::<Vec<_>>();
+            if !failures.is_empty() {
+                output_lines.push("failures:".to_string());
+                output_lines.extend(
+                    failures
+                        .iter()
+                        .map(|status| ValidationResults::format_status(status, "  ")),
+                );
+            }
+        }
+
+        if let Some(deltas) = results.ingredient_deltas.as_ref() {
+            for delta in deltas {
+                let failures = delta
+                    .validation_deltas()
+                    .failure
+                    .iter()
+                    .filter(|status| {
+                        status.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                    })
+                    .collect::<Vec<_>>();
+                if !failures.is_empty() {
+                    output_lines.push(format!(
+                        "ingredient [{}] failures:",
+                        delta.ingredient_assertion_uri()
+                    ));
+                    output_lines.extend(
+                        failures
+                            .iter()
+                            .map(|status| ValidationResults::format_status(status, "  ")),
+                    );
+                }
+            }
+        }
+
+        write!(f, "{}", output_lines.join("\n"))
     }
 }
 
@@ -1207,6 +1342,109 @@ pub mod tests {
         assert_eq!(
             validation_results.validation_state(),
             ValidationState::Invalid
+        );
+    }
+
+    #[test]
+    fn failure_summary_active_manifest_failure() {
+        let mut validation_results = ValidationResults::default();
+        validation_results.add_status(ValidationStatus::new_failure(ASSERTION_DATAHASH_MISMATCH));
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Invalid
+        );
+        assert_eq!(
+            validation_results.failure_summary().to_string(),
+            "failures:\n  assertion.dataHash.mismatch"
+        );
+    }
+
+    #[test]
+    fn failure_summary_ingredient_failure() {
+        let mut validation_results = ValidationResults::default();
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new_failure(ASSERTION_DATAHASH_MISMATCH)
+                .set_ingredient_uri("urn:uuid:1234"),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Invalid
+        );
+        assert_eq!(
+            validation_results.failure_summary().to_string(),
+            "ingredient [urn:uuid:1234] failures:\n  assertion.dataHash.mismatch"
+        );
+    }
+
+    #[test]
+    fn failure_summary_filters_untrusted_ingredient() {
+        let mut validation_results = ValidationResults::default();
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new_failure(SIGNING_CREDENTIAL_UNTRUSTED)
+                .set_ingredient_uri("urn:uuid:1234"),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Valid
+        );
+        assert_eq!(validation_results.failure_summary().to_string(), "");
+    }
+
+    #[test]
+    fn validation_results_display() {
+        let mut validation_results = ValidationResults::default();
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(validation_status::TIMESTAMP_MALFORMED)
+                .set_kind(LogKind::Informational),
+        );
+        validation_results.add_status(
+            ValidationStatus::new_failure(CLAIM_MALFORMED)
+                .set_url("self#jumbf=c2pa/urn:uuid:abc/c2pa.claim")
+                .set_explanation("claim CBOR failed to decode".to_string()),
+        );
+        validation_results.add_status(
+            ValidationStatus::new_failure(ASSERTION_DATAHASH_MISMATCH)
+                .set_ingredient_uri("urn:uuid:abcd"),
+        );
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Invalid
+        );
+        assert_eq!(
+            validation_results.to_string(),
+            concat!(
+                "state: Invalid\n",
+                "  success: claimSignature.validated, claimSignature.insideValidity\n",
+                "  informational:\n",
+                "    timeStamp.malformed\n",
+                "  failure:\n",
+                "    claim.malformed: claim CBOR failed to decode (self#jumbf=c2pa/urn:uuid:abc/c2pa.claim)\n",
+                "  ingredient [urn:uuid:abcd]:\n",
+                "    failure:\n",
+                "      assertion.dataHash.mismatch\n",
+            )
         );
     }
 

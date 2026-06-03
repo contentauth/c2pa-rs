@@ -1101,7 +1101,7 @@ impl Ingredient {
                                 // verify the store
                                 Store::verify_store_async(
                                     &store,
-                                    &mut ClaimAssetData::Stream(stream, format),
+                                    Some(&mut ClaimAssetData::Stream(stream, format)),
                                     &mut validation_log,
                                     context,
                                 )
@@ -1629,7 +1629,7 @@ impl Ingredient {
 
                     Store::verify_store_async(
                         &store,
-                        &mut ClaimAssetData::Stream(stream, format),
+                        Some(&mut ClaimAssetData::Stream(stream, format)),
                         &mut validation_log,
                         &context,
                     )
@@ -1801,7 +1801,10 @@ mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::{utils::test_signer::test_signer, Builder, Reader, SigningAlg};
+    use crate::{
+        assertions::DigitalSourceType, builder::BuilderIntent, utils::test_signer::test_signer,
+        Builder, Reader, SigningAlg,
+    };
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -2044,6 +2047,7 @@ mod tests {
         let mut builder = Builder::default()
             .with_definition(r#"{"title": "Test Image"}"#)
             .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         builder.add_ingredient(ingredient);
 
         let signer = test_signer(SigningAlg::Ps256);
