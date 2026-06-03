@@ -11,7 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#![allow(clippy::unwrap_used)] // This mod is only used in test code.
+// This mod is only used in test code, so panic and unwrap are used.
+#![allow(clippy::panic)]
+#![allow(clippy::unwrap_used)]
 
 use async_trait::async_trait;
 use c2pa_raw_crypto::{signer_from_private_key, RawSigner, SigningAlg};
