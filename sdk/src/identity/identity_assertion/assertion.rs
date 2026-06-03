@@ -15,6 +15,7 @@ use std::{
     borrow::Cow,
     collections::BTreeMap,
     fmt::{Debug, Formatter},
+    sync::Arc,
 };
 
 use async_generic::async_generic;
@@ -27,6 +28,7 @@ use crate::{
         raw_signature::RawSignatureValidationError,
     },
     dynamic_assertion::PartialClaim,
+    http::AsyncHttpResolver,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
         identity_assertion::{
@@ -304,6 +306,7 @@ impl IdentityAssertion {
         &self,
         partial_claim: &PartialClaim,
         status_tracker: &mut StatusTracker,
+        resolver: Arc<dyn AsyncHttpResolver>,
     ) -> Result<serde_json::Value, ValidationError<String>> {
         let settings = Context::new().settings().clone();
         self.check_padding(status_tracker)?;
@@ -395,7 +398,7 @@ impl IdentityAssertion {
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else if sig_type == "cawg.identity_claims_aggregation" {
-            let verifier = IcaSignatureVerifier {};
+            let verifier = IcaSignatureVerifier::new(resolver);
 
             let result = if _sync {
                 verifier

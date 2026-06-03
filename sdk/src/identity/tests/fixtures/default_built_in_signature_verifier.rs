@@ -19,7 +19,7 @@ use crate::identity::{
 /// credentials used in test.
 pub(crate) fn default_built_in_signature_verifier<'a>() -> BuiltInSignatureVerifier<'a> {
     BuiltInSignatureVerifier {
-        ica_verifier: IcaSignatureVerifier {},
+        ica_verifier: IcaSignatureVerifier::default(),
         x509_verifier: X509SignatureVerifier::default(),
     }
 }

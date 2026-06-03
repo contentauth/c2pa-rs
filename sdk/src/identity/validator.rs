@@ -14,18 +14,32 @@
 //! This module contains the APIs you will use to validate a
 //! C2PA Manifest that contains one or more CAWG identity assertions.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::{
     dynamic_assertion::{AsyncPostValidator, PartialClaim},
+    http::AsyncHttpResolver,
     identity::IdentityAssertion,
     status_tracker::StatusTracker,
-    ManifestAssertion,
+    Context, ManifestAssertion,
 };
 
 /// Validates a CAWG identity assertion.
-pub struct CawgValidator;
+pub struct CawgValidator {
+    resolver: Arc<dyn AsyncHttpResolver>,
+}
+
+impl Default for CawgValidator {
+    fn default() -> Self {
+        Self {
+            resolver: Context::new().resolver_async(),
+        }
+    }
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AsyncPostValidator for CawgValidator {
@@ -41,7 +55,7 @@ impl AsyncPostValidator for CawgValidator {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
             tracker.push_current_uri(uri.to_string());
             let result = identity_assertion
-                .validate_partial_claim_async(partial_claim, tracker)
+                .validate_partial_claim_async(partial_claim, tracker, self.resolver.clone())
                 .await
                 .ok();
             tracker.pop_current_uri();

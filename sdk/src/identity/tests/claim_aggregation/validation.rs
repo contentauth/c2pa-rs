@@ -66,7 +66,7 @@ async fn success_case() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -130,7 +130,7 @@ async fn invalid_cose_sign1() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
 
@@ -210,7 +210,7 @@ async fn invalid_cose_sign_alg() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
 
@@ -272,7 +272,7 @@ async fn missing_cose_sign_alg() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
 
@@ -335,7 +335,7 @@ async fn invalid_content_type() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -398,7 +398,7 @@ async fn invalid_content_type_assigned() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -460,7 +460,7 @@ async fn missing_content_type() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -534,7 +534,7 @@ async fn missing_vc() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
 
@@ -592,7 +592,7 @@ async fn invalid_vc() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
 
@@ -659,7 +659,7 @@ async fn invalid_issuer_did() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -724,7 +724,7 @@ async fn unsupported_did_method() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -787,7 +787,7 @@ async fn unresolvable_did() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -850,7 +850,7 @@ async fn did_doc_without_assertion_method() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -926,7 +926,7 @@ async fn signature_mismatch() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -994,7 +994,7 @@ async fn valid_time_stamp() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1081,7 +1081,7 @@ async fn invalid_time_stamp() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1150,7 +1150,7 @@ async fn valid_from_missing() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1218,7 +1218,7 @@ async fn valid_from_in_future() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1291,7 +1291,7 @@ async fn valid_from_after_time_stamp() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1387,7 +1387,7 @@ async fn valid_until_in_future() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1456,7 +1456,7 @@ async fn valid_until_in_past() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1544,7 +1544,7 @@ async fn signer_payload_mismatch() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 

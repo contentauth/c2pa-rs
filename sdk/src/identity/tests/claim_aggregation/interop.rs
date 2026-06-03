@@ -69,7 +69,7 @@ async fn adobe_connected_identities() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
     let ica = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
     // There should be exactly one verified identity.
@@ -145,7 +145,7 @@ async fn ims_multiple_manifests() {
 
     // Check the summary report for the entire manifest store.
     let mut st = StatusTracker::default();
-    let isv = IcaSignatureVerifier {};
+    let isv = IcaSignatureVerifier::default();
     let ia_summary = IdentityAssertion::summarize_from_reader(&reader, &mut st, &isv).await;
     let ia_json = serde_json::to_string(&ia_summary).unwrap();
 

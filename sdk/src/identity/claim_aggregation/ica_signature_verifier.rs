@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::sync::Arc;
+
 use async_generic::async_generic;
 use async_trait::async_trait;
 use base64::{prelude::BASE64_URL_SAFE, Engine};
@@ -54,6 +56,21 @@ use crate::{
 /// [§3.3.1 Securing JSON-LD Verifiable Credentials with COSE]: https://w3c.github.io/vc-jose-cose/#securing-vcs-with-cose
 pub struct IcaSignatureVerifier {
     // TO DO (CAI-7980): Add option to configure trusted ICA issuers.
+    resolver: Arc<dyn AsyncHttpResolver>,
+}
+
+// WASM is single-threaded; Arc<dyn AsyncHttpResolver> satisfies MaybeSync but
+// not the unconditional Sync required by SignatureVerifier. Safe because WASM
+// has no threads.
+#[cfg(target_arch = "wasm32")]
+unsafe impl Sync for IcaSignatureVerifier {}
+
+impl Default for IcaSignatureVerifier {
+    fn default() -> Self {
+        Self {
+            resolver: Context::new().resolver_async(),
+        }
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -81,8 +98,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
         let mut ica_credential = self.parse_ica_vc_v2(payload_bytes, status_tracker)?;
 
-        let _resolver = Context::new().resolver_async();
-        self.check_issuer_signature(&sign1, &ica_credential, _resolver.as_ref())
+        self.check_issuer_signature(&sign1, &ica_credential, self.resolver.as_ref())
             .or_else(|err| {
                 ok = false;
                 self.handle_signature_error(err, status_tracker)
@@ -157,8 +173,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
         // TO DO (CAI-7970): Add support for VC version 1.
         let mut ica_credential = self.parse_ica_vc_v2(payload_bytes, status_tracker)?;
 
-        let _resolver = Context::new().resolver_async();
-        self.check_issuer_signature_async(&sign1, &ica_credential, _resolver.as_ref())
+        self.check_issuer_signature_async(&sign1, &ica_credential, self.resolver.as_ref())
             .await
             .or_else(|err| {
                 ok = false;
@@ -222,6 +237,10 @@ impl SignatureVerifier for IcaSignatureVerifier {
 }
 
 impl IcaSignatureVerifier {
+    pub(crate) fn new(resolver: Arc<dyn AsyncHttpResolver>) -> Self {
+        Self { resolver }
+    }
+
     /// Signal an error if the `sig_type` value is not
     /// `cawg.identity_claims_aggregation`.
     fn check_sig_type(

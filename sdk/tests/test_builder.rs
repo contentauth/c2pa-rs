@@ -166,7 +166,8 @@ fn test_builder_cyclic_ingredient() -> Result<()> {
         let mut reader =
             Reader::from_context(no_verify_context).with_stream(format, cyclic_ingredient)?;
         // Ideally we'd use a sync path for this. There are limitations for tokio on WASM.
-        tokio::runtime::Runtime::new()?.block_on(reader.post_validate_async(&CawgValidator {}))?;
+        tokio::runtime::Runtime::new()?
+            .block_on(reader.post_validate_async(&CawgValidator::default()))?;
     }
 
     Ok(())
