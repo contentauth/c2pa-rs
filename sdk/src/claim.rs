@@ -4247,7 +4247,10 @@ pub mod tests {
     /// the base instance intact, not vice-versa.
     #[test]
     fn test_redact_assertion_exact_label_match_with_shared_prefix() {
-        use crate::{assertions::{labels, EmbeddedData}, jumbf::labels::to_assertion_uri};
+        use crate::{
+            assertions::{labels, EmbeddedData},
+            jumbf::labels::to_assertion_uri,
+        };
 
         let mut claim = Claim::new("unit test", Some("test"), 2);
 
@@ -4259,11 +4262,15 @@ pub mod tests {
 
         // Both labels must be here
         assert!(
-            claim.get_assertion(labels::INGREDIENT_THUMBNAIL, 0).is_some(),
+            claim
+                .get_assertion(labels::INGREDIENT_THUMBNAIL, 0)
+                .is_some(),
             "instance 0 should exist"
         );
         assert!(
-            claim.get_assertion(labels::INGREDIENT_THUMBNAIL, 1).is_some(),
+            claim
+                .get_assertion(labels::INGREDIENT_THUMBNAIL, 1)
+                .is_some(),
             "instance 1 should exist"
         );
 
@@ -4281,7 +4288,9 @@ pub mod tests {
 
         // The URI without the __1 (base) should still be here
         assert!(
-            claim.get_assertion(labels::INGREDIENT_THUMBNAIL, 0).is_some(),
+            claim
+                .get_assertion(labels::INGREDIENT_THUMBNAIL, 0)
+                .is_some(),
             "instance 0 must still exist after redacting instance 1"
         );
 
@@ -4292,11 +4301,15 @@ pub mod tests {
 
         // Both URIs must be gone now
         assert!(
-            claim.get_assertion(labels::INGREDIENT_THUMBNAIL, 0).is_none(),
+            claim
+                .get_assertion(labels::INGREDIENT_THUMBNAIL, 0)
+                .is_none(),
             "instance 0 should be gone"
         );
         assert!(
-            claim.get_assertion(labels::INGREDIENT_THUMBNAIL, 1).is_none(),
+            claim
+                .get_assertion(labels::INGREDIENT_THUMBNAIL, 1)
+                .is_none(),
             "instance 1 should be gone"
         );
     }
