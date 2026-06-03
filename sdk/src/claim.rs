@@ -1821,13 +1821,13 @@ impl Claim {
 
         // delete assertion or databox
         if assertion_uri.contains(ASSERTION_STORE) {
-            // Extract the last path segment from the URI to match exactly,
-            // avoids substring false-positives.
-            let uri_label = assertion_uri.rsplit('/').next().unwrap_or(assertion_uri);
             if let Some(index) = self
                 .assertion_store
                 .iter()
-                .position(|x| x.label() == uri_label)
+                .position(|x| {
+                    assertion_uri
+                        .ends_with(&Claim::label_with_instance(&x.label_raw(), x.instance()))
+                })
             {
                 self.assertion_store.remove(index);
                 return Ok(());
