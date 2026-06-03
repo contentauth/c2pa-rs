@@ -9,6 +9,18 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.85.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.85.1...c2pa-v0.85.2)
+_03 June 2026_
+
+### Fixed
+
+* Exact ingredient redaction URI matching ([#2203](https://github.com/contentauth/c2pa-rs/pull/2203))
+* Harden against integer underflow in JUMBF box parsers ([#2200](https://github.com/contentauth/c2pa-rs/pull/2200))
+* Dup redaction ([#2199](https://github.com/contentauth/c2pa-rs/pull/2199))
+* Harden against unchecked array index in JUMBF brotli box accessor ([#2192](https://github.com/contentauth/c2pa-rs/pull/2192))
+* Make GIF box map C2PA placeholder len 0 rather than 1 ([#2156](https://github.com/contentauth/c2pa-rs/pull/2156))
+* Error with validation results on invalid manifest after verify after sign ([#2147](https://github.com/contentauth/c2pa-rs/pull/2147))
+
 ## [0.85.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.85.0...c2pa-v0.85.1)
 _01 June 2026_
 
