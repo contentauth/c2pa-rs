@@ -421,13 +421,11 @@ pub struct Builder {
 
     /// Base path to search for resources.
     #[cfg(feature = "file_io")]
-    #[deprecated(note = "Use set_base_path() instead")]
     #[serde(skip)]
-    pub base_path: Option<PathBuf>,
+    base_path: Option<PathBuf>,
 
     /// A builder should construct a created, opened or updated manifest.
-    #[deprecated(note = "Use set_intent() to set or intent()")]
-    pub intent: Option<BuilderIntent>,
+    intent: Option<BuilderIntent>,
 
     /// Manifest labels to fetch timestamps for.
     ///
@@ -725,7 +723,6 @@ impl Builder {
     /// # Returns
     /// * A mutable reference to the [`Builder`].
     #[cfg(feature = "file_io")]
-    #[allow(deprecated)]
     pub fn set_base_path<P: Into<PathBuf>>(&mut self, base_path: P) -> &mut Self {
         let base_path = base_path.into();
         // make sure the resource store is updated to the current base path
@@ -950,7 +947,8 @@ impl Builder {
         self.context
             .check_progress(ProgressPhase::AddingIngredient, 1, 1)?;
 
-        let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
+        #[allow(unused_mut)]
+        let mut ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
         if format == "c2pa" || format == "application/c2pa" {
             let parent_ingredient = self.add_ingredient_from_archive(stream)?;
@@ -2880,7 +2878,6 @@ impl Builder {
         source.rewind()?;
 
         #[cfg(feature = "file_io")]
-        #[allow(deprecated)]
         if let Some(base_path) = &self.base_path {
             self.resources.set_base_path(base_path);
         }
@@ -2982,7 +2979,6 @@ impl Builder {
         source.rewind()?;
 
         #[cfg(feature = "file_io")]
-        #[allow(deprecated)]
         if let Some(base_path) = &self.base_path {
             self.resources.set_base_path(base_path);
         }
