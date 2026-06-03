@@ -1,0 +1,81 @@
+[package]
+name = "c2pa-raw-crypto"
+version = "0.1.0"
+description = "Raw cryptographic signing and validation primitives for C2PA"
+authors = ["Eric Scouten <scouten@adobe.com>"]
+license = "MIT OR Apache-2.0"
+documentation = "https://docs.rs/c2pa-raw-crypto"
+homepage = "https://contentauthenticity.org"
+repository = "https://github.com/contentauth/c2pa-rs"
+readme = "README.md"
+edition = "2021"
+rust-version = "1.88.0"
+exclude = ["tests/fixtures"]
+
+[features]
+default = ["rust_native_crypto"]
+rust_native_crypto = [
+    "dep:const-oid",
+    "dep:ecdsa",
+    "dep:ed25519-dalek",
+    "dep:p256",
+    "dep:p384",
+    "dep:p521",
+    "dep:pkcs1",
+    "dep:rand",
+    "dep:rsa",
+    "dep:sha2",
+]
+openssl = ["dep:openssl"]
+
+[dependencies]
+const-hex = "1.14"
+pkcs8 = "0.10.2"
+serde = { version = "1.0.225", features = ["derive"] }
+spki = "0.7.3"
+thiserror = "2.0.17"
+
+# Rust-native crypto backend (default).
+const-oid = { version = "0.9.6", optional = true }
+ecdsa = { version = "0.16.9", default-features = false, optional = true }
+ed25519-dalek = { version = "2.1.1", features = ["pem"], optional = true }
+p256 = { version = "0.13.2", default-features = false, features = [
+    "arithmetic",
+    "ecdsa",
+    "pem",
+    "std",
+], optional = true }
+p384 = { version = "0.13.0", default-features = false, features = [
+    "arithmetic",
+    "ecdsa",
+    "pem",
+    "std",
+], optional = true }
+p521 = { version = "0.13.3", default-features = false, features = [
+    "arithmetic",
+    "digest",
+    "ecdsa",
+    "getrandom",
+    "pem",
+    "std",
+], optional = true }
+pkcs1 = { version = "0.7.5", optional = true }
+rand = { version = "0.8.5", optional = true }
+rsa = { version = "0.9.10", features = ["sha2"], optional = true }
+sha2 = { version = "0.10.6", optional = true }
+
+# OpenSSL is unavailable on wasm32; only offer the feature off-Wasm.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+openssl = { version = "0.10.78", features = ["vendored"], optional = true }
+
+# `rand` (used by the rust-native RSA signer) pulls in `getrandom`, which needs
+# its `js` backend to build for wasm32-unknown-unknown.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+bcder = "0.7.3"
+rasn = "0.28.2"
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
+wasm-bindgen-test = "0.3.55"
