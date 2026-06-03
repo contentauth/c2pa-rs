@@ -9,6 +9,50 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.85.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.85.0...c2pa-v0.85.1)
+_01 June 2026_
+
+### Fixed
+
+* Preserve validation status log kind after deserialization ([#2162](https://github.com/contentauth/c2pa-rs/pull/2162))
+* Declare c2pa XML namespace on SVG root, not manifest tag ([#2113](https://github.com/contentauth/c2pa-rs/pull/2113))
+
+### Other
+
+* Avoid buffering intermediate streams if stream len is greater than threshold ([#2178](https://github.com/contentauth/c2pa-rs/pull/2178))
+* Avoid buffering PNG when writing XMP and removing manifest ([#2177](https://github.com/contentauth/c2pa-rs/pull/2177))
+
+## [0.85.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.84.1...c2pa-v0.85.0)
+_27 May 2026_
+
+### Added
+
+* Support CAWG callback signing via c_ffi ([#2118](https://github.com/contentauth/c2pa-rs/pull/2118))
+
+### Fixed
+
+* Sync resolver for CAWG web DID ([#2172](https://github.com/contentauth/c2pa-rs/pull/2172))
+* Load ingredient manifest store esp. to load resources on search/load miss ([#2164](https://github.com/contentauth/c2pa-rs/pull/2164))
+* Share reqwest HTTP clients ([#2152](https://github.com/contentauth/c2pa-rs/pull/2152))
+* Improve archive APIs to be able to link archives to actions ([#2095](https://github.com/contentauth/c2pa-rs/pull/2095))
+* Use XMP instance_id from source asset in sign and save_to_stream ([#2158](https://github.com/contentauth/c2pa-rs/pull/2158))
+* Harden against Builder::base_path injection attack on archive deserialisation ([#2139](https://github.com/contentauth/c2pa-rs/pull/2139))
+* Harden against integer overflow attacks in hash_stream_by_alg_with_progress range validation ([#2140](https://github.com/contentauth/c2pa-rs/pull/2140))
+
+### Other
+
+* Skip intermediate stream copy for common signing path ([#2161](https://github.com/contentauth/c2pa-rs/pull/2161))
+* Avoid buffering PNG into memory when writing ([#2159](https://github.com/contentauth/c2pa-rs/pull/2159))
+* Avoid buffering stream when computing placeholder PNG C2PA chunk ([#2154](https://github.com/contentauth/c2pa-rs/pull/2154))
+* Avoid buffering stream when computing placeholder JPEG C2PA chunk ([#2155](https://github.com/contentauth/c2pa-rs/pull/2155))
+* Fix lints in newer Rust versions. ([#2153](https://github.com/contentauth/c2pa-rs/pull/2153))
+* Optimize signing passes/copies for large PNGs ([#1967](https://github.com/contentauth/c2pa-rs/pull/1967))
+* Optimize signing passes/copies for large RIFFs ([#1970](https://github.com/contentauth/c2pa-rs/pull/1970))
+* Optimize signing passes/copies for large JPEGs ([#1971](https://github.com/contentauth/c2pa-rs/pull/1971))
+* Lazy-load ingredient manifest stores from shared Arc<Store>  ([#2103](https://github.com/contentauth/c2pa-rs/pull/2103))
+* Consolidate embeddable async functions ([#2149](https://github.com/contentauth/c2pa-rs/pull/2149))
+* Consolidate async verify functions ([#2146](https://github.com/contentauth/c2pa-rs/pull/2146))
+
 ## [0.84.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.84.0...c2pa-v0.84.1)
 _12 May 2026_
 

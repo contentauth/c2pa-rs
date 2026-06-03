@@ -356,11 +356,12 @@ impl JUMBFSuperBox {
     }
 
     pub fn data_box_as_brotli_box(&self, index: usize) -> Option<&JUMBFBrotliContentBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFBrotliContentBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFBrotliContentBox>()
+        })
     }
 }
 
@@ -3195,6 +3196,14 @@ pub mod tests {
             "expected BoxNestingTooDeep for {} nested boxes",
             BoxReader::MAX_JUMB_DEPTH + 1
         );
+    }
+
+    #[test]
+    fn test_data_box_as_brotli_box_empty_returns_none() {
+        // `data_box_as_brotli_box` on a superbox with no data boxes must return
+        // None, not panic on out-of-bounds indexing.
+        let sbox = JUMBFSuperBox::new("test.empty", None);
+        assert!(sbox.data_box_as_brotli_box(0).is_none());
     }
 }
 

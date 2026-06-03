@@ -482,56 +482,51 @@ impl IcaSignatureVerifier {
             }
 
             "web" => {
-                if _sync {
+                let did_doc = if _sync {
+                    did_web::resolve(&primary_did)?
+                } else {
+                    did_web::resolve_async(&primary_did, self.resolver.as_ref()).await?
+                };
+
+                let Some(vm1) = did_doc.verification_relationships.assertion_method.first() else {
                     return Err(ValidationError::SignatureError(
-                        IcaValidationError::UnsupportedIssuerDid(
-                            "did:web requires async resolution".to_string(),
+                        IcaValidationError::InvalidDidDocument(
+                            "DID document doesn't contain an assertionMethod entry".to_string(),
                         ),
                     ));
-                } else {
-                    let did_doc = did_web::resolve(&primary_did, _resolver).await?;
+                };
 
-                    let Some(vm1) = did_doc.verification_relationships.assertion_method.first()
-                    else {
-                        return Err(ValidationError::SignatureError(
-                            IcaValidationError::InvalidDidDocument(
-                                "DID document doesn't contain an assertionMethod entry".to_string(),
-                            ),
-                        ));
-                    };
+                let super::w3c_vc::did_doc::ValueOrReference::Value(vm1) = vm1 else {
+                    return Err(ValidationError::SignatureError(
+                        IcaValidationError::InvalidDidDocument(
+                            "DID document's assertionMethod is not a value".to_string(),
+                        ),
+                    ));
+                };
 
-                    let super::w3c_vc::did_doc::ValueOrReference::Value(vm1) = vm1 else {
-                        return Err(ValidationError::SignatureError(
-                            IcaValidationError::InvalidDidDocument(
-                                "DID document's assertionMethod is not a value".to_string(),
-                            ),
-                        ));
-                    };
+                let Some(jwk_prop) = vm1.properties.get("publicKeyJwk") else {
+                    return Err(ValidationError::SignatureError(
+                        IcaValidationError::InvalidDidDocument(
+                            "DID document's assertionMethod doesn't contain a publicKeyJwk entry"
+                                .to_string(),
+                        ),
+                    ));
+                };
 
-                    let Some(jwk_prop) = vm1.properties.get("publicKeyJwk") else {
-                        return Err(ValidationError::SignatureError(
-                            IcaValidationError::InvalidDidDocument(
-                                "DID document's assertionMethod doesn't contain a publicKeyJwk entry"
-                                    .to_string(),
-                            ),
-                        ));
-                    };
+                // OMG SO HACKY!
+                let Ok(jwk_json) = serde_json::to_string_pretty(jwk_prop) else {
+                    return Err(ValidationError::InternalError(
+                        "couldn't re-serialize JWK".to_string(),
+                    ));
+                };
 
-                    // OMG SO HACKY!
-                    let Ok(jwk_json) = serde_json::to_string_pretty(jwk_prop) else {
-                        return Err(ValidationError::InternalError(
-                            "couldn't re-serialize JWK".to_string(),
-                        ));
-                    };
+                let Ok(jwk) = serde_json::from_str(&jwk_json) else {
+                    return Err(ValidationError::InternalError(
+                        "couldn't re-serialize JWK".to_string(),
+                    ));
+                };
 
-                    let Ok(jwk) = serde_json::from_str(&jwk_json) else {
-                        return Err(ValidationError::InternalError(
-                            "couldn't re-serialize JWK".to_string(),
-                        ));
-                    };
-
-                    jwk
-                }
+                jwk
             }
 
             x => {
