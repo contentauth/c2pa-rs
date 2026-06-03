@@ -1821,14 +1821,9 @@ impl Claim {
 
         // delete assertion or databox
         if assertion_uri.contains(ASSERTION_STORE) {
-            if let Some(index) = self
-                .assertion_store
-                .iter()
-                .position(|x| {
-                    assertion_uri
-                        .ends_with(&Claim::label_with_instance(&x.label_raw(), x.instance()))
-                })
-            {
+            if let Some(index) = self.assertion_store.iter().position(|x| {
+                assertion_uri.ends_with(&Claim::label_with_instance(&x.label_raw(), x.instance()))
+            }) {
                 self.assertion_store.remove(index);
                 return Ok(());
             }
