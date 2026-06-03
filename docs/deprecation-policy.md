@@ -14,7 +14,8 @@ We follow [Semantic Versioning (SemVer)](https://semver.org/). Version 1.0.0 wil
 
 **Before 1.0:** Major version zero (`0.y.z`) is for initial development: Anything may change at any time, and the public API should not be considered stable. In the Rust/Cargo ecosystem, this means that a change from `0.2.3` to `0.3.0` may include incompatible API changes. We will, however, make a good-faith effort to follow the deprecation process below even before 1.0, so that users have advance warning before breakage occurs.
 
-> **Note:** Pre-1.0, this policy is applied on a best-effort basis. We may not always be able to provide a full deprecation cycle for every change as the API converges on its 1.0 shape. In particular, the `c2pa::Error` type is expected to undergo non-trivial refactoring prior to 1.0 — variants may be added, removed, renamed, or have their payloads reshaped between minor releases, and downstream code that matches on specific variants should expect churn until 1.0.
+> [!NOTE]
+> Pre-1.0, this policy is applied on a best-effort basis. We may not always be able to provide a full deprecation cycle for every change as the API converges on its 1.0 shape. In particular, the `c2pa::Error` type is expected to undergo non-trivial refactoring prior to 1.0 — variants may be added, removed, renamed, or have their payloads reshaped between minor releases, and downstream code that matches on specific variants should expect churn until 1.0.
 
 **After 1.0:** Breaking changes will only ship in major version increments. Before completely removing functionality in a new major release, there will be at least one minor release that contains the deprecation so that API consumers can smoothly transition to the new API. We will publish and retain historical documentation for at least each minor point release.
 
