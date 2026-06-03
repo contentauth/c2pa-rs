@@ -438,8 +438,7 @@ mod tests {
             let resolver = PanicResolver;
 
             // AWS EC2 metadata endpoint — the canonical SSRF target from the report.
-            let result =
-                did_web::resolve_async(&did("did:web:169.254.169.254"), &resolver).await;
+            let result = did_web::resolve_async(&did("did:web:169.254.169.254"), &resolver).await;
             assert!(
                 matches!(result, Err(DidWebError::InvalidWebDid(_))),
                 "expected InvalidWebDid for link-local IP, got {result:?}"
@@ -470,8 +469,7 @@ mod tests {
             let restricted =
                 RestrictedResolver::with_allowed_hosts(inner, vec![] as Vec<HostPattern>);
 
-            let result =
-                did_web::resolve_async(&did("did:web:localhost"), &restricted).await;
+            let result = did_web::resolve_async(&did("did:web:localhost"), &restricted).await;
 
             did_web::clear_proxies();
 
