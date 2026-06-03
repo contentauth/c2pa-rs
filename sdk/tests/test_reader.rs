@@ -13,7 +13,6 @@
 
 mod common;
 use c2pa::{validation_status, Builder, Context, Error, Reader, Result, Settings, ValidationState};
-#[cfg(feature = "fetch_remote_manifests")]
 use c2pa_macros::c2pa_test_async;
 use common::{assert_err, compare_to_known_good, fixture_stream};
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -79,10 +78,14 @@ fn test_reader_xca_jpg() -> Result<()> {
     compare_to_known_good(&reader, "XCA.json")
 }
 
-#[cfg(feature = "fetch_remote_manifests")]
 #[c2pa_test_async]
 async fn test_reader_remote_url_async() -> Result<()> {
-    let reader = Reader::default()
+    let context = Context::new().with_settings(serde_json::json!({
+        "verify": {
+            "remote_manifest_fetch": true
+        }
+    }))?;
+    let reader = Reader::from_context(context)
         .with_stream_async(
             "image/jpeg",
             std::io::Cursor::new(include_bytes!("./fixtures/cloud.jpg")),
