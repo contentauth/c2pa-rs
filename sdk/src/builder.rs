@@ -580,7 +580,6 @@ impl Builder {
     /// * `intent` - The [`BuilderIntent`] for this [`Builder`].
     /// # Returns
     /// * A mutable reference to the [`Builder`].
-    #[allow(deprecated)]
     pub fn set_intent(&mut self, intent: BuilderIntent) -> &mut Self {
         // Note: We can't modify context.settings anymore since Context is in an Arc
         // The intent is stored in the Builder itself
@@ -590,7 +589,6 @@ impl Builder {
 
     /// Returns the current [`BuilderIntent`] for this [`Builder`], if set.
     /// If not set, it will use the Settings default intent.
-    #[allow(deprecated)]
     pub fn intent(&self) -> Option<BuilderIntent> {
         let mut intent = self.intent.clone();
         if intent.is_none() {
