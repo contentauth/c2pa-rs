@@ -2138,7 +2138,10 @@ impl BoxReader {
             }
 
             if header.name == BoxType::SaltHash {
-                let data_len = header.size - HEADER_SIZE;
+                let data_len = header
+                    .size
+                    .checked_sub(HEADER_SIZE)
+                    .ok_or(JumbfParseError::InvalidBoxHeader)?;
                 let buf = reader
                     .read_to_vec(data_len)
                     .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
@@ -2304,7 +2307,9 @@ impl BoxReader {
         reader.read_exact(&mut uuid)?;
 
         // and finally the data itself...
-        let data_len = size - HEADER_SIZE - 16 /*UUID*/;
+        let data_len = size
+            .checked_sub(HEADER_SIZE + 16 /*UUID*/)
+            .ok_or(JumbfParseError::InvalidBoxHeader)?;
         let buf = reader
             .read_to_vec(data_len)
             .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
@@ -3292,6 +3297,32 @@ pub mod tests {
         let mut reader = Cursor::new(bytes);
         assert!(matches!(
             BoxReader::read_super_box(&mut reader),
+            Err(JumbfParseError::InvalidBoxHeader)
+        ));
+    }
+
+    #[test]
+    fn test_read_uuid_box_rejects_undersized_box() {
+        let stream = vec![0x03u8; 64];
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_uuid_box(&mut reader, 20),
+            Err(JumbfParseError::InvalidBoxHeader)
+        ));
+    }
+
+    #[test]
+    fn test_read_desc_box_salthash_rejects_undersized_box() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&[0u8; 16]);
+        data.push(0x13); // toggles: labeled + private
+        data.extend_from_slice(b"a\0");
+        data.extend_from_slice(&4u32.to_be_bytes());
+        data.extend_from_slice(b"c2sh");
+
+        let mut reader = Cursor::new(data);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 35),
             Err(JumbfParseError::InvalidBoxHeader)
         ));
     }
