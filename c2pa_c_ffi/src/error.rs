@@ -87,13 +87,9 @@ impl C2paError {
         let err_str = err.to_string();
         match err {
             c2pa::Error::AssertionMissing { url } => Self::AssertionNotFound("".to_string()),
-            AssertionInvalidRedaction
-            | AssertionRedactionNotFound
-            | AssertionUnsupportedVersion => Self::Assertion(err_str),
-            ClaimAlreadySigned
-            | ClaimUnsigned
+            AssertionInvalidRedaction | AssertionRedactionNotFound => Self::Assertion(err_str),
+            ClaimUnsigned
             | ClaimMissingSignatureBox
-            | ClaimMissingIdentity
             | ClaimVersion
             | ClaimInvalidContent
             | ClaimMissingHardBinding
@@ -104,20 +100,12 @@ impl C2paError {
             ClaimMissing { label } => Self::ManifestNotFound(err_str),
             AssertionDecoding(_) | ClaimDecoding(_) => Self::Decoding(err_str),
             AssertionEncoding(_) | XmlWriteError | ClaimEncoding => Self::Encoding(err_str),
-            InvalidCoseSignature { coset_error } => Self::Signature(err_str),
             CoseSignatureAlgorithmNotSupported
-            | CoseMissingKey
             | CoseX5ChainMissing
             | CoseInvalidCert
             | CoseSignature
             | CoseVerifier
-            | CoseCertExpiration
-            | CoseCertRevoked
-            | CoseInvalidTimeStamp
-            | CoseTimeStampValidity
-            | CoseTimeStampMismatch
             | CoseTimeStampGeneration
-            | CoseTimeStampAuthority
             | CoseSigboxTooSmall
             | TimeStampError(_)
             | RawSignatureValidationError(_)
