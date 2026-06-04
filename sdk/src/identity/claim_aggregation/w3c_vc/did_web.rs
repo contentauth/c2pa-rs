@@ -172,10 +172,10 @@ fn get_did_doc(url: &str, resolver: &dyn SyncHttpResolver) -> Result<Vec<u8>, Di
     read_body_with_limit(body, url)
 }
 
-pub(crate) fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+pub(crate) fn resolve(did: &Did<'_>, resolver: &dyn SyncHttpResolver) -> Result<DidDocument, DidWebError> {
     let url = prepare_url(did)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
-    let bytes = get_did_doc(&url, &SyncGenericResolver::new())?;
+    let bytes = get_did_doc(&url, resolver)?;
     parse_did_doc(bytes, &url)
 }
 

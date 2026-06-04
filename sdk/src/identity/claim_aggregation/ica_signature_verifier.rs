@@ -25,7 +25,7 @@ use crate::{
         asn1::rfc3161::TstInfo,
         cose::{validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustPolicy},
     },
-    http::AsyncHttpResolver,
+    http::{AsyncHttpResolver, SyncHttpResolver},
     identity::{
         claim_aggregation::{
             w3c_vc::{
@@ -56,13 +56,16 @@ use crate::{
 /// [§3.3.1 Securing JSON-LD Verifiable Credentials with COSE]: https://w3c.github.io/vc-jose-cose/#securing-vcs-with-cose
 pub struct IcaSignatureVerifier {
     // TO DO (CAI-7980): Add option to configure trusted ICA issuers.
-    resolver: Arc<dyn AsyncHttpResolver>,
+    async_resolver: Arc<dyn AsyncHttpResolver>,
+    sync_resolver: Arc<dyn SyncHttpResolver>,
 }
 
 impl Default for IcaSignatureVerifier {
     fn default() -> Self {
+        let ctx = Context::new();
         Self {
-            resolver: Context::new().resolver_async(),
+            async_resolver: ctx.resolver_async(),
+            sync_resolver: ctx.resolver(),
         }
     }
 }
@@ -92,7 +95,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
         let mut ica_credential = self.parse_ica_vc_v2(payload_bytes, status_tracker)?;
 
-        self.check_issuer_signature(&sign1, &ica_credential, self.resolver.as_ref())
+        self.check_issuer_signature(&sign1, &ica_credential, self.sync_resolver.as_ref())
             .or_else(|err| {
                 ok = false;
                 self.handle_signature_error(err, status_tracker)
@@ -167,7 +170,7 @@ impl SignatureVerifier for IcaSignatureVerifier {
         // TO DO (CAI-7970): Add support for VC version 1.
         let mut ica_credential = self.parse_ica_vc_v2(payload_bytes, status_tracker)?;
 
-        self.check_issuer_signature_async(&sign1, &ica_credential, self.resolver.as_ref())
+        self.check_issuer_signature_async(&sign1, &ica_credential, self.async_resolver.as_ref())
             .await
             .or_else(|err| {
                 ok = false;
@@ -231,8 +234,12 @@ impl SignatureVerifier for IcaSignatureVerifier {
 }
 
 impl IcaSignatureVerifier {
-    pub(crate) fn new(resolver: Arc<dyn AsyncHttpResolver>) -> Self {
-        Self { resolver }
+    #[async_generic(async_signature(&self,
+        resolver: Arc<dyn AsyncHttpResolver>))]
+    pub(crate) fn new(resolver: Arc<dyn SyncHttpResolver>) -> Self {
+        Self {
+            resolver
+        }
     }
 
     /// Signal an error if the `sig_type` value is not
@@ -446,12 +453,15 @@ impl IcaSignatureVerifier {
     //
     // TO DO (CAI-7976): Accept issuer DID in either `issuer` or `issuer.id` field.
     // Currently only `issuer` field is supported.
-    #[async_generic]
+    #[async_generic(async_signature(&self,
+        sign1: &CoseSign1,
+        ica_credential: &IcaCredential,
+        _resolver: &dyn AsyncHttpResolver))]
     fn check_issuer_signature(
         &self,
         sign1: &CoseSign1,
         ica_credential: &IcaCredential,
-        _resolver: &dyn AsyncHttpResolver,
+        _resolver: &dyn SyncHttpResolver,
     ) -> Result<(), ValidationError<IcaValidationError>> {
         let issuer_id = Did::new(&ica_credential.issuer)?;
         let (primary_did, _fragment) = issuer_id.split_fragment();
@@ -477,9 +487,9 @@ impl IcaSignatureVerifier {
 
             "web" => {
                 let did_doc = if _sync {
-                    did_web::resolve(&primary_did)?
+                    did_web::resolve(&primary_did, _resolver)?
                 } else {
-                    did_web::resolve_async(&primary_did, self.resolver.as_ref()).await?
+                    did_web::resolve_async(&primary_did, self.async_resolver.as_ref()).await?
                 };
 
                 let Some(vm1) = did_doc.verification_relationships.assertion_method.first() else {
