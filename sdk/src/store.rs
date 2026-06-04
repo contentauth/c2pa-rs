@@ -1195,9 +1195,22 @@ impl Store {
         labels::version(desired_version_label) <= labels::version(base_version_label)
     }
 
+    /// Deserialize a manifest store from raw JUMBF bytes.
+    ///
+    /// This is a pure data operation — no asset I/O. The resulting store contains all
+    /// claims and assertions from the JUMBF but signatures are not verified here;
+    /// call [`Store::verify_store`] separately when asset data is available.
     #[inline]
-    pub(crate) fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
+    pub fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
         Self::from_jumbf_impl(Store::new(), buffer, validation_log)
+    }
+
+    /// Serialize the manifest store to raw JUMBF bytes.
+    ///
+    /// For unsigned claims the signature box will contain a placeholder. Call
+    /// [`Store::sign_manifest`] to produce a fully signed JUMBF in one step.
+    pub fn to_jumbf(&self) -> Result<Vec<u8>> {
+        self.to_jumbf_internal(0)
     }
 
     #[inline]

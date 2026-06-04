@@ -531,7 +531,7 @@ impl Ingredient {
     /// Create a new Ingredient assertion from a stream
     /// You must specify the relationship and format.
     /// This will return the new Ingredient and associated manifest_bytes if they exist.
-    pub(crate) fn from_stream(
+    pub fn from_stream(
         relationship: Relationship,
         format: &str,
         mut stream: impl Read + Seek + Send,

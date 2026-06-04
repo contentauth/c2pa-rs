@@ -51,8 +51,7 @@ pub use exif::Exif;
 
 #[allow(dead_code)] // will become public later
 mod ingredient;
-pub(crate) use ingredient::Ingredient;
-pub use ingredient::Relationship;
+pub use ingredient::{Ingredient, Relationship};
 
 pub mod labels;
 

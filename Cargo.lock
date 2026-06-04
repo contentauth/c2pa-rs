@@ -645,6 +645,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "c2pa-claim"
+version = "0.84.1"
+dependencies = [
+ "c2pa_cbor",
+ "serde",
+ "serde-transcode",
+ "serde_bytes",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
+name = "c2pa-store"
+version = "0.84.1"
+dependencies = [
+ "brotli",
+ "byteorder",
+ "c2pa",
+ "c2pa-claim",
+ "c2pa_cbor",
+ "extfmt",
+ "hex",
+ "log",
+ "serde",
+ "serde-transcode",
+ "serde_bytes",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "c2pa_cbor"
 version = "0.77.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

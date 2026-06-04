@@ -277,7 +277,7 @@ pub(crate) mod asset_handlers;
 pub(crate) mod asset_io;
 pub(crate) mod builder;
 pub(crate) mod callback_signer;
-pub(crate) mod claim;
+pub mod claim;
 pub(crate) mod claim_generator_info;
 pub(crate) mod context;
 pub(crate) mod cose_validator;
@@ -299,7 +299,7 @@ pub(crate) mod reader;
 pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;
-pub(crate) mod store;
+pub mod store;
 
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};

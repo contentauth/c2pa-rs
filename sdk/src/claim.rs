@@ -572,7 +572,11 @@ impl Claim {
 
     // Deserializer that maps V1/V2 Claim object into our internal Claim representation.  Note:  Our Claim
     // structure is not the Claim from the spec but an amalgamation that allows us to represent any version
-    pub(crate) fn from_value(claim_value: c2pa_cbor::Value, label: &str, data: &[u8]) -> Result<Self> {
+    pub(crate) fn from_value(
+        claim_value: c2pa_cbor::Value,
+        label: &str,
+        data: &[u8],
+    ) -> Result<Self> {
         // populate claim from the map
         // parse possible fields to figure out which version of the claim is possible.
         let claim_version = if map_cbor_to_type::<Vec<HashedUri>>("assertions", &claim_value)
@@ -3886,7 +3890,11 @@ impl Claim {
     }
 
     /// returns first instance of an assertion whose label and instance match
-    pub(crate) fn get_assertion(&self, assertion_label: &str, instance: usize) -> Option<&Assertion> {
+    pub(crate) fn get_assertion(
+        &self,
+        assertion_label: &str,
+        instance: usize,
+    ) -> Option<&Assertion> {
         let mut iter = self.claim_assertion_store().iter().filter_map(|ca| {
             if ca.label_raw() == assertion_label && ca.instance() == instance {
                 Some(ca.assertion())

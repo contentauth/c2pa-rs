@@ -629,8 +629,8 @@ impl Ingredient {
             default_instance_id()
         };
 
-        let mut ingredient = Self::new(title.into(), format, id);
-
+        let mut ingredient = Self::new_v2(title.into(), format);
+        ingredient.set_instance_id(id);
         ingredient.document_id = xmp_info.document_id; // use document id if one exists
         ingredient.provenance = xmp_info.provenance;
 
