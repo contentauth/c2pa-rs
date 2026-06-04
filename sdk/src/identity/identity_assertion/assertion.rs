@@ -28,7 +28,7 @@ use crate::{
         raw_signature::RawSignatureValidationError,
     },
     dynamic_assertion::PartialClaim,
-    http::{AsyncHttpResolver, SyncHttpResolver},
+    http::AsyncHttpResolver,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
         identity_assertion::{
@@ -301,15 +301,12 @@ impl IdentityAssertion {
     ///
     /// The async variant (`validate_partial_claim_async`) handles all known
     /// signature types.
-    #[async_generic(async_signature(&self,
-        partial_claim: &PartialClaim,
-        status_tracker: &mut StatusTracker,
-        resolver: Arc<dyn AsyncHttpResolver>,))]
+    #[async_generic]
     pub(crate) fn validate_partial_claim(
         &self,
         partial_claim: &PartialClaim,
         status_tracker: &mut StatusTracker,
-        resolver: Arc<dyn SyncHttpResolver>,
+        resolver: Arc<dyn AsyncHttpResolver>,
     ) -> Result<serde_json::Value, ValidationError<String>> {
         let settings = Context::new().settings().clone();
         self.check_padding(status_tracker)?;
