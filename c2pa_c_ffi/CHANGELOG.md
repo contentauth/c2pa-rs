@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.85.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.85.1...c2pa-c-ffi-v0.85.2)
+_03 June 2026_
+
+### Fixed
+
+* Error with validation results on invalid manifest after verify after sign ([#2147](https://github.com/contentauth/c2pa-rs/pull/2147))
+
+## [0.85.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.85.0...c2pa-c-ffi-v0.85.1)
+_01 June 2026_
+
+### Added
+
+* Add Mac Catalyst builds ([#2160](https://github.com/contentauth/c2pa-rs/pull/2160))
+
 ## [0.85.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.84.1...c2pa-c-ffi-v0.85.0)
 _27 May 2026_
 

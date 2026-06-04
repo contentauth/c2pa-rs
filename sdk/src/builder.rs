@@ -2832,6 +2832,13 @@ impl Builder {
                 .get_box_hashed_embeddable_manifest_async(signer, &self.context)
                 .await
         }?;
+        if self.context.settings().verify.verify_after_sign {
+            if _sync {
+                store.verify_store_strict(None, &self.context)?;
+            } else {
+                store.verify_store_strict_async(None, &self.context).await?;
+            }
+        }
         // get composed version for embedding to JPEG
         Store::get_composed_manifest(&bytes, format)
     }
@@ -8764,14 +8771,16 @@ mod tests {
 
     #[test]
     fn test_to_archive_preserves_duplicate_label_assertions() -> Result<()> {
-        let mut builder = Builder::default();
+        let context = Context::new().into_shared();
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         builder.add_assertion("org.contentauth.test", &json!({"v": 1}))?;
         builder.add_assertion("org.contentauth.test", &json!({"v": 2}))?;
 
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive)?;
         archive.rewind()?;
-        let mut builder = Builder::default().with_archive(archive)?;
+        let mut builder = Builder::from_shared_context(&context).with_archive(archive)?;
 
         let signer = test_signer(SigningAlg::Ps256);
         let mut output = Cursor::new(Vec::new());
@@ -8929,6 +8938,7 @@ mod tests {
         });
         let mut signing_builder =
             Builder::from_shared_context(&context).with_definition(manifest_def.to_string())?;
+        signing_builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_a))?;
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_b))?;
 
@@ -9038,6 +9048,7 @@ mod tests {
         });
         let mut signing_builder =
             Builder::from_shared_context(&context).with_definition(manifest_def.to_string())?;
+        signing_builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_a))?;
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_b))?;
 

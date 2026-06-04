@@ -1821,11 +1821,9 @@ impl Claim {
 
         // delete assertion or databox
         if assertion_uri.contains(ASSERTION_STORE) {
-            if let Some(index) = self
-                .assertion_store
-                .iter()
-                .position(|x| assertion_uri.contains(&x.label()))
-            {
+            if let Some(index) = self.assertion_store.iter().position(|x| {
+                assertion_uri.ends_with(&Claim::label_with_instance(&x.label_raw(), x.instance()))
+            }) {
                 self.assertion_store.remove(index);
                 return Ok(());
             }
@@ -1872,7 +1870,6 @@ impl Claim {
     #[async_generic]
     pub(crate) fn verify_claim(
         claim: &Claim,
-        asset_data: &mut ClaimAssetData<'_>,
         svi: &StoreValidationInfo<'_>,
         cert_check: bool,
         ctp: &CertificateTrustPolicy,
@@ -1986,8 +1983,7 @@ impl Claim {
             .await
         };
 
-        let result =
-            Claim::verify_internal(claim, asset_data, svi, verified, validation_log, context);
+        let result = Claim::verify_internal(claim, svi, verified, validation_log, context);
         validation_log.pop_current_uri();
         result
     }
@@ -2926,7 +2922,6 @@ impl Claim {
 
     fn verify_internal(
         claim: &Claim,
-        asset_data: &mut ClaimAssetData<'_>,
         svi: &StoreValidationInfo,
         verified: Result<CertificateInfo>,
         validation_log: &mut StatusTracker,
@@ -3249,9 +3244,6 @@ impl Claim {
                 url: ca_tracking_list[0].label(),
             });
         }
-
-        // verify data hashes for provenance claims
-        Claim::verify_hash_binding(claim, asset_data, svi, validation_log, context)?;
 
         // check action rules
         Claim::verify_actions(claim, svi, validation_log, context.settings())?;
@@ -4242,5 +4234,78 @@ pub mod tests {
         }
 
         Ok(())
+    }
+
+    /// When a claim has two assertions whose labels share a prefix
+    /// (e.g. `c2pa.thumbnail.ingredient` and `c2pa.thumbnail.ingredient__1`),
+    /// redacting the `__1` URI must remove only the `__1` instance and leave
+    /// the base instance intact, not vice-versa.
+    #[test]
+    fn test_redact_assertion_exact_label_match_with_shared_prefix() {
+        use crate::{
+            assertions::{labels, EmbeddedData},
+            jumbf::labels::to_assertion_uri,
+        };
+
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+
+        // Add two ingredient thumbnails — the second gets the `__1` suffix.
+        let thumb0 = EmbeddedData::new(labels::INGREDIENT_THUMBNAIL, "image/jpeg", vec![0u8; 4]);
+        let thumb1 = EmbeddedData::new(labels::INGREDIENT_THUMBNAIL, "image/jpeg", vec![1u8; 4]);
+        claim.add_assertion(&thumb0).expect("add thumb0");
+        claim.add_assertion(&thumb1).expect("add thumb1");
+
+        // Both labels must be here
+        assert!(
+            claim
+                .get_assertion(labels::INGREDIENT_THUMBNAIL, 0)
+                .is_some(),
+            "instance 0 should exist"
+        );
+        assert!(
+            claim
+                .get_assertion(labels::INGREDIENT_THUMBNAIL, 1)
+                .is_some(),
+            "instance 1 should exist"
+        );
+
+        let manifest_label = claim.label();
+        let uri_base = to_assertion_uri(manifest_label, labels::INGREDIENT_THUMBNAIL);
+        let uri_instance1 = to_assertion_uri(
+            manifest_label,
+            &format!("{}__1", labels::INGREDIENT_THUMBNAIL),
+        );
+
+        // Order is important here, first redact the __1 URI
+        claim
+            .redact_assertion(&uri_instance1)
+            .expect("redact instance 1 should succeed");
+
+        // The URI without the __1 (base) should still be here
+        assert!(
+            claim
+                .get_assertion(labels::INGREDIENT_THUMBNAIL, 0)
+                .is_some(),
+            "instance 0 must still exist after redacting instance 1"
+        );
+
+        // Now redact the base
+        claim
+            .redact_assertion(&uri_base)
+            .expect("redact base instance should succeed");
+
+        // Both URIs must be gone now
+        assert!(
+            claim
+                .get_assertion(labels::INGREDIENT_THUMBNAIL, 0)
+                .is_none(),
+            "instance 0 should be gone"
+        );
+        assert!(
+            claim
+                .get_assertion(labels::INGREDIENT_THUMBNAIL, 1)
+                .is_none(),
+            "instance 1 should be gone"
+        );
     }
 }
