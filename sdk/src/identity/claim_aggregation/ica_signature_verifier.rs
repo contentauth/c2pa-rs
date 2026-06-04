@@ -175,7 +175,10 @@ impl SignatureVerifier for IcaSignatureVerifier {
         // TO DO (CAI-7970): Add support for VC version 1.
         let mut ica_credential = self.parse_ica_vc_v2(payload_bytes, status_tracker)?;
 
-        let signature_ok = match self.check_issuer_signature_async(&sign1, &ica_credential).await {
+        let signature_ok = match self
+            .check_issuer_signature_async(&sign1, &ica_credential)
+            .await
+        {
             Ok(()) => true,
             Err(err) => {
                 ok = false;
