@@ -50,8 +50,19 @@ use crate::{
 /// [`SignatureVerifier`]: crate::identity::SignatureVerifier
 /// [§8.1, Identity claims aggregation]: https://creator-assertions.github.io/identity/1.1-draft/#_identity_claims_aggregation
 /// [§3.3.1 Securing JSON-LD Verifiable Credentials with COSE]: https://w3c.github.io/vc-jose-cose/#securing-vcs-with-cose
+#[derive(Default)]
 pub struct IcaSignatureVerifier {
-    // TO DO (CAI-7980): Add option to configure trusted ICA issuers.
+    /// Exact-match list of trusted ICA issuer DIDs.
+    ///
+    /// During validation, the credential's `issuer` (after stripping any
+    /// fragment) is compared against this list. An issuer that is not present is
+    /// reported with the failure code `cawg.ica.untrusted_issuer` for that
+    /// identity assertion (see [`IcaSignatureVerifier::check_issuer_trust`]).
+    ///
+    /// An empty list means that no issuer is trusted. This list is normally
+    /// populated from the `cawg_trust.trusted_ica_issuers` setting of the
+    /// [`Context`](crate::Context) under which validation is performed.
+    pub trusted_issuers: Vec<String>,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -79,11 +90,21 @@ impl SignatureVerifier for IcaSignatureVerifier {
 
         let mut ica_credential = self.parse_ica_vc_v2(payload_bytes, status_tracker)?;
 
-        self.check_issuer_signature(&sign1, &ica_credential)
-            .or_else(|err| {
+        let signature_ok = match self.check_issuer_signature(&sign1, &ica_credential) {
+            Ok(()) => true,
+            Err(err) => {
                 ok = false;
-                self.handle_signature_error(err, status_tracker)
-            })?;
+                self.handle_signature_error(err, status_tracker)?;
+                false
+            }
+        };
+
+        // Once we've established that the signature is valid, verify that the
+        // issuer is one we've been configured to trust. This is scoped to this
+        // identity assertion and does not affect the enclosing manifest's state.
+        if signature_ok {
+            self.check_issuer_trust(&ica_credential, status_tracker, &mut ok)?;
+        }
 
         let local_ctp = CertificateTrustPolicy::passthrough();
         let mut timestamp_tracker = StatusTracker::default();
@@ -154,12 +175,21 @@ impl SignatureVerifier for IcaSignatureVerifier {
         // TO DO (CAI-7970): Add support for VC version 1.
         let mut ica_credential = self.parse_ica_vc_v2(payload_bytes, status_tracker)?;
 
-        self.check_issuer_signature_async(&sign1, &ica_credential)
-            .await
-            .or_else(|err| {
+        let signature_ok = match self.check_issuer_signature_async(&sign1, &ica_credential).await {
+            Ok(()) => true,
+            Err(err) => {
                 ok = false;
-                self.handle_signature_error(err, status_tracker)
-            })?;
+                self.handle_signature_error(err, status_tracker)?;
+                false
+            }
+        };
+
+        // Once we've established that the signature is valid, verify that the
+        // issuer is one we've been configured to trust. This is scoped to this
+        // identity assertion and does not affect the enclosing manifest's state.
+        if signature_ok {
+            self.check_issuer_trust(&ica_credential, status_tracker, &mut ok)?;
+        }
 
         // todo: no trust list support yet for CAWG so passthrough for now
         let local_ctp = CertificateTrustPolicy::passthrough();
@@ -531,6 +561,62 @@ impl IcaSignatureVerifier {
                 public_key.verify(data, &signature).map_err(JwkError::from)
             })
             .map_err(|_e| ValidationError::SignatureMismatch)?;
+
+        Ok(())
+    }
+
+    /// Verify that the credential's issuer DID is present on the configured
+    /// list of trusted ICA issuers.
+    ///
+    /// The CAWG identity spec requires the validator to verify that the issuer's
+    /// DID can be traced to its preconfigured list of trustable entities. If the
+    /// issuer is not verifiably trusted, the validator MUST issue the failure
+    /// code `cawg.ica.untrusted_issuer` but MAY continue validation.
+    ///
+    /// The list of trusted issuers is taken from [`Self::trusted_issuers`],
+    /// which is normally populated from the `cawg_trust.trusted_ica_issuers`
+    /// setting of the [`Context`] under which validation is performed. It is
+    /// empty by default, which means that no issuer is trusted unless explicitly
+    /// configured: a self-issued `did:jwk` (or any other DID) is not trustworthy
+    /// merely because its signature is self-consistent.
+    ///
+    /// This failure is scoped to the individual identity assertion. It does not
+    /// render the enclosing C2PA manifest invalid or untrusted (see
+    /// [`ValidationResults::validation_state`]).
+    ///
+    /// [`Context`]: crate::Context
+    /// [`ValidationResults::validation_state`]: crate::validation_results::ValidationResults::validation_state
+    fn check_issuer_trust(
+        &self,
+        ica_credential: &IcaCredential,
+        status_tracker: &mut StatusTracker,
+        ok: &mut bool,
+    ) -> Result<(), ValidationError<IcaValidationError>> {
+        let issuer_id = Did::new(&ica_credential.issuer)?;
+        let (primary_did, _fragment) = issuer_id.split_fragment();
+        let primary_did: &str = &primary_did;
+
+        if self
+            .trusted_issuers
+            .iter()
+            .any(|t| t.as_str() == primary_did)
+        {
+            return Ok(());
+        }
+
+        *ok = false;
+
+        log_current_item!(
+            "ICA issuer is not a trusted issuer",
+            "IcaSignatureVerifier::check_signature"
+        )
+        .validation_status("cawg.ica.untrusted_issuer")
+        .failure(
+            status_tracker,
+            ValidationError::SignatureError(IcaValidationError::UntrustedIssuer(
+                primary_did.to_string(),
+            )),
+        )?;
 
         Ok(())
     }

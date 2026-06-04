@@ -12,14 +12,14 @@
 // each license.
 
 use crate::identity::{
-    claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, BuiltInSignatureVerifier,
+    tests::ica_test_verifier, x509::X509SignatureVerifier, BuiltInSignatureVerifier,
 };
 
 /// Create a `BuiltInSignatureVerifier` that is configured to read the
 /// credentials used in test.
 pub(crate) fn default_built_in_signature_verifier<'a>() -> BuiltInSignatureVerifier<'a> {
     BuiltInSignatureVerifier {
-        ica_verifier: IcaSignatureVerifier {},
+        ica_verifier: ica_test_verifier(),
         x509_verifier: X509SignatureVerifier::default(),
     }
 }

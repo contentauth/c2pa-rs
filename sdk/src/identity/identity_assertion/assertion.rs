@@ -42,8 +42,9 @@ use crate::{
     },
     jumbf::labels::to_assertion_uri,
     log_current_item, log_item,
+    settings::Settings,
     status_tracker::StatusTracker,
-    Context, Manifest, Reader,
+    Manifest, Reader,
 };
 
 /// This struct represents the raw content of the identity assertion.
@@ -304,8 +305,8 @@ impl IdentityAssertion {
         &self,
         partial_claim: &PartialClaim,
         status_tracker: &mut StatusTracker,
+        settings: &Settings,
     ) -> Result<serde_json::Value, ValidationError<String>> {
-        let settings = Context::new().settings().clone();
         self.check_padding(status_tracker)?;
 
         self.signer_payload
@@ -395,7 +396,13 @@ impl IdentityAssertion {
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else if sig_type == "cawg.identity_claims_aggregation" {
-            let verifier = IcaSignatureVerifier {};
+            let verifier = IcaSignatureVerifier {
+                trusted_issuers: settings
+                    .cawg_trust
+                    .trusted_ica_issuers
+                    .clone()
+                    .unwrap_or_default(),
+            };
 
             let result = if _sync {
                 verifier
@@ -410,12 +417,11 @@ impl IdentityAssertion {
                     .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
             }?;
 
-            log_current_item!(
-                "CAWG identity_claims_aggregation signature valid",
-                "validate_partial_claim"
-            )
-            .validation_status("cawg.ica.credential_valid")
-            .success(status_tracker);
+            // NOTE: The `cawg.ica.credential_valid` success code is issued by
+            // `IcaSignatureVerifier::check_signature` itself, and only when no
+            // failure codes (such as `cawg.ica.untrusted_issuer`) were generated.
+            // We must not issue it again here, or an untrusted issuer would be
+            // reported as both untrusted and valid.
 
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))

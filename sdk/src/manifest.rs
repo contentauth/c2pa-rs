@@ -608,11 +608,11 @@ impl Manifest {
                     let identity_assertion: IdentityAssertion = ma.to_assertion()?;
                     let value: Option<serde_json::Value> = if _sync {
                         identity_assertion
-                            .validate_partial_claim(&partial_claim, validation_log)
+                            .validate_partial_claim(&partial_claim, validation_log, settings)
                             .ok()
                     } else {
                         identity_assertion
-                            .validate_partial_claim_async(&partial_claim, validation_log)
+                            .validate_partial_claim_async(&partial_claim, validation_log, settings)
                             .await
                             .ok()
                     };
