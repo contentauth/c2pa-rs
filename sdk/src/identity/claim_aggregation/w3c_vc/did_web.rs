@@ -20,6 +20,8 @@
 
 use std::io::Read;
 
+use async_generic::async_generic;
+
 use super::{did::Did, did_doc::DidDocument};
 use crate::http::{AsyncHttpResolver, HttpResolverError, SyncGenericResolver, SyncHttpResolver};
 
@@ -106,7 +108,7 @@ pub(crate) async fn resolve_async(
 ) -> Result<DidDocument, DidWebError> {
     let url = prepare_url(did)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
-    let bytes = get_did_doc(&url, resolver).await?;
+    let bytes = get_did_doc_async(&url, resolver).await?;
     parse_did_doc(bytes, &url)
 }
 
@@ -137,13 +139,20 @@ fn read_body_with_limit(body: Box<dyn Read>, url: &str) -> Result<Vec<u8>, DidWe
     Ok(document)
 }
 
-async fn get_did_doc(url: &str, resolver: &dyn AsyncHttpResolver) -> Result<Vec<u8>, DidWebError> {
+#[async_generic(async_signature(url: &str, resolver: &dyn AsyncHttpResolver))]
+fn get_did_doc(url: &str, resolver: &dyn SyncHttpResolver) -> Result<Vec<u8>, DidWebError> {
     let request = build_request(url)?;
 
-    let response = resolver
-        .http_resolve_async(request)
-        .await
-        .map_err(|e| DidWebError::Request(url.to_owned(), e))?;
+    let response = if _sync {
+        resolver
+            .http_resolve(request)
+            .map_err(|e| DidWebError::Request(url.to_owned(), e))?
+    } else {
+        resolver
+            .http_resolve_async(request)
+            .await
+            .map_err(|e| DidWebError::Request(url.to_owned(), e))?
+    };
 
     // Fast-fail if Content-Length exceeds the limit before reading any body bytes.
     let reported_len = response
@@ -151,6 +160,7 @@ async fn get_did_doc(url: &str, resolver: &dyn AsyncHttpResolver) -> Result<Vec<
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<u64>().ok());
+
     if let Some(len) = reported_len {
         if len > MAX_DID_DOC_SIZE {
             return Err(DidWebError::ResponseTooLarge);
@@ -165,22 +175,8 @@ async fn get_did_doc(url: &str, resolver: &dyn AsyncHttpResolver) -> Result<Vec<
 pub(crate) fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
     let url = prepare_url(did)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
-    let bytes = get_did_doc_sync(&url)?;
+    let bytes = get_did_doc(&url, &SyncGenericResolver::new())?;
     parse_did_doc(bytes, &url)
-}
-
-fn get_did_doc_sync(url: &str) -> Result<Vec<u8>, DidWebError> {
-    let request = build_request(url)?;
-    let response = SyncGenericResolver::with_redirects()
-        .unwrap_or_default()
-        .http_resolve(request)
-        .map_err(|e| match e {
-            HttpResolverError::ResponseTooLarge => DidWebError::ResponseTooLarge,
-            e => DidWebError::Request(url.to_owned(), e),
-        })?;
-    let (parts, body) = response.into_parts();
-    check_response_status(parts.status, url)?;
-    read_body_with_limit(body, url)
 }
 
 pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {

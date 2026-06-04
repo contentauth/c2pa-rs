@@ -59,12 +59,6 @@ pub struct IcaSignatureVerifier {
     resolver: Arc<dyn AsyncHttpResolver>,
 }
 
-// WASM is single-threaded; Arc<dyn AsyncHttpResolver> satisfies MaybeSync but
-// not the unconditional Sync required by SignatureVerifier. Safe because WASM
-// has no threads.
-#[cfg(target_arch = "wasm32")]
-unsafe impl Sync for IcaSignatureVerifier {}
-
 impl Default for IcaSignatureVerifier {
     fn default() -> Self {
         Self {
