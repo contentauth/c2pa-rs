@@ -35,10 +35,10 @@ fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
 openssl = [
     "dep:openssl",
-    "c2pa-raw-crypto/openssl",
+    "c2pa_raw_crypto/openssl",
 ]
 pdf = ["dep:lopdf"]
-rust_native_crypto = ["c2pa-raw-crypto/rust_native_crypto"]
+rust_native_crypto = ["c2pa_raw_crypto/rust_native_crypto"]
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364
 default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
@@ -84,7 +84,6 @@ name = "redaction"
 crate-type = ["lib"]
 
 [dependencies]
-c2pa-raw-crypto = { path = "../c2pa-raw-crypto", version = "0.1.0", default-features = false }
 asn1-rs = "0.7.2"
 async-generic = "1.1"
 async-trait = "0.1.89"
@@ -97,6 +96,7 @@ byteorder = { version = "1.5.0", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.44", default-features = false, features = ["serde"] }
 c2pa_cbor = "0.77.2"
+c2pa_raw_crypto = { version = "0.1.0", default-features = false }
 const-hex = "1.19"
 coset = "0.4.2"
 der = { version = "0.7.10", features = ["alloc"] }

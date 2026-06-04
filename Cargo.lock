@@ -540,9 +540,9 @@ dependencies = [
  "byteorder",
  "byteordered",
  "bytes",
- "c2pa-raw-crypto",
  "c2pa_cbor",
  "c2pa_macros",
+ "c2pa_raw_crypto",
  "chrono",
  "codspeed-criterion-compat",
  "console_log",
@@ -637,32 +637,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "c2pa-raw-crypto"
-version = "0.1.0"
-dependencies = [
- "bcder",
- "const-hex",
- "const-oid",
- "ecdsa",
- "ed25519-dalek",
- "getrandom 0.2.17",
- "openssl",
- "p256",
- "p384",
- "p521",
- "pkcs1",
- "pkcs8",
- "rand 0.8.6",
- "rasn",
- "rsa",
- "serde",
- "sha2",
- "spki",
- "thiserror 2.0.18",
- "wasm-bindgen-test",
-]
-
-[[package]]
 name = "c2pa_cbor"
 version = "0.77.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -679,6 +653,31 @@ version = "0.85.2"
 dependencies = [
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "c2pa_raw_crypto"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d253c7634ea4af499db27bc68afa130a6eaee4b7975abbf36bd1f64554013096"
+dependencies = [
+ "const-hex",
+ "const-oid",
+ "ecdsa",
+ "ed25519-dalek",
+ "getrandom 0.2.17",
+ "openssl",
+ "p256",
+ "p384",
+ "p521",
+ "pkcs1",
+ "pkcs8",
+ "rand 0.8.6",
+ "rsa",
+ "serde",
+ "sha2",
+ "spki",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
