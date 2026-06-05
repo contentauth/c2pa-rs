@@ -156,6 +156,40 @@ pub(crate) fn stream_with_fs_fallback(
     Ok(spooled)
 }
 
+// Write adapter that caps output at `max_len` bytes, preventing decompression
+// bombs and similar unbounded-output attacks.
+pub(crate) struct BoundedVecWriter {
+    inner: Vec<u8>,
+    max_len: usize,
+}
+
+impl BoundedVecWriter {
+    pub(crate) fn new(max_len: usize) -> Self {
+        Self {
+            inner: Vec::new(),
+            max_len,
+        }
+    }
+
+    pub(crate) fn into_inner(self) -> Vec<u8> {
+        self.inner
+    }
+}
+
+impl Write for BoundedVecWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.inner.len().saturating_add(buf.len()) > self.max_len {
+            return Err(std::io::Error::other("output exceeds maximum size"));
+        }
+        self.inner.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 // Returns a new Vec first making sure it can hold the desired capacity.  Fill
 // with default value if provided
 pub(crate) fn safe_vec<T: Clone>(item_cnt: u64, init_with: Option<T>) -> Result<Vec<T>> {

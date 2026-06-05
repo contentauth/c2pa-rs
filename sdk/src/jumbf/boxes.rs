@@ -1523,17 +1523,18 @@ impl CAIManifest {
     }
 
     pub fn from(sbox: &JUMBFSuperBox) -> JumbfParseResult<Self> {
+        const MAX_DECOMPRESSED_MANIFEST_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
+
         let mut compressed_store = false;
 
         // decompress brotli box if available
         let store_box = if let Some(compressed_manifest) = sbox.data_box_as_brotli_box(0) {
-            let decompressed_manifest = Vec::new();
-
-            let mut decompressed_stream = Cursor::new(decompressed_manifest);
+            let mut bounded_writer =
+                crate::utils::io_utils::BoundedVecWriter::new(MAX_DECOMPRESSED_MANIFEST_SIZE);
             let mut compressed_stream = Cursor::new(compressed_manifest.data());
-            brotli::BrotliDecompress(&mut compressed_stream, &mut decompressed_stream)?;
+            brotli::BrotliDecompress(&mut compressed_stream, &mut bounded_writer)?;
 
-            decompressed_stream.rewind()?;
+            let mut decompressed_stream = Cursor::new(bounded_writer.into_inner());
 
             compressed_store = true;
             BoxReader::read_super_box(&mut decompressed_stream)?
@@ -3324,6 +3325,26 @@ pub mod tests {
         assert!(matches!(
             BoxReader::read_desc_box(&mut reader, 35),
             Err(JumbfParseError::InvalidBoxHeader)
+        ));
+    }
+
+    #[test]
+    fn test_caimanifest_from_rejects_decompression_bomb() {
+        use brotli::enc::BrotliEncoderParams;
+
+        let payload = vec![0u8; 11 * 1024 * 1024];
+        let mut compressed = Vec::new();
+        let mut input = Cursor::new(payload.as_slice());
+        brotli::BrotliCompress(&mut input, &mut compressed, &BrotliEncoderParams::default())
+            .expect("brotli compress");
+
+        let brotli_box = JUMBFBrotliContentBox::new(compressed);
+        let mut sbox = JUMBFSuperBox::new("test", None);
+        sbox.add_data_box(Box::new(brotli_box));
+
+        assert!(matches!(
+            CAIManifest::from(&sbox),
+            Err(JumbfParseError::IoError(_))
         ));
     }
 }

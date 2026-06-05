@@ -224,6 +224,8 @@ fn parse_all_boxes(reader: &mut dyn CAIRead) -> Result<Vec<JxlBoxInfo>> {
 /// If a `brob` box wraps content of the given target type, decompress and return it.
 /// The reader should be positioned at the start of the brob box's data area.
 fn decompress_brob(reader: &mut dyn CAIRead, data_size: u64) -> Result<([u8; 4], Vec<u8>)> {
+    const MAX_DECOMPRESSED_BROB_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
+
     let mut original_type = [0u8; 4];
     reader
         .read_exact(&mut original_type)
@@ -232,11 +234,12 @@ fn decompress_brob(reader: &mut dyn CAIRead, data_size: u64) -> Result<([u8; 4],
     let compressed_size = data_size.saturating_sub(4);
     let mut constrained_reader = reader.take(compressed_size);
 
-    let mut decompressed = Vec::new();
-    brotli::BrotliDecompress(&mut constrained_reader, &mut decompressed)
+    let mut bounded_writer =
+        crate::utils::io_utils::BoundedVecWriter::new(MAX_DECOMPRESSED_BROB_SIZE);
+    brotli::BrotliDecompress(&mut constrained_reader, &mut bounded_writer)
         .map_err(|_| Error::InvalidAsset("Failed to decompress brob box".to_string()))?;
 
-    Ok((original_type, decompressed))
+    Ok((original_type, bounded_writer.into_inner()))
 }
 
 /// Returns `true` if the given `jumb` box payload contains a JUMBF description box (`jumd`)
@@ -1512,6 +1515,29 @@ pub mod tests {
 
         assert_eq!(orig_type, BOX_XML);
         assert_eq!(decompressed, original_data);
+    }
+
+    #[test]
+    fn test_brob_decompression_rejects_bomb() {
+        let payload = vec![0u8; 11 * 1024 * 1024];
+        let mut compressed = Vec::new();
+        let params = brotli::enc::BrotliEncoderParams::default();
+        brotli::BrotliCompress(
+            &mut Cursor::new(payload.as_slice()),
+            &mut compressed,
+            &params,
+        )
+        .unwrap();
+
+        let mut brob_payload = Vec::new();
+        brob_payload.extend_from_slice(&BOX_XML);
+        brob_payload.extend_from_slice(&compressed);
+
+        let mut cursor = Cursor::new(&brob_payload);
+        assert!(matches!(
+            decompress_brob(&mut cursor, brob_payload.len() as u64),
+            Err(Error::InvalidAsset(_))
+        ));
     }
 
     #[test]
