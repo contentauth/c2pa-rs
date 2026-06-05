@@ -232,7 +232,6 @@ jobs:
           MIRIFLAGS: "-Zmiri-disable-isolation -Zmiri-tree-borrows"
         run: |
           cargo +nightly miri nextest run \
-            --config 'profile.default.slow-timeout={ period = "120s", terminate-after = 5 }' \
             -p c2pa-c-ffi \
             --no-default-features \
             --features rust_native_crypto,file_io \
