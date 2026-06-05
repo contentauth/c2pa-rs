@@ -36,7 +36,7 @@ use thiserror::Error;
 
 use crate::{
     jumbf::{boxio, labels},
-    utils::io_utils::ReaderUtils,
+    utils::io_utils::{BoundedVecWriter, ReaderUtils},
 };
 
 /// `JumbfParseError` enumerates errors detected while parsing JUMBF data structures.
@@ -1529,8 +1529,7 @@ impl CAIManifest {
 
         // decompress brotli box if available
         let store_box = if let Some(compressed_manifest) = sbox.data_box_as_brotli_box(0) {
-            let mut bounded_writer =
-                crate::utils::io_utils::BoundedVecWriter::new(MAX_DECOMPRESSED_MANIFEST_SIZE);
+            let mut bounded_writer = BoundedVecWriter::new(MAX_DECOMPRESSED_MANIFEST_SIZE);
             let mut compressed_stream = Cursor::new(compressed_manifest.data());
             brotli::BrotliDecompress(&mut compressed_stream, &mut bounded_writer)?;
 
