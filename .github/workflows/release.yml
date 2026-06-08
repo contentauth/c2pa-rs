@@ -33,43 +33,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
-        run: |
-          echo "-- Running release-plz release-pr --"
-          release_pr_output=$(release-plz release-pr \
-            --git-token "${GITHUB_TOKEN}" \
-            --repo-url "https://github.com/${GITHUB_REPOSITORY}" \
-            -o json)
-          echo "release_pr_output: $release_pr_output"
-          prs=$(echo "$release_pr_output" | jq -c .prs)
-          echo "prs=$prs" >> "$GITHUB_OUTPUT"
-          prs_length=$(echo "$prs" | jq 'length')
-          if [ "$prs_length" != "0" ]; then
-            prs_created=true
-            first_pr=$(echo "$prs" | jq -c '.[0]')
-          else
-            prs_created=false
-            first_pr="{}"
-          fi
-          echo "pr=$first_pr" >> "$GITHUB_OUTPUT"
-          echo "prs_created=$prs_created" >> "$GITHUB_OUTPUT"
-
-          echo "-- Running release-plz release --"
-          release_output=$(release-plz release \
-            --git-token "${GITHUB_TOKEN}" \
-            -o json)
-          echo "release_output: $release_output"
-          releases=$(echo "$release_output" | jq -c .releases)
-          echo "releases=$releases" >> "$GITHUB_OUTPUT"
-          releases_length=$(echo "$releases" | jq 'length')
-          if [ "$releases_length" != "0" ]; then
-            releases_created=true
-          else
-            releases_created=false
-          fi
-          echo "releases_created=$releases_created" >> "$GITHUB_OUTPUT"
-
-      - name: Fetch newly created tags
-        run: git fetch --tags
 
       - name: Debug release-plz outputs
         env:
@@ -90,12 +53,12 @@ jobs:
 
       - name: Identify c2patool release
         id: sniff-c2patool-release-tag
+        env:
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
         run: |
-          echo "All tags on HEAD:"
-          git tag --contains HEAD
-          echo "Filtered c2patool tags:"
-          git tag --contains HEAD | grep '^c2patool-' || echo "No c2patool tags found"
-          echo tag=`git tag --contains HEAD | grep '^c2patool-'` >> "$GITHUB_OUTPUT" || true
+          tag=$(echo "$RELEASES" | jq -r '.[] | select(.package_name == "c2patool") | .tag // empty')
+          echo "c2patool tag: ${tag:-<none>}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
   publish-c2patool-binaries:
     name: Publish c2patool binaries
