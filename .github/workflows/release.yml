@@ -14,10 +14,6 @@ jobs:
     name: Release-plz
     runs-on: ubuntu-latest
 
-    env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
-
     outputs:
       c2patool-release-tag: ${{ steps.sniff-c2patool-release-tag.outputs.tag }}
 
@@ -31,32 +27,9 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      # Hopefully temporary step while we sort out build issues.
-      - name: Work around crates.io git index issues
-        run: |
-          rm -rf ~/.cargo/registry/index/github.com-1ecc6299db9ec823/ || true
-
-      - name: Install release-plz from fork
-        run: |
-          curl -sL -o release-plz.tar.gz \
-            https://github.com/scouten-adobe/release-plz/releases/download/patched-2026-02-12/release-plz-linux-x86_64.tar.gz
-          tar -xzf release-plz.tar.gz
-          REPLZ=$(find . -maxdepth 2 -name 'release-plz' -type f | head -1)
-          chmod +x "$REPLZ" && sudo mv "$REPLZ" /usr/local/bin/release-plz
-          rm -f release-plz.tar.gz
-
-      - name: Install cargo-semver-checks
-        uses: taiki-e/install-action@90b40388b8931b1c39e248959515e295e02e9066
-        with:
-          tool: cargo-semver-checks@0.46
-
-      - name: Configure git user from GitHub token
-        uses: release-plz/git-config@59144859caf016f8b817a2ac9b051578729173c4
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-
       - name: Run release-plz
         id: release-plz
+        uses: MarcoIeni/release-plz-action@v0.5.129
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
