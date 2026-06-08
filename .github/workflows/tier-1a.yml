@@ -209,7 +209,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
           verbose: true
-          files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
+          files: ./lcov.info
 
   tests-windows-arm-openssl:
     name: Unit tests (Windows ARM, OpenSSL)

@@ -1061,13 +1061,6 @@ pub mod tests {
     use crate::utils::io_utils::tempdirectory;
     use crate::{utils::test::test_settings, SigningAlg};
 
-    #[cfg(feature = "file_io")]
-    fn save_settings_as_json<P: AsRef<Path>>(settings: &Settings, settings_path: P) -> Result<()> {
-        let settings_json = serde_json::to_string_pretty(settings).map_err(Error::JsonError)?;
-
-        std::fs::write(settings_path, settings_json.as_bytes()).map_err(Error::IoError)
-    }
-
     /// Legacy test: verifies the thread-local settings API reads defaults and round-trips values.
     #[test]
     fn test_thread_local_settings() {
@@ -1109,7 +1102,8 @@ pub mod tests {
         let temp_dir = tempdirectory().unwrap();
         let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
 
-        save_settings_as_json(&Settings::default(), &op).unwrap();
+        let settings_json = serde_json::to_string_pretty(&Settings::default()).unwrap();
+        std::fs::write(&op, settings_json.as_bytes()).unwrap();
 
         let settings = Settings::new().with_file(&op).unwrap();
         assert_eq!(settings, Settings::default());
