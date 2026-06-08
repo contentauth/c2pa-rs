@@ -1831,6 +1831,23 @@ mod tests {
         assert!(ingredient.provenance().is_some());
     }
 
+    #[c2pa_test_async]
+    async fn test_jpg_cloud_from_memory_and_bad_manifest() {
+        let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let bad_manifest_bytes = b"not a real c2pa manifest".to_vec();
+        let format = "image/jpeg";
+        let ingredient = Ingredient::from_manifest_and_asset_bytes_async(
+            bad_manifest_bytes,
+            format,
+            asset_bytes,
+        )
+        .await
+        .expect("ingredient should load even with a bad manifest");
+
+        assert_eq!(ingredient.format(), Some(format));
+        assert!(ingredient.validation_status().is_some());
+    }
+
     #[test]
     fn test_ingredient_thumbnail_uri_is_absolute() {
         let mut ingredient = Ingredient::new_v2("Test Ingredient", "image/jpeg");

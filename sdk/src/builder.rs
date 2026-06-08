@@ -9240,6 +9240,7 @@ mod tests {
 
         let ingredient_folder = fixture_path("ingredient");
         builder.set_base_path(&ingredient_folder);
+        assert_eq!(builder.base_path(), Some(ingredient_folder.as_path()));
 
         let ingredient_json =
             std::fs::read_to_string(ingredient_folder.join("ingredient.json")).unwrap();
