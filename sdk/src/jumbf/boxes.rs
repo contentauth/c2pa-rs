@@ -356,11 +356,12 @@ impl JUMBFSuperBox {
     }
 
     pub fn data_box_as_brotli_box(&self, index: usize) -> Option<&JUMBFBrotliContentBox> {
-        let da_box = &self.data_boxes[index];
-        da_box
-            .as_ref()
-            .as_any()
-            .downcast_ref::<JUMBFBrotliContentBox>()
+        self.data_boxes.get(index).and_then(|da_box| {
+            da_box
+                .as_ref()
+                .as_any()
+                .downcast_ref::<JUMBFBrotliContentBox>()
+        })
     }
 }
 
@@ -2137,7 +2138,10 @@ impl BoxReader {
             }
 
             if header.name == BoxType::SaltHash {
-                let data_len = header.size - HEADER_SIZE;
+                let data_len = header
+                    .size
+                    .checked_sub(HEADER_SIZE)
+                    .ok_or(JumbfParseError::InvalidBoxHeader)?;
                 let buf = reader
                     .read_to_vec(data_len)
                     .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
@@ -2176,7 +2180,9 @@ impl BoxReader {
             unread_bytes(reader, HEADER_SIZE)?;
         }
 
-        let json_len = size - HEADER_SIZE;
+        let json_len = size
+            .checked_sub(HEADER_SIZE)
+            .ok_or(JumbfParseError::InvalidBoxHeader)?;
         let buf = reader
             .read_to_vec(json_len)
             .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
@@ -2198,7 +2204,9 @@ impl BoxReader {
             unread_bytes(reader, HEADER_SIZE)?;
         }
 
-        let cbor_len = size - HEADER_SIZE;
+        let cbor_len = size
+            .checked_sub(HEADER_SIZE)
+            .ok_or(JumbfParseError::InvalidBoxHeader)?;
         let buf = reader
             .read_to_vec(cbor_len)
             .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
@@ -2220,7 +2228,9 @@ impl BoxReader {
             unread_bytes(reader, HEADER_SIZE)?;
         }
 
-        let padding_len = size - HEADER_SIZE;
+        let padding_len = size
+            .checked_sub(HEADER_SIZE)
+            .ok_or(JumbfParseError::InvalidBoxHeader)?;
         let buf = reader
             .read_to_vec(padding_len)
             .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
@@ -2243,7 +2253,9 @@ impl BoxReader {
         }
 
         // read the data itself...
-        let data_len = size - HEADER_SIZE;
+        let data_len = size
+            .checked_sub(HEADER_SIZE)
+            .ok_or(JumbfParseError::InvalidBoxHeader)?;
         let buf = reader
             .read_to_vec(data_len)
             .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
@@ -2266,7 +2278,9 @@ impl BoxReader {
         }
 
         // read the data itself...
-        let data_len = size - HEADER_SIZE;
+        let data_len = size
+            .checked_sub(HEADER_SIZE)
+            .ok_or(JumbfParseError::InvalidBoxHeader)?;
         let buf = reader
             .read_to_vec(data_len)
             .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
@@ -2293,7 +2307,9 @@ impl BoxReader {
         reader.read_exact(&mut uuid)?;
 
         // and finally the data itself...
-        let data_len = size - HEADER_SIZE - 16 /*UUID*/;
+        let data_len = size
+            .checked_sub(HEADER_SIZE + 16 /*UUID*/)
+            .ok_or(JumbfParseError::InvalidBoxHeader)?;
         let buf = reader
             .read_to_vec(data_len)
             .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
@@ -2383,7 +2399,9 @@ impl BoxReader {
         }
 
         // read data itself...
-        let data_len = size - HEADER_SIZE;
+        let data_len = size
+            .checked_sub(HEADER_SIZE)
+            .ok_or(JumbfParseError::InvalidBoxHeader)?;
         let buf = reader
             .read_to_vec(data_len)
             .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
@@ -2495,7 +2513,10 @@ impl BoxReader {
                         }
 
                         // read data itself...
-                        let data_len = box_header.size - HEADER_SIZE;
+                        let data_len = box_header
+                            .size
+                            .checked_sub(HEADER_SIZE)
+                            .ok_or(JumbfParseError::InvalidBoxHeader)?;
                         reader
                             .read_to_vec(data_len)
                             .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
@@ -3195,6 +3216,115 @@ pub mod tests {
             "expected BoxNestingTooDeep for {} nested boxes",
             BoxReader::MAX_JUMB_DEPTH + 1
         );
+    }
+
+    #[test]
+    fn test_data_box_as_brotli_box_empty_returns_none() {
+        // `data_box_as_brotli_box` on a superbox with no data boxes must return
+        // None, not panic on out-of-bounds indexing.
+        let sbox = JUMBFSuperBox::new("test.empty", None);
+        assert!(sbox.data_box_as_brotli_box(0).is_none());
+    }
+
+    #[test]
+    fn test_read_json_box_rejects_undersized_box() {
+        let stream = vec![0x03u8; 64];
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_json_box(&mut reader, 4),
+            Err(JumbfParseError::InvalidBoxHeader)
+        ));
+    }
+
+    #[test]
+    fn test_read_cbor_box_rejects_undersized_box() {
+        let stream = vec![0x03u8; 64];
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_cbor_box(&mut reader, 4),
+            Err(JumbfParseError::InvalidBoxHeader)
+        ));
+    }
+
+    #[test]
+    fn test_read_padding_box_rejects_undersized_box() {
+        let stream = vec![0x03u8; 64];
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_padding_box(&mut reader, 4),
+            Err(JumbfParseError::InvalidBoxHeader)
+        ));
+    }
+
+    #[test]
+    fn test_read_jp2c_box_rejects_undersized_box() {
+        let stream = vec![0x03u8; 64];
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_jp2c_box(&mut reader, 4),
+            Err(JumbfParseError::InvalidBoxHeader)
+        ));
+    }
+
+    #[test]
+    fn test_read_brotli_box_rejects_undersized_box() {
+        let stream = vec![0x03u8; 64];
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_brotli_box(&mut reader, 4),
+            Err(JumbfParseError::InvalidBoxHeader)
+        ));
+    }
+
+    #[test]
+    fn test_read_embedded_content_box_rejects_undersized_box() {
+        let stream = vec![0x03u8; 64];
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_embedded_content_box(&mut reader, 4),
+            Err(JumbfParseError::InvalidBoxHeader)
+        ));
+    }
+
+    #[test]
+    fn test_read_super_box_rejects_undersized_unknown_box() {
+        let sbox = JUMBFSuperBox::new("a", None);
+        let mut bytes = Vec::new();
+        sbox.write_box(&mut bytes).expect("write failed");
+        bytes.extend_from_slice(&4u32.to_be_bytes());
+        bytes.extend_from_slice(b"xxxx");
+
+        let mut reader = Cursor::new(bytes);
+        assert!(matches!(
+            BoxReader::read_super_box(&mut reader),
+            Err(JumbfParseError::InvalidBoxHeader)
+        ));
+    }
+
+    #[test]
+    fn test_read_uuid_box_rejects_undersized_box() {
+        let stream = vec![0x03u8; 64];
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_uuid_box(&mut reader, 20),
+            Err(JumbfParseError::InvalidBoxHeader)
+        ));
+    }
+
+    #[test]
+    fn test_read_desc_box_salthash_rejects_undersized_box() {
+        let mut data = Vec::new();
+        data.extend_from_slice(&[0u8; 16]);
+        data.push(0x13); // toggles: labeled + private
+        data.extend_from_slice(b"a\0");
+        data.extend_from_slice(&4u32.to_be_bytes());
+        data.extend_from_slice(b"c2sh");
+
+        let mut reader = Cursor::new(data);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 35),
+            Err(JumbfParseError::InvalidBoxHeader)
+        ));
     }
 }
 
