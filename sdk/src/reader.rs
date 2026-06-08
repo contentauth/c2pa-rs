@@ -703,7 +703,7 @@ impl Reader {
     /// Get the manifest store as a pretty-printed crJSON string.
     ///
     /// crJSON is a standardized JSON format for C2PA manifest data.
-    /// Returns `"{}"` if conversion or formatting fails.
+    /// Returns empty valid JSON `"{}"` if conversion or formatting fails.
     pub fn crjson(&self) -> String {
         self.crjson_checked().unwrap_or_else(|_| "{}".to_string())
     }
