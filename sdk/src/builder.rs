@@ -731,6 +731,12 @@ impl Builder {
         self
     }
 
+    /// Returns the base path used to search for resources, if set.
+    #[cfg(feature = "file_io")]
+    pub fn base_path(&self) -> Option<&Path> {
+        self.base_path.as_deref()
+    }
+
     /// Sets the remote_url for this [`Builder`].
     ///
     /// The URL must return the manifest data and is injected into the destination asset when signing.
