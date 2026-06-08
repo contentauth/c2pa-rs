@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
@@ -202,7 +202,7 @@ jobs:
     steps:
       - name: Checkout repository
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.2
 
       - name: Install Rust toolchain
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
