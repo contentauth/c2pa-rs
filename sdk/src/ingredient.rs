@@ -1765,8 +1765,11 @@ mod tests {
             .with_value("verify.remote_manifest_fetch", true)
             .unwrap();
         let context = Context::new().with_settings(settings).unwrap();
-        let ingredient =
-            load_ingredient_with_context(&context, "cloud.jpg").expect("load_ingredient");
+        let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let ingredient = Ingredient::from_json(r#"{"title": "cloud.jpg"}"#)
+            .unwrap()
+            .with_stream(format, &mut std::io::Cursor::new(asset_bytes), &context)
+            .expect("load_ingredient");
 
         assert_eq!(ingredient.title(), Some("cloud.jpg"));
         assert_eq!(ingredient.format(), Some(format));
@@ -1782,7 +1785,13 @@ mod tests {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
         crate::settings::set_settings_value("verify.remote_manifest_fetch", true).unwrap();
 
-        let ingredient = load_ingredient("cloud.jpg").expect("load_ingredient");
+        let format = "image/jpeg";
+        let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
+        let context = Context::new();
+        let ingredient = Ingredient::from_json(r#"{"title": "cloud.jpg"}"#)
+            .unwrap()
+            .with_stream(format, &mut std::io::Cursor::new(asset_bytes), &context)
+            .expect("load_ingredient");
 
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
