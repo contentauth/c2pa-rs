@@ -1062,10 +1062,8 @@ pub mod tests {
     use crate::{utils::test::test_settings, SigningAlg};
 
     #[cfg(feature = "file_io")]
-    fn save_settings_as_json<P: AsRef<Path>>(settings_path: P) -> Result<()> {
-        let settings = get_thread_local_settings();
-
-        let settings_json = serde_json::to_string_pretty(&settings).map_err(Error::JsonError)?;
+    fn save_settings_as_json<P: AsRef<Path>>(settings: &Settings, settings_path: P) -> Result<()> {
+        let settings_json = serde_json::to_string_pretty(settings).map_err(Error::JsonError)?;
 
         std::fs::write(settings_path, settings_json.as_bytes()).map_err(Error::IoError)
     }
@@ -1111,7 +1109,7 @@ pub mod tests {
         let temp_dir = tempdirectory().unwrap();
         let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
 
-        save_settings_as_json(&op).unwrap();
+        save_settings_as_json(&Settings::default(), &op).unwrap();
 
         let settings = Settings::new().with_file(&op).unwrap();
         assert_eq!(settings, Settings::default());
