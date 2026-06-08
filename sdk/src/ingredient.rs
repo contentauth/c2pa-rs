@@ -1768,7 +1768,8 @@ mod tests {
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let ingredient = Ingredient::from_json(r#"{"title": "cloud.jpg"}"#)
             .unwrap()
-            .with_stream(format, &mut std::io::Cursor::new(asset_bytes), &context)
+            .with_stream_async(format, &mut std::io::Cursor::new(asset_bytes), &context)
+            .await
             .expect("load_ingredient");
 
         assert_eq!(ingredient.title(), Some("cloud.jpg"));
@@ -1790,7 +1791,8 @@ mod tests {
         let context = Context::new();
         let ingredient = Ingredient::from_json(r#"{"title": "cloud.jpg"}"#)
             .unwrap()
-            .with_stream(format, &mut std::io::Cursor::new(asset_bytes), &context)
+            .with_stream_async(format, &mut std::io::Cursor::new(asset_bytes), &context)
+            .await
             .expect("load_ingredient");
 
         assert!(ingredient.validation_status().is_some());
