@@ -19,7 +19,7 @@ const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../fixtures/C.jpg");
 
 /// Load a fixture and return the crJSON value for the first manifest's assertions object.
 fn first_assertions() -> Result<serde_json::Value> {
-    let reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let json = reader.to_crjson_value()?;
     let manifest = json["manifests"][0].clone();
     Ok(manifest["assertions"].clone())
@@ -82,7 +82,8 @@ fn test_hash_data_not_filtered() -> Result<()> {
     );
 
     // Confirm it is absent from the standard Manifest JSON format.
-    let standard_reader = Reader::from_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+    let standard_reader =
+        Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
     let standard_json = serde_json::to_value(standard_reader)?;
     let standard_assertions = standard_json["manifests"]
         .as_object()

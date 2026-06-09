@@ -6,10 +6,13 @@
 
 use std::io::{Cursor, Seek};
 
-use c2pa::{
-    assertions::DigitalSourceType, settings::Settings, Builder, BuilderIntent, Ingredient, Reader,
-    Result,
-};
+use c2pa::{assertions::DigitalSourceType, Builder, BuilderIntent, Reader, Result, Signer};
+
+mod common;
+
+fn test_context() -> std::sync::Arc<c2pa::Context> {
+    common::test_context().into_shared()
+}
 
 /// Test that nested ingredients are properly reconstructed from a manifest store
 /// when undergoing multiple serialize-deserialize cycles.
@@ -20,17 +23,17 @@ use c2pa::{
 /// - Second edit with first edit as ingredient (level 2, so with nested ingredient)
 #[test]
 fn test_nested_ingredients_reconstruction_from_store() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let context = test_context();
 
     let format = "image/jpeg";
     let mut base_image = Cursor::new(include_bytes!("fixtures/no_manifest.jpg"));
 
     // Top level of nesting
     let mut level1_output = Cursor::new(Vec::new());
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     builder.sign(
-        &Settings::signer()?,
+        context.signer()?,
         format,
         &mut base_image,
         &mut level1_output,
@@ -40,10 +43,10 @@ fn test_nested_ingredients_reconstruction_from_store() -> Result<()> {
     // When using Edit intent, the source automatically becomes the parent ingredient
     level1_output.rewind()?;
     let mut level2_output = Cursor::new(Vec::new());
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
     builder.sign(
-        &Settings::signer()?,
+        context.signer()?,
         format,
         &mut level1_output,
         &mut level2_output,
@@ -53,10 +56,10 @@ fn test_nested_ingredients_reconstruction_from_store() -> Result<()> {
     // When using Edit intent, the source automatically becomes the parent ingredient
     level2_output.rewind()?;
     let mut level3_output = Cursor::new(Vec::new());
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
     builder.sign(
-        &Settings::signer()?,
+        context.signer()?,
         format,
         &mut level2_output,
         &mut level3_output,
@@ -64,7 +67,7 @@ fn test_nested_ingredients_reconstruction_from_store() -> Result<()> {
 
     // Now read the level 3 output and verify nested ingredients are properly reconstructed
     level3_output.rewind()?;
-    let reader = Reader::from_stream(format, &mut level3_output)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut level3_output)?;
 
     // Verify we have an active manifest
     let active_manifest = reader
@@ -115,17 +118,17 @@ fn test_nested_ingredients_reconstruction_from_store() -> Result<()> {
 /// Test that converting a Reader to Builder preserves nested ingredients.
 #[test]
 fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let context = test_context();
 
     let format = "image/jpeg";
     let mut base_image = Cursor::new(include_bytes!("fixtures/no_manifest.jpg"));
 
     // Create a 3-level ingredient hierarchy
     let mut level1_output = Cursor::new(Vec::new());
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     builder.sign(
-        &Settings::signer()?,
+        context.signer()?,
         format,
         &mut base_image,
         &mut level1_output,
@@ -134,7 +137,7 @@ fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
     base_image.rewind()?;
     level1_output.rewind()?;
     let mut level2_output = Cursor::new(Vec::new());
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
     builder.add_ingredient_from_stream(
         serde_json::json!({"title": "L1"}).to_string(),
@@ -142,7 +145,7 @@ fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
         &mut level1_output,
     )?;
     builder.sign(
-        &Settings::signer()?,
+        context.signer()?,
         format,
         &mut base_image,
         &mut level2_output,
@@ -151,7 +154,7 @@ fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
     base_image.rewind()?;
     level2_output.rewind()?;
     let mut level3_output = Cursor::new(Vec::new());
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
     builder.add_ingredient_from_stream(
         serde_json::json!({"title": "L2"}).to_string(),
@@ -159,7 +162,7 @@ fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
         &mut level2_output,
     )?;
     builder.sign(
-        &Settings::signer()?,
+        context.signer()?,
         format,
         &mut base_image,
         &mut level3_output,
@@ -167,7 +170,7 @@ fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
 
     // Read the level 3 output
     level3_output.rewind()?;
-    let reader = Reader::from_stream(format, &mut level3_output)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut level3_output)?;
 
     // Convert Reader to Builder
     let mut builder_from_reader = reader.into_builder()?;
@@ -176,7 +179,7 @@ fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
     base_image.rewind()?;
     let mut level4_output = Cursor::new(Vec::new());
     builder_from_reader.sign(
-        &Settings::signer()?,
+        context.signer()?,
         format,
         &mut base_image,
         &mut level4_output,
@@ -184,7 +187,7 @@ fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
 
     // Read the level 4 output and verify nested ingredients are preserved
     level4_output.rewind()?;
-    let reader = Reader::from_stream(format, &mut level4_output)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut level4_output)?;
 
     let active_manifest = reader
         .active_manifest()
@@ -212,17 +215,17 @@ fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
 /// Test that ingredient manifest_data properly includes nested ingredients.
 #[test]
 fn test_ingredient_manifest_data_includes_nested_ingredients() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let context = test_context();
 
     let format = "image/jpeg";
     let mut base_image = Cursor::new(include_bytes!("fixtures/no_manifest.jpg"));
 
     // Create a 2-level hierarchy
     let mut level1_output = Cursor::new(Vec::new());
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     builder.sign(
-        &Settings::signer()?,
+        context.signer()?,
         format,
         &mut base_image,
         &mut level1_output,
@@ -231,7 +234,7 @@ fn test_ingredient_manifest_data_includes_nested_ingredients() -> Result<()> {
     base_image.rewind()?;
     level1_output.rewind()?;
     let mut level2_output = Cursor::new(Vec::new());
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
     builder.add_ingredient_from_stream(
         serde_json::json!({"title": "Test ingredient"}).to_string(),
@@ -239,7 +242,7 @@ fn test_ingredient_manifest_data_includes_nested_ingredients() -> Result<()> {
         &mut level1_output,
     )?;
     builder.sign(
-        &Settings::signer()?,
+        context.signer()?,
         format,
         &mut base_image,
         &mut level2_output,
@@ -247,7 +250,7 @@ fn test_ingredient_manifest_data_includes_nested_ingredients() -> Result<()> {
 
     // Read and convert to Builder
     level2_output.rewind()?;
-    let reader = Reader::from_stream(format, &mut level2_output)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut level2_output)?;
     let builder = reader.into_builder()?;
 
     // Verify the ingredient has manifest_data in its own resources too
@@ -275,17 +278,17 @@ fn test_ingredient_manifest_data_includes_nested_ingredients() -> Result<()> {
 /// Test that deeply nested ingredients are properly handled.
 #[test]
 fn test_deeply_nested_ingredients() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let context = test_context();
 
     let format = "image/jpeg";
     let mut base_image = Cursor::new(include_bytes!("fixtures/no_manifest.jpg"));
 
     // Create a deeper ingredient hierarchy (5 levels)
     let mut current_output = Cursor::new(Vec::new());
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     builder.sign(
-        &Settings::signer()?,
+        context.signer()?,
         format,
         &mut base_image,
         &mut current_output,
@@ -296,25 +299,20 @@ fn test_deeply_nested_ingredients() -> Result<()> {
         base_image.rewind()?;
         current_output.rewind()?;
         let mut next_output = Cursor::new(Vec::new());
-        let mut builder = Builder::new();
+        let mut builder = Builder::from_shared_context(&context);
         builder.set_intent(BuilderIntent::Edit);
         builder.add_ingredient_from_stream(
             serde_json::json!({"title": format!("Level {}", level)}).to_string(),
             format,
             &mut current_output,
         )?;
-        builder.sign(
-            &Settings::signer()?,
-            format,
-            &mut base_image,
-            &mut next_output,
-        )?;
+        builder.sign(context.signer()?, format, &mut base_image, &mut next_output)?;
         current_output = next_output;
     }
 
     // Read the final output
     current_output.rewind()?;
-    let reader = Reader::from_stream(format, &mut current_output)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut current_output)?;
 
     // Walk down the ingredient hierarchy and verify all levels are present
     let mut current_manifest = reader
@@ -351,17 +349,17 @@ fn test_deeply_nested_ingredients() -> Result<()> {
 /// Test that empty/missing nested ingredients don't cause crashes or issues.
 #[test]
 fn test_ingredient_without_nested_ingredients() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let context = test_context();
 
     let format = "image/jpeg";
     let mut base_image = Cursor::new(include_bytes!("fixtures/no_manifest.jpg"));
 
     // Create a 2-level hierarchy (level 1 has no ingredients)
     let mut level1_output = Cursor::new(Vec::new());
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     builder.sign(
-        &Settings::signer()?,
+        context.signer()?,
         format,
         &mut base_image,
         &mut level1_output,
@@ -370,7 +368,7 @@ fn test_ingredient_without_nested_ingredients() -> Result<()> {
     base_image.rewind()?;
     level1_output.rewind()?;
     let mut level2_output = Cursor::new(Vec::new());
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
     builder.add_ingredient_from_stream(
         serde_json::json!({"title": "Simple ingredient"}).to_string(),
@@ -378,7 +376,7 @@ fn test_ingredient_without_nested_ingredients() -> Result<()> {
         &mut level1_output,
     )?;
     builder.sign(
-        &Settings::signer()?,
+        context.signer()?,
         format,
         &mut base_image,
         &mut level2_output,
@@ -386,7 +384,7 @@ fn test_ingredient_without_nested_ingredients() -> Result<()> {
 
     // Read and verify...
     level2_output.rewind()?;
-    let reader = Reader::from_stream(format, &mut level2_output)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut level2_output)?;
 
     let active_manifest = reader
         .active_manifest()
@@ -413,10 +411,11 @@ fn test_sign_manifest(
     builder: &mut Builder,
     format: &str,
     source: &mut Cursor<&[u8]>,
+    signer: &dyn Signer,
 ) -> Result<Cursor<Vec<u8>>> {
     let mut output = Cursor::new(Vec::new());
     source.rewind()?;
-    builder.sign(&Settings::signer()?, format, source, &mut output)?;
+    builder.sign(signer, format, source, &mut output)?;
     output.rewind()?;
     Ok(output)
 }
@@ -434,18 +433,19 @@ fn test_sign_manifest(
 /// because A appeared in both B's and C's ingredient trees.
 #[test]
 fn test_diamond_topology_read() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let context = test_context();
+    let signer = context.signer()?;
 
     let format = "image/jpeg";
     let mut source = Cursor::new(include_bytes!("fixtures/no_manifest.jpg").as_slice());
 
     // A: base manifest
-    let mut builder_a = Builder::new();
+    let mut builder_a = Builder::from_shared_context(&context);
     builder_a.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
-    let mut output_a = test_sign_manifest(&mut builder_a, format, &mut source)?;
+    let mut output_a = test_sign_manifest(&mut builder_a, format, &mut source, signer)?;
 
     // B: has A as ingredient
-    let mut builder_b = Builder::new();
+    let mut builder_b = Builder::from_shared_context(&context);
     builder_b.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     output_a.rewind()?;
     builder_b.add_ingredient_from_stream(
@@ -453,10 +453,10 @@ fn test_diamond_topology_read() -> Result<()> {
         format,
         &mut output_a,
     )?;
-    let mut output_b = test_sign_manifest(&mut builder_b, format, &mut source)?;
+    let mut output_b = test_sign_manifest(&mut builder_b, format, &mut source, signer)?;
 
     // C: also has A as ingredient (independent of B)
-    let mut builder_c = Builder::new();
+    let mut builder_c = Builder::from_shared_context(&context);
     builder_c.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     output_a.rewind()?;
     builder_c.add_ingredient_from_stream(
@@ -464,10 +464,10 @@ fn test_diamond_topology_read() -> Result<()> {
         format,
         &mut output_a,
     )?;
-    let mut output_c = test_sign_manifest(&mut builder_c, format, &mut source)?;
+    let mut output_c = test_sign_manifest(&mut builder_c, format, &mut source, signer)?;
 
     // D: combines B and C (diamond — both share A as ancestor)
-    let mut builder_d = Builder::new();
+    let mut builder_d = Builder::from_shared_context(&context);
     builder_d.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     output_b.rewind()?;
     builder_d.add_ingredient_from_stream(
@@ -476,13 +476,15 @@ fn test_diamond_topology_read() -> Result<()> {
         &mut output_b,
     )?;
     output_c.rewind()?;
-    let mut ingredient_c = Ingredient::from_stream(format, &mut output_c)?;
-    ingredient_c.set_title("C");
-    builder_d.add_ingredient(ingredient_c);
-    let mut output_d = test_sign_manifest(&mut builder_d, format, &mut source)?;
+    builder_d.add_ingredient_from_stream(
+        serde_json::json!({"title": "C"}).to_string(),
+        format,
+        &mut output_c,
+    )?;
+    let mut output_d = test_sign_manifest(&mut builder_d, format, &mut source, signer)?;
 
     // Read D — this must complete without exponential memory growth
-    let reader = Reader::from_stream(format, &mut output_d)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut output_d)?;
 
     let active = reader
         .active_manifest()
@@ -519,19 +521,20 @@ fn test_diamond_topology_read() -> Result<()> {
 /// This verifies `build_ingredient_store` resolves both via the fallback chain.
 #[test]
 fn test_mixed_v2_v3_ingredient_versions() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let context = test_context();
+    let signer = context.signer()?;
 
     let format = "image/jpeg";
     let mut source = Cursor::new(include_bytes!("fixtures/no_manifest.jpg").as_slice());
 
     // A: base manifest (v1 claim so it can be an ingredient of both v1 and v2 claims)
-    let mut builder_a = Builder::new();
+    let mut builder_a = Builder::from_shared_context(&context);
     builder_a.definition.claim_version = Some(1);
     builder_a.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
-    let mut output_a = test_sign_manifest(&mut builder_a, format, &mut source)?;
+    let mut output_a = test_sign_manifest(&mut builder_a, format, &mut source, signer)?;
 
     // B: claim_version=1 → v2 ingredient assertions (c2pa_manifest field)
-    let mut builder_b = Builder::new();
+    let mut builder_b = Builder::from_shared_context(&context);
     builder_b.definition.claim_version = Some(1);
     builder_b.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     output_a.rewind()?;
@@ -540,10 +543,10 @@ fn test_mixed_v2_v3_ingredient_versions() -> Result<()> {
         format,
         &mut output_a,
     )?;
-    let mut output_b = test_sign_manifest(&mut builder_b, format, &mut source)?;
+    let mut output_b = test_sign_manifest(&mut builder_b, format, &mut source, signer)?;
 
     // C: default claim_version (2) → v3 ingredient assertions (active_manifest field)
-    let mut builder_c = Builder::new();
+    let mut builder_c = Builder::from_shared_context(&context);
     builder_c.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     output_a.rewind()?;
     builder_c.add_ingredient_from_stream(
@@ -551,10 +554,10 @@ fn test_mixed_v2_v3_ingredient_versions() -> Result<()> {
         format,
         &mut output_a,
     )?;
-    let mut output_c = test_sign_manifest(&mut builder_c, format, &mut source)?;
+    let mut output_c = test_sign_manifest(&mut builder_c, format, &mut source, signer)?;
 
     // D: combines B (v2 ingredients) and C (v3 ingredients)
-    let mut builder_d = Builder::new();
+    let mut builder_d = Builder::from_shared_context(&context);
     builder_d.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     output_b.rewind()?;
     builder_d.add_ingredient_from_stream(
@@ -563,19 +566,21 @@ fn test_mixed_v2_v3_ingredient_versions() -> Result<()> {
         &mut output_b,
     )?;
     output_c.rewind()?;
-    let mut ingredient_c = Ingredient::from_stream(format, &mut output_c)?;
-    ingredient_c.set_title("C");
-    builder_d.add_ingredient(ingredient_c);
-    let mut output_d = test_sign_manifest(&mut builder_d, format, &mut source)?;
+    builder_d.add_ingredient_from_stream(
+        serde_json::json!({"title": "C"}).to_string(),
+        format,
+        &mut output_c,
+    )?;
+    let mut output_d = test_sign_manifest(&mut builder_d, format, &mut source, signer)?;
 
     // Read D, convert to builder (exercises build_ingredient_store), re-sign as E
-    let reader = Reader::from_stream(format, &mut output_d)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut output_d)?;
     let mut builder_e = reader.into_builder()?;
     builder_e.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
-    let mut output_e = test_sign_manifest(&mut builder_e, format, &mut source)?;
+    let mut output_e = test_sign_manifest(&mut builder_e, format, &mut source, signer)?;
 
     // Read E and verify structure is preserved despite mixed ingredient versions
-    let reader_e = Reader::from_stream(format, &mut output_e)?;
+    let reader_e = Reader::from_shared_context(&context).with_stream(format, &mut output_e)?;
     let active_e = reader_e
         .active_manifest()
         .expect("E should have active manifest");
@@ -608,17 +613,18 @@ fn test_mixed_v2_v3_ingredient_versions() -> Result<()> {
 /// to a Builder and re-signs to verify the round-trip preserves structure.
 #[test]
 fn test_diamond_topology_into_builder_round_trip() -> Result<()> {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+    let context = test_context();
+    let signer = context.signer()?;
 
     let format = "image/jpeg";
     let mut source = Cursor::new(include_bytes!("fixtures/no_manifest.jpg").as_slice());
 
     // Build diamond: A -> B, A -> C, B+C -> D
-    let mut builder_a = Builder::new();
+    let mut builder_a = Builder::from_shared_context(&context);
     builder_a.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
-    let mut output_a = test_sign_manifest(&mut builder_a, format, &mut source)?;
+    let mut output_a = test_sign_manifest(&mut builder_a, format, &mut source, signer)?;
 
-    let mut builder_b = Builder::new();
+    let mut builder_b = Builder::from_shared_context(&context);
     builder_b.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     output_a.rewind()?;
     builder_b.add_ingredient_from_stream(
@@ -626,9 +632,9 @@ fn test_diamond_topology_into_builder_round_trip() -> Result<()> {
         format,
         &mut output_a,
     )?;
-    let mut output_b = test_sign_manifest(&mut builder_b, format, &mut source)?;
+    let mut output_b = test_sign_manifest(&mut builder_b, format, &mut source, signer)?;
 
-    let mut builder_c = Builder::new();
+    let mut builder_c = Builder::from_shared_context(&context);
     builder_c.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     output_a.rewind()?;
     builder_c.add_ingredient_from_stream(
@@ -636,9 +642,9 @@ fn test_diamond_topology_into_builder_round_trip() -> Result<()> {
         format,
         &mut output_a,
     )?;
-    let mut output_c = test_sign_manifest(&mut builder_c, format, &mut source)?;
+    let mut output_c = test_sign_manifest(&mut builder_c, format, &mut source, signer)?;
 
-    let mut builder_d = Builder::new();
+    let mut builder_d = Builder::from_shared_context(&context);
     builder_d.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
     output_b.rewind()?;
     builder_d.add_ingredient_from_stream(
@@ -647,20 +653,22 @@ fn test_diamond_topology_into_builder_round_trip() -> Result<()> {
         &mut output_b,
     )?;
     output_c.rewind()?;
-    let mut ingredient_c = Ingredient::from_stream(format, &mut output_c)?;
-    ingredient_c.set_title("C");
-    builder_d.add_ingredient(ingredient_c);
-    let mut output_d = test_sign_manifest(&mut builder_d, format, &mut source)?;
+    builder_d.add_ingredient_from_stream(
+        serde_json::json!({"title": "C"}).to_string(),
+        format,
+        &mut output_c,
+    )?;
+    let mut output_d = test_sign_manifest(&mut builder_d, format, &mut source, signer)?;
 
     // Read D, convert to builder, re-sign as E
-    let reader = Reader::from_stream(format, &mut output_d)?;
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut output_d)?;
     let mut builder_e = reader.into_builder()?;
     // Prevent auto-capture of source as additional ingredient (test_settings has intent=edit)
     builder_e.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
-    let mut output_e = test_sign_manifest(&mut builder_e, format, &mut source)?;
+    let mut output_e = test_sign_manifest(&mut builder_e, format, &mut source, signer)?;
 
     // Read E and verify structure is preserved
-    let reader_e = Reader::from_stream(format, &mut output_e)?;
+    let reader_e = Reader::from_shared_context(&context).with_stream(format, &mut output_e)?;
     let active_e = reader_e
         .active_manifest()
         .expect("E should have active manifest");

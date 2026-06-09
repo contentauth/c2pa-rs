@@ -105,6 +105,7 @@ pub fn main() -> Result<()> {
     let source = PathBuf::from(src);
     let dest = PathBuf::from(dst);
     // if a filepath was provided on the command line, read it as a parent file
+    #[allow(deprecated)]
     let mut parent = Ingredient::from_file(source.as_path())?;
     parent.set_relationship(Relationship::ParentOf);
 
@@ -140,7 +141,7 @@ pub fn main() -> Result<()> {
     )?;
 
     // create a new Manifest
-    let mut builder = Builder::new();
+    let mut builder = Builder::default();
     builder.definition.claim_version = Some(2);
     let mut generator = ClaimGeneratorInfo::new(GENERATOR);
     generator.set_version("0.1");
@@ -159,7 +160,7 @@ pub fn main() -> Result<()> {
 
     builder.sign_file(&*signer, &source, &dest)?;
 
-    let reader = Reader::from_file(&dest)?;
+    let reader = Reader::default().with_file(&dest)?;
 
     // example of how to print out the whole manifest as json
     println!("{reader}\n");

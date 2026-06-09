@@ -34,6 +34,10 @@ jobs:
             target: x86_64-apple-ios
           - os: macos-latest
             target: aarch64-apple-ios-sim
+          - os: macos-latest
+            target: aarch64-apple-ios-macabi
+          - os: macos-latest
+            target: x86_64-apple-ios-macabi
           - os: ubuntu-latest
             target: aarch64-linux-android
           - os: ubuntu-latest
@@ -152,7 +156,7 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.extract_tag.outputs.tag_name }}
 

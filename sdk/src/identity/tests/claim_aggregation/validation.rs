@@ -30,7 +30,6 @@ use crate::{
         IdentityAssertion, ValidationError,
     },
     status_tracker::{LogKind, StatusTracker},
-    Reader,
 };
 
 #[c2pa_test_async]
@@ -54,7 +53,7 @@ async fn success_case() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -118,7 +117,7 @@ async fn invalid_cose_sign1() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -198,7 +197,7 @@ async fn invalid_cose_sign_alg() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -260,7 +259,7 @@ async fn missing_cose_sign_alg() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -323,7 +322,7 @@ async fn invalid_content_type() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -386,7 +385,7 @@ async fn invalid_content_type_assigned() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -448,7 +447,7 @@ async fn missing_content_type() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -522,7 +521,7 @@ async fn missing_vc() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -580,7 +579,7 @@ async fn invalid_vc() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -647,7 +646,7 @@ async fn invalid_issuer_did() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -712,7 +711,7 @@ async fn unsupported_did_method() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -775,7 +774,7 @@ async fn unresolvable_did() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -838,7 +837,7 @@ async fn did_doc_without_assertion_method() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -914,7 +913,7 @@ async fn signature_mismatch() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -982,7 +981,7 @@ async fn valid_time_stamp() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -1069,7 +1068,7 @@ async fn invalid_time_stamp() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -1138,7 +1137,7 @@ async fn valid_from_missing() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -1206,7 +1205,7 @@ async fn valid_from_in_future() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -1279,7 +1278,7 @@ async fn valid_from_after_time_stamp() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -1375,7 +1374,7 @@ async fn valid_until_in_future() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -1444,7 +1443,7 @@ async fn valid_until_in_past() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -1532,7 +1531,7 @@ async fn signer_payload_mismatch() {
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();

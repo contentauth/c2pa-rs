@@ -14,7 +14,7 @@
 #![deny(missing_docs)]
 #[cfg(feature = "file_io")]
 use std::path::{Path, PathBuf};
-use std::{borrow::Cow, io::Cursor};
+use std::{borrow::Cow, io::Cursor, sync::Arc};
 
 use async_generic::async_generic;
 use log::{debug, error};
@@ -139,6 +139,11 @@ pub struct Ingredient {
     /// [`ManifestStore`]: crate::ManifestStore
     #[serde(skip_serializing_if = "Option::is_none")]
     manifest_data: Option<ResourceRef>,
+
+    /// When set, [`Ingredient::manifest_data`] is resolved on demand from this store
+    /// (see [`Reader`](crate::Reader) construction) instead of from [`Ingredient::resources`].
+    #[serde(skip)]
+    source_store: Option<Arc<Store>>,
 
     /// The ingredient's label as assigned in the manifest.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -322,9 +327,25 @@ impl Ingredient {
     ///
     /// manifest_data is the binary form of a manifest store in .c2pa format.
     pub fn manifest_data(&self) -> Option<Cow<'_, Vec<u8>>> {
-        self.manifest_data
-            .as_ref()
-            .and_then(|r| self.resources.get(&r.identifier).ok())
+        let r = self.manifest_data.as_ref()?;
+        match self.resources.get(&r.identifier) {
+            Ok(cow) => Some(cow),
+            Err(_) => self
+                .try_get_deferred_manifest_data(&r.identifier)
+                .ok()
+                .map(Cow::Owned),
+        }
+    }
+
+    fn try_get_deferred_manifest_data(&self, id: &str) -> Result<Vec<u8>> {
+        let mdr = self.manifest_data.as_ref().ok_or_else(|| Error::NotFound)?;
+        if mdr.identifier != id {
+            return Err(Error::NotFound);
+        }
+        let source_store = self.source_store.as_ref().ok_or_else(|| Error::NotFound)?;
+        let claim = source_store.get_claim(id).ok_or_else(|| Error::NotFound)?;
+        let sub = Store::build_flat_ingredient_store(source_store.as_ref(), claim)?;
+        sub.to_jumbf_internal(0)
     }
 
     /// Returns a reference to ingredient data if it exists.
@@ -473,20 +494,43 @@ impl Ingredient {
         self
     }
 
+    /// Sets the ingredient's label, used as the linking key for action `ingredientIds[]`.
+    pub fn set_label<S: Into<String>>(&mut self, label: S) -> &mut Self {
+        self.label = Some(label.into());
+        self
+    }
+
     /// Sets a reference to Manifest C2PA data.
     pub fn set_manifest_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
+        self.source_store = None;
         self.manifest_data = Some(data_ref);
         Ok(self)
     }
 
     /// Sets the Manifest C2PA data for this ingredient with bytes.
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
+        self.source_store = None;
         let base_id = "manifest_data".to_string();
         self.manifest_data = Some(
             self.resources
                 .add_with(&base_id, "application/c2pa", data)?,
         );
         Ok(self)
+    }
+
+    /// Lazily resolve [`Ingredient::manifest_data`] from `source_store` using
+    /// [`Ingredient::active_manifest`] as the provenance claim label.
+    pub(crate) fn set_deferred_manifest_data(&mut self, source_store: Arc<Store>) -> Result<()> {
+        let active = self
+            .active_manifest()
+            .map(str::to_owned)
+            .ok_or_else(|| Error::NotFound)?;
+        if source_store.get_claim(&active).is_none() {
+            return Ok(());
+        }
+        self.source_store = Some(source_store);
+        self.manifest_data = Some(ResourceRef::new("application/c2pa", active));
+        Ok(())
     }
 
     /// Sets a reference to Ingredient data.
@@ -706,13 +750,25 @@ impl Ingredient {
     }
 
     #[cfg(feature = "file_io")]
-    /// Creates an `Ingredient` from a file path.
+    /// Creates an `Ingredient` from a file path using thread-local settings.
+    ///
+    /// Use [`Ingredient::from_file_with_options`] with an explicit context instead.
+    #[deprecated(
+        note = "Use `Ingredient::from_file_with_options` with an explicit `Context` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         Self::from_file_with_options(path.as_ref(), &DefaultOptions { base: None })
     }
 
     #[cfg(feature = "file_io")]
-    /// Creates an `Ingredient` from a file path.
+    /// Creates an `Ingredient` from a file path using thread-local settings.
+    ///
+    /// Use [`Ingredient::from_file_with_options`] with an explicit context instead.
+    #[deprecated(
+        note = "Use `Ingredient::from_file_with_options` with an explicit `Context` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub fn from_file_with_folder<P: AsRef<Path>>(path: P, folder: P) -> Result<Self> {
         Self::from_file_with_options(
             path.as_ref(),
@@ -727,8 +783,15 @@ impl Ingredient {
         (assertion.content_type(), assertion.data())
     }
 
-    /// Creates an `Ingredient` from a file path and options.
+    /// Creates an `Ingredient` from a file path and options, using thread-local settings.
+    ///
+    /// Pass an explicit [`Context`](crate::Context) to `from_file_impl` directly, or use
+    /// the [`Builder`](crate::Builder) API with [`Builder::from_context`](crate::Builder::from_context)
+    /// to avoid relying on thread-local settings.
     #[cfg(feature = "file_io")]
+    #[deprecated(
+        note = "Rely on `Builder::from_context` with an explicit `Context` instead of using thread-local settings."
+    )]
     pub fn from_file_with_options<P: AsRef<Path>>(
         path: P,
         options: &dyn IngredientOptions,
@@ -818,19 +881,28 @@ impl Ingredient {
         Ok(ingredient)
     }
 
-    /// Creates an `Ingredient` from a memory buffer.
+    /// Creates an `Ingredient` from a memory buffer using thread-local settings.
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
+    ///
+    /// Use [`Ingredient::from_stream`] with an explicit [`Context`](crate::Context) instead.
+    #[deprecated(
+        note = "Use `Ingredient::from_stream` with an explicit `Context` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub fn from_memory(format: &str, buffer: &[u8]) -> Result<Self> {
         let mut stream = Cursor::new(buffer);
         Self::from_stream(format, &mut stream)
     }
 
-    /// Creates an `Ingredient` from a stream.
+    /// Creates an `Ingredient` from a stream using thread-local settings.
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
+    ///
+    /// Pass an explicit [`Context`](crate::Context) via `add_stream_internal` instead.
+    #[deprecated(note = "Pass an explicit `Context` instead of relying on thread-local settings.")]
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = crate::settings::get_thread_local_settings();
@@ -973,19 +1045,30 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Creates an `Ingredient` from a memory buffer (async version).
+    /// Creates an `Ingredient` from a memory buffer (async version) using thread-local settings.
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
+    ///
+    /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
+    #[deprecated(
+        note = "Use `Builder::from_context(context)` with an explicit `Context` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub async fn from_memory_async(format: &str, buffer: &[u8]) -> Result<Self> {
         let mut stream = Cursor::new(buffer);
         Self::from_stream_async(format, &mut stream).await
     }
 
-    /// Creates an `Ingredient` from a stream (async version).
+    /// Creates an `Ingredient` from a stream (async version) using thread-local settings.
     ///
     /// This does not set title or hash.
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
+    ///
+    /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
+    #[deprecated(
+        note = "Use `Builder::from_context(context)` with an explicit `Context` instead of relying on thread-local settings."
+    )]
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = crate::settings::get_thread_local_settings();
@@ -1018,7 +1101,7 @@ impl Ingredient {
                                 // verify the store
                                 Store::verify_store_async(
                                     &store,
-                                    &mut ClaimAssetData::Stream(stream, format),
+                                    Some(&mut ClaimAssetData::Stream(stream, format)),
                                     &mut validation_log,
                                     context,
                                 )
@@ -1114,6 +1197,8 @@ impl Ingredient {
                 Some(label) => label,           // use the manifest from the thumbnail uri
                 None => claim_label.to_owned(), /* relative so use the whole url from the thumbnail assertion */
             };
+            let absolute_uri =
+                jumbf::labels::to_absolute_uri(&target_claim_label, &hashed_uri.url());
             let maybe_resource_ref = match hashed_uri.url() {
                 uri if uri.contains(jumbf::labels::ASSERTIONS) => {
                     // Get the bits of the thumbnail and convert it to a resource
@@ -1122,16 +1207,14 @@ impl Ingredient {
                         .get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_claim_label)
                         .map(|assertion| {
                             let (format, image) = Self::thumbnail_from_assertion(assertion);
-                            ingredient
-                                .resources
-                                .add_uri(&hashed_uri.url(), format, image)
+                            ingredient.resources.add_uri(&absolute_uri, format, image)
                         })
                 }
                 uri if uri.contains(jumbf::labels::DATABOXES) => store
                     .get_data_box_from_uri_and_claim(hashed_uri, &target_claim_label)
                     .map(|data_box| {
                         ingredient.resources.add_uri(
-                            &hashed_uri.url(),
+                            &absolute_uri,
                             &data_box.format,
                             data_box.data.clone(),
                         )
@@ -1216,20 +1299,25 @@ impl Ingredient {
         let mut thumbnail = None;
         // for Builder model, ingredient resources may be in the manifest
         let get_resource = |id: &str| {
-            self.resources.get(id).or_else(|_| {
-                resources
-                    .ok_or_else(|| Error::NotFound)
-                    .and_then(|r| r.get(id))
-            })
+            self.resources
+                .get(id)
+                .or_else(|_| {
+                    resources
+                        .ok_or_else(|| Error::NotFound)
+                        .and_then(|r| r.get(id))
+                })
+                .or_else(|_| self.try_get_deferred_manifest_data(id).map(Cow::Owned))
         };
 
-        // Needed so no thumbnails is generated if thumbnail got redacted.
-        let thumbnail_redacted_manifests: std::collections::HashSet<String> = redactions
+        // Collect the redacted thumbnail URIs, use them for comparison.
+        let redacted_thumbnail_uris: std::collections::HashSet<String> = redactions
             .as_deref()
             .unwrap_or_default()
             .iter()
-            .filter(|r| r.contains(labels::CLAIM_THUMBNAIL))
-            .filter_map(|r| jumbf::labels::manifest_label_from_uri(r))
+            .filter(|r| {
+                r.contains(labels::CLAIM_THUMBNAIL) || r.contains(labels::INGREDIENT_THUMBNAIL)
+            })
+            .cloned()
             .collect();
 
         // add the ingredient manifest_data to the claim
@@ -1261,20 +1349,23 @@ impl Ingredient {
                 let signature_uri = jumbf::labels::to_signature_uri(manifest_label);
 
                 // Use the parent claim thumbnail if validation passed and it was not redacted.
-                let thumbnail_not_redacted = !thumbnail_redacted_manifests.contains(manifest_label);
                 let is_valid = self
                     .validation_results()
                     .is_some_and(|v| v.validation_state() != crate::ValidationState::Invalid);
-                if thumbnail_not_redacted && is_valid {
+                if is_valid {
                     thumbnail = ingredient_active_claim
                         .assertions()
                         .iter()
                         .find(|hashed_uri| hashed_uri.url().contains(labels::CLAIM_THUMBNAIL))
-                        .map(|t| {
+                        .and_then(|t| {
                             // convert ingredient uris to absolute when adding them
                             // since this uri references a different manifest
                             let url = jumbf::labels::to_absolute_uri(manifest_label, &t.url());
-                            HashedUri::new(url, t.alg(), &t.hash())
+                            if redacted_thumbnail_uris.contains(url.as_str()) {
+                                None
+                            } else {
+                                Some(HashedUri::new(url, t.alg(), &t.hash()))
+                            }
                         });
                 }
                 // generate c2pa_manifest hashed_uris
@@ -1295,21 +1386,53 @@ impl Ingredient {
         };
 
         // If the ingredient defines a thumbnail, add it to the claim,
-        // unless the source claim thumbnail was redacted...
-        // (that is why we kept thumbnail_redacted_manifests around).
+        // unless the thumbnail URI is explicitly listed in the redactions.
         if let Some(thumb_ref) = self.thumbnail_ref() {
-            // Normalize the identifier to an absolute JUMBF URI using the ingredient's
-            // active manifest label as the base (a no-op for identifiers that are already
-            // absolute), then extract the manifest label from the result so we can check
-            // whether that manifest's thumbnails are being redacted.
-            let thumbnail_is_redacted = self
+            // A relative self#jumbf= URI on an ingredient that already
+            // has manifest_data is a stale reference from the outer (archive) manifest being
+            // rebuilt. Due to staleness, resources might need to be removed if stale/redacted.
+            // Ingredients without manifest_data may also carry relative self#jumbf= thumbnail
+            // identifiers (e.g. written by the archive format for freshly-generated thumbnails),
+            // those are valid resources in the builder's resource store and must be kept.
+            // A thumbnail is also "stale" when it comes from the outer archive manifest rather
+            // than the ingredient's own manifest chain. URIs are absolute but may
+            // still point to a different (outer) manifest, not the ingredient's active_manifest,
+            // which also makes them stale and should not be added in this case.
+            let is_stale_outer_ref = self.manifest_data_ref().is_some()
+                && thumb_ref.identifier.starts_with("self#jumbf=")
+                && (!thumb_ref.identifier.starts_with("self#jumbf=/")
+                    || self
+                        .active_manifest
+                        .as_deref()
+                        .is_some_and(|label| !thumb_ref.identifier.contains(label)));
+
+            // Resolve the thumbnail identifier to an absolute JUMBF URI using the ingredient's
+            // own manifest label (self.active_manifest), then check directly against the
+            // redacted URI set...
+            let abs_thumb_uri = self
                 .active_manifest
                 .as_deref()
                 .map(|active_label| {
                     jumbf::labels::to_absolute_uri(active_label, &thumb_ref.identifier)
                 })
-                .and_then(|abs_uri| jumbf::labels::manifest_label_from_uri(&abs_uri))
-                .is_some_and(|label| thumbnail_redacted_manifests.contains(&label));
+                .unwrap_or_else(|| thumb_ref.identifier.clone());
+
+            // For ingredients with embedded manifest data, a freshly-generated thumbnail
+            // (e.g. an XMP-IID filename from maybe_add_thumbnail) may exist even when the
+            // manifest's own claim thumbnail failed validation. If any thumbnail from
+            // this ingredient's manifest chain is being redacted, suppress the fresh
+            // thumbnail too, it represents the same provenance (edge case for thumbnails
+            // added from files).
+            let active_manifest_label = self.active_manifest.as_deref().unwrap_or("");
+            let fresh_thumb_is_suppressed = self.manifest_data_ref().is_some()
+                && !active_manifest_label.is_empty()
+                && redacted_thumbnail_uris
+                    .iter()
+                    .any(|uri| uri.contains(active_manifest_label));
+
+            let thumbnail_is_redacted = is_stale_outer_ref
+                || redacted_thumbnail_uris.contains(abs_thumb_uri.as_str())
+                || fresh_thumb_is_suppressed;
 
             if !thumbnail_is_redacted {
                 // if we have a hash, just build the hashed uri
@@ -1441,7 +1564,11 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes.
+    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes,
+    /// using thread-local settings.
+    ///
+    /// Use [`Ingredient::from_manifest_and_asset_stream_async`] with an explicit
+    /// [`Context`](crate::Context) instead.
     ///
     /// # Example: Create an Ingredient from a binary manifest (.c2pa) and asset bytes
     /// ```
@@ -1462,6 +1589,10 @@ impl Ingredient {
     /// #    Ok(())
     /// }
     /// ```
+    #[deprecated(
+        note = "Pass an explicit `Context` via `from_manifest_and_asset_stream_async` instead of relying on thread-local settings."
+    )]
+    #[allow(deprecated)]
     pub async fn from_manifest_and_asset_bytes_async<M: Into<Vec<u8>>>(
         manifest_bytes: M,
         format: &str,
@@ -1471,7 +1602,11 @@ impl Ingredient {
         Self::from_manifest_and_asset_stream_async(manifest_bytes, format, &mut stream).await
     }
 
-    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset.
+    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset,
+    /// using thread-local settings.
+    ///
+    /// Pass an explicit [`Context`](crate::Context) instead of relying on thread-local settings.
+    #[deprecated(note = "Pass an explicit `Context` instead of relying on thread-local settings.")]
     pub async fn from_manifest_and_asset_stream_async<M: Into<Vec<u8>>>(
         manifest_bytes: M,
         format: &str,
@@ -1494,7 +1629,7 @@ impl Ingredient {
 
                     Store::verify_store_async(
                         &store,
-                        &mut ClaimAssetData::Stream(stream, format),
+                        Some(&mut ClaimAssetData::Stream(stream, format)),
                         &mut validation_log,
                         &context,
                     )
@@ -1659,12 +1794,17 @@ impl IngredientOptions for DefaultOptions {
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
 
     use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
     use super::*;
+    use crate::{
+        assertions::DigitalSourceType, builder::BuilderIntent, utils::test_signer::test_signer,
+        Builder, Reader, SigningAlg,
+    };
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -1896,6 +2036,38 @@ mod tests {
         assert!(ingredient.manifest_data().is_some());
         assert!(ingredient.provenance().is_some());
     }
+
+    #[test]
+    fn test_ingredient_thumbnail_uri_is_absolute() {
+        let mut ingredient = Ingredient::new_v2("Test Ingredient", "image/jpeg");
+        ingredient
+            .set_thumbnail("image/jpeg", b"a super real thumbnail".to_vec())
+            .unwrap();
+
+        let mut builder = Builder::default()
+            .with_definition(r#"{"title": "Test Image"}"#)
+            .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+        builder.add_ingredient(ingredient);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut source = Cursor::new(include_bytes!("../tests/fixtures/C.jpg").as_slice());
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(&signer, "image/jpeg", &mut source, &mut output)
+            .unwrap();
+
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+        let manifest = reader.active_manifest().unwrap();
+        let manifest_label = manifest.label().unwrap();
+        let ingredient = manifest.ingredients().first().unwrap();
+        let thumb_ref = ingredient.thumbnail_ref().unwrap();
+
+        let expected_prefix = format!("self#jumbf=/c2pa/{manifest_label}/");
+        assert!(thumb_ref.identifier.starts_with(&expected_prefix),);
+    }
 }
 
 #[cfg(test)]
@@ -1903,6 +2075,7 @@ mod tests {
 mod tests_file_io {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
 
     use super::*;
     use crate::{assertion::AssertionData, utils::test::fixture_path};

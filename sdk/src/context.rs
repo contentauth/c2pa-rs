@@ -802,6 +802,12 @@ impl Context {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::utils::test_signer::async_test_signer;
+    use crate::{
+        utils::{test::test_context, test_signer::test_signer},
+        SigningAlg,
+    };
 
     #[test]
     fn test_into_settings_from_settings() {
@@ -843,9 +849,7 @@ mod tests {
 
     #[test]
     fn test_signer_from_settings() {
-        // Create a context with signer settings from the test_settings.toml file
-        let toml = include_str!("../tests/fixtures/test_settings.toml");
-        let context = Context::new().with_settings(toml).unwrap();
+        let context = test_context();
 
         // Verify that signer can be created from the settings
         let signer = context.signer();
@@ -854,7 +858,7 @@ mod tests {
         // Verify the signer has the expected algorithm
         let signer = signer.unwrap();
         assert!(
-            signer.alg() == crate::SigningAlg::Ps256,
+            signer.alg() == SigningAlg::Ps256,
             "Signer from settings should have Ps256 algorithm"
         );
 
@@ -901,7 +905,7 @@ mod tests {
     #[test]
     fn test_custom_signer() {
         // Create a custom test signer
-        let custom_signer = crate::utils::test_signer::test_signer(crate::SigningAlg::Es256);
+        let custom_signer = test_signer(SigningAlg::Es256);
 
         // Create a context with the custom signer
         let context = Context::new().with_signer(custom_signer);
@@ -909,7 +913,7 @@ mod tests {
         // Verify the custom signer is returned with the expected algorithm
         let signer = context.signer().unwrap();
         assert!(
-            signer.alg() == crate::SigningAlg::Es256,
+            signer.alg() == SigningAlg::Es256,
             "Custom signer should have Es256 algorithm"
         );
     }
@@ -917,10 +921,8 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_custom_async_signer() {
-        use crate::utils::test_signer::async_test_signer;
-
         // Create a custom async signer using the test utility
-        let custom_async_signer = async_test_signer(crate::SigningAlg::Es256);
+        let custom_async_signer = async_test_signer(SigningAlg::Es256);
 
         // Create a context with the custom async signer
         let context = Context::new().with_async_signer(custom_async_signer);
@@ -929,7 +931,7 @@ mod tests {
         let async_signer = context.async_signer().unwrap();
         assert_eq!(
             async_signer.alg(),
-            crate::SigningAlg::Es256,
+            SigningAlg::Es256,
             "Custom async signer should have Es256 algorithm"
         );
 
@@ -1334,10 +1336,8 @@ mod tests {
 
     #[test]
     fn test_set_signer() {
-        use crate::SigningAlg;
-
         // Create a custom test signer (Es256)
-        let custom_signer = crate::utils::test_signer::test_signer(SigningAlg::Es256);
+        let custom_signer = test_signer(SigningAlg::Es256);
 
         // Create a context and mutate it with set_signer
         let mut context = Context::new();
@@ -1362,10 +1362,8 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_set_async_signer() {
-        use crate::SigningAlg;
-
         // Create a custom async test signer (Es256)
-        let custom_signer = crate::utils::test_signer::async_test_signer(SigningAlg::Es256);
+        let custom_signer = async_test_signer(SigningAlg::Es256);
 
         // Create a context and mutate it with set_async_signer
         let mut context = Context::new();
@@ -1396,10 +1394,8 @@ mod tests {
 
     #[test]
     fn test_set_methods_replace_previous_values() {
-        use crate::SigningAlg;
-
         // Create a context with initial signer (Ps256)
-        let initial_signer = crate::utils::test_signer::test_signer(SigningAlg::Ps256);
+        let initial_signer = test_signer(SigningAlg::Ps256);
         let mut context = Context::new().with_signer(initial_signer);
 
         // Verify initial signer
@@ -1411,7 +1407,7 @@ mod tests {
         );
 
         // Replace with new signer (Es256) using set_signer
-        let new_signer = crate::utils::test_signer::test_signer(SigningAlg::Es256);
+        let new_signer = test_signer(SigningAlg::Es256);
         context.set_signer(new_signer).unwrap();
 
         // Verify signer was replaced
