@@ -416,60 +416,17 @@ pub fn verify_time_stamp(
         };
 
         // Verify signature of time stamp signature.
-        if _sync {
-            // IMPORTANT: The synchronous implementation of validate_timestamp_sync
-            // on WASM is unable to support _some_ signature algorithms. The async path
-            // should be used whenever possible (for WASM, at least).
-            if validate_timestamp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der)
-                .is_err()
-            {
-                log_item!(
-                    "",
-                    "timestamp signed data did not match signature",
-                    "verify_time_stamp"
-                )
-                .validation_status(TIMESTAMP_UNTRUSTED)
-                .informational(&mut current_validation_log);
+        if validate_timestamp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der).is_err() {
+            log_item!(
+                "",
+                "timestamp signed data did not match signature",
+                "verify_time_stamp"
+            )
+            .validation_status(TIMESTAMP_UNTRUSTED)
+            .informational(&mut current_validation_log);
 
-                last_err = TimeStampError::Untrusted;
-                continue;
-            }
-        } else {
-            #[cfg(not(target_arch = "wasm32"))]
-            if validate_timestamp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der)
-                .is_err()
-            {
-                log_item!(
-                    "",
-                    "timestamp signed data did not match signature",
-                    "verify_time_stamp"
-                )
-                .validation_status(TIMESTAMP_UNTRUSTED)
-                .informational(&mut current_validation_log);
-
-                last_err = TimeStampError::Untrusted;
-                continue;
-            }
-
-            // NOTE: We're keeping the WASM-specific async path alive for now because it
-            // supports more signature algorithms. Look for future WASM platform to provide
-            // the opportunity to unify.
-            #[cfg(target_arch = "wasm32")]
-            if validate_timestamp_sig_async(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der)
-                .await
-                .is_err()
-            {
-                log_item!(
-                    "",
-                    "timestamp signed data did not match signature",
-                    "verify_time_stamp"
-                )
-                .validation_status(TIMESTAMP_UNTRUSTED)
-                .informational(&mut current_validation_log);
-
-                last_err = TimeStampError::Untrusted;
-                continue;
-            }
+            last_err = TimeStampError::Untrusted;
+            continue;
         }
 
         // Make sure the time stamp's cert was valid for the stated signing time.
@@ -868,18 +825,4 @@ fn validate_timestamp_sig(
     validator
         .validate(&sig_val.to_bytes(), tbs, signing_key_der)
         .map_err(|_| TimeStampError::InvalidData)
-}
-
-// The built-in validators are pure-Rust and synchronous on every target
-// (including WASM), so the async timestamp path uses the synchronous validator
-// directly.
-#[cfg(target_arch = "wasm32")]
-async fn validate_timestamp_sig_async(
-    sig_alg: &bcder::Oid,
-    hash_alg: &bcder::Oid,
-    sig_val: &OctetString,
-    tbs: &[u8],
-    signing_key_der: &[u8],
-) -> Result<(), TimeStampError> {
-    validate_timestamp_sig(sig_alg, hash_alg, sig_val, tbs, signing_key_der)
 }
