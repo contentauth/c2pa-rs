@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.65](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.64...c2patool-v0.26.65)
+_09 June 2026_
+
+### Fixed
+
+* DLL hijacking vulnerability in c2patool (CAI-8608) ([#2031](https://github.com/contentauth/c2pa-rs/pull/2031))
+
 ## [0.26.64](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.63...c2patool-v0.26.64)
 _08 June 2026_
 
