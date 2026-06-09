@@ -22,7 +22,10 @@
 // `certificate_trust_policy.rs` prefers `rust_native_crypto` (mirroring
 // `c2pa-raw-crypto`). Gating the module to match that dispatch avoids compiling
 // it as dead code.
-#[cfg(all(feature = "openssl", not(feature = "rust_native_crypto")))]
+#[cfg(all(
+    feature = "openssl",
+    not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
+))]
 pub(crate) mod openssl;
 
 #[cfg(feature = "rust_native_crypto")]
