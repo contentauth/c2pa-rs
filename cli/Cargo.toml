@@ -26,7 +26,6 @@ anyhow = "1.0"
 atree = "0.5.4"
 c2pa = { workspace = true, features = [
     "openssl",
-    "default_http",
     "fetch_remote_manifests",
     "file_io",
     "add_thumbnails",
