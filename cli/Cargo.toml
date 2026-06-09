@@ -25,6 +25,7 @@ networking = [
 anyhow = "1.0"
 atree = "0.5.4"
 c2pa = { workspace = true, features = [
+    "openssl",
     "fetch_remote_manifests",
     "file_io",
     "add_thumbnails",
