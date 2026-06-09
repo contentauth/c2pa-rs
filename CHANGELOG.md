@@ -9,6 +9,17 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.86.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.86.1...c2pa-v0.86.2)
+_09 June 2026_
+
+### Fixed
+
+* Noop test new release workflow ([#2221](https://github.com/contentauth/c2pa-rs/pull/2221))
+
+### Other
+
+* Use latest `release-plz` and add a dry run job on release PRs ([#2217](https://github.com/contentauth/c2pa-rs/pull/2217))
+
 ## [0.86.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.86.0...c2pa-v0.86.1)
 _08 June 2026_
 
