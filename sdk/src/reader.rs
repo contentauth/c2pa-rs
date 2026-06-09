@@ -208,6 +208,7 @@ impl Reader {
     }
 
     /// Add manifest store from a stream to the [`Reader`].
+    ///
     /// # Arguments
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
