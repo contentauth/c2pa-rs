@@ -199,7 +199,7 @@ fn default_format() -> String {
 
 // TryFrom implementations for ManifestDefinition
 
-/// Implement TryFrom for &str (JSON string)
+/// Implement TryFrom for &str (JSON string).
 impl TryFrom<&str> for ManifestDefinition {
     type Error = Error;
 
@@ -208,7 +208,7 @@ impl TryFrom<&str> for ManifestDefinition {
     }
 }
 
-/// Implement TryFrom for String
+/// Implement TryFrom for String.
 impl TryFrom<String> for ManifestDefinition {
     type Error = Error;
 
