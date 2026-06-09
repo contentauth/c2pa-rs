@@ -17,10 +17,12 @@
 //! The active backend mirrors the cryptography backend selected for
 //! `c2pa-raw-crypto`.
 
-// The OpenSSL trust backend is compiled whenever `openssl` is enabled; the
-// runtime dispatch in `certificate_trust_policy.rs` selects `rust_native_crypto`
-// in preference when both are enabled (mirroring `c2pa-raw-crypto`).
-#[cfg(feature = "openssl")]
+// The OpenSSL trust backend is only used when `openssl` is enabled and
+// `rust_native_crypto` is not; when both are enabled the dispatch in
+// `certificate_trust_policy.rs` prefers `rust_native_crypto` (mirroring
+// `c2pa-raw-crypto`). Gating the module to match that dispatch avoids compiling
+// it as dead code.
+#[cfg(all(feature = "openssl", not(feature = "rust_native_crypto")))]
 pub(crate) mod openssl;
 
 #[cfg(feature = "rust_native_crypto")]

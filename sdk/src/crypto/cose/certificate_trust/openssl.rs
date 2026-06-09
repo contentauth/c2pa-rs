@@ -19,9 +19,6 @@ use openssl::{
 
 use crate::crypto::cose::{CertificateTrustError, CertificateTrustPolicy, TrustAnchorType};
 
-// Dead when both `openssl` and `rust_native_crypto` are enabled (the rust-native
-// trust backend is selected at runtime in that case).
-#[allow(dead_code)]
 pub(crate) fn check_certificate_trust(
     ctp: &CertificateTrustPolicy,
     chain_der: &[Vec<u8>],
