@@ -996,7 +996,8 @@ fn main() -> Result<()> {
             windows_sys::Win32::System::LibraryLoader::LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
         ) == 0
         {
-            bail!("Failed to set default DLL directories");
+            let err = windows_sys::Win32::Foundation::GetLastError();
+            bail!("Failed to set default DLL directories (error {err})");
         }
     }
 
