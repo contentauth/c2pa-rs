@@ -8,7 +8,7 @@ rust-version = "1.88.0"
 
 [dependencies]
 anyhow = "1.0.102"
-c2pa = { path = "../sdk", version = "0.85.1", features = [
+c2pa = { path = "../sdk", version = "0.86.1", features = [
 	"fetch_remote_manifests",
 	"file_io",
 	"add_thumbnails",
