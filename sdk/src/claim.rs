@@ -2033,11 +2033,7 @@ impl Claim {
                     claim.ingredient_assertions().iter().find_map(|i| {
                         if i.label() == target {
                             Ingredient::from_assertion(i.assertion()).ok().map(|ing| {
-                                let rel = match &ing.relationship {
-                                    Relationship::ParentOf => "parentOf",
-                                    Relationship::ComponentOf => "componentOf",
-                                    Relationship::InputTo => "inputTo",
-                                };
+                                let rel = ing.relationship.as_str();
                                 let title = ing.title.as_deref().unwrap_or("<no title>");
                                 format!("'{}' (title='{}', relationship='{}')", url, title, rel)
                             })

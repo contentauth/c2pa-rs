@@ -52,6 +52,16 @@ pub enum Relationship {
     InputTo,
 }
 
+impl Relationship {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Relationship::ParentOf => "parentOf",
+            Relationship::ComponentOf => "componentOf",
+            Relationship::InputTo => "inputTo",
+        }
+    }
+}
+
 /// An ingredient assertion
 #[derive(Debug, Default, PartialEq)]
 pub struct Ingredient {
