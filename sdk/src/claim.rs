@@ -2015,8 +2015,6 @@ impl Claim {
         params: &assertions::ActionParameters,
         expected_relationship: &str,
     ) -> String {
-        use crate::jumbf::labels::assertion_label_from_uri;
-
         let urls: Vec<String> = {
             let mut v = Vec::new();
             if let Some(h) = &params.ingredient {
