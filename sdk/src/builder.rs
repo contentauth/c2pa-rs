@@ -199,7 +199,7 @@ fn default_format() -> String {
 
 // TryFrom implementations for ManifestDefinition
 
-/// Implement TryFrom for &str (JSON string)
+/// Implement TryFrom for &str (JSON string).
 impl TryFrom<&str> for ManifestDefinition {
     type Error = Error;
 
@@ -208,7 +208,7 @@ impl TryFrom<&str> for ManifestDefinition {
     }
 }
 
-/// Implement TryFrom for String
+/// Implement TryFrom for String.
 impl TryFrom<String> for ManifestDefinition {
     type Error = Error;
 
@@ -3418,7 +3418,6 @@ mod tests {
         asset_handlers::bmff_io::{
             inject_manifest_into_free_box, inject_placeholder, read_bmff_c2pa_boxes,
         },
-        crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         maybe_send_sync::MaybeSend,
         settings::Settings,
@@ -3432,7 +3431,7 @@ mod tests {
             test_signer::{async_test_signer, test_signer},
         },
         validation_results::ValidationState,
-        Reader,
+        Reader, SigningAlg,
     };
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]

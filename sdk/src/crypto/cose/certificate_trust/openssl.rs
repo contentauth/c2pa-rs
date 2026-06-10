@@ -11,15 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use c2pa_raw_crypto::OpenSslMutex;
 use openssl::{
     stack::Stack,
     x509::{verify::X509VerifyFlags, X509StoreContext, X509},
 };
 
-use crate::crypto::{
-    cose::{CertificateTrustError, CertificateTrustPolicy, TrustAnchorType},
-    raw_signature::openssl::OpenSslMutex,
-};
+use crate::crypto::cose::{CertificateTrustError, CertificateTrustPolicy, TrustAnchorType};
 
 pub(crate) fn check_certificate_trust(
     ctp: &CertificateTrustPolicy,

@@ -15,15 +15,14 @@
 
 use std::str::FromStr;
 
+use c2pa_raw_crypto::RawSignatureValidationError;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use rasn_ocsp::{BasicOcspResponse, CertStatus, OcspResponseStatus};
 use rasn_pkix::CrlReason;
 use thiserror::Error;
 
 use crate::{
-    crypto::{internal::time, raw_signature::RawSignatureValidationError},
-    log_item,
-    status_tracker::StatusTracker,
+    crypto::internal::time, log_item, status_tracker::StatusTracker,
     validation_results::validation_codes,
 };
 
@@ -346,9 +345,10 @@ fn validate_ocsp_sig(
     tbs: &[u8],
     signing_key_der: &[u8],
 ) -> Result<(), RawSignatureValidationError> {
-    if let Some(validator) =
-        crate::crypto::raw_signature::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
-    {
+    if let Some(validator) = c2pa_raw_crypto::validator_for_sig_and_hash_algs(
+        &c2pa_raw_crypto::Oid::new(sig_alg.as_ref()),
+        &c2pa_raw_crypto::Oid::new(hash_alg.as_ref()),
+    ) {
         validator
             .validate(&sig_val.to_bytes(), tbs, signing_key_der)
             .map_err(|e| RawSignatureValidationError::CryptoLibraryError(e.to_string()))
