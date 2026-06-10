@@ -145,7 +145,7 @@ pub struct Manifest {
 }
 
 fn default_instance_id() -> String {
-    format!("xmp:iid:{}", Uuid::new_v4())
+    format!("xmp.iid:{}", Uuid::new_v4())
 }
 
 fn default_format() -> String {
