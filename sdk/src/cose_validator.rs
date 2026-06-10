@@ -14,7 +14,6 @@
 use std::{borrow::Cow, io::Write};
 
 use async_generic::async_generic;
-use c2pa_raw_crypto::SigningAlg;
 use coset::CoseSign1;
 use x509_parser::{num_bigint::BigUint, prelude::*};
 
@@ -27,6 +26,7 @@ use crate::{
             signing_time_from_sign1, signing_time_from_sign1_async, validate_cose_tst_info,
             validate_cose_tst_info_async, CertificateInfo, CertificateTrustPolicy, Verifier,
         },
+        raw_signature::SigningAlg,
     },
     error::{Error, Result},
     settings::Settings,
@@ -263,8 +263,8 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        settings::Settings, status_tracker::StatusTracker, utils::test_signer::test_signer, Signer,
-        SigningAlg,
+        crypto::raw_signature::SigningAlg, settings::Settings, status_tracker::StatusTracker,
+        utils::test_signer::test_signer, Signer,
     };
 
     #[test]
@@ -299,9 +299,10 @@ pub mod tests {
     }
     #[test]
     fn test_stapled_ocsp() {
-        use c2pa_raw_crypto::{signer_from_private_key, RawSigner};
-
-        use crate::crypto::{cert_chain_pem_to_der, cose::cose_reserve_size};
+        use crate::crypto::{
+            raw_signature::{signer_from_cert_chain_and_private_key, RawSigner, RawSignerError},
+            time_stamp::{TimeStampError, TimeStampProvider},
+        };
 
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
@@ -317,13 +318,13 @@ pub mod tests {
         let pem_key = include_bytes!("../tests/fixtures/certs/ps256.pem").to_vec();
         let ocsp_rsp_data = include_bytes!("../tests/fixtures/ocsp_good.data");
 
-        let raw_signer = signer_from_private_key(&pem_key, SigningAlg::Ps256).unwrap();
-        let cert_chain = cert_chain_pem_to_der(&sign_cert).unwrap();
+        let raw_signer =
+            signer_from_cert_chain_and_private_key(&sign_cert, &pem_key, SigningAlg::Ps256, None)
+                .unwrap();
 
         // create a test signer that supports stapling
         struct OcspSigner {
             pub raw_signer: Box<dyn RawSigner>,
-            pub cert_chain: Vec<Vec<u8>>,
             pub ocsp_rsp: Vec<u8>,
         }
 
@@ -337,16 +338,11 @@ pub mod tests {
             }
 
             fn certs(&self) -> Result<Vec<Vec<u8>>> {
-                Ok(self.cert_chain.clone())
+                Ok(self.raw_signer.cert_chain()?)
             }
 
             fn reserve_size(&self) -> usize {
-                cose_reserve_size(
-                    self.raw_signer.max_signature_size(),
-                    &self.cert_chain,
-                    false,
-                    Some(&self.ocsp_rsp),
-                )
+                self.raw_signer.reserve_size()
             }
 
             fn ocsp_val(&self) -> Option<Vec<u8>> {
@@ -356,7 +352,6 @@ pub mod tests {
 
         let ocsp_signer = OcspSigner {
             raw_signer,
-            cert_chain,
             ocsp_rsp: ocsp_rsp_data.to_vec(),
         };
 

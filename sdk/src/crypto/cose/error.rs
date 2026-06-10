@@ -11,11 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_raw_crypto::{RawSignatureValidationError, RawSignerError};
 use thiserror::Error;
 
 use crate::crypto::{
     cose::{CertificateProfileError, CertificateTrustError},
+    raw_signature::{RawSignatureValidationError, RawSignerError},
     time_stamp::TimeStampError,
 };
 

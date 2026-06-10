@@ -4338,13 +4338,14 @@ pub mod tests {
     use crate::{
         assertions::{Action, Actions, Uuid},
         claim::AssertionStoreJsonFormat,
+        crypto::raw_signature::SigningAlg,
         status_tracker::{LogItem, StatusTracker},
         utils::{
             patch::patch_bytes,
             test::{create_test_claim, create_test_streams, fixture_path},
             test_signer::{async_test_signer, test_signer},
         },
-        ClaimGeneratorInfo, DigitalSourceType, SigningAlg,
+        ClaimGeneratorInfo, DigitalSourceType,
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -4692,7 +4693,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_sign_with_expired_cert() {
-        use crate::{create_signer, SigningAlg};
+        use crate::{create_signer, crypto::raw_signature::SigningAlg};
 
         let context = Context::new();
 

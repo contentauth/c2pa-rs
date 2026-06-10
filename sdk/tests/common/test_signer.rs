@@ -11,7 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa::{CallbackSigner, SigningAlg};
+use c2pa::{
+    crypto::raw_signature::{RawSignerError, SigningAlg},
+    CallbackSigner,
+};
 
 const CERTS: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
 const PRIVATE_KEY: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pem");
@@ -31,8 +34,8 @@ fn ed_sign(data: &[u8], private_key: &[u8]) -> c2pa::Result<Vec<u8>> {
 
     // For Ed25519, the key is 32 bytes long, so we skip the first 16 bytes of the PEM data
     let key_bytes = &pem.contents()[16..];
-    let signing_key =
-        SigningKey::try_from(key_bytes).map_err(|e| c2pa::Error::OtherError(Box::new(e)))?;
+    let signing_key = SigningKey::try_from(key_bytes)
+        .map_err(|e| RawSignerError::InternalError(e.to_string()))?;
 
     // Sign the data
     let signature: Signature = signing_key.sign(data);

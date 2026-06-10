@@ -19,7 +19,7 @@ mod integration_v2 {
     use std::io::{Cursor, Seek};
 
     use anyhow::Result;
-    use c2pa::{Builder, CallbackSigner, Reader, SigningAlg};
+    use c2pa::{crypto::raw_signature::SigningAlg, Builder, CallbackSigner, Reader};
     use serde_json::json;
 
     use super::common::test_context;

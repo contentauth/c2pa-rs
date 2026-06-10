@@ -11,19 +11,19 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::str::FromStr;
+
 use asn1_rs::{Any, Class, FromDer, Header, Tag};
-use c2pa_raw_crypto::{
-    oids::*, validator_for_sig_and_hash_algs, RawSignatureValidationError, SigningAlg,
+use nom::AsBytes;
+use x509_parser::{
+    certificate::X509Certificate, der_parser::oid, oid_registry::Oid, x509::AlgorithmIdentifier,
 };
-use x509_parser::{certificate::X509Certificate, x509::AlgorithmIdentifier};
 
-use crate::crypto::cose::{CertificateTrustError, CertificateTrustPolicy, TrustAnchorType};
-
-/// Convert a [`c2pa_raw_crypto::Oid`] into a `bcder::Oid` by reusing the OID's
-/// DER content octets directly.
-fn raw_crypto_oid_to_bcder_oid(oid: &c2pa_raw_crypto::Oid) -> bcder::Oid {
-    bcder::Oid(bytes::Bytes::copy_from_slice(oid.as_bytes()))
-}
+use super::validators::validator_for_sig_and_hash_algs;
+use crate::crypto::{
+    cose::{CertificateTrustError, CertificateTrustPolicy, TrustAnchorType},
+    raw_signature::{oids::*, RawSignatureValidationError, SigningAlg},
+};
 
 pub(crate) fn check_certificate_trust(
     ctp: &CertificateTrustPolicy,
@@ -170,46 +170,79 @@ fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateTrustError> {
 }
 
 fn signing_alg_to_sig_and_hash_oid(alg: &str) -> Option<(bcder::Oid, bcder::Oid)> {
-    let pair = |sig: &c2pa_raw_crypto::Oid, hash: &c2pa_raw_crypto::Oid| {
+    if alg == "rsa256" {
         Some((
-            raw_crypto_oid_to_bcder_oid(sig),
-            raw_crypto_oid_to_bcder_oid(hash),
+            ans1_oid_bcder_oid(&RSA_OID)?,
+            ans1_oid_bcder_oid(&SHA256_OID)?,
         ))
-    };
-
-    match alg {
-        "rsa256" => pair(&RSA_OID, &SHA256_OID),
-        "rsa384" => pair(&RSA_OID, &SHA384_OID),
-        "rsa512" => pair(&RSA_OID, &SHA512_OID),
-        "es256" => pair(&EC_PUBLICKEY_OID, &SHA256_OID),
-        "es384" => pair(&EC_PUBLICKEY_OID, &SHA384_OID),
-        "es512" => pair(&EC_PUBLICKEY_OID, &SHA512_OID),
-        "ps256" => pair(&RSA_PSS_OID, &SHA256_OID),
-        "ps384" => pair(&RSA_PSS_OID, &SHA384_OID),
-        "ps512" => pair(&RSA_PSS_OID, &SHA512_OID),
-        "ed25519" => pair(&ED25519_OID, &SHA512_OID),
-        _ => None,
+    } else if alg == "rsa384" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_OID)?,
+            ans1_oid_bcder_oid(&SHA384_OID)?,
+        ))
+    } else if alg == "rsa512" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_OID)?,
+            ans1_oid_bcder_oid(&SHA512_OID)?,
+        ))
+    } else if alg == "es256" {
+        Some((
+            ans1_oid_bcder_oid(&EC_PUBLICKEY_OID)?,
+            ans1_oid_bcder_oid(&SHA256_OID)?,
+        ))
+    } else if alg == "es384" {
+        Some((
+            ans1_oid_bcder_oid(&EC_PUBLICKEY_OID)?,
+            ans1_oid_bcder_oid(&SHA384_OID)?,
+        ))
+    } else if alg == "es512" {
+        Some((
+            ans1_oid_bcder_oid(&EC_PUBLICKEY_OID)?,
+            ans1_oid_bcder_oid(&SHA512_OID)?,
+        ))
+    } else if alg == "ps256" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_PSS_OID)?,
+            ans1_oid_bcder_oid(&SHA256_OID)?,
+        ))
+    } else if alg == "ps384" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_PSS_OID)?,
+            ans1_oid_bcder_oid(&SHA384_OID)?,
+        ))
+    } else if alg == "ps512" {
+        Some((
+            ans1_oid_bcder_oid(&RSA_PSS_OID)?,
+            ans1_oid_bcder_oid(&SHA512_OID)?,
+        ))
+    } else if alg == "ed25519" {
+        Some((
+            ans1_oid_bcder_oid(&ED25519_OID)?,
+            ans1_oid_bcder_oid(&SHA512_OID)?,
+        ))
+    } else {
+        None
     }
 }
 
 fn cert_signing_alg(cert: &X509Certificate) -> Option<String> {
-    let cert_alg = cert.signature_algorithm.algorithm.as_bytes();
+    let cert_alg = &cert.signature_algorithm.algorithm;
 
-    if cert_alg == SHA256_WITH_RSAENCRYPTION_OID.as_bytes() {
+    if *cert_alg == SHA256_WITH_RSAENCRYPTION_OID {
         Some("rsa256".to_string())
-    } else if cert_alg == SHA384_WITH_RSAENCRYPTION_OID.as_bytes() {
+    } else if *cert_alg == SHA384_WITH_RSAENCRYPTION_OID {
         Some("rsa384".to_string())
-    } else if cert_alg == SHA512_WITH_RSAENCRYPTION_OID.as_bytes() {
+    } else if *cert_alg == SHA512_WITH_RSAENCRYPTION_OID {
         Some("rsa512".to_string())
-    } else if cert_alg == ECDSA_WITH_SHA256_OID.as_bytes() {
+    } else if *cert_alg == ECDSA_WITH_SHA256_OID {
         Some(SigningAlg::Es256.to_string())
-    } else if cert_alg == ECDSA_WITH_SHA384_OID.as_bytes() {
+    } else if *cert_alg == ECDSA_WITH_SHA384_OID {
         Some(SigningAlg::Es384.to_string())
-    } else if cert_alg == ECDSA_WITH_SHA512_OID.as_bytes() {
+    } else if *cert_alg == ECDSA_WITH_SHA512_OID {
         Some(SigningAlg::Es512.to_string())
-    } else if cert_alg == RSA_PSS_OID.as_bytes() {
+    } else if *cert_alg == RSA_PSS_OID {
         signing_alg_from_rsapss_alg(&cert.signature_algorithm)
-    } else if cert_alg == ED25519_OID.as_bytes() {
+    } else if *cert_alg == ED25519_OID {
         Some(SigningAlg::Ed25519.to_string())
     } else {
         None
@@ -271,12 +304,11 @@ fn signing_alg_from_rsapss_alg(alg: &AlgorithmIdentifier) -> Option<String> {
     }
 
     // We only recognize a few specific algorithm types.
-    let ha_alg_bytes = ha_alg.algorithm.as_bytes();
-    if ha_alg_bytes == SHA256_OID.as_bytes() {
+    if ha_alg.algorithm == SHA256_OID {
         Some("ps256".to_string())
-    } else if ha_alg_bytes == SHA384_OID.as_bytes() {
+    } else if ha_alg.algorithm == SHA384_OID {
         Some("ps384".to_string())
-    } else if ha_alg_bytes == SHA512_OID.as_bytes() {
+    } else if ha_alg.algorithm == SHA512_OID {
         Some("ps512".to_string())
     } else {
         None
@@ -301,10 +333,7 @@ fn verify_data(
     let (sig_alg, hash_alg) = signing_alg_to_sig_and_hash_oid(&cert_alg_string)
         .ok_or(CertificateTrustError::InvalidCertificate)?;
 
-    let result = if let Some(validator) = validator_for_sig_and_hash_algs(
-        &c2pa_raw_crypto::Oid::new(sig_alg.as_ref()),
-        &c2pa_raw_crypto::Oid::new(hash_alg.as_ref()),
-    ) {
+    let result = if let Some(validator) = validator_for_sig_and_hash_algs(&sig_alg, &hash_alg) {
         validator.validate(sig, data, certificate_public_key.raw.as_ref())
     } else {
         return Err(CertificateTrustError::InvalidCertificate);

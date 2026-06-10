@@ -13,10 +13,6 @@
 
 use asn1_rs::FromDer;
 use async_generic::async_generic;
-use c2pa_raw_crypto::{
-    ec_utils::{der_to_p1363, ec_curve_from_public_key_der, parse_ec_der_sig},
-    SigningAlg,
-};
 use coset::{
     cbor::value::Value,
     iana::{self, EnumI64},
@@ -27,12 +23,13 @@ use serde_bytes::ByteBuf;
 use x509_parser::prelude::X509Certificate;
 
 use super::cert_chain_from_sign1;
-use crate::crypto::cose::{
-    add_sigtst_header, add_sigtst_header_async, AsyncCoseSigner, CoseError, CoseSigner,
-    TimeStampStorage,
+use crate::crypto::{
+    cose::{add_sigtst_header, add_sigtst_header_async, CoseError, TimeStampStorage},
+    ec_utils::{der_to_p1363, ec_curve_from_public_key_der, parse_ec_der_sig},
+    raw_signature::{AsyncRawSigner, RawSigner, SigningAlg},
 };
 
-/// Given an arbitrary block of data and a [`CoseSigner`] or [`AsyncCoseSigner`]
+/// Given an arbitrary block of data and a [`RawSigner`] or [`AsyncRawSigner`]
 /// instance, generate a COSE signature for that block of data.
 ///
 /// Returns a byte vector that is a `Cose_Sign1` data structure.
@@ -80,13 +77,13 @@ use crate::crypto::cose::{
 /// [§14.5, X.509 Certificates]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#x509_certificates
 /// [RFC 9360]: https://datatracker.ietf.org/doc/html/rfc9360
 #[async_generic(async_signature(
-    signer: &dyn AsyncCoseSigner,
+    signer: &dyn AsyncRawSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage
 ))]
-pub(crate) fn sign(
-    signer: &dyn CoseSigner,
+pub fn sign(
+    signer: &dyn RawSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
@@ -105,13 +102,13 @@ pub(crate) fn sign(
 }
 
 #[async_generic(async_signature(
-    signer: &dyn AsyncCoseSigner,
+    signer: &dyn AsyncRawSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage
 ))]
-pub(crate) fn sign_v1(
-    signer: &dyn CoseSigner,
+pub fn sign_v1(
+    signer: &dyn RawSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
@@ -158,7 +155,7 @@ pub(crate) fn sign_v1(
     // Fix up signatures that may be in the wrong format.
     sign1.signature = match alg {
         SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
-            if parse_ec_der_sig(&signature).is_some() {
+            if parse_ec_der_sig(&signature).is_ok() {
                 // Fix up DER signature to be in P1363 format.
                 let certs = cert_chain_from_sign1(&sign1)?;
 
@@ -192,13 +189,13 @@ pub(crate) fn sign_v1(
 }
 
 #[async_generic(async_signature(
-    signer: &dyn AsyncCoseSigner,
+    signer: &dyn AsyncRawSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage
 ))]
-pub(crate) fn sign_v2(
-    signer: &dyn CoseSigner,
+pub fn sign_v2(
+    signer: &dyn RawSigner,
     data: &[u8],
     box_size: Option<usize>,
     tss: TimeStampStorage,
@@ -225,7 +222,7 @@ pub enum CosePayload {
     Embedded,
 }
 
-/// Given an arbitrary block of data and a [`CoseSigner`] or [`AsyncCoseSigner`]
+/// Given an arbitrary block of data and a [`RawSigner`] or [`AsyncRawSigner`]
 /// instance, generate a COSE signature for that block of data.
 ///
 /// The `payload` flag allows you to configure whether the payload is detached
@@ -276,19 +273,16 @@ pub enum CosePayload {
 ///
 /// [§14.5, X.509 Certificates]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#x509_certificates
 /// [RFC 9360]: https://datatracker.ietf.org/doc/html/rfc9360
-// Retained for embedded-payload COSE signing; not currently exercised by the
-// C2PA (detached-payload) flows.
-#[allow(dead_code)]
 #[async_generic(async_signature(
-    signer: &dyn AsyncCoseSigner,
+    signer: &dyn AsyncRawSigner,
     data: &[u8],
     box_size: Option<usize>,
     payload: CosePayload,
     content_type: Option<ContentType>,
     tss: TimeStampStorage
 ))]
-pub(crate) fn sign_v2_embedded(
-    signer: &dyn CoseSigner,
+pub fn sign_v2_embedded(
+    signer: &dyn RawSigner,
     data: &[u8],
     box_size: Option<usize>,
     payload: CosePayload,
@@ -330,7 +324,7 @@ pub(crate) fn sign_v2_embedded(
     // Fix up signatures that may be in the wrong format.
     sign1.signature = match alg {
         SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
-            if parse_ec_der_sig(&signature).is_some() {
+            if parse_ec_der_sig(&signature).is_ok() {
                 // Fix up DER signature to be in P1363 format.
                 let certs = cert_chain_from_sign1(&sign1)?;
 
@@ -379,9 +373,9 @@ pub(crate) fn sign_v2_embedded(
     pad_cose_sig(&mut sign1, box_size)
 }
 
-#[async_generic(async_signature(signer: &dyn AsyncCoseSigner, alg: SigningAlg, content_type: Option<ContentType>))]
+#[async_generic(async_signature(signer: &dyn AsyncRawSigner, alg: SigningAlg, content_type: Option<ContentType>))]
 fn build_protected_header(
-    signer: &dyn CoseSigner,
+    signer: &dyn RawSigner,
     alg: SigningAlg,
     content_type: Option<ContentType>,
 ) -> Result<ProtectedHeader, CoseError> {
@@ -393,7 +387,6 @@ fn build_protected_header(
         SigningAlg::Es384 => HeaderBuilder::new().algorithm(iana::Algorithm::ES384),
         SigningAlg::Es512 => HeaderBuilder::new().algorithm(iana::Algorithm::ES512),
         SigningAlg::Ed25519 => HeaderBuilder::new().algorithm(iana::Algorithm::EdDSA),
-        _ => return Err(CoseError::UnsupportedSigningAlgorithm),
     };
 
     let certs = signer.cert_chain()?;
@@ -431,9 +424,9 @@ fn build_protected_header(
     Ok(ph2)
 }
 
-#[async_generic(async_signature(signer: &dyn AsyncCoseSigner, data: &[u8], p_header: &ProtectedHeader, tss: TimeStampStorage,))]
+#[async_generic(async_signature(signer: &dyn AsyncRawSigner, data: &[u8], p_header: &ProtectedHeader, tss: TimeStampStorage,))]
 fn build_unprotected_header(
-    signer: &dyn CoseSigner,
+    signer: &dyn RawSigner,
     data: &[u8],
     p_header: &ProtectedHeader,
     tss: TimeStampStorage,
@@ -475,43 +468,11 @@ const PAD: &str = "pad";
 const PAD2: &str = "pad2";
 const PAD_OFFSET: usize = 7;
 
-/// Compute the number of bytes to reserve for a `c2pa.signature` JUMBF box that
-/// wraps a COSE `Sign1`.
-///
-/// A [`RawSigner`](c2pa_raw_crypto::RawSigner) reports only the size of its raw
-/// signature; the surrounding COSE framing, certificate chain, optional RFC 3161
-/// time stamp, and optional OCSP response are this crate's responsibility, so we
-/// account for them here.
-pub(crate) fn cose_reserve_size(
-    raw_signature_size: usize,
-    certs: &[Vec<u8>],
-    has_time_stamp: bool,
-    ocsp_response: Option<&[u8]>,
-) -> usize {
-    /// COSE/JUMBF framing overhead beyond the items accounted for explicitly.
-    const COSE_OVERHEAD: usize = 1024;
-
-    /// Reserve for an RFC 3161 time stamp token in the COSE unprotected header.
-    const TIME_STAMP_RESERVE: usize = 10000;
-
-    let cert_chain_len: usize = certs.iter().map(Vec::len).sum();
-
-    raw_signature_size
-        + cert_chain_len
-        + COSE_OVERHEAD
-        + if has_time_stamp {
-            TIME_STAMP_RESERVE
-        } else {
-            0
-        }
-        + ocsp_response.map_or(0, <[u8]>::len)
-}
-
-/// Pad the CoseSign1 structure with zeroes to match the reserved box size. There
-/// are some values lengths that are impossible to hit with a single padding so
-/// when that happens a second padding is added to change the remaining needed
-/// padding. The default initial guess works for almost all sizes, without the
-/// need for additional loops.
+// Pad the CoseSign1 structure with zeroes to match the reserved box size. There
+// are some values lengths that are impossible to hit with a single padding so
+// when that happens a second padding is added to change the remaining needed
+// padding. The default initial guess works for almost all sizes, without the
+// need for additional loops.
 fn pad_cose_sig(sign1: &mut CoseSign1, end_size: Option<usize>) -> Result<Vec<u8>, CoseError> {
     let mut sign1_clone = sign1.clone();
 
