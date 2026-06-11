@@ -1,0 +1,120 @@
+# Receiver for c2pa-js. Install as
+# .github/workflows/test-c2pa-rs-branch.yml in contentauth/c2pa-js.
+#
+# c2pa-js builds wasm directly from the `c2pa` crate declared in its root
+# Cargo.toml ([workspace.dependencies]). So, like c2pa-node-v2, we re-target by
+# rewriting that to a git+branch source, which produces a real diff: we commit
+# it to a branch, open a draft PR, build/test, and report status back.
+#
+# Mirrors c2pa-js's own CI (.github/workflows/ci.yml): the composite
+# install-dependencies action sets up the Rust + wasm + pnpm toolchain, then
+# `pnpm ci:check` lints/tests/builds all packages (c2pa-wasm, c2pa-types,
+# c2pa-web).
+#
+# Requires the CROSS_ORG_PR_TOKEN secret (see contentauth/c2pa-rs
+# docs/breaking-change-automation/README.md).
+
+name: Test against c2pa-rs branch
+
+on:
+  repository_dispatch:
+    types: [c2pa-rs-breaking-change]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  REPO_NAME: c2pa-js
+  C2PA_RS_PR: ${{ github.event.client_payload.pr_number }}
+  C2PA_RS_REF: ${{ github.event.client_payload.ref }}
+  C2PA_RS_SHA: ${{ github.event.client_payload.head_sha }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+          fetch-depth: 0
+
+      - name: Report start to c2pa-rs
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+        run: |
+          gh api -X POST "repos/contentauth/c2pa-rs/statuses/$C2PA_RS_SHA" \
+            -f state=pending \
+            -f "context=breaking-changes / $REPO_NAME" \
+            -f "description=Building $REPO_NAME against c2pa-rs branch $C2PA_RS_REF..." >/dev/null
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Point c2pa dependency at the PR branch
+        run: |
+          python3 - "$C2PA_RS_REF" <<'PY'
+          import re, sys, pathlib
+          ref = sys.argv[1]
+          p = pathlib.Path("Cargo.toml")
+          t = p.read_text()
+          t = re.sub(
+              r'(?m)^(c2pa\s*=\s*\{)\s*version\s*=\s*"[^"]*"\s*,?',
+              r'\1 git = "https://github.com/contentauth/c2pa-rs", branch = "%s",' % ref,
+              t,
+          )
+          p.write_text(t)
+          print(t)
+          PY
+          cargo update -p c2pa
+
+      - name: Install headless Chromium + Chromedriver
+        working-directory: ./packages/c2pa-web
+        run: pnpm exec playwright install --with-deps
+
+      - name: Build and test
+        id: build
+        continue-on-error: true
+        run: pnpm ci:check
+
+      - name: Open / update draft PR
+        id: pr
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+        run: |
+          branch="breaking/c2pa-rs-pr-${C2PA_RS_PR}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add Cargo.toml Cargo.lock
+          git commit -m "test: re-target c2pa to c2pa-rs#${C2PA_RS_PR} (${C2PA_RS_REF})" \
+            || echo "No changes to commit."
+          git push -u origin "$branch" --force
+          url=$(gh pr view "$branch" --json url -q .url 2>/dev/null || true)
+          if [ -z "$url" ]; then
+            url=$(gh pr create --draft \
+              --title "Verify against c2pa-rs#${C2PA_RS_PR} (breaking change)" \
+              --body "Automated verification of c2pa-rs PR #${C2PA_RS_PR} (branch \`${C2PA_RS_REF}\`). Build outcome: ${{ steps.build.outcome }}." \
+              --head "$branch")
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Report result to c2pa-rs
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+        run: |
+          if [ "${{ steps.build.outcome }}" = "success" ]; then
+            state=success
+            desc="$REPO_NAME builds against the c2pa-rs branch."
+          else
+            state=failure
+            desc="$REPO_NAME does NOT build against the c2pa-rs branch — changes needed."
+          fi
+          gh api -X POST "repos/contentauth/c2pa-rs/statuses/$C2PA_RS_SHA" \
+            -f "state=$state" \
+            -f "context=breaking-changes / $REPO_NAME" \
+            -f "description=$desc" \
+            -f "target_url=${{ steps.pr.outputs.url }}" >/dev/null

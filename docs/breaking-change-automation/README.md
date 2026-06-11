@@ -74,11 +74,13 @@ Each dependent gets `.github/workflows/test-c2pa-rs-branch.yml`. Because the
 repos consume c2pa-rs differently, the receivers differ — use the ready-made
 ones where they exist:
 
-| Dependent | Receiver to install | Phase |
+| Dependent | Receiver to install | Notes |
 | --- | --- | --- |
-| `c2pa-node-v2` | [`receivers/c2pa-node-v2.yml`](./receivers/c2pa-node-v2.yml) — Variant A, opens a draft PR | 1 (ready) |
-| `c2pa-python` | [`receivers/c2pa-python.yml`](./receivers/c2pa-python.yml) — `build-from-source`, status-only | 1 (ready) |
-| `c2pa-cpp`, `c2pa-ios`, `c2pa-android`, `c2pa-js` | start from [`test-c2pa-rs-branch.yml`](./test-c2pa-rs-branch.yml) (Variant B) | 2 (blocked on the artifact bridge) |
+| `c2pa-node-v2` | [`receivers/c2pa-node-v2.yml`](./receivers/c2pa-node-v2.yml) | Variant A (git-branch dep), opens a draft PR |
+| `c2pa-js` | [`receivers/c2pa-js.yml`](./receivers/c2pa-js.yml) | Variant A (git-branch dep, builds wasm), opens a draft PR |
+| `c2pa-python` | [`receivers/c2pa-python.yml`](./receivers/c2pa-python.yml) | `build-from-source` via `C2PA_RS_PATH`, status-only |
+| `c2pa-cpp` | [`receivers/c2pa-cpp.yml`](./receivers/c2pa-cpp.yml) | `build-from-source` via `C2PA_BUILD_FROM_SOURCE`, status-only |
+| `c2pa-ios`, `c2pa-android` | start from [`test-c2pa-rs-branch.yml`](./test-c2pa-rs-branch.yml) (Variant B) | need the artifact bridge — see Phase 2 |
 
 When adapting the generic template, edit the two marked sections:
 
@@ -99,23 +101,25 @@ How "use the PR branch" is implemented differs by how each repo consumes c2pa-rs
 | Repo | Consumes c2pa-rs as | Re-target in receiver |
 | --- | --- | --- |
 | `c2pa-node-v2` | crates.io `c2pa` dep in its root `Cargo.toml` | Variant A: rewrite to `git`+`branch`, `cargo update -p c2pa` (commits a diff → draft PR) |
-| `c2pa-python` | downloads prebuilt artifacts; has a `build-from-source` path | check out the branch and `make build-from-source C2PA_RS_PATH=...` (no diff → status-only) |
-| `c2pa-cpp` | prebuilt native libs from c2pa-rs **releases** | Variant B: download branch artifacts (bridge ready; receiver TODO) |
-| `c2pa-ios` | prebuilt native libs from releases | Variant B (receiver TODO) |
-| `c2pa-android` | prebuilt native libs from releases | Variant B (receiver TODO) |
-| `c2pa-js` | wasm / `c2pa-node` artifacts | Variant B (receiver TODO) |
+| `c2pa-js` | builds wasm from a `c2pa` dep in its root `Cargo.toml` | Variant A: rewrite to `git`+`branch`, `pnpm ci:check` (commits a diff → draft PR) |
+| `c2pa-python` | downloads prebuilt artifacts; has a `build-from-source` path | check out the branch, `make build-from-source C2PA_RS_PATH=...` (no diff → status-only) |
+| `c2pa-cpp` | prebuilt libs via CMake; has a `build-from-source` path | check out the branch, `C2PA_BUILD_FROM_SOURCE=ON C2PA_RS_PATH=... make test` (status-only) |
+| `c2pa-ios` | prebuilt native libs from releases (xcframework) | Variant B: stage branch artifacts (see Phase 2) |
+| `c2pa-android` | prebuilt `.so` libs from releases (jniLibs) | Variant B: stage branch artifacts (see Phase 2) |
 
-Ready receivers exist for `c2pa-node-v2` and `c2pa-python` (see step 3). Variant
-B in the generic template is a placeholder pending the per-repo receiver work.
+Ready receivers exist for `c2pa-node-v2`, `c2pa-js`, `c2pa-python`, and
+`c2pa-cpp` (see step 3). Variant B in the generic template is a placeholder
+pending the iOS/Android receiver work.
 
-## Phase 2 — branch artifacts for prebuilt-binary dependents
+## Phase 2 — branch artifacts for the prebuilt-binary dependents
 
-`c2pa-cpp`, `c2pa-ios`, `c2pa-android`, and `c2pa-js` consume prebuilt native
-libraries that c2pa-rs publishes from
-[`library-release.yml`](../../.github/workflows/library-release.yml).
+Only `c2pa-ios` and `c2pa-android` truly need prebuilt native libraries (the
+other four build from source). They consume the binaries that c2pa-rs publishes
+from [`library-release.yml`](../../.github/workflows/library-release.yml).
 
-**The artifact bridge is now in place.** That workflow already uploads per-target
-workflow artifacts (`release-artifacts-<os>-<target>`) on every run, and its
+**The artifact bridge is in place.** That workflow already uploads per-target
+workflow artifacts (`release-artifacts-<os>-<target>`, containing the same
+`c2pa-v*-<target>.zip` files as the release assets) on every run, and its
 `release` job is gated to `c2pa-v*` tag pushes — so dispatching it against a
 branch produces downloadable artifacts without cutting a release:
 
@@ -123,16 +127,28 @@ branch produces downloadable artifacts without cutting a release:
 gh workflow run library-release.yml --ref <pr-branch>
 ```
 
-A Variant B receiver then downloads them (e.g. `gh run download <run-id>
---pattern 'release-artifacts-*'`) and stages them where the build expects the
-release-downloaded libraries.
+### Remaining receiver-side work (per repo)
 
-**Still TODO (receiver side, per repo):** decide who triggers the branch build
-and how the run id reaches the receivers — either the orchestrator builds once
-and passes the run id in the dispatch payload (cheaper; one build per labeled
-PR), or each receiver triggers and polls its own build (simpler; N builds). Then
-wire the download + stage + build steps into each of the four repos. Phase 1
-fully covers the Rust-dependency dependents.
+- **Who triggers the build / run-id delivery.** Recommended: the orchestrator
+  triggers one branch build and the iOS/Android receivers locate it (cheaper
+  than N builds). Add a `verify_sha` input + a correlating `run-name:` to
+  `library-release.yml`, then a receiver finds the run with `gh run list
+  --workflow library-release.yml`, waits with `gh run watch`, and downloads with
+  `gh run download <id> --pattern 'release-artifacts-*'`. NOTE: triggering a
+  workflow with the default `GITHUB_TOKEN` does **not** start a new run, so the
+  orchestrator must use `CROSS_ORG_PR_TOKEN` — which then also needs
+  **Actions: write** on c2pa-rs (a scope beyond Phase 1).
+- **`c2pa-ios`**: macOS runner; stage the downloaded zips into the dir named by
+  `C2PA_LOCAL_ARTIFACTS` (the build prefers local artifacts over the release
+  download). The artifact filenames embed the crate version, so the branch's
+  version must match the repo's `C2PA_VERSION` (`Configurations/Base.xcconfig`)
+  or that pin must be overridden. Build/test via `make test-library`.
+- **`c2pa-android`**: its gradle `downloadNativeLibraries` task only fetches from
+  release URLs — it needs a local-artifacts override (e.g. a
+  `-PlocalC2paArtifactsPath=` property that stages `.so` files into
+  `library/src/main/jniLibs/<abi>/`). That's a build-tooling change in the repo.
+  `assembleRelease` verifies the build on ubuntu; instrumented tests need an
+  emulator.
 
 ## Limitations
 
