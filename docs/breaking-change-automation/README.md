@@ -80,7 +80,8 @@ ones where they exist:
 | `c2pa-js` | [`receivers/c2pa-js.yml`](./receivers/c2pa-js.yml) | Variant A (git-branch dep, builds wasm), opens a draft PR |
 | `c2pa-python` | [`receivers/c2pa-python.yml`](./receivers/c2pa-python.yml) | `build-from-source` via `C2PA_RS_PATH`, status-only |
 | `c2pa-cpp` | [`receivers/c2pa-cpp.yml`](./receivers/c2pa-cpp.yml) | `build-from-source` via `C2PA_BUILD_FROM_SOURCE`, status-only |
-| `c2pa-ios`, `c2pa-android` | start from [`test-c2pa-rs-branch.yml`](./test-c2pa-rs-branch.yml) (Variant B) | need the artifact bridge — see Phase 2 |
+| `c2pa-ios` | [`receivers/c2pa-ios.yml`](./receivers/c2pa-ios.yml) | downloads branch artifacts → `C2PA_LOCAL_ARTIFACTS`, status-only (unvalidated) |
+| `c2pa-android` | [`receivers/c2pa-android.yml`](./receivers/c2pa-android.yml) | stages branch `.so` into `jniLibs`, `assembleRelease`, status-only (unvalidated) |
 
 When adapting the generic template, edit the two marked sections:
 
@@ -127,28 +128,47 @@ branch produces downloadable artifacts without cutting a release:
 gh workflow run library-release.yml --ref <pr-branch>
 ```
 
-### Remaining receiver-side work (per repo)
+### How the build is triggered and located
 
-- **Who triggers the build / run-id delivery.** Recommended: the orchestrator
-  triggers one branch build and the iOS/Android receivers locate it (cheaper
-  than N builds). Add a `verify_sha` input + a correlating `run-name:` to
-  `library-release.yml`, then a receiver finds the run with `gh run list
-  --workflow library-release.yml`, waits with `gh run watch`, and downloads with
-  `gh run download <id> --pattern 'release-artifacts-*'`. NOTE: triggering a
-  workflow with the default `GITHUB_TOKEN` does **not** start a new run, so the
-  orchestrator must use `CROSS_ORG_PR_TOKEN` — which then also needs
-  **Actions: write** on c2pa-rs (a scope beyond Phase 1).
-- **`c2pa-ios`**: macOS runner; stage the downloaded zips into the dir named by
+The orchestrator triggers **one** branch build of `library-release.yml` per
+labeled PR (only when `BINARY_DEPENDENTS` is non-empty) and the iOS/Android
+receivers locate it by SHA — cheaper than each receiver building its own. The
+mechanics:
+
+- `library-release.yml` takes a `verify_sha` input and sets a `run-name:` that
+  embeds it. Receivers find the run with `gh run list --workflow
+  library-release.yml` (matching `displayTitle`), wait with `gh run watch`, and
+  download with `gh run download <id> --pattern 'release-artifacts-*'`.
+- Triggering a workflow with the default `GITHUB_TOKEN` does **not** start a new
+  run, so the orchestrator triggers it with `CROSS_ORG_PR_TOKEN`, which needs
+  **Actions: write** on c2pa-rs.
+
+The receivers are drafted in [`receivers/c2pa-ios.yml`](./receivers/c2pa-ios.yml)
+and [`receivers/c2pa-android.yml`](./receivers/c2pa-android.yml):
+
+- **`c2pa-ios`** (macOS runner): stages downloaded zips into the dir named by
   `C2PA_LOCAL_ARTIFACTS` (the build prefers local artifacts over the release
-  download). The artifact filenames embed the crate version, so the branch's
-  version must match the repo's `C2PA_VERSION` (`Configurations/Base.xcconfig`)
-  or that pin must be overridden. Build/test via `make test-library`.
-- **`c2pa-android`**: its gradle `downloadNativeLibraries` task only fetches from
-  release URLs — it needs a local-artifacts override (e.g. a
-  `-PlocalC2paArtifactsPath=` property that stages `.so` files into
-  `library/src/main/jniLibs/<abi>/`). That's a build-tooling change in the repo.
-  `assembleRelease` verifies the build on ubuntu; instrumented tests need an
-  emulator.
+  download) and overrides `C2PA_VERSION` with the version detected from the
+  artifact filenames, so the pin in `Configurations/Base.xcconfig` need not
+  match. Build/test via `make test-library`.
+- **`c2pa-android`** (ubuntu runner): pre-stages the branch `.so` files and the
+  patched `c2pa.h` into the exact locations gradle expects; because the
+  `downloadNativeLibraries` task skips any arch whose `.so` already exists, it
+  no-ops and `assembleRelease` builds against the staged libs — no gradle change
+  needed. Verifies the build only; instrumented tests need an emulator.
+
+> ⚠️ Both iOS/Android receivers are **unvalidated** — they need a real labeled-PR
+> run (token + runners) to confirm the make/gradle invocations, artifact layout,
+> and version handling.
+
+### To activate iOS/Android
+
+1. Merge their receiver PRs.
+2. Ensure `library-release.yml` (with the `verify_sha` input) is on the default
+   branch — i.e. this PR is merged.
+3. Add `c2pa-ios c2pa-android` to **both** `DEPENDENTS` and `BINARY_DEPENDENTS`
+   in `breaking-changes.yml`.
+4. Confirm `CROSS_ORG_PR_TOKEN` has **Actions: write** on c2pa-rs.
 
 ## Limitations
 

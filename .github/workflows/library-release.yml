@@ -1,5 +1,9 @@
 name: Publish c2pa-library binaries
 
+# When dispatched with `verify_sha`, name the run so the breaking-change
+# receivers can locate it (they match on this SHA via `gh run list`).
+run-name: ${{ inputs.verify_sha != '' && format('Library build — verify {0}', inputs.verify_sha) || 'Publish c2pa-library binaries' }}
+
 on:
   push:
     tags:
@@ -8,10 +12,15 @@ on:
   # `gh workflow run library-release.yml --ref <branch>`) to produce the native
   # library binaries as downloadable workflow artifacts WITHOUT cutting a
   # release. This is the artifact bridge that lets the breaking-change
-  # automation verify the prebuilt-binary dependents (c2pa-cpp, c2pa-ios,
-  # c2pa-android, c2pa-js) against a PR branch. See
-  # docs/breaking-change-automation/README.md.
+  # automation verify the prebuilt-binary dependents (c2pa-ios, c2pa-android)
+  # against a PR branch. See docs/breaking-change-automation/README.md.
   workflow_dispatch:
+    inputs:
+      verify_sha:
+        description: "c2pa-rs commit SHA being verified (breaking-change automation). Leave blank for normal builds."
+        required: false
+        type: string
+        default: ""
 
 jobs:
   build:

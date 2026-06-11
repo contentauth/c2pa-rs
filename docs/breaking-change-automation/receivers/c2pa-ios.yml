@@ -1,0 +1,100 @@
+# Receiver for c2pa-ios. Install as
+# .github/workflows/test-c2pa-rs-branch.yml in contentauth/c2pa-ios.
+#
+# c2pa-ios consumes prebuilt Apple native libraries from c2pa-rs releases, but
+# its build prefers local artifacts when C2PA_LOCAL_ARTIFACTS points at a dir
+# containing c2pa-<version>-<suffix>.zip files. So this receiver downloads the
+# branch build artifacts produced by c2pa-rs's library-release.yml (triggered by
+# the orchestrator), stages them, and builds/tests against them. STATUS-ONLY
+# (no committable diff); the status links to this workflow run.
+#
+# Requires the CROSS_ORG_PR_TOKEN secret with Actions:read on c2pa-rs (to find +
+# download the build run). See contentauth/c2pa-rs
+# docs/breaking-change-automation/README.md.
+#
+# UNVALIDATED: this needs a real run to confirm the make target, the
+# C2PA_LOCAL_ARTIFACTS layout, and version handling.
+
+name: Test against c2pa-rs branch
+
+on:
+  repository_dispatch:
+    types: [c2pa-rs-breaking-change]
+
+permissions:
+  contents: read
+
+env:
+  REPO_NAME: c2pa-ios
+  C2PA_RS_PR: ${{ github.event.client_payload.pr_number }}
+  C2PA_RS_REF: ${{ github.event.client_payload.ref }}
+  C2PA_RS_SHA: ${{ github.event.client_payload.head_sha }}
+  GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+
+jobs:
+  verify:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout c2pa-ios
+        uses: actions/checkout@v6
+
+      - name: Report start to c2pa-rs
+        run: |
+          gh api -X POST "repos/contentauth/c2pa-rs/statuses/$C2PA_RS_SHA" \
+            -f state=pending \
+            -f "context=breaking-changes / $REPO_NAME" \
+            -f "description=Building $REPO_NAME against c2pa-rs branch $C2PA_RS_REF..." >/dev/null
+
+      - name: Locate, await, and download the c2pa-rs branch build
+        run: |
+          set -euo pipefail
+          # The orchestrator triggers library-release.yml with run-name embedding
+          # our head SHA. Poll until that run appears.
+          run_id=""
+          for _ in $(seq 1 90); do
+            run_id=$(gh run list --repo contentauth/c2pa-rs \
+              --workflow library-release.yml --limit 40 \
+              --json databaseId,displayTitle \
+              -q "[.[] | select(.displayTitle | contains(\"$C2PA_RS_SHA\"))][0].databaseId")
+            [ -n "$run_id" ] && [ "$run_id" != "null" ] && break
+            sleep 20
+          done
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "::error::Could not find a library-release run for $C2PA_RS_SHA"; exit 1
+          fi
+          echo "Found library build run $run_id; waiting for completion..."
+          gh run watch "$run_id" --repo contentauth/c2pa-rs || true
+
+          mkdir -p dl staged
+          gh run download "$run_id" --repo contentauth/c2pa-rs \
+            --pattern 'release-artifacts-*apple-ios*' \
+            --pattern 'release-artifacts-*apple-darwin*' --dir dl
+          # Flatten the per-target zips into one dir for C2PA_LOCAL_ARTIFACTS.
+          find dl -name 'c2pa-*.zip' -exec cp {} staged/ \;
+          ls -1 staged
+          # Detect the crate version from a downloaded zip name (c2pa-vX.Y.Z-...).
+          ver=$(ls staged | sed -E 's/^c2pa-(v[0-9.]+)-.*/\1/' | head -1)
+          echo "C2PA_LOCAL_ARTIFACTS=$PWD/staged" >> "$GITHUB_ENV"
+          echo "C2PA_VERSION=$ver" >> "$GITHUB_ENV"
+
+      - name: Build and test
+        id: build
+        continue-on-error: true
+        run: make test-library
+
+      - name: Report result to c2pa-rs
+        if: always()
+        run: |
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ "${{ steps.build.outcome }}" = "success" ]; then
+            state=success
+            desc="$REPO_NAME builds against the c2pa-rs branch."
+          else
+            state=failure
+            desc="$REPO_NAME does NOT build against the c2pa-rs branch — changes needed."
+          fi
+          gh api -X POST "repos/contentauth/c2pa-rs/statuses/$C2PA_RS_SHA" \
+            -f "state=$state" \
+            -f "context=breaking-changes / $REPO_NAME" \
+            -f "description=$desc" \
+            -f "target_url=$run_url" >/dev/null

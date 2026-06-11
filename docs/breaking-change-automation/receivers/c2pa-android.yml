@@ -1,0 +1,126 @@
+# Receiver for c2pa-android. Install as
+# .github/workflows/test-c2pa-rs-branch.yml in contentauth/c2pa-android.
+#
+# c2pa-android consumes prebuilt .so libraries from c2pa-rs releases via a gradle
+# `downloadNativeLibraries` task. That task SKIPS any arch whose .so already
+# exists, so this receiver pre-stages the branch-built .so files (and the patched
+# c2pa.h header) into the exact locations gradle expects; the download task then
+# no-ops and `assembleRelease` builds against the staged libs. No gradle change
+# needed. STATUS-ONLY (no committable diff); the status links to this run.
+#
+# This verifies the BUILD only. Instrumented tests (connectedAndroidTest) need an
+# emulator and are out of scope here.
+#
+# Requires the CROSS_ORG_PR_TOKEN secret with Actions:read on c2pa-rs. See
+# contentauth/c2pa-rs docs/breaking-change-automation/README.md.
+#
+# UNVALIDATED: needs a real run to confirm staging paths and the assembleRelease
+# build. If c2pa-android's header-patch logic changes, update the sed below.
+
+name: Test against c2pa-rs branch
+
+on:
+  repository_dispatch:
+    types: [c2pa-rs-breaking-change]
+
+permissions:
+  contents: read
+
+env:
+  REPO_NAME: c2pa-android
+  C2PA_RS_PR: ${{ github.event.client_payload.pr_number }}
+  C2PA_RS_REF: ${{ github.event.client_payload.ref }}
+  C2PA_RS_SHA: ${{ github.event.client_payload.head_sha }}
+  GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout c2pa-android
+        uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Report start to c2pa-rs
+        run: |
+          gh api -X POST "repos/contentauth/c2pa-rs/statuses/$C2PA_RS_SHA" \
+            -f state=pending \
+            -f "context=breaking-changes / $REPO_NAME" \
+            -f "description=Building $REPO_NAME against c2pa-rs branch $C2PA_RS_REF..." >/dev/null
+
+      - name: Locate, await, and download the c2pa-rs branch build
+        run: |
+          set -euo pipefail
+          run_id=""
+          for _ in $(seq 1 90); do
+            run_id=$(gh run list --repo contentauth/c2pa-rs \
+              --workflow library-release.yml --limit 40 \
+              --json databaseId,displayTitle \
+              -q "[.[] | select(.displayTitle | contains(\"$C2PA_RS_SHA\"))][0].databaseId")
+            [ -n "$run_id" ] && [ "$run_id" != "null" ] && break
+            sleep 20
+          done
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "::error::Could not find a library-release run for $C2PA_RS_SHA"; exit 1
+          fi
+          echo "Found library build run $run_id; waiting for completion..."
+          gh run watch "$run_id" --repo contentauth/c2pa-rs || true
+          gh run download "$run_id" --repo contentauth/c2pa-rs \
+            --pattern 'release-artifacts-*-android*' --dir dl
+
+      - name: Stage native libs into jniLibs (so the download task no-ops)
+        run: |
+          set -euo pipefail
+          # ABI (jniLibs dir) <- c2pa-rs target
+          declare -A MAP=(
+            [arm64-v8a]=aarch64-linux-android
+            [armeabi-v7a]=armv7-linux-androideabi
+            [x86]=i686-linux-android
+            [x86_64]=x86_64-linux-android
+          )
+          header_done=""
+          for abi in "${!MAP[@]}"; do
+            target="${MAP[$abi]}"
+            zip=$(find dl -name "c2pa-*-${target}.zip" | head -1)
+            if [ -z "$zip" ]; then
+              echo "::error::missing artifact zip for $target"; exit 1
+            fi
+            tmp=$(mktemp -d); unzip -q "$zip" -d "$tmp"
+            mkdir -p "library/src/main/jniLibs/$abi"
+            cp "$tmp/lib/libc2pa_c.so" "library/src/main/jniLibs/$abi/libc2pa_c.so"
+            if [ -z "$header_done" ] && [ -f "$tmp/include/c2pa.h" ]; then
+              mkdir -p library/src/main/jni
+              # Replicate c2pa-android's header patch.
+              sed 's/typedef struct C2paSigner C2paSigner;/typedef struct C2paSigner { } C2paSigner;/' \
+                "$tmp/include/c2pa.h" > library/src/main/jni/c2pa.h
+              header_done=1
+            fi
+          done
+          echo "Staged jniLibs:"; find library/src/main/jniLibs -name '*.so'
+
+      - name: Build (assembleRelease)
+        id: build
+        continue-on-error: true
+        # downloadNativeLibraries detects the staged .so files and skips fetching.
+        run: ./gradlew :library:assembleRelease
+
+      - name: Report result to c2pa-rs
+        if: always()
+        run: |
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ "${{ steps.build.outcome }}" = "success" ]; then
+            state=success
+            desc="$REPO_NAME builds against the c2pa-rs branch."
+          else
+            state=failure
+            desc="$REPO_NAME does NOT build against the c2pa-rs branch — changes needed."
+          fi
+          gh api -X POST "repos/contentauth/c2pa-rs/statuses/$C2PA_RS_SHA" \
+            -f "state=$state" \
+            -f "context=breaking-changes / $REPO_NAME" \
+            -f "description=$desc" \
+            -f "target_url=$run_url" >/dev/null

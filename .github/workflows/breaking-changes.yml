@@ -34,6 +34,13 @@ env:
   # blocks the gate. c2pa-ios and c2pa-android join once their artifact-bridge
   # receivers ship (see docs/breaking-change-automation/README.md, Phase 2).
   DEPENDENTS: "c2pa-node-v2 c2pa-js c2pa-python c2pa-cpp"
+  # Subset of DEPENDENTS that consume prebuilt native libraries and therefore
+  # need a branch build of library-release.yml to download. When non-empty, the
+  # orchestrator triggers one library build per labeled PR (the receivers locate
+  # it by SHA). Populate with "c2pa-ios c2pa-android" once those receivers are
+  # live AND library-release.yml's verify_sha input has landed on the default
+  # branch. Empty = no library build is triggered.
+  BINARY_DEPENDENTS: ""
 
 jobs:
   # Runs on every PR. Always posts the required `breaking-changes-gate` context
@@ -85,6 +92,18 @@ jobs:
 
           # Gate goes pending until every dependent reports back.
           gate pending "Verifying dependent crates against this branch..."
+
+          # If any dependent needs prebuilt native libraries, trigger ONE branch
+          # build of library-release.yml; the binary receivers locate it by SHA.
+          # Must use the cross-repo token: a workflow triggered by GITHUB_TOKEN
+          # does not start a new run.
+          if [ -n "$BINARY_DEPENDENTS" ]; then
+            jq -n --arg ref "$REF" --arg sha "$SHA" \
+              '{ref: $ref, inputs: {verify_sha: $sha}}' \
+              | GH_TOKEN="$DISPATCH_TOKEN" gh api -X POST \
+                  "repos/$REPO/actions/workflows/library-release.yml/dispatches" --input -
+            echo "Triggered library-release.yml branch build for $REF (verify_sha=$SHA)"
+          fi
 
           for dep in $DEPENDENTS; do
             # Informational per-dependent context, also seeded as pending.
