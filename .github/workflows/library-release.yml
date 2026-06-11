@@ -4,6 +4,13 @@ on:
   push:
     tags:
       - "c2pa-v*" # Trigger on version tags (e.g., v1.0.0)
+  # Can also be dispatched against an arbitrary branch (e.g.
+  # `gh workflow run library-release.yml --ref <branch>`) to produce the native
+  # library binaries as downloadable workflow artifacts WITHOUT cutting a
+  # release. This is the artifact bridge that lets the breaking-change
+  # automation verify the prebuilt-binary dependents (c2pa-cpp, c2pa-ios,
+  # c2pa-android, c2pa-js) against a PR branch. See
+  # docs/breaking-change-automation/README.md.
   workflow_dispatch:
 
 jobs:
@@ -128,7 +135,11 @@ jobs:
 
   release:
     needs: build
-    if: always()
+    # Only publish a GitHub Release for version-tag pushes. On a branch
+    # workflow_dispatch the build job still uploads per-target workflow
+    # artifacts (release-artifacts-*) for downstreams to download; we skip the
+    # release itself (there is no tag, and tag_name extraction would fail).
+    if: always() && startsWith(github.ref, 'refs/tags/c2pa-v')
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifacts

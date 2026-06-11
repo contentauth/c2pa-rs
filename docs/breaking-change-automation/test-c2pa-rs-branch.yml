@@ -1,0 +1,143 @@
+# TEMPLATE — do not run from c2pa-rs. Copy this file into each dependent repo
+# as `.github/workflows/test-c2pa-rs-branch.yml` and adjust the two marked
+# sections (REPO_NAME and the re-target / build steps) for that repo.
+#
+# It receives a repository_dispatch from contentauth/c2pa-rs when a PR there is
+# labeled `breaking-changes`, re-targets this repo's build to the c2pa-rs PR
+# branch, opens a draft PR here with that change, builds/tests, and reports a
+# commit status back to the originating c2pa-rs PR.
+#
+# Requires a secret CROSS_ORG_PR_TOKEN (PAT or GitHub App token) with:
+#   - contents: write + pull-requests: write on THIS repo (push branch, open PR)
+#   - statuses:  write on contentauth/c2pa-rs (report back)
+# See contentauth/c2pa-rs docs/breaking-change-automation/README.md.
+
+name: Test against c2pa-rs branch
+
+on:
+  repository_dispatch:
+    types: [c2pa-rs-breaking-change]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  # CHANGE ME: must match the context the c2pa-rs orchestrator seeds, i.e. this
+  # repo's short name as listed in c2pa-rs `DEPENDENTS` (e.g. c2pa-python).
+  REPO_NAME: c2pa-node-v2
+  C2PA_RS_PR: ${{ github.event.client_payload.pr_number }}
+  C2PA_RS_REF: ${{ github.event.client_payload.ref }}
+  C2PA_RS_SHA: ${{ github.event.client_payload.head_sha }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+
+      - name: Report start to c2pa-rs
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+        run: |
+          gh api -X POST "repos/contentauth/c2pa-rs/statuses/$C2PA_RS_SHA" \
+            -f state=pending \
+            -f "context=breaking-changes / $REPO_NAME" \
+            -f "description=Building $REPO_NAME against c2pa-rs branch $C2PA_RS_REF..."
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # ======================================================================
+      # CHANGE ME — re-target this repo's build to the c2pa-rs PR branch.
+      #
+      # Variant A (Rust dependency: c2pa-node-v2, c2pa-python build-from-source):
+      #   swap the crates.io `c2pa` dependency for a git+branch source.
+      # ======================================================================
+      - name: Point c2pa dependency at the PR branch
+        run: |
+          python3 - "$C2PA_RS_REF" <<'PY'
+          import re, sys, pathlib
+          ref = sys.argv[1]
+          p = pathlib.Path("Cargo.toml")
+          t = p.read_text()
+          # Rewrite `c2pa = { version = "x", ... }` to a git + branch source,
+          # preserving the remaining keys (features, default-features, ...).
+          t = re.sub(
+              r'(?m)^(c2pa\s*=\s*\{)\s*version\s*=\s*"[^"]*"\s*,?',
+              r'\1 git = "https://github.com/contentauth/c2pa-rs", branch = "%s",' % ref,
+              t,
+          )
+          p.write_text(t)
+          print(t)
+          PY
+          cargo update -p c2pa
+
+      # ----------------------------------------------------------------------
+      # Variant B (prebuilt native libs: c2pa-cpp, c2pa-ios, c2pa-android,
+      # c2pa-js) — instead of the step above, download the c2pa-rs branch build
+      # artifacts and stage them where the build expects the release-downloaded
+      # libraries. The artifact bridge in c2pa-rs `library-release.yml` is ready:
+      #
+      #   gh workflow run library-release.yml --repo contentauth/c2pa-rs \
+      #     --ref "$C2PA_RS_REF"
+      #   # ...wait for the run, then:
+      #   gh run download <run-id> --repo contentauth/c2pa-rs \
+      #     --pattern 'release-artifacts-*' --dir native/
+      #
+      # See README "Phase 2" for who-triggers-the-build / run-id-delivery design.
+      # ----------------------------------------------------------------------
+
+      # ======================================================================
+      # CHANGE ME — this repo's real build + test entry point. Examples:
+      #   make test  |  pnpm install && pnpm test  |  ./gradlew test
+      # ======================================================================
+      - name: Build and test
+        id: build
+        continue-on-error: true
+        run: make test
+
+      - name: Open / update draft PR
+        id: pr
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+        run: |
+          branch="breaking/c2pa-rs-pr-${C2PA_RS_PR}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add -A
+          git commit -m "test: re-target to c2pa-rs#${C2PA_RS_PR} (${C2PA_RS_REF})" \
+            || echo "No changes to commit."
+          git push -u origin "$branch" --force
+
+          url=$(gh pr view "$branch" --json url -q .url 2>/dev/null || true)
+          if [ -z "$url" ]; then
+            url=$(gh pr create --draft \
+              --title "Verify against c2pa-rs#${C2PA_RS_PR} (breaking change)" \
+              --body "Automated verification of c2pa-rs PR #${C2PA_RS_PR} (branch \`${C2PA_RS_REF}\`). Build outcome: ${{ steps.build.outcome }}." \
+              --head "$branch")
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Report result to c2pa-rs
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+        run: |
+          if [ "${{ steps.build.outcome }}" = "success" ]; then
+            state=success
+            desc="$REPO_NAME builds against the c2pa-rs branch."
+          else
+            state=failure
+            desc="$REPO_NAME does NOT build against the c2pa-rs branch — changes needed."
+          fi
+          gh api -X POST "repos/contentauth/c2pa-rs/statuses/$C2PA_RS_SHA" \
+            -f "state=$state" \
+            -f "context=breaking-changes / $REPO_NAME" \
+            -f "description=$desc" \
+            -f "target_url=${{ steps.pr.outputs.url }}"

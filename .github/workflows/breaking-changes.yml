@@ -1,0 +1,154 @@
+# When a PR is labeled `breaking-changes`, fan out to every downstream binding
+# repo in the org and verify it still builds against this PR's branch. Each
+# dependent reports a commit status back here; a single always-present gate
+# context (`breaking-changes-gate`) aggregates those results and is the only
+# context branch protection needs to require.
+#
+# This uses `pull_request_target` (not `pull_request`) so the gate status can be
+# posted even on fork PRs — under `pull_request` the token is read-only for
+# forks, which would leave the required gate context unset and block every fork
+# PR. SECURITY: the fan-out job never checks out or executes PR code; it only
+# reads trusted event metadata and posts statuses / dispatches. Do not add a
+# checkout of the PR head to this workflow.
+#
+# See docs/breaking-change-automation/README.md for setup (the CROSS_ORG_PR_TOKEN
+# secret, the per-repo receiver workflow, and the branch-protection required check).
+
+name: Breaking changes
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+  status:
+
+permissions:
+  contents: read
+  statuses: write
+
+env:
+  GATE_CONTEXT: breaking-changes-gate
+  DISPATCH_TYPE: c2pa-rs-breaking-change
+  # Downstream binding repos in this org. Keep in sync with the contexts the
+  # per-repo receiver workflows post back.
+  DEPENDENTS: "c2pa-node-v2 c2pa-js c2pa-python c2pa-cpp c2pa-android c2pa-ios"
+
+jobs:
+  # Runs on every PR. Always posts the required `breaking-changes-gate` context
+  # so unlabeled (and fork) PRs are never left waiting, and fans out to the
+  # dependents when a same-repo PR carries the label.
+  fan-out:
+    name: Fan out to dependents
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate gate and dispatch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Cross-repo token: write access to the dependent repos + statuses.
+          DISPATCH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'breaking-changes') }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          set -euo pipefail
+
+          gate() {
+            gh api -X POST "repos/$REPO/statuses/$SHA" \
+              -f "state=$1" -f "context=$GATE_CONTEXT" -f "description=$2" >/dev/null
+          }
+
+          if [ "$HAS_LABEL" != "true" ]; then
+            gate success "No breaking-changes label; nothing to verify."
+            exit 0
+          fi
+
+          # A fork's branch does not live in contentauth/c2pa-rs, so dependents
+          # cannot re-target to it. Pass the gate with a note rather than block.
+          if [ "$IS_FORK" = "true" ]; then
+            echo "::warning::breaking-changes verification is skipped for fork PRs;" \
+              "push the branch to contentauth/c2pa-rs to verify dependents."
+            gate success "Fork PR — breaking-change verification skipped (branch not in canonical repo)."
+            exit 0
+          fi
+
+          if [ -z "$DISPATCH_TOKEN" ]; then
+            echo "::error::CROSS_ORG_PR_TOKEN is not set; cannot dispatch to dependents." \
+              "See docs/breaking-change-automation/README.md."
+            exit 1
+          fi
+
+          # Gate goes pending until every dependent reports back.
+          gate pending "Verifying dependent crates against this branch..."
+
+          for dep in $DEPENDENTS; do
+            # Informational per-dependent context, also seeded as pending.
+            gh api -X POST "repos/$REPO/statuses/$SHA" \
+              -f state=pending \
+              -f "context=breaking-changes / $dep" \
+              -f "description=Awaiting $dep verification..." >/dev/null
+
+            # Trigger the receiver workflow in the dependent repo.
+            jq -n \
+              --arg ref "$REF" \
+              --arg pr "$PR_NUMBER" \
+              --arg sha "$SHA" \
+              --arg src "$REPO" \
+              '{event_type: env.DISPATCH_TYPE,
+                client_payload: {ref: $ref, pr_number: $pr, head_sha: $sha, source_repo: $src}}' \
+              | GH_TOKEN="$DISPATCH_TOKEN" gh api -X POST \
+                  "repos/contentauth/$dep/dispatches" --input -
+
+            echo "Dispatched $DISPATCH_TYPE to contentauth/$dep"
+          done
+
+  # Fires whenever a commit status changes. We only act on the per-dependent
+  # `breaking-changes / *` contexts and recompute the aggregate gate from the
+  # latest state of all dependents on that commit.
+  aggregate:
+    name: Aggregate dependent results
+    if: >
+      github.event_name == 'status' &&
+      startsWith(github.event.context, 'breaking-changes /')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Recompute gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.sha }}
+        run: |
+          set -euo pipefail
+          statuses=$(gh api --paginate "repos/$REPO/commits/$SHA/statuses")
+
+          failed=0
+          pending=0
+          for dep in $DEPENDENTS; do
+            ctx="breaking-changes / $dep"
+            state=$(echo "$statuses" | jq -r --arg c "$ctx" \
+              '[.[] | select(.context == $c)] | sort_by(.updated_at) | last | .state // "missing"')
+            echo "$ctx => $state"
+            case "$state" in
+              success) ;;
+              failure|error) failed=1 ;;
+              *) pending=1 ;;   # pending or missing
+            esac
+          done
+
+          if [ "$failed" = "1" ]; then
+            state=failure
+            desc="One or more dependent crates need changes before this PR can land."
+          elif [ "$pending" = "1" ]; then
+            state=pending
+            desc="Waiting on dependent crate verification..."
+          else
+            state=success
+            desc="All dependent crates build against this branch."
+          fi
+
+          gh api -X POST "repos/$REPO/statuses/$SHA" \
+            -f "state=$state" \
+            -f "context=$GATE_CONTEXT" \
+            -f "description=$desc" >/dev/null

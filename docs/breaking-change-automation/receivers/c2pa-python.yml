@@ -1,0 +1,89 @@
+# Receiver for c2pa-python. Install as
+# .github/workflows/test-c2pa-rs-branch.yml in contentauth/c2pa-python.
+#
+# c2pa-python has no `c2pa` Cargo dependency to rewrite: it normally downloads
+# prebuilt native artifacts, but the Makefile exposes a `build-from-source`
+# path driven by C2PA_RS_PATH. So we re-target by checking out c2pa-rs at the PR
+# branch and building against it. There is no committable diff, so this receiver
+# is STATUS-ONLY (no draft PR); the status links to this workflow run. A red
+# status means a human needs to make changes in c2pa-python.
+#
+# Requires the CROSS_ORG_PR_TOKEN secret (see contentauth/c2pa-rs
+# docs/breaking-change-automation/README.md).
+#
+# NOTE: verify the `make` invocations below against c2pa-python's Makefile
+# (the PYTHON variable and target names) before relying on this in production.
+
+name: Test against c2pa-rs branch
+
+on:
+  repository_dispatch:
+    types: [c2pa-rs-breaking-change]
+
+permissions:
+  contents: read
+
+env:
+  REPO_NAME: c2pa-python
+  C2PA_RS_PR: ${{ github.event.client_payload.pr_number }}
+  C2PA_RS_REF: ${{ github.event.client_payload.ref }}
+  C2PA_RS_SHA: ${{ github.event.client_payload.head_sha }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout c2pa-python
+        uses: actions/checkout@v6
+
+      - name: Checkout c2pa-rs @ PR branch
+        uses: actions/checkout@v6
+        with:
+          repository: contentauth/c2pa-rs
+          ref: ${{ github.event.client_payload.ref }}
+          path: c2pa-rs
+
+      - name: Report start to c2pa-rs
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+        run: |
+          gh api -X POST "repos/contentauth/c2pa-rs/statuses/$C2PA_RS_SHA" \
+            -f state=pending \
+            -f "context=breaking-changes / $REPO_NAME" \
+            -f "description=Building $REPO_NAME against c2pa-rs branch $C2PA_RS_REF..." >/dev/null
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build against local c2pa-rs and test
+        id: build
+        continue-on-error: true
+        env:
+          C2PA_RS_PATH: ${{ github.workspace }}/c2pa-rs
+        run: |
+          python3 -m venv .venv
+          . .venv/bin/activate
+          make install-deps PYTHON=python
+          make build-from-source C2PA_RS_PATH="$C2PA_RS_PATH" PYTHON=python
+          make test PYTHON=python
+
+      - name: Report result to c2pa-rs
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+        run: |
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ "${{ steps.build.outcome }}" = "success" ]; then
+            state=success
+            desc="$REPO_NAME builds against the c2pa-rs branch."
+          else
+            state=failure
+            desc="$REPO_NAME does NOT build against the c2pa-rs branch — changes needed."
+          fi
+          gh api -X POST "repos/contentauth/c2pa-rs/statuses/$C2PA_RS_SHA" \
+            -f "state=$state" \
+            -f "context=breaking-changes / $REPO_NAME" \
+            -f "description=$desc" \
+            -f "target_url=$run_url" >/dev/null
