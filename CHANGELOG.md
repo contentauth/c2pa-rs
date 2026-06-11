@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.88.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.87.0...c2pa-v0.88.0)
+_11 June 2026_
+
+### Added
+
+* Remove some long deprecated APIs ([#2206](https://github.com/contentauth/c2pa-rs/pull/2206))
+
 ## [0.87.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.86.1...c2pa-v0.87.0)
 _11 June 2026_
 
