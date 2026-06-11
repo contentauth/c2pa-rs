@@ -10,9 +10,6 @@
 #
 # Requires the CROSS_ORG_PR_TOKEN secret (see contentauth/c2pa-rs
 # docs/breaking-change-automation/README.md).
-#
-# NOTE: verify the `make` invocations below against c2pa-python's Makefile
-# (the PYTHON variable and target names) before relying on this in production.
 
 name: Test against c2pa-rs branch
 
@@ -57,17 +54,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Follows c2pa-python's documented "Building from local c2pa-rs sources"
+      # flow (README). The make targets honor the active virtualenv.
       - name: Build against local c2pa-rs and test
         id: build
         continue-on-error: true
         env:
           C2PA_RS_PATH: ${{ github.workspace }}/c2pa-rs
         run: |
-          python3 -m venv .venv
+          make create-venv
           . .venv/bin/activate
-          make install-deps PYTHON=python
-          make build-from-source C2PA_RS_PATH="$C2PA_RS_PATH" PYTHON=python
-          make test PYTHON=python
+          make install-deps
+          make build-from-source C2PA_RS_PATH="$C2PA_RS_PATH"
+          make test
 
       - name: Report result to c2pa-rs
         if: always()

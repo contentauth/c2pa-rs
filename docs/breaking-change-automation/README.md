@@ -104,7 +104,7 @@ How "use the PR branch" is implemented differs by how each repo consumes c2pa-rs
 | `c2pa-node-v2` | crates.io `c2pa` dep in its root `Cargo.toml` | Variant A: rewrite to `git`+`branch`, `cargo update -p c2pa` (commits a diff → draft PR) |
 | `c2pa-js` | builds wasm from a `c2pa` dep in its root `Cargo.toml` | Variant A: rewrite to `git`+`branch`, `pnpm ci:check` (commits a diff → draft PR) |
 | `c2pa-python` | downloads prebuilt artifacts; has a `build-from-source` path | check out the branch, `make build-from-source C2PA_RS_PATH=...` (no diff → status-only) |
-| `c2pa-cpp` | prebuilt libs via CMake; has a `build-from-source` path | check out the branch, `C2PA_BUILD_FROM_SOURCE=ON C2PA_RS_PATH=... make test` (status-only) |
+| `c2pa-cpp` | prebuilt libs via CMake; has a `build-from-source` path | check out the branch as a sibling dir, `C2PA_BUILD_FROM_SOURCE=ON C2PA_RS_PATH=... make test-release` with `LD_LIBRARY_PATH` set (status-only) |
 | `c2pa-ios` | prebuilt native libs from releases (xcframework) | Variant B: stage branch artifacts (see Phase 2) |
 | `c2pa-android` | prebuilt `.so` libs from releases (jniLibs) | Variant B: stage branch artifacts (see Phase 2) |
 

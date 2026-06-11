@@ -30,10 +30,14 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
+      # c2pa-cpp's build-from-source expects c2pa-rs as a filesystem neighbor,
+      # so check both out as siblings under the workspace.
       - name: Checkout c2pa-cpp
         uses: actions/checkout@v6
+        with:
+          path: c2pa-cpp
 
-      - name: Checkout c2pa-rs @ PR branch
+      - name: Checkout c2pa-rs @ PR branch (sibling of c2pa-cpp)
         uses: actions/checkout@v6
         with:
           repository: contentauth/c2pa-rs
@@ -54,13 +58,19 @@ jobs:
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y ninja-build cmake
 
+      # Follows c2pa-cpp's documented "Building using local sources" flow
+      # (README): C2PA_BUILD_FROM_SOURCE + C2PA_RS_PATH, with LD_LIBRARY_PATH set
+      # so the tests can load the freshly built libc2pa_c at runtime.
       - name: Build against local c2pa-rs and test
         id: build
         continue-on-error: true
+        working-directory: c2pa-cpp
         env:
           C2PA_BUILD_FROM_SOURCE: "ON"
           C2PA_RS_PATH: ${{ github.workspace }}/c2pa-rs
-        run: make test
+        run: |
+          export LD_LIBRARY_PATH="$PWD/build/release/tests:${LD_LIBRARY_PATH:-}"
+          make test-release
 
       - name: Report result to c2pa-rs
         if: always()
