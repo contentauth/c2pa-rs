@@ -969,8 +969,7 @@ pub mod tests {
             Relationship::InputTo,
         ] {
             let s = variant.as_str();
-            let deserialized: Relationship =
-                serde_json::from_str(&format!("\"{}\"", s)).unwrap();
+            let deserialized: Relationship = serde_json::from_str(&format!("\"{}\"", s)).unwrap();
             assert_eq!(deserialized, variant);
         }
     }
