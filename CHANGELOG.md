@@ -9,6 +9,23 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.87.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.86.1...c2pa-v0.87.0)
+_11 June 2026_
+
+### Added
+
+* [**breaking**] Split c2pa-raw-crypto into its own crate ([#2202](https://github.com/contentauth/c2pa-rs/pull/2202))
+
+### Fixed
+
+* Improve ingredientMismatch error messages ([#2225](https://github.com/contentauth/c2pa-rs/pull/2225))
+* Noop test new release workflow ([#2221](https://github.com/contentauth/c2pa-rs/pull/2221))
+
+### Other
+
+* Revert "feat!: Split c2pa-raw-crypto into its own crate ([#2202](https://github.com/contentauth/c2pa-rs/pull/2202))"
+* Use latest `release-plz` and add a dry run job on release PRs ([#2217](https://github.com/contentauth/c2pa-rs/pull/2217))
+
 ## [0.86.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.86.0...c2pa-v0.86.1)
 _08 June 2026_
 
