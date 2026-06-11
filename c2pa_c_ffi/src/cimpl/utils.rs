@@ -22,7 +22,10 @@ use std::{
     any::TypeId,
     collections::HashMap,
     os::raw::c_uchar,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicPtr, Ordering},
+        Arc, Mutex, Once,
+    },
 };
 
 use crate::{cimpl::cimpl_error::CimplError, error::Error, maybe_send_sync::MaybeSend};
@@ -165,11 +168,59 @@ impl Drop for PointerRegistry {
     }
 }
 
-/// Get the global pointer registry
+static REGISTRY: AtomicPtr<PointerRegistry> = AtomicPtr::new(std::ptr::null_mut());
+
+#[cfg(unix)]
+static ATFORK_INIT: Once = Once::new();
+
+/// Reinitialize the pointer registry in the child of a `fork()`.
+///
+/// After a multithreaded `fork()`, the inherited `Mutex` inside the registry
+/// may be held by a parent thread that does not exist in the child. Any
+/// `lock()` call in the child may then block forever...
+/// Therefore, we store a fresh registry while the child is still single-threaded.
+///
+/// The old registry allocation is intentionally leaked: dropping it would
+/// try to lock the broken mutex and print  "unfreed pointers" warnings
+/// for handles that belong to the parent.
+/// The child will `exec()` or `_exit()`shortly, so the OS should
+/// reclaim memory anyway.
+#[cfg(unix)]
+unsafe extern "C" fn reinit_registry_after_fork() {
+    let new_reg = Box::into_raw(Box::new(PointerRegistry::new()));
+    REGISTRY.store(new_reg, Ordering::Release);
+}
+
+/// Register the post-fork child handler the first time the registry is used.
+/// No-op on non-Unix targets.
+fn ensure_fork_handler_registered() {
+    #[cfg(unix)]
+    ATFORK_INIT.call_once(|| unsafe {
+        libc::pthread_atfork(None, None, Some(reinit_registry_after_fork));
+    });
+}
+
+/// Get the global pointer registry, initialising it on the first call.
 pub(crate) fn get_registry() -> &'static PointerRegistry {
-    use std::sync::OnceLock;
-    static REGISTRY: OnceLock<PointerRegistry> = OnceLock::new();
-    REGISTRY.get_or_init(PointerRegistry::new)
+    ensure_fork_handler_registered();
+    let ptr = REGISTRY.load(Ordering::Acquire);
+    if !ptr.is_null() {
+        return unsafe { &*ptr };
+    }
+    let new_reg = Box::into_raw(Box::new(PointerRegistry::new()));
+    match REGISTRY.compare_exchange(
+        std::ptr::null_mut(),
+        new_reg,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
+        Ok(_) => unsafe { &*new_reg },
+        Err(existing) => {
+            // Another thread initialized first; drop our fresh empty registry.
+            unsafe { drop(Box::from_raw(new_reg)) };
+            unsafe { &*existing }
+        }
+    }
 }
 
 // ============================================================================
@@ -589,5 +640,39 @@ mod tests {
         assert!(result.is_err());
 
         unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_fork_reinit_no_deadlock() {
+        // Ensure registry is non-empty and atfork handler is registered before fork.
+        let c_str = to_c_string("fork test".to_string());
+        assert!(!c_str.is_null());
+
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork() failed");
+
+        if pid == 0 {
+            // Child: reinit_registry_after_fork replaced the inherited
+            // mutex with a fresh one. cimpl_free must not deadlock.
+            cimpl_free(c_str as *mut std::ffi::c_void);
+            unsafe { libc::_exit(0) };
+        }
+
+        // Parent: wait up to 5 s. If child deadlocks, SIGALRM terminates this process.
+        let mut status = 0i32;
+        unsafe {
+            libc::alarm(5);
+            libc::waitpid(pid, &mut status, 0);
+            libc::alarm(0);
+        }
+        assert!(
+            libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0,
+            "child exited abnormally: status={status}"
+        );
+
+        // Parent still owns the original pointer,
+        // verify parent can free.
+        cimpl_free(c_str as *mut std::ffi::c_void);
     }
 }
