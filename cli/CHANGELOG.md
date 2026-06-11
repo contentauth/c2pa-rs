@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.66](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.65...c2patool-v0.26.66)
+_11 June 2026_
+
+### Fixed
+
+* Enable c2pa features in sub-crates since default-features is disabled at the workspace-level ([#2219](https://github.com/contentauth/c2pa-rs/pull/2219))
+
+### Other
+
+* Use latest `release-plz` and add a dry run job on release PRs ([#2217](https://github.com/contentauth/c2pa-rs/pull/2217))
+
 ## [0.26.65](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.64...c2patool-v0.26.65)
 _09 June 2026_
 
