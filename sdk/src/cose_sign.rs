@@ -17,16 +17,16 @@
 
 use async_generic::async_generic;
 use async_trait::async_trait;
-use c2pa_raw_crypto::{RawSignerError, SigningAlg};
 
 use crate::{
     claim::Claim,
     cose_validator::verify_cose,
     crypto::{
         cose::{
-            check_end_entity_certificate_profile, sign, sign_async, AsyncCoseSigner,
-            CertificateTrustPolicy, CoseSigner, TimeStampStorage,
+            check_end_entity_certificate_profile, sign, sign_async, CertificateTrustPolicy,
+            TimeStampStorage,
         },
+        raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
         time_stamp::{AsyncTimeStampProvider, TimeStampError, TimeStampProvider},
     },
     settings::Settings,
@@ -134,11 +134,23 @@ pub(crate) fn cose_sign(
     }
 
     if _sync {
-        let wrapper = SignerWrapper(signer);
-        Ok(sign(&wrapper, data, Some(box_size), time_stamp_storage)?)
+        match signer.raw_signer() {
+            Some(raw_signer) => Ok(sign(*raw_signer, data, Some(box_size), time_stamp_storage)?),
+            None => {
+                let wrapper = SignerWrapper(signer);
+                Ok(sign(&wrapper, data, Some(box_size), time_stamp_storage)?)
+            }
+        }
     } else {
-        let wrapper = AsyncSignerWrapper(signer);
-        Ok(sign_async(&wrapper, data, Some(box_size), time_stamp_storage).await?)
+        match signer.async_raw_signer() {
+            Some(raw_signer) => {
+                Ok(sign_async(*raw_signer, data, Some(box_size), time_stamp_storage).await?)
+            }
+            None => {
+                let wrapper = AsyncSignerWrapper(signer);
+                Ok(sign_async(&wrapper, data, Some(box_size), time_stamp_storage).await?)
+            }
+        }
     }
 }
 
@@ -167,11 +179,9 @@ fn signing_cert_valid(signing_cert: &[u8], settings: &Settings) -> Result<()> {
 
 struct SignerWrapper<'a>(&'a dyn Signer);
 
-impl CoseSigner for SignerWrapper<'_> {
+impl RawSigner for SignerWrapper<'_> {
     fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
-        self.0
-            .sign(data)
-            .map_err(|e| RawSignerError::InternalError(e.to_string()))
+        Ok(self.0.sign(data)?)
     }
 
     fn alg(&self) -> SigningAlg {
@@ -179,9 +189,11 @@ impl CoseSigner for SignerWrapper<'_> {
     }
 
     fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
-        self.0
-            .certs()
-            .map_err(|e| RawSignerError::InternalError(e.to_string()))
+        Ok(self.0.certs()?)
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
     }
 
     fn ocsp_response(&self) -> Option<Vec<u8>> {
@@ -219,12 +231,9 @@ struct AsyncSignerWrapper<'a>(&'a dyn AsyncSigner);
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl AsyncCoseSigner for AsyncSignerWrapper<'_> {
+impl AsyncRawSigner for AsyncSignerWrapper<'_> {
     async fn sign(&self, data: Vec<u8>) -> std::result::Result<Vec<u8>, RawSignerError> {
-        self.0
-            .sign(data)
-            .await
-            .map_err(|e| RawSignerError::InternalError(e.to_string()))
+        Ok(self.0.sign(data).await?)
     }
 
     fn alg(&self) -> SigningAlg {
@@ -232,9 +241,11 @@ impl AsyncCoseSigner for AsyncSignerWrapper<'_> {
     }
 
     fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
-        self.0
-            .certs()
-            .map_err(|e| RawSignerError::InternalError(e.to_string()))
+        Ok(self.0.certs()?)
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
     }
 
     async fn ocsp_response(&self) -> Option<Vec<u8>> {
@@ -282,9 +293,10 @@ mod tests {
     use super::sign_claim;
     use crate::{
         claim::Claim,
+        crypto::raw_signature::SigningAlg,
         settings::Settings,
         utils::test_signer::{async_test_signer, test_signer},
-        Result, Signer, SigningAlg,
+        Result, Signer,
     };
 
     #[test]
@@ -320,7 +332,7 @@ mod tests {
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
 
-        use crate::{cose_sign::sign_claim_async, AsyncSigner, SigningAlg};
+        use crate::{cose_sign::sign_claim_async, crypto::raw_signature::SigningAlg, AsyncSigner};
 
         let mut claim = Claim::new("extern_sign_test", Some("contentauth"), 1);
         claim.build().unwrap();
@@ -351,8 +363,8 @@ mod tests {
             Ok(b"totally bogus signature".to_vec())
         }
 
-        fn alg(&self) -> crate::SigningAlg {
-            crate::SigningAlg::Ps256
+        fn alg(&self) -> crate::crypto::raw_signature::SigningAlg {
+            crate::crypto::raw_signature::SigningAlg::Ps256
         }
 
         fn certs(&self) -> Result<Vec<Vec<u8>>> {

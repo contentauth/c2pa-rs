@@ -23,7 +23,7 @@ use crate::{
         mp3_io::Mp3Error, png_io::PngError, riff_io::RiffError, svg_io::SvgError,
         tiff_io::TiffError,
     },
-    crypto::{cose::CoseError, time_stamp::TimeStampError},
+    crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
     http::HttpResolverError,
     ValidationResults,
 };
@@ -296,10 +296,10 @@ pub enum Error {
     TimeStampError(#[from] crate::crypto::time_stamp::TimeStampError),
 
     #[error(transparent)]
-    RawSignatureValidationError(#[from] c2pa_raw_crypto::RawSignatureValidationError),
+    RawSignatureValidationError(#[from] crate::crypto::raw_signature::RawSignatureValidationError),
 
     #[error(transparent)]
-    RawSignerError(#[from] c2pa_raw_crypto::RawSignerError),
+    RawSignerError(#[from] crate::crypto::raw_signature::RawSignerError),
 
     #[error(transparent)]
     CertificateProfileError(#[from] crate::crypto::cose::CertificateProfileError),
@@ -403,6 +403,13 @@ impl From<Error> for CoseError {
             Error::RawSignatureValidationError(e) => Self::RawSignatureValidationError(e),
             _ => Self::InternalError(err.to_string()),
         }
+    }
+}
+
+impl From<Error> for RawSignerError {
+    fn from(err: Error) -> Self {
+        // See if better mappings exist, but I doubt it.
+        Self::InternalError(err.to_string())
     }
 }
 

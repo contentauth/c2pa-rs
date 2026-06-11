@@ -18,12 +18,14 @@ use std::{
 };
 
 use async_generic::async_generic;
-use c2pa_raw_crypto::RawSignatureValidationError;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    crypto::cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
+    crypto::{
+        cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
+        raw_signature::RawSignatureValidationError,
+    },
     dynamic_assertion::PartialClaim,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
