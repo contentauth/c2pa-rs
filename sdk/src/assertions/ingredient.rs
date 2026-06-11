@@ -959,6 +959,23 @@ pub mod tests {
     };
 
     #[test]
+
+    // Fails if `as_str()` returns a string that doesn't match the corresponding serde(rename)
+    // value, causing deserialization to reject the string or map it to the wrong variant.
+    fn relationship_serde_roundtrip() {
+        for variant in [
+            Relationship::ParentOf,
+            Relationship::ComponentOf,
+            Relationship::InputTo,
+        ] {
+            let s = variant.as_str();
+            let deserialized: Relationship =
+                serde_json::from_str(&format!("\"{}\"", s)).unwrap();
+            assert_eq!(deserialized, variant);
+        }
+    }
+
+    #[test]
     fn assertion_ingredient() {
         let original = Ingredient::new(
             "image 1.jpg",
