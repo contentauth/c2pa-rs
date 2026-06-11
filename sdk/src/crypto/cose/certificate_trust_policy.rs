@@ -148,9 +148,8 @@ impl CertificateTrustPolicy {
         }
 
         #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
-        #[cfg(feature = "rust_native_crypto")]
         {
-            return super::certificate_trust::rust_native::check_certificate_trust(
+            return crate::crypto::raw_signature::rust_native::check_certificate_trust::check_certificate_trust(
                 self,
                 chain_der,
                 end_entity_cert_der,
@@ -163,7 +162,7 @@ impl CertificateTrustPolicy {
             not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
         ))]
         {
-            return super::certificate_trust::openssl::check_certificate_trust(
+            return crate::crypto::raw_signature::openssl::check_certificate_trust::check_certificate_trust(
                 self,
                 chain_der,
                 end_entity_cert_der,
@@ -476,8 +475,10 @@ impl From<openssl::error::ErrorStack> for CertificateTrustError {
     feature = "openssl",
     not(all(feature = "rust_native_crypto", target_arch = "wasm32"))
 ))]
-impl From<c2pa_raw_crypto::OpenSslMutexUnavailable> for CertificateTrustError {
-    fn from(err: c2pa_raw_crypto::OpenSslMutexUnavailable) -> Self {
+impl From<crate::crypto::raw_signature::openssl::OpenSslMutexUnavailable>
+    for CertificateTrustError
+{
+    fn from(err: crate::crypto::raw_signature::openssl::OpenSslMutexUnavailable) -> Self {
         Self::InternalError(err.to_string())
     }
 }
@@ -506,46 +507,16 @@ mod tests {
     #![allow(clippy::unwrap_used)]
     use asn1_rs::{oid, Oid};
     use c2pa_macros::c2pa_test_async;
-    use c2pa_raw_crypto::SigningAlg;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
     use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
-    use crate::crypto::cose::{
-        CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError, TrustAnchorType,
+    use crate::crypto::{
+        cose::{
+            CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError, TrustAnchorType,
+        },
+        raw_signature::{signer::test_signer, SigningAlg},
     };
-
-    /// Returns the DER certificate chain from the bundled test credentials for
-    /// `alg`.
-    fn test_cert_chain(alg: SigningAlg) -> Vec<Vec<u8>> {
-        let cert_chain: &[u8] = match alg {
-            SigningAlg::Ed25519 => {
-                include_bytes!("../../../tests/fixtures/crypto/raw_signature/ed25519.pub")
-            }
-            SigningAlg::Es256 => {
-                include_bytes!("../../../tests/fixtures/crypto/raw_signature/es256.pub")
-            }
-            SigningAlg::Es384 => {
-                include_bytes!("../../../tests/fixtures/crypto/raw_signature/es384.pub")
-            }
-            SigningAlg::Es512 => {
-                include_bytes!("../../../tests/fixtures/crypto/raw_signature/es512.pub")
-            }
-            SigningAlg::Ps256 => {
-                include_bytes!("../../../tests/fixtures/crypto/raw_signature/ps256.pub")
-            }
-            SigningAlg::Ps384 => {
-                include_bytes!("../../../tests/fixtures/crypto/raw_signature/ps384.pub")
-            }
-            SigningAlg::Ps512 => {
-                include_bytes!("../../../tests/fixtures/crypto/raw_signature/ps512.pub")
-            }
-            _ => panic!("unsupported test signing algorithm: {alg}"),
-        };
-
-        #[allow(clippy::unwrap_used)]
-        crate::crypto::cert_chain_pem_to_der(cert_chain).unwrap()
-    }
 
     #[test]
     #[cfg_attr(
@@ -791,21 +762,21 @@ zGxQnM2hCA==
         ))
         .unwrap();
 
-        let ps256 = test_cert_chain(SigningAlg::Ps256);
-        let ps384 = test_cert_chain(SigningAlg::Ps384);
-        let ps512 = test_cert_chain(SigningAlg::Ps512);
-        let es256 = test_cert_chain(SigningAlg::Es256);
-        let es384 = test_cert_chain(SigningAlg::Es384);
-        let es512 = test_cert_chain(SigningAlg::Es512);
-        let ed25519 = test_cert_chain(SigningAlg::Ed25519);
+        let ps256 = test_signer(SigningAlg::Ps256);
+        let ps384 = test_signer(SigningAlg::Ps384);
+        let ps512 = test_signer(SigningAlg::Ps512);
+        let es256 = test_signer(SigningAlg::Es256);
+        let es384 = test_signer(SigningAlg::Es384);
+        let es512 = test_signer(SigningAlg::Es512);
+        let ed25519 = test_signer(SigningAlg::Ed25519);
 
-        let ps256_certs = ps256.clone();
-        let ps384_certs = ps384.clone();
-        let ps512_certs = ps512.clone();
-        let es256_certs = es256.clone();
-        let es384_certs = es384.clone();
-        let es512_certs = es512.clone();
-        let ed25519_certs = ed25519.clone();
+        let ps256_certs = ps256.cert_chain().unwrap();
+        let ps384_certs = ps384.cert_chain().unwrap();
+        let ps512_certs = ps512.cert_chain().unwrap();
+        let es256_certs = es256.cert_chain().unwrap();
+        let es384_certs = es384.cert_chain().unwrap();
+        let es512_certs = es512.cert_chain().unwrap();
+        let ed25519_certs = ed25519.cert_chain().unwrap();
 
         assert!(
             ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
@@ -848,21 +819,21 @@ zGxQnM2hCA==
     fn test_user_trust_store() {
         let ctp = CertificateTrustPolicy::default();
 
-        let ps256 = test_cert_chain(SigningAlg::Ps256);
-        let ps384 = test_cert_chain(SigningAlg::Ps384);
-        let ps512 = test_cert_chain(SigningAlg::Ps512);
-        let es256 = test_cert_chain(SigningAlg::Es256);
-        let es384 = test_cert_chain(SigningAlg::Es384);
-        let es512 = test_cert_chain(SigningAlg::Es512);
-        let ed25519 = test_cert_chain(SigningAlg::Ed25519);
+        let ps256 = test_signer(SigningAlg::Ps256);
+        let ps384 = test_signer(SigningAlg::Ps384);
+        let ps512 = test_signer(SigningAlg::Ps512);
+        let es256 = test_signer(SigningAlg::Es256);
+        let es384 = test_signer(SigningAlg::Es384);
+        let es512 = test_signer(SigningAlg::Es512);
+        let ed25519 = test_signer(SigningAlg::Ed25519);
 
-        let ps256_certs = ps256.clone();
-        let ps384_certs = ps384.clone();
-        let ps512_certs = ps512.clone();
-        let es256_certs = es256.clone();
-        let es384_certs = es384.clone();
-        let es512_certs = es512.clone();
-        let ed25519_certs = ed25519.clone();
+        let ps256_certs = ps256.cert_chain().unwrap();
+        let ps384_certs = ps384.cert_chain().unwrap();
+        let ps512_certs = ps512.cert_chain().unwrap();
+        let es256_certs = es256.cert_chain().unwrap();
+        let es384_certs = es384.cert_chain().unwrap();
+        let es512_certs = es512.cert_chain().unwrap();
+        let ed25519_certs = ed25519.cert_chain().unwrap();
 
         assert!(
             ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
@@ -954,21 +925,21 @@ zGxQnM2hCA==
     fn test_broken_trust_chain() {
         let ctp = CertificateTrustPolicy::default();
 
-        let ps256 = test_cert_chain(SigningAlg::Ps256);
-        let ps384 = test_cert_chain(SigningAlg::Ps384);
-        let ps512 = test_cert_chain(SigningAlg::Ps512);
-        let es256 = test_cert_chain(SigningAlg::Es256);
-        let es384 = test_cert_chain(SigningAlg::Es384);
-        let es512 = test_cert_chain(SigningAlg::Es512);
-        let ed25519 = test_cert_chain(SigningAlg::Ed25519);
+        let ps256 = test_signer(SigningAlg::Ps256);
+        let ps384 = test_signer(SigningAlg::Ps384);
+        let ps512 = test_signer(SigningAlg::Ps512);
+        let es256 = test_signer(SigningAlg::Es256);
+        let es384 = test_signer(SigningAlg::Es384);
+        let es512 = test_signer(SigningAlg::Es512);
+        let ed25519 = test_signer(SigningAlg::Ed25519);
 
-        let ps256_certs = ps256.clone();
-        let ps384_certs = ps384.clone();
-        let ps512_certs = ps512.clone();
-        let es256_certs = es256.clone();
-        let es384_certs = es384.clone();
-        let es512_certs = es512.clone();
-        let ed25519_certs = ed25519.clone();
+        let ps256_certs = ps256.cert_chain().unwrap();
+        let ps384_certs = ps384.cert_chain().unwrap();
+        let ps512_certs = ps512.cert_chain().unwrap();
+        let es256_certs = es256.cert_chain().unwrap();
+        let es384_certs = es384.cert_chain().unwrap();
+        let es512_certs = es512.cert_chain().unwrap();
+        let ed25519_certs = ed25519.cert_chain().unwrap();
 
         // Break the trust chain by skipping the first intermediate CA.
         assert_eq!(
@@ -1137,21 +1108,29 @@ zGxQnM2hCA==
         ))
         .unwrap();
 
-        let ps256 = test_cert_chain(SigningAlg::Ps256);
-        let ps384 = test_cert_chain(SigningAlg::Ps384);
-        let ps512 = test_cert_chain(SigningAlg::Ps512);
-        let es256 = test_cert_chain(SigningAlg::Es256);
-        let es384 = test_cert_chain(SigningAlg::Es384);
-        let es512 = test_cert_chain(SigningAlg::Es512);
-        let ed25519 = test_cert_chain(SigningAlg::Ed25519);
+        let ps256 = test_signer(SigningAlg::Ps256);
+        let ps384 = test_signer(SigningAlg::Ps384);
+        let ps512 = test_signer(SigningAlg::Ps512);
+        let es256 = test_signer(SigningAlg::Es256);
+        let es384 = test_signer(SigningAlg::Es384);
+        let es512 = test_signer(SigningAlg::Es512);
+        let ed25519 = test_signer(SigningAlg::Ed25519);
 
-        let ps256_certs = ps256.clone();
-        let ps384_certs = ps384.clone();
-        let ps512_certs = ps512.clone();
-        let es256_certs = es256.clone();
-        let es384_certs = es384.clone();
-        let es512_certs = es512.clone();
-        let ed25519_certs = ed25519.clone();
+        assert_eq!(ps256.alg(), SigningAlg::Ps256);
+        assert_eq!(ps384.alg(), SigningAlg::Ps384);
+        assert_eq!(ps512.alg(), SigningAlg::Ps512);
+        assert_eq!(es256.alg(), SigningAlg::Es256);
+        assert_eq!(es384.alg(), SigningAlg::Es384);
+        assert_eq!(es512.alg(), SigningAlg::Es512);
+        assert_eq!(ed25519.alg(), SigningAlg::Ed25519);
+
+        let ps256_certs = ps256.cert_chain().unwrap();
+        let ps384_certs = ps384.cert_chain().unwrap();
+        let ps512_certs = ps512.cert_chain().unwrap();
+        let es256_certs = es256.cert_chain().unwrap();
+        let es384_certs = es384.cert_chain().unwrap();
+        let es512_certs = es512.cert_chain().unwrap();
+        let ed25519_certs = ed25519.cert_chain().unwrap();
 
         ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
             .unwrap();

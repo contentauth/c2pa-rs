@@ -20,7 +20,7 @@ use std::io::{Cursor, Seek};
 use c2pa_macros::c2pa_test_async;
 
 use crate::{
-    crypto::cose::Verifier,
+    crypto::{cose::Verifier, raw_signature},
     identity::{
         builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
         tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
@@ -55,13 +55,15 @@ async fn x509_signing() {
     let (cawg_cert_chain, cawg_private_key) =
         cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
 
-    let cawg_raw_signer =
-        c2pa_raw_crypto::signer_from_private_key(&cawg_private_key, SigningAlg::Ed25519).unwrap();
+    let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
+        &cawg_cert_chain,
+        &cawg_private_key,
+        SigningAlg::Ed25519,
+        None,
+    )
+    .unwrap();
 
-    let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(
-        cawg_raw_signer,
-        crate::crypto::cert_chain_pem_to_der(&cawg_cert_chain).unwrap(),
-    );
+    let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
     let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
     c2pa_signer.add_identity_assertion(iab);
 

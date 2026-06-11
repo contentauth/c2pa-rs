@@ -12,7 +12,6 @@
 // each license.
 
 use async_generic::async_generic;
-use c2pa_raw_crypto::SigningAlg;
 use coset::{
     cbor::value::Value,
     iana::{self, Algorithm, EnumI64},
@@ -20,8 +19,11 @@ use coset::{
 };
 
 use crate::{
-    crypto::cose::{
-        validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustPolicy, CoseError,
+    crypto::{
+        cose::{
+            validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustPolicy, CoseError,
+        },
+        raw_signature::SigningAlg,
     },
     log_item,
     status_tracker::StatusTracker,

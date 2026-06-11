@@ -13,13 +13,17 @@
 
 use std::sync::Arc;
 
-use c2pa_raw_crypto::{signer_from_private_key, RawSigner, RawSignerError, SigningAlg};
 use http::Request;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     create_signer,
-    crypto::cert_chain_pem_to_der,
+    crypto::{
+        raw_signature::{
+            signer_from_cert_chain_and_private_key, RawSigner, RawSignerError, SigningAlg,
+        },
+        time_stamp::{TimeStampError, TimeStampProvider},
+    },
     dynamic_assertion::DynamicAssertion,
     http::{SyncGenericResolver, SyncHttpResolver},
     identity::{builder::IdentityAssertionBuilder, x509::X509CredentialHolder},
@@ -41,7 +45,6 @@ pub enum SignerSettings {
     /// A signer configured locally.
     Local {
         /// Algorithm to use for signing.
-        #[cfg_attr(feature = "json_schema", schemars(with = "crate::SigningAlgSchema"))]
         alg: SigningAlg,
         /// Certificate used for signing (PEM format).
         sign_cert: String,
@@ -60,7 +63,6 @@ pub enum SignerSettings {
         /// A POST request with a byte-stream will be sent to this URL.
         url: String,
         /// Algorithm to use for signing.
-        #[cfg_attr(feature = "json_schema", schemars(with = "crate::SigningAlgSchema"))]
         alg: SigningAlg,
         /// Certificate used for signing (PEM format).
         sign_cert: String,
@@ -178,6 +180,30 @@ impl SettingsValidate for SignerSettings {
 /// Wraps an `Arc<dyn RawSigner>` so it can be passed as an owned `Box<dyn RawSigner>`.
 struct ArcRawSigner(Arc<dyn RawSigner + Send + Sync>);
 
+impl TimeStampProvider for ArcRawSigner {
+    fn time_stamp_service_url(&self) -> Option<String> {
+        self.0.time_stamp_service_url()
+    }
+
+    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.0.time_stamp_request_headers()
+    }
+
+    fn time_stamp_request_body(
+        &self,
+        message: &[u8],
+    ) -> std::result::Result<Vec<u8>, TimeStampError> {
+        self.0.time_stamp_request_body(message)
+    }
+
+    fn send_time_stamp_request(
+        &self,
+        message: &[u8],
+    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
+        self.0.send_time_stamp_request(message)
+    }
+}
+
 impl RawSigner for ArcRawSigner {
     fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
         self.0.sign(data)
@@ -187,15 +213,22 @@ impl RawSigner for ArcRawSigner {
         self.0.alg()
     }
 
-    fn max_signature_size(&self) -> usize {
-        self.0.max_signature_size()
+    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
+        self.0.cert_chain()
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
+    }
+
+    fn ocsp_response(&self) -> Option<Vec<u8>> {
+        self.0.ocsp_response()
     }
 }
 
 pub(crate) struct CawgX509IdentitySigner {
     c2pa_signer: BoxedSigner,
     identity_signer: Arc<dyn RawSigner + Send + Sync>,
-    identity_cert_chain: Vec<Vec<u8>>,
     referenced_assertions: Vec<String>,
     roles: Vec<String>,
 }
@@ -211,14 +244,11 @@ impl CawgX509IdentitySigner {
         referenced_assertions: Vec<String>,
         roles: Vec<String>,
     ) -> Result<Self> {
-        // The identity (CAWG) signature is not RFC 3161 time stamped, so the TSA
-        // URL is intentionally unused here.
-        let _ = tsa_url;
-        let raw_signer = signer_from_private_key(private_key, alg)?;
+        let raw_signer =
+            signer_from_cert_chain_and_private_key(sign_cert, private_key, alg, tsa_url)?;
         Ok(Self {
             c2pa_signer,
             identity_signer: Arc::from(raw_signer),
-            identity_cert_chain: cert_chain_pem_to_der(sign_cert)?,
             referenced_assertions,
             roles,
         })
@@ -231,11 +261,9 @@ impl CawgX509IdentitySigner {
         referenced_assertions: &[&str],
         roles: &[&str],
     ) -> Self {
-        let identity_cert_chain = identity_signer.certs().unwrap_or_default();
         Self {
             c2pa_signer,
             identity_signer: Arc::new(OwnedSignerWrapper(identity_signer)),
-            identity_cert_chain,
             referenced_assertions: referenced_assertions
                 .iter()
                 .map(|s| s.to_string())
@@ -289,10 +317,7 @@ impl Signer for CawgX509IdentitySigner {
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         let identity_signer: Box<dyn RawSigner + Sync + Send + 'static> =
             Box::new(ArcRawSigner(Arc::clone(&self.identity_signer)));
-        let x509_credential_holder = X509CredentialHolder::from_raw_signer(
-            identity_signer,
-            self.identity_cert_chain.clone(),
-        );
+        let x509_credential_holder = X509CredentialHolder::from_raw_signer(identity_signer);
 
         let mut iab = IdentityAssertionBuilder::for_credential_holder(x509_credential_holder);
 
@@ -311,6 +336,10 @@ impl Signer for CawgX509IdentitySigner {
         }
 
         vec![Box::new(iab)]
+    }
+
+    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
+        self.c2pa_signer.raw_signer()
     }
 }
 
