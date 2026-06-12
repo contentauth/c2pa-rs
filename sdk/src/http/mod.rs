@@ -291,11 +291,11 @@ impl AsyncHttpResolver for AsyncGenericResolver {
 /// An error that occurs during sync/async HTTP resolver resolution.
 #[derive(Debug, thiserror::Error)]
 pub enum HttpResolverError {
-    /// An error occured in the [`http`] crate.
+    /// An error occurred in the [`http`] crate.
     #[error(transparent)]
     Http(#[from] http::Error),
 
-    /// An error occured in during I/O.
+    /// An error occurred in during I/O.
     #[error(transparent)]
     Io(#[from] io::Error),
 
@@ -327,8 +327,8 @@ pub enum HttpResolverError {
     #[error("response body exceeded maximum allowed size")]
     ResponseTooLarge,
 
-    /// An error occured from the underlying HTTP resolver.
-    #[error("an error occurred from the underlying http resolver")]
+    /// An error occurred from the underlying HTTP resolver.
+    #[error("an error occurred from the underlying http resolver: {0}")]
     Other(Box<dyn std::error::Error + Send + Sync>),
 }
 
