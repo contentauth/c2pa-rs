@@ -8790,4 +8790,102 @@ pub mod tests {
             "expected Err(InvalidAsset) for depth >= MAX_INGREDIENT_DEPTH, got: {result:?}"
         );
     }
+
+    /// Sidecar workflow using only existing sdk methods (no c2pa-claim or c2pa-store crates).
+    ///
+    /// Validates that the sdk's internal API is sufficient to express the full
+    /// sidecar signing pipeline: ingredient extraction, hard-binding hash,
+    /// actions referencing the ingredient, sign, produce JUMBF, re-parse.
+    #[test]
+    fn test_sidecar_with_ingredient() {
+        use crate::{
+            assertions::{
+                c2pa_action, Action, Actions, DataHash, DigitalSourceType, Ingredient, Relationship,
+            },
+            context::Context,
+            status_tracker::StatusTracker,
+            utils::test_signer::test_signer,
+            crypto::raw_signature::SigningAlg,
+        };
+        use std::io::Cursor;
+
+        let asset_bytes =
+            std::fs::read("tests/fixtures/C.jpg").expect("C.jpg fixture");
+        let ctx = Context::new();
+
+        // Build claim
+        let cgi = ClaimGeneratorInfo::new("sdk-sidecar-test");
+        let mut claim = Claim::new("sdk-sidecar-test", Some("test"), 2);
+        claim.add_claim_generator_info(cgi);
+
+        // 1. Ingredient assertion — from_stream returns (assertions::Ingredient, Option<Vec<u8>>)
+        let (ingredient, manifest_bytes) = Ingredient::from_stream(
+            Relationship::ParentOf,
+            "image/jpeg",
+            Cursor::new(&asset_bytes),
+            &ctx,
+        )
+        .expect("Ingredient::from_stream");
+        // Load the ingredient's embedded manifests into the claim's ingredient store
+        if let Some(bytes) = manifest_bytes {
+            Store::load_ingredient_to_claim(&mut claim, &bytes, None, &ctx)
+                .expect("load_ingredient_to_claim");
+        }
+        let ingredient_uri = claim.add_assertion(&ingredient).expect("add ingredient");
+
+        // 2. Actions: c2pa.opened referencing the ingredient
+        let actions = Actions::new().add_action(
+            Action::new(c2pa_action::OPENED)
+                .set_source_type(DigitalSourceType::DigitalCapture)
+                .set_parameter(
+                    "ingredients".to_string(),
+                    serde_json::json!([serde_json::to_value(&ingredient_uri).unwrap()]),
+                )
+                .expect("set_parameter"),
+        );
+        claim.add_assertion(&actions).expect("add actions");
+
+        // 3. DataHash hard binding (sidecar: whole asset, no exclusions)
+        let mut dh = DataHash::new("jumbf manifest", "sha256");
+        dh.gen_hash_from_stream(&mut Cursor::new(&asset_bytes))
+            .expect("gen_hash_from_stream");
+        claim.add_assertion(&dh).expect("add data_hash");
+
+
+        // 4. Commit to store and sign
+        let mut store = Store::new();
+        store.commit_claim(claim).expect("commit_claim");
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let jumbf = store
+            .sign_manifest(signer.as_ref(), &ctx)
+            .expect("sign_manifest");
+        assert!(!jumbf.is_empty());
+
+        // 5. Structural validation: parse back through from_jumbf
+        let mut log = StatusTracker::default();
+        let restored = Store::from_jumbf(&jumbf, &mut log).expect("from_jumbf");
+        assert!(!log.has_any_error(), "parse errors: {log:?}");
+        assert!(
+            restored.claims().len() > 1,
+            "ingredient manifests should appear alongside the active manifest"
+        );
+
+        let pc = restored.provenance_claim().expect("provenance claim");
+        assert_eq!(pc.version(), 2);
+
+        let urls: Vec<String> = pc.assertions().iter().map(|h| h.url()).collect();
+        assert!(
+            urls.iter().any(|u| u.contains("c2pa.ingredient")),
+            "missing c2pa.ingredient: {urls:?}"
+        );
+        assert!(
+            urls.iter().any(|u| u.contains("c2pa.actions")),
+            "missing c2pa.actions: {urls:?}"
+        );
+        assert!(
+            urls.iter().any(|u| u.contains("c2pa.hash.data")),
+            "missing c2pa.hash.data: {urls:?}"
+        );
+    }
 }
