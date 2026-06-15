@@ -18,10 +18,10 @@ use std::path::PathBuf;
 use anyhow::Result;
 #[allow(deprecated)]
 use c2pa::{
-    assertions::{c2pa_action, labels, Action, Actions, CreativeWork, Exif, SchemaDotOrgPerson},
+    assertions::{labels, Actions, CreativeWork, Exif},
     create_signer,
     crypto::raw_signature::SigningAlg,
-    Builder, ClaimGeneratorInfo, Ingredient, Reader, Relationship,
+    Builder, BuilderIntent, ClaimGeneratorInfo, Reader,
 };
 
 const GENERATOR: &str = "test_app";
@@ -104,27 +104,11 @@ pub fn main() -> Result<()> {
 
     let source = PathBuf::from(src);
     let dest = PathBuf::from(dst);
-    // if a filepath was provided on the command line, read it as a parent file
-    #[allow(deprecated)]
-    let mut parent = Ingredient::from_file(source.as_path())?;
-    parent.set_relationship(Relationship::ParentOf);
 
     // overwrite the destination file if it exists
     if dest.exists() {
         std::fs::remove_file(&dest)?;
     }
-
-    // create an action assertion stating that we imported this file
-    let actions = Actions::new().add_action(
-        Action::new(c2pa_action::OPENED)
-            .set_parameter("ingredientIds", [parent.instance_id().to_owned()])?,
-    );
-
-    // build a creative work assertion
-    // TO DO: Replace this example.
-    #[allow(deprecated)]
-    let creative_work =
-        CreativeWork::new().add_author(SchemaDotOrgPerson::new().set_name("me")?)?;
 
     let exif = Exif::from_json_str(
         r#"{
@@ -145,12 +129,9 @@ pub fn main() -> Result<()> {
     builder.definition.claim_version = Some(2);
     let mut generator = ClaimGeneratorInfo::new(GENERATOR);
     generator.set_version("0.1");
-    #[allow(deprecated)]
     builder
+        .set_intent(BuilderIntent::Edit)
         .set_claim_generator_info(generator)
-        .add_ingredient(parent)
-        .add_assertion(Actions::LABEL, &actions)?
-        .add_assertion(CreativeWork::LABEL, &creative_work)?
         .add_assertion(Exif::LABEL, &exif)?;
 
     // sign and embed into the target file

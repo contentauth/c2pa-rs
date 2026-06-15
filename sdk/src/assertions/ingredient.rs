@@ -52,6 +52,16 @@ pub enum Relationship {
     InputTo,
 }
 
+impl Relationship {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Relationship::ParentOf => "parentOf",
+            Relationship::ComponentOf => "componentOf",
+            Relationship::InputTo => "inputTo",
+        }
+    }
+}
+
 /// An ingredient assertion
 #[derive(Debug, Default, PartialEq)]
 pub struct Ingredient {
@@ -947,6 +957,22 @@ pub mod tests {
         assertions::AssetTypeEnum,
         validation_results::{IngredientDeltaValidationResult, StatusCodes},
     };
+
+    #[test]
+
+    // Fails if `as_str()` returns a string that doesn't match the corresponding serde(rename)
+    // value, causing deserialization to reject the string or map it to the wrong variant.
+    fn relationship_serde_roundtrip() {
+        for variant in [
+            Relationship::ParentOf,
+            Relationship::ComponentOf,
+            Relationship::InputTo,
+        ] {
+            let s = variant.as_str();
+            let deserialized: Relationship = serde_json::from_str(&format!("\"{}\"", s)).unwrap();
+            assert_eq!(deserialized, variant);
+        }
+    }
 
     #[test]
     fn assertion_ingredient() {

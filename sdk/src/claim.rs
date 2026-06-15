@@ -2005,6 +2005,60 @@ impl Claim {
         Ok(vi.cert_chain)
     }
 
+    // Build a diagnostic message for ingredientMismatch errors, showing the failing
+    // action's index, type, each referenced ingredient URL, and the actual relationship
+    // found (vs. the expected one).
+    fn ingredient_mismatch_msg(
+        claim: &Claim,
+        action_index: usize,
+        action_type: &str,
+        params: &assertions::ActionParameters,
+        expected_relationship: &str,
+    ) -> String {
+        let urls: Vec<String> = {
+            let mut v = Vec::new();
+            if let Some(h) = &params.ingredient {
+                v.push(h.url());
+            }
+            if let Some(hs) = &params.ingredients {
+                v.extend(hs.iter().map(|h| h.url()));
+            }
+            v
+        };
+
+        let details: Vec<String> = urls
+            .iter()
+            .map(|url| {
+                let found = assertion_label_from_uri(url).and_then(|target| {
+                    claim.ingredient_assertions().iter().find_map(|i| {
+                        if i.label() == target {
+                            Ingredient::from_assertion(i.assertion()).ok().map(|ing| {
+                                let rel = ing.relationship.as_str();
+                                let title = ing.title.as_deref().unwrap_or("<no title>");
+                                format!("'{}' (title='{}', relationship='{}')", url, title, rel)
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                });
+                found.unwrap_or_else(|| format!("'{}' (not found in ingredient assertions)", url))
+            })
+            .collect();
+
+        format!(
+            "action[{}] ('{}') must have valid ingredient with {} relationship; ingredient(s): [{}]",
+            action_index,
+            action_type,
+            expected_relationship,
+            if details.is_empty() {
+                "none".to_string()
+            } else {
+                details.join(", ")
+            }
+        )
+    }
+
     // Perform 2.x action validation check, hashed URI references are only checked
     // to be present and to be valild references an actual manifest store object.
     //The hashed uri's hashes are are validated as part of the Claim assertions check.
@@ -2136,7 +2190,7 @@ impl Claim {
                 Claim::verify_icons(claim, &icons, validation_log)?;
             }
 
-            for action in actions.actions() {
+            for (action_index, action) in actions.actions().iter().enumerate() {
                 //dbg!("action: {:?}", &action);
                 // 2.a action must have an action
                 if action.action().is_empty() {
@@ -2285,21 +2339,18 @@ impl Claim {
                         }
 
                         if found_good != 1 {
-                            log_item!(
-                                label.clone(),
-                                "opened must have valid ingredient with ParentOf relationship",
-                                "verify_actions"
-                            )
-                            .validation_status(
-                                validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                            )
-                            .failure_no_throw(
-                                validation_log,
-                                Error::ValidationRule(
-                                    "opened must have valid ingredient with ParentOf relationship"
-                                        .into(),
-                                ),
+                            let msg = Self::ingredient_mismatch_msg(
+                                claim,
+                                action_index,
+                                action.action(),
+                                params,
+                                "parentOf",
                             );
+                            log_item!(label.clone(), msg.clone(), "verify_actions")
+                                .validation_status(
+                                    validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
+                                )
+                                .failure_no_throw(validation_log, Error::ValidationRule(msg));
                         }
                     }
 
@@ -2348,20 +2399,18 @@ impl Claim {
                         }
 
                         if found_good != 1 {
-                            log_item!(
-                                label.clone(),
-                                "action must have valid ingredient with ComponentOf relationship",
-                                "verify_actions"
-                            )
-                            .validation_status(
-                                validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                            )
-                            .failure_no_throw(
-                                validation_log,
-                                Error::ValidationRule(
-                                    "action must have valid ingredient with ComponentOf relationship".into(),
-                                ),
+                            let msg = Self::ingredient_mismatch_msg(
+                                claim,
+                                action_index,
+                                action.action(),
+                                params,
+                                "componentOf",
                             );
+                            log_item!(label.clone(), msg.clone(), "verify_actions")
+                                .validation_status(
+                                    validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
+                                )
+                                .failure_no_throw(validation_log, Error::ValidationRule(msg));
                         }
                     }
                 }
@@ -2419,21 +2468,18 @@ impl Claim {
                         }
                         // will only exist if we actual tested for an ingredient
                         if let Some(false) = parent_tested {
-                            log_item!(
-                                label.clone(),
-                                "action must have valid ingredient with ParentOf relationship",
-                                "verify_actions"
-                            )
-                            .validation_status(
-                                validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
-                            )
-                            .failure_no_throw(
-                                validation_log,
-                                Error::ValidationRule(
-                                    "action must have valid ingredient with ParentOf relationship"
-                                        .into(),
-                                ),
+                            let msg = Self::ingredient_mismatch_msg(
+                                claim,
+                                action_index,
+                                action.action(),
+                                params,
+                                "parentOf",
                             );
+                            log_item!(label.clone(), msg.clone(), "verify_actions")
+                                .validation_status(
+                                    validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH,
+                                )
+                                .failure_no_throw(validation_log, Error::ValidationRule(msg));
                         }
                     }
                 }
