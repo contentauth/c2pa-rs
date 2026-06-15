@@ -114,6 +114,20 @@ impl CimplError {
         Self::new(7, format!("InvalidBufferSize: {} for '{}'", size, param))
     }
 
+    pub fn array_too_long<S: Into<String>>(param: S) -> Self {
+        Self::new(
+            8,
+            format!(
+                "ArrayTooLong: {} exceeds maximum length or missing NULL terminator",
+                param.into()
+            ),
+        )
+    }
+
+    pub fn invalid_utf8<S: Into<String>>(param: S) -> Self {
+        Self::new(2, format!("InvalidUtf8: non-UTF-8 string in {}", param.into()))
+    }
+
     pub fn other<S: Into<String>>(msg: S) -> Self {
         Self::new(5, format!("Other: {}", msg.into()))
     }

@@ -403,7 +403,7 @@ macro_rules! untrack_or_return_null {
     }};
 }
 
-/// Maximum length for C strings when using bounded conversion (64KB)
+/// Maximum length for C strings when using bounded conversion (1 MB)
 pub const MAX_CSTRING_LEN: usize = 1048576;
 
 /// Maximum number of entries accepted from a NULL-terminated C string array.
@@ -798,14 +798,7 @@ macro_rules! cstr_array_or_return {
             let mut i = 0usize;
             loop {
                 if i >= $crate::macros::MAX_STRING_ARRAY_LEN {
-                    $crate::CimplError::new(
-                        2,
-                        concat!(
-                            stringify!($ptr),
-                            ": array exceeds maximum length or missing NULL terminator"
-                        ),
-                    )
-                    .set_last();
+                    $crate::CimplError::array_too_long(stringify!($ptr)).set_last();
                     return $err_val;
                 }
                 // SAFETY: caller guarantees ptr points to a valid NULL-terminated array.
@@ -818,11 +811,7 @@ macro_rules! cstr_array_or_return {
                 match cstr.to_str() {
                     Ok(s) => result.push(s.to_owned()),
                     Err(_) => {
-                        $crate::CimplError::new(
-                            2,
-                            concat!(stringify!($ptr), ": non-UTF-8 string in array"),
-                        )
-                        .set_last();
+                        $crate::CimplError::invalid_utf8(stringify!($ptr)).set_last();
                         return $err_val;
                     }
                 }

@@ -450,7 +450,7 @@ pub fn to_c_string(s: String) -> *mut std::os::raw::c_char {
 /// Converts a `Vec <u8>` to a tracked C byte array pointer
 ///
 /// The returned pointer is tracked for allocation safety and MUST be freed
-/// by calling `free_c_bytes`.
+/// by calling `cimpl_free`.
 ///
 /// # Arguments
 /// * `bytes` - The byte vector to convert
@@ -459,7 +459,7 @@ pub fn to_c_string(s: String) -> *mut std::os::raw::c_char {
 /// * `*const c_uchar` - Pointer to the byte array, or null if the vector is empty
 ///
 /// # Safety
-/// The returned pointer must be freed exactly once by calling `free_c_bytes`.
+/// The returned pointer must be freed exactly once by calling `cimpl_free`.
 /// Returns null for empty vectors to avoid dangling pointers from zero-sized allocations.
 pub fn to_c_bytes(bytes: Vec<u8>) -> *const c_uchar {
     let len = bytes.len();
@@ -589,5 +589,26 @@ mod tests {
         assert!(result.is_err());
 
         unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    #[test]
+    fn test_track_arc_free_runs_cleanup() {
+        let ptr = track_arc(Arc::into_raw(Arc::new(42i32)) as *mut i32);
+        assert!(!ptr.is_null());
+        assert!(validate_pointer::<i32>(ptr).is_ok());
+
+        // cimpl_free runs the tracked Arc cleanup, second free must fail.
+        assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
+        assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), -1);
+    }
+
+    #[test]
+    fn test_track_arc_mutex_free_runs_cleanup() {
+        let ptr = track_arc_mutex(Arc::into_raw(Arc::new(Mutex::new(42i32))) as *mut Mutex<i32>);
+        assert!(!ptr.is_null());
+        assert!(validate_pointer::<Mutex<i32>>(ptr).is_ok());
+
+        assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
+        assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), -1);
     }
 }
