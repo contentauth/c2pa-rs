@@ -234,7 +234,7 @@ fn decompress_brob(reader: &mut dyn CAIRead, data_size: u64) -> Result<([u8; 4],
     let compressed_size = data_size.saturating_sub(4);
     let mut constrained_reader = reader.take(compressed_size);
 
-    let mut bounded_writer = BoundedVecWriter::new(MAX_DECOMPRESSED_BROB_SIZE);
+    let mut bounded_writer = BoundedVecWriter::new(MAX_DECOMPRESSED_BROB_SIZE)?;
     brotli::BrotliDecompress(&mut constrained_reader, &mut bounded_writer)
         .map_err(|_| Error::InvalidAsset("Failed to decompress brob box".to_string()))?;
 

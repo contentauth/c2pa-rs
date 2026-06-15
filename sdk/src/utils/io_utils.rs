@@ -164,11 +164,11 @@ pub(crate) struct BoundedVecWriter {
 }
 
 impl BoundedVecWriter {
-    pub(crate) fn new(max_len: usize) -> Self {
-        Self {
-            inner: Vec::new(),
+    pub(crate) fn new(max_len: usize) -> Result<Self> {
+        Ok(Self {
+            inner: safe_vec(max_len as u64, None)?,
             max_len,
-        }
+        })
     }
 
     pub(crate) fn into_inner(self) -> Vec<u8> {

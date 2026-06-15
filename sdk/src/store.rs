@@ -1195,12 +1195,12 @@ impl Store {
 
     #[inline]
     pub fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
-        Self::from_jumbf_impl(
-            Store::new(),
-            buffer,
-            validation_log,
-            &get_thread_local_settings(),
-        )
+        // Legacy path: no Context available; read thread-local settings for backward compatibility.
+        let max_manifest_size = get_thread_local_settings()
+            .core
+            .max_decompressed_manifest_size_in_mb
+            .saturating_mul(1024 * 1024);
+        Self::from_jumbf_impl(Store::new(), buffer, validation_log, max_manifest_size)
     }
 
     #[inline]
@@ -1209,11 +1209,16 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
+        let max_manifest_size = context
+            .settings()
+            .core
+            .max_decompressed_manifest_size_in_mb
+            .saturating_mul(1024 * 1024);
         Self::from_jumbf_impl(
             Store::from_context(context),
             buffer,
             validation_log,
-            context.settings(),
+            max_manifest_size,
         )
     }
 
@@ -1221,7 +1226,7 @@ impl Store {
         mut store: Store,
         buffer: &[u8],
         validation_log: &mut StatusTracker,
-        settings: &Settings,
+        max_manifest_size: usize,
     ) -> Result<Store> {
         if buffer.is_empty() {
             return Err(Error::JumbfNotFound);
@@ -1253,7 +1258,7 @@ impl Store {
                 cai_block
                     .data_box_as_superbox(idx)
                     .ok_or(Error::JumbfBoxNotFound)?,
-                settings,
+                max_manifest_size,
             )?;
             let cai_store_box = store_box.super_box();
             let cai_store_desc_box = cai_store_box.desc_box();

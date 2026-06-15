@@ -318,6 +318,12 @@ impl Default for Core {
 
 impl SettingsValidate for Core {
     fn validate(&self) -> Result<()> {
+        const MAX_MANIFEST_SIZE_MB: usize = 1024; // 1 GiB
+        if self.max_decompressed_manifest_size_in_mb > MAX_MANIFEST_SIZE_MB {
+            return Err(Error::BadParam(format!(
+                "max_decompressed_manifest_size_in_mb must not exceed {MAX_MANIFEST_SIZE_MB} MB"
+            )));
+        }
         Ok(())
     }
 }
@@ -1136,6 +1142,13 @@ pub mod tests {
         .to_string();
 
         assert!(Settings::new().with_toml(&modified_core).is_err());
+    }
+
+    #[test]
+    fn test_core_validate_rejects_oversized_manifest_cap() {
+        let result =
+            Settings::default().with_value("core.max_decompressed_manifest_size_in_mb", 1025usize);
+        assert!(result.is_err());
     }
 
     /// Legacy test: verifies arbitrary (hidden) keys can be stored and retrieved via the

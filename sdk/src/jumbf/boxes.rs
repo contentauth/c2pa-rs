@@ -26,7 +26,7 @@ use std::{
     any::Any,
     ffi::CString,
     fmt,
-    io::{Cursor, Read, Result as IoResult, Seek, SeekFrom, Write},
+    io::{Cursor, Error as IoError, Read, Result as IoResult, Seek, SeekFrom, Write},
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
@@ -36,7 +36,6 @@ use thiserror::Error;
 
 use crate::{
     jumbf::{boxio, labels},
-    settings::Settings,
     utils::io_utils::{BoundedVecWriter, ReaderUtils},
 };
 
@@ -1523,17 +1522,13 @@ impl CAIManifest {
         }
     }
 
-    pub fn from(sbox: &JUMBFSuperBox, settings: &Settings) -> JumbfParseResult<Self> {
-        let max_size = settings
-            .core
-            .max_decompressed_manifest_size_in_mb
-            .saturating_mul(1024 * 1024);
-
+    pub fn from(sbox: &JUMBFSuperBox, max_manifest_size: usize) -> JumbfParseResult<Self> {
         let mut compressed_store = false;
 
         // decompress brotli box if available
         let store_box = if let Some(compressed_manifest) = sbox.data_box_as_brotli_box(0) {
-            let mut bounded_writer = BoundedVecWriter::new(max_size);
+            let mut bounded_writer = BoundedVecWriter::new(max_manifest_size)
+                .map_err(|e| JumbfParseError::IoError(IoError::other(e.to_string())))?;
             let mut compressed_stream = Cursor::new(compressed_manifest.data());
             brotli::BrotliDecompress(&mut compressed_stream, &mut bounded_writer)?;
 
@@ -3332,12 +3327,11 @@ pub mod tests {
     }
 
     #[test]
-    fn test_caimanifest_from_rejects_bomb_at_default_cap() {
+    fn test_caimanifest_from_rejects_bomb_above_cap() {
         use brotli::enc::BrotliEncoderParams;
 
-        use crate::settings::Settings;
-
-        let payload = vec![0u8; 32 * 1024 * 1024 + 1];
+        let cap = 1024 * 1024; // 1 MiB
+        let payload = vec![0u8; cap + 1];
         let mut compressed = Vec::new();
         brotli::BrotliCompress(
             &mut Cursor::new(payload.as_slice()),
@@ -3351,36 +3345,7 @@ pub mod tests {
         sbox.add_data_box(Box::new(brotli_box));
 
         assert!(matches!(
-            CAIManifest::from(&sbox, &Settings::default()),
-            Err(JumbfParseError::IoError(_))
-        ));
-    }
-
-    #[test]
-    fn test_caimanifest_from_rejects_bomb_above_lowered_cap() {
-        use brotli::enc::BrotliEncoderParams;
-
-        use crate::settings::Settings;
-
-        let settings = Settings::default()
-            .with_value("core.max_decompressed_manifest_size_in_mb", 16usize)
-            .unwrap();
-
-        let payload = vec![0u8; 16 * 1024 * 1024 + 1];
-        let mut compressed = Vec::new();
-        brotli::BrotliCompress(
-            &mut Cursor::new(payload.as_slice()),
-            &mut compressed,
-            &BrotliEncoderParams::default(),
-        )
-        .expect("brotli compress");
-
-        let brotli_box = JUMBFBrotliContentBox::new(compressed);
-        let mut sbox = JUMBFSuperBox::new("test", None);
-        sbox.add_data_box(Box::new(brotli_box));
-
-        assert!(matches!(
-            CAIManifest::from(&sbox, &settings),
+            CAIManifest::from(&sbox, cap),
             Err(JumbfParseError::IoError(_))
         ));
     }
