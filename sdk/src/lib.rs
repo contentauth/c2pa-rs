@@ -254,9 +254,6 @@ pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};
 pub use hashed_uri::HashedUri;
 pub use ingredient::Ingredient;
-#[cfg(feature = "file_io")]
-#[doc(hidden)]
-pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use manifest::{Manifest, SignatureInfo};
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 pub use reader::Reader;

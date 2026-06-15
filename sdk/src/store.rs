@@ -22,9 +22,7 @@ use async_generic::async_generic;
 use log::error;
 
 #[cfg(feature = "file_io")]
-use crate::jumbf_io::{
-    get_file_extension, get_supported_file_extension, load_jumbf_from_file, save_jumbf_to_file,
-};
+use crate::jumbf_io::{get_supported_file_extension, save_jumbf_to_file};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
@@ -84,7 +82,7 @@ use crate::{
         ASSERTION_CBOR_INVALID, ASSERTION_JSON_INVALID, ASSERTION_MISSING, CLAIM_MALFORMED,
     },
     validation_status::{self, ALGORITHM_UNSUPPORTED},
-    AsyncSigner, Signer,
+    AsyncSigner, Signer, ValidationResults, ValidationState,
 };
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
@@ -1579,7 +1577,6 @@ impl Store {
         store: &Store,
         claim: &Claim,
         svi: &StoreValidationInfo<'_>,
-        asset_data: &mut ClaimAssetData<'_>,
         validation_log: &mut StatusTracker,
         depth: usize,
         context: &Context,
@@ -1768,7 +1765,6 @@ impl Store {
                     if _sync {
                         Claim::verify_claim(
                             ingredient,
-                            asset_data,
                             svi,
                             check_ingredient_trust,
                             &store.ctp,
@@ -1778,7 +1774,6 @@ impl Store {
                     } else {
                         Claim::verify_claim_async(
                             ingredient,
-                            asset_data,
                             svi,
                             check_ingredient_trust,
                             &store.ctp,
@@ -1794,7 +1789,6 @@ impl Store {
                             store,
                             ingredient,
                             svi,
-                            asset_data,
                             validation_log,
                             depth.saturating_add(1),
                             context,
@@ -1804,7 +1798,6 @@ impl Store {
                             store,
                             ingredient,
                             svi,
-                            asset_data,
                             validation_log,
                             depth.saturating_add(1),
                             context,
@@ -1839,7 +1832,7 @@ impl Store {
     fn get_store_validation_info<'a>(
         &'a self,
         claim: &'a Claim,
-        asset_data: &mut ClaimAssetData<'_>,
+        asset_data: Option<&mut ClaimAssetData<'_>>,
         validation_log: &mut StatusTracker,
     ) -> Result<StoreValidationInfo<'a>> {
         let mut svi = StoreValidationInfo::default();
@@ -1862,46 +1855,49 @@ impl Store {
         }
 
         // get the manifest offset position
-        let locations = match asset_data {
-            #[cfg(feature = "file_io")]
-            ClaimAssetData::Path(path) => {
-                let format = get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
-                let mut reader = std::fs::File::open(path)?;
+        if let Some(asset_data) = asset_data {
+            let locations = match asset_data {
+                #[cfg(feature = "file_io")]
+                ClaimAssetData::Path(path) => {
+                    let format =
+                        get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
+                    let mut reader = std::fs::File::open(path)?;
 
-                object_locations_from_stream(&format, &mut reader)
-            }
-            ClaimAssetData::Bytes(items, typ) => {
-                let format = typ.to_owned();
-                let mut reader = Cursor::new(items);
+                    object_locations_from_stream(&format, &mut reader)
+                }
+                ClaimAssetData::Bytes(items, typ) => {
+                    let format = typ.to_owned();
+                    let mut reader = Cursor::new(items);
 
-                object_locations_from_stream(&format, &mut reader)
-            }
-            ClaimAssetData::Stream(reader, typ) => {
-                let format = typ.to_owned();
-                let positions = object_locations_from_stream(&format, reader);
-                reader.rewind()?;
-                positions
-            }
-            ClaimAssetData::StreamFragment(reader, _read1, typ) => {
-                let format = typ.to_owned();
-                object_locations_from_stream(&format, reader)
-            }
-            #[cfg(feature = "file_io")]
-            ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
-                let format = typ.to_owned();
-                object_locations_from_stream(&format, reader)
-            }
-        };
+                    object_locations_from_stream(&format, &mut reader)
+                }
+                ClaimAssetData::Stream(reader, typ) => {
+                    let format = typ.to_owned();
+                    let positions = object_locations_from_stream(&format, reader);
+                    reader.rewind()?;
+                    positions
+                }
+                ClaimAssetData::StreamFragment(reader, _read1, typ) => {
+                    let format = typ.to_owned();
+                    object_locations_from_stream(&format, reader)
+                }
+                #[cfg(feature = "file_io")]
+                ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
+                    let format = typ.to_owned();
+                    object_locations_from_stream(&format, reader)
+                }
+            };
 
-        if let Ok(locations) = locations {
-            if let Some(manifest_loc) = locations
-                .iter()
-                .find(|o| o.htype == HashBlockObjectType::Cai)
-            {
-                svi.manifest_store_range = Some(HashRange::new(
-                    manifest_loc.offset as u64,
-                    manifest_loc.length as u64,
-                ));
+            if let Ok(locations) = locations {
+                if let Some(manifest_loc) = locations
+                    .iter()
+                    .find(|o| o.htype == HashBlockObjectType::Cai)
+                {
+                    svi.manifest_store_range = Some(HashRange::new(
+                        manifest_loc.offset as u64,
+                        manifest_loc.length as u64,
+                    ));
+                }
             }
         }
 
@@ -1975,14 +1971,13 @@ impl Store {
     /// validation_log: If present all found errors are logged and returned, other wise first error causes exit and is returned
     #[async_generic(async_signature(
         store: &Store,
-        asset_data: &mut ClaimAssetData<'_>,
+        mut asset_data: Option<&mut ClaimAssetData<'_>>,
         validation_log: &mut StatusTracker,
         context: &Context,
-
     ))]
     pub fn verify_store(
         store: &Store,
-        asset_data: &mut ClaimAssetData<'_>,
+        mut asset_data: Option<&mut ClaimAssetData<'_>>,
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<()> {
@@ -1999,43 +1994,53 @@ impl Store {
         };
 
         // get info needed to complete validation
-        let svi = store.get_store_validation_info(claim, asset_data, validation_log)?;
+        let svi =
+            store.get_store_validation_info(claim, asset_data.as_deref_mut(), validation_log)?;
 
         if _sync {
             // verify the provenance claim
-            Claim::verify_claim(
-                claim,
-                asset_data,
-                &svi,
-                true,
-                &store.ctp,
-                validation_log,
-                context,
-            )?;
+            Claim::verify_claim(claim, &svi, true, &store.ctp, validation_log, context)?;
 
-            Store::ingredient_checks(store, claim, &svi, asset_data, validation_log, 0, context)?;
+            Store::ingredient_checks(store, claim, &svi, validation_log, 0, context)?;
         } else {
-            Claim::verify_claim_async(
-                claim,
-                asset_data,
-                &svi,
-                true,
-                &store.ctp,
-                validation_log,
-                context,
-            )
-            .await?;
+            Claim::verify_claim_async(claim, &svi, true, &store.ctp, validation_log, context)
+                .await?;
 
-            Store::ingredient_checks_async(
-                store,
-                claim,
-                &svi,
-                asset_data,
-                validation_log,
-                0,
-                context,
-            )
-            .await?;
+            Store::ingredient_checks_async(store, claim, &svi, validation_log, 0, context).await?;
+        }
+
+        // verify the asset hash binding once for the whole store, on the binding manifest
+        if let Some(data) = asset_data {
+            if let Some(binding_claim) = store.get_claim(&svi.binding_claim) {
+                Claim::verify_hash_binding(binding_claim, data, &svi, validation_log, context)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Verifies the store and returns [`Error::InvalidManifest`] if the validation state is
+    /// invalid. Pass `asset_data` to also verify hash bindings against the asset.
+    #[async_generic(async_signature(
+        &mut self,
+        asset_data: Option<&mut ClaimAssetData<'_>>,
+        context: &Context,
+    ))]
+    pub(crate) fn verify_store_strict(
+        &mut self,
+        asset_data: Option<&mut ClaimAssetData<'_>>,
+        context: &Context,
+    ) -> Result<()> {
+        let mut validation_log = StatusTracker::default();
+        if _sync {
+            Store::verify_store(self, asset_data, &mut validation_log, context)?;
+        } else {
+            Store::verify_store_async(self, asset_data, &mut validation_log, context).await?;
+        }
+
+        let validation_results = ValidationResults::from_store(self, &validation_log);
+        if validation_results.validation_state() == ValidationState::Invalid {
+            return Err(Error::InvalidManifest(validation_results));
         }
 
         Ok(())
@@ -2291,7 +2296,13 @@ impl Store {
                 let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
                 pc.set_signature_val(sig);
 
-                return self.to_jumbf_internal(signer.reserve_size());
+                let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+                if context.settings().verify.verify_after_sign {
+                    self.verify_store_strict(None, context)?;
+                }
+
+                return Ok(jumbf_bytes);
             }
         }
 
@@ -2302,7 +2313,13 @@ impl Store {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.set_signature_val(sig);
 
-        self.to_jumbf_internal(signer.reserve_size())
+        let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        if context.settings().verify.verify_after_sign {
+            self.verify_store_strict(None, context)?;
+        }
+
+        Ok(jumbf_bytes)
     }
 
     fn prep_embeddable_store(
@@ -2424,6 +2441,14 @@ impl Store {
         pc.set_signature_val(sig);
 
         let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+        if context.settings().verify.verify_after_sign {
+            if _sync {
+                self.verify_store_strict(None, context)?;
+            } else {
+                self.verify_store_strict_async(None, context).await?;
+            }
+        }
 
         self.finish_embeddable_store(&jumbf_bytes, format)
     }
@@ -2876,7 +2901,8 @@ impl Store {
 
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
-        let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
+        let input_len = io_utils::stream_len(input_stream)?;
+        let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
 
         #[allow(unused_mut)] // Not mutable in the non-async case.
         self.start_save_stream(
@@ -2915,11 +2941,10 @@ impl Store {
         }?;
 
         // update the signature
-        let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+        let pc: &mut Claim = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.set_signature_val(sig.clone());
 
         // update the JUMBF with the signature
-        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         output_stream.rewind()?;
@@ -2931,27 +2956,19 @@ impl Store {
 
                 context.check_progress(ProgressPhase::Embedding, 1, 1)?;
 
-                let verify_after_sign = settings.verify.verify_after_sign;
-                // Also catch the case where we may have written to io::empty() or similar
-                if verify_after_sign && output_stream.seek(SeekFrom::End(0))? > 0 {
-                    // verify the store
-                    let mut validation_log =
-                        StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-                    if _sync {
-                        Store::verify_store(
-                            self,
-                            &mut crate::claim::ClaimAssetData::Stream(output_stream, format),
-                            &mut validation_log,
-                            context,
-                        )?;
+                if context.settings().verify.verify_after_sign {
+                    let output_len = output_stream.seek(SeekFrom::End(0))?;
+                    let validate_hash = context.settings().verify.verify_after_sign_hash;
+                    let mut asset_data = if output_len > 0 && validate_hash {
+                        Some(ClaimAssetData::Stream(output_stream, format))
                     } else {
-                        Store::verify_store_async(
-                            self,
-                            &mut crate::claim::ClaimAssetData::Stream(output_stream, format),
-                            &mut validation_log,
-                            context,
-                        )
-                        .await?;
+                        None
+                    };
+                    if _sync {
+                        self.verify_store_strict(asset_data.as_mut(), context)?;
+                    } else {
+                        self.verify_store_strict_async(asset_data.as_mut(), context)
+                            .await?;
                     }
                 }
                 Ok(m)
@@ -2973,7 +2990,8 @@ impl Store {
         let settings = context.settings();
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
-        let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold);
+        let input_len = io_utils::stream_len(input_stream)?;
+        let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
@@ -3007,7 +3025,7 @@ impl Store {
                         .get_writer(format)
                         .ok_or(Error::UnsupportedType)?;
 
-                    let mut tmp_stream = io_utils::stream_with_fs_fallback(threshold);
+                    let mut tmp_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
                     manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
 
                     // add external ref if possible
@@ -3138,7 +3156,7 @@ impl Store {
 
                 // insert Merkle UUID boxes at the correct location if required
                 if let Some(merkle_uuid_boxes) = &bmff_hash.merkle_uuid_boxes {
-                    let mut temp_stream = io_utils::stream_with_fs_fallback(threshold);
+                    let mut temp_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
 
                     if !source_is_intermediate {
                         // Merkle insertion requires a writable source; populate intermediate
@@ -3358,24 +3376,6 @@ impl Store {
         Ok((pc.signature_val().to_vec(), jumbf_bytes))
     }
 
-    /// Verify Store from an existing asset
-    /// asset_path: path to input asset
-    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
-    #[cfg(feature = "file_io")]
-    pub fn verify_from_path(
-        &mut self,
-        asset_path: &'_ Path,
-        validation_log: &mut StatusTracker,
-        context: &Context,
-    ) -> Result<()> {
-        Store::verify_store(
-            self,
-            &mut ClaimAssetData::Path(asset_path),
-            validation_log,
-            context,
-        )
-    }
-
     // fetch remote manifest if possible
     #[cfg(feature = "fetch_remote_manifests")]
     #[async_generic]
@@ -3493,49 +3493,6 @@ impl Store {
         }
     }
 
-    /// load jumbf given a file path
-    ///
-    /// This handles, embedded, sidecar and remote manifests
-    ///
-    /// in_path -  path to source file
-    /// validation_log - optional vec to contain addition info about the asset
-    #[cfg(feature = "file_io")]
-    pub fn load_jumbf_from_path(in_path: &Path, context: &Context) -> Result<Vec<u8>> {
-        let external_manifest = in_path.with_extension(MANIFEST_STORE_EXT);
-        let external_exists = external_manifest.exists();
-
-        match load_jumbf_from_file(in_path) {
-            Ok(manifest_bytes) => Ok(manifest_bytes),
-            Err(Error::UnsupportedType) => {
-                if external_exists {
-                    std::fs::read(external_manifest).map_err(Error::IoError)
-                } else {
-                    Err(Error::UnsupportedType)
-                }
-            }
-            Err(Error::JumbfNotFound) => {
-                if external_exists {
-                    std::fs::read(external_manifest).map_err(Error::IoError)
-                } else {
-                    // check for remote manifest
-                    let mut asset_reader = std::fs::File::open(in_path)?;
-                    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
-                    if let Some(ext_ref) = crate::utils::xmp_inmemory_utils::XmpInfo::from_source(
-                        &mut asset_reader,
-                        &ext,
-                    )
-                    .provenance
-                    {
-                        Store::handle_remote_manifest(&ext_ref, context)
-                    } else {
-                        Err(Error::JumbfNotFound)
-                    }
-                }
-            }
-            Err(e) => Err(e),
-        }
-    }
-
     /// Returns embedded remote manifest URL if available
     /// asset_type: extensions or mime type of the data
     /// data: byte array containing the asset
@@ -3632,9 +3589,10 @@ impl Store {
             stream.rewind()?;
             let mut asset_data = ClaimAssetData::Stream(&mut stream, format);
             if _sync {
-                Store::verify_store(&store, &mut asset_data, validation_log, context)
+                Store::verify_store(&store, Some(&mut asset_data), validation_log, context)
             } else {
-                Store::verify_store_async(&store, &mut asset_data, validation_log, context).await
+                Store::verify_store_async(&store, Some(&mut asset_data), validation_log, context)
+                    .await
             }?;
         }
         Ok(store)
@@ -3664,7 +3622,11 @@ impl Store {
             // verify store and claims
             Store::verify_store(
                 &store,
-                &mut ClaimAssetData::StreamFragments(init_segment, fragments, asset_type),
+                Some(&mut ClaimAssetData::StreamFragments(
+                    init_segment,
+                    fragments,
+                    asset_type,
+                )),
                 validation_log,
                 context,
             )?;
@@ -3707,9 +3669,10 @@ impl Store {
         if verify {
             let mut fragment = ClaimAssetData::StreamFragment(&mut stream, &mut fragment, format);
             if _sync {
-                Store::verify_store(&store, &mut fragment, validation_log, context)
+                Store::verify_store(&store, Some(&mut fragment), validation_log, context)
             } else {
-                Store::verify_store_async(&store, &mut fragment, validation_log, context).await
+                Store::verify_store_async(&store, Some(&mut fragment), validation_log, context)
+                    .await
             }?;
         };
         Ok(store)
@@ -4092,9 +4055,11 @@ impl Store {
 
         // make necessary changes to the incoming store
         let mut i_store_mut = Store::from_jumbf_with_context(data, &mut report, context)?;
-        let mut final_redactions = Vec::new();
-        if let Some(mut redactions) = redactions {
-            final_redactions.append(&mut redactions);
+        let mut final_redactions = HashSet::new();
+        if let Some(redactions) = redactions {
+            for r in redactions {
+                final_redactions.insert(r);
+            }
         }
 
         // remove the claims from the incoming store as to not overwrite the current claim
@@ -4104,15 +4069,18 @@ impl Store {
 
         // if there are redactions in both apply the current redaction to incoming claim
         if !to_both.is_empty() {
+            for r in to_both.iter() {
+                final_redactions.insert(r.to_owned());
+            }
+
             // copy the redactions differences from current to incoming claim
-            to_both.retain(|f| !svi.redactions.contains(f));
-            final_redactions.append(&mut to_both);
+            final_redactions.retain(|f| !svi.redactions.contains(f));
         }
 
         let claims_to_add: Vec<Claim> = i_store_mut.claims().into_iter().cloned().collect();
         claim.add_ingredient_data(
             claims_to_add,
-            Some(final_redactions),
+            Some(final_redactions.into_iter().collect()),
             &svi.ingredient_references,
         )?;
         Ok(i_store)
@@ -4295,12 +4263,11 @@ pub mod tests {
         assertion::AssertionJson,
         assertions::{labels::BOX_HASH, BoxHash},
         hashed_uri::HashedUri,
-        jumbf_io::get_assetio_handler_from_path,
+        jumbf_io::{get_assetio_handler_from_path, load_jumbf_from_file, save_jumbf_to_file},
         utils::{
             hash_utils::Hasher,
             io_utils::tempdirectory,
-            test::write_jpeg_placeholder_file,
-            test::{temp_dir_path, TEST_USER_ASSERTION},
+            test::{temp_dir_path, write_jpeg_placeholder_file, TEST_USER_ASSERTION},
             test_signer::test_cawg_signer,
         },
     };
@@ -6305,6 +6272,65 @@ pub mod tests {
         assert!(pc.update_manifest());
     }
 
+    fn add_ingredient_assertion_to_claim(
+        store: &Store,
+        claim: &mut Claim,
+        action: &str,
+        relationship: Relationship,
+        instance: Option<usize>,
+    ) -> Result<()> {
+        use crate::{hashed_uri::HashedUri, jumbf::labels::to_signature_uri, ValidationResults};
+
+        let report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+
+        let pc = store.provenance_claim().unwrap();
+
+        let ingredient_hashes = store.get_manifest_box_hashes(pc);
+        let parent_hashed_uri = HashedUri::new(
+            store.provenance_path().unwrap(),
+            Some(pc.alg().to_string()),
+            &ingredient_hashes.manifest_box_hash,
+        );
+        let signature_hashed_uri = HashedUri::new(
+            to_signature_uri(pc.label()),
+            Some(pc.alg().to_string()),
+            &ingredient_hashes.signature_box_hash,
+        );
+
+        let validation_results = ValidationResults::from_store(store, &report);
+
+        let ingredient = Ingredient::new_v3(relationship)
+            .set_active_manifests_and_signature_from_hashed_uri(
+                Some(parent_hashed_uri),
+                Some(signature_hashed_uri),
+            ) // mandatory for v3
+            .set_validation_results(Some(validation_results)); // mandatory for v3
+
+        claim.add_assertion(&ingredient).unwrap();
+
+        // create mandatory opened action (optional for update manifest)
+        let ingredient = claim.ingredient_assertions()[0];
+        let mut ingredient_uri = to_assertion_uri(claim.label(), &ingredient.label());
+        if let Some(instance) = instance {
+            ingredient_uri.push_str(&format!("__{instance}"));
+        }
+        let ingredient_hashed_uri = HashedUri::new(
+            ingredient_uri,
+            Some(claim.alg().to_owned()),
+            ingredient.hash(),
+        );
+
+        let a = Action::new(action)
+            .set_parameter("ingredients", vec![ingredient_hashed_uri])
+            .unwrap();
+        let actions = Actions::new().add_action(a);
+
+        // add action (this is optional for update manifest)
+        claim.add_assertion(&actions).unwrap();
+
+        Ok(())
+    }
+
     #[test]
     fn test_ingredient_conflict_with_current_manifest() {
         use crate::{
@@ -6364,7 +6390,7 @@ pub mod tests {
         let mut redacted_store = Store::load_ingredient_to_claim(
             &mut claim,
             &manifest_bytes,
-            Some(vec![redacted_uri]),
+            Some(vec![redacted_uri.clone()]),
             &context,
         )
         .unwrap();
@@ -6439,32 +6465,85 @@ pub mod tests {
         assert!(!um_report.has_any_error());
 
         // add ingredient again without redaction to make sure conflict is resolved with current redaction
-        let mut new_claim = Claim::new("adobe unit test", Some("update_manifest_2"), 2);
+        let mut new_claim = Claim::new("adobe unit test", Some("merged_manifests"), 2);
         // ClaimGeneratorInfo is mandatory in Claim V2
         let cgi = ClaimGeneratorInfo::new("claim_v2_unit_test");
         new_claim.add_claim_generator_info(cgi);
 
-        // load ingredient with redaction
-        output_stream2.rewind().unwrap();
-        let (redacted_manifest_bytes, _) =
-            Store::load_jumbf_from_stream(format, &mut output_stream2, &context).unwrap();
-        Store::load_ingredient_to_claim(&mut new_claim, &redacted_manifest_bytes, None, &context)
-            .unwrap();
-
         // load original ingredient without redaction
+        let mut original_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let (original_manifest_bytes, _) =
             Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec), &context)
                 .unwrap();
-        let _conflict_store = Store::load_ingredient_to_claim(
+        let original_store =
+            Store::from_jumbf(&original_manifest_bytes, &mut original_log).unwrap();
+        Store::load_ingredient_to_claim(&mut new_claim, &original_manifest_bytes, None, &context)
+            .unwrap();
+        // add original ingredient assertion as component to create conflict
+        add_ingredient_assertion_to_claim(
+            &original_store,
             &mut new_claim,
-            &original_manifest_bytes,
+            "c2pa.opened",
+            Relationship::ParentOf,
             None,
+        )
+        .unwrap();
+
+        // load ingredient with redaction and try to redact again
+        // it should not cause any issues and should retain the redacted ingredient assertion without error, and the conflict should be resolved with the current redaction
+        output_stream2.rewind().unwrap();
+        let mut redacted_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let (redacted_manifest_bytes, _) =
+            Store::load_jumbf_from_stream(format, &mut output_stream2, &context).unwrap();
+        let redacted_store =
+            Store::from_jumbf(&redacted_manifest_bytes, &mut redacted_log).unwrap();
+        Store::load_ingredient_to_claim(
+            &mut new_claim,
+            &redacted_manifest_bytes,
+            Some(vec![redacted_uri.clone()]),
+            &context,
+        )
+        .unwrap();
+        // add redacted ingredient assertion as component
+        add_ingredient_assertion_to_claim(
+            &redacted_store,
+            &mut new_claim,
+            "c2pa.placed",
+            Relationship::ComponentOf,
+            Some(1),
+        )
+        .unwrap();
+
+        // save output of the conflict store to see the conflict assertion
+        output_stream2.rewind().unwrap();
+        let mut output_stream3 = std::io::Cursor::new(Vec::new());
+        let mut final_store = Store::from_context(&Context::new());
+
+        final_store.commit_claim(new_claim).unwrap();
+        final_store
+            .save_to_stream(
+                format,
+                &mut output_stream2,
+                &mut output_stream3,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+
+        // the confict_store is adjusted to remove the conflicting claim
+        output_stream3.rewind().unwrap();
+        let mut resolved_store_report =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let resolved_store = Store::from_stream(
+            format,
+            &mut output_stream3,
+            &mut resolved_store_report,
             &context,
         )
         .unwrap();
 
-        // the confict_store is adjusted to remove the conflicting claim
-        let redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
+        // make sure the redaction stuck
+        let redacted_claim = resolved_store.get_claim(pc.label()).unwrap();
         assert!(redacted_claim
             .get_assertion(labels::SCHEMA_ORG, 0)
             .is_none());
@@ -8244,7 +8323,7 @@ pub mod tests {
 
         Store::verify_store_async(
             &new_store,
-            &mut ClaimAssetData::Bytes(&result, "jpg"),
+            Some(&mut ClaimAssetData::Bytes(&result, "jpg")),
             &mut report,
             &context,
         )
@@ -8814,12 +8893,11 @@ pub mod tests {
 
     #[test]
     fn test_ingredient_depth_limit_ingredient_checks() {
-        use crate::{claim::ClaimAssetData, context::Context};
+        use crate::context::Context;
 
         let store = Store::new();
         let claim = Claim::new("depth_test", Some("contentauth"), 2);
         let svi = StoreValidationInfo::default();
-        let mut asset_data = ClaimAssetData::Bytes(&[], "image/jpeg");
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let context = Context::new();
@@ -8828,7 +8906,6 @@ pub mod tests {
             &store,
             &claim,
             &svi,
-            &mut asset_data,
             &mut validation_log,
             MAX_INGREDIENT_DEPTH,
             &context,

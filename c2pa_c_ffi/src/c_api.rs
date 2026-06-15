@@ -17,16 +17,11 @@ use std::{
 };
 
 // C has no namespace so we prefix things with C2PA to make them unique (as namespace)
-#[cfg(feature = "file_io")]
-use c2pa::Ingredient;
 use c2pa::{
     assertions::DataHash, create_signer, Builder as C2paBuilder, CallbackSigner, Context,
     ProgressPhase, Reader as C2paReader, Settings as C2paSettings, SigningAlg,
 };
 
-//use tokio::runtime::Builder;
-#[cfg(feature = "file_io")]
-use crate::json_api::{read_file, sign_file};
 #[cfg(test)]
 use crate::safe_slice_from_raw_parts;
 // Import macros and utilities from cimpl
@@ -917,66 +912,6 @@ pub unsafe extern "C" fn c2pa_context_cancel(ctx: *mut C2paContext) -> c_int {
     ctx.cancel();
     0
 }
-
-///
-/// # Errors
-/// Returns NULL if there were errors, otherwise returns a JSON string.
-/// The error string can be retrieved by calling c2pa_error.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling release_string
-/// and it is no longer valid after that call.
-#[cfg(feature = "file_io")]
-#[no_mangle]
-#[deprecated(
-    note = "Use c2pa_reader_from_context() with an explicit context for new implementations."
-)]
-#[allow(deprecated)]
-pub unsafe extern "C" fn c2pa_read_file(
-    path: *const c_char,
-    data_dir: *const c_char,
-) -> *mut c_char {
-    let path = cstr_or_return_null!(path);
-    let data_dir = cstr_option!(data_dir);
-
-    let result = read_file(&path, data_dir);
-    let json = ok_or_return_null!(result);
-    to_c_string(json)
-}
-
-/// Returns an Ingredient JSON string from a file path.
-///
-/// Any thumbnail or C2PA data will be written to data_dir if provided.
-///
-/// # Errors
-/// Returns NULL if there were errors, otherwise returns a JSON string
-/// containing the Ingredient.
-/// The error string can be retrieved by calling c2pa_error.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling release_string
-/// and it is no longer valid after that call.
-#[cfg(feature = "file_io")]
-#[no_mangle]
-#[deprecated(
-    note = "Use c2pa_builder_add_ingredient_from_stream() with an explicit context for new implementations."
-)]
-#[allow(deprecated)]
-pub unsafe extern "C" fn c2pa_read_ingredient_file(
-    path: *const c_char,
-    data_dir: *const c_char,
-) -> *mut c_char {
-    let path = cstr_or_return_null!(path);
-    let data_dir = cstr_or_return_null!(data_dir);
-    // Legacy C API: uses thread-local settings. Use c2pa_reader_from_context for new implementations.
-    let result = Ingredient::from_file_with_folder(path, data_dir).map_err(Error::from_c2pa_error);
-    let ingredient = ok_or_return_null!(result);
-    let json = serde_json::to_string(&ingredient).unwrap_or_default();
-    to_c_string(json)
-}
-
 #[repr(C)]
 /// Defines the configuration for a Signer.
 ///
@@ -991,46 +926,6 @@ pub struct C2paSignerInfo {
     pub private_key: *const c_char,
     /// The timestamp authority URL or NULL.
     pub ta_url: *const c_char,
-}
-
-/// Add a signed manifest to the file at path with the given signer information.
-///
-/// # Errors
-/// Returns an error field if there were errors.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling release_string
-/// and it is no longer valid after that call.
-#[cfg(feature = "file_io")]
-#[no_mangle]
-#[deprecated(
-    note = "Use c2pa_builder_from_context() with c2pa_builder_sign_to_stream() for new implementations."
-)]
-#[allow(deprecated)]
-pub unsafe extern "C" fn c2pa_sign_file(
-    source_path: *const c_char,
-    dest_path: *const c_char,
-    manifest: *const c_char,
-    signer_info: &C2paSignerInfo,
-    data_dir: *const c_char,
-) -> *mut c_char {
-    // Convert C pointers into Rust.
-    let source_path = cstr_or_return_null!(source_path);
-    let dest_path = cstr_or_return_null!(dest_path);
-    let manifest = cstr_or_return_null!(manifest);
-    let data_dir = cstr_option!(data_dir);
-
-    let signer_info = SignerInfo {
-        alg: cstr_or_return_null!(signer_info.alg),
-        sign_cert: cstr_or_return_null!(signer_info.sign_cert).into_bytes(),
-        private_key: cstr_or_return_null!(signer_info.private_key).into_bytes(),
-        ta_url: cstr_option!(signer_info.ta_url),
-    };
-    // Read manifest from JSON and then sign and write it.
-    let result = sign_file(&source_path, &dest_path, &manifest, &signer_info, data_dir);
-    ok_or_return_null!(result); // we don't return the bytes, just an empty string for ok
-    to_c_string("".to_string())
 }
 
 /// Frees a string allocated by Rust.
@@ -1446,8 +1341,18 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) -> *mut c_char {
     let c2pa_reader = deref_or_return_null!(reader_ptr, C2paReader);
-
     to_c_string(c2pa_reader.detailed_json())
+}
+
+/// Returns a crJSON string generated from a C2paReader.
+///
+/// # Safety
+/// The returned value MUST be released by calling c2pa_free
+/// and it is no longer valid after that call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_crjson(reader_ptr: *mut C2paReader) -> *mut c_char {
+    let c2pa_reader = deref_or_return_null!(reader_ptr, C2paReader);
+    to_c_string(c2pa_reader.crjson())
 }
 
 /// Returns the remote url of the manifest if it was obtained remotely.
@@ -3352,119 +3257,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
-    #[allow(deprecated)]
-    fn test_c2pa_read_file_null_path() {
-        let data_dir = CString::new("/tmp").unwrap();
-        let result = unsafe { c2pa_read_file(std::ptr::null(), data_dir.as_ptr()) };
-        assert!(result.is_null());
-        let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
-        assert_eq!(error_str.to_str().unwrap(), "NullParameter: path");
-    }
-
-    #[test]
-    #[cfg(feature = "file_io")]
-    #[allow(deprecated)]
-    fn test_c2pa_read_ingredient_file_null_path() {
-        let data_dir = CString::new("/tmp").unwrap();
-        let result = unsafe { c2pa_read_ingredient_file(std::ptr::null(), data_dir.as_ptr()) };
-        assert!(result.is_null());
-        let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
-        assert_eq!(error_str.to_str().unwrap(), "NullParameter: path");
-    }
-
-    #[test]
-    #[cfg(feature = "file_io")]
-    #[allow(deprecated)]
-    fn test_c2pa_sign_file_null_source_path() {
-        let dest_path = CString::new("/tmp/output.jpg").unwrap();
-        let manifest = CString::new("{}").unwrap();
-        let signer_info = C2paSignerInfo {
-            alg: std::ptr::null(),
-            sign_cert: std::ptr::null(),
-            private_key: std::ptr::null(),
-            ta_url: std::ptr::null(),
-        };
-        let result = unsafe {
-            c2pa_sign_file(
-                std::ptr::null(),
-                dest_path.as_ptr(),
-                manifest.as_ptr(),
-                &signer_info,
-                std::ptr::null(),
-            )
-        };
-        assert!(result.is_null());
-        let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
-        assert_eq!(error_str.to_str().unwrap(), "NullParameter: source_path");
-    }
-
-    #[test]
-    #[cfg(feature = "file_io")]
-    #[allow(deprecated)]
-    fn test_c2pa_sign_file_success() {
-        use std::{fs, path::PathBuf};
-
-        // Setup paths
-        let base = env!("CARGO_MANIFEST_DIR");
-        let source = format!("{base}/../sdk/tests/fixtures/IMG_0003.jpg");
-        let temp_dir = PathBuf::from(base).join("../target/tmp");
-        fs::create_dir_all(&temp_dir).unwrap();
-        let dest = temp_dir.join("c2pa_sign_file_test_output.jpg");
-
-        let source_path = CString::new(source).unwrap();
-        let dest_path = CString::new(dest.to_str().unwrap()).unwrap();
-        let manifest = CString::new("{}").unwrap();
-
-        // Setup signer info
-        let alg = CString::new("es256").unwrap();
-        let cert = CString::new(include_str!(fixture_path!("certs/es256.pub"))).unwrap();
-        let key =
-            CString::new(include_bytes!(fixture_path!("certs/es256.pem")).as_slice()).unwrap();
-
-        let signer_info = C2paSignerInfo {
-            alg: alg.as_ptr(),
-            sign_cert: cert.as_ptr(),
-            private_key: key.as_ptr(),
-            ta_url: std::ptr::null(),
-        };
-
-        // Call c2pa_sign_file
-        let result = unsafe {
-            c2pa_sign_file(
-                source_path.as_ptr(),
-                dest_path.as_ptr(),
-                manifest.as_ptr(),
-                &signer_info,
-                std::ptr::null(),
-            )
-        };
-
-        // Verify result is not null and is an empty string
-        assert!(
-            !result.is_null(),
-            "c2pa_sign_file should return non-null on success"
-        );
-        let result_str = unsafe { CString::from_raw(result) };
-        assert_eq!(
-            result_str.to_str().unwrap(),
-            "",
-            "c2pa_sign_file should return empty string on success"
-        );
-
-        // Verify the output file was created and has content
-        assert!(dest.exists(), "Output file should exist");
-        let metadata = fs::metadata(&dest).unwrap();
-        assert!(metadata.len() > 0, "Output file should have content");
-
-        // Clean up
-        fs::remove_file(dest).ok();
-    }
-
-    #[test]
     #[allow(deprecated)]
     fn test_c2pa_reader_remote_url() {
         let mut stream = TestStream::new(include_bytes!(fixture_path!("cloud.jpg")).to_vec());
@@ -3599,6 +3391,15 @@ mod tests {
         let mut dest_stream = TestStream::new(Vec::new());
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::Empty,
+            )
+        };
+        assert_eq!(result, 0);
 
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
@@ -4857,6 +4658,15 @@ verify_after_sign = true
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::Empty,
+            )
+        };
+        assert_eq!(result, 0);
+
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
 
@@ -5395,7 +5205,21 @@ verify_after_sign = true
             CimplError::last_message()
         );
 
-        let manifest_def = CString::new("{}").unwrap();
+        let manifest_def = CString::new(
+            serde_json::json!({
+                "assertions": [{
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                        }]
+                    }
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 

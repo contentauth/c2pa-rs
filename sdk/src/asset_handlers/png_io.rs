@@ -30,7 +30,7 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::{tempfile_builder, ReaderUtils},
+        io_utils::{patch_stream, tempfile_builder, ReaderUtils},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -125,18 +125,12 @@ fn get_png_chunk_positions<R: Read + Seek + ?Sized>(f: &mut R) -> Result<Vec<Png
 fn get_cai_data<R: Read + Seek + ?Sized>(mut f: &mut R) -> Result<Vec<u8>> {
     let ps = get_png_chunk_positions(f)?;
 
-    if ps
-        .clone()
-        .into_iter()
-        .filter(|pcp| pcp.name == CAI_CHUNK)
-        .count()
-        > 1
-    {
+    if ps.iter().filter(|pcp| pcp.name == CAI_CHUNK).count() > 1 {
         return Err(Error::TooManyManifestStores);
     }
 
     let pcp = ps
-        .into_iter()
+        .iter()
         .find(|pcp| pcp.name == CAI_CHUNK)
         .ok_or(Error::JumbfNotFound)?;
 
@@ -182,7 +176,7 @@ impl CAIReader for PngIO {
         let ps = get_png_chunk_positions(asset_reader).ok()?;
         let mut xmp_str: Option<String> = None;
 
-        ps.into_iter().find(|pcp| {
+        ps.iter().find(|pcp| {
             if pcp.name == ITXT_CHUNK {
                 // seek to start of chunk
                 if asset_reader.seek(SeekFrom::Start(pcp.start + 8)).is_err() {
@@ -408,13 +402,10 @@ impl CAIWriter for PngIO {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
     ) -> Result<()> {
-        // get png byte
         let ps = get_png_chunk_positions(input_stream)?;
+        let existing_c2pa = ps.iter().find(|pcp| pcp.name == CAI_CHUNK);
 
-        // get image bytes
         input_stream.rewind()?;
-        let mut png_buf: Vec<u8> = Vec::new();
-        input_stream.read_to_end(&mut png_buf)?;
 
         /*  splice in new chunk.  Each PNG chunk has the following format:
                 chunk data length (4 bytes big endian)
@@ -423,22 +414,20 @@ impl CAIWriter for PngIO {
                 chunk crc (4 bytes in crc in format defined in PNG spec)
         */
 
-        // erase existing
-        let empty_buf = Vec::new();
-        let mut iter = ps.into_iter();
-        if let Some(existing_cai) = iter.find(|pcp| pcp.name == CAI_CHUNK) {
-            // replace existing CAI
-            let start = usize::try_from(existing_cai.start)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
-
-            let end = usize::try_from(existing_cai.end())
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-            png_buf.splice(start..end, empty_buf.iter().cloned());
+        match existing_c2pa {
+            Some(c2pa) => {
+                patch_stream(
+                    input_stream,
+                    output_stream,
+                    c2pa.start,
+                    c2pa.end() - c2pa.start,
+                    &[],
+                )?;
+            }
+            None => {
+                io::copy(input_stream, output_stream)?;
+            }
         }
-
-        // save png data
-        output_stream.write_all(&png_buf)?;
 
         Ok(())
     }
@@ -589,7 +578,6 @@ fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)>
     }
 }
 impl RemoteRefEmbed for PngIO {
-    #[allow(unused_variables)]
     fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
@@ -649,31 +637,15 @@ impl RemoteRefEmbed for PngIO {
                     .encode(&mut xmp_chunk)
                     .map_err(|_| Error::EmbeddingError)?;
 
-                // patch output stream
-                let mut png_buf = Vec::new();
-                source_stream.rewind()?;
-                source_stream
-                    .read_to_end(&mut png_buf)
-                    .map_err(Error::IoError)?;
-
-                if let Some((start, xmp_len)) = get_xmp_insertion_point(source_stream) {
-                    let mut png_buf = Vec::new();
-                    source_stream.rewind()?;
-                    source_stream
-                        .read_to_end(&mut png_buf)
-                        .map_err(Error::IoError)?;
-
-                    // replace existing XMP
-                    let xmp_start = usize::try_from(start)
-                        .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?; // get beginning of chunk which starts 4 bytes before label
-
-                    let xmp_end = usize::try_from(start + xmp_len as u64)
-                        .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
-
-                    png_buf.splice(xmp_start..xmp_end, xmp_data.iter().cloned());
-
+                if let Some((xmp_start, xmp_len)) = get_xmp_insertion_point(source_stream) {
                     output_stream.rewind()?;
-                    output_stream.write_all(&png_buf)?;
+                    patch_stream(
+                        source_stream,
+                        output_stream,
+                        xmp_start,
+                        xmp_len as u64,
+                        &xmp_data,
+                    )?;
 
                     Ok(())
                 } else {

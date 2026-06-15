@@ -983,6 +983,24 @@ pub(crate) fn folder_mode_output_path_ok(path: &Path) -> bool {
 }
 
 fn main() -> Result<()> {
+    // Harden against DLL hijacking on Windows by removing the current working
+    // directory from the DLL search path. Without this, Windows' default DLL
+    // search order includes the CWD, which allows an attacker to place a
+    // malicious DLL alongside the executable. LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
+    // restricts the search to: the application directory, System32, and
+    // directories added via AddDllDirectory/SetDllDirectory — excluding the CWD.
+    // SAFETY: no invariants to uphold; the argument is a valid constant.
+    #[cfg(windows)]
+    unsafe {
+        if windows_sys::Win32::System::LibraryLoader::SetDefaultDllDirectories(
+            windows_sys::Win32::System::LibraryLoader::LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
+        ) == 0
+        {
+            let err = windows_sys::Win32::Foundation::GetLastError();
+            bail!("Failed to set default DLL directories (error {err})");
+        }
+    }
+
     let args = CliArgs::parse();
 
     // default to error logging, RUST_LOG=debug to get detailed debug logging
@@ -1326,10 +1344,20 @@ fn main() -> Result<()> {
         }
         create_dir_all(&output)?;
         if args.ingredient {
-            #[allow(deprecated)]
-            let report = Ingredient::from_file_with_folder(path, &output)
-                .map_err(special_errs)?
-                .to_string();
+            let mut builder = Builder::from_shared_context(&context);
+            let ingredient = builder
+                .add_ingredient_from_stream(
+                    "{}",
+                    &format_from_path(path).ok_or(c2pa::Error::UnsupportedType)?,
+                    &mut File::open(path)?,
+                )
+                .map_err(special_errs)?;
+            // write resources to the output folder explicitly
+            for (id, data) in ingredient.resources().resources() {
+                std::fs::write(output.join(id), data)?;
+            }
+            let report = ingredient.to_string();
+
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
             println!("Ingredient report written to the directory {:?}", &output);
         } else {
@@ -1348,8 +1376,12 @@ fn main() -> Result<()> {
             println!("Manifest report written to the directory {:?}", &output);
         }
     } else if args.ingredient {
-        #[allow(deprecated)]
-        let ingredient = Ingredient::from_file(path).map_err(special_errs)?;
+        let mut builder = Builder::from_shared_context(&context);
+        let ingredient = builder.add_ingredient_from_stream(
+            r#"{"relationship":"component-of"}"#,
+            &format_from_path(path).ok_or(c2pa::Error::UnsupportedType)?,
+            &mut File::open(path)?,
+        )?;
         println!("{}", ingredient)
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),
