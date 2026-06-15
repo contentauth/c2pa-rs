@@ -295,6 +295,11 @@ pub struct Core {
     /// See more information in the spec here:
     /// [Compressed manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_compressed_boxes)
     pub prefer_compress_manifests: bool,
+    /// Maximum size in megabytes of a Brotli-decompressed JUMBF manifest.
+    /// Limits memory consumption from decompression bomb attacks.
+    ///
+    /// The default is 32 MB.
+    pub max_decompressed_manifest_size_in_mb: usize,
 }
 
 impl Default for Core {
@@ -306,6 +311,7 @@ impl Default for Core {
             decode_identity_assertions: true,
             allowed_network_hosts: None,
             prefer_compress_manifests: false,
+            max_decompressed_manifest_size_in_mb: 32,
         }
     }
 }
@@ -1125,6 +1131,7 @@ pub mod tests {
             merkle_tree_chunk_size_in_kb = true
             merkle_tree_max_proofs = "sha1000000"
             backing_store_memory_threshold_in_mb = -123456
+            max_decompressed_manifest_size_in_mb = -123456
         }
         .to_string();
 

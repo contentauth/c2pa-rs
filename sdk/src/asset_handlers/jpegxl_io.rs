@@ -224,7 +224,7 @@ fn parse_all_boxes(reader: &mut dyn CAIRead) -> Result<Vec<JxlBoxInfo>> {
 /// If a `brob` box wraps content of the given target type, decompress and return it.
 /// The reader should be positioned at the start of the brob box's data area.
 fn decompress_brob(reader: &mut dyn CAIRead, data_size: u64) -> Result<([u8; 4], Vec<u8>)> {
-    const MAX_DECOMPRESSED_BROB_SIZE: usize = 10 * 1024 * 1024; // 10 MiB
+    const MAX_DECOMPRESSED_BROB_SIZE: usize = 1024 * 1024; // 1 MiB
 
     let mut original_type = [0u8; 4];
     reader
@@ -1518,7 +1518,7 @@ pub mod tests {
 
     #[test]
     fn test_brob_decompression_rejects_bomb() {
-        let payload = vec![0u8; 11 * 1024 * 1024];
+        let payload = vec![0u8; 1024 * 1024 + 1];
         let mut compressed = Vec::new();
         let params = brotli::enc::BrotliEncoderParams::default();
         brotli::BrotliCompress(
