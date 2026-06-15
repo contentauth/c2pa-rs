@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.67](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.66...c2patool-v0.26.67)
+_11 June 2026_
+
+### Added
+
+* Remove some long deprecated APIs ([#2206](https://github.com/contentauth/c2pa-rs/pull/2206))
+
+## [0.26.66](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.65...c2patool-v0.26.66)
+_11 June 2026_
+
+### Fixed
+
+* Enable c2pa features in sub-crates since default-features is disabled at the workspace-level ([#2219](https://github.com/contentauth/c2pa-rs/pull/2219))
+
+### Other
+
+* Use latest `release-plz` and add a dry run job on release PRs ([#2217](https://github.com/contentauth/c2pa-rs/pull/2217))
+
+## [0.26.65](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.64...c2patool-v0.26.65)
+_09 June 2026_
+
+### Fixed
+
+* DLL hijacking vulnerability in c2patool (CAI-8608) ([#2031](https://github.com/contentauth/c2pa-rs/pull/2031))
+
+## [0.26.64](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.63...c2patool-v0.26.64)
+_08 June 2026_
+
+## [0.26.63](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.62...c2patool-v0.26.63)
+_04 June 2026_
+
+## [0.26.62](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.61...c2patool-v0.26.62)
+_03 June 2026_
+
+## [0.26.61](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.60...c2patool-v0.26.61)
+_01 June 2026_
+
 ## [0.26.60](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.59...c2patool-v0.26.60)
 _27 May 2026_
 

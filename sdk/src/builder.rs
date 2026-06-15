@@ -196,7 +196,7 @@ fn default_format() -> String {
 
 // TryFrom implementations for ManifestDefinition
 
-/// Implement TryFrom for &str (JSON string)
+/// Implement TryFrom for &str (JSON string).
 impl TryFrom<&str> for ManifestDefinition {
     type Error = Error;
 
@@ -205,7 +205,7 @@ impl TryFrom<&str> for ManifestDefinition {
     }
 }
 
-/// Implement TryFrom for String
+/// Implement TryFrom for String.
 impl TryFrom<String> for ManifestDefinition {
     type Error = Error;
 
@@ -418,13 +418,11 @@ pub struct Builder {
 
     /// Base path to search for resources.
     #[cfg(feature = "file_io")]
-    #[deprecated(note = "Use set_base_path() instead")]
     #[serde(skip)]
-    pub base_path: Option<PathBuf>,
+    base_path: Option<PathBuf>,
 
     /// A builder should construct a created, opened or updated manifest.
-    #[deprecated(note = "Use set_intent() to set or intent()")]
-    pub intent: Option<BuilderIntent>,
+    intent: Option<BuilderIntent>,
 
     /// Manifest labels to fetch timestamps for.
     ///
@@ -579,7 +577,6 @@ impl Builder {
     /// * `intent` - The [`BuilderIntent`] for this [`Builder`].
     /// # Returns
     /// * A mutable reference to the [`Builder`].
-    #[allow(deprecated)]
     pub fn set_intent(&mut self, intent: BuilderIntent) -> &mut Self {
         // Note: We can't modify context.settings anymore since Context is in an Arc
         // The intent is stored in the Builder itself
@@ -589,7 +586,6 @@ impl Builder {
 
     /// Returns the current [`BuilderIntent`] for this [`Builder`], if set.
     /// If not set, it will use the Settings default intent.
-    #[allow(deprecated)]
     pub fn intent(&self) -> Option<BuilderIntent> {
         let mut intent = self.intent.clone();
         if intent.is_none() {
@@ -722,7 +718,6 @@ impl Builder {
     /// # Returns
     /// * A mutable reference to the [`Builder`].
     #[cfg(feature = "file_io")]
-    #[allow(deprecated)]
     pub fn set_base_path<P: Into<PathBuf>>(&mut self, base_path: P) -> &mut Self {
         let base_path = base_path.into();
         // make sure the resource store is updated to the current base path
@@ -731,6 +726,12 @@ impl Builder {
 
         self.base_path = Some(base_path);
         self
+    }
+
+    /// Returns the base path used to search for resources, if set.
+    #[cfg(feature = "file_io")]
+    pub fn base_path(&self) -> Option<&Path> {
+        self.base_path.as_deref()
     }
 
     /// Sets the remote_url for this [`Builder`].
@@ -947,7 +948,8 @@ impl Builder {
         self.context
             .check_progress(ProgressPhase::AddingIngredient, 1, 1)?;
 
-        let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
+        #[allow(unused_mut)]
+        let mut ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
         if format == "c2pa" || format == "application/c2pa" {
             let parent_ingredient = self.add_ingredient_from_archive(stream)?;
@@ -2758,6 +2760,13 @@ impl Builder {
                 .get_box_hashed_embeddable_manifest_async(signer, &self.context)
                 .await
         }?;
+        if self.context.settings().verify.verify_after_sign {
+            if _sync {
+                store.verify_store_strict(None, &self.context)?;
+            } else {
+                store.verify_store_strict_async(None, &self.context).await?;
+            }
+        }
         // get composed version for embedding to JPEG
         Store::get_composed_manifest(&bytes, format)
     }
@@ -2799,7 +2808,6 @@ impl Builder {
         source.rewind()?;
 
         #[cfg(feature = "file_io")]
-        #[allow(deprecated)]
         if let Some(base_path) = &self.base_path {
             self.resources.set_base_path(base_path);
         }
@@ -2901,7 +2909,6 @@ impl Builder {
         source.rewind()?;
 
         #[cfg(feature = "file_io")]
-        #[allow(deprecated)]
         if let Some(base_path) = &self.base_path {
             self.resources.set_base_path(base_path);
         }
@@ -8683,14 +8690,16 @@ mod tests {
 
     #[test]
     fn test_to_archive_preserves_duplicate_label_assertions() -> Result<()> {
-        let mut builder = Builder::default();
+        let context = Context::new().into_shared();
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         builder.add_assertion("org.contentauth.test", &json!({"v": 1}))?;
         builder.add_assertion("org.contentauth.test", &json!({"v": 2}))?;
 
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive)?;
         archive.rewind()?;
-        let mut builder = Builder::default().with_archive(archive)?;
+        let mut builder = Builder::from_shared_context(&context).with_archive(archive)?;
 
         let signer = test_signer(SigningAlg::Ps256);
         let mut output = Cursor::new(Vec::new());
@@ -8848,6 +8857,7 @@ mod tests {
         });
         let mut signing_builder =
             Builder::from_shared_context(&context).with_definition(manifest_def.to_string())?;
+        signing_builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_a))?;
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_b))?;
 
@@ -8957,6 +8967,7 @@ mod tests {
         });
         let mut signing_builder =
             Builder::from_shared_context(&context).with_definition(manifest_def.to_string())?;
+        signing_builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_a))?;
         signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_b))?;
 
@@ -9150,6 +9161,7 @@ mod tests {
 
         let ingredient_folder = fixture_path("ingredient");
         builder.set_base_path(&ingredient_folder);
+        assert_eq!(builder.base_path(), Some(ingredient_folder.as_path()));
 
         let ingredient_json =
             std::fs::read_to_string(ingredient_folder.join("ingredient.json")).unwrap();

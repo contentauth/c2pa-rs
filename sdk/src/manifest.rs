@@ -378,7 +378,7 @@ impl Manifest {
     /// The files will be relative to the given base path.
     /// Ingredients' resources will also be relative to this path.
     #[cfg(feature = "file_io")]
-    pub fn with_base_path<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
+    fn with_base_path<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
         create_dir_all(&base_path)?;
         self.resources.set_base_path(base_path.as_ref());
         for i in 0..self.ingredients.len() {

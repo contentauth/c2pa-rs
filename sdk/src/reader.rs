@@ -208,6 +208,7 @@ impl Reader {
     }
 
     /// Add manifest store from a stream to the [`Reader`].
+    ///
     /// # Arguments
     /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
@@ -703,7 +704,7 @@ impl Reader {
     /// Get the manifest store as a pretty-printed crJSON string.
     ///
     /// crJSON is a standardized JSON format for C2PA manifest data.
-    /// Returns `"{}"` if conversion or formatting fails.
+    /// Returns empty valid JSON `"{}"` if conversion or formatting fails.
     pub fn crjson(&self) -> String {
         self.crjson_checked().unwrap_or_else(|_| "{}".to_string())
     }
@@ -1317,6 +1318,8 @@ pub mod tests {
 
     use super::*;
     use crate::{
+        assertions::DigitalSourceType,
+        builder::BuilderIntent,
         utils::{test::test_context, test_signer::test_signer},
         Builder, SigningAlg,
     };
@@ -1703,6 +1706,7 @@ pub mod tests {
         let mut builder = Builder::default()
             .with_definition(r#"{"title": "Test Image"}"#)
             .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         builder.add_ingredient(ingredient1);
         builder.add_ingredient(ingredient2);
 
