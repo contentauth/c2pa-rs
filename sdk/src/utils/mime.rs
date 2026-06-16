@@ -23,6 +23,7 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
         "ico" => "image/x-icon",
         "bmp" => "image/bmp",
         "webp" => "image/webp",
+        "jxl" => "image/jxl",
         "dng" => "image/x-adobe-dng",
         "heic" => "image/heic",
         "heif" => "image/heif",
