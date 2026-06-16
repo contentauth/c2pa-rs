@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{borrow::Cow, path::PathBuf, slice::Iter};
+use std::{borrow::Cow, path::PathBuf, slice::Iter, sync::Arc};
 #[cfg(feature = "file_io")]
 use std::{fs::create_dir_all, path::Path};
 
@@ -28,11 +28,12 @@ use crate::{
     assertions::{labels, Actions, AssertionMetadata, EmbeddedData, Metadata, SoftwareAgent},
     claim::{ClaimAssertionType, RemoteManifest},
     crypto::raw_signature::SigningAlg,
+    dynamic_assertion::PartialClaim,
     error::{Error, Result},
     hashed_uri::HashedUri,
     identity::IdentityAssertion,
     ingredient::Ingredient,
-    jumbf::labels::{to_absolute_uri, to_assertion_uri},
+    jumbf::labels::{to_absolute_uri, to_assertion_uri, ASSERTIONS},
     manifest_assertion::ManifestAssertion,
     resource_store::{mime_from_uri, ResourceRef, ResourceStore},
     settings::Settings,
@@ -388,10 +389,9 @@ impl Manifest {
         Ok(self)
     }
 
-    /// Installs a store-backed resolver on this manifest's resources so that
+    /// Adds a store-backed resolver on this manifest's resources so that
     /// JUMBF-URI identifiers (e.g. claim thumbnails) can be resolved lazily.
-    pub(crate) fn set_store_resolver(&mut self, store: std::sync::Arc<Store>) {
-        use crate::jumbf::labels::ASSERTIONS;
+    pub(crate) fn set_store_resolver(&mut self, store: Arc<Store>) {
         self.resources
             .set_resolver(std::sync::Arc::new(move |uri: &str| {
                 if uri.contains(ASSERTIONS) {
@@ -610,7 +610,7 @@ impl Manifest {
                     let mut ma = ManifestAssertion::new(label.to_string(), value)
                         .set_instance(claim_assertion.instance());
 
-                    let mut partial_claim = crate::dynamic_assertion::PartialClaim::default();
+                    let mut partial_claim = PartialClaim::default();
                     for a in claim.assertions() {
                         partial_claim.add_assertion(a);
                     }

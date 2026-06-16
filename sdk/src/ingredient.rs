@@ -38,17 +38,18 @@ use crate::{
     hashed_uri::HashedUri,
     jumbf::{
         self,
-        labels::{assertion_label_from_uri, manifest_label_from_uri},
+        labels::{assertion_label_from_uri, manifest_label_from_uri, ASSERTIONS, DATABOXES},
     },
     log_item,
     resource_store::{ResourceRef, ResourceStore},
+    settings::get_thread_local_settings,
     status_tracker::StatusTracker,
     store::Store,
     utils::{
         mime::{extension_to_mime, format_to_mime},
         xmp_inmemory_utils::XmpInfo,
     },
-    validation_results::ValidationResults,
+    validation_results::{ValidationResults, ValidationState},
     validation_status::{self, ValidationStatus},
 };
 
@@ -471,7 +472,7 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Installs a resolver on this ingredient's [`ResourceStore`] that looks up
+    /// Adds a resolver on this ingredient's [`ResourceStore`] that looks up
     /// assertion, databox, and manifest bytes from `store` by URI on demand.
     ///
     /// Also sets the deferred `manifest_data` ref when `active_manifest` names a
@@ -501,21 +502,15 @@ impl Ingredient {
         }
         self.resources
             .set_resolver(std::sync::Arc::new(move |uri: &str| {
-                use crate::jumbf::labels::{manifest_label_from_uri, ASSERTIONS, DATABOXES};
                 if uri.contains(DATABOXES) {
                     let label = manifest_label_from_uri(uri)?;
-                    let hashed_uri = crate::hashed_uri::HashedUri::new(uri.to_owned(), None, &[]);
+                    let hashed_uri = HashedUri::new(uri.to_owned(), None, &[]);
                     return store
                         .get_data_box_from_uri_and_claim(&hashed_uri, &label)
                         .map(|db| db.data.clone());
                 }
                 if uri.contains(ASSERTIONS) {
                     let assertion = store.get_assertion_from_uri(uri)?;
-                    // Try EmbeddedData first (claim thumbnails, data assertions).
-                    // Fall back to raw assertion bytes (ingredient thumbnails stored as binary).
-                    if let Ok(embedded) = EmbeddedData::from_assertion(assertion) {
-                        return Some(embedded.data);
-                    }
                     return Some(assertion.data().to_vec());
                 }
                 // Manifest: uri is a bare claim label (set by manifest_data ref above).
@@ -675,7 +670,7 @@ impl Ingredient {
                                 .rsplit_once('.')
                                 .and_then(|(_, ext)| extension_to_mime(ext))
                                 .unwrap_or("image/jpeg"); // default to jpeg??
-                            let mut thumb = crate::resource_store::ResourceRef::new(format, &uri);
+                            let mut thumb = ResourceRef::new(format, &uri);
                             // keep track of the alg and hash for reuse
                             thumb.alg = hashed_uri.alg();
                             let hash = base64::encode(&hashed_uri.hash());
@@ -746,7 +741,7 @@ impl Ingredient {
     #[deprecated(note = "Use with_stream with an explicit Context instead")]
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_thread_local_settings();
+        let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
@@ -912,7 +907,7 @@ impl Ingredient {
     )]
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_thread_local_settings();
+        let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
         Self::from_stream_async_with_settings(format, stream, &context).await
     }
@@ -1076,25 +1071,26 @@ impl Ingredient {
             }
         };
 
-        // if the ingredient as a data field, we need to resolve that as well
+        // if the ingredient has a data field, we need to resolve that as well
         if let Some(data_uri) = ingredient_assertion.data.as_ref() {
-            let maybe_data_ref = match data_uri.url() {
-                uri if uri.contains(jumbf::labels::ASSERTIONS) => {
+            let maybe_data_ref = match jumbf::labels::to_absolute_uri(claim_label, &data_uri.url())
+            {
+                absolute_uri if absolute_uri.contains(jumbf::labels::ASSERTIONS) => {
                     // Verify the assertion exists; record its format, but don't copy bytes —
                     // the resolver will fetch them on demand.
                     store
-                        .get_assertion_from_uri_and_claim(&uri, claim_label)
+                        .get_assertion_from_uri_and_claim(&absolute_uri, claim_label)
                         .map(|assertion| {
                             Ok::<ResourceRef, Error>(ResourceRef::new(
                                 assertion.content_type(),
-                                &uri,
+                                &absolute_uri,
                             ))
                         })
                 }
-                uri if uri.contains(jumbf::labels::DATABOXES) => store
+                absolute_uri if absolute_uri.contains(jumbf::labels::DATABOXES) => store
                     .get_data_box_from_uri_and_claim(data_uri, claim_label)
                     .map(|data_box| {
-                        Ok::<ResourceRef, Error>(ResourceRef::new(&data_box.format, &uri))
+                        Ok::<ResourceRef, Error>(ResourceRef::new(&data_box.format, &absolute_uri))
                     }),
                 _ => None,
             };
@@ -1182,7 +1178,7 @@ impl Ingredient {
                 // Use the parent claim thumbnail if validation passed and it was not redacted.
                 let is_valid = self
                     .validation_results()
-                    .is_some_and(|v| v.validation_state() != crate::ValidationState::Invalid);
+                    .is_some_and(|v| v.validation_state() != ValidationState::Invalid);
                 if is_valid {
                     thumbnail = ingredient_active_claim
                         .assertions()
@@ -1201,12 +1197,12 @@ impl Ingredient {
                 }
                 // generate c2pa_manifest hashed_uris
                 (
-                    Some(crate::hashed_uri::HashedUri::new(
+                    Some(HashedUri::new(
                         uri,
                         Some(ingredient_active_claim.alg().to_owned()),
                         hash.as_ref(),
                     )),
-                    Some(crate::hashed_uri::HashedUri::new(
+                    Some(HashedUri::new(
                         signature_uri,
                         Some(ingredient_active_claim.alg().to_owned()),
                         sig_hash.as_ref(),
@@ -1444,7 +1440,7 @@ impl Ingredient {
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_thread_local_settings();
+        let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
