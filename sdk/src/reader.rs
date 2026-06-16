@@ -1239,6 +1239,29 @@ impl Reader {
                 }
             }
         }
+
+        // Wire the archive store as a lazy resolver so that JUMBF URI identifiers in
+        // the definition (thumbnails, ingredient data) can be resolved when re-signing.
+        let arc_store = Arc::clone(&self.store);
+        builder.resources.set_resolver(Arc::new(move |uri: &str| {
+            use crate::jumbf::labels::{ASSERTIONS, DATABOXES};
+            if uri.contains(DATABOXES) {
+                let label = manifest_label_from_uri(uri)?;
+                let hashed_uri = crate::hashed_uri::HashedUri::new(uri.to_owned(), None, &[]);
+                return arc_store
+                    .get_data_box_from_uri_and_claim(&hashed_uri, &label)
+                    .map(|db| db.data.clone());
+            }
+            if uri.contains(ASSERTIONS) {
+                let assertion = arc_store.get_assertion_from_uri(uri)?;
+                if let Ok(embedded) = crate::assertions::EmbeddedData::try_from(assertion) {
+                    return Some(embedded.data);
+                }
+                return Some(assertion.data().to_vec());
+            }
+            None
+        }));
+
         Ok(builder)
     }
 

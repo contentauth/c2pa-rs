@@ -538,6 +538,15 @@ impl Ingredient {
         Ok(self)
     }
 
+    /// Sets the data field directly without checking the ingredient's own resource store.
+    ///
+    /// Used by Builder::prepare_resources() to store a JUMBF URI reference whose
+    /// bytes are accessible via the builder's resource store (alt_resource_store).
+    pub(crate) fn set_data_direct(&mut self, data_ref: ResourceRef) -> &mut Self {
+        self.data = Some(data_ref);
+        self
+    }
+
     /// Sets a detailed description for this ingredient.
     pub fn set_description<S: Into<String>>(&mut self, description: S) -> &mut Self {
         self.description = Some(description.into());
@@ -1300,20 +1309,27 @@ impl Ingredient {
         // if the ingredient has a data field, resolve and add it to the claim
         let mut data = None;
         if let Some(data_ref) = self.data_ref() {
-            let box_data = get_resource(&data_ref.identifier)?;
-            let hash_uri = match claim.version() {
-                1 => claim.add_databox(
-                    &data_ref.format,
-                    box_data.into_owned(),
-                    data_ref.data_types.clone(),
-                )?,
-                _ => {
-                    let embedded_data = EmbeddedData::new(
-                        labels::EMBEDDED_DATA,
-                        format_to_mime(&data_ref.format),
+            let hash_uri = if let Some(h) = data_ref.hash.as_ref() {
+                // pre-registered via Builder::prepare_resources: assertion already in claim
+                let hash =
+                    base64::decode(h).map_err(|_e| Error::BadParam("Invalid hash".to_string()))?;
+                HashedUri::new(data_ref.identifier.clone(), data_ref.alg.clone(), &hash)
+            } else {
+                let box_data = get_resource(&data_ref.identifier)?;
+                match claim.version() {
+                    1 => claim.add_databox(
+                        &data_ref.format,
                         box_data.into_owned(),
-                    );
-                    claim.add_assertion(&embedded_data)?
+                        data_ref.data_types.clone(),
+                    )?,
+                    _ => {
+                        let embedded_data = EmbeddedData::new(
+                            labels::EMBEDDED_DATA,
+                            format_to_mime(&data_ref.format),
+                            box_data.into_owned(),
+                        );
+                        claim.add_assertion(&embedded_data)?
+                    }
                 }
             };
 

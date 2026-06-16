@@ -41,7 +41,7 @@ use crate::{
     },
     claim::Claim,
     context::{Context, ProgressPhase},
-    crypto::cose,
+    crypto::{base64, cose},
     error::{Error, Result},
     hash_utils::hash_by_alg,
     jumbf::labels::manifest_label_from_uri,
@@ -446,6 +446,18 @@ pub struct Builder {
     // Accumulator to assist with hashing mdat bytes for BmffHash assertions.
     #[serde(skip)]
     bmff_hasher: MerkleAccumulator,
+
+    // Pre-populated claim built by add_resource(). When Some, to_claim() clones this as its
+    // starting claim so that assertions added by add_resource() are already present.
+    #[serde(skip)]
+    pre_claim: Option<Claim>,
+
+    // Maps each user-provided resource id (e.g. "thumbnail.jpg") → ResourceRef with the
+    // JUMBF URI and hash of the corresponding assertion in pre_claim.
+    // Used by to_claim() to skip re-adding assertions that add_resource() already placed
+    // in pre_claim, and to pass updated ResourceRefs to ingredient.add_to_claim().
+    #[serde(skip)]
+    pub(crate) resource_map: HashMap<String, ResourceRef>,
 }
 
 impl AsRef<Builder> for Builder {
@@ -1009,6 +1021,101 @@ impl Builder {
     ) -> Result<&mut Self> {
         let sanitized_id = sanitize_archive_path(id)?;
 
+        // For v2+ claims, write the bytes directly into the pre_claim as an EmbeddedData
+        // assertion — no copy in the ResourceStore. The assertion label is derived from the
+        // current definition so that thumbnails get the right label.
+        if self.claim_version() >= 2 {
+            if self.resource_map.contains_key(&sanitized_id) {
+                return Err(Error::BadParam(id.to_string()));
+            }
+
+            // Determine the assertion label from the definition's current state.
+            let (assertion_label, format) = if self
+                .definition
+                .thumbnail
+                .as_ref()
+                .is_some_and(|r| r.identifier == sanitized_id)
+            {
+                let fmt = self
+                    .definition
+                    .thumbnail
+                    .as_ref()
+                    .map(|r| r.format.clone())
+                    .unwrap_or_default();
+                (labels::CLAIM_THUMBNAIL, fmt)
+            } else if let Some(ing) = self.definition.ingredients.iter().find(|ing| {
+                ing.thumbnail_ref()
+                    .is_some_and(|r| r.identifier == sanitized_id)
+            }) {
+                let fmt = ing
+                    .thumbnail_ref()
+                    .map(|r| r.format.clone())
+                    .unwrap_or_default();
+                (labels::INGREDIENT_THUMBNAIL, fmt)
+            } else if let Some(ing) = self
+                .definition
+                .ingredients
+                .iter()
+                .find(|ing| ing.data_ref().is_some_and(|r| r.identifier == sanitized_id))
+            {
+                let fmt = ing.data_ref().map(|r| r.format.clone()).unwrap_or_default();
+                (labels::EMBEDDED_DATA, fmt)
+            } else {
+                // Resource not yet referenced in the definition — fall back to ResourceStore
+                // so callers that set definition refs after add_resource still work.
+                if self.resources.exists(&sanitized_id) {
+                    return Err(Error::BadParam(id.to_string()));
+                }
+                let mut buf = Vec::new();
+                stream.read_to_end(&mut buf)?;
+                self.resources.add(sanitized_id, buf)?;
+                return Ok(self);
+            };
+
+            // Initialize pre_claim on first use.
+            if self.pre_claim.is_none() {
+                if self.definition.label.is_none() {
+                    let version = self.claim_version();
+                    let temp = Claim::new("", self.definition.vendor.as_deref(), version.into());
+                    self.definition.label = Some(temp.label().to_string());
+                }
+                let label = self
+                    .definition
+                    .label
+                    .as_deref()
+                    .ok_or_else(|| Error::BadParam("label".into()))?
+                    .to_string();
+                let version = self.claim_version();
+                self.pre_claim = Some(
+                    Claim::new_with_user_guid("", &label, version.into())?
+                        .with_context(self.context.clone()),
+                );
+            }
+            let pre = self
+                .pre_claim
+                .as_mut()
+                .ok_or_else(|| Error::BadParam("pre_claim".into()))?;
+
+            let mut data = Vec::new();
+            stream.read_to_end(&mut data)?;
+
+            let embedded = EmbeddedData::new(assertion_label, format_to_mime(&format), data);
+            let hu = pre.add_assertion(&embedded)?;
+
+            self.resource_map.insert(
+                sanitized_id,
+                ResourceRef {
+                    format,
+                    identifier: hu.url().clone(),
+                    hash: Some(base64::encode(&hu.hash())),
+                    alg: hu.alg().or_else(|| Some(pre.alg().to_string())),
+                    data_types: None,
+                },
+            );
+            return Ok(self);
+        }
+
+        // v1 claims: store in ResourceStore as before.
         if self.resources.exists(&sanitized_id) {
             return Err(Error::BadParam(id.to_string())); // todo add specific error
         }
@@ -1317,19 +1424,26 @@ impl Builder {
             "".to_string() // claim_generator is not used in version 2
         };
 
-        let mut claim = match definition.label.as_ref() {
-            Some(label) => Claim::new_with_user_guid(
-                &claim_generator,
-                &label.to_string(),
-                self.claim_version().into(),
-            )?,
-            None => Claim::new(
-                &claim_generator,
-                definition.vendor.as_deref(),
-                self.claim_version().into(),
-            ),
-        }
-        .with_context(self.context.clone());
+        // If prepare_resources() pre-populated a claim, clone it so pre-registered
+        // EmbeddedData assertions (thumbnail, ingredient data) are already in the claim
+        // with stable JUMBF URIs. Otherwise build a fresh claim the normal way.
+        let mut claim = if let Some(pre) = &self.pre_claim {
+            pre.clone().with_context(self.context.clone())
+        } else {
+            match definition.label.as_ref() {
+                Some(label) => Claim::new_with_user_guid(
+                    &claim_generator,
+                    &label.to_string(),
+                    self.claim_version().into(),
+                )?,
+                None => Claim::new(
+                    &claim_generator,
+                    definition.vendor.as_deref(),
+                    self.claim_version().into(),
+                ),
+            }
+            .with_context(self.context.clone())
+        };
 
         // add claim generator info to claim and resolve icons
         for info in &claim_generator_info {
@@ -1365,8 +1479,9 @@ impl Builder {
 
         if let Some(thumb_ref) = definition.thumbnail.as_ref() {
             // Setting the format to "none" will ensure that no claim thumbnail is added
-            if thumb_ref.format != "none" {
-                //let data = self.resources.get(&thumb_ref.identifier)?;
+            if thumb_ref.format != "none" && !self.resource_map.contains_key(&thumb_ref.identifier)
+            {
+                // Not pre-registered via add_resource — add assertion normally.
                 let mut stream = self.resources.open(thumb_ref)?;
                 let mut data = Vec::new();
                 stream.read_to_end(&mut data)?;
@@ -1386,6 +1501,8 @@ impl Builder {
                 // todo: add setting for created added thumbnails
                 add_assertion(&mut claim, &thumbnail, false)?;
             }
+            // else: assertion was pre-registered by add_resource() and is already
+            // present in the claim via the pre_claim clone — nothing to add.
         }
         // add all ingredients to the claim
         // We use a map to track the ingredient IDs and their hashed URIs
@@ -1399,13 +1516,38 @@ impl Builder {
                 .map(|label| label.to_string())
                 .unwrap_or_else(|| ingredient.instance_id().to_string());
 
-            // add it to the claim
-            let uri = ingredient.add_to_claim(
-                &mut claim,
-                definition.redactions.clone(),
-                Some(&self.resources),
-                &self.context,
-            )?;
+            // If any ResourceRef for this ingredient was pre-registered via add_resource(),
+            // clone the ingredient and substitute the JUMBF URI refs so that add_to_claim()
+            // uses the hash shortcut and doesn't re-add the assertion.
+            let thumb_pre = ingredient
+                .thumbnail_ref()
+                .and_then(|r| self.resource_map.get(&r.identifier));
+            let data_pre = ingredient
+                .data_ref()
+                .and_then(|r| self.resource_map.get(&r.identifier));
+
+            let uri = if thumb_pre.is_some() || data_pre.is_some() {
+                let mut ing = ingredient.clone();
+                if let Some(new_ref) = thumb_pre {
+                    ing.set_thumbnail_ref(new_ref.clone())?;
+                }
+                if let Some(new_ref) = data_pre {
+                    ing.set_data_direct(new_ref.clone());
+                }
+                ing.add_to_claim(
+                    &mut claim,
+                    definition.redactions.clone(),
+                    Some(&self.resources),
+                    &self.context,
+                )?
+            } else {
+                ingredient.add_to_claim(
+                    &mut claim,
+                    definition.redactions.clone(),
+                    Some(&self.resources),
+                    &self.context,
+                )?
+            };
             if !id.is_empty() {
                 ingredient_map.insert(id, (ingredient.relationship(), uri));
             }
@@ -3461,6 +3603,8 @@ mod tests {
 
         let thumbnail_ref = ResourceRef::new("ingredient/jpeg", "5678");
 
+        // Use a valid v4-UUID label so pre_claim can be initialized.
+        let valid_label = Claim::new("", Some("test"), 2).label().to_string();
         let definition = ManifestDefinition {
             vendor: Some("test".to_string()),
             claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
@@ -3468,7 +3612,7 @@ mod tests {
             title: Some("Test_Manifest".to_string()),
             instance_id: "1234".to_string(),
             thumbnail: Some(thumbnail_ref.clone()),
-            label: Some("ABCDE".to_string()),
+            label: Some(valid_label.clone()),
             ..Default::default()
         };
 
@@ -3494,21 +3638,16 @@ mod tests {
         assert_eq!(definition.title, Some("Test_Manifest".to_string()));
         assert_eq!(definition.format, "image/tiff".to_string());
         assert_eq!(definition.instance_id, "1234".to_string());
-        assert_eq!(definition.thumbnail, Some(thumbnail_ref));
+        assert_eq!(definition.thumbnail, Some(thumbnail_ref.clone()));
         assert_eq!(definition.ingredients[0].title(), Some("Parent Test"));
         assert_eq!(
             definition.assertions[0].label(),
             "org.test.assertion".to_string()
         );
-        assert_eq!(definition.label, Some("ABCDE".to_string()));
-        assert_eq!(
-            builder
-                .resources
-                .get(&builder.definition.thumbnail.unwrap().identifier)
-                .unwrap()
-                .into_owned(),
-            b"12345"
-        );
+        assert_eq!(definition.label, Some(valid_label));
+        // With v2 claims, add_resource writes directly to the pre_claim assertion store,
+        // not to the ResourceStore. Verify the resource is tracked in resource_map.
+        assert!(builder.resource_map.contains_key(&thumbnail_ref.identifier));
     }
 
     #[test]
