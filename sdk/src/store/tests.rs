@@ -4,6 +4,8 @@
 
 #[cfg(feature = "file_io")]
 use std::fs;
+#[cfg(feature = "file_io")]
+use std::path::PathBuf;
 use std::{
     io::{Read, Seek, SeekFrom, Write},
     sync::{
@@ -22,8 +24,6 @@ use sha2::Sha256;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use super::*;
-#[cfg(feature = "file_io")]
-use std::path::PathBuf;
 #[cfg(feature = "file_io")]
 use crate::{
     assertion::AssertionJson,
