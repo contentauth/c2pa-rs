@@ -1,16 +1,17 @@
 use std::io::{Cursor, Read, Seek, SeekFrom};
 #[cfg(feature = "file_io")]
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
+
 use async_generic::async_generic;
+
 #[cfg(feature = "fetch_remote_manifests")]
 use super::DEFAULT_MANIFEST_RESPONSE_SIZE;
-#[cfg(feature = "file_io")]
-use super::MANIFEST_STORE_EXT;
 use super::{Store, StoreValidationInfo, MAX_INGREDIENT_DEPTH};
 #[cfg(feature = "file_io")]
-use crate::jumbf_io::{
-    get_supported_file_extension, load_jumbf_from_file, save_jumbf_to_file,
-};
+use crate::jumbf_io::{get_supported_file_extension, save_jumbf_to_file};
 use crate::{
     assertion::AssertionBase,
     assertions::{
@@ -40,8 +41,7 @@ use crate::{
         is_zero,
     },
     validation_results::ValidationResults,
-    validation_status,
-    AsyncSigner, Signer, ValidationState,
+    validation_status, AsyncSigner, Signer, ValidationState,
 };
 
 impl Store {
@@ -818,7 +818,6 @@ impl Store {
 
         self.finish_embeddable_store(&jumbf_bytes, format)
     }
-
 
     /// Returns the supplied manifest composed to be directly compatible with the desired format.
     /// For example, if format is JPEG function will return the set of APP11 segments that contains
@@ -1909,5 +1908,4 @@ impl Store {
         };
         Ok(store)
     }
-
 }

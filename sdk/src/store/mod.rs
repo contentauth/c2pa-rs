@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "file_io")]
-use std::path::{Path, PathBuf};
 use std::{
     collections::{HashMap, HashSet},
     io::Cursor,
@@ -21,8 +19,6 @@ use std::{
 use async_generic::async_generic;
 use log::error;
 
-#[cfg(feature = "file_io")]
-use crate::jumbf_io::{get_supported_file_extension, save_jumbf_to_file};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
@@ -51,18 +47,15 @@ use crate::{
         self,
         boxes::*,
         labels::{
-            manifest_label_from_uri, manifest_label_to_parts, to_assertion_uri,
-            ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
+            manifest_label_from_uri, manifest_label_to_parts, to_assertion_uri, ASSERTIONS,
+            CREDENTIALS, DATABOXES, SIGNATURE,
         },
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
     settings::{builder::OcspFetchScope, get_thread_local_settings, Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
-    utils::{
-        hash_utils::HashRange,
-        is_zero,
-    },
+    utils::{hash_utils::HashRange, is_zero},
     validation_results::validation_codes::{
         ASSERTION_CBOR_INVALID, ASSERTION_JSON_INVALID, ASSERTION_MISSING, CLAIM_MALFORMED,
     },
@@ -1723,6 +1716,7 @@ impl Store {
 
         self.to_jumbf_internal(signer.reserve_size())
     }
+
     /// Inserts placeholders for dynamic assertions to be updated later.
     #[async_generic(async_signature(
         &mut self,
@@ -2367,7 +2361,6 @@ pub enum InvalidClaimError {
     )]
     AssertionCountMismatch { expected: usize, found: usize },
 }
-
 
 mod store_io;
 
