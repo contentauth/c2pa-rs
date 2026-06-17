@@ -176,7 +176,6 @@ pub struct ResourceStore {
     /// Optional resolver that can look up resource bytes by URI from an external source
     /// (e.g. a `Store`). Used to defer materialization of bytes during reading.
     #[serde(skip)]
-    #[cfg_attr(feature = "json_schema", schemars(skip))]
     resolver: Option<StoreResolver>,
 }
 
@@ -197,21 +196,9 @@ impl std::fmt::Debug for StoreResolver {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-impl std::ops::Deref for StoreResolver {
-    type Target = dyn Fn(&str) -> Option<Vec<u8>> + Send + Sync;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.0
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl std::ops::Deref for StoreResolver {
-    type Target = dyn Fn(&str) -> Option<Vec<u8>>;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.0
+impl StoreResolver {
+    fn resolve(&self, id: &str) -> Option<Vec<u8>> {
+        (self.0)(id)
     }
 }
 
@@ -247,8 +234,8 @@ impl ResourceStore {
             self.set_resolver(Arc::new(move |uri: &str| {
                 existing
                     .as_ref()
-                    .and_then(|r| r(uri))
-                    .or_else(|| new_resolver(uri))
+                    .and_then(|r| r.resolve(uri))
+                    .or_else(|| new_resolver.resolve(uri))
             }));
         }
     }
@@ -354,7 +341,7 @@ impl ResourceStore {
                     return Ok(Cow::Owned(value));
                 }
                 None => {
-                    if let Some(data) = self.resolver.as_ref().and_then(|r| r(id)) {
+                    if let Some(data) = self.resolver.as_ref().and_then(|r| r.resolve(id)) {
                         return Ok(Cow::Owned(data));
                     }
                     return Err(Error::ResourceNotFound(id.to_string()));
@@ -365,7 +352,7 @@ impl ResourceStore {
             || {
                 self.resolver
                     .as_ref()
-                    .and_then(|r| r(id))
+                    .and_then(|r| r.resolve(id))
                     .map(Cow::Owned)
                     .ok_or_else(|| Error::ResourceNotFound(id.to_string()))
             },
@@ -388,7 +375,7 @@ impl ResourceStore {
                     return std::io::copy(&mut file, &mut stream).map_err(Error::IoError);
                 }
                 None => {
-                    if let Some(data) = self.resolver.as_ref().and_then(|r| r(id)) {
+                    if let Some(data) = self.resolver.as_ref().and_then(|r| r.resolve(id)) {
                         stream.write_all(&data).map_err(Error::IoError)?;
                         return Ok(data.len() as u64);
                     }
@@ -402,7 +389,7 @@ impl ResourceStore {
                 Ok(data.len() as u64)
             }
             None => {
-                if let Some(data) = self.resolver.as_ref().and_then(|r| r(id)) {
+                if let Some(data) = self.resolver.as_ref().and_then(|r| r.resolve(id)) {
                     stream.write_all(&data).map_err(Error::IoError)?;
                     return Ok(data.len() as u64);
                 }
@@ -426,7 +413,7 @@ impl ResourceStore {
         }
 
         if let Some(resolver) = &self.resolver {
-            if resolver(id).is_some() {
+            if resolver.resolve(id).is_some() {
                 return true;
             }
         }
