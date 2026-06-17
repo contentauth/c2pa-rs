@@ -33,7 +33,7 @@ use crate::{
 pub struct BuiltInSignatureVerifier<'a> {
     /// Configuration to use when an identity claims aggregation credential is
     /// presented.
-    pub ica_verifier: IcaSignatureVerifier,
+    pub ica_verifier: IcaSignatureVerifier<'a>,
 
     /// Configuration to use when an X.509 credential is presented.
     pub x509_verifier: X509SignatureVerifier<'a>,

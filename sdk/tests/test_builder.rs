@@ -86,6 +86,7 @@ fn test_builder_riff() -> Result<()> {
 // manifest as the ingredients active manifest.
 //
 // Source: https://github.com/contentauth/c2pa-rs/issues/1554
+#[cfg(test)]
 #[test]
 fn test_builder_cyclic_ingredient() -> Result<()> {
     let context = test_context().into_shared();

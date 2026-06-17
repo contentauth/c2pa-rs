@@ -14,35 +14,42 @@
 //! This module contains the APIs you will use to validate a
 //! C2PA Manifest that contains one or more CAWG identity assertions.
 
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::{
+    context::Context,
     dynamic_assertion::{AsyncPostValidator, PartialClaim},
-    http::AsyncHttpResolver,
+    http::HttpResolvers,
     identity::IdentityAssertion,
     status_tracker::StatusTracker,
-    Context, ManifestAssertion,
+    ManifestAssertion,
 };
 
 /// Validates a CAWG identity assertion.
-pub struct CawgValidator {
-    resolver: Arc<dyn AsyncHttpResolver>,
+pub struct CawgValidator<'a> {
+    resolvers: &'a dyn HttpResolvers,
 }
 
-impl Default for CawgValidator {
-    fn default() -> Self {
+impl<'a> CawgValidator<'a> {
+    /// Create a [`CawgValidator`] using resolvers from the provided context.
+    pub fn new(resolvers_: &'a dyn HttpResolvers) -> Self {
         Self {
-            resolver: Context::new().resolver_async(),
+            resolvers: resolvers_,
         }
+    }
+}
+
+impl Default for CawgValidator<'_> {
+    fn default() -> Self {
+        let context: &'static Context = Box::leak(Box::new(Context::new()));
+        Self { resolvers: context }
     }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl AsyncPostValidator for CawgValidator {
+impl AsyncPostValidator for CawgValidator<'_> {
     async fn validate(
         &self,
         label: &str,
@@ -55,7 +62,7 @@ impl AsyncPostValidator for CawgValidator {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
             tracker.push_current_uri(uri.to_string());
             let result = identity_assertion
-                .validate_partial_claim_async(partial_claim, tracker, self.resolver.clone())
+                .validate_partial_claim_async(partial_claim, tracker, self.resolvers)
                 .await
                 .ok();
             tracker.pop_current_uri();

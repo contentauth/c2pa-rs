@@ -30,6 +30,7 @@ use crate::{
     crypto::raw_signature::SigningAlg,
     error::{Error, Result},
     hashed_uri::HashedUri,
+    http::HttpResolvers,
     identity::IdentityAssertion,
     ingredient::Ingredient,
     jumbf::labels::{to_absolute_uri, to_assertion_uri},
@@ -610,7 +611,7 @@ impl Manifest {
                             .validate_partial_claim(
                                 &partial_claim,
                                 validation_log,
-                                context.resolver_async(),
+                                &context as &dyn HttpResolvers,
                             )
                             .ok()
                     } else {
@@ -618,7 +619,7 @@ impl Manifest {
                             .validate_partial_claim_async(
                                 &partial_claim,
                                 validation_log,
-                                context.resolver_async(),
+                                &context as &dyn HttpResolvers,
                             )
                             .await
                             .ok()

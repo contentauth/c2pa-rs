@@ -22,7 +22,7 @@ use crate::{
     assertions::labels,
     crypto::cose::CertificateTrustPolicy,
     error::Result,
-    http::{AsyncHttpResolver, SyncHttpResolver},
+    http::HttpResolvers,
     status_tracker::StatusTracker,
     Error,
 };
@@ -63,24 +63,18 @@ impl TimeStamp {
     // The `signature` is normally obtained from [`Store::get_cose_sign1_signature`].
     //
     // [`Store::get_cose_sign1_signature`][crate::store::Store::get_cose_sign1_structure].
-    #[async_generic(async_signature(
-        &mut self,
-        tsa_url: &str,
-        manifest_id: &str,
-        signature: &[u8],
-        http_resolver: &impl AsyncHttpResolver,
-    ))]
+    #[async_generic]
     pub(crate) fn refresh_timestamp(
         &mut self,
         tsa_url: &str,
         manifest_id: &str,
         signature: &[u8],
-        http_resolver: &impl SyncHttpResolver,
+        resolvers: &dyn HttpResolvers,
     ) -> Result<()> {
         let timestamp_token = if _sync {
-            TimeStamp::send_timestamp_token_request(tsa_url, signature, http_resolver)?
+            TimeStamp::send_timestamp_token_request(tsa_url, signature, resolvers)?
         } else {
-            TimeStamp::send_timestamp_token_request_async(tsa_url, signature, http_resolver).await?
+            TimeStamp::send_timestamp_token_request_async(tsa_url, signature, resolvers).await?
         };
 
         self.0
@@ -94,34 +88,22 @@ impl TimeStamp {
     /// This function will verify the structure of the returned response but not the trust.
     ///
     /// See [`TimeStamp::refresh_timestamp`] for more information.
-    #[async_generic(async_signature(
-        tsa_url: &str,
-        message: &[u8],
-        http_resolver: &impl AsyncHttpResolver,
-    ))]
+    #[async_generic]
     pub(crate) fn send_timestamp_token_request(
         tsa_url: &str,
         message: &[u8],
-        http_resolver: &impl SyncHttpResolver,
+        resolvers: &dyn HttpResolvers,
     ) -> Result<Vec<u8>> {
         let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
         let headers = None;
 
         let bytes = if _sync {
             crate::crypto::time_stamp::default_rfc3161_request(
-                tsa_url,
-                headers,
-                &body,
-                message,
-                http_resolver,
+                tsa_url, headers, &body, message, resolvers,
             )
         } else {
             crate::crypto::time_stamp::default_rfc3161_request_async(
-                tsa_url,
-                headers,
-                &body,
-                message,
-                http_resolver,
+                tsa_url, headers, &body, message, resolvers,
             )
             .await
         }

@@ -1994,21 +1994,18 @@ impl Builder {
 
             if let Some(claim) = provenance_claim.claim_ingredient(&manifest_label) {
                 let signature = claim.cose_sign1()?.signature;
+                let context = self.context();
+                let resolvers = &context as &dyn crate::http::HttpResolvers;
                 if _sync {
                     timestamp_assertion.refresh_timestamp(
                         tsa_url,
                         &manifest_label,
                         &signature,
-                        &self.context().resolver(),
+                        resolvers,
                     )?;
                 } else {
                     timestamp_assertion
-                        .refresh_timestamp_async(
-                            tsa_url,
-                            &manifest_label,
-                            &signature,
-                            &self.context().resolver_async(),
-                        )
+                        .refresh_timestamp_async(tsa_url, &manifest_label, &signature, resolvers)
                         .await?;
                 }
             }
