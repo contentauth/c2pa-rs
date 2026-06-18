@@ -26,7 +26,7 @@ use uuid::Uuid;
 #[cfg(doc)]
 use crate::Manifest;
 use crate::{
-    assertion::{Assertion, AssertionBase},
+    assertion::{Assertion, AssertionBase, AssertionData},
     assertions::{
         self, labels, AssertionMetadata, AssetType, CertificateStatus, EmbeddedData, Relationship,
     },
@@ -38,7 +38,10 @@ use crate::{
     hashed_uri::HashedUri,
     jumbf::{
         self,
-        labels::{assertion_label_from_uri, manifest_label_from_uri, ASSERTIONS, DATABOXES},
+        labels::{
+            assertion_label_from_uri, manifest_label_from_uri, to_assertion_uri, ASSERTIONS,
+            DATABOXES,
+        },
     },
     log_item,
     resource_store::{ResourceRef, ResourceStore},
@@ -491,36 +494,80 @@ impl Ingredient {
     }
 
     pub(crate) fn set_store_resolver(&mut self, store: Arc<Store>) {
+        // Capture active manifest label before the closure moves `store`.
+        let active = self.active_manifest().map(str::to_owned);
+
         // Set the deferred manifest_data ref when the active manifest label is
         // present in this store and no explicit ref was already provided.
         if self.manifest_data.is_none() {
-            if let Some(active) = self.active_manifest().map(str::to_owned) {
-                if store.get_claim(&active).is_some() {
-                    self.manifest_data = Some(ResourceRef::new("application/c2pa", active));
+            if let Some(ref a) = active {
+                if store.get_claim(a).is_some() {
+                    self.manifest_data = Some(ResourceRef::new("application/c2pa", a.clone()));
                 }
             }
         }
-        self.resources
-            .set_resolver(std::sync::Arc::new(move |uri: &str| {
+
+        let store_get = store.clone();
+        let store_has = store.clone();
+        let store_keys = store;
+        let active_keys = active;
+
+        self.resources.set_resolver(
+            Arc::new(move |uri: &str| {
                 if uri.contains(DATABOXES) {
                     let label = manifest_label_from_uri(uri)?;
                     let hashed_uri = HashedUri::new(uri.to_owned(), None, &[]);
-                    return store
+                    return store_get
                         .get_data_box_from_uri_and_claim(&hashed_uri, &label)
-                        .map(|db| db.data.clone());
+                        .map(|db| Ok(db.data.clone()));
                 }
                 if uri.contains(ASSERTIONS) {
-                    let assertion = store.get_assertion_from_uri(uri)?;
-                    return Some(assertion.data().to_vec());
+                    let assertion = store_get.get_assertion_from_uri(uri)?;
+                    return Some(Ok(assertion.data().to_vec()));
                 }
                 // Manifest: uri is a bare claim label (set by manifest_data ref above).
-                if let Some(claim) = store.get_claim(uri) {
-                    return Store::build_flat_ingredient_store(&store, claim)
-                        .and_then(|s| s.to_jumbf_internal(0))
-                        .ok();
+                if let Some(claim) = store_get.get_claim(uri) {
+                    return Some(
+                        Store::build_flat_ingredient_store(&store_get, claim)
+                            .and_then(|s| s.to_jumbf_internal(0)),
+                    );
                 }
                 None
-            }));
+            }),
+            Arc::new(move |uri: &str| {
+                if uri.contains(ASSERTIONS) {
+                    store_has
+                        .get_assertion_from_uri(uri)
+                        .map(|a| matches!(a.decode_data(), AssertionData::Binary(_)))
+                        .unwrap_or(false)
+                } else if uri.contains(DATABOXES) {
+                    let hr = HashedUri::new(uri.to_owned(), None, &[]);
+                    let label = manifest_label_from_uri(uri).unwrap_or_default();
+                    store_has
+                        .get_data_box_from_uri_and_claim(&hr, &label)
+                        .is_some()
+                } else {
+                    store_has.get_claim(uri).is_some()
+                }
+            }),
+            Arc::new(move || {
+                let Some(ref label) = active_keys else {
+                    return Vec::new();
+                };
+                let Some(claim) = store_keys.get_claim(label) else {
+                    return Vec::new();
+                };
+                let mut result: Vec<String> = claim
+                    .claim_assertion_store()
+                    .iter()
+                    .filter(|ca| matches!(ca.assertion().decode_data(), AssertionData::Binary(_)))
+                    .map(|ca| to_assertion_uri(label, &ca.label()))
+                    .collect();
+                result.extend(claim.databoxes().iter().map(|(hr, _)| hr.url().to_owned()));
+                result.push(label.clone());
+                result
+            }),
+        );
     }
 
     /// Sets a reference to Ingredient data.
@@ -977,7 +1024,6 @@ impl Ingredient {
         store: &Store,
         claim_label: &str,
         ingredient_uri: &str,
-        #[cfg(feature = "file_io")] resource_path: Option<&Path>,
     ) -> Result<Self> {
         let assertion =
             store
@@ -1020,11 +1066,6 @@ impl Ingredient {
         };
 
         ingredient.resources.set_label(claim_label); // set the label for relative paths
-
-        #[cfg(feature = "file_io")]
-        if let Some(base_path) = resource_path {
-            ingredient.resources_mut().set_base_path(base_path)
-        }
 
         // Find the thumbnail and add as a ResourceRef.
         if let Some(hashed_uri) = ingredient_assertion.thumbnail.as_ref() {
@@ -1372,16 +1413,6 @@ impl Ingredient {
             .clone_from(&self.informational_uri);
         ingredient_assertion.data_types.clone_from(&self.data_types);
         claim.add_assertion(&ingredient_assertion)
-    }
-
-    /// Setting a base path will make the ingredient use resource files instead of memory buffers.
-    ///
-    /// The files will be relative to the given base path.
-    #[cfg(feature = "file_io")]
-    pub(crate) fn with_base_path<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
-        std::fs::create_dir_all(&base_path)?;
-        self.resources.set_base_path(base_path.as_ref());
-        Ok(self)
     }
 
     /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes,
