@@ -165,6 +165,7 @@ serde_json = { version = "1.0.150", features = ["preserve_order"] }
 serde_with = "3.20.0"
 serde-transcode = "1.1.1"
 sha1 = "0.10.6"
+sha2 = "0.11.0"
 spki = { version = "0.7.3", optional = true }
 static-iref = "3.0"
 tempfile = "3.27.0"
@@ -176,19 +177,6 @@ web-time = "1.1"
 x509-parser = "0.18.1"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 zip = { version = "8.6.0", default-features = false }
-
-# Use the asm feature of sha2 on aarch64 macOS for better performance. This nearly
-# halves hashing time for large assets (> 50gb mp4, for example).
-#
-# Note: This feature has been removed in later versions of sha2.
-# If upgrading, ensure sha2 has implemented equivalent optimizations for aarch64.
-#
-# See: https://github.com/RustCrypto/hashes/pull/542 and
-# https://github.com/RustCrypto/hashes/tree/master/sha2#backends (which hasn't been released yet).
-sha2 = "0.10.6"
-# Apply the "asm" feature only for macOS on AArch64.
-[target.'cfg(all(target_arch = "aarch64", target_os = "macos"))'.dependencies]
-sha2 = { version = "0.10.6", features = ["asm"] }
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 reqwest = { version = "0.12.28", default-features = false, features = [
