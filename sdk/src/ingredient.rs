@@ -157,7 +157,8 @@ pub struct Ingredient {
 }
 
 fn default_instance_id() -> String {
-    format!("xmp:iid:{}", Uuid::new_v4())
+    // "xmp.iid:" (dot) is the correct Adobe/XMP convention, not "xmp:iid:" (colon).
+    format!("xmp.iid:{}", Uuid::new_v4())
 }
 
 fn default_relationship() -> Relationship {
@@ -2153,6 +2154,19 @@ mod tests {
         assert_eq!(
             image,
             include_bytes!("../tests/fixtures/sample1.svg").to_vec()
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_default_instance_id_uses_dot_separator() {
+        // libpng-test.png has no xmpMM:InstanceID, so default_instance_id() is used.
+        let ap = fixture_path("libpng-test.png");
+        let ingredient = Ingredient::from_file(ap).unwrap();
+        assert!(
+            ingredient.instance_id().starts_with("xmp.iid:"),
+            "expected xmp.iid: prefix, got: {}",
+            ingredient.instance_id()
         );
     }
 }
