@@ -43,6 +43,7 @@ fn temp_path(name: &str) -> PathBuf {
     create_dir_all(&path).ok();
     path.join(name)
 }
+
 #[test]
 fn tool_not_found() -> Result<(), Box<dyn Error>> {
     let mut cmd = Command::new(cargo::cargo_bin!("c2patool"));
@@ -100,6 +101,7 @@ fn tool_embed_jpeg_report() -> Result<(), Box<dyn Error>> {
         .stdout(str::contains("My Title"));
     Ok(())
 }
+
 #[test]
 fn tool_fs_output_report() -> Result<(), Box<dyn Error>> {
     let path = temp_path("output_dir");
@@ -341,92 +343,123 @@ fn tool_sign_to_same_file_no_force() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
-// #[test]
-// fn test_succeed_using_example_signer() -> Result<(), Box<dyn Error>> {
-//     let output = temp_path("./output_external.jpg");
-//     // We are calling a cargo/bin here that successfully signs claim bytes. We are using
-//     // a cargo/bin because it works on all OSs, we like Rust, and our example external signing
-//     // code is compiled and verified during every test of this project.
-//     let mut successful_process = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-//     successful_process.push("target/debug/signer-path-success");
-//     Command::cargo_bin("c2patool")?
-//         .arg(fixture_path("earth_apollo17.jpg"))
-//         .arg("--signer-path")
-//         .arg(&successful_process)
-//         .arg("--reserve-size")
-//         .arg("20248")
-//         .arg("--manifest")
-//         .arg("sample/test.json")
-//         .arg("-o")
-//         .arg(&output)
-//         .arg("-f")
-//         .assert()
-//         .success();
-//     Ok(())
-// }
-// #[test]
-// fn test_fails_for_not_found_external_signer() -> Result<(), Box<dyn Error>> {
-//     let output = temp_path("./output_external.jpg");
-//     Command::cargo_bin("c2patool")?
-//         .arg(fixture_path("earth_apollo17.jpg"))
-//         .arg("--signer-path")
-//         .arg("./executable-not-found-test")
-//         .arg("--reserve-size")
-//         .arg("10248")
-//         .arg("--manifest")
-//         .arg("sample/test.json")
-//         .arg("-o")
-//         .arg(&output)
-//         .arg("-f")
-//         .assert()
-//         .stderr(str::contains("Failed to run command at"))
-//         .failure();
-//     Ok(())
-// }
-// #[test]
-// fn test_fails_for_external_signer_failure() -> Result<(), Box<dyn Error>> {
-//     let output = temp_path("./output_external.jpg");
-//     let mut failing_process = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-//     failing_process.push("target/debug/signer-path-fail");
-//     Command::cargo_bin("c2patool")?
-//         .arg(fixture_path("earth_apollo17.jpg"))
-//         .arg("--signer-path")
-//         .arg(&failing_process)
-//         .arg("--reserve-size")
-//         .arg("20248")
-//         .arg("--manifest")
-//         .arg("sample/test.json")
-//         .arg("-o")
-//         .arg(&output)
-//         .arg("-f")
-//         .assert()
-//         .stderr(str::contains("User supplied signer process failed"))
-//         // Ensures stderr from user executable is revealed to client.
-//         .stderr(str::contains("signer-path-fail-stderr"))
-//         .failure();
-//     Ok(())
-// }
-// #[test]
-// fn test_fails_for_external_signer_success_without_stdout() -> Result<(), Box<dyn Error>> {
-//     let output = temp_path("./output_external.jpg");
-//     let mut failing_process = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-//     failing_process.push("target/debug/signer-path-no-stdout");
-//     Command::cargo_bin("c2patool")?
-//         .arg(fixture_path("earth_apollo17.jpg"))
-//         .arg("--signer-path")
-//         .arg(&failing_process)
-//         .arg("--reserve-size")
-//         .arg("10248")
-//         .arg("--manifest")
-//         .arg("sample/test.json")
-//         .arg("-o")
-//         .arg(&output)
-//         .arg("-f")
-//         .assert()
-//         .stderr(str::contains("User supplied process succeeded, but the external process did not write signature bytes to stdout"))
-//         .failure();
-//     Ok(())
-// }
+#[test]
+fn test_sign_using_c2patool_as_subprocess_signer() -> Result<(), Box<dyn Error>> {
+    let output = temp_path("output_subprocess_signer.jpg");
+    // "c2patool test-signer" implements the subprocess signing protocol:
+    // --signer-info returns the baked-in es256 cert; default mode signs stdin bytes.
+    let signer_cmd = format!("{} test-signer", cargo::cargo_bin!("c2patool").display());
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("--signer-path")
+        .arg(&signer_cmd)
+        .arg("--manifest")
+        .arg("sample/test.json")
+        .arg("-o")
+        .arg(&output)
+        .arg("-f")
+        .assert()
+        .success();
+    Ok(())
+}
+
+#[test]
+fn test_sign_cawg_using_c2patool_as_identity_signer() -> Result<(), Box<dyn Error>> {
+    let output = temp_path("output_cawg_identity_signer.jpg");
+    // Both --signer-path and --identity-signer-path use "c2patool test-signer".
+    // --signer-info is called for each to discover the baked-in es256 cert and alg.
+    let signer_cmd = format!("{} test-signer", cargo::cargo_bin!("c2patool").display());
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("--signer-path")
+        .arg(&signer_cmd)
+        .arg("--identity-signer-path")
+        .arg(&signer_cmd)
+        .arg("--manifest")
+        .arg("sample/test.json")
+        .arg("-o")
+        .arg(&output)
+        .arg("-f")
+        .assert()
+        .success()
+        .stdout(str::contains("cawg.identity"));
+    Ok(())
+}
+
+#[test]
+fn test_fails_for_not_found_external_signer() -> Result<(), Box<dyn Error>> {
+    let output = temp_path("output_not_found_signer.jpg");
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("--signer-path")
+        .arg("./nonexistent-signer-binary-xyz")
+        .arg("--manifest")
+        .arg("sample/test.json")
+        .arg("-o")
+        .arg(&output)
+        .arg("-f")
+        .assert()
+        .failure()
+        .stderr(str::contains("Failed to run"));
+    Ok(())
+}
+
+#[test]
+fn test_fails_for_external_signer_failure() -> Result<(), Box<dyn Error>> {
+    let output = temp_path("output_failing_signer.jpg");
+    // "c2patool test-signer --fail" exits with an error, exercising the failure path.
+    let signer_cmd = format!(
+        "{} test-signer --fail",
+        cargo::cargo_bin!("c2patool").display()
+    );
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("--signer-path")
+        .arg(&signer_cmd)
+        .arg("--manifest")
+        .arg("sample/test.json")
+        .arg("-o")
+        .arg(&output)
+        .arg("-f")
+        .assert()
+        .failure()
+        .stderr(str::contains("deliberately failed"));
+    Ok(())
+}
+
+#[test]
+// With RUST_LOG unset, default level is `error` (see main) — debug! lines in configure_sdk must not appear.
+fn rust_log_unset_suppresses_trust_debug_messages() -> Result<(), Box<dyn Error>> {
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
+        .arg("trust")
+        .arg("--trust_anchors")
+        .arg(fixture_path("trust/anchors.pem"))
+        .arg("--trust_config")
+        .arg(fixture_path("trust/store.cfg"))
+        .env_remove("RUST_LOG")
+        .assert()
+        .success()
+        .stderr(str::contains("Using trust anchors").not());
+    Ok(())
+}
+
+#[test]
+// With RUST_LOG=debug, trust setup emits debug! lines; proves the test above is exercising log level.
+fn rust_log_debug_shows_trust_debug_messages() -> Result<(), Box<dyn Error>> {
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST))
+        .arg("trust")
+        .arg("--trust_anchors")
+        .arg(fixture_path("trust/anchors.pem"))
+        .arg("--trust_config")
+        .arg(fixture_path("trust/store.cfg"))
+        .env("RUST_LOG", "debug")
+        .assert()
+        .success()
+        .stderr(str::contains("Using trust"));
+    Ok(())
+}
 
 #[test]
 // c2patool tests/fixtures/C.jpg trust --trust_anchors=tests/fixtures/trust/anchors.pem --trust_config=tests/fixtures/trust/store.cfg
@@ -661,5 +694,88 @@ fn tool_read_image_crjson() -> Result<(), Box<dyn Error>> {
         .success()
         .stdout(str::contains("\"jsonGenerator\""))
         .stdout(str::contains("https://c2pa.org/crjson"));
+    Ok(())
+}
+
+// Minimal manifest definition with no actions; lets the SDK auto-inject the
+// correct c2pa.created / c2pa.opened action based on intent.
+const MINIMAL_MANIFEST: &str = r#"{"assertions": []}"#;
+
+#[test]
+// c2patool earth_apollo17.jpg --create digitalCapture -c '{"assertions":[]}' -o out.jpg -f
+// Create intent: auto-injects c2pa.created with digitalCapture, no parent ingredient.
+fn intent_create_adds_created_action() -> Result<(), Box<dyn Error>> {
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("--create")
+        .arg("digitalCapture")
+        .arg("-c")
+        .arg(MINIMAL_MANIFEST)
+        .arg("-o")
+        .arg(temp_path("intent_create_out.jpg"))
+        .arg("-f")
+        .assert()
+        .success()
+        .stdout(str::contains("c2pa.created"))
+        .stdout(str::contains("digitalCapture"))
+        .stdout(str::contains("parentOf").not());
+    Ok(())
+}
+
+#[test]
+// --create and --parent are mutually exclusive at the CLI level.
+fn intent_create_rejects_parent_flag() -> Result<(), Box<dyn Error>> {
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("--create")
+        .arg("digitalCapture")
+        .arg("--parent")
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("-c")
+        .arg(MINIMAL_MANIFEST)
+        .arg("-o")
+        .arg(temp_path("intent_create_parent_out.jpg"))
+        .arg("-f")
+        .assert()
+        .failure()
+        .stderr(str::contains("cannot be used with"));
+    Ok(())
+}
+
+#[test]
+// Default (no --create / --update flag) = Edit intent.
+// SDK auto-adds source as parent ingredient and injects c2pa.opened tied to it.
+fn intent_edit_default_adds_parent_and_opened_action() -> Result<(), Box<dyn Error>> {
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("-c")
+        .arg(MINIMAL_MANIFEST)
+        .arg("-o")
+        .arg(temp_path("intent_edit_out.jpg"))
+        .arg("-f")
+        .assert()
+        .success()
+        .stdout(str::contains("c2pa.opened"))
+        .stdout(str::contains("parentOf"));
+    Ok(())
+}
+
+#[test]
+// --update = Update manifest intent.
+// The source must already have a manifest (update manifests require provenance on the parent).
+// SDK auto-adds source as parent ingredient and injects c2pa.opened tied to it.
+fn intent_update_adds_parent_and_opened_action() -> Result<(), Box<dyn Error>> {
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST)) // C.jpg already has a manifest
+        .arg("--update")
+        .arg("-c")
+        .arg(MINIMAL_MANIFEST)
+        .arg("-o")
+        .arg(temp_path("intent_update_out.jpg"))
+        .arg("-f")
+        .assert()
+        .success()
+        .stdout(str::contains("c2pa.opened"))
+        .stdout(str::contains("parentOf"));
     Ok(())
 }

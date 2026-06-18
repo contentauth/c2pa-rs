@@ -9,6 +9,7 @@
 .cargo/config.toml
 
 .vscode
+.claude
 
 /semver-checks/target/
 sdk/target/

@@ -38,6 +38,9 @@ use crate::{
 };
 
 // https://www.w3.org/Graphics/GIF/spec-gif89a.txt
+
+const XMP_MAGIC_TRAILER_LEN: usize = 257;
+
 pub struct GifIO {}
 
 impl CAIReader for GifIO {
@@ -53,20 +56,31 @@ impl CAIReader for GifIO {
             .ok()?
             .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())?;
 
+        // The XMP magic trailer is exactly 257 bytes. A block shorter than that
+        // cannot carry a valid trailer; reject it rather than underflowing the
+        // usize subtraction below (panic in debug, wrap-to-MAX in release).
+        if bytes.len() < XMP_MAGIC_TRAILER_LEN {
+            return None;
+        }
+
         // TODO: this should be validated on construction
-        // Validate the 258-byte XMP magic trailer (excluding terminator).
-        if let Some(byte) = bytes.get(bytes.len() - 257) {
+        if let Some(byte) = bytes.get(bytes.len() - XMP_MAGIC_TRAILER_LEN) {
             if *byte != 1 {
                 return None;
             }
         }
-        for (i, byte) in bytes.iter().rev().take(256).enumerate() {
+        for (i, byte) in bytes
+            .iter()
+            .rev()
+            .take(XMP_MAGIC_TRAILER_LEN - 1)
+            .enumerate()
+        {
             if *byte != i as u8 {
                 return None;
             }
         }
 
-        bytes.truncate(bytes.len() - 257);
+        bytes.truncate(bytes.len() - XMP_MAGIC_TRAILER_LEN);
         String::from_utf8(bytes).ok()
     }
 }
@@ -234,67 +248,63 @@ impl AssetBoxHash for GifIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
         let c2pa_block_exists = self.find_c2pa_block(input_stream)?.is_some();
 
-        Blocks::new(input_stream)?
-            .try_fold(
-                (Vec::new(), None, 0),
-                |(mut box_maps, last_marker, mut offset),
-                 marker|
-                 -> Result<(Vec<_>, Option<BlockMarker<Block>>, usize)> {
-                    let marker = marker?;
+        let mut box_maps = Vec::new();
+        let mut last_marker: Option<BlockMarker<Block>> = None;
 
-                    // If the C2PA block doesn't exist, we need to insert a placeholder after the global color table
-                    // if it exists, or otherwise after the logical screen descriptor.
-                    if !c2pa_block_exists {
-                        if let Some(last_marker) = last_marker.as_ref() {
-                            let should_insert_placeholder = match last_marker.block {
-                                Block::GlobalColorTable(_) => true,
-                                // If the current block is a global color table, then wait til the next iteration to insert.
-                                Block::LogicalScreenDescriptor(_)
-                                    if !matches!(marker.block, Block::GlobalColorTable(_)) =>
-                                {
-                                    true
-                                }
-                                _ => false,
-                            };
-                            if should_insert_placeholder {
-                                offset += 1;
-                                box_maps.push(
-                                    BlockMarker {
-                                        block: Block::ApplicationExtension(
-                                            ApplicationExtension::new_c2pa(&[])?,
-                                        ),
-                                        start: marker.start,
-                                        len: 1,
-                                    }
-                                    .to_box_map()?,
-                                );
-                            }
-                        }
-                    }
+        for marker in Blocks::new(input_stream)? {
+            let marker = marker?;
 
-                    // According to C2PA spec, these blocks must be grouped into the same box map.
-                    match marker.block {
-                        // If it's a local color table, then an image descriptor MUST have come before it.
-                        // If it's a global color table, then a logical screen descriptor MUST have come before it.
-                        Block::LocalColorTable(_) | Block::GlobalColorTable(_) => {
-                            match box_maps.last_mut() {
-                                Some(last_box_map) => {
-                                    last_box_map.range_len += marker.len();
-                                }
-                                // Realistically, this case is unreachable, but to play it safe, we error.
-                                None => return Err(Error::NotFound),
+            // If the C2PA block doesn't exist, we need to insert a placeholder after the global color table
+            // if it exists, or otherwise after the logical screen descriptor.
+            if !c2pa_block_exists {
+                if let Some(last_marker) = last_marker.as_ref() {
+                    let should_insert_placeholder = match last_marker.block {
+                        Block::GlobalColorTable(_) => true,
+                        // If the current block is a global color table, then wait til the next iteration to insert.
+                        Block::LogicalScreenDescriptor(_)
+                            if !matches!(marker.block, Block::GlobalColorTable(_)) =>
+                        {
+                            true
+                        }
+                        _ => false,
+                    };
+                    if should_insert_placeholder {
+                        box_maps.push(
+                            BlockMarker {
+                                block: Block::ApplicationExtension(ApplicationExtension::new_c2pa(
+                                    &[],
+                                )?),
+                                start: marker.start,
+                                len: 0,
                             }
-                        }
-                        _ => {
-                            let mut box_map = marker.to_box_map()?;
-                            box_map.range_start += offset as u64;
-                            box_maps.push(box_map);
-                        }
+                            .to_box_map()?,
+                        );
                     }
-                    Ok((box_maps, Some(marker), offset))
-                },
-            )
-            .map(|(box_maps, _, _)| box_maps)
+                }
+            }
+
+            // According to C2PA spec, these blocks must be grouped into the same box map.
+            match marker.block {
+                // If it's a local color table, then an image descriptor MUST have come before it.
+                // If it's a global color table, then a logical screen descriptor MUST have come before it.
+                Block::LocalColorTable(_) | Block::GlobalColorTable(_) => {
+                    match box_maps.last_mut() {
+                        Some(last_box_map) => {
+                            last_box_map.range_len += marker.len();
+                        }
+                        // Realistically, this case is unreachable, but to play it safe, we error.
+                        None => return Err(Error::NotFound),
+                    }
+                }
+                _ => {
+                    box_maps.push(marker.to_box_map()?);
+                }
+            }
+
+            last_marker = Some(marker);
+        }
+
+        Ok(box_maps)
     }
 }
 
@@ -903,7 +913,7 @@ impl ApplicationExtension {
 
     fn new_xmp(mut bytes: Vec<u8>) -> Result<ApplicationExtension> {
         // Add XMP magic trailer.
-        bytes.reserve(257);
+        bytes.reserve(XMP_MAGIC_TRAILER_LEN);
         bytes.push(1);
         for byte in (0..=255).rev() {
             bytes.push(byte);
@@ -1455,7 +1465,7 @@ mod tests {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 pad: ByteBuf::from(Vec::new()),
-                range_start: 368495,
+                range_start: 368494,
                 range_len: 778
             })
         );
@@ -1467,7 +1477,7 @@ mod tests {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 pad: ByteBuf::from(Vec::new()),
-                range_start: SAMPLE1.len() as u64,
+                range_start: SAMPLE1.len() as u64 - 1,
                 range_len: 1
             })
         );
@@ -1487,6 +1497,39 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_xmp_short_trailer_does_not_panic() {
+        // An XMP Application Extension whose decoded payload is shorter than 257 bytes
+        // must return None, not panic with "attempt to subtract with overflow".
+        // Craft the minimum valid GIF structure with a short XMP block.
+        let gif_io = GifIO {};
+
+        // Build a minimal GIF89a with a single short XMP Application Extension.
+        // Header(6) + LogicalScreenDescriptor(7, no GCT) + AppExt + Trailer(1)
+        let mut data: Vec<u8> = Vec::new();
+
+        // GIF89a header
+        data.extend_from_slice(b"GIF89a");
+        // Logical Screen Descriptor: width=1, height=1, packed=0x00 (no GCT), bg=0, aspect=0
+        data.extend_from_slice(&[0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00]);
+        // Application Extension introducer + label
+        data.push(0x21); // Extension introducer
+        data.push(0xff); // Application Extension label
+        data.push(0x0b); // Block size = 11
+        data.extend_from_slice(b"XMP Data"); // identifier (8 bytes)
+        data.extend_from_slice(&[0x58, 0x4d, 0x50]); // auth code "XMP"
+                                                     // One short sub-block: 10 bytes of payload (well under 257)
+        data.push(0x0a); // sub-block size
+        data.extend_from_slice(&[0u8; 10]); // payload
+        data.push(0x00); // sub-block terminator
+                         // Trailer
+        data.push(0x3b);
+
+        let mut stream = Cursor::new(data);
+        // Must return None, must not panic.
+        assert_eq!(gif_io.read_xmp(&mut stream), None);
     }
 
     #[test]

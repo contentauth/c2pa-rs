@@ -75,41 +75,6 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
     segs.find_map(extract_xmp).map(String::from)
 }
 
-fn add_required_segs_to_stream(
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
-) -> Result<()> {
-    let mut buf: Vec<u8> = Vec::new();
-    input_stream.rewind()?;
-    input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-    input_stream.rewind()?;
-
-    let dimg_opt = DynImage::from_bytes(buf.into())
-        .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
-
-    if let Some(DynImage::Jpeg(jpeg)) = dimg_opt {
-        // check for JUMBF Seg
-        let cai_app11 = get_cai_segments(&jpeg)?; // make sure we only check for C2PA segments
-
-        if cai_app11.is_empty() {
-            // create dummy JUMBF seg
-            let mut no_bytes: Vec<u8> = vec![0; 50]; // enough bytes to be valid
-            no_bytes.splice(16..20, C2PA_MARKER); // cai UUID signature
-            let aio = JpegIO {};
-            aio.write_cai(input_stream, output_stream, &no_bytes)?;
-        } else {
-            // just clone
-            input_stream.rewind()?;
-            output_stream.rewind()?;
-            std::io::copy(input_stream, output_stream)?;
-        }
-    } else {
-        return Err(Error::UnsupportedType);
-    }
-
-    Ok(())
-}
-
 // all cai specific segments
 fn get_cai_segments(jpeg: &img_parts::jpeg::Jpeg) -> Result<Vec<usize>> {
     let mut cai_segs: Vec<usize> = Vec::new();
@@ -206,6 +171,10 @@ impl CAIReader for JpegIO {
         if let Some(dimg) = dimg_opt {
             match dimg {
                 DynImage::Jpeg(jpeg) => {
+                    if jpeg.segments().is_empty() {
+                        return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
+                    }
+
                     let app11 = jpeg.segments_by_marker(markers::APP11);
                     let mut cai_en: Vec<u8> = Vec::new();
                     let mut cai_seg_cnt: u32 = 0;
@@ -289,19 +258,26 @@ impl CAIWriter for JpegIO {
         // read the whole asset
         input_stream.rewind()?;
         input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        // TODO: optimize this by implementing a streaming parser
         let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
         // remove existing CAI segments
         let insertion_point = match delete_cai_segments(&mut jpeg)? {
-            Some(i) if i > 0 => i - 1,
-            _ => 0,
+            Some(i) if i > 0 => i, // note the Jpeg::from_bytes Vec does not contain the SOI marker
+            _ => {
+                // insert after last APP0 if it exists (JFIF compatible), otherwise at the beginning (after SOI)
+                let app0_index = jpeg
+                    .segments()
+                    .iter()
+                    .rposition(|segment| segment.marker() == APP0);
+                app0_index.map_or(0, |i| i + 1)
+            }
         };
 
-        let jumbf_len = store_bytes.len();
-        let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
         let mut seg_chucks = store_bytes.chunks(MAX_JPEG_MARKER_SIZE);
+        let num_segments = seg_chucks.len();
 
-        for seg in 1..num_segments + 1 {
+        for seg in 0..num_segments {
             /*
                 If the size of the box payload is less than 2^32-8 bytes,
                 then all fields except the XLBox field, that is: Le, CI, En, Z, LBox and TBox,
@@ -316,14 +292,14 @@ impl CAIWriter for JpegIO {
             // Z: Packet sequence number - 0x00000001...
             let ci = vec![0x4a, 0x50];
             let en = vec![0x02, 0x11];
-            let z: u32 = u32::try_from(seg)
+            let z: u32 = u32::try_from(seg + 1)
                 .map_err(|_| Error::InvalidAsset("Too many JUMBF segments".to_string()))?; //seg.to_be_bytes();
 
             let mut seg_data = Vec::new();
             seg_data.extend(ci);
             seg_data.extend(en);
             seg_data.extend(z.to_be_bytes());
-            if seg > 1 {
+            if seg > 0 {
                 // the LBox and TBox are already in the JUMBF
                 // but we need to duplicate them in all other segments
                 let lbox_tbox = store_bytes
@@ -331,13 +307,10 @@ impl CAIWriter for JpegIO {
                     .ok_or(Error::InvalidAsset("Store bytes too short".to_string()))?;
                 seg_data.extend(lbox_tbox);
             }
-            if seg_chucks.len() > 0 {
-                // make sure we have some...
-                if let Some(next_seg) = seg_chucks.next() {
-                    seg_data.extend(next_seg);
-                }
-            } else {
-                seg_data.extend(store_bytes);
+
+            // make sure we have some...
+            if let Some(next_seg) = seg_chucks.next() {
+                seg_data.extend(next_seg);
             }
 
             let seg_bytes = Bytes::from(seg_data);
@@ -368,16 +341,29 @@ impl CAIWriter for JpegIO {
         let mut positions: Vec<HashObjectPositions> = Vec::new();
         let mut curr_offset = 2; // start after JPEG marker
 
-        let output_vec: Vec<u8> = Vec::new();
-        let mut output_stream = Cursor::new(output_vec);
-        // make sure the file has the required segments so we can generate all the required offsets
-        add_required_segs_to_stream(input_stream, &mut output_stream)?;
+        input_stream.rewind()?;
+        let mut buf = Vec::new();
 
-        let buf: Vec<u8> = output_stream.into_inner();
+        // TODO: optimize this by implementing a streaming parser
+        input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        let jpeg = Jpeg::from_bytes(buf.into())
+            .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
+        if jpeg.segments().is_empty() {
+            return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
+        }
 
-        let dimg = DynImage::from_bytes(buf.into())
-            .map_err(|e| Error::OtherError(Box::new(e)))?
-            .ok_or(Error::UnsupportedType)?;
+        let placeholder = if get_cai_segments(&jpeg)?.is_empty() {
+            let app0_index = jpeg.segments().iter().rposition(|s| s.marker() == APP0);
+
+            let placeholder_index = app0_index.map_or(0, |i| i + 1);
+            // len computed as done in write_cai
+            // marker + length_field + CI + EN + Z + data
+            let placeholder_len = 2 + 2 + 2 + 2 + 4 + 50;
+
+            Some((placeholder_index, placeholder_len))
+        } else {
+            None
+        };
 
         let mut cai_loc = HashObjectPositions {
             offset: 0,
@@ -385,77 +371,87 @@ impl CAIWriter for JpegIO {
             htype: HashBlockObjectType::Cai,
         };
 
-        match dimg {
-            DynImage::Jpeg(jpeg) => {
-                for seg in jpeg.segments() {
-                    match seg.marker() {
-                        markers::APP11 => {
-                            // JUMBF marker
-                            let raw_bytes = seg.contents();
-
-                            if raw_bytes.len() > 16 {
-                                // we need at least 16 bytes in each segment for CAI
-                                let mut raw_vec = raw_bytes.to_vec();
-                                let _ci = raw_vec.as_mut_slice()[0..2].to_vec();
-                                let en = raw_vec.as_mut_slice()[2..4].to_vec();
-
-                                let is_cai_continuation = vec_compare(&cai_en, &en);
-
-                                if cai_seg_cnt > 0 && is_cai_continuation {
-                                    cai_seg_cnt += 1;
-                                    cai_loc.length += seg.len_with_entropy();
-                                } else {
-                                    // check if this is a CAI JUMBF block
-                                    let jumb_type = raw_vec
-                                        .get(24..28)
-                                        .ok_or(Error::InvalidAsset(
-                                            "Invalid JPEG CAI JUMBF block".to_string(),
-                                        ))?
-                                        .to_vec();
-                                    let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
-                                    if is_cai {
-                                        cai_seg_cnt = 1;
-                                        cai_en.clone_from(&en); // store the identifier
-
-                                        cai_loc.offset = curr_offset;
-                                        cai_loc.length += seg.len_with_entropy();
-                                    } else {
-                                        // save other for completeness sake
-                                        let v = HashObjectPositions {
-                                            offset: curr_offset,
-                                            length: seg.len_with_entropy(),
-                                            htype: HashBlockObjectType::Other,
-                                        };
-                                        positions.push(v);
-                                    }
-                                }
-                            }
-                        }
-                        markers::APP1 => {
-                            // XMP marker or EXIF or Extra XMP
-                            let v = HashObjectPositions {
-                                offset: curr_offset,
-                                length: seg.len_with_entropy(),
-                                htype: HashBlockObjectType::Xmp,
-                            };
-                            // todo: pick the app1 that is the xmp (not crucial as it gets hashed either way)
-                            positions.push(v);
-                        }
-                        _ => {
-                            // save other for completeness sake
-                            let v = HashObjectPositions {
-                                offset: curr_offset,
-                                length: seg.len_with_entropy(),
-                                htype: HashBlockObjectType::Other,
-                            };
-
-                            positions.push(v);
-                        }
-                    }
-                    curr_offset += seg.len_with_entropy();
+        for (index, seg) in jpeg.segments().iter().enumerate() {
+            if let Some((placeholder_index, placeholder_len)) = placeholder {
+                if index == placeholder_index {
+                    cai_loc.offset = curr_offset;
+                    cai_loc.length = placeholder_len;
+                    curr_offset += placeholder_len;
                 }
             }
-            _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
+
+            match seg.marker() {
+                markers::APP11 => {
+                    // JUMBF marker
+                    let raw_bytes = seg.contents();
+
+                    if raw_bytes.len() > 16 {
+                        // we need at least 16 bytes in each segment for CAI
+                        let mut raw_vec = raw_bytes.to_vec();
+                        let _ci = raw_vec.as_mut_slice()[0..2].to_vec();
+                        let en = raw_vec.as_mut_slice()[2..4].to_vec();
+
+                        let is_cai_continuation = vec_compare(&cai_en, &en);
+
+                        if cai_seg_cnt > 0 && is_cai_continuation {
+                            cai_seg_cnt += 1;
+                            cai_loc.length += seg.len_with_entropy();
+                        } else {
+                            // check if this is a CAI JUMBF block
+                            let jumb_type = raw_vec
+                                .get(24..28)
+                                .ok_or(Error::InvalidAsset(
+                                    "Invalid JPEG CAI JUMBF block".to_string(),
+                                ))?
+                                .to_vec();
+                            let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
+                            if is_cai {
+                                cai_seg_cnt = 1;
+                                cai_en.clone_from(&en); // store the identifier
+
+                                cai_loc.offset = curr_offset;
+                                cai_loc.length += seg.len_with_entropy();
+                            } else {
+                                // save other for completeness sake
+                                let v = HashObjectPositions {
+                                    offset: curr_offset,
+                                    length: seg.len_with_entropy(),
+                                    htype: HashBlockObjectType::Other,
+                                };
+                                positions.push(v);
+                            }
+                        }
+                    }
+                }
+                markers::APP1 => {
+                    // XMP marker or EXIF or Extra XMP
+                    let v = HashObjectPositions {
+                        offset: curr_offset,
+                        length: seg.len_with_entropy(),
+                        htype: HashBlockObjectType::Xmp,
+                    };
+                    // todo: pick the app1 that is the xmp (not crucial as it gets hashed either way)
+                    positions.push(v);
+                }
+                _ => {
+                    // save other for completeness sake
+                    let v = HashObjectPositions {
+                        offset: curr_offset,
+                        length: seg.len_with_entropy(),
+                        htype: HashBlockObjectType::Other,
+                    };
+
+                    positions.push(v);
+                }
+            }
+            curr_offset += seg.len_with_entropy();
+        }
+
+        if let Some((placeholder_index, placeholder_len)) = placeholder {
+            if placeholder_index >= jpeg.segments().len() {
+                cai_loc.offset = curr_offset;
+                cai_loc.length = placeholder_len;
+            }
         }
 
         if cai_loc.length > 0 {
@@ -1058,20 +1054,40 @@ impl AssetBoxHash for JpegIO {
         let has_c2pa = box_maps
             .iter()
             .any(|bm| bm.names.first().is_some_and(|n| n == C2PA_BOXHASH));
+
         if !has_c2pa {
-            // SOI is always FF D8 (2 bytes) at position 0.  C2PA is inserted
-            // right after it, so range_start = 2, range_len = 0 (synthetic).
-            let synthetic = BoxMap {
+            let mut c2pa_box = BoxMap {
                 names: vec![C2PA_BOXHASH.to_string()],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 excluded: Some(true),
                 pad: ByteBuf::from(Vec::new()),
-                range_start: 2,
+                range_start: 0,
                 range_len: 0,
             };
-            // SOI is always first; insert the synthetic C2PA right after it.
-            box_maps.insert(1, synthetic);
+            // SOI is always first; insert the C2PA box right after it or after APP0 if it exists.
+            let app0_index = box_maps
+                .iter()
+                .position(|bm| bm.names.first().is_some_and(|n| n == "APP0"));
+            match app0_index {
+                Some(i) => {
+                    let app0_box = &box_maps[i];
+                    input_stream.seek(std::io::SeekFrom::Start(app0_box.range_start))?;
+                    let size = get_seg_size(input_stream)?;
+
+                    c2pa_box.range_start = app0_box.range_start + size as u64;
+                    box_maps.insert(i + 1, c2pa_box)
+                }
+                None if box_maps.len() > 1 => {
+                    let box0 = &box_maps[0];
+                    input_stream.seek(std::io::SeekFrom::Start(box0.range_start))?;
+                    let size = get_seg_size(input_stream)?;
+
+                    c2pa_box.range_start = box0.range_start + size as u64;
+                    box_maps.insert(1, c2pa_box)
+                }
+                None => return Err(Error::InvalidAsset("JPEG file has no segments".to_string())),
+            };
         }
 
         for bm in box_maps.iter_mut() {
@@ -1104,13 +1120,12 @@ impl AssetBoxHash for JpegIO {
 
 impl ComposedManifestRef for JpegIO {
     fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
-        let jumbf_len = manifest_data.len();
-        let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
         let mut seg_chucks = manifest_data.chunks(MAX_JPEG_MARKER_SIZE);
+        let num_segments = seg_chucks.len(); // recalculate based on actual chunks
 
         let mut segments = Vec::new();
 
-        for seg in 1..num_segments + 1 {
+        for seg in 0..num_segments {
             /*
                 If the size of the box payload is less than 2^32-8 bytes,
                 then all fields except the XLBox field, that is: Le, CI, En, Z, LBox and TBox,
@@ -1125,14 +1140,14 @@ impl ComposedManifestRef for JpegIO {
             // Z: Packet sequence number - 0x00000001...
             let ci = vec![0x4a, 0x50];
             let en = vec![0x02, 0x11];
-            let z: u32 = u32::try_from(seg)
+            let z: u32 = u32::try_from(seg + 1)
                 .map_err(|_| Error::InvalidAsset("Too many JUMBF segments".to_string()))?; //seg.to_be_bytes();
 
             let mut seg_data = Vec::new();
             seg_data.extend(ci);
             seg_data.extend(en);
             seg_data.extend(z.to_be_bytes());
-            if seg > 1 {
+            if seg > 0 {
                 // the LBox and TBox are already in the JUMBF
                 // but we need to duplicate them in all other segments
                 let lbox_tbox = manifest_data
@@ -1140,13 +1155,10 @@ impl ComposedManifestRef for JpegIO {
                     .ok_or(Error::InvalidAsset("Manifest data too short".to_string()))?;
                 seg_data.extend(lbox_tbox);
             }
-            if seg_chucks.len() > 0 {
-                // make sure we have some...
-                if let Some(next_seg) = seg_chucks.next() {
-                    seg_data.extend(next_seg);
-                }
-            } else {
-                seg_data.extend(manifest_data);
+
+            // make sure we have some...
+            if let Some(next_seg) = seg_chucks.next() {
+                seg_data.extend(next_seg);
             }
 
             let seg_bytes = Bytes::from(seg_data);
@@ -1191,7 +1203,7 @@ pub mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::utils::io_utils::tempdirectory;
+    use crate::utils::io_utils::{safe_vec, tempdirectory};
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");
@@ -1468,5 +1480,18 @@ pub mod tests {
         let jpeg_io = JpegIO {};
 
         let _ = jpeg_io.get_object_locations_from_stream(&mut stream);
+    }
+
+    #[test]
+    fn test_crash_jpeg_segments_equal_chunk_multiple() {
+        let some_data = safe_vec(MAX_JPEG_MARKER_SIZE as u64 * 3, Some(1u8)).unwrap();
+        let source = crate::utils::test::fixture_path("CA.jpg");
+        let mut source_stream = std::fs::File::open(source).unwrap();
+
+        let jpeg_io = JpegIO {};
+        let output = Vec::new();
+        let mut output_stream = Cursor::new(output);
+
+        let _ = jpeg_io.write_cai(&mut source_stream, &mut output_stream, &some_data);
     }
 }

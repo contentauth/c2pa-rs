@@ -119,13 +119,23 @@ pub(crate) fn stream_len<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<u64>
     Ok(len)
 }
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn stream_with_fs_fallback(
+    _threshold_mb: usize,
+    _expected_size_bytes: u64,
+) -> Result<impl Read + Write + Seek> {
+    Ok(std::io::Cursor::new(Vec::new()))
+}
+
 /// Will create a [`Read`]-, [`Write`]-, and [`Seek`]-capable stream that will
 /// stay in memory unless a threshold size is exceeded.
 ///
 /// # Parameters
 /// - `threshold`: Size (in MB) of stream beyond which an on-disk stream will be used.
-///    This threshold should be the one specified in settings under
-///    `core.backing_store_memory_threshold_in_mb`.
+///   This threshold should be the one specified in settings under
+///   `core.backing_store_memory_threshold_in_mb`.
+/// - `expected_size_bytes`: Size (in bytes) of the stream. If this exceeds the threshold
+///   it will return a file-backed stream directly.
 ///
 /// # Errors
 /// - Returns an error if the threshold value from settings is not valid.
@@ -133,15 +143,51 @@ pub(crate) fn stream_len<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<u64>
 /// # Note
 /// This will always return an in-memory stream when the compilation target doesn't
 /// support file I/O.
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn stream_with_fs_fallback(_threshold: usize) -> impl Read + Write + Seek {
-    std::io::Cursor::new(Vec::new())
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn stream_with_fs_fallback(
+    threshold_mb: usize,
+    expected_size_bytes: u64,
+) -> Result<impl Read + Write + Seek> {
+    let threshold_bytes = threshold_mb.saturating_mul(1024 * 1024);
+    let mut spooled = SpooledTempFile::new(threshold_bytes);
+    if expected_size_bytes > threshold_bytes as u64 {
+        spooled.roll()?;
+    }
+    Ok(spooled)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn stream_with_fs_fallback(threshold: usize) -> impl Read + Write + Seek {
-    SpooledTempFile::new(threshold * 1024 * 1024)
-    // IMPORTANT: SpooledTempFile API is in bytes; this function's API is in MB.
+// Write adapter that caps output at `max_len` bytes, preventing decompression
+// bombs and similar unbounded-output attacks.
+pub(crate) struct BoundedVecWriter {
+    inner: Vec<u8>,
+    max_len: usize,
+}
+
+impl BoundedVecWriter {
+    pub(crate) fn new(max_len: usize) -> Result<Self> {
+        Ok(Self {
+            inner: safe_vec(max_len as u64, None)?,
+            max_len,
+        })
+    }
+
+    pub(crate) fn into_inner(self) -> Vec<u8> {
+        self.inner
+    }
+}
+
+impl Write for BoundedVecWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.inner.len().saturating_add(buf.len()) > self.max_len {
+            return Err(std::io::Error::other("output exceeds maximum size"));
+        }
+        self.inner.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 // Returns a new Vec first making sure it can hold the desired capacity.  Fill

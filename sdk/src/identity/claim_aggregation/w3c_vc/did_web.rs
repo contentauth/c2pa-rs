@@ -18,17 +18,46 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::Read;
+
 use super::{did::Did, did_doc::DidDocument};
-use crate::http::{AsyncGenericResolver, AsyncHttpResolver, HttpResolverError};
+use crate::http::{
+    AsyncGenericResolver, AsyncHttpResolver, HttpResolverError, SyncGenericResolver,
+    SyncHttpResolver,
+};
+
+/// Maximum number of bytes accepted from a DID Web server response body.
+pub(crate) const MAX_DID_DOC_SIZE: u64 = 1024 * 1024; // 1 MiB
 
 const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"));
 
 #[cfg(test)]
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashMap};
 
 #[cfg(test)]
 thread_local! {
-    pub(crate) static PROXY: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Maps a `did:web` domain name to a URL prefix (ending in `/`) that should
+    /// be used in place of the real `https://{domain}/` origin. Tests register
+    /// entries here to redirect DID document resolution to a local mock server,
+    /// keeping the suite hermetic.
+    pub(crate) static PROXIES: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
+}
+
+/// Redirect `did:web` resolution for `domain` to `url_prefix` (a base URL
+/// ending in `/`, such as a mock server origin) for the current thread.
+#[cfg(test)]
+pub(crate) fn set_proxy(domain: &str, url_prefix: &str) {
+    PROXIES.with(|proxies| {
+        proxies
+            .borrow_mut()
+            .insert(domain.to_string(), url_prefix.to_string());
+    });
+}
+
+/// Remove all `did:web` resolution redirects for the current thread.
+#[cfg(test)]
+pub(crate) fn clear_proxies() {
+    PROXIES.with(|proxies| proxies.borrow_mut().clear());
 }
 
 use http::header;
@@ -55,51 +84,94 @@ pub enum DidWebError {
 
     #[error("invalid web DID: {0}")]
     InvalidWebDid(String),
+
+    #[error("response body exceeded size limit of {MAX_DID_DOC_SIZE} bytes")]
+    ResponseTooLarge,
 }
 
-pub(crate) async fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+fn prepare_url(did: &Did<'_>) -> Result<String, DidWebError> {
     let method = did.method_name();
     #[allow(clippy::panic)] // TEMPORARY while refactoring
     if method != "web" {
         panic!("Unexpected DID method {method}");
     }
-
-    let method_specific_id = did.method_specific_id();
-
-    let url = to_url(method_specific_id)?;
-    // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
-
-    let did_doc = get_did_doc(&url).await?;
-
-    let json = String::from_utf8(did_doc).map_err(|_| DidWebError::InvalidData(url.clone()))?;
-
-    DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url))
+    to_url(did.method_specific_id())
 }
 
-async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
-    let request = http::Request::get(url)
+fn parse_did_doc(bytes: Vec<u8>, url: &str) -> Result<DidDocument, DidWebError> {
+    let json = String::from_utf8(bytes).map_err(|_| DidWebError::InvalidData(url.to_owned()))?;
+    DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url.to_owned()))
+}
+
+pub(crate) async fn resolve_async(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+    let url = prepare_url(did)?;
+    // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
+    let bytes = get_did_doc(&url).await?;
+    parse_did_doc(bytes, &url)
+}
+
+fn build_request(url: &str) -> Result<http::Request<Vec<u8>>, DidWebError> {
+    http::Request::get(url)
         .header(header::USER_AGENT, USER_AGENT)
         .header(header::ACCEPT, "application/did+json")
         .body(Vec::new())
-        .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))?;
+        .map_err(|e| DidWebError::Request(url.to_owned(), e.into()))
+}
+
+fn check_response_status(status: http::StatusCode, url: &str) -> Result<(), DidWebError> {
+    match status {
+        http::StatusCode::OK => Ok(()),
+        http::StatusCode::NOT_FOUND => Err(DidWebError::NotFound(url.to_string())),
+        _ => Err(DidWebError::Server(status.to_string())),
+    }
+}
+
+fn read_body_with_limit(body: Box<dyn Read>, url: &str) -> Result<Vec<u8>, DidWebError> {
+    let mut document = Vec::new();
+    body.take(MAX_DID_DOC_SIZE + 1)
+        .read_to_end(&mut document)
+        .map_err(|e| DidWebError::Response(e.into()))?;
+    if document.len() as u64 > MAX_DID_DOC_SIZE {
+        return Err(DidWebError::ResponseTooLarge);
+    }
+    Ok(document)
+}
+
+async fn get_did_doc(url: &str) -> Result<Vec<u8>, DidWebError> {
+    let request = build_request(url)?;
     let response = AsyncGenericResolver::with_redirects()
         .unwrap_or_default()
+        .with_max_response_body_size(MAX_DID_DOC_SIZE)
         .http_resolve_async(request)
         .await
-        .map_err(|e| DidWebError::Request(url.to_owned(), e))?;
+        .map_err(|e| match e {
+            HttpResolverError::ResponseTooLarge => DidWebError::ResponseTooLarge,
+            e => DidWebError::Request(url.to_owned(), e),
+        })?;
+    let (parts, body) = response.into_parts();
+    check_response_status(parts.status, url)?;
+    read_body_with_limit(body, url)
+}
 
-    let (parts, mut body) = response.into_parts();
-    match parts.status {
-        http::StatusCode::OK => (),
-        http::StatusCode::NOT_FOUND => return Err(DidWebError::NotFound(url.to_string())),
-        _ => return Err(DidWebError::Server(parts.status.to_string())),
-    };
+pub(crate) fn resolve(did: &Did<'_>) -> Result<DidDocument, DidWebError> {
+    let url = prepare_url(did)?;
+    // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
+    let bytes = get_did_doc_sync(&url)?;
+    parse_did_doc(bytes, &url)
+}
 
-    let mut document = Vec::new();
-    body.read_to_end(&mut document)
-        .map_err(|e| DidWebError::Response(e.into()))?;
-
-    Ok(document)
+fn get_did_doc_sync(url: &str) -> Result<Vec<u8>, DidWebError> {
+    let request = build_request(url)?;
+    let response = SyncGenericResolver::with_redirects()
+        .unwrap_or_default()
+        .http_resolve(request)
+        .map_err(|e| match e {
+            HttpResolverError::ResponseTooLarge => DidWebError::ResponseTooLarge,
+            e => DidWebError::Request(url.to_owned(), e),
+        })?;
+    let (parts, body) = response.into_parts();
+    check_response_status(parts.status, url)?;
+    read_body_with_limit(body, url)
 }
 
 pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
@@ -132,12 +204,9 @@ pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
     );
 
     #[cfg(test)]
-    PROXY.with(|proxy| {
-        if let Some(ref proxy) = *proxy.borrow() {
-            if domain_name == "localhost" {
-                url = format!("{proxy}{path}/did.json");
-                dbg!(&url);
-            }
+    PROXIES.with(|proxies| {
+        if let Some(prefix) = proxies.borrow().get(domain_name) {
+            url = format!("{prefix}{path}/did.json");
         }
     });
 
@@ -190,7 +259,7 @@ mod tests {
         use super::did;
         use crate::identity::claim_aggregation::w3c_vc::{
             did_doc::DidDocument,
-            did_web::{self, PROXY},
+            did_web::{self, DidWebError, MAX_DID_DOC_SIZE},
         };
 
         #[tokio::test]
@@ -212,11 +281,8 @@ mod tests {
 
             let server = MockServer::start();
 
-            PROXY.with(|proxy| {
-                let server_url = server.url("/").replace("127.0.0.1", "localhost");
-                dbg!(&server_url);
-                proxy.replace(Some(server_url));
-            });
+            let server_url = server.url("/").replace("127.0.0.1", "localhost");
+            did_web::set_proxy("localhost", &server_url);
 
             let did_doc_mock = server.mock(|when, then| {
                 when.method(GET).path("/.well-known/did.json");
@@ -225,15 +291,70 @@ mod tests {
                     .body(DID_JSON);
             });
 
-            let doc = did_web::resolve(&did("did:web:localhost")).await.unwrap();
+            let doc = did_web::resolve_async(&did("did:web:localhost"))
+                .await
+                .unwrap();
             let doc_expected = DidDocument::from_json(DID_JSON).unwrap();
             assert_eq!(doc, doc_expected);
 
-            PROXY.with(|proxy| {
-                proxy.replace(None);
-            });
+            did_web::clear_proxies();
 
             did_doc_mock.assert();
+        }
+
+        #[tokio::test]
+        async fn content_length_above_limit_rejected() {
+            let server = MockServer::start();
+
+            let server_url = server.url("/").replace("127.0.0.1", "localhost");
+            did_web::set_proxy("localhost", &server_url);
+
+            // Server explicitly advertises Content-Length above the limit.
+            // The Content-Length pre-check in AsyncGenericResolver rejects the
+            // response immediately, before passing any body bytes to the caller.
+            let oversized_body = vec![b'X'; (MAX_DID_DOC_SIZE + 1) as usize];
+            let _mock = server.mock(|when, then| {
+                when.method(GET).path("/.well-known/did.json");
+                then.status(200)
+                    .header("content-type", "application/did+json")
+                    .header("content-length", (MAX_DID_DOC_SIZE + 1).to_string())
+                    .body(oversized_body);
+            });
+
+            let result = did_web::resolve_async(&did("did:web:localhost")).await;
+
+            did_web::clear_proxies();
+
+            assert!(
+                matches!(result, Err(did_web::DidWebError::ResponseTooLarge)),
+                "expected ResponseTooLarge, got {result:?}"
+            );
+        }
+
+        #[tokio::test]
+        async fn oversized_response_returns_error() {
+            let server = MockServer::start();
+
+            let server_url = server.url("/").replace("127.0.0.1", "localhost");
+            did_web::set_proxy("localhost", &server_url);
+
+            // Serve a body one byte larger than the allowed limit.
+            let oversized_body = vec![b'X'; (MAX_DID_DOC_SIZE + 1) as usize];
+            let _mock = server.mock(|when, then| {
+                when.method(GET).path("/.well-known/did.json");
+                then.status(200)
+                    .header("content-type", "application/did+json")
+                    .body(oversized_body);
+            });
+
+            let result = did_web::resolve_async(&did("did:web:localhost")).await;
+
+            did_web::clear_proxies();
+
+            assert!(
+                matches!(result, Err(did_web::DidWebError::ResponseTooLarge)),
+                "expected ResponseTooLarge, got {result:?}"
+            );
         }
 
         /*

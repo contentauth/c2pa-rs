@@ -1,0 +1,19 @@
+{
+    "@context": "https://www.w3.org/ns/did/v1",
+    "id": "did:web:connected-identities.identity-stage.adobe.com",
+    "assertionMethod": [
+        {
+            "id": "did:web:connected-identities.identity-stage.adobe.com#key-0",
+            "controller": "did:web:connected-identities.identity-stage.adobe.com",
+            "publicKeyJwk": {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "x": "gPfQ48DeVQtfDMh9in27XZfCBlblW7FdgcyqsHPBmis",
+                "kid": "did:web:connected-identities.identity-stage.adobe.com#key-0",
+                "alg": "EdDSA"
+            },
+            "type": "JsonWebKey"
+        }
+    ],
+    "services": []
+}
