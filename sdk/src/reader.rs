@@ -37,7 +37,8 @@ use crate::{
     context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
-    jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
+    hashed_uri::HashedUri,
+    jumbf::labels::{manifest_label_from_uri, to_absolute_uri, ASSERTIONS, DATABOXES},
     jumbf_io, log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
@@ -894,69 +895,40 @@ impl Reader {
         uri: &str,
         mut stream: impl Write + Read + Seek + MaybeSend,
     ) -> Result<usize> {
-        // get the manifest referenced by the uri, or the active one if None
-        // add logic to search for local or absolute uri identifiers
-        let (manifest, label) = match manifest_label_from_uri(uri) {
-            Some(label) => (self.manifests.get(&label), label),
-            None => (
-                self.active_manifest(),
-                self.active_label().unwrap_or_default().to_string(),
-            ),
-        };
-        let relative_uri = to_relative_uri(uri);
+        let label = manifest_label_from_uri(uri)
+            .or_else(|| self.active_label().map(str::to_owned))
+            .unwrap_or_default();
         let absolute_uri = to_absolute_uri(&label, uri);
 
-        if let Some(manifest) = manifest {
-            let find_resource = |uri: &str| -> Result<&crate::ResourceStore> {
-                let mut resources = manifest.resources();
-                if !resources.exists(uri) {
-                    // also search ingredients resources to support Reader model
-                    for ingredient in manifest.ingredients() {
-                        if ingredient.resources().exists(uri) {
-                            resources = ingredient.resources();
-                            return Ok(resources);
-                        }
-                    }
-                } else {
-                    return Ok(resources);
-                }
-                Err(Error::ResourceNotFound(uri.to_owned()))
-            };
-            let result = find_resource(&relative_uri);
-            match result {
-                Ok(resource) => resource.write_stream(&relative_uri, stream),
-                Err(_) => match find_resource(&absolute_uri) {
-                    Ok(resource) => resource.write_stream(&absolute_uri, stream),
-                    Err(_) => {
-                        // Fallback: ingredient manifest_data may be lazily loaded.
-                        // We must try to materialize it on cache miss/not loaded state...
-                        // This is to cover the case a resource was asked for, but the resource
-                        // may not have been loaded eagerly.
-                        // manifest_label_from_uri() extracts <claim-label>, which is
-                        // what set_deferred_manifest_data() stores in md_ref.identifier.
-                        for ingredient in manifest.ingredients() {
-                            if let Some(md_ref) = ingredient.manifest_data_ref() {
-                                if md_ref.identifier == label
-                                    || md_ref.identifier == relative_uri
-                                    || md_ref.identifier == absolute_uri
-                                {
-                                    if let Some(cow) = ingredient.manifest_data() {
-                                        let bytes = cow.into_owned();
-                                        let len = bytes.len();
-                                        stream.write_all(&bytes).map_err(Error::IoError)?;
-                                        return Ok(len);
-                                    }
-                                }
-                            }
-                        }
-                        Err(Error::ResourceNotFound(relative_uri.to_owned()))
-                    }
-                },
-            }
+        let bytes: &[u8] = if absolute_uri.contains(ASSERTIONS) {
+            self.store
+                .get_assertion_from_uri(&absolute_uri)
+                .map(|a| a.data())
+                .ok_or_else(|| Error::ResourceNotFound(uri.to_owned()))?
+        } else if absolute_uri.contains(DATABOXES) {
+            let hashed_uri = HashedUri::new(absolute_uri.clone(), None, &[]);
+            self.store
+                .get_data_box_from_uri_and_claim(&hashed_uri, &label)
+                .map(|db| db.data.as_slice())
+                .ok_or_else(|| Error::ResourceNotFound(uri.to_owned()))?
         } else {
-            Err(Error::ResourceNotFound(uri.to_owned()))
-        }
-        .map(|size| size as usize)
+            // URI names a manifest — stream its JUMBF bytes
+            return self
+                .store
+                .get_claim(&label)
+                .ok_or_else(|| Error::ResourceNotFound(uri.to_owned()))
+                .and_then(|claim| Store::build_flat_ingredient_store(&self.store, claim))
+                .and_then(|s| s.to_jumbf_internal(0))
+                .and_then(|bytes| {
+                    let len = bytes.len();
+                    stream.write_all(&bytes).map_err(Error::IoError)?;
+                    Ok(len)
+                });
+        };
+
+        let len = bytes.len();
+        stream.write_all(bytes).map_err(Error::IoError)?;
+        Ok(len)
     }
 
     /// Write all resources to a folder.

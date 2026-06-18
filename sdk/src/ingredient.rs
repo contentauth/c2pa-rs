@@ -1080,23 +1080,16 @@ impl Ingredient {
                     // the resolver will fetch them on demand.
                     store
                         .get_assertion_from_uri_and_claim(&absolute_uri, claim_label)
-                        .map(|assertion| {
-                            Ok::<ResourceRef, Error>(ResourceRef::new(
-                                assertion.content_type(),
-                                &absolute_uri,
-                            ))
-                        })
+                        .map(|assertion| ResourceRef::new(assertion.content_type(), &absolute_uri))
                 }
                 absolute_uri if absolute_uri.contains(jumbf::labels::DATABOXES) => store
                     .get_data_box_from_uri_and_claim(data_uri, claim_label)
-                    .map(|data_box| {
-                        Ok::<ResourceRef, Error>(ResourceRef::new(&data_box.format, &absolute_uri))
-                    }),
+                    .map(|data_box| ResourceRef::new(&data_box.format, &absolute_uri)),
                 _ => None,
             };
             match maybe_data_ref {
                 Some(data_ref) => {
-                    ingredient.data = Some(data_ref?);
+                    ingredient.data = Some(data_ref);
                 }
                 None => {
                     if !store.is_uri_redacted(claim_label, &data_uri.url()) {
