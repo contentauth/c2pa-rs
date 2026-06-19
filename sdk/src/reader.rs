@@ -210,7 +210,10 @@ impl Reader {
     /// Add manifest store from a stream to the [`Reader`].
     ///
     /// # Arguments
-    /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
+    /// * `format` - The MIME type or file extension of the stream, used as a fallback when
+    ///   content-based format detection cannot determine the format from the stream's leading
+    ///   bytes.  Detection is attempted first; `format` is only used when detection returns
+    ///   no result.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
     /// # Returns
     /// The updated [`Reader`] with the added manifest store.
@@ -222,6 +225,11 @@ impl Reader {
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
         stream.rewind()?; // Ensure stream is at the start
+
+        // Prefer the caller's format hint when it identifies the same container as the
+        // stream bytes (e.g. "dng" stays "dng" rather than being widened to "image/tiff").
+        let format_owned = jumbf_io::format_from_stream(format, &mut stream);
+        let format = format_owned.as_str();
 
         self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
 
@@ -297,8 +305,9 @@ impl Reader {
     #[async_generic]
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
-        let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
         let mut file = File::open(path)?;
+        let path_fmt = crate::format_from_path(path).unwrap_or_default();
+        let format = jumbf_io::format_from_stream(&path_fmt, &mut file);
 
         // Try loading from stream first
         let mut validation_log = StatusTracker::default();
