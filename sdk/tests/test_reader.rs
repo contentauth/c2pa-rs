@@ -146,3 +146,68 @@ fn test_reader_validation_state_uses_context_settings() -> Result<()> {
 
     Ok(())
 }
+
+// ── format-detection tests ────────────────────────────────────────────────────
+
+/// with_stream should succeed even when the caller supplies the wrong MIME type,
+/// because content-based detection overrides the provided format string.
+#[test]
+fn test_reader_stream_wrong_format_overridden_by_detection() -> Result<()> {
+    // CA.jpg is a real JPEG; pass "image/png" as the format — detection must
+    // recognise the FF D8 FF magic and succeed anyway.
+    let (_correct_format, mut stream) = fixture_stream("CA.jpg")?;
+    let reader = Reader::default().with_stream("image/png", &mut stream)?;
+    compare_to_known_good(&reader, "CA.json")
+}
+
+/// with_file should succeed when the file has a wrong extension, because
+/// content-based detection takes priority over the extension.
+#[test]
+#[cfg(feature = "file_io")]
+fn test_reader_file_wrong_extension_overridden_by_detection() -> Result<()> {
+    use std::io::Write;
+
+    use tempfile::Builder;
+
+    // Copy CA.jpg bytes into a temp file whose name ends in ".png".
+    let jpeg_bytes = include_bytes!("fixtures/CA.jpg");
+    #[cfg(target_os = "wasi")]
+    let mut tmp = Builder::new()
+        .suffix(".png")
+        .tempfile_in("/")
+        .map_err(c2pa::Error::IoError)?;
+    #[cfg(not(target_os = "wasi"))]
+    let mut tmp = Builder::new()
+        .suffix(".png")
+        .tempfile()
+        .map_err(c2pa::Error::IoError)?;
+    tmp.write_all(jpeg_bytes).map_err(c2pa::Error::IoError)?;
+    tmp.flush().map_err(c2pa::Error::IoError)?;
+
+    let reader = Reader::default().with_file(tmp.path())?;
+    compare_to_known_good(&reader, "CA.json")
+}
+
+/// with_file should succeed when the file has no extension at all, because
+/// content-based detection fills in the format.
+#[test]
+#[cfg(feature = "file_io")]
+fn test_reader_file_no_extension_overridden_by_detection() -> Result<()> {
+    use tempfile::Builder;
+
+    let jpeg_bytes = include_bytes!("fixtures/CA.jpg");
+    #[cfg(target_os = "wasi")]
+    let tmp = Builder::new()
+        .tempfile_in("/")
+        .map_err(c2pa::Error::IoError)?;
+    #[cfg(not(target_os = "wasi"))]
+    let tmp = Builder::new().tempfile().map_err(c2pa::Error::IoError)?;
+    // Rename to strip the extension entirely.
+    let no_ext_path = tmp.path().with_extension("");
+    std::fs::write(&no_ext_path, jpeg_bytes).map_err(c2pa::Error::IoError)?;
+
+    let reader = Reader::default().with_file(&no_ext_path)?;
+    // Clean up the extra file we created (tmp itself is cleaned up on drop).
+    let _ = std::fs::remove_file(&no_ext_path);
+    compare_to_known_good(&reader, "CA.json")
+}

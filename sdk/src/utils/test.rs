@@ -466,6 +466,34 @@ pub fn create_test_streams(
     }
 }
 
+/// Create a single in-memory input stream from a fixture file.
+/// Use this for read-only tests (e.g. format detection) that don't need an output stream.
+#[allow(clippy::expect_used)]
+pub fn create_test_stream(fixture_name: &str) -> (&'static str, std::io::Cursor<Vec<u8>>) {
+    if let Some(fixture) = get_registry().get(fixture_name) {
+        return (fixture.1, std::io::Cursor::new(fixture.0.to_vec()));
+    }
+
+    #[cfg(feature = "file_io")]
+    {
+        let input_path = fixture_path(fixture_name);
+        let input_data = std::fs::read(&input_path).expect("could not read input file");
+        let format = input_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .and_then(extension_to_mime)
+            .unwrap_or("application/octet-stream");
+        (format, std::io::Cursor::new(input_data))
+    }
+    #[cfg(not(feature = "file_io"))]
+    {
+        panic!(
+            "Fixture '{}' not found in embedded registry and file I/O is disabled",
+            fixture_name
+        );
+    }
+}
+
 /// Setup for file-based tests that need actual file I/O operations
 pub struct TestFileSetup {
     pub temp_dir: TempDir,

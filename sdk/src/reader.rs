@@ -37,7 +37,8 @@ use crate::{
     context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
-    jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
+    hashed_uri::HashedUri,
+    jumbf::labels::{manifest_label_from_uri, to_absolute_uri, ASSERTIONS, DATABOXES},
     jumbf_io, log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
@@ -210,7 +211,10 @@ impl Reader {
     /// Add manifest store from a stream to the [`Reader`].
     ///
     /// # Arguments
-    /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
+    /// * `format` - The MIME type or file extension of the stream, used as a fallback when
+    ///   content-based format detection cannot determine the format from the stream's leading
+    ///   bytes.  Detection is attempted first; `format` is only used when detection returns
+    ///   no result.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
     /// # Returns
     /// The updated [`Reader`] with the added manifest store.
@@ -222,6 +226,11 @@ impl Reader {
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
         stream.rewind()?; // Ensure stream is at the start
+
+        // Prefer the caller's format hint when it identifies the same container as the
+        // stream bytes (e.g. "dng" stays "dng" rather than being widened to "image/tiff").
+        let format_owned = jumbf_io::format_from_stream(format, &mut stream);
+        let format = format_owned.as_str();
 
         self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
 
@@ -297,8 +306,9 @@ impl Reader {
     #[async_generic]
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
-        let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
         let mut file = File::open(path)?;
+        let path_fmt = crate::format_from_path(path).unwrap_or_default();
+        let format = jumbf_io::format_from_stream(&path_fmt, &mut file);
 
         // Try loading from stream first
         let mut validation_log = StatusTracker::default();
@@ -885,69 +895,40 @@ impl Reader {
         uri: &str,
         mut stream: impl Write + Read + Seek + MaybeSend,
     ) -> Result<usize> {
-        // get the manifest referenced by the uri, or the active one if None
-        // add logic to search for local or absolute uri identifiers
-        let (manifest, label) = match manifest_label_from_uri(uri) {
-            Some(label) => (self.manifests.get(&label), label),
-            None => (
-                self.active_manifest(),
-                self.active_label().unwrap_or_default().to_string(),
-            ),
-        };
-        let relative_uri = to_relative_uri(uri);
+        let label = manifest_label_from_uri(uri)
+            .or_else(|| self.active_label().map(str::to_owned))
+            .unwrap_or_default();
         let absolute_uri = to_absolute_uri(&label, uri);
 
-        if let Some(manifest) = manifest {
-            let find_resource = |uri: &str| -> Result<&crate::ResourceStore> {
-                let mut resources = manifest.resources();
-                if !resources.exists(uri) {
-                    // also search ingredients resources to support Reader model
-                    for ingredient in manifest.ingredients() {
-                        if ingredient.resources().exists(uri) {
-                            resources = ingredient.resources();
-                            return Ok(resources);
-                        }
-                    }
-                } else {
-                    return Ok(resources);
-                }
-                Err(Error::ResourceNotFound(uri.to_owned()))
-            };
-            let result = find_resource(&relative_uri);
-            match result {
-                Ok(resource) => resource.write_stream(&relative_uri, stream),
-                Err(_) => match find_resource(&absolute_uri) {
-                    Ok(resource) => resource.write_stream(&absolute_uri, stream),
-                    Err(_) => {
-                        // Fallback: ingredient manifest_data may be lazily loaded.
-                        // We must try to materialize it on cache miss/not loaded state...
-                        // This is to cover the case a resource was asked for, but the resource
-                        // may not have been loaded eagerly.
-                        // manifest_label_from_uri() extracts <claim-label>, which is
-                        // what set_deferred_manifest_data() stores in md_ref.identifier.
-                        for ingredient in manifest.ingredients() {
-                            if let Some(md_ref) = ingredient.manifest_data_ref() {
-                                if md_ref.identifier == label
-                                    || md_ref.identifier == relative_uri
-                                    || md_ref.identifier == absolute_uri
-                                {
-                                    if let Some(cow) = ingredient.manifest_data() {
-                                        let bytes = cow.into_owned();
-                                        let len = bytes.len();
-                                        stream.write_all(&bytes).map_err(Error::IoError)?;
-                                        return Ok(len);
-                                    }
-                                }
-                            }
-                        }
-                        Err(Error::ResourceNotFound(relative_uri.to_owned()))
-                    }
-                },
-            }
+        let bytes: &[u8] = if absolute_uri.contains(ASSERTIONS) {
+            self.store
+                .get_assertion_from_uri(&absolute_uri)
+                .map(|a| a.data())
+                .ok_or_else(|| Error::ResourceNotFound(uri.to_owned()))?
+        } else if absolute_uri.contains(DATABOXES) {
+            let hashed_uri = HashedUri::new(absolute_uri.clone(), None, &[]);
+            self.store
+                .get_data_box_from_uri_and_claim(&hashed_uri, &label)
+                .map(|db| db.data.as_slice())
+                .ok_or_else(|| Error::ResourceNotFound(uri.to_owned()))?
         } else {
-            Err(Error::ResourceNotFound(uri.to_owned()))
-        }
-        .map(|size| size as usize)
+            // URI names a manifest — stream its JUMBF bytes
+            return self
+                .store
+                .get_claim(&label)
+                .ok_or_else(|| Error::ResourceNotFound(uri.to_owned()))
+                .and_then(|claim| Store::build_flat_ingredient_store(&self.store, claim))
+                .and_then(|s| s.to_jumbf_internal(0))
+                .and_then(|bytes| {
+                    let len = bytes.len();
+                    stream.write_all(&bytes).map_err(Error::IoError)?;
+                    Ok(len)
+                });
+        };
+
+        let len = bytes.len();
+        stream.write_all(bytes).map_err(Error::IoError)?;
+        Ok(len)
     }
 
     /// Write all resources to a folder.
@@ -969,20 +950,36 @@ impl Reader {
     /// ```
     #[cfg(feature = "file_io")]
     pub fn to_folder<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
+        use crate::jumbf::labels::to_assertion_uri;
+
         std::fs::create_dir_all(&path)?;
         std::fs::write(path.as_ref().join("manifest_store.json"), self.json())?;
         let c2pa_data = self.store.to_jumbf_internal(0)?;
         std::fs::write(path.as_ref().join("manifest_data.c2pa"), c2pa_data)?;
-        for manifest in self.manifests.values() {
-            let resources = manifest.resources();
-            for (uri, data) in resources.resources() {
-                let id_path = uri_to_path(uri, manifest.label());
-                let path = path.as_ref().join(id_path);
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent)?;
+
+        let write_bytes = |rel_path: std::path::PathBuf, data: &[u8]| -> Result<()> {
+            let file_path = path.as_ref().join(rel_path);
+            if let Some(parent) = file_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(file_path, data).map_err(Error::IoError)
+        };
+
+        for claim in self.store.claims() {
+            let claim_label = claim.label();
+            // Write binary (media) assertions — thumbnails, icons, embedded data
+            for ca in claim.claim_assertion_store() {
+                let assertion = ca.assertion();
+                if !assertion.content_type().starts_with("application/") {
+                    let uri = to_assertion_uri(claim_label, &ca.label());
+                    if let Some(a) = self.store.get_assertion_from_uri(&uri) {
+                        let _ = write_bytes(uri_to_path(&uri, Some(claim_label)), a.data());
+                    }
                 }
-                let mut file = std::fs::File::create(&path)?;
-                file.write_all(data)?;
+            }
+            // Write databoxes
+            for (hr, databox) in claim.databoxes() {
+                let _ = write_bytes(uri_to_path(&hr.url(), Some(claim_label)), &databox.data);
             }
         }
         Ok(())
@@ -1233,9 +1230,6 @@ impl Reader {
                 }
                 for assertion in manifest.assertions.iter() {
                     builder.add_assertion(assertion.label(), assertion.value()?)?;
-                }
-                for (uri, data) in manifest.resources().resources() {
-                    builder.add_resource(uri, std::io::Cursor::new(data))?;
                 }
             }
         }
@@ -1567,10 +1561,38 @@ pub mod tests {
 
         let temp_dir = tempdirectory().unwrap();
         reader.to_folder(temp_dir.path())?;
-        let path = temp_dir_path(&temp_dir, "manifest_store.json");
-        assert!(path.exists());
-        let path = temp_dir_path(&temp_dir, "manifest_data.c2pa");
-        assert!(path.exists());
+        assert!(temp_dir_path(&temp_dir, "manifest_store.json").exists());
+        assert!(temp_dir_path(&temp_dir, "manifest_data.c2pa").exists());
+
+        // Collect all thumbnail files written under the manifest subdirectories.
+        let thumbnails: Vec<_> = std::fs::read_dir(temp_dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .flat_map(|manifest_dir| {
+                let assertions_dir = manifest_dir.path().join("c2pa.assertions");
+                std::fs::read_dir(assertions_dir)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| {
+                        e.file_name()
+                            .to_string_lossy()
+                            .starts_with("c2pa.thumbnail")
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert!(
+            !thumbnails.is_empty(),
+            "expected thumbnail files in output folder"
+        );
+        for thumb in &thumbnails {
+            assert!(
+                thumb.metadata().unwrap().len() > 0,
+                "thumbnail file should not be empty"
+            );
+        }
         Ok(())
     }
 
