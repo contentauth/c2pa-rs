@@ -22,7 +22,7 @@ use der::asn1::ObjectIdentifier;
 use rasn::{prelude::*, types};
 use rasn_cms::{CertificateChoices, SignerIdentifier};
 use sha1::Sha1;
-use sha2::{Digest as _, Sha256, Sha384, Sha512};
+use sha2::{Sha256, Sha384, Sha512};
 
 use crate::{
     crypto::{
@@ -638,10 +638,13 @@ enum DigestAlgorithm {
 impl DigestAlgorithm {
     fn digester(self) -> Hasher {
         match self {
-            DigestAlgorithm::Sha1 => Hasher::Sha1(Sha1::new()),
-            DigestAlgorithm::Sha256 => Hasher::Sha256(Sha256::new()),
-            DigestAlgorithm::Sha384 => Hasher::Sha384(Sha384::new()),
-            DigestAlgorithm::Sha512 => Hasher::Sha512(Sha512::new()),
+            // `Sha1` follows the `digest` 0.10 traits, while `Sha2*` follows
+            // `digest` 0.11, so each `new()` must be fully qualified to the
+            // matching `Digest` trait.
+            DigestAlgorithm::Sha1 => Hasher::Sha1(<Sha1 as sha1::Digest>::new()),
+            DigestAlgorithm::Sha256 => Hasher::Sha256(<Sha256 as sha2::Digest>::new()),
+            DigestAlgorithm::Sha384 => Hasher::Sha384(<Sha384 as sha2::Digest>::new()),
+            DigestAlgorithm::Sha512 => Hasher::Sha512(<Sha512 as sha2::Digest>::new()),
         }
     }
 }

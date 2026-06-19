@@ -1344,10 +1344,20 @@ fn main() -> Result<()> {
         }
         create_dir_all(&output)?;
         if args.ingredient {
-            #[allow(deprecated)]
-            let report = Ingredient::from_file_with_folder(path, &output)
-                .map_err(special_errs)?
-                .to_string();
+            let mut builder = Builder::from_shared_context(&context);
+            let ingredient = builder
+                .add_ingredient_from_stream(
+                    "{}",
+                    &format_from_path(path).ok_or(c2pa::Error::UnsupportedType)?,
+                    &mut File::open(path)?,
+                )
+                .map_err(special_errs)?;
+            // write resources to the output folder explicitly
+            for (id, data) in ingredient.resources().resources() {
+                std::fs::write(output.join(id), data)?;
+            }
+            let report = ingredient.to_string();
+
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
             println!("Ingredient report written to the directory {:?}", &output);
         } else {
@@ -1366,8 +1376,12 @@ fn main() -> Result<()> {
             println!("Manifest report written to the directory {:?}", &output);
         }
     } else if args.ingredient {
-        #[allow(deprecated)]
-        let ingredient = Ingredient::from_file(path).map_err(special_errs)?;
+        let mut builder = Builder::from_shared_context(&context);
+        let ingredient = builder.add_ingredient_from_stream(
+            r#"{"relationship":"component-of"}"#,
+            &format_from_path(path).ok_or(c2pa::Error::UnsupportedType)?,
+            &mut File::open(path)?,
+        )?;
         println!("{}", ingredient)
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),

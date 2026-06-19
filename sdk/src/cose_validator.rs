@@ -257,8 +257,6 @@ pub(crate) fn get_signing_info(
 #[cfg(test)]
 pub mod tests {
     use coset::{cbor::value::Value, Label};
-    #[allow(deprecated)]
-    use sha2::digest::generic_array::sequence::Shorten;
     use x509_parser::{certificate::X509Certificate, pem::Pem};
 
     use super::*;

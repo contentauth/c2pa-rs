@@ -22,9 +22,7 @@ use async_generic::async_generic;
 use log::error;
 
 #[cfg(feature = "file_io")]
-use crate::jumbf_io::{
-    get_file_extension, get_supported_file_extension, load_jumbf_from_file, save_jumbf_to_file,
-};
+use crate::jumbf_io::{get_supported_file_extension, save_jumbf_to_file};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
@@ -73,7 +71,7 @@ use crate::{
     log_item,
     manifest_store_report::ManifestStoreReport,
     maybe_send_sync::MaybeSend,
-    settings::{builder::OcspFetchScope, Settings, MAX_ASSERTIONS},
+    settings::{builder::OcspFetchScope, get_thread_local_settings, Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
@@ -1197,7 +1195,12 @@ impl Store {
 
     #[inline]
     pub fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
-        Self::from_jumbf_impl(Store::new(), buffer, validation_log)
+        // Legacy path: no Context available; read thread-local settings for backward compatibility.
+        let max_manifest_size = get_thread_local_settings()
+            .core
+            .max_decompressed_manifest_size_in_mb
+            .saturating_mul(1024 * 1024);
+        Self::from_jumbf_impl(Store::new(), buffer, validation_log, max_manifest_size)
     }
 
     #[inline]
@@ -1206,13 +1209,24 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
-        Self::from_jumbf_impl(Store::from_context(context), buffer, validation_log)
+        let max_manifest_size = context
+            .settings()
+            .core
+            .max_decompressed_manifest_size_in_mb
+            .saturating_mul(1024 * 1024);
+        Self::from_jumbf_impl(
+            Store::from_context(context),
+            buffer,
+            validation_log,
+            max_manifest_size,
+        )
     }
 
     fn from_jumbf_impl(
         mut store: Store,
         buffer: &[u8],
         validation_log: &mut StatusTracker,
+        max_manifest_size: usize,
     ) -> Result<Store> {
         if buffer.is_empty() {
             return Err(Error::JumbfNotFound);
@@ -1244,6 +1258,7 @@ impl Store {
                 cai_block
                     .data_box_as_superbox(idx)
                     .ok_or(Error::JumbfBoxNotFound)?,
+                max_manifest_size,
             )?;
             let cai_store_box = store_box.super_box();
             let cai_store_desc_box = cai_store_box.desc_box();
@@ -3378,24 +3393,6 @@ impl Store {
         Ok((pc.signature_val().to_vec(), jumbf_bytes))
     }
 
-    /// Verify Store from an existing asset
-    /// asset_path: path to input asset
-    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
-    #[cfg(feature = "file_io")]
-    pub fn verify_from_path(
-        &mut self,
-        asset_path: &'_ Path,
-        validation_log: &mut StatusTracker,
-        context: &Context,
-    ) -> Result<()> {
-        Store::verify_store(
-            self,
-            Some(&mut ClaimAssetData::Path(asset_path)),
-            validation_log,
-            context,
-        )
-    }
-
     // fetch remote manifest if possible
     #[cfg(feature = "fetch_remote_manifests")]
     #[async_generic]
@@ -3507,49 +3504,6 @@ impl Store {
                     Ok((jumbf, Some(ext_ref)))
                 } else {
                     Err(Error::JumbfNotFound)
-                }
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    /// load jumbf given a file path
-    ///
-    /// This handles, embedded, sidecar and remote manifests
-    ///
-    /// in_path -  path to source file
-    /// validation_log - optional vec to contain addition info about the asset
-    #[cfg(feature = "file_io")]
-    pub fn load_jumbf_from_path(in_path: &Path, context: &Context) -> Result<Vec<u8>> {
-        let external_manifest = in_path.with_extension(MANIFEST_STORE_EXT);
-        let external_exists = external_manifest.exists();
-
-        match load_jumbf_from_file(in_path) {
-            Ok(manifest_bytes) => Ok(manifest_bytes),
-            Err(Error::UnsupportedType) => {
-                if external_exists {
-                    std::fs::read(external_manifest).map_err(Error::IoError)
-                } else {
-                    Err(Error::UnsupportedType)
-                }
-            }
-            Err(Error::JumbfNotFound) => {
-                if external_exists {
-                    std::fs::read(external_manifest).map_err(Error::IoError)
-                } else {
-                    // check for remote manifest
-                    let mut asset_reader = std::fs::File::open(in_path)?;
-                    let ext = get_file_extension(in_path).ok_or(Error::UnsupportedType)?;
-                    if let Some(ext_ref) = crate::utils::xmp_inmemory_utils::XmpInfo::from_source(
-                        &mut asset_reader,
-                        &ext,
-                    )
-                    .provenance
-                    {
-                        Store::handle_remote_manifest(&ext_ref, context)
-                    } else {
-                        Err(Error::JumbfNotFound)
-                    }
                 }
             }
             Err(e) => Err(e),
@@ -4326,12 +4280,11 @@ pub mod tests {
         assertion::AssertionJson,
         assertions::{labels::BOX_HASH, BoxHash},
         hashed_uri::HashedUri,
-        jumbf_io::get_assetio_handler_from_path,
+        jumbf_io::{get_assetio_handler_from_path, load_jumbf_from_file, save_jumbf_to_file},
         utils::{
             hash_utils::Hasher,
             io_utils::tempdirectory,
-            test::write_jpeg_placeholder_file,
-            test::{temp_dir_path, TEST_USER_ASSERTION},
+            test::{temp_dir_path, write_jpeg_placeholder_file, TEST_USER_ASSERTION},
             test_signer::test_cawg_signer,
         },
     };
@@ -5740,6 +5693,67 @@ pub mod tests {
         assert!(!report.logged_items().is_empty());
 
         assert!(report.has_error(Error::UnsupportedType));
+    }
+
+    fn make_brotli_bomb_jumbf(decompressed_size: usize) -> Vec<u8> {
+        use brotli::enc::BrotliEncoderParams;
+
+        use crate::{
+            jumbf::boxes::{Cai, JUMBFBrotliContentBox, JUMBFSuperBox, CAI_MANIFEST_UUID},
+            store::BMFFBox,
+        };
+
+        let payload = vec![0u8; decompressed_size];
+        let mut compressed = Vec::new();
+        brotli::BrotliCompress(
+            &mut Cursor::new(payload.as_slice()),
+            &mut compressed,
+            &BrotliEncoderParams::default(),
+        )
+        .expect("brotli compress");
+
+        let brotli_box = JUMBFBrotliContentBox::new(compressed);
+        let mut manifest_sbox = JUMBFSuperBox::new("test.manifest", Some(CAI_MANIFEST_UUID));
+        manifest_sbox.add_data_box(Box::new(brotli_box));
+
+        let mut cai = Cai::new();
+        cai.add_box(Box::new(manifest_sbox));
+
+        let mut bytes = Vec::new();
+        cai.super_box()
+            .write_box(&mut bytes)
+            .expect("serialize cai block");
+        bytes
+    }
+
+    #[test]
+    fn test_from_jumbf_rejects_brotli_bomb_via_thread_local() {
+        crate::settings::set_settings_value("core.max_decompressed_manifest_size_in_mb", 1usize)
+            .unwrap();
+
+        let result = Store::from_jumbf(
+            &make_brotli_bomb_jumbf(2 * 1024 * 1024),
+            &mut StatusTracker::default(),
+        );
+
+        crate::settings::reset_default_settings().unwrap();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_jumbf_with_context_rejects_brotli_bomb() {
+        let settings = Settings::default()
+            .with_value("core.max_decompressed_manifest_size_in_mb", 1usize)
+            .unwrap();
+        let context = Context::new().with_settings(settings).unwrap();
+
+        let result = Store::from_jumbf_with_context(
+            &make_brotli_bomb_jumbf(2 * 1024 * 1024),
+            &mut StatusTracker::default(),
+            &context,
+        );
+
+        assert!(result.is_err());
     }
 
     #[test]
