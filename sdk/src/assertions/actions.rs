@@ -756,6 +756,17 @@ impl Action {
         self
     }
 
+    /// Sets the ingredient [`HashedUri`] references for this action directly.
+    ///
+    /// Use this when building actions via `Builder::add_assertion_with_ref` — the
+    /// [`HashedUri`] values returned from adding ingredient assertions can be passed here
+    /// so the action references them without any deferred resolution in `to_claim()`.
+    pub fn set_ingredient_refs(mut self, ingredients: Vec<HashedUri>) -> Self {
+        let params = self.parameters.get_or_insert_with(Default::default);
+        params.ingredients = Some(ingredients);
+        self
+    }
+
     /// Adds an ingredient id to the action.
     pub fn add_ingredient_id(mut self, ingredient_id: &str) -> Result<Self> {
         if let Some(Value::Array(mut ids)) = self.get_parameter(INGREDIENT_IDS) {

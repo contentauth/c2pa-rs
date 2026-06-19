@@ -790,15 +790,33 @@ impl Builder {
         S: Into<String>,
         R: Read + Seek + ?Sized,
     {
-        // just read into a buffer until resource store handles reading streams
-        let mut resource = Vec::new();
-        stream.read_to_end(&mut resource)?;
-        // add the resource and set the resource reference
-        self.resources.add(&self.definition.instance_id, resource)?;
-        self.definition.thumbnail = Some(ResourceRef::new(
-            format,
-            self.definition.instance_id.clone(),
-        ));
+        let format: String = format.into();
+        let instance_id = self.definition.instance_id.clone();
+        if self.claim_version() >= 2 {
+            let mut data = Vec::new();
+            stream.read_to_end(&mut data)?;
+            let hu = self.add_assertion_with_ref(&EmbeddedData::new(
+                labels::CLAIM_THUMBNAIL,
+                format_to_mime(&format),
+                data,
+            ))?;
+            let alg = self.pre_claim.as_ref().map(|p| p.alg().to_string());
+            self.resource_map.insert(
+                instance_id.clone(),
+                ResourceRef {
+                    format: format.clone(),
+                    identifier: hu.url().clone(),
+                    hash: Some(base64::encode(&hu.hash())),
+                    alg: hu.alg().or(alg),
+                    data_types: None,
+                },
+            );
+        } else {
+            let mut resource = Vec::new();
+            stream.read_to_end(&mut resource)?;
+            self.resources.add(&instance_id, resource)?;
+        }
+        self.definition.thumbnail = Some(ResourceRef::new(format, instance_id));
         Ok(self)
     }
 
@@ -1003,6 +1021,62 @@ impl Builder {
         self
     }
 
+    /// Returns `&mut Claim` for the pre-populated claim, initializing it on first use.
+    fn ensure_pre_claim(&mut self) -> Result<&mut Claim> {
+        if self.pre_claim.is_none() {
+            if self.definition.label.is_none() {
+                let version = self.claim_version();
+                let temp = Claim::new("", self.definition.vendor.as_deref(), version.into());
+                self.definition.label = Some(temp.label().to_string());
+            }
+            let label = self
+                .definition
+                .label
+                .as_deref()
+                .ok_or_else(|| Error::BadParam("label".into()))?
+                .to_string();
+            let version = self.claim_version();
+            self.pre_claim = Some(
+                Claim::new_with_user_guid("", &label, version.into())?
+                    .with_context(self.context.clone()),
+            );
+        }
+        self.pre_claim
+            .as_mut()
+            .ok_or_else(|| Error::BadParam("pre_claim".into()))
+    }
+
+    /// Adds any assertion directly to the pre-claim and returns its [`HashedUri`].
+    ///
+    /// The returned URI and hash are stable — they will remain valid in the final signed
+    /// manifest. The caller may store the [`HashedUri`] and reference it from other
+    /// assertions before signing.
+    pub fn add_assertion_with_ref<A>(&mut self, assertion: &A) -> Result<HashedUri>
+    where
+        A: AssertionBase,
+    {
+        self.ensure_pre_claim()?.add_assertion(assertion)
+    }
+
+    /// Adds an [`EmbeddedData`] assertion from a stream and returns its [`HashedUri`].
+    ///
+    /// Convenience wrapper over `add_assertion_with_ref` for binary resources.
+    /// `label` determines the assertion type (e.g. [`labels::EMBEDDED_DATA`] or
+    /// [`labels::CLAIM_THUMBNAIL`]).
+    ///
+    /// Returns a [`HashedUri`] with the JUMBF URI and pre-computed hash, usable in other
+    /// assertions before signing.
+    pub fn add_embedded_data(
+        &mut self,
+        label: &str,
+        format: &str,
+        stream: &mut impl Read,
+    ) -> Result<HashedUri> {
+        let mut data = Vec::new();
+        stream.read_to_end(&mut data)?;
+        self.add_assertion_with_ref(&EmbeddedData::new(label, format_to_mime(format), data))
+    }
+
     /// Adds a resource to the manifest.
     ///
     /// The ID must match an identifier in the manifest.
@@ -1072,43 +1146,15 @@ impl Builder {
                 return Ok(self);
             };
 
-            // Initialize pre_claim on first use.
-            if self.pre_claim.is_none() {
-                if self.definition.label.is_none() {
-                    let version = self.claim_version();
-                    let temp = Claim::new("", self.definition.vendor.as_deref(), version.into());
-                    self.definition.label = Some(temp.label().to_string());
-                }
-                let label = self
-                    .definition
-                    .label
-                    .as_deref()
-                    .ok_or_else(|| Error::BadParam("label".into()))?
-                    .to_string();
-                let version = self.claim_version();
-                self.pre_claim = Some(
-                    Claim::new_with_user_guid("", &label, version.into())?
-                        .with_context(self.context.clone()),
-                );
-            }
-            let pre = self
-                .pre_claim
-                .as_mut()
-                .ok_or_else(|| Error::BadParam("pre_claim".into()))?;
-
-            let mut data = Vec::new();
-            stream.read_to_end(&mut data)?;
-
-            let embedded = EmbeddedData::new(assertion_label, format_to_mime(&format), data);
-            let hu = pre.add_assertion(&embedded)?;
-
+            let hu = self.add_embedded_data(assertion_label, &format, &mut stream)?;
+            let alg = self.pre_claim.as_ref().map(|p| p.alg().to_string());
             self.resource_map.insert(
                 sanitized_id,
                 ResourceRef {
                     format,
                     identifier: hu.url().clone(),
                     hash: Some(base64::encode(&hu.hash())),
-                    alg: hu.alg().or_else(|| Some(pre.alg().to_string())),
+                    alg: hu.alg().or(alg),
                     data_types: None,
                 },
             );
@@ -1921,7 +1967,14 @@ impl Builder {
         // check settings to see if we should auto generate a thumbnail
         let auto_thumbnail = self.context.settings().builder.thumbnail.enabled;
 
-        if self.definition.thumbnail.is_none() && auto_thumbnail {
+        // Also skip if a thumbnail was already added directly to pre_claim via add_embedded_data.
+        let has_pre_claim_thumbnail = self.pre_claim.as_ref().is_some_and(|p| {
+            p.claim_assertion_store()
+                .iter()
+                .any(|ca| ca.label_raw().contains(labels::CLAIM_THUMBNAIL))
+        });
+
+        if self.definition.thumbnail.is_none() && !has_pre_claim_thumbnail && auto_thumbnail {
             self.context
                 .check_progress(ProgressPhase::Thumbnail, 1, 1)?;
             stream.rewind()?;
@@ -9779,6 +9832,131 @@ mod tests {
         assert!(
             loaded.base_path.is_none(),
             "base_path must not be populated from archive JSON"
+        );
+    }
+
+    /// Tests the new pre-claim API end-to-end:
+    /// - `add_embedded_data()` for icons, thumbnails, and ingredient thumbnails
+    /// - `add_assertion_with_ref()` to add ingredient and actions assertions by value
+    /// - The returned [`HashedUri`] wires assertions together before signing
+    #[test]
+    fn test_add_assertion_with_ref() {
+        use crate::{
+            assertions::{c2pa_action, labels, Action, Actions, IngredientAssertion, Relationship},
+            resource_store::UriOrResource,
+            ClaimGeneratorInfo,
+        };
+
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut builder = Builder::default();
+        builder.definition.format = format.to_string();
+        builder.definition.title = Some("Test add_assertion_with_ref".to_string());
+
+        // Add an icon for ClaimGeneratorInfo — returns a HashedUri immediately.
+        let icon_uri = builder
+            .add_embedded_data(labels::ICON, "image/svg+xml", &mut Cursor::new(b"<svg/>"))
+            .expect("add icon");
+
+        // Wire the icon into ClaimGeneratorInfo as a HashedUri — no deferred resolution.
+        builder.set_claim_generator_info(ClaimGeneratorInfo {
+            name: "TestApp".to_string(),
+            icon: Some(UriOrResource::HashedUri(icon_uri.clone())),
+            ..Default::default()
+        });
+
+        // Claim thumbnail — assertion lands in pre_claim directly.
+        builder
+            .add_embedded_data(
+                labels::CLAIM_THUMBNAIL,
+                "image/jpeg",
+                &mut Cursor::new(TEST_THUMBNAIL),
+            )
+            .expect("claim thumbnail");
+
+        // Ingredient thumbnail → HashedUri used to set the thumbnail field on the ingredient assertion.
+        let ing_thumb_uri = builder
+            .add_embedded_data(
+                labels::INGREDIENT_THUMBNAIL,
+                "image/jpeg",
+                &mut Cursor::new(TEST_THUMBNAIL),
+            )
+            .expect("ingredient thumbnail");
+
+        // Build the ingredient assertion with a direct HashedUri ref to its thumbnail.
+        let ing_assertion = IngredientAssertion::new_v3(Relationship::ParentOf)
+            .set_title("Test Ingredient")
+            .set_format("image/jpeg")
+            .set_thumbnail(Some(&ing_thumb_uri));
+
+        let ing_uri = builder
+            .add_assertion_with_ref(&ing_assertion)
+            .expect("ingredient assertion");
+
+        // Build Actions: software agent carries the icon; opened action references the ingredient.
+        let agent_cgi = ClaimGeneratorInfo {
+            name: "TestEditor".to_string(),
+            icon: Some(UriOrResource::HashedUri(icon_uri)),
+            ..Default::default()
+        };
+
+        let action = Action::new(c2pa_action::OPENED).set_ingredient_refs(vec![ing_uri]);
+
+        let mut actions = Actions::new();
+        actions.add_software_agent(agent_cgi);
+        let actions = actions.add_action(action);
+
+        builder
+            .add_assertion_with_ref(&actions)
+            .expect("actions assertion");
+
+        // Sign the asset.
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .expect("sign");
+
+        // Read back and verify.
+        dest.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream(format, &mut dest)
+            .expect("read signed asset");
+
+        println!("reader JSON: {}", reader.json());
+
+        assert_ne!(
+            reader.validation_state(),
+            ValidationState::Invalid,
+            "manifest should be valid"
+        );
+
+        let manifest = reader.active_manifest().expect("active manifest");
+
+        // Claim thumbnail was added via add_embedded_data with CLAIM_THUMBNAIL label.
+        assert!(
+            manifest.thumbnail_ref().is_some(),
+            "claim thumbnail should be present"
+        );
+
+        // One ingredient assertion was added.
+        assert_eq!(manifest.ingredients().len(), 1, "expected one ingredient");
+
+        // Actions assertion with the opened action referencing the ingredient.
+        let found_actions: Actions = manifest
+            .find_assertion(Actions::LABEL)
+            .expect("actions assertion in manifest");
+        assert_eq!(found_actions.actions().len(), 1);
+        assert_eq!(found_actions.actions()[0].action(), c2pa_action::OPENED);
+
+        // The action should carry ingredient refs set via set_ingredient_refs().
+        let params = found_actions.actions()[0]
+            .parameters()
+            .expect("action parameters");
+        assert!(
+            params.ingredients.is_some(),
+            "opened action should reference the ingredient"
         );
     }
 
