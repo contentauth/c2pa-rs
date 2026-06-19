@@ -162,12 +162,11 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>], context: &Context) -> Optio
         }
 
         let request = request.body(Vec::new()).ok()?;
-        let resolvers = &context as &dyn crate::http::HttpResolvers;
         let response = if _sync {
-            resolvers.sync_resolver().http_resolve(request).ok()?
+            context.resolver().http_resolve(request).ok()?
         } else {
-            resolvers
-                .async_resolver()
+            context
+                .resolver_async()
                 .http_resolve_async(request)
                 .await
                 .ok()?

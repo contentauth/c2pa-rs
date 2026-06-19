@@ -27,7 +27,6 @@ use crate::{
         raw_signature::RawSignatureValidationError,
     },
     dynamic_assertion::PartialClaim,
-    http::HttpResolvers,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
         identity_assertion::{
@@ -305,7 +304,7 @@ impl IdentityAssertion {
         &self,
         partial_claim: &PartialClaim,
         status_tracker: &mut StatusTracker,
-        resolvers: &dyn HttpResolvers,
+        context: &Context,
     ) -> Result<serde_json::Value, ValidationError<String>> {
         let settings = Context::new().settings().clone();
         self.check_padding(status_tracker)?;
@@ -397,7 +396,7 @@ impl IdentityAssertion {
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else if sig_type == "cawg.identity_claims_aggregation" {
-            let verifier = IcaSignatureVerifier::new(resolvers);
+            let verifier = IcaSignatureVerifier::new(context);
 
             let result = if _sync {
                 verifier

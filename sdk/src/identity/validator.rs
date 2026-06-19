@@ -20,7 +20,6 @@ use serde_json::Value;
 use crate::{
     context::Context,
     dynamic_assertion::{AsyncPostValidator, PartialClaim},
-    http::HttpResolvers,
     identity::IdentityAssertion,
     status_tracker::StatusTracker,
     ManifestAssertion,
@@ -28,22 +27,20 @@ use crate::{
 
 /// Validates a CAWG identity assertion.
 pub struct CawgValidator<'a> {
-    resolvers: &'a dyn HttpResolvers,
+    context: &'a Context,
 }
 
 impl<'a> CawgValidator<'a> {
-    /// Create a [`CawgValidator`] using resolvers from the provided context.
-    pub fn new(resolvers_: &'a dyn HttpResolvers) -> Self {
-        Self {
-            resolvers: resolvers_,
-        }
+    /// Create a [`CawgValidator`] from the provided context.
+    pub fn new(context: &'a Context) -> Self {
+        Self { context }
     }
 }
 
 impl Default for CawgValidator<'_> {
     fn default() -> Self {
         let context: &'static Context = Box::leak(Box::new(Context::new()));
-        Self { resolvers: context }
+        Self { context }
     }
 }
 
@@ -62,7 +59,7 @@ impl AsyncPostValidator for CawgValidator<'_> {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
             tracker.push_current_uri(uri.to_string());
             let result = identity_assertion
-                .validate_partial_claim_async(partial_claim, tracker, self.resolvers)
+                .validate_partial_claim_async(partial_claim, tracker, self.context)
                 .await
                 .ok();
             tracker.pop_current_uri();

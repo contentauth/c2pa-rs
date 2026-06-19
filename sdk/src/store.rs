@@ -3405,11 +3405,10 @@ impl Store {
         context.check_progress(ProgressPhase::FetchingRemoteManifest, 1, 1)?;
 
         let request = http::Request::get(url).body(Vec::new())?;
-        let resolvers: &dyn crate::http::HttpResolvers = &context;
         let response = if _sync {
-            resolvers.sync_resolver().http_resolve(request)
+            context.resolver().http_resolve(request)
         } else {
-            resolvers.async_resolver().http_resolve_async(request).await
+            context.resolver_async().http_resolve_async(request).await
         };
 
         match response {

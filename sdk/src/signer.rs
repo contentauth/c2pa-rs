@@ -14,12 +14,12 @@
 use async_trait::async_trait;
 
 use crate::{
+    context::Context,
     crypto::{
         raw_signature::{AsyncRawSigner, RawSigner, RawSignerError, SigningAlg},
         time_stamp::{TimeStampError, TimeStampProvider},
     },
     dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
-    http::{AsyncGenericResolver, ResolverBundle, SyncGenericResolver},
     maybe_send_sync::{MaybeSend, MaybeSync},
     Result,
 };
@@ -91,13 +91,10 @@ pub trait Signer {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-                let bundle = ResolverBundle::new(
-                    SyncGenericResolver::with_redirects().unwrap_or_default(),
-                    AsyncGenericResolver::new(),
-                );
+                let context = Context::new();
                 return Some(
                     crate::crypto::time_stamp::default_rfc3161_request(
-                        &url, headers, &body, message, &bundle,
+                        &url, headers, &body, message, &context,
                     )
                     .map_err(|e| e.into()),
                 );
@@ -220,13 +217,10 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
-                let bundle = ResolverBundle::new(
-                    SyncGenericResolver::new(),
-                    AsyncGenericResolver::with_redirects().unwrap_or_default(),
-                );
+                let context = Context::new();
                 return Some(
                     crate::crypto::time_stamp::default_rfc3161_request_async(
-                        &url, headers, &body, message, &bundle,
+                        &url, headers, &body, message, &context,
                     )
                     .await
                     .map_err(|e| e.into()),

@@ -30,7 +30,6 @@ use crate::{
     crypto::raw_signature::SigningAlg,
     error::{Error, Result},
     hashed_uri::HashedUri,
-    http::HttpResolvers,
     identity::IdentityAssertion,
     ingredient::Ingredient,
     jumbf::labels::{to_absolute_uri, to_assertion_uri},
@@ -608,19 +607,11 @@ impl Manifest {
                     let identity_assertion: IdentityAssertion = ma.to_assertion()?;
                     let value: Option<serde_json::Value> = if _sync {
                         identity_assertion
-                            .validate_partial_claim(
-                                &partial_claim,
-                                validation_log,
-                                &context as &dyn HttpResolvers,
-                            )
+                            .validate_partial_claim(&partial_claim, validation_log, context)
                             .ok()
                     } else {
                         identity_assertion
-                            .validate_partial_claim_async(
-                                &partial_claim,
-                                validation_log,
-                                &context as &dyn HttpResolvers,
-                            )
+                            .validate_partial_claim_async(&partial_claim, validation_log, context)
                             .await
                             .ok()
                     };

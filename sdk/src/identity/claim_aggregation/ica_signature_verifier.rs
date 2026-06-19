@@ -17,14 +17,12 @@ use base64::{prelude::BASE64_URL_SAFE, Engine};
 use chrono::{DateTime, Utc};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
-#[cfg(test)]
-use crate::context::Context;
 use crate::{
+    context::Context,
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustPolicy},
     },
-    http::HttpResolvers,
     identity::{
         claim_aggregation::{
             w3c_vc::{
@@ -55,14 +53,14 @@ use crate::{
 /// [§3.3.1 Securing JSON-LD Verifiable Credentials with COSE]: https://w3c.github.io/vc-jose-cose/#securing-vcs-with-cose
 pub struct IcaSignatureVerifier<'a> {
     // TO DO (CAI-7980): Add option to configure trusted ICA issuers.
-    resolvers: &'a dyn HttpResolvers,
+    context: &'a Context,
 }
 
 #[cfg(test)]
 impl Default for IcaSignatureVerifier<'static> {
     fn default() -> Self {
         let context: &'static Context = Box::leak(Box::new(Context::new()));
-        Self { resolvers: context }
+        Self { context }
     }
 }
 
@@ -230,10 +228,8 @@ impl SignatureVerifier for IcaSignatureVerifier<'_> {
 }
 
 impl<'a> IcaSignatureVerifier<'a> {
-    pub(crate) fn new(resolvers_: &'a dyn crate::http::HttpResolvers) -> Self {
-        Self {
-            resolvers: resolvers_,
-        }
+    pub(crate) fn new(context_: &'a Context) -> Self {
+        Self { context: context_ }
     }
 
     // pub(crate) fn from_async_resolver(resolver: Arc<dyn AsyncHttpResolver>) -> Self {
@@ -481,9 +477,9 @@ impl<'a> IcaSignatureVerifier<'a> {
 
             "web" => {
                 let did_doc = if _sync {
-                    did_web::resolve(&primary_did, self.resolvers)?
+                    did_web::resolve(&primary_did, self.context)?
                 } else {
-                    did_web::resolve_async(&primary_did, self.resolvers).await?
+                    did_web::resolve_async(&primary_did, self.context).await?
                 };
 
                 let Some(vm1) = did_doc.verification_relationships.assertion_method.first() else {

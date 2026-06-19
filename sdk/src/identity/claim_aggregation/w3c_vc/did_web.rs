@@ -23,8 +23,9 @@ use std::io::Read;
 use async_generic::async_generic;
 
 use super::{did::Did, did_doc::DidDocument};
-use crate::http::{
-    AsyncHttpResolver, HttpResolverError, HttpResolvers, SyncGenericResolver, SyncHttpResolver,
+use crate::{
+    context::Context,
+    http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
 };
 
 /// Maximum number of bytes accepted from a DID Web server response body.
@@ -106,11 +107,11 @@ fn parse_did_doc(bytes: Vec<u8>, url: &str) -> Result<DidDocument, DidWebError> 
 
 pub(crate) async fn resolve_async(
     did: &Did<'_>,
-    resolvers: &dyn HttpResolvers,
+    context: &Context,
 ) -> Result<DidDocument, DidWebError> {
     let url = prepare_url(did)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
-    let bytes = get_did_doc_async(&url, resolvers).await?;
+    let bytes = get_did_doc_async(&url, context).await?;
     parse_did_doc(bytes, &url)
 }
 
@@ -142,17 +143,17 @@ fn read_body_with_limit(body: Box<dyn Read>, url: &str) -> Result<Vec<u8>, DidWe
 }
 
 #[async_generic]
-fn get_did_doc(url: &str, resolvers: &dyn HttpResolvers) -> Result<Vec<u8>, DidWebError> {
+fn get_did_doc(url: &str, context: &Context) -> Result<Vec<u8>, DidWebError> {
     let request = build_request(url)?;
 
     let response = if _sync {
-        resolvers
-            .sync_resolver()
+        context
+            .resolver()
             .http_resolve(request)
             .map_err(|e| DidWebError::Request(url.to_owned(), e))?
     } else {
-        resolvers
-            .async_resolver()
+        context
+            .resolver_async()
             .http_resolve_async(request)
             .await
             .map_err(|e| DidWebError::Request(url.to_owned(), e))?
@@ -176,13 +177,10 @@ fn get_did_doc(url: &str, resolvers: &dyn HttpResolvers) -> Result<Vec<u8>, DidW
     read_body_with_limit(body, url)
 }
 
-pub(crate) fn resolve(
-    did: &Did<'_>,
-    resolvers: &dyn HttpResolvers,
-) -> Result<DidDocument, DidWebError> {
+pub(crate) fn resolve(did: &Did<'_>, context: &Context) -> Result<DidDocument, DidWebError> {
     let url = prepare_url(did)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
-    let bytes = get_did_doc(&url, resolvers)?;
+    let bytes = get_did_doc(&url, context)?;
     parse_did_doc(bytes, &url)
 }
 
@@ -300,7 +298,7 @@ mod tests {
 
         use super::did;
         use crate::{
-            http::{AsyncGenericResolver, ResolverBundle, SyncGenericResolver},
+            context::Context,
             identity::claim_aggregation::w3c_vc::{
                 did_doc::DidDocument,
                 did_web::{self, DidWebError, MAX_DID_DOC_SIZE},
@@ -336,9 +334,8 @@ mod tests {
                     .body(DID_JSON);
             });
 
-            let resolvers =
-                ResolverBundle::new(SyncGenericResolver::new(), AsyncGenericResolver::new());
-            let doc = did_web::resolve_async(&did("did:web:localhost"), &resolvers)
+            let context = Context::new();
+            let doc = did_web::resolve_async(&did("did:web:localhost"), &context)
                 .await
                 .unwrap();
             let doc_expected = DidDocument::from_json(DID_JSON).unwrap();
@@ -365,9 +362,8 @@ mod tests {
                     .body(oversized_body);
             });
 
-            let resolvers =
-                ResolverBundle::new(SyncGenericResolver::new(), AsyncGenericResolver::new());
-            let result = did_web::resolve_async(&did("did:web:localhost"), &resolvers).await;
+            let context = Context::new();
+            let result = did_web::resolve_async(&did("did:web:localhost"), &context).await;
 
             did_web::clear_proxies();
 
@@ -393,9 +389,8 @@ mod tests {
                     .body(oversized_body);
             });
 
-            let resolvers =
-                ResolverBundle::new(SyncGenericResolver::new(), AsyncGenericResolver::new());
-            let result = did_web::resolve_async(&did("did:web:localhost"), &resolvers).await;
+            let context = Context::new();
+            let result = did_web::resolve_async(&did("did:web:localhost"), &context).await;
 
             did_web::clear_proxies();
 
@@ -441,17 +436,15 @@ mod tests {
                 }
             }
 
-            let resolver = PanicResolver;
-
-            let resolvers = ResolverBundle::new(SyncGenericResolver::new(), resolver);
+            let context = Context::new().with_resolver_async(PanicResolver);
             // AWS EC2 metadata endpoint — the canonical SSRF target from the report.
-            let result = did_web::resolve_async(&did("did:web:169.254.169.254"), &resolvers).await;
+            let result = did_web::resolve_async(&did("did:web:169.254.169.254"), &context).await;
             assert!(
                 matches!(result, Err(DidWebError::InvalidWebDid(_))),
                 "expected InvalidWebDid for link-local IP, got {result:?}"
             );
 
-            let result = did_web::resolve_async(&did("did:web:192.168.1.1"), &resolvers).await;
+            let result = did_web::resolve_async(&did("did:web:192.168.1.1"), &context).await;
             assert!(
                 matches!(result, Err(DidWebError::InvalidWebDid(_))),
                 "expected InvalidWebDid for RFC-1918 IP, got {result:?}"
@@ -475,9 +468,9 @@ mod tests {
             let inner = AsyncGenericResolver::new();
             let restricted =
                 RestrictedResolver::with_allowed_hosts(inner, vec![] as Vec<HostPattern>);
-            let resolvers = ResolverBundle::new(SyncGenericResolver::new(), restricted);
+            let context = Context::new().with_resolver_async(restricted);
 
-            let result = did_web::resolve_async(&did("did:web:localhost"), &resolvers).await;
+            let result = did_web::resolve_async(&did("did:web:localhost"), &context).await;
 
             did_web::clear_proxies();
 

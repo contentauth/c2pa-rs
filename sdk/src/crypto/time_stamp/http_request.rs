@@ -16,6 +16,7 @@ use bcder::{decode::Constructed, encode::Values};
 use http::header;
 
 use crate::{
+    context::Context,
     crypto::{
         asn1::rfc3161::{TimeStampReq, TimeStampResp},
         cose::CertificateTrustPolicy,
@@ -25,7 +26,7 @@ use crate::{
             TimeStampError,
         },
     },
-    http::{HttpResolverError, HttpResolvers},
+    http::HttpResolverError,
     status_tracker::StatusTracker,
 };
 
@@ -41,7 +42,7 @@ pub fn default_rfc3161_request(
     headers: Option<Vec<(String, String)>>,
     data: &[u8],
     message: &[u8],
-    resolvers: &dyn HttpResolvers,
+    context: &Context,
 ) -> Result<Vec<u8>, TimeStampError> {
     let request = Constructed::decode(
         bcder::decode::SliceSource::new(data),
@@ -53,9 +54,9 @@ pub fn default_rfc3161_request(
     })?;
 
     let ts = if _sync {
-        time_stamp_request_http(url, headers, &request, resolvers)?
+        time_stamp_request_http(url, headers, &request, context)?
     } else {
-        time_stamp_request_http_async(url, headers, &request, resolvers).await?
+        time_stamp_request_http_async(url, headers, &request, context).await?
     };
 
     let mut local_log = StatusTracker::default();
@@ -76,7 +77,7 @@ fn time_stamp_request_http(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     timestamp_request: &TimeStampReq,
-    resolvers: &dyn HttpResolvers,
+    context: &Context,
 ) -> Result<Vec<u8>, TimeStampError> {
     // This function exists to work around a bug in serialization of
     // TimeStampResp so we just return the data directly.
@@ -101,12 +102,12 @@ fn time_stamp_request_http(
     let request = request.header(header::CONTENT_TYPE, HTTP_CONTENT_TYPE_REQUEST);
 
     let response = if _sync {
-        resolvers
-            .sync_resolver()
+        context
+            .resolver()
             .http_resolve(request.body(body).map_err(HttpResolverError::Http)?)?
     } else {
-        resolvers
-            .async_resolver()
+        context
+            .resolver_async()
             .http_resolve_async(request.body(body).map_err(HttpResolverError::Http)?)
             .await?
     };

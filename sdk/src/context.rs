@@ -18,7 +18,7 @@ use std::sync::{
 
 use crate::{
     http::{
-        restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver, HttpResolvers,
+        restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
         SyncGenericResolver, SyncHttpResolver,
     },
     maybe_send_sync::{MaybeSend, MaybeSync},
@@ -798,16 +798,6 @@ impl Context {
     }
 }
 
-impl HttpResolvers for Context {
-    fn sync_resolver(&self) -> Arc<dyn SyncHttpResolver> {
-        self.resolver()
-    }
-
-    fn async_resolver(&self) -> Arc<dyn AsyncHttpResolver> {
-        self.resolver_async()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -1072,25 +1062,14 @@ mod tests {
 
     #[test]
     fn test_default_sync_resolver() {
-        // Create a context with default resolver
         let context = Context::new();
-        let resolvers: &dyn HttpResolvers = &context as &dyn HttpResolvers;
-
-        // Verify we can get the default resolver
-        let _resolver = resolvers.sync_resolver();
+        let _resolver = context.resolver();
     }
 
     #[test]
     fn test_default_async_resolver() {
-        // Create a context with default resolver
         let context = Context::new();
-        let resolvers: &dyn HttpResolvers = &context as &dyn HttpResolvers;
-
-        // Verify we can get the default async resolver
-        let _resolver = resolvers.async_resolver();
-
-        // The test passes if we can get the async resolver without errors
-        // The default is a RestrictedResolver wrapping AsyncGenericResolver
+        let _resolver = context.resolver_async();
     }
 
     #[test]
@@ -1120,12 +1099,8 @@ mod tests {
             }
         }
 
-        // Create a context with the custom resolver
         let context = Context::new().with_resolver(MockSyncResolver);
-        let resolvers = &context as &dyn HttpResolvers;
-
-        // Verify the custom resolver is used
-        let resolver = resolvers.sync_resolver();
+        let resolver = context.resolver();
 
         // Make a test request to verify it's our mock
         let request = Request::builder()
@@ -1205,8 +1180,7 @@ mod tests {
 
         // Get the resolver
         let context = Context::new().with_settings(settings_toml).unwrap();
-        let resolvers: &dyn HttpResolvers = &context as &dyn HttpResolvers;
-        let _resolver = resolvers.sync_resolver();
+        let _resolver = context.resolver();
 
         // Note: We can't easily test the actual restriction behavior here
         // without making real HTTP requests, but we verify the resolver is created
@@ -1228,11 +1202,9 @@ mod tests {
     fn test_resolver_caching() {
         // Create a context
         let context = Context::new();
-        let resolvers = &context as &dyn HttpResolvers;
-        // Get the resolver multiple times
-        let _resolver1 = resolvers.sync_resolver();
-        let _resolver2 = resolvers.sync_resolver();
-        let _resolver3 = resolvers.sync_resolver();
+        let _resolver1 = context.resolver();
+        let _resolver2 = context.resolver();
+        let _resolver3 = context.resolver();
 
         // The test passes if we can call resolver() multiple times without errors
         // The OnceLock ensures the same resolver is returned (initialized once)

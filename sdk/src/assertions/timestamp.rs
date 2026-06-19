@@ -20,9 +20,9 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
+    context::Context,
     crypto::cose::CertificateTrustPolicy,
     error::Result,
-    http::HttpResolvers,
     status_tracker::StatusTracker,
     Error,
 };
@@ -69,12 +69,12 @@ impl TimeStamp {
         tsa_url: &str,
         manifest_id: &str,
         signature: &[u8],
-        resolvers: &dyn HttpResolvers,
+        context: &Context,
     ) -> Result<()> {
         let timestamp_token = if _sync {
-            TimeStamp::send_timestamp_token_request(tsa_url, signature, resolvers)?
+            TimeStamp::send_timestamp_token_request(tsa_url, signature, context)?
         } else {
-            TimeStamp::send_timestamp_token_request_async(tsa_url, signature, resolvers).await?
+            TimeStamp::send_timestamp_token_request_async(tsa_url, signature, context).await?
         };
 
         self.0
@@ -92,18 +92,18 @@ impl TimeStamp {
     pub(crate) fn send_timestamp_token_request(
         tsa_url: &str,
         message: &[u8],
-        resolvers: &dyn HttpResolvers,
+        context: &Context,
     ) -> Result<Vec<u8>> {
         let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
         let headers = None;
 
         let bytes = if _sync {
             crate::crypto::time_stamp::default_rfc3161_request(
-                tsa_url, headers, &body, message, resolvers,
+                tsa_url, headers, &body, message, context,
             )
         } else {
             crate::crypto::time_stamp::default_rfc3161_request_async(
-                tsa_url, headers, &body, message, resolvers,
+                tsa_url, headers, &body, message, context,
             )
             .await
         }
