@@ -666,9 +666,9 @@ dependencies = [
 
 [[package]]
 name = "c2pa_raw_crypto"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ed300f0ccf5ac798902029aec44162f61fb25381d4711ae587671f424d5db04"
+checksum = "ea8b0035cb7a2d51e0664be21e1f5635d6cb572256beab9a7356b6ca3e3b6743"
 dependencies = [
  "const-hex",
  "ecdsa",
@@ -683,7 +683,7 @@ dependencies = [
  "rand 0.8.6",
  "rsa",
  "serde",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "spki",
  "thiserror 2.0.18",
  "zeroize",
