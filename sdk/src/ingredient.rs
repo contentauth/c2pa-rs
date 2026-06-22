@@ -44,7 +44,7 @@ use crate::{
         },
     },
     log_item,
-    resource_store::{ResourceRef, ResourceStore},
+    resource_store::{ResourceRef, ResourceStore, StoreResolver},
     settings::get_thread_local_settings,
     status_tracker::StatusTracker,
     store::Store,
@@ -494,11 +494,8 @@ impl Ingredient {
     }
 
     pub(crate) fn set_store_resolver(&mut self, store: Arc<Store>) {
-        // Capture active manifest label before the closure moves `store`.
         let active = self.active_manifest().map(str::to_owned);
 
-        // Set the deferred manifest_data ref when the active manifest label is
-        // present in this store and no explicit ref was already provided.
         if self.manifest_data.is_none() {
             if let Some(ref a) = active {
                 if store.get_claim(a).is_some() {
@@ -507,67 +504,8 @@ impl Ingredient {
             }
         }
 
-        let store_get = store.clone();
-        let store_has = store.clone();
-        let store_keys = store;
-        let active_keys = active;
-
-        self.resources.set_resolver(
-            Arc::new(move |uri: &str| {
-                if uri.contains(DATABOXES) {
-                    let label = manifest_label_from_uri(uri)?;
-                    let hashed_uri = HashedUri::new(uri.to_owned(), None, &[]);
-                    return store_get
-                        .get_data_box_from_uri_and_claim(&hashed_uri, &label)
-                        .map(|db| Ok(db.data.clone()));
-                }
-                if uri.contains(ASSERTIONS) {
-                    let assertion = store_get.get_assertion_from_uri(uri)?;
-                    return Some(Ok(assertion.data().to_vec()));
-                }
-                // Manifest: uri is a bare claim label (set by manifest_data ref above).
-                if let Some(claim) = store_get.get_claim(uri) {
-                    return Some(
-                        Store::build_flat_ingredient_store(&store_get, claim)
-                            .and_then(|s| s.to_jumbf_internal(0)),
-                    );
-                }
-                None
-            }),
-            Arc::new(move |uri: &str| {
-                if uri.contains(ASSERTIONS) {
-                    store_has
-                        .get_assertion_from_uri(uri)
-                        .map(|a| matches!(a.decode_data(), AssertionData::Binary(_)))
-                        .unwrap_or(false)
-                } else if uri.contains(DATABOXES) {
-                    let hr = HashedUri::new(uri.to_owned(), None, &[]);
-                    let label = manifest_label_from_uri(uri).unwrap_or_default();
-                    store_has
-                        .get_data_box_from_uri_and_claim(&hr, &label)
-                        .is_some()
-                } else {
-                    store_has.get_claim(uri).is_some()
-                }
-            }),
-            Arc::new(move || {
-                let Some(ref label) = active_keys else {
-                    return Vec::new();
-                };
-                let Some(claim) = store_keys.get_claim(label) else {
-                    return Vec::new();
-                };
-                let mut result: Vec<String> = claim
-                    .claim_assertion_store()
-                    .iter()
-                    .filter(|ca| matches!(ca.assertion().decode_data(), AssertionData::Binary(_)))
-                    .map(|ca| to_assertion_uri(label, &ca.label()))
-                    .collect();
-                result.extend(claim.databoxes().iter().map(|(hr, _)| hr.url().to_owned()));
-                result.push(label.clone());
-                result
-            }),
-        );
+        self.resources
+            .set_resolver(Arc::new(IngredientStoreResolver { store, active }));
     }
 
     /// Sets a reference to Ingredient data.
@@ -1589,6 +1527,72 @@ impl std::fmt::Display for Ingredient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let report = serde_json::to_string_pretty(self).unwrap_or_default();
         f.write_str(&report)
+    }
+}
+
+#[derive(Debug)]
+struct IngredientStoreResolver {
+    store: Arc<Store>,
+    active: Option<String>,
+}
+
+impl StoreResolver for IngredientStoreResolver {
+    fn get(&self, uri: &str) -> Option<crate::Result<Vec<u8>>> {
+        if uri.contains(DATABOXES) {
+            let label = manifest_label_from_uri(uri)?;
+            let hashed_uri = HashedUri::new(uri.to_owned(), None, &[]);
+            return self
+                .store
+                .get_data_box_from_uri_and_claim(&hashed_uri, &label)
+                .map(|db| Ok(db.data.clone()));
+        }
+        if uri.contains(ASSERTIONS) {
+            let assertion = self.store.get_assertion_from_uri(uri)?;
+            return Some(Ok(assertion.data().to_vec()));
+        }
+        // Manifest: uri is a bare claim label set by manifest_data ref.
+        if let Some(claim) = self.store.get_claim(uri) {
+            return Some(
+                Store::build_flat_ingredient_store(&self.store, claim)
+                    .and_then(|s| s.to_jumbf_internal(0)),
+            );
+        }
+        None
+    }
+
+    fn has(&self, uri: &str) -> bool {
+        if uri.contains(ASSERTIONS) {
+            self.store
+                .get_assertion_from_uri(uri)
+                .map(|a| matches!(a.decode_data(), AssertionData::Binary(_)))
+                .unwrap_or(false)
+        } else if uri.contains(DATABOXES) {
+            let hr = HashedUri::new(uri.to_owned(), None, &[]);
+            let label = manifest_label_from_uri(uri).unwrap_or_default();
+            self.store
+                .get_data_box_from_uri_and_claim(&hr, &label)
+                .is_some()
+        } else {
+            self.store.get_claim(uri).is_some()
+        }
+    }
+
+    fn keys(&self) -> Vec<String> {
+        let Some(ref label) = self.active else {
+            return Vec::new();
+        };
+        let Some(claim) = self.store.get_claim(label) else {
+            return Vec::new();
+        };
+        let mut result: Vec<String> = claim
+            .claim_assertion_store()
+            .iter()
+            .filter(|ca| matches!(ca.assertion().decode_data(), AssertionData::Binary(_)))
+            .map(|ca| to_assertion_uri(label, &ca.label()))
+            .collect();
+        result.extend(claim.databoxes().iter().map(|(hr, _)| hr.url().to_owned()));
+        result.push(label.clone());
+        result
     }
 }
 
