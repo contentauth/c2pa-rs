@@ -56,14 +56,6 @@ pub struct IcaSignatureVerifier<'a> {
     context: &'a Context,
 }
 
-#[cfg(test)]
-impl Default for IcaSignatureVerifier<'static> {
-    fn default() -> Self {
-        let context: &'static Context = Box::leak(Box::new(Context::new()));
-        Self { context }
-    }
-}
-
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl SignatureVerifier for IcaSignatureVerifier<'_> {

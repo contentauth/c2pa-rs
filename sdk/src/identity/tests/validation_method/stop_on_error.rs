@@ -363,6 +363,7 @@ mod invalid_sig_type {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
+        context::Context,
         identity::{
             claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, IdentityAssertion,
         },
@@ -490,7 +491,8 @@ mod invalid_sig_type {
         assert_eq!(sp.sig_type, "INVALID.identity.naive_credential".to_owned());
 
         // Intentionally not using NaiveSignatureVerifier here.
-        let ica_verifier = IcaSignatureVerifier::default();
+        let context = Context::new();
+        let ica_verifier = IcaSignatureVerifier::new(&context);
         let err = ia
             .validate(
                 reader.active_manifest().unwrap(),

@@ -37,13 +37,6 @@ impl<'a> CawgValidator<'a> {
     }
 }
 
-impl Default for CawgValidator<'_> {
-    fn default() -> Self {
-        let context: &'static Context = Box::leak(Box::new(Context::new()));
-        Self { context }
-    }
-}
-
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl AsyncPostValidator for CawgValidator<'_> {

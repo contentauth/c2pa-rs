@@ -194,6 +194,7 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
+        context::Context,
         crypto::raw_signature,
         identity::{
             builder::{
@@ -270,7 +271,8 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let verifier = default_built_in_signature_verifier();
+        let context = Context::new();
+        let verifier = default_built_in_signature_verifier(&context);
         let sig_info = ia.validate(manifest, &mut st, &verifier).await.unwrap();
 
         let BuiltInCredential::X509Signature(sig_info) = sig_info else {
@@ -320,7 +322,8 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let verifier = default_built_in_signature_verifier();
+        let context = Context::new();
+        let verifier = default_built_in_signature_verifier(&context);
         let ica = ia.validate(manifest, &mut st, &verifier).await.unwrap();
 
         let BuiltInCredential::IdentityClaimsAggregationCredential(ica) = ica else {
@@ -432,7 +435,8 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let verifier = default_built_in_signature_verifier();
+        let context = Context::new();
+        let verifier = default_built_in_signature_verifier(&context);
         let err = ia.validate(manifest, &mut st, &verifier).await.unwrap_err();
 
         match err {
