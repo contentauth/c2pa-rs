@@ -167,6 +167,7 @@ pub fn check_ocsp_status(
                         ctp,
                         tst_info,
                         validation_log,
+                        context.settings().verify.verify_timestamp_trust,
                         context,
                     )
                 } else {
@@ -176,6 +177,7 @@ pub fn check_ocsp_status(
                         ctp,
                         tst_info,
                         validation_log,
+                        context.settings().verify.verify_timestamp_trust,
                         context,
                     )
                     .await
@@ -403,6 +405,7 @@ fn check_stapled_ocsp_response(
     ctp: &CertificateTrustPolicy,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    verify_timestamp_trust: bool,
     context: &crate::context::Context,
 ))]
 pub(crate) fn fetch_and_check_ocsp_response(
@@ -411,6 +414,7 @@ pub(crate) fn fetch_and_check_ocsp_response(
     ctp: &CertificateTrustPolicy,
     tst_info: Option<&TstInfo>,
     validation_log: &mut StatusTracker,
+    verify_timestamp_trust: bool,
     context: &crate::context::Context,
 ) -> Result<OcspResponse, CoseError> {
     let certs = cert_chain_from_sign1(sign1)?;
@@ -436,15 +440,9 @@ pub(crate) fn fetch_and_check_ocsp_response(
     // use supplied override time if provided
     let signing_time: Option<DateTime<Utc>> = match tst_info {
         Some(tst_info) => Some(tst_info.gen_time.clone().into()),
-        None => validate_cose_tst_info(
-            sign1,
-            data,
-            ctp,
-            validation_log,
-            context.settings().verify.verify_timestamp_trust,
-        )
-        .ok()
-        .map(|tst_info| tst_info.gen_time.clone().into()),
+        None => validate_cose_tst_info(sign1, data, ctp, validation_log, verify_timestamp_trust)
+            .ok()
+            .map(|tst_info| tst_info.gen_time.clone().into()),
     };
 
     // Check the OCSP response, but only if it is well-formed.
