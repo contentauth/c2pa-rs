@@ -31,9 +31,11 @@ use crate::{
     hashed_uri::HashedUri,
     identity::IdentityAssertion,
     ingredient::Ingredient,
-    jumbf::labels::{to_absolute_uri, to_assertion_uri, ASSERTIONS},
+    jumbf::labels::{
+        manifest_label_from_uri, to_absolute_uri, to_assertion_uri, ASSERTIONS, DATABOXES,
+    },
     manifest_assertion::ManifestAssertion,
-    resource_store::{ResourceRef, ResourceStore},
+    resource_store::{ResourceRef, ResourceStore, StoreResolver},
     settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
@@ -374,45 +376,70 @@ impl Manifest {
     /// JUMBF-URI identifiers (e.g. claim thumbnails) can be resolved lazily.
     pub(crate) fn set_store_resolver(&mut self, store: Arc<Store>) {
         let label = self.label().unwrap_or_default().to_owned();
-        let store_get = store.clone();
-        let store_has = store.clone();
-        let store_keys = store;
-        let label_keys = label;
-        self.resources.set_resolver(
-            Arc::new(move |uri: &str| {
-                if uri.contains(ASSERTIONS) {
-                    let assertion = store_get.get_assertion_from_uri(uri)?;
-                    if let Ok(embedded) = EmbeddedData::from_assertion(assertion) {
-                        return Some(Ok(embedded.data));
-                    }
-                    return Some(Ok(assertion.data().to_vec()));
-                }
-                None
-            }),
-            Arc::new(move |uri: &str| {
-                if uri.contains(ASSERTIONS) {
-                    store_has
-                        .get_assertion_from_uri(uri)
-                        .map(|a| matches!(a.decode_data(), AssertionData::Binary(_)))
-                        .unwrap_or(false)
-                } else {
-                    false
-                }
-            }),
-            Arc::new(move || {
-                let Some(claim) = store_keys.get_claim(&label_keys) else {
-                    return Vec::new();
-                };
-                claim
-                    .claim_assertion_store()
-                    .iter()
-                    .filter(|ca| matches!(ca.assertion().decode_data(), AssertionData::Binary(_)))
-                    .map(|ca| to_assertion_uri(&label_keys, &ca.label()))
-                    .collect()
-            }),
-        );
+        self.resources
+            .set_resolver(Arc::new(ManifestStoreResolver { store, label }));
+    }
+}
+
+#[derive(Debug)]
+struct ManifestStoreResolver {
+    store: Arc<Store>,
+    label: String,
+}
+
+impl StoreResolver for ManifestStoreResolver {
+    fn get(&self, uri: &str) -> Option<crate::Result<Vec<u8>>> {
+        if uri.contains(DATABOXES) {
+            let label = manifest_label_from_uri(uri)?;
+            let hashed_uri = HashedUri::new(uri.to_owned(), None, &[]);
+            return self
+                .store
+                .get_data_box_from_uri_and_claim(&hashed_uri, &label)
+                .map(|db| Ok(db.data.clone()));
+        }
+        if uri.contains(ASSERTIONS) {
+            let assertion = self.store.get_assertion_from_uri(uri)?;
+            if let Ok(embedded) = EmbeddedData::from_assertion(assertion) {
+                return Some(Ok(embedded.data));
+            }
+            return Some(Ok(assertion.data().to_vec()));
+        }
+        None
     }
 
+    fn has(&self, uri: &str) -> bool {
+        if uri.contains(ASSERTIONS) {
+            self.store
+                .get_assertion_from_uri(uri)
+                .map(|a| matches!(a.decode_data(), AssertionData::Binary(_)))
+                .unwrap_or(false)
+        } else if uri.contains(DATABOXES) {
+            let hr = HashedUri::new(uri.to_owned(), None, &[]);
+            let label = manifest_label_from_uri(uri).unwrap_or_default();
+            self.store
+                .get_data_box_from_uri_and_claim(&hr, &label)
+                .is_some()
+        } else {
+            false
+        }
+    }
+
+    fn keys(&self) -> Vec<String> {
+        let Some(claim) = self.store.get_claim(&self.label) else {
+            return Vec::new();
+        };
+        let mut keys: Vec<String> = claim
+            .claim_assertion_store()
+            .iter()
+            .filter(|ca| matches!(ca.assertion().decode_data(), AssertionData::Binary(_)))
+            .map(|ca| to_assertion_uri(&self.label, &ca.label()))
+            .collect();
+        keys.extend(claim.databoxes().iter().map(|(hr, _)| hr.url().to_owned()));
+        keys
+    }
+}
+
+impl Manifest {
     // Generates a Manifest given a store and a manifest label.
     #[async_generic]
     pub(crate) fn from_store(

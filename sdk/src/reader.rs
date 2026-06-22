@@ -37,7 +37,6 @@ use crate::{
     context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
-    hashed_uri::HashedUri,
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, ASSERTIONS, DATABOXES},
     jumbf_io, log_item,
     manifest::StoreOptions,
@@ -906,10 +905,17 @@ impl Reader {
                 .map(|a| a.data())
                 .ok_or_else(|| Error::ResourceNotFound(uri.to_owned()))?
         } else if absolute_uri.contains(DATABOXES) {
-            let hashed_uri = HashedUri::new(absolute_uri.clone(), None, &[]);
+            // Match by URL only — we don't have the hash at call time, and databox URIs
+            // are unique within a claim.
             self.store
-                .get_data_box_from_uri_and_claim(&hashed_uri, &label)
-                .map(|db| db.data.as_slice())
+                .get_claim(&label)
+                .and_then(|claim| {
+                    claim
+                        .databoxes()
+                        .iter()
+                        .find(|(hu, _)| hu.url() == absolute_uri)
+                        .map(|(_, db)| db.data.as_slice())
+                })
                 .ok_or_else(|| Error::ResourceNotFound(uri.to_owned()))?
         } else {
             // URI names a manifest — stream its JUMBF bytes
@@ -970,16 +976,19 @@ impl Reader {
             // Write binary (media) assertions — thumbnails, icons, embedded data
             for ca in claim.claim_assertion_store() {
                 let assertion = ca.assertion();
-                if !assertion.content_type().starts_with("application/") {
+                if !matches!(
+                    assertion.content_type(),
+                    "application/cbor" | "application/json" | "application/c2pa"
+                ) {
                     let uri = to_assertion_uri(claim_label, &ca.label());
                     if let Some(a) = self.store.get_assertion_from_uri(&uri) {
-                        let _ = write_bytes(uri_to_path(&uri, Some(claim_label)), a.data());
+                        write_bytes(uri_to_path(&uri, Some(claim_label)), a.data())?;
                     }
                 }
             }
             // Write databoxes
             for (hr, databox) in claim.databoxes() {
-                let _ = write_bytes(uri_to_path(&hr.url(), Some(claim_label)), &databox.data);
+                write_bytes(uri_to_path(&hr.url(), Some(claim_label)), &databox.data)?;
             }
         }
         Ok(())

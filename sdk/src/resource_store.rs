@@ -37,7 +37,7 @@ use crate::{
     error::Error,
     hashed_uri::HashedUri,
     jumbf::labels::{to_absolute_uri, DATABOXES},
-    maybe_send_sync::MaybeSend,
+    maybe_send_sync::{MaybeSend, MaybeSync},
     utils::mime::format_to_mime,
     Result,
 };
@@ -166,55 +166,41 @@ pub struct ResourceStore {
     /// Optional resolver that can look up resource bytes by URI from an external source
     /// (e.g. a `Store`). Used to defer materialization of bytes during reading.
     #[serde(skip)]
-    resolver: Option<StoreResolver>,
+    resolver: Option<Arc<dyn StoreResolver>>,
 }
 
-/// Type aliases for the three resolver closures stored in [`StoreResolver`].
-/// On wasm32 the store is not `Sync`, so we omit the `Send + Sync` bounds.
-#[cfg(not(target_arch = "wasm32"))]
-type GetFn = Arc<dyn Fn(&str) -> Option<crate::Result<Vec<u8>>> + Send + Sync>;
-#[cfg(target_arch = "wasm32")]
-type GetFn = Arc<dyn Fn(&str) -> Option<crate::Result<Vec<u8>>>>;
-
-#[cfg(not(target_arch = "wasm32"))]
-type HasFn = Arc<dyn Fn(&str) -> bool + Send + Sync>;
-#[cfg(target_arch = "wasm32")]
-type HasFn = Arc<dyn Fn(&str) -> bool>;
-
-#[cfg(not(target_arch = "wasm32"))]
-type KeysFn = Arc<dyn Fn() -> Vec<String> + Send + Sync>;
-#[cfg(target_arch = "wasm32")]
-type KeysFn = Arc<dyn Fn() -> Vec<String>>;
-
-/// Wraps the three resolver closures so that `ResourceStore` can derive `Debug`.
+/// A pluggable resolver that lets [`ResourceStore`] look up resource bytes from an
+/// external source (e.g. a parsed [`Store`][crate::store::Store]) without eagerly copying them.
 ///
-/// - `get_fn`: Returns `None` for unknown URIs, `Some(Err)` for known-but-failed.
-/// - `has_fn`: O(1) existence check for binary resources only.
-/// - `keys_fn`: Enumerates binary resource URIs (EmbeddedData assertions, databoxes, manifests).
-#[derive(Clone)]
-struct StoreResolver {
-    get_fn: GetFn,
-    has_fn: HasFn,
-    keys_fn: KeysFn,
+/// - [`get`][StoreResolver::get]: Returns `None` for unknown URIs, `Some(Err)` for known-but-failed.
+/// - [`has`][StoreResolver::has]: O(1) existence check — `true` only for binary resources.
+/// - [`keys`][StoreResolver::keys]: Enumerates binary resource URIs visible through this resolver.
+pub(crate) trait StoreResolver: std::fmt::Debug + MaybeSend + MaybeSync {
+    fn get(&self, uri: &str) -> Option<crate::Result<Vec<u8>>>;
+    fn has(&self, uri: &str) -> bool;
+    fn keys(&self) -> Vec<String>;
 }
 
-impl std::fmt::Debug for StoreResolver {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "StoreResolver")
-    }
+/// Chains two resolvers: tries `primary` first, falls back to `fallback`.
+#[derive(Debug)]
+struct ChainedResolver {
+    primary: Arc<dyn StoreResolver>,
+    fallback: Arc<dyn StoreResolver>,
 }
 
-impl StoreResolver {
-    fn get(&self, id: &str) -> Option<crate::Result<Vec<u8>>> {
-        (self.get_fn)(id)
+impl StoreResolver for ChainedResolver {
+    fn get(&self, uri: &str) -> Option<crate::Result<Vec<u8>>> {
+        self.primary.get(uri).or_else(|| self.fallback.get(uri))
     }
 
-    fn has(&self, id: &str) -> bool {
-        (self.has_fn)(id)
+    fn has(&self, uri: &str) -> bool {
+        self.primary.has(uri) || self.fallback.has(uri)
     }
 
     fn keys(&self) -> Vec<String> {
-        (self.keys_fn)()
+        let mut ids = self.primary.keys();
+        ids.extend(self.fallback.keys());
+        ids
     }
 }
 
@@ -230,16 +216,12 @@ impl ResourceStore {
         }
     }
 
-    /// Sets the three resolver closures used to lazily look up resource bytes by URI.
+    /// Sets the resolver used to lazily look up resource bytes by URI.
     ///
-    /// Used by the reading path to defer materialization — closures are called
-    /// as a fallback when a resource is not present in memory or on disk.
-    pub(crate) fn set_resolver(&mut self, get: GetFn, has: HasFn, keys: KeysFn) {
-        self.resolver = Some(StoreResolver {
-            get_fn: get,
-            has_fn: has,
-            keys_fn: keys,
-        });
+    /// The resolver is called as a fallback when a resource is not present in
+    /// memory or on disk.
+    pub(crate) fn set_resolver(&mut self, resolver: Arc<dyn StoreResolver>) {
+        self.resolver = Some(resolver);
     }
 
     /// Chains the resolver from `other` as an additional fallback on this store.
@@ -250,29 +232,14 @@ impl ResourceStore {
     /// ingredient's manifest store without eagerly copying them.
     pub(crate) fn chain_resolver_from(&mut self, other: &ResourceStore) {
         if let Some(new_resolver) = other.resolver.clone() {
-            let existing = self.resolver.take();
-            let ex_get = existing.clone();
-            let ex_has = existing.clone();
-            let ex_keys = existing;
-            let nr_get = new_resolver.clone();
-            let nr_has = new_resolver.clone();
-            let nr_keys = new_resolver;
-            self.set_resolver(
-                Arc::new(move |uri: &str| {
-                    ex_get
-                        .as_ref()
-                        .and_then(|r| r.get(uri))
-                        .or_else(|| nr_get.get(uri))
-                }),
-                Arc::new(move |uri: &str| {
-                    ex_has.as_ref().map(|r| r.has(uri)).unwrap_or(false) || nr_has.has(uri)
-                }),
-                Arc::new(move || {
-                    let mut ids = ex_keys.as_ref().map(|r| r.keys()).unwrap_or_default();
-                    ids.extend(nr_keys.keys());
-                    ids
-                }),
-            );
+            if let Some(existing) = self.resolver.take() {
+                self.set_resolver(Arc::new(ChainedResolver {
+                    primary: existing,
+                    fallback: new_resolver,
+                }));
+            } else {
+                self.set_resolver(new_resolver);
+            }
         }
     }
 
