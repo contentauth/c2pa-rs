@@ -35,10 +35,9 @@ use crate::{
     jumbf::labels::{to_absolute_uri, to_assertion_uri},
     manifest_assertion::ManifestAssertion,
     resource_store::{mime_from_uri, ResourceRef, ResourceStore},
-    settings::Settings,
     status_tracker::StatusTracker,
     store::Store,
-    ClaimGeneratorInfo, ManifestAssertionKind,
+    ClaimGeneratorInfo, Context, ManifestAssertionKind,
 };
 
 /// This is used internally when generating manifests from a Store
@@ -395,7 +394,7 @@ impl Manifest {
         manifest_label: &str,
         options: &mut StoreOptions,
         validation_log: &mut StatusTracker,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Self> {
         let claim = store
             .get_claim(manifest_label)
@@ -485,7 +484,7 @@ impl Manifest {
             })
             .collect();
 
-        let decode_identity_assertions = settings.core.decode_identity_assertions;
+        let decode_identity_assertions = context.settings().core.decode_identity_assertions;
 
         for assertion in claim.assertions() {
             let claim_assertion = match store
@@ -608,11 +607,11 @@ impl Manifest {
                     let identity_assertion: IdentityAssertion = ma.to_assertion()?;
                     let value: Option<serde_json::Value> = if _sync {
                         identity_assertion
-                            .validate_partial_claim(&partial_claim, validation_log)
+                            .validate_partial_claim(&partial_claim, validation_log, context)
                             .ok()
                     } else {
                         identity_assertion
-                            .validate_partial_claim_async(&partial_claim, validation_log)
+                            .validate_partial_claim_async(&partial_claim, validation_log, context)
                             .await
                             .ok()
                     };
