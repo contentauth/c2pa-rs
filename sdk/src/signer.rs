@@ -91,6 +91,8 @@ pub trait Signer {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                // TODO: This is not a recommended practice to create the Context object this way.
+                // Context should always be created using the settings set from the underlying application.
                 let context = Context::new();
                 return Some(
                     crate::crypto::time_stamp::default_rfc3161_request(
@@ -217,6 +219,8 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                // TODO: This is not a recommended practice to create the Context object this way.
+                // Context should always be created using the settings set from the underlying application.
                 let context = Context::new();
                 return Some(
                     crate::crypto::time_stamp::default_rfc3161_request_async(
