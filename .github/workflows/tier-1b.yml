@@ -200,3 +200,39 @@ jobs:
 
       - name: Run cargo-udeps
         run: cargo udeps --all-targets --all-features
+
+  miri:
+    name: Miri on c2pa-c-ffi
+    if: contains(github.event.pull_request.labels.*.name, 'miri')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust nightly with Miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install cargo-nextest
+        run: cargo binstall --no-confirm cargo-nextest
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Set up Miri
+        run: cargo +nightly miri setup
+
+      - name: Run Miri on c2pa-c-ffi
+        env:
+          MIRIFLAGS: "-Zmiri-disable-isolation -Zmiri-tree-borrows"
+        run: |
+          cargo +nightly miri nextest run \
+            -p c2pa-c-ffi \
+            --no-default-features \
+            --features rust_native_crypto,file_io \
+            --no-fail-fast
