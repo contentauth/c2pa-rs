@@ -19,9 +19,7 @@ use anyhow::Result;
 #[allow(deprecated)]
 use c2pa::{
     assertions::{labels, Actions, CreativeWork, Exif},
-    create_signer,
-    crypto::raw_signature::SigningAlg,
-    Builder, BuilderIntent, ClaimGeneratorInfo, Reader,
+    create_signer, Builder, BuilderIntent, ClaimGeneratorInfo, Reader, SigningAlg,
 };
 
 const GENERATOR: &str = "test_app";
