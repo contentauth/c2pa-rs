@@ -9,6 +9,57 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.89.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.88.0...c2pa-v0.89.0)
+_19 June 2026_
+
+### Added
+
+* Add source to `HttpResolverError::Other` error message ([#2237](https://github.com/contentauth/c2pa-rs/pull/2237))
+* Auto format detect for Reader ([#2181](https://github.com/contentauth/c2pa-rs/pull/2181))
+
+### Fixed
+
+* Harden JUMBF and JPEG XL parsers against Brotli decompression bombs ([#2210](https://github.com/contentauth/c2pa-rs/pull/2210))
+
+## [0.88.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.87.0...c2pa-v0.88.0)
+_11 June 2026_
+
+### Added
+
+* Remove some long deprecated APIs ([#2206](https://github.com/contentauth/c2pa-rs/pull/2206))
+
+## [0.87.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.86.1...c2pa-v0.87.0)
+_11 June 2026_
+
+### Added
+
+* [**breaking**] Split c2pa-raw-crypto into its own crate ([#2202](https://github.com/contentauth/c2pa-rs/pull/2202))
+
+### Fixed
+
+* Improve ingredientMismatch error messages ([#2225](https://github.com/contentauth/c2pa-rs/pull/2225))
+* Noop test new release workflow ([#2221](https://github.com/contentauth/c2pa-rs/pull/2221))
+
+### Other
+
+* Revert "feat!: Split c2pa-raw-crypto into its own crate ([#2202](https://github.com/contentauth/c2pa-rs/pull/2202))"
+* Use latest `release-plz` and add a dry run job on release PRs ([#2217](https://github.com/contentauth/c2pa-rs/pull/2217))
+
+## [0.86.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.86.0...c2pa-v0.86.1)
+_08 June 2026_
+
+### Fixed
+
+* NOOP PR for release-plz trigger ([#2215](https://github.com/contentauth/c2pa-rs/pull/2215))
+
+## [0.86.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.85.2...c2pa-v0.86.0)
+_04 June 2026_
+
+### Fixed
+
+* [**breaking**] Remove unused `Error` variant types ([#2195](https://github.com/contentauth/c2pa-rs/pull/2195))
+* Harden additional JUMBF parser sites against integer underflow ([#2201](https://github.com/contentauth/c2pa-rs/pull/2201))
+
 ## [0.85.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.85.1...c2pa-v0.85.2)
 _03 June 2026_
 

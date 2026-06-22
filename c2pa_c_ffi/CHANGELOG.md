@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.88.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.87.0...c2pa-c-ffi-v0.88.0)
+_11 June 2026_
+
+### Added
+
+* Remove some long deprecated APIs ([#2206](https://github.com/contentauth/c2pa-rs/pull/2206))
+
+## [0.87.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.86.1...c2pa-c-ffi-v0.87.0)
+_11 June 2026_
+
+### Other
+
+* Use latest `release-plz` and add a dry run job on release PRs ([#2217](https://github.com/contentauth/c2pa-rs/pull/2217))
+
+## [0.86.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.86.0...c2pa-c-ffi-v0.86.1)
+_08 June 2026_
+
+### Added
+
+* CrJson binding on Reader in C FFI ([#2212](https://github.com/contentauth/c2pa-rs/pull/2212))
+
+## [0.86.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.85.2...c2pa-c-ffi-v0.86.0)
+_04 June 2026_
+
+### Fixed
+
+* [**breaking**] Remove unused `Error` variant types ([#2195](https://github.com/contentauth/c2pa-rs/pull/2195))
+
 ## [0.85.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.85.1...c2pa-c-ffi-v0.85.2)
 _03 June 2026_
 
