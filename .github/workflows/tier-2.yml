@@ -45,7 +45,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.3
 
       - name: Install Rust toolchain
         if: matrix.target != 'wasm32-unknown-emscripten'
@@ -70,7 +70,7 @@ jobs:
 
       - name: Checkout Emscripten SDK
         if: matrix.target == 'wasm32-unknown-emscripten'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.3
         with:
           repository: emscripten-core/emsdk
           path: emsdk
