@@ -580,8 +580,9 @@ impl<'a> IcaSignatureVerifier<'a> {
     ///
     /// The CAWG identity spec requires the validator to verify that the issuer's
     /// DID can be traced to its preconfigured list of trustable entities. If the
-    /// issuer is not verifiably trusted, the validator MUST issue the failure
-    /// code `cawg.ica.untrusted_issuer` but MAY continue validation.
+    /// issuer is not verifiably trusted, the validator issues the
+    /// `cawg.ica.untrusted_issuer` code (recorded informationally) and withholds
+    /// the `cawg.ica.credential_valid` success code, but MAY continue validation.
     ///
     /// The list of trusted issuers is the `cawg_trust.trusted_ica_issuers`
     /// setting of the [`Context`] under which validation is performed. It is
@@ -589,8 +590,8 @@ impl<'a> IcaSignatureVerifier<'a> {
     /// configured: a self-issued `did:jwk` (or any other DID) is not trustworthy
     /// merely because its signature is self-consistent.
     ///
-    /// This failure is scoped to the individual identity assertion. It does not
-    /// render the enclosing C2PA manifest invalid or untrusted (see
+    /// This is scoped to the individual identity assertion. It does not render
+    /// the enclosing C2PA manifest invalid or untrusted (see
     /// [`ValidationResults::validation_state`]).
     ///
     /// [`Context`]: crate::Context
@@ -611,19 +612,19 @@ impl<'a> IcaSignatureVerifier<'a> {
             }
         }
 
+        // Withhold the `cawg.ica.credential_valid` success code so the identity
+        // is not surfaced as validated...
         *ok = false;
 
+        // ...but record the untrusted issuer only informationally. It is scoped
+        // to this identity assertion and must not, on its own, fail the enclosing
+        // manifest (see [`ValidationResults::validation_state`]).
         log_current_item!(
             "ICA issuer is not a trusted issuer",
             "IcaSignatureVerifier::check_signature"
         )
         .validation_status("cawg.ica.untrusted_issuer")
-        .failure(
-            status_tracker,
-            ValidationError::SignatureError(IcaValidationError::UntrustedIssuer(
-                primary_did.to_string(),
-            )),
-        )?;
+        .informational(status_tracker);
 
         Ok(())
     }

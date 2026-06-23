@@ -21,11 +21,11 @@ For this reason, the library treats ICA issuers as untrusted unless they appear 
 The DID of the credential's `issuer` (with any fragment removed) is compared, using exact string matching, against this list.
 
 * If the issuer is on the list, validation can proceed to the success code `cawg.ica.credential_valid`.
-* If the issuer is **not** on the list, the failure code `cawg.ica.untrusted_issuer` is reported for that identity assertion and `cawg.ica.credential_valid` is withheld.
+* If the issuer is **not** on the list, the informational code `cawg.ica.untrusted_issuer` is reported for that identity assertion and `cawg.ica.credential_valid` is withheld. Treat the absence of `cawg.ica.credential_valid` as the signal that the identity was not validated.
 
 The default value is empty, meaning that **no** ICA issuer is trusted. This is a deliberate secure default; populate the list with the issuers you trust.
 
-The `cawg.ica.untrusted_issuer` result is scoped to the individual identity assertion. Like an untrusted C2PA signing certificate, it does not by itself make the enclosing manifest's `validation_state` `Invalid`, nor does it downgrade a manifest that is otherwise `Trusted` on the basis of its own C2PA signer.
+The `cawg.ica.untrusted_issuer` result is scoped to the individual identity assertion and is recorded informationally: it does not make the enclosing manifest's `validation_state` `Invalid`, nor does it downgrade a manifest that is otherwise `Trusted` on the basis of its own C2PA signer.
 
 These settings are read from the [`Context`](https://docs.rs/c2pa/latest/c2pa/struct.Context.html) under which validation is performed. When using the explicit post-validation API, construct the validator with that context via `CawgValidator::new(&context)`.
 

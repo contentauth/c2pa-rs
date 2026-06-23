@@ -90,11 +90,6 @@ pub enum IcaValidationError {
     /// `c2paAsset` does not match `signer_payload`
     #[error("c2paAsset does not match signer_payload")]
     SignerPayloadMismatch,
-
-    /// The credential's issuer DID is not on the configured list of trusted ICA
-    /// issuers.
-    #[error("the issuer DID ({0}) is not a trusted ICA issuer")]
-    UntrustedIssuer(String),
 }
 
 impl From<coset::CoseError> for ValidationError<IcaValidationError> {

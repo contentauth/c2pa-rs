@@ -947,14 +947,15 @@ async fn did_is_untrusted() {
     let subject = ica_vc.credential_subjects.first();
     assert_eq!(subject.verified_identities, expected_identities);
 
-    // Because a failure code was generated, the `cawg.ica.credential_valid`
-    // success code MUST NOT be issued. The only logged item is the
-    // untrusted-issuer failure.
+    // Because the issuer is untrusted, the `cawg.ica.credential_valid` success
+    // code MUST NOT be issued. The only logged item is the untrusted-issuer
+    // notice, which is recorded informationally (not as a failure) because it is
+    // scoped to the identity assertion and does not fail the manifest.
     let mut log_items = st.logged_items().iter();
 
     let li = log_items.next().unwrap();
 
-    assert_eq!(li.kind, LogKind::Failure);
+    assert_eq!(li.kind, LogKind::Informational);
     assert_eq!(
         li.label,
         "self#jumbf=/c2pa/test:urn:uuid:71b584f1-da28-4bf7-89a8-417be6bb07ac/c2pa.assertions/cawg.identity"

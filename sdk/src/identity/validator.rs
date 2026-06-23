@@ -206,13 +206,18 @@ mod tests {
         let active = results.active_manifest().unwrap();
 
         // The credential's issuer is not on the (empty) allow-list, so an
-        // untrusted-issuer failure is recorded for this identity assertion...
+        // untrusted-issuer notice is recorded informationally for this identity
+        // assertion (not as a failure, so it does not affect manifest state)...
         assert!(active
+            .informational()
+            .iter()
+            .any(|s| s.code() == "cawg.ica.untrusted_issuer"));
+        assert!(!active
             .failure()
             .iter()
             .any(|s| s.code() == "cawg.ica.untrusted_issuer"));
 
-        // ...and, because a failure was generated, the credential is not reported
+        // ...and, because the issuer is untrusted, the credential is not reported
         // as valid.
         assert!(!active
             .success()

@@ -413,10 +413,10 @@ impl IdentityAssertion {
             }?;
 
             // NOTE: The `cawg.ica.credential_valid` success code is issued by
-            // `IcaSignatureVerifier::check_signature` itself, and only when no
-            // failure codes (such as `cawg.ica.untrusted_issuer`) were generated.
-            // We must not issue it again here, or an untrusted issuer would be
-            // reported as both untrusted and valid.
+            // `IcaSignatureVerifier::check_signature` itself, and only when the
+            // credential is valid and its issuer is trusted (i.e. no
+            // `cawg.ica.untrusted_issuer` notice was generated). We must not issue
+            // it again here, or an untrusted issuer would be reported as valid.
 
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
