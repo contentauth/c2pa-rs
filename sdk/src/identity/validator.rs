@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::{
+    context::Context,
     dynamic_assertion::{AsyncPostValidator, PartialClaim},
     identity::IdentityAssertion,
     status_tracker::StatusTracker,
@@ -25,10 +26,20 @@ use crate::{
 };
 
 /// Validates a CAWG identity assertion.
-pub struct CawgValidator;
+pub struct CawgValidator<'a> {
+    context: &'a Context,
+}
+
+impl<'a> CawgValidator<'a> {
+    /// Create a [`CawgValidator`] from the provided context.
+    pub fn new(context: &'a Context) -> Self {
+        Self { context }
+    }
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl AsyncPostValidator for CawgValidator {
+impl AsyncPostValidator for CawgValidator<'_> {
     async fn validate(
         &self,
         label: &str,
@@ -41,7 +52,7 @@ impl AsyncPostValidator for CawgValidator {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
             tracker.push_current_uri(uri.to_string());
             let result = identity_assertion
-                .validate_partial_claim_async(partial_claim, tracker)
+                .validate_partial_claim_async(partial_claim, tracker, self.context)
                 .await
                 .ok();
             tracker.pop_current_uri();

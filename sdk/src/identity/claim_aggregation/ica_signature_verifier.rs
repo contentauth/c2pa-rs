@@ -18,6 +18,7 @@ use chrono::{DateTime, Utc};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
 use crate::{
+    context::Context,
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustPolicy},
@@ -50,13 +51,14 @@ use crate::{
 /// [`SignatureVerifier`]: crate::identity::SignatureVerifier
 /// [§8.1, Identity claims aggregation]: https://creator-assertions.github.io/identity/1.1-draft/#_identity_claims_aggregation
 /// [§3.3.1 Securing JSON-LD Verifiable Credentials with COSE]: https://w3c.github.io/vc-jose-cose/#securing-vcs-with-cose
-pub struct IcaSignatureVerifier {
+pub struct IcaSignatureVerifier<'a> {
     // TO DO (CAI-7980): Add option to configure trusted ICA issuers.
+    context: &'a Context,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl SignatureVerifier for IcaSignatureVerifier {
+impl SignatureVerifier for IcaSignatureVerifier<'_> {
     type Error = IcaValidationError;
     type Output = IcaCredential;
 
@@ -217,7 +219,15 @@ impl SignatureVerifier for IcaSignatureVerifier {
     }
 }
 
-impl IcaSignatureVerifier {
+impl<'a> IcaSignatureVerifier<'a> {
+    pub(crate) fn new(context_: &'a Context) -> Self {
+        Self { context: context_ }
+    }
+
+    // pub(crate) fn from_async_resolver(resolver: Arc<dyn AsyncHttpResolver>) -> Self {
+    //     Self { resolver }
+    // }
+
     /// Signal an error if the `sig_type` value is not
     /// `cawg.identity_claims_aggregation`.
     fn check_sig_type(
@@ -361,11 +371,11 @@ impl IcaSignatureVerifier {
         Ok(())
     }
 
-    fn payload_bytes<'a>(
+    fn payload_bytes<'b>(
         &self,
-        sign1: &'a CoseSign1,
+        sign1: &'b CoseSign1,
         status_tracker: &mut StatusTracker,
-    ) -> Result<&'a Vec<u8>, ValidationError<IcaValidationError>> {
+    ) -> Result<&'b Vec<u8>, ValidationError<IcaValidationError>> {
         let Some(ref payload_bytes) = sign1.payload else {
             let err = ValidationError::SignatureError(IcaValidationError::CredentialPayloadMissing);
 
@@ -459,9 +469,9 @@ impl IcaSignatureVerifier {
 
             "web" => {
                 let did_doc = if _sync {
-                    did_web::resolve(&primary_did)?
+                    did_web::resolve(&primary_did, self.context)?
                 } else {
-                    did_web::resolve_async(&primary_did).await?
+                    did_web::resolve_async(&primary_did, self.context).await?
                 };
 
                 let Some(vm1) = did_doc.verification_relationships.assertion_method.first() else {
