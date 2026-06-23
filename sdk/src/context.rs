@@ -267,8 +267,8 @@ impl IntoSettings for serde_json::Value {
 /// ```
 pub struct Context {
     settings: Settings,
-    sync_resolver: SyncResolverState,
-    async_resolver: AsyncResolverState,
+    sync_resolver_state: SyncResolverState,
+    async_resolver_state: AsyncResolverState,
     signer: SignerState,
     async_signer: AsyncSignerState,
     progress_callback: Option<Box<ProgressCallbackFunc>>,
@@ -281,8 +281,8 @@ impl Default for Context {
     fn default() -> Self {
         Self {
             settings: Settings::default(),
-            sync_resolver: SyncResolverState::Default(OnceLock::new()),
-            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
+            async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             #[cfg(test)]
             signer: SignerState::Custom(crate::utils::test_signer::test_signer(
                 crate::SigningAlg::Ps256,
@@ -410,7 +410,7 @@ impl Context {
         mut self,
         resolver: T,
     ) -> Self {
-        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
+        self.sync_resolver_state = SyncResolverState::Custom(Arc::new(resolver));
         self
     }
 
@@ -418,7 +418,7 @@ impl Context {
         &mut self,
         resolver: T,
     ) -> Result<()> {
-        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
+        self.sync_resolver_state = SyncResolverState::Custom(Arc::new(resolver));
         Ok(())
     }
 
@@ -433,7 +433,7 @@ impl Context {
         mut self,
         resolver: T,
     ) -> Self {
-        self.async_resolver = AsyncResolverState::Custom(Arc::new(resolver));
+        self.async_resolver_state = AsyncResolverState::Custom(Arc::new(resolver));
         self
     }
 
@@ -441,7 +441,7 @@ impl Context {
         &mut self,
         resolver: T,
     ) -> Result<()> {
-        self.async_resolver = AsyncResolverState::Custom(Arc::new(resolver));
+        self.async_resolver_state = AsyncResolverState::Custom(Arc::new(resolver));
         Ok(())
     }
 
@@ -450,7 +450,7 @@ impl Context {
     /// The default resolver is a `SyncGenericResolver` wrapped with `RestrictedResolver`
     /// to apply host filtering from the settings.
     pub fn resolver(&self) -> Arc<dyn SyncHttpResolver> {
-        match &self.sync_resolver {
+        match &self.sync_resolver_state {
             SyncResolverState::Custom(resolver) => resolver.clone(),
             SyncResolverState::Default(once_lock) => once_lock
                 .get_or_init(|| {
@@ -474,7 +474,7 @@ impl Context {
     /// The default resolver is an `AsyncGenericResolver` wrapped with `RestrictedResolver`
     /// to apply host filtering from the settings.
     pub fn resolver_async(&self) -> Arc<dyn AsyncHttpResolver> {
-        match &self.async_resolver {
+        match &self.async_resolver_state {
             AsyncResolverState::Custom(resolver) => resolver.clone(),
             AsyncResolverState::Default(once_lock) => once_lock
                 .get_or_init(|| {
@@ -873,8 +873,8 @@ mod tests {
         // create a context with FromSettings and empty settings
         let mut context = Context {
             settings: Settings::default(),
-            sync_resolver: SyncResolverState::Default(OnceLock::new()),
-            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
+            async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
@@ -949,8 +949,8 @@ mod tests {
         // Create a context without custom async signer (will try to load from settings)
         let context = Context {
             settings: Settings::default(),
-            sync_resolver: SyncResolverState::Default(OnceLock::new()),
-            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
+            async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
@@ -1062,23 +1062,14 @@ mod tests {
 
     #[test]
     fn test_default_sync_resolver() {
-        // Create a context with default resolver
         let context = Context::new();
-
-        // Verify we can get the default resolver
         let _resolver = context.resolver();
     }
 
     #[test]
     fn test_default_async_resolver() {
-        // Create a context with default resolver
         let context = Context::new();
-
-        // Verify we can get the default async resolver
         let _resolver = context.resolver_async();
-
-        // The test passes if we can get the async resolver without errors
-        // The default is a RestrictedResolver wrapping AsyncGenericResolver
     }
 
     #[test]
@@ -1108,10 +1099,7 @@ mod tests {
             }
         }
 
-        // Create a context with the custom resolver
         let context = Context::new().with_resolver(MockSyncResolver);
-
-        // Verify the custom resolver is used
         let resolver = context.resolver();
 
         // Make a test request to verify it's our mock
@@ -1189,9 +1177,9 @@ mod tests {
             [core]
             allowed_network_hosts = ["example.com", "test.org"]
         "#;
-        let context = Context::new().with_settings(settings_toml).unwrap();
 
         // Get the resolver
+        let context = Context::new().with_settings(settings_toml).unwrap();
         let _resolver = context.resolver();
 
         // Note: We can't easily test the actual restriction behavior here
@@ -1214,8 +1202,6 @@ mod tests {
     fn test_resolver_caching() {
         // Create a context
         let context = Context::new();
-
-        // Get the resolver multiple times
         let _resolver1 = context.resolver();
         let _resolver2 = context.resolver();
         let _resolver3 = context.resolver();

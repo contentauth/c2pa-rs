@@ -1013,7 +1013,7 @@ impl Reader {
                     manifest_label,
                     &mut options,
                     validation_log,
-                    self.context.settings(),
+                    &self.context,
                 )
             } else {
                 Manifest::from_store_async(
@@ -1021,7 +1021,7 @@ impl Reader {
                     manifest_label,
                     &mut options,
                     validation_log,
-                    self.context.settings(),
+                    &self.context,
                 )
                 .await
             };
