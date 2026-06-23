@@ -188,7 +188,10 @@ mod tests {
             .unwrap()
             .with_value("cawg_trust.trusted_ica_issuers", Vec::<String>::new())
             .unwrap();
-        let context = Context::new().with_settings(settings).unwrap().into_shared();
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .into_shared();
 
         // Both the reader and the validator share this context, so the empty
         // allow-list reaches the verifier through the CawgValidator.
