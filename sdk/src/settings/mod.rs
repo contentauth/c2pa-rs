@@ -91,12 +91,17 @@ pub struct Trust {
     /// Each entry is a full DID string (any DID method) that is compared, after
     /// stripping any fragment, against the `issuer` of an ICA verifiable
     /// credential. An issuer that is not present on this list is reported with
-    /// the failure code `cawg.ica.untrusted_issuer` for that identity assertion.
+    /// the informational code `cawg.ica.untrusted_issuer` for that identity
+    /// assertion and its `cawg.ica.credential_valid` success code is withheld.
     ///
     /// The default value is empty, meaning that NO ICA issuer is trusted. This
     /// is a deliberate secure default: a self-issued `did:jwk` (or any other
     /// issuer) is not trustworthy simply because its signature is
     /// self-consistent. Populate this list with the DIDs of issuers you trust.
+    ///
+    // TO DO (CAI-12709): This field is only meaningful for `cawg_trust`, not for
+    // the C2PA `trust`. Move it (and the other CAWG-relevant settings) to a
+    // dedicated `CawgTrust` struct so it no longer pollutes the C2PA `Trust`.
     pub trusted_ica_issuers: Option<Vec<String>>,
 }
 
