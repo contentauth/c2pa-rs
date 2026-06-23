@@ -29,20 +29,27 @@ pub(crate) const ICA_FIXTURE_JWK_ISSUER: &str = "did:jwk:eyJhbGciOiJFZERTQSIsImt
 pub(crate) const ICA_FIXTURE_WEB_ISSUER: &str =
     "did:web:connected-identities.identity-stage.adobe.com";
 
-/// An [`IcaSignatureVerifier`](crate::identity::claim_aggregation::IcaSignatureVerifier)
-/// that trusts the issuers used by the bundled CAWG ICA test fixtures.
+/// A [`Context`](crate::Context) whose `cawg_trust.trusted_ica_issuers`
+/// allow-list trusts the issuers used by the bundled CAWG ICA test fixtures.
 ///
-/// Tests that exercise a directly-constructed verifier use this so that an
-/// otherwise-valid fixture is treated as having a trusted issuer (and therefore
-/// produces `cawg.ica.credential_valid`). To exercise the untrusted-issuer path,
-/// construct a verifier with a different (or empty) `trusted_issuers` list.
-pub(crate) fn ica_test_verifier() -> crate::identity::claim_aggregation::IcaSignatureVerifier {
-    crate::identity::claim_aggregation::IcaSignatureVerifier {
-        trusted_issuers: vec![
-            ICA_FIXTURE_JWK_ISSUER.to_string(),
-            ICA_FIXTURE_WEB_ISSUER.to_string(),
-        ],
-    }
+/// Tests that exercise a directly-constructed
+/// [`IcaSignatureVerifier`](crate::identity::claim_aggregation::IcaSignatureVerifier)
+/// build it from this context (`IcaSignatureVerifier::new(&ica_test_context())`)
+/// so that an otherwise-valid fixture is treated as having a trusted issuer (and
+/// therefore produces `cawg.ica.credential_valid`). To exercise the
+/// untrusted-issuer path, build a verifier from a context with a different (or
+/// empty) allow-list, such as `Context::new()`.
+pub(crate) fn ica_test_context() -> crate::Context {
+    let settings = crate::settings::Settings::default()
+        .with_value(
+            "cawg_trust.trusted_ica_issuers",
+            vec![
+                ICA_FIXTURE_JWK_ISSUER.to_string(),
+                ICA_FIXTURE_WEB_ISSUER.to_string(),
+            ],
+        )
+        .unwrap();
+    crate::Context::new().with_settings(settings).unwrap()
 }
 
 /// Read a manifest store with identity assertion decoding disabled so the raw

@@ -18,38 +18,32 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::{
+    context::Context,
     dynamic_assertion::{AsyncPostValidator, PartialClaim},
     identity::IdentityAssertion,
-    settings::Settings,
     status_tracker::StatusTracker,
-    Context, ManifestAssertion,
+    ManifestAssertion,
 };
 
 /// Validates a CAWG identity assertion.
 ///
-/// A `CawgValidator` carries the [`Settings`] (taken from a [`Context`]) that
-/// govern CAWG validation, such as the `cawg_trust.trusted_ica_issuers`
-/// allow-list. Construct one with [`CawgValidator::new`] to validate under a
-/// specific [`Context`], or use [`CawgValidator::default`] to validate under
-/// default settings.
-#[derive(Default)]
-pub struct CawgValidator {
-    settings: Settings,
+/// A `CawgValidator` carries the [`Context`] that governs CAWG validation,
+/// including the `cawg_trust.trusted_ica_issuers` allow-list. Construct one with
+/// [`CawgValidator::new`] to validate under a specific [`Context`].
+pub struct CawgValidator<'a> {
+    context: &'a Context,
 }
 
-impl CawgValidator {
-    /// Create a `CawgValidator` whose trust configuration is drawn from the
-    /// provided [`Context`].
-    pub fn new(context: &Context) -> Self {
-        Self {
-            settings: context.settings().clone(),
-        }
+impl<'a> CawgValidator<'a> {
+    /// Create a [`CawgValidator`] from the provided context.
+    pub fn new(context: &'a Context) -> Self {
+        Self { context }
     }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl AsyncPostValidator for CawgValidator {
+impl AsyncPostValidator for CawgValidator<'_> {
     async fn validate(
         &self,
         label: &str,
@@ -62,7 +56,7 @@ impl AsyncPostValidator for CawgValidator {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
             tracker.push_current_uri(uri.to_string());
             let result = identity_assertion
-                .validate_partial_claim_async(partial_claim, tracker, &self.settings)
+                .validate_partial_claim_async(partial_claim, tracker, self.context)
                 .await
                 .ok();
             tracker.pop_current_uri();
@@ -194,14 +188,14 @@ mod tests {
             .unwrap()
             .with_value("cawg_trust.trusted_ica_issuers", Vec::<String>::new())
             .unwrap();
-        let context = Context::new().with_settings(settings).unwrap();
+        let context = Context::new().with_settings(settings).unwrap().into_shared();
 
-        // Construct the validator from the context *before* moving the context
-        // into the reader.
+        // Both the reader and the validator share this context, so the empty
+        // allow-list reaches the verifier through the CawgValidator.
         let validator = super::CawgValidator::new(&context);
 
         let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
-        let mut reader = Reader::from_context(context)
+        let mut reader = Reader::from_shared_context(&context)
             .with_stream_async("image/jpeg", &mut stream)
             .await
             .unwrap();

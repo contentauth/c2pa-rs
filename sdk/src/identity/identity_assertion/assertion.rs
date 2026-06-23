@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
+    context::Context,
     crypto::{
         cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
         raw_signature::RawSignatureValidationError,
@@ -42,7 +43,6 @@ use crate::{
     },
     jumbf::labels::to_assertion_uri,
     log_current_item, log_item,
-    settings::Settings,
     status_tracker::StatusTracker,
     Manifest, Reader,
 };
@@ -305,8 +305,9 @@ impl IdentityAssertion {
         &self,
         partial_claim: &PartialClaim,
         status_tracker: &mut StatusTracker,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<serde_json::Value, ValidationError<String>> {
+        let settings = context.settings();
         self.check_padding(status_tracker)?;
 
         self.signer_payload
@@ -396,13 +397,7 @@ impl IdentityAssertion {
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else if sig_type == "cawg.identity_claims_aggregation" {
-            let verifier = IcaSignatureVerifier {
-                trusted_issuers: settings
-                    .cawg_trust
-                    .trusted_ica_issuers
-                    .clone()
-                    .unwrap_or_default(),
-            };
+            let verifier = IcaSignatureVerifier::new(context);
 
             let result = if _sync {
                 verifier

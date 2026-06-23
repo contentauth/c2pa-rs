@@ -86,6 +86,7 @@ fn test_builder_riff() -> Result<()> {
 // manifest as the ingredients active manifest.
 //
 // Source: https://github.com/contentauth/c2pa-rs/issues/1554
+#[cfg(test)]
 #[test]
 fn test_builder_cyclic_ingredient() -> Result<()> {
     let context = test_context().into_shared();
@@ -166,8 +167,9 @@ fn test_builder_cyclic_ingredient() -> Result<()> {
         let mut reader =
             Reader::from_context(no_verify_context).with_stream(format, cyclic_ingredient)?;
         // Ideally we'd use a sync path for this. There are limitations for tokio on WASM.
+        let validator_context = Context::new();
         tokio::runtime::Runtime::new()?
-            .block_on(reader.post_validate_async(&CawgValidator::default()))?;
+            .block_on(reader.post_validate_async(&CawgValidator::new(&validator_context)))?;
     }
 
     Ok(())

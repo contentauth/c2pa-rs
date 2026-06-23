@@ -18,6 +18,7 @@ use chrono::{DateTime, Utc};
 use coset::{CoseSign1, RegisteredLabelWithPrivate, TaggedCborSerializable};
 
 use crate::{
+    context::Context,
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{validate_cose_tst_info, validate_cose_tst_info_async, CertificateTrustPolicy},
@@ -50,24 +51,22 @@ use crate::{
 /// [`SignatureVerifier`]: crate::identity::SignatureVerifier
 /// [§8.1, Identity claims aggregation]: https://creator-assertions.github.io/identity/1.1-draft/#_identity_claims_aggregation
 /// [§3.3.1 Securing JSON-LD Verifiable Credentials with COSE]: https://w3c.github.io/vc-jose-cose/#securing-vcs-with-cose
-#[derive(Default)]
-pub struct IcaSignatureVerifier {
-    /// Exact-match list of trusted ICA issuer DIDs.
+pub struct IcaSignatureVerifier<'a> {
+    /// Context under which validation is performed.
     ///
-    /// During validation, the credential's `issuer` (after stripping any
-    /// fragment) is compared against this list. An issuer that is not present is
-    /// reported with the failure code `cawg.ica.untrusted_issuer` for that
-    /// identity assertion (see [`IcaSignatureVerifier::check_issuer_trust`]).
-    ///
-    /// An empty list means that no issuer is trusted. This list is normally
-    /// populated from the `cawg_trust.trusted_ica_issuers` setting of the
-    /// [`Context`](crate::Context) under which validation is performed.
-    pub trusted_issuers: Vec<String>,
+    /// The `cawg_trust.trusted_ica_issuers` setting on this context's
+    /// [`Settings`](crate::settings::Settings) is the exact-match allow-list of
+    /// trusted ICA issuer DIDs. During validation, the credential's `issuer`
+    /// (after stripping any fragment) is compared against that list; an issuer
+    /// that is not present is reported with `cawg.ica.untrusted_issuer` for that
+    /// identity assertion (see [`IcaSignatureVerifier::check_issuer_trust`]). An
+    /// empty list means that no issuer is trusted.
+    context: &'a Context,
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl SignatureVerifier for IcaSignatureVerifier {
+impl SignatureVerifier for IcaSignatureVerifier<'_> {
     type Error = IcaValidationError;
     type Output = IcaCredential;
 
@@ -250,7 +249,15 @@ impl SignatureVerifier for IcaSignatureVerifier {
     }
 }
 
-impl IcaSignatureVerifier {
+impl<'a> IcaSignatureVerifier<'a> {
+    pub(crate) fn new(context_: &'a Context) -> Self {
+        Self { context: context_ }
+    }
+
+    // pub(crate) fn from_async_resolver(resolver: Arc<dyn AsyncHttpResolver>) -> Self {
+    //     Self { resolver }
+    // }
+
     /// Signal an error if the `sig_type` value is not
     /// `cawg.identity_claims_aggregation`.
     fn check_sig_type(
@@ -394,11 +401,11 @@ impl IcaSignatureVerifier {
         Ok(())
     }
 
-    fn payload_bytes<'a>(
+    fn payload_bytes<'b>(
         &self,
-        sign1: &'a CoseSign1,
+        sign1: &'b CoseSign1,
         status_tracker: &mut StatusTracker,
-    ) -> Result<&'a Vec<u8>, ValidationError<IcaValidationError>> {
+    ) -> Result<&'b Vec<u8>, ValidationError<IcaValidationError>> {
         let Some(ref payload_bytes) = sign1.payload else {
             let err = ValidationError::SignatureError(IcaValidationError::CredentialPayloadMissing);
 
@@ -492,9 +499,9 @@ impl IcaSignatureVerifier {
 
             "web" => {
                 let did_doc = if _sync {
-                    did_web::resolve(&primary_did)?
+                    did_web::resolve(&primary_did, self.context)?
                 } else {
-                    did_web::resolve_async(&primary_did).await?
+                    did_web::resolve_async(&primary_did, self.context).await?
                 };
 
                 let Some(vm1) = did_doc.verification_relationships.assertion_method.first() else {
@@ -576,8 +583,7 @@ impl IcaSignatureVerifier {
     /// issuer is not verifiably trusted, the validator MUST issue the failure
     /// code `cawg.ica.untrusted_issuer` but MAY continue validation.
     ///
-    /// The list of trusted issuers is taken from [`Self::trusted_issuers`],
-    /// which is normally populated from the `cawg_trust.trusted_ica_issuers`
+    /// The list of trusted issuers is the `cawg_trust.trusted_ica_issuers`
     /// setting of the [`Context`] under which validation is performed. It is
     /// empty by default, which means that no issuer is trusted unless explicitly
     /// configured: a self-issued `did:jwk` (or any other DID) is not trustworthy
@@ -599,12 +605,10 @@ impl IcaSignatureVerifier {
         let (primary_did, _fragment) = issuer_id.split_fragment();
         let primary_did: &str = &primary_did;
 
-        if self
-            .trusted_issuers
-            .iter()
-            .any(|t| t.as_str() == primary_did)
-        {
-            return Ok(());
+        if let Some(trusted_issuers) = &self.context.settings().cawg_trust.trusted_ica_issuers {
+            if trusted_issuers.iter().any(|t| t.as_str() == primary_did) {
+                return Ok(());
+            }
         }
 
         *ok = false;

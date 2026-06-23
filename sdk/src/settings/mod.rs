@@ -316,6 +316,11 @@ pub struct Core {
     /// See more information in the spec here:
     /// [Compressed manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_compressed_boxes)
     pub prefer_compress_manifests: bool,
+    /// Maximum size in megabytes of a Brotli-decompressed JUMBF manifest.
+    /// Limits memory consumption from decompression bomb attacks.
+    ///
+    /// The default is 32 MB.
+    pub max_decompressed_manifest_size_in_mb: usize,
 }
 
 impl Default for Core {
@@ -327,12 +332,19 @@ impl Default for Core {
             decode_identity_assertions: true,
             allowed_network_hosts: None,
             prefer_compress_manifests: false,
+            max_decompressed_manifest_size_in_mb: 32,
         }
     }
 }
 
 impl SettingsValidate for Core {
     fn validate(&self) -> Result<()> {
+        const MAX_MANIFEST_SIZE_MB: usize = 1024; // 1 GiB
+        if self.max_decompressed_manifest_size_in_mb > MAX_MANIFEST_SIZE_MB {
+            return Err(Error::BadParam(format!(
+                "max_decompressed_manifest_size_in_mb must not exceed {MAX_MANIFEST_SIZE_MB} MB"
+            )));
+        }
         Ok(())
     }
 }
@@ -1082,15 +1094,6 @@ pub mod tests {
     use crate::utils::io_utils::tempdirectory;
     use crate::{utils::test::test_settings, SigningAlg};
 
-    #[cfg(feature = "file_io")]
-    fn save_settings_as_json<P: AsRef<Path>>(settings_path: P) -> Result<()> {
-        let settings = get_thread_local_settings();
-
-        let settings_json = serde_json::to_string_pretty(&settings).map_err(Error::JsonError)?;
-
-        std::fs::write(settings_path, settings_json.as_bytes()).map_err(Error::IoError)
-    }
-
     /// Legacy test: verifies the thread-local settings API reads defaults and round-trips values.
     #[test]
     fn test_thread_local_settings() {
@@ -1132,7 +1135,8 @@ pub mod tests {
         let temp_dir = tempdirectory().unwrap();
         let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
 
-        save_settings_as_json(&op).unwrap();
+        let settings_json = serde_json::to_string_pretty(&Settings::default()).unwrap();
+        std::fs::write(&op, settings_json.as_bytes()).unwrap();
 
         let settings = Settings::new().with_file(&op).unwrap();
         assert_eq!(settings, Settings::default());
@@ -1154,10 +1158,18 @@ pub mod tests {
             merkle_tree_chunk_size_in_kb = true
             merkle_tree_max_proofs = "sha1000000"
             backing_store_memory_threshold_in_mb = -123456
+            max_decompressed_manifest_size_in_mb = -123456
         }
         .to_string();
 
         assert!(Settings::new().with_toml(&modified_core).is_err());
+    }
+
+    #[test]
+    fn test_core_validate_rejects_oversized_manifest_cap() {
+        let result =
+            Settings::default().with_value("core.max_decompressed_manifest_size_in_mb", 1025usize);
+        assert!(result.is_err());
     }
 
     /// Legacy test: verifies arbitrary (hidden) keys can be stored and retrieved via the

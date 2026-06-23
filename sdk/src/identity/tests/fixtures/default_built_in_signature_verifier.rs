@@ -11,15 +11,21 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::identity::{
-    tests::ica_test_verifier, x509::X509SignatureVerifier, BuiltInSignatureVerifier,
+use crate::{
+    context::Context,
+    identity::{
+        claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier,
+        BuiltInSignatureVerifier,
+    },
 };
 
 /// Create a `BuiltInSignatureVerifier` that is configured to read the
 /// credentials used in test.
-pub(crate) fn default_built_in_signature_verifier<'a>() -> BuiltInSignatureVerifier<'a> {
+pub(crate) fn default_built_in_signature_verifier(
+    context: &Context,
+) -> BuiltInSignatureVerifier<'_> {
     BuiltInSignatureVerifier {
-        ica_verifier: ica_test_verifier(),
+        ica_verifier: IcaSignatureVerifier::new(context),
         x509_verifier: X509SignatureVerifier::default(),
     }
 }

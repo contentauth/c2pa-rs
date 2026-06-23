@@ -1,7 +1,7 @@
 [package]
 name = "c2patool"
 default-run = "c2patool"
-version = "0.26.62"
+version = "0.26.68"
 description = "Tool for displaying and creating C2PA manifests."
 authors = [
     "Gavin Peacock <gpeacock@adobe.com>",
@@ -24,7 +24,8 @@ networking = [
 [dependencies]
 anyhow = "1.0"
 atree = "0.5.4"
-c2pa = { path = "../sdk", version = "0.85.2", features = [
+c2pa = { workspace = true, features = [
+    "openssl",
     "fetch_remote_manifests",
     "file_io",
     "add_thumbnails",
@@ -46,6 +47,12 @@ etcetera = "0.11.0"
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 reqwest = { version = "0.12.28", features = ["blocking"] }
 tokio = { version = "1.52.3", features = ["rt", "rt-multi-thread"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+] }
 
 [target.'cfg(target_os = "wasi")'.dependencies]
 wasi = "0.14"

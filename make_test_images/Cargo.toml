@@ -8,13 +8,14 @@ rust-version = "1.88.0"
 
 [dependencies]
 anyhow = "1.0.102"
-c2pa = { path = "../sdk", version = "0.85.2", features = [
+c2pa = { workspace = true, features = [
+    "openssl",
 	"fetch_remote_manifests",
 	"file_io",
 	"add_thumbnails",
 	"pdf",
     "default_http"
-]}
+] }
 env_logger = "0.11"
 lazy_static = "1.5.0"
 image = { version = "0.25.10", default-features = false, features = [
