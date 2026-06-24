@@ -18,6 +18,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::{
+    context::Context,
     dynamic_assertion::{AsyncPostValidator, PartialClaim},
     identity::IdentityAssertion,
     status_tracker::StatusTracker,
@@ -25,10 +26,20 @@ use crate::{
 };
 
 /// Validates a CAWG identity assertion.
-pub struct CawgValidator;
+pub struct CawgValidator<'a> {
+    context: &'a Context,
+}
+
+impl<'a> CawgValidator<'a> {
+    /// Create a [`CawgValidator`] from the provided context.
+    pub fn new(context: &'a Context) -> Self {
+        Self { context }
+    }
+}
+
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl AsyncPostValidator for CawgValidator {
+impl AsyncPostValidator for CawgValidator<'_> {
     async fn validate(
         &self,
         label: &str,
@@ -41,7 +52,7 @@ impl AsyncPostValidator for CawgValidator {
             let identity_assertion: IdentityAssertion = assertion.to_assertion()?;
             tracker.push_current_uri(uri.to_string());
             let result = identity_assertion
-                .validate_partial_claim(partial_claim, tracker)
+                .validate_partial_claim_async(partial_claim, tracker, self.context)
                 .await
                 .ok();
             tracker.pop_current_uri();
@@ -72,13 +83,47 @@ mod tests {
     const MULTIPLE_IDENTITIES_VALID: &[u8] =
         include_bytes!("tests/fixtures/claim_aggregation/ims_multiple_manifests.jpg");
 
+    // DID document for the `did:web` issuer that both Adobe-signed fixtures above
+    // were signed against. Served by a local mock so validation does not depend on
+    // reaching the Adobe stage server over the network.
+    #[cfg(not(target_arch = "wasm32"))]
+    const CONNECTED_IDENTITIES_DID: &str =
+        include_str!("tests/fixtures/claim_aggregation/connected_identities_did.json");
+
+    /// Start a local mock server that serves the issuer DID document and redirect
+    /// `did:web` resolution for the Adobe stage domain to it. The returned
+    /// `MockServer` must be kept alive for the duration of the test.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn mock_connected_identities_did() -> httpmock::MockServer {
+        use httpmock::prelude::*;
+
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/.well-known/did.json");
+            then.status(200)
+                .header("content-type", "application/did+json")
+                .body(CONNECTED_IDENTITIES_DID);
+        });
+
+        crate::identity::claim_aggregation::w3c_vc::did_web::set_proxy(
+            "connected-identities.identity-stage.adobe.com",
+            &server.url("/"),
+        );
+
+        server
+    }
+
     #[c2pa_test_async]
     async fn test_connected_identities_valid() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let _did_server = mock_connected_identities_did();
+
         let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
 
-        let reader = Reader::from_stream_async("image/jpeg", &mut stream)
+        let reader = Reader::default()
+            .with_stream_async("image/jpeg", &mut stream)
             .await
             .unwrap();
 
@@ -102,9 +147,13 @@ mod tests {
     async fn test_multiple_identities_valid() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let _did_server = mock_connected_identities_did();
+
         let mut stream = Cursor::new(MULTIPLE_IDENTITIES_VALID);
 
-        let reader = Reader::from_stream_async("image/jpeg", &mut stream)
+        let reader = Reader::default()
+            .with_stream_async("image/jpeg", &mut stream)
             .await
             .unwrap();
 
@@ -126,7 +175,8 @@ mod tests {
     async fn test_cawg_validate_with_hard_binding_missing() {
         let mut stream = Cursor::new(NO_HARD_BINDING);
 
-        let reader = Reader::from_stream_async("image/jpeg", &mut stream)
+        let reader = Reader::default()
+            .with_stream_async("image/jpeg", &mut stream)
             .await
             .unwrap();
 

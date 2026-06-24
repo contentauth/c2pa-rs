@@ -114,6 +114,7 @@ fn diamond_dag_validates_each_manifest_once() -> Result<()> {
 
     let image_data = generate_diamond_dag(depth)?;
     let mut stream = Cursor::new(&image_data);
+    #[allow(deprecated)]
     let reader = Reader::from_stream("image/jpeg", &mut stream)?;
 
     assert_eq!(

@@ -15,6 +15,7 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     io::{Read, Seek, Write},
+    sync::Arc,
 };
 
 #[cfg(feature = "json_schema")]
@@ -22,7 +23,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "file_io")]
 use {
-    crate::utils::io_utils::uri_to_path,
+    crate::utils::path_utils::sanitize_archive_path,
     std::{
         fs::{create_dir_all, read, write},
         path::{Path, PathBuf},
@@ -35,8 +36,8 @@ use crate::{
     claim::Claim,
     error::Error,
     hashed_uri::HashedUri,
-    jumbf::labels::{assertion_label_from_uri, to_absolute_uri, DATABOXES},
-    maybe_send_sync::MaybeSend,
+    jumbf::labels::{to_absolute_uri, DATABOXES},
+    maybe_send_sync::{MaybeSend, MaybeSync},
     utils::mime::format_to_mime,
     Result,
 };
@@ -74,17 +75,14 @@ impl UriOrResource {
         }
     }
 
-    pub fn to_resource_ref(
-        &self,
-        resources: &mut ResourceStore,
-        claim: &Claim,
-    ) -> Result<UriOrResource> {
+    pub fn to_resource_ref(&self, claim: &Claim) -> Result<UriOrResource> {
         match self {
             UriOrResource::ResourceRef(r) => Ok(UriOrResource::ResourceRef(r.clone())),
             UriOrResource::HashedUri(h) => {
-                let (format, data) = if h.url().contains(DATABOXES) {
+                let url = to_absolute_uri(claim.label(), &h.url());
+                let format = if h.url().contains(DATABOXES) {
                     let data_box = claim.get_databox(h).ok_or(Error::MissingDataBox)?;
-                    (data_box.format.to_owned(), data_box.data.clone())
+                    data_box.format.clone()
                 } else {
                     let (label, instance) = Claim::assertion_label_from_link(&h.url());
                     let assertion =
@@ -93,14 +91,9 @@ impl UriOrResource {
                             .ok_or(Error::AssertionMissing {
                                 url: h.url().to_string(),
                             })?;
-                    (
-                        assertion.content_type().to_string(),
-                        assertion.data().to_vec(),
-                    )
+                    assertion.content_type().to_string()
                 };
-                let url = to_absolute_uri(claim.label(), &h.url());
-                let resource_ref = resources.add_with(&url, &format, data)?;
-                Ok(UriOrResource::ResourceRef(resource_ref))
+                Ok(UriOrResource::ResourceRef(ResourceRef::new(format, url)))
             }
         }
     }
@@ -170,6 +163,45 @@ pub struct ResourceStore {
     base_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
+    /// Optional resolver that can look up resource bytes by URI from an external source
+    /// (e.g. a `Store`). Used to defer materialization of bytes during reading.
+    #[serde(skip)]
+    resolver: Option<Arc<dyn StoreResolver>>,
+}
+
+/// A pluggable resolver that lets [`ResourceStore`] look up resource bytes from an
+/// external source (e.g. a parsed [`Store`][crate::store::Store]) without eagerly copying them.
+///
+/// - [`get`][StoreResolver::get]: Returns `None` for unknown URIs, `Some(Err)` for known-but-failed.
+/// - [`has`][StoreResolver::has]: O(1) existence check — `true` only for binary resources.
+/// - [`keys`][StoreResolver::keys]: Enumerates binary resource URIs visible through this resolver.
+pub(crate) trait StoreResolver: std::fmt::Debug + MaybeSend + MaybeSync {
+    fn get(&self, uri: &str) -> Option<crate::Result<Vec<u8>>>;
+    fn has(&self, uri: &str) -> bool;
+    fn keys(&self) -> Vec<String>;
+}
+
+/// Chains two resolvers: tries `primary` first, falls back to `fallback`.
+#[derive(Debug)]
+struct ChainedResolver {
+    primary: Arc<dyn StoreResolver>,
+    fallback: Arc<dyn StoreResolver>,
+}
+
+impl StoreResolver for ChainedResolver {
+    fn get(&self, uri: &str) -> Option<crate::Result<Vec<u8>>> {
+        self.primary.get(uri).or_else(|| self.fallback.get(uri))
+    }
+
+    fn has(&self, uri: &str) -> bool {
+        self.primary.has(uri) || self.fallback.has(uri)
+    }
+
+    fn keys(&self) -> Vec<String> {
+        let mut ids = self.primary.keys();
+        ids.extend(self.fallback.keys());
+        ids
+    }
 }
 
 impl ResourceStore {
@@ -180,6 +212,34 @@ impl ResourceStore {
             #[cfg(feature = "file_io")]
             base_path: None,
             label: None,
+            resolver: None,
+        }
+    }
+
+    /// Sets the resolver used to lazily look up resource bytes by URI.
+    ///
+    /// The resolver is called as a fallback when a resource is not present in
+    /// memory or on disk.
+    pub(crate) fn set_resolver(&mut self, resolver: Arc<dyn StoreResolver>) {
+        self.resolver = Some(resolver);
+    }
+
+    /// Chains the resolver from `other` as an additional fallback on this store.
+    ///
+    /// When [`get`](Self::get) finds no local match it tries the existing resolver
+    /// chain first, then falls through to `other`'s resolver.  This allows a
+    /// builder's resource store to transparently serve bytes that live in an
+    /// ingredient's manifest store without eagerly copying them.
+    pub(crate) fn chain_resolver_from(&mut self, other: &ResourceStore) {
+        if let Some(new_resolver) = other.resolver.clone() {
+            if let Some(existing) = self.resolver.take() {
+                self.set_resolver(Arc::new(ChainedResolver {
+                    primary: existing,
+                    fallback: new_resolver,
+                }));
+            } else {
+                self.set_resolver(new_resolver);
+            }
         }
     }
 
@@ -244,43 +304,6 @@ impl ResourceStore {
         Ok(ResourceRef::new(format, id))
     }
 
-    /// Adds a resource from a URI, generating a [`ResourceRef`].
-    ///
-    /// The generated identifier may be different from the key.
-    pub(crate) fn add_uri<R>(
-        &mut self,
-        uri: &str,
-        format: &str,
-        value: R,
-    ) -> crate::Result<ResourceRef>
-    where
-        R: Into<Vec<u8>>,
-    {
-        #[cfg(feature = "file_io")]
-        let mut id = uri.to_string();
-        #[cfg(not(feature = "file_io"))]
-        let id = uri.to_string();
-
-        // if it isn't jumbf, assume it's an external uri and use it as is
-        if id.starts_with("self#jumbf=") {
-            #[cfg(feature = "file_io")]
-            if self.base_path.is_some() {
-                let mut path = uri_to_path(&id, self.label.as_deref());
-                // add a file extension if it doesn't have one
-                if !(id.ends_with(".jpeg") || id.ends_with(".png")) {
-                    if let Some(ext) = crate::utils::mime::format_to_extension(format) {
-                        path.set_extension(ext);
-                    }
-                }
-                id = path.display().to_string()
-            }
-            if !self.exists(&id) {
-                self.add(&id, value)?;
-            }
-        }
-        Ok(ResourceRef::new(format, id))
-    }
-
     /// Adds a resource, using a given id value.
     pub fn add<S, R>(&mut self, id: S, value: R) -> crate::Result<&mut Self>
     where
@@ -289,7 +312,8 @@ impl ResourceStore {
     {
         #[cfg(feature = "file_io")]
         if let Some(base) = self.base_path.as_ref() {
-            let path = base.join(id.into());
+            let sanitized_id = sanitize_archive_path(&id.into())?;
+            let path = base.join(&sanitized_id);
             create_dir_all(path.parent().unwrap_or(Path::new("")))?;
             write(path, value.into())?;
             return Ok(self);
@@ -319,11 +343,23 @@ impl ResourceStore {
                     })?;
                     return Ok(Cow::Owned(value));
                 }
-                None => return Err(Error::ResourceNotFound(id.to_string())),
+                None => {
+                    if let Some(result) = self.resolver.as_ref().and_then(|r| r.get(id)) {
+                        return result.map(Cow::Owned);
+                    }
+                    return Err(Error::ResourceNotFound(id.to_string()));
+                }
             }
         }
         self.resources.get(id).map_or_else(
-            || Err(Error::ResourceNotFound(id.to_string())),
+            || {
+                self.resolver
+                    .as_ref()
+                    .and_then(|r| r.get(id))
+                    .map_or(Err(Error::ResourceNotFound(id.to_string())), |r| {
+                        r.map(Cow::Owned)
+                    })
+            },
             |v| Ok(Cow::Borrowed(v)),
         )
     }
@@ -342,7 +378,14 @@ impl ResourceStore {
                     let mut file = std::fs::File::open(path)?;
                     return std::io::copy(&mut file, &mut stream).map_err(Error::IoError);
                 }
-                None => return Err(Error::ResourceNotFound(id.to_string())),
+                None => {
+                    if let Some(result) = self.resolver.as_ref().and_then(|r| r.get(id)) {
+                        let data = result?;
+                        stream.write_all(&data).map_err(Error::IoError)?;
+                        return Ok(data.len() as u64);
+                    }
+                    return Err(Error::ResourceNotFound(id.to_string()));
+                }
             }
         }
         match self.resources().get(id) {
@@ -350,11 +393,18 @@ impl ResourceStore {
                 stream.write_all(data).map_err(Error::IoError)?;
                 Ok(data.len() as u64)
             }
-            None => Err(Error::ResourceNotFound(id.to_string())),
+            None => {
+                if let Some(result) = self.resolver.as_ref().and_then(|r| r.get(id)) {
+                    let data = result?;
+                    stream.write_all(&data).map_err(Error::IoError)?;
+                    return Ok(data.len() as u64);
+                }
+                Err(Error::ResourceNotFound(id.to_string()))
+            }
         }
     }
 
-    /// Returns `true` if the resource has been added or exists as file.
+    /// Returns `true` if the resource has been added or exists as a file or in the resolver.
     pub fn exists(&self, id: &str) -> bool {
         if self.resources.contains_key(id) {
             return true;
@@ -363,10 +413,30 @@ impl ResourceStore {
         #[cfg(feature = "file_io")]
         if let Some(base) = self.base_path.as_ref() {
             let path = base.join(id);
-            return path.exists();
+            if path.exists() {
+                return true;
+            }
+        }
+
+        if let Some(resolver) = &self.resolver {
+            if resolver.has(id) {
+                return true;
+            }
         }
 
         false
+    }
+
+    /// Returns all resource IDs — both in-memory keys and those enumerated by the resolver.
+    ///
+    /// Only binary resources are enumerated from the resolver (EmbeddedData assertions,
+    /// databoxes, and manifest bytes).
+    pub fn iter_resource_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.resources.keys().cloned().collect();
+        if let Some(resolver) = &self.resolver {
+            ids.extend(resolver.keys());
+        }
+        ids
     }
 
     #[cfg(feature = "file_io")]
@@ -393,20 +463,6 @@ impl ResourceResolver for ResourceStore {
         let cursor = std::io::Cursor::new(data);
         Ok(Box::new(cursor))
     }
-}
-
-pub fn mime_from_uri(uri: &str) -> String {
-    if let Some(label) = assertion_label_from_uri(uri) {
-        if label.starts_with(labels::THUMBNAIL) {
-            // https://spec.c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_thumbnail
-            if let Some(ext) = label.rsplit('.').next() {
-                return format!("image/{ext}");
-            }
-        }
-    }
-
-    // Unknown binary data.
-    String::from("application/octet-stream")
 }
 
 #[cfg(test)]
@@ -466,7 +522,7 @@ mod tests {
             }]
         }"#;
 
-        let mut builder = Builder::from_json(json).expect("from json");
+        let mut builder = Builder::default().with_definition(json).expect("from json");
         builder
             .add_resource("abc123", Cursor::new(value))
             .expect("add_resource");
@@ -490,8 +546,77 @@ mod tests {
             .expect("sign");
 
         output_image.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output_image).expect("from_bytes");
+        let reader = Reader::default()
+            .with_stream("jpeg", &mut output_image)
+            .expect("from_bytes");
         let _json = reader.json();
         println!("{_json}");
+    }
+
+    #[cfg(all(feature = "file_io", not(target_arch = "wasm32")))]
+    mod zip_slip_tests {
+        use tempfile::tempdir;
+
+        use super::*;
+
+        #[test]
+        fn add_with_base_path_rejects_parent_dir_traversal() {
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            let result = store.add("../outside_evil.txt", b"attacker data".to_vec());
+            assert!(result.is_err());
+
+            let escaped = temp.path().parent().unwrap().join("outside_evil.txt");
+            assert!(!escaped.exists());
+        }
+
+        #[test]
+        fn add_with_base_path_rejects_absolute_path() {
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            let result = store.add("/etc/passwd", b"attacker data".to_vec());
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn add_with_base_path_accepts_normal_resource() {
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            store.add("thumbnail.jpg", b"image data".to_vec()).unwrap();
+            assert!(temp.path().join("thumbnail.jpg").exists());
+        }
+
+        #[test]
+        fn add_with_base_path_accepts_subdir_resource() {
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            store
+                .add("subdir/thumbnail.jpg", b"image data".to_vec())
+                .unwrap();
+            assert!(temp.path().join("subdir/thumbnail.jpg").exists());
+        }
+
+        #[test]
+        fn add_with_base_path_rejects_backslash_traversal() {
+            // Cross-platform regression: a Windows-authored archive can carry
+            // entry IDs that use `\` as a path separator. On Linux those would
+            // appear as a single Normal component to Path::components() and
+            // would slip past the traversal check unless we reject backslash
+            // explicitly.
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            let result = store.add("..\\..\\etc\\passwd", b"attacker data".to_vec());
+            assert!(result.is_err());
+        }
     }
 }

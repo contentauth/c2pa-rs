@@ -51,7 +51,7 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::{patch_stream, safe_vec, stream_len, tempfile_builder},
+        io_utils::{patch_stream, safe_vec, stream_len, tempfile_builder, BoundedVecWriter},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -224,6 +224,8 @@ fn parse_all_boxes(reader: &mut dyn CAIRead) -> Result<Vec<JxlBoxInfo>> {
 /// If a `brob` box wraps content of the given target type, decompress and return it.
 /// The reader should be positioned at the start of the brob box's data area.
 fn decompress_brob(reader: &mut dyn CAIRead, data_size: u64) -> Result<([u8; 4], Vec<u8>)> {
+    const MAX_DECOMPRESSED_BROB_SIZE: usize = 1024 * 1024; // 1 MiB
+
     let mut original_type = [0u8; 4];
     reader
         .read_exact(&mut original_type)
@@ -232,11 +234,11 @@ fn decompress_brob(reader: &mut dyn CAIRead, data_size: u64) -> Result<([u8; 4],
     let compressed_size = data_size.saturating_sub(4);
     let mut constrained_reader = reader.take(compressed_size);
 
-    let mut decompressed = Vec::new();
-    brotli::BrotliDecompress(&mut constrained_reader, &mut decompressed)
+    let mut bounded_writer = BoundedVecWriter::new(MAX_DECOMPRESSED_BROB_SIZE)?;
+    brotli::BrotliDecompress(&mut constrained_reader, &mut bounded_writer)
         .map_err(|_| Error::InvalidAsset("Failed to decompress brob box".to_string()))?;
 
-    Ok((original_type, decompressed))
+    Ok((original_type, bounded_writer.into_inner()))
 }
 
 /// Returns `true` if the given `jumb` box payload contains a JUMBF description box (`jumd`)
@@ -850,6 +852,37 @@ impl AssetBoxHash for JpegXlIO {
             });
         }
 
+        // If there is no C2PA jumb box, add a placeholder to the box map so the hashing layer
+        // can identify the correct offset for the Cai exclusion region before the real manifest
+        // is written.
+        if !box_maps
+            .iter()
+            .any(|m| m.names.contains(&C2PA_BOXHASH.to_string()))
+        {
+            let range_start = find_jumb_insertion_offset(&boxes);
+
+            let c2pa_box = BoxMap {
+                names: vec![C2PA_BOXHASH.to_string()],
+                alg: None,
+                hash: ByteBuf::from(Vec::new()),
+                excluded: None,
+                pad: ByteBuf::from(Vec::new()),
+                range_start, // will be patched to correct offset by add_required_jumb_to_stream
+                range_len: 0,
+            };
+
+            // Insert the C2PA box after ftyp.
+            let ftyp_string = String::from("ftyp");
+            let insert_index = box_maps
+                .iter()
+                .position(|m| m.names.contains(&ftyp_string))
+                .ok_or_else(|| {
+                    Error::InvalidAsset("invalid JPEG XL container: missing ftyp box".to_string())
+                })?;
+
+            box_maps.insert(insert_index + 1, c2pa_box);
+        }
+
         Ok(box_maps)
     }
 }
@@ -981,7 +1014,10 @@ pub mod tests {
     use byteorder::WriteBytesExt;
 
     use super::*;
-    use crate::utils::io_utils::tempdirectory;
+    use crate::{
+        utils::{io_utils::tempdirectory, test::test_context},
+        Builder, CallbackSigner, Reader, SigningAlg,
+    };
 
     /// Public test helper: builds a minimal JPEG XL container for use in integration tests.
     pub fn build_test_jxl_container() -> Vec<u8> {
@@ -1481,6 +1517,29 @@ pub mod tests {
     }
 
     #[test]
+    fn test_brob_decompression_rejects_bomb() {
+        let payload = vec![0u8; 1024 * 1024 + 1];
+        let mut compressed = Vec::new();
+        let params = brotli::enc::BrotliEncoderParams::default();
+        brotli::BrotliCompress(
+            &mut Cursor::new(payload.as_slice()),
+            &mut compressed,
+            &params,
+        )
+        .unwrap();
+
+        let mut brob_payload = Vec::new();
+        brob_payload.extend_from_slice(&BOX_XML);
+        brob_payload.extend_from_slice(&compressed);
+
+        let mut cursor = Cursor::new(&brob_payload);
+        assert!(matches!(
+            decompress_brob(&mut cursor, brob_payload.len() as u64),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    #[test]
     fn test_remove_preserves_brob_wrapped_jumb() -> Result<()> {
         // brob-wrapped jumb is treated as opaque data, so remove_cai_store
         // should NOT remove it (it's not recognized as a C2PA manifest).
@@ -1632,37 +1691,6 @@ pub mod tests {
                 "Box map entries must be ordered by offset and non-overlapping"
             );
         }
-    }
-
-    #[test]
-    fn test_box_map_brob_jumb_not_marked_as_c2pa() -> Result<()> {
-        // brob-wrapped jumb is treated as opaque data for hashing, so it should
-        // NOT be marked as C2PA_BOXHASH in the box map.
-        let manifest_data = b"brob_wrapped_manifest";
-        let container = build_jxl_with_brob_jumb(manifest_data)?;
-        let mut cursor = Cursor::new(&container);
-
-        let jpegxl_io = JpegXlIO {};
-        let box_map = jpegxl_io.get_box_map(&mut cursor).unwrap();
-
-        let c2pa_entries: Vec<_> = box_map
-            .iter()
-            .filter(|bm| bm.names[0] == C2PA_BOXHASH)
-            .collect();
-        assert_eq!(
-            c2pa_entries.len(),
-            0,
-            "brob-wrapped jumb should NOT be identified as C2PA"
-        );
-
-        // The brob box should appear as a regular "brob" entry
-        let brob_entries: Vec<_> = box_map.iter().filter(|bm| bm.names[0] == "brob").collect();
-        assert_eq!(
-            brob_entries.len(),
-            1,
-            "brob box should appear as opaque data"
-        );
-        Ok(())
     }
 
     // ─── Remote reference (XMP embedding) tests ───
@@ -2090,21 +2118,21 @@ pub mod tests {
     ///      `C2PA_BOXHASH` label; all non-excluded, non-CAI boxes carry a
     ///      non-empty hash.
     #[test]
-    fn test_e2e_jpegxl_sign_read_validate() -> crate::error::Result<()> {
+    fn test_e2e_jpegxl_sign_read_validate() -> Result<()> {
         // ── Test fixtures ────────────────────────────────────────────────────────
         static SAMPLE_JXL: &[u8] = include_bytes!("../../tests/fixtures/sample1.jxl");
         static CERTS: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pub");
         static PRIVATE_KEY: &[u8] = include_bytes!("../../tests/fixtures/certs/ed25519.pem");
 
         // Ed25519 signing helper (same pattern used in v2_api_integration.rs)
-        fn ed_sign(data: &[u8], private_key: &[u8]) -> crate::error::Result<Vec<u8>> {
+        fn ed_sign(data: &[u8], private_key: &[u8]) -> Result<Vec<u8>> {
             use ed25519_dalek::{Signature, Signer, SigningKey};
             use pem::parse;
-            let pem = parse(private_key).map_err(|e| crate::Error::OtherError(Box::new(e)))?;
+            let pem = parse(private_key).map_err(|e| Error::OtherError(Box::new(e)))?;
             // Ed25519 PKCS#8 private key: skip the 16-byte ASN.1 prefix.
             let key_bytes = &pem.contents()[16..];
-            let signing_key = SigningKey::try_from(key_bytes)
-                .map_err(|e| crate::Error::OtherError(Box::new(e)))?;
+            let signing_key =
+                SigningKey::try_from(key_bytes).map_err(|e| Error::OtherError(Box::new(e)))?;
             let signature: Signature = signing_key.sign(data);
             Ok(signature.to_bytes().to_vec())
         }
@@ -2113,10 +2141,10 @@ pub mod tests {
 
         // Load the test trust anchors and verification settings so that the
         // Ed25519 test certificate is trusted during read-back.
-        crate::Settings::from_toml(include_str!("../../tests/fixtures/test_settings.toml"))?;
+        let context = test_context().into_shared();
 
         let signer_fn = |_ctx: *const (), data: &[u8]| ed_sign(data, PRIVATE_KEY);
-        let signer = crate::CallbackSigner::new(signer_fn, crate::SigningAlg::Ed25519, CERTS);
+        let signer = CallbackSigner::new(signer_fn, SigningAlg::Ed25519, CERTS);
 
         let manifest_json = serde_json::json!({
             "title": "E2E JPEG XL Integration Test",
@@ -2155,7 +2183,8 @@ pub mod tests {
             ]
         });
 
-        let mut builder = crate::Builder::from_json(&manifest_json.to_string())?;
+        let mut builder =
+            Builder::from_shared_context(&context).with_definition(manifest_json.to_string())?;
 
         let mut source = Cursor::new(SAMPLE_JXL);
         let mut signed = Cursor::new(Vec::new());
@@ -2164,12 +2193,12 @@ pub mod tests {
         // ── Phase 2: Read back and validate manifest claims ──────────────────────
 
         signed.rewind().unwrap();
-        let reader = crate::Reader::from_stream("image/jxl", &mut signed)?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/jxl", &mut signed)?;
 
         // Active manifest must be present.
         let manifest = reader
             .active_manifest()
-            .ok_or_else(|| crate::Error::ClaimEncoding)?;
+            .ok_or_else(|| Error::ClaimEncoding)?;
 
         assert_eq!(
             manifest.title().unwrap_or_default(),

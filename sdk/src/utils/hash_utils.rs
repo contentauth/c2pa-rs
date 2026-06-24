@@ -257,7 +257,10 @@ where
 
             // verify structure of blocks
             let num_blocks = hr.len();
-            let range_end = hr[num_blocks - 1].start() + hr[num_blocks - 1].length();
+            let range_end = hr[num_blocks - 1]
+                .start()
+                .checked_add(hr[num_blocks - 1].length())
+                .ok_or(Error::BadParam("hash range overflow".to_string()))?;
             let data_end = data_len - 1;
 
             // range extends past end of file so fail
@@ -355,7 +358,11 @@ where
                         continue;
                     }
 
-                    let end = inclusion.start() + inclusion.length() - 1;
+                    let end = inclusion
+                        .start()
+                        .checked_add(inclusion.length())
+                        .ok_or(Error::BadParam("inclusion range overflow".to_string()))?
+                        - 1;
                     let inclusion_start = inclusion.start();
 
                     // add new BMFF V2 offset as a new range to be included so that we can
@@ -603,6 +610,32 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
+
+    // Attacker-controlled HashRange with start+length > u64::MAX must return Err,
+    // not panic, in both the exclusion and inclusion paths.
+    #[test]
+    fn test_exclusion_range_overflow_returns_error() {
+        let data = vec![0u8; 64];
+        let mut reader = Cursor::new(&data);
+        let hr = vec![HashRange::new(u64::MAX - 10, 20)]; // start + length overflows u64
+        let result = hash_stream_by_alg("sha256", &mut reader, Some(hr), true);
+        assert!(
+            result.is_err(),
+            "exclusion range overflow must return Err, not panic"
+        );
+    }
+
+    #[test]
+    fn test_inclusion_range_overflow_returns_error() {
+        let data = vec![0u8; 64];
+        let mut reader = Cursor::new(&data);
+        let hr = vec![HashRange::new(u64::MAX, 1)]; // start + length overflows u64
+        let result = hash_stream_by_alg("sha256", &mut reader, Some(hr), false);
+        assert!(
+            result.is_err(),
+            "inclusion range overflow must return Err, not panic"
+        );
+    }
 
     #[test]
     fn progress_callback_is_called() {

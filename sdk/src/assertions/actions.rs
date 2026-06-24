@@ -249,6 +249,111 @@ pub mod c2pa_action {
     pub const UNKNOWN: &str = "c2pa.unknown";
 }
 
+/// Deprecated string constants for C2PA action reasons.
+///
+/// Use [`C2paReason`] enum variants instead.
+#[deprecated(since = "0.80.3", note = "Use `C2paReason` enum variants instead")]
+pub mod c2pa_reason {
+    /// Personally identifiable information is present.
+    #[deprecated(since = "0.80.3", note = "Use `C2paReason::PiiPresent`")]
+    pub const PII_PRESENT: &str = "c2pa.PII.present";
+
+    /// The data is invalid.
+    #[deprecated(since = "0.80.3", note = "Use `C2paReason::InvalidData`")]
+    pub const INVALID_DATA: &str = "c2pa.invalid.data";
+
+    /// Trade secret information is present.
+    #[deprecated(since = "0.80.3", note = "Use `C2paReason::TradeSecretPresent`")]
+    pub const TRADE_SECRET_PRESENT: &str = "c2pa.trade-secret.present";
+
+    /// Government classified or confidential information is present.
+    #[deprecated(since = "0.80.3", note = "Use `C2paReason::GovernmentConfidential`")]
+    pub const GOVERNMENT_CONFIDENTIAL: &str = "c2pa.government.confidential";
+}
+
+/// Predefined reason values for the `reason` field on [`Action`].
+///
+/// The C2PA specification defines these standard values for use with
+/// `c2pa.redacted` actions. Custom values must follow entity-specific
+/// namespace syntax (e.g., `com.example.my-reason`).
+///
+/// New variants may be added in future releases.
+///
+/// See [Reason - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_reason).
+#[non_exhaustive]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+pub enum C2paReason {
+    /// Personally identifiable information is present.
+    #[serde(rename = "c2pa.PII.present")]
+    PiiPresent,
+
+    /// The data is invalid.
+    #[serde(rename = "c2pa.invalid.data")]
+    InvalidData,
+
+    /// Trade secret information is present.
+    #[serde(rename = "c2pa.trade-secret.present")]
+    TradeSecretPresent,
+
+    /// Government classified or confidential information is present.
+    #[serde(rename = "c2pa.government.confidential")]
+    GovernmentConfidential,
+
+    /// An unknown or custom reason value.
+    #[serde(untagged)]
+    Other(String),
+}
+
+impl C2paReason {
+    /// Returns the string representation of this reason without allocating.
+    pub fn as_str(&self) -> &str {
+        match self {
+            C2paReason::PiiPresent => "c2pa.PII.present",
+            C2paReason::InvalidData => "c2pa.invalid.data",
+            C2paReason::TradeSecretPresent => "c2pa.trade-secret.present",
+            C2paReason::GovernmentConfidential => "c2pa.government.confidential",
+            C2paReason::Other(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for C2paReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<C2paReason> for String {
+    fn from(r: C2paReason) -> Self {
+        r.as_str().to_owned()
+    }
+}
+
+impl PartialEq<str> for C2paReason {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for C2paReason {
+    fn eq(&self, other: &&str) -> bool {
+        self == *other
+    }
+}
+
+impl PartialEq<C2paReason> for str {
+    fn eq(&self, other: &C2paReason) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<C2paReason> for &str {
+    fn eq(&self, other: &C2paReason) -> bool {
+        other == *self
+    }
+}
+
 pub static V2_DEPRECATED_ACTIONS: [&str; 7] = [
     "c2pa.copied",
     "c2pa.formatted",
@@ -380,6 +485,7 @@ pub struct Action {
 
     // The reason why this action was performed, required when the action is `c2pa.redacted`
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "json_schema", schemars(with = "Option<C2paReason>"))]
     pub(crate) reason: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -627,8 +733,11 @@ impl Action {
 
     /// Sets the reason why this action was performed.
     ///
-    /// This is only present in C2PA v2.
-    /// See [Related actions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_reason).
+    /// Required for `c2pa.redacted` actions. The value should be one of
+    /// the variants in [`C2paReason`] or a custom value following
+    /// entity-specific namespace syntax (e.g., `com.example.my-reason`).
+    ///
+    /// See [Reason - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_reason).
     pub fn set_reason<S: Into<String>>(mut self, reason: S) -> Self {
         self.reason = Some(reason.into());
         self

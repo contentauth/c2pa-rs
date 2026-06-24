@@ -140,6 +140,8 @@ fn main() -> Result<()> {
 }
 ```
 
+When the manifest JSON omits `claim_generator_info` (or uses `[]`), `Builder` resolves it at claim time: first from `builder.claim_generator_info` in the settings you passed to `Context` (as in the `json!` above, if you set that field), otherwise the library default.
+
 ## Settings definition
 
 The Settings definition has the following top-level structure:
@@ -157,11 +159,10 @@ The Settings definition has the following top-level structure:
 }
 ```
 
-NOTES:
-
-- All properties are optional. If you do not specify a value, the SDK will use the default value, if any.
-- If you specify a value of `null`, then the property will be set to `null`, not the default.
-- Do not quote Boolean property values (for example, use `true` not `"true"`).
+> [!NOTE]
+> - All properties are optional. If you do not specify a value, the SDK will use the default value, if any.
+> - If you specify a value of `null`, then the property will be set to `null`, not the default.
+> - Do not quote Boolean property values (for example, use `true` not `"true"`).
 
 For a complete reference to all the Settings properties, see the [SDK object reference - Settings](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema).
 
@@ -229,7 +230,8 @@ Here's the Settings JSON with all default values:
     "merkle_tree_max_proofs": 5,
     "backing_store_memory_threshold_in_mb": 512,
     "decode_identity_assertions": true,
-    "allowed_network_hosts": null
+    "allowed_network_hosts": null,
+    "max_decompressed_manifest_size_in_mb": 32
   },
   "signer": null,
   "trust": {
@@ -583,4 +585,4 @@ Context wraps a `Settings` instance and uses it to:
 
 4. **Configure builder behavior** - The `builder` settings control thumbnail generation, actions, and other manifest creation options.
 
-The `Settings` format hasn't changed&mdash;only how you provide those settings.
+The `Settings` format hasn't changed; only how you provide those settings has changed.

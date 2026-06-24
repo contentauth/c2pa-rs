@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+mod common;
+
 /// Complete functional integration test with parent and ingredients.
 // Isolate from wasm by wrapping in module.
 #[cfg(feature = "file_io")]
@@ -19,11 +21,13 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions, AssetReference, Metadata},
-        Builder, Context, Ingredient, Reader, Result, Settings,
+        Builder, Context, Reader, Result, Settings,
     };
     use c2pa_macros::c2pa_test_async;
     #[allow(unused)] // different code path for WASI
     use tempfile::{tempdir, TempDir};
+
+    use super::common::test_context;
 
     /// Returns the path to a fixture file.
     fn fixture_path(file_name: &str) -> PathBuf {
@@ -50,9 +54,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
-        let settings =
-            Settings::new().with_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-        let context = Context::new().with_settings(settings)?.into_shared();
+        let context = test_context().into_shared();
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
@@ -67,15 +69,12 @@ mod integration_1 {
         // allocate actions so we can add them
         let mut actions = Actions::new();
 
-        // add a parent ingredient
-        // let mut parent = Ingredient::from_file(&parent_path)?;
-        // parent.set_is_parent();
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
             Action::new(c2pa_action::OPENED)
                 .set_when("2015-06-26T16:43:23+0200")
                 .set_parameter("name".to_owned(), "import")?
-                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
+                .add_ingredient_id("apollo17")?,
         );
 
         let ingredient_json = serde_json::json!({
@@ -96,17 +95,15 @@ mod integration_1 {
             Action::new("c2pa.edit").set_parameter("name".to_owned(), "brightnesscontrast")?,
         );
 
-        // add an ingredient
-        let ingredient = Ingredient::from_file(&ingredient_path)?;
-
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
             Action::new(c2pa_action::EDITED)
                 .set_parameter("name".to_owned(), "import")?
-                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
+                .add_ingredient_id("apollo17")?,
         );
 
-        builder.add_ingredient(ingredient);
+        let mut ingredient_file = std::fs::File::open(&ingredient_path)?;
+        builder.add_ingredient_from_stream("{}", "image/png", &mut ingredient_file)?;
 
         builder.add_assertion(Actions::LABEL, &actions)?;
 
@@ -133,7 +130,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_json_manifest() -> Result<()> {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        let context = test_context().into_shared();
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
@@ -144,15 +141,15 @@ mod integration_1 {
 
         let json = std::fs::read_to_string(manifest_path)?;
 
-        let mut builder = Builder::from_json(&json)?;
+        let mut builder = Builder::from_shared_context(&context).with_definition(&json)?;
         builder.set_base_path(fixture_path(""));
 
         // sign and embed into the target file
-        let signer = Settings::signer()?;
-        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+        let signer = context.signer()?;
+        builder.sign_file(signer, &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
-        let reader = Reader::from_file(&output_path)?;
+        let reader = Reader::from_shared_context(&context).with_file(&output_path)?;
 
         println!("{reader}");
         // std::fs::copy(&output_path, "test_file.jpg")?; // for debugging to get copy of the file
@@ -170,9 +167,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_bmff_manifest() -> Result<()> {
-        let settings =
-            Settings::new().with_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-        let context = Context::new().with_settings(settings)?.into_shared();
+        let context = test_context().into_shared();
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
@@ -207,9 +202,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_asset_reference_assertion() -> Result<()> {
-        let settings =
-            Settings::new().with_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-        let context = Context::new().with_settings(settings)?.into_shared();
+        let context = test_context().into_shared();
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
@@ -234,7 +227,7 @@ mod integration_1 {
         builder.sign_file(signer, &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
-        let reader = Reader::from_file(&output_path)?;
+        let reader = Reader::from_shared_context(&context).with_file(&output_path)?;
 
         println!("{reader}");
 
@@ -253,9 +246,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_metadata_assertion() -> Result<()> {
-        let settings =
-            Settings::new().with_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-        let context = Context::new().with_settings(settings)?.into_shared();
+        let context = test_context().into_shared();
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
@@ -336,15 +327,7 @@ mod integration_1 {
 
         // Read back the new file with embedded manifest.
         let mut file = std::fs::File::open(&output_path)?;
-        let mut reader =
-            Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
-
-        reader
-            .post_validate_async(&c2pa::identity::validator::CawgValidator {})
-            .await
-            .unwrap();
-
-        dbg!(&reader);
+        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
 
         // The test credentials are currently flagged as untrusted.
         // This will be fixed when https://github.com/contentauth/c2pa-rs/pull/1356
