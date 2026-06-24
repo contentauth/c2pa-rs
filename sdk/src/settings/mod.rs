@@ -98,7 +98,6 @@ pub struct Trust {
     /// is a deliberate secure default: a self-issued `did:jwk` (or any other
     /// issuer) is not trustworthy simply because its signature is
     /// self-consistent. Populate this list with the DIDs of issuers you trust.
-    ///
     // TO DO (CAI-12709): This field is only meaningful for `cawg_trust`, not for
     // the C2PA `trust`. Move it (and the other CAWG-relevant settings) to a
     // dedicated `CawgTrust` struct so it no longer pollutes the C2PA `Trust`.
