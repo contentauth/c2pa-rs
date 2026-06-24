@@ -183,6 +183,12 @@ pub enum DigitalSourceType {
     Other(String),
 }
 
+impl From<String> for DigitalSourceType {
+    fn from(s: String) -> Self {
+        serde_json::from_value::<DigitalSourceType>(serde_json::Value::String(s)).unwrap()
+    }
+}
+
 impl fmt::Display for DigitalSourceType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.serialize(f)
