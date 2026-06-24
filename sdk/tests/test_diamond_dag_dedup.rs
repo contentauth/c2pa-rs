@@ -11,15 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Test that diamond DAG manifests don't cause exponential revisits.
+//! Test that diamond DAG manifests are validated without exponential revisits.
 //!
 //! In a diamond DAG (manifest A references B and C, both referencing D),
-//! without dedup the recursive validation visits O(2^N) nodes instead of O(N).
-//! At depth 14, that's 16,384 visits instead of ~28, causing 30-70 minute hangs.
+//! the recursive validation in `ingredient_checks` /
+//! `get_claim_referenced_manifests_impl` must dedupe already-visited manifests.
+//! Without dedup, depth-N walks visit O(2^N) nodes instead of O(N), both hanging
+//! validation and producing duplicate entries in the validation log.
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io::Cursor;
-use std::time::Instant;
 
 use c2pa::{Builder, BuilderIntent, Context, Reader, Result, Settings};
 use serde_json::json;
@@ -40,35 +41,30 @@ fn generate_diamond_dag(depth: u32) -> Result<Vec<u8>> {
     let format = "image/jpeg";
     let source_bytes: &[u8] = include_bytes!("fixtures/no_manifest.jpg");
 
-    // Use the test_signer (ed25519, no TSA) to avoid network calls
     let signer = common::test_signer();
 
-    let mut level_images: HashMap<u32, Vec<Vec<u8>>> = HashMap::new();
+    let mut prev_level: Vec<Vec<u8>> = Vec::new();
 
-    // Create base manifest (level 0)
+    // Level 0: single base manifest.
     let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
     let mut source = Cursor::new(source_bytes);
     let mut dest = Cursor::new(Vec::new());
     builder.sign(&signer, format, &mut source, &mut dest)?;
-    level_images.insert(0, vec![dest.into_inner()]);
+    prev_level.push(dest.into_inner());
 
-    // Build diamond: each level has two branches, both referencing all previous level manifests
-    for level in 1..depth {
+    // Intermediate levels: two branches that both ingest every prior-level manifest.
+    for _level in 1..depth {
         let mut this_level: Vec<Vec<u8>> = Vec::new();
-
         for _branch in 0..2 {
             let mut builder = Builder::from_shared_context(&context);
             builder.set_intent(BuilderIntent::Edit);
-
-            let prev_images = level_images.get(&(level - 1)).unwrap();
-            for (idx, prev_image) in prev_images.iter().enumerate() {
+            for (idx, prev_image) in prev_level.iter().enumerate() {
                 let ingredient_json = json!({
-                    "title": format!("Parent_L{}_I{}", level - 1, idx),
+                    "title": format!("Parent_{}", idx),
                     "relationship": "parentOf",
                 })
                 .to_string();
-
                 let mut ingredient_stream = Cursor::new(prev_image);
                 builder.add_ingredient_from_stream(
                     ingredient_json,
@@ -76,32 +72,26 @@ fn generate_diamond_dag(depth: u32) -> Result<Vec<u8>> {
                     &mut ingredient_stream,
                 )?;
             }
-
             let mut source = Cursor::new(source_bytes);
             let mut dest = Cursor::new(Vec::new());
             builder.sign(&signer, format, &mut source, &mut dest)?;
             this_level.push(dest.into_inner());
         }
-
-        level_images.insert(level, this_level);
+        prev_level = this_level;
     }
 
-    // Create final manifest referencing both branches
+    // Final manifest closes the diamond by ingesting both top-level branches.
     let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
-
-    let prev_images = level_images.get(&(depth - 1)).unwrap();
-    for (idx, prev_image) in prev_images.iter().enumerate() {
+    for (idx, prev_image) in prev_level.iter().enumerate() {
         let ingredient_json = json!({
             "title": format!("Branch_{}", idx),
             "relationship": "parentOf",
         })
         .to_string();
-
         let mut ingredient_stream = Cursor::new(prev_image);
         builder.add_ingredient_from_stream(ingredient_json, format, &mut ingredient_stream)?;
     }
-
     let mut source = Cursor::new(source_bytes);
     let mut dest = Cursor::new(Vec::new());
     builder.sign(&signer, format, &mut source, &mut dest)?;
@@ -109,34 +99,78 @@ fn generate_diamond_dag(depth: u32) -> Result<Vec<u8>> {
     Ok(dest.into_inner())
 }
 
-/// Test that a diamond DAG at depth 8 completes in reasonable time.
+/// Validating a diamond DAG must touch each unique manifest exactly once.
 ///
-/// Without the dedup fix, depth 8 would cause 2^8 = 256 manifest visits.
-/// With the fix, it should visit only ~17 unique manifests.
-/// We use a generous 60-second timeout — with the fix this takes < 1 second.
+/// At depth 8 the structure has 1 base + 2*(depth-1) intermediates + 1 final = 16
+/// unique manifests. Without dedup the recursive walks would revisit nodes
+/// 2^depth = 256 times, ballooning the validation log with duplicate entries
+/// (and hanging entirely at higher depths). We assert the exact counts so a
+/// regression of either dedup site (`ingredient_checks` or
+/// `get_claim_referenced_manifests_impl`) is caught deterministically.
 #[test]
-fn diamond_dag_depth_8_completes_quickly() -> Result<()> {
+fn diamond_dag_validates_each_manifest_once() -> Result<()> {
     let depth = 8;
+    let expected_manifest_count = 1 + 2 * (depth - 1) as usize + 1;
 
     let image_data = generate_diamond_dag(depth)?;
-
-    let start = Instant::now();
     let mut stream = Cursor::new(&image_data);
     let reader = Reader::from_stream("image/jpeg", &mut stream)?;
-    let elapsed = start.elapsed();
 
-    let manifest_count = reader.iter_manifests().count();
-    assert!(manifest_count > 0, "should have parsed manifests");
+    assert_eq!(
+        reader.iter_manifests().count(),
+        expected_manifest_count,
+        "expected one entry per unique manifest in the diamond",
+    );
 
-    // With the dedup fix, this should complete in well under 60 seconds.
-    // Without the fix at depth 8, it would take significantly longer due to 256 visits.
-    assert!(
-        elapsed.as_secs() < 60,
-        "Diamond DAG depth {} took {:?}, which exceeds the 60s limit. \
-         This suggests the dedup fix is not working — O(2^N) exponential blowup.",
-        depth,
-        elapsed,
+    let validation_results = reader
+        .validation_results()
+        .expect("reader should report validation_results");
+
+    let statuses = all_statuses(validation_results);
+
+    // Each manifest is signed with an untrusted test cert, so the count of
+    // `signingCredential.untrusted` entries across active + ingredient deltas
+    // must equal the number of unique manifests. Without dedup this would
+    // explode to O(2^depth).
+    let untrusted_urls: Vec<&str> = statuses
+        .iter()
+        .filter(|s| s.code() == "signingCredential.untrusted")
+        .filter_map(|s| s.url())
+        .collect();
+    assert_eq!(
+        untrusted_urls.len(),
+        expected_manifest_count,
+        "each unique manifest's untrusted-cert finding should appear exactly once",
+    );
+
+    // No manifest URI should be reported more than once across the entire
+    // result set.
+    let unique: HashSet<&str> = untrusted_urls.iter().copied().collect();
+    assert_eq!(
+        untrusted_urls.len(),
+        unique.len(),
+        "validation_results contains duplicate manifest URIs (dedup regression)",
     );
 
     Ok(())
+}
+
+/// Flatten every ValidationStatus across active + ingredient deltas into one
+/// iterator so callers can count or inspect with simple closures.
+fn all_statuses(vr: &c2pa::ValidationResults) -> Vec<&c2pa::validation_status::ValidationStatus> {
+    let mut out = Vec::new();
+    if let Some(active) = vr.active_manifest() {
+        out.extend(active.success());
+        out.extend(active.informational());
+        out.extend(active.failure());
+    }
+    if let Some(deltas) = vr.ingredient_deltas() {
+        for d in deltas {
+            let s = d.validation_deltas();
+            out.extend(s.success());
+            out.extend(s.informational());
+            out.extend(s.failure());
+        }
+    }
+    out
 }
