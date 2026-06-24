@@ -29,7 +29,7 @@ jobs:
 #         uses: dtolnay/rust-toolchain@stable
 # 
 #       - name: Dry-run release-plz
-#         uses: MarcoIeni/release-plz-action@v0.5.129
+#         uses: MarcoIeni/release-plz-action@v0.5.130
 #         with:
 #           command: release
 #           dry_run: true
@@ -58,7 +58,7 @@ jobs:
 
       - name: Run release-plz
         id: release-plz
-        uses: MarcoIeni/release-plz-action@v0.5.129
+        uses: MarcoIeni/release-plz-action@v0.5.130
         with:
           verbose: true
         env:
