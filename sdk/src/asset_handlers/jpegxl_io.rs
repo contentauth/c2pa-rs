@@ -2103,7 +2103,8 @@ pub mod tests {
     ///    - The active manifest carries the expected title and format.
     ///    - Both the `c2pa.actions` and `c2pa.hash` assertions are present.
     ///    - No hard validation failures exist (only `signingCredential.untrusted`
-    ///      is accepted, because the test CA is self-signed).
+    ///      or `cawg.identity.untrusted` is accepted, because the test CA is
+    ///      self-signed).
     ///    - Claim-signature validation succeeded (signature is cryptographically
     ///      valid even though the cert is not in a production trust store).
     ///
@@ -2214,8 +2215,9 @@ pub mod tests {
             "manifest must contain a c2pa.actions assertion; got: {:?}",
             assertions.iter().map(|a| a.label()).collect::<Vec<_>>()
         );
-        // Check validation results: only `signingCredential.untrusted` is
-        // acceptable as a failure (test CA is not in the production trust store).
+        // Check validation results: only an untrusted-credential failure
+        // (`signingCredential.untrusted` or `cawg.identity.untrusted`) is
+        // acceptable (test CA is not in the production trust store).
         // All other failure codes indicate a real problem in the signing or
         // embedding pipeline.
         if let Some(results) = reader.validation_results() {
@@ -2223,7 +2225,7 @@ pub mod tests {
                 let hard_failures: Vec<_> = active
                     .failure()
                     .iter()
-                    .filter(|f| f.code() != "signingCredential.untrusted")
+                    .filter(|f| !crate::validation_results::is_untrusted_failure(f.code()))
                     .collect();
                 assert!(
                     hard_failures.is_empty(),
