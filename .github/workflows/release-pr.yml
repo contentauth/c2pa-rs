@@ -1,0 +1,58 @@
+name: Release-plz PR
+
+# Opens/updates the version-bump + changelog "release PR" on a release-line
+# branch (stable, or a retired v0.x line). Merging that PR is what triggers a
+# publish (release.yml). For a breaking train, this prepares the 0.(x+1).0 bump
+# once the release-candidate branch has been promoted (merged) into stable.
+#
+# Release-candidate branches themselves do not run release-plz; they only bake
+# under the Tier CI suites. This runs release-plz `release-pr` ONLY -- it never
+# publishes. Publishing is handled separately by release.yml.
+# See docs/release-process.md.
+
+permissions:
+  pull-requests: write
+  contents: write
+
+on:
+  push:
+    branches:
+      - stable
+      - 'v0.*'
+  workflow_dispatch:
+
+jobs:
+  release-pr:
+    name: Release-plz PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run release-plz (release-pr)
+        uses: MarcoIeni/release-plz-action@v0.5.129
+        with:
+          command: release-pr
+          verbose: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
+
+      # release-plz sometimes opens a new release branch + PR instead of
+      # updating the existing one, leaving the old branch behind. Delete stale
+      # release-plz branches to reduce noise, keeping the most recent.
+      - name: Clean up stale release-plz branches
+        run: |
+          git --no-pager branch --remote |\
+            grep 'origin/release-plz-' |\
+            sort -r |\
+            tail -n +2 |\
+            sed 's/origin\///' |\
+            xargs -r -I {} git push origin --delete {}

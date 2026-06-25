@@ -1,0 +1,31 @@
+# Version-controlled GitHub labels, synced by labels.yml workflow via
+# crazy-max/ghaction-github-labeler. Add labels here rather than creating them
+# by hand in the GitHub UI.
+#
+# NOTE: This file intentionally lists only the labels the release process
+# depends on. Per-line backport labels (backport-v0.<N>) are created on demand
+# at train-cut time and are not enumerated here.
+
+- name: release
+  color: "0e8a16"
+  description: "release-plz release PR; runs the full Tier 1A+1B+2 suite"
+
+- name: check-release
+  color: "1d76db"
+  description: "Force the full Tier 1A+1B+2 suite on this PR"
+
+- name: backport-stable
+  color: "5319e7"
+  description: "Cherry-pick this merged main PR onto the stable release line"
+
+- name: release-train
+  color: "fbca04"
+  description: "Tracking issue for an active breaking-change release train bake"
+
+- name: reconciliation
+  color: "d93f0b"
+  description: "A release branch has commits missing from main (upstream-first violation)"
+
+- name: canary
+  color: "b60205"
+  description: "Cross-repo canary detected drift with an extracted crate"

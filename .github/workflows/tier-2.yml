@@ -19,7 +19,7 @@ on:
 jobs:
   c-library-mobile-builds:
     name: C library mobile builds
-    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ${{ matrix.os }}
 
     strategy:

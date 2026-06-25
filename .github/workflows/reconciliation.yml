@@ -1,0 +1,96 @@
+name: Release-branch reconciliation
+
+# Safety net for the upstream-first rule. Everything is supposed to land on
+# `main` first and only be cherry-picked onto release-line branches. This job
+# detects the opposite -- a commit that exists on a release-line branch but not
+# on `main` -- and opens an issue so the change can be forward-ported and isn't
+# lost across a future major bump.
+#
+# It deliberately does NOT merge a release-line branch back into `main`:
+# merging into the actively-refactored `main` is the conflict-prone direction
+# and risks resurrecting code a refactor removed.
+
+on:
+  schedule:
+    - cron: '0 13 * * 1-5' # weekday mornings (UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  reconcile:
+    name: Detect drift from main
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Extend with active v0.* lines as they are created.
+        branch: [stable]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Find commits on release branch missing from main
+        id: drift
+        run: |
+          if ! git ls-remote --exit-code --heads origin "${{ matrix.branch }}" >/dev/null 2>&1; then
+            echo "Branch ${{ matrix.branch }} does not exist yet; nothing to reconcile."
+            echo "missing=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch origin main "${{ matrix.branch }}"
+          # `git cherry` marks with `+` the commits on the release branch whose
+          # change is NOT present (as an equivalent patch) on main.
+          MISSING=$(git cherry origin/main "origin/${{ matrix.branch }}" | grep '^+' || true)
+          {
+            echo "missing<<EOF"
+            echo "$MISSING"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update reconciliation issue
+        if: steps.drift.outputs.missing != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = '${{ matrix.branch }}';
+            const missing = `${{ steps.drift.outputs.missing }}`;
+            const title = `Reconciliation: \`${branch}\` has commits missing from \`main\``;
+            const body = [
+              `The following commits are on \`${branch}\` but not on \`main\` (an upstream-first violation):`,
+              '',
+              '```',
+              missing,
+              '```',
+              '',
+              'Please forward-port these to `main`. This branch is intentionally **not** auto-merged back into `main`.',
+            ].join('\n');
+
+            // Avoid opening a duplicate every run: update an existing open issue.
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'reconciliation',
+            });
+            const match = existing.data.find(i => i.title === title);
+            if (match) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: match.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                labels: ['reconciliation'],
+                body,
+              });
+            }

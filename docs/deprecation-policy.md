@@ -14,6 +14,8 @@ We follow [Semantic Versioning (SemVer)](https://semver.org/). Version 1.0.0 wil
 
 **Before 1.0:** Major version zero (`0.y.z`) is for initial development: Anything may change at any time, and the public API should not be considered stable. In the Rust/Cargo ecosystem, this means that a change from `0.2.3` to `0.3.0` may include incompatible API changes. We will, however, make a good-faith effort to follow the deprecation process below even before 1.0, so that users have advance warning before breakage occurs.
 
+Pre-1.0 this dovetails with our two-track [release process](release-process.md): a **deprecation is additive**, so it ships continuously as a patch release (the `y` in `0.x.y`) and starts the grace-period clock immediately. The eventual **removal is breaking**, so it rides the next scheduled breaking "train" (a bump of the middle number, `0.x.0`) once the grace period has elapsed. Users therefore get the replacement API and the deprecation warning right away, with a known schedule for when the old API disappears.
+
 > [!NOTE]
 > Pre-1.0, this policy is applied on a best-effort basis. We may not always be able to provide a full deprecation cycle for every change as the API converges on its 1.0 shape. In particular, the `c2pa::Error` type is expected to undergo non-trivial refactoring prior to 1.0 — variants may be added, removed, renamed, or have their payloads reshaped between minor releases, and downstream code that matches on specific variants should expect churn until 1.0.
 
@@ -83,9 +85,8 @@ In the final stage, the item is actually removed from the API:
 
 After the grace period:
 
-- The deprecated item is removed in the next major release. **Exception:** A minor release may be used for these cases:
-    -  The item was marked as deprecated prior to the 1.0.0 release.
-    -  The item was only ever made public via a non-default feature/build configuration.
+- **Post-1.0:** the deprecated item is removed in the next major release.
+- **Pre-1.0:** the removal is a breaking change, so it ships on the next scheduled breaking [release train](release-process.md#track-2--the-breaking-train-0x0) — a bump of the middle version number (`0.x.0`). (This is the pre-1.0 analogue of "the next major release.") The same applies to an item that was only ever made public via a non-default feature/build configuration.
 - The full [migration guide](#migration-guides) is provided and reflects the removal as permanent.
 
 ## Language-specific deprecation annotations
