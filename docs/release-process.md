@@ -50,8 +50,7 @@ Low-risk, non-breaking features and bug fixes ship continuously:
 
 Key points:
 
-* **No mandatory bake.** Because these changes don't break anyone, they don't need a release-candidate stage. (An optional `0.x.y-rc.N` soak can be used for a change that warrants extra caution.)
-* **Downstream re-validation.** Before each additive crates.io release we re-validate against the downstream projects we maintain (the other language bindings). Budget at least one business day for that validation.
+* **Short (~1-day) bake.** Additive releases (`0.x.y`, y ≥ 1) don't need a full release-candidate stage, but we do hold a brief bake — approximately one business day — before the crates.io publish, to re-verify compatibility against the downstream projects we maintain (the other language bindings). This is far lighter than the breaking train's bake; it exists to catch integration surprises, not to soak the change. (An optional `0.x.y-rc.N` soak can additionally be used for a change that warrants extra caution.)
 * **Compatibility is verified, not assumed.** Every additive release is gated on [`cargo-semver-checks`](#semver-checks) so an accidental break can't ship as a "patch."
 
 ## Track 2 — The breaking train (`0.x.0`)
@@ -156,16 +155,15 @@ Labels the process depends on are version-controlled in [`.github/labels.yml`](.
 ## Validation gating
 
 * **Backport PRs** run Tier 1A plus `cargo-semver-checks` — fast feedback on each cherry-pick.
-* **The release-plz release PR** carries the `release` label and therefore runs the full **Tier 1A + 1B + 2** suite. This is the comprehensive gate immediately before a crates.io publish, and the natural home for the downstream re-validation budget.
+* **The release-plz release PR** carries the `release` label and therefore runs the full **Tier 1A + 1B + 2** suite. This is the comprehensive gate immediately before a crates.io publish, and the natural home for the short (~1-day) downstream re-verification.
 * To force the full suite on an individual risky backport before it reaches the release branch, add the `check-release` label to that backport PR.
 
 See [docs/support-tiers.md](support-tiers.md) for what each tier covers.
 
 ## What we are deliberately NOT doing
 
-* **No standing three-channel pipeline.** We run two channels continuously — `main` (nightly-like) and the current stable line (`0.x.y`). A release-candidate channel opens only transiently during a train's ~3-day bake and closes when the train ships. We avoid a permanent nightly→beta→stable system with its ongoing beta-maintenance burden.
 * **No standing release team or RFC gate** for ordinary releases.
-* **No mandatory bake** on additive releases.
+* **No heavyweight release-candidate stage on additive releases.** Additive releases get only the short (~1-day) downstream re-verification described above — not the multi-day candidate bake the breaking train uses.
 * **No 1.0-style "no breaking changes, ever" guarantee** — that commitment is for when we approach 1.0.
 
 ## Commit lint used for PR title enforcement
