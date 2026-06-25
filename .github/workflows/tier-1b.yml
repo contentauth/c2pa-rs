@@ -101,7 +101,7 @@ jobs:
       - name: Run tests
         env:
           RUST_BACKTRACE: "1"
-          FEATURES: ${{needs.get-features.outputs.rust_native_crypto-features}}
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
           cargo test --features "$FEATURES"
 
