@@ -33,10 +33,46 @@ use crate::{
     log_item,
     status_tracker::StatusTracker,
     validation_results::validation_codes::{
-        ALGORITHM_UNSUPPORTED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
-        SIGNING_CREDENTIAL_UNTRUSTED,
+        ALGORITHM_UNSUPPORTED, CAWG_IDENTITY_TRUSTED, CAWG_IDENTITY_UNTRUSTED,
+        SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
     },
 };
+
+/// Identifies which kind of credential a COSE signature represents, so that the
+/// trust-check result is reported with the appropriate validation status codes.
+///
+/// The same trust check is shared by the C2PA claim signer and the CAWG
+/// creator-identity credential; this selects which namespace the resulting
+/// status codes belong to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CredentialKind {
+    /// A C2PA claim signer. Trust results use the `signingCredential.*` codes.
+    #[default]
+    C2paSigning,
+
+    /// A CAWG creator-identity credential. Trust results use the
+    /// `cawg.identity.*` codes ([`CAWG_IDENTITY_TRUSTED`] /
+    /// [`CAWG_IDENTITY_UNTRUSTED`]) instead of the `signingCredential.*` codes.
+    CawgIdentity,
+}
+
+impl CredentialKind {
+    /// The validation status code to report when the credential is trusted.
+    fn trusted_status(self) -> &'static str {
+        match self {
+            CredentialKind::C2paSigning => SIGNING_CREDENTIAL_TRUSTED,
+            CredentialKind::CawgIdentity => CAWG_IDENTITY_TRUSTED,
+        }
+    }
+
+    /// The validation status code to report when the credential is not trusted.
+    fn untrusted_status(self) -> &'static str {
+        match self {
+            CredentialKind::C2paSigning => SIGNING_CREDENTIAL_UNTRUSTED,
+            CredentialKind::CawgIdentity => CAWG_IDENTITY_UNTRUSTED,
+        }
+    }
+}
 
 /// A `Verifier` reads a COSE signature and reports on its validity.
 ///
@@ -60,7 +96,11 @@ pub enum Verifier<'a> {
 }
 
 impl Verifier<'_> {
-    /// Verify a COSE signature according to the configured policies.
+    /// Verify a COSE signature according to the configured policies, reporting
+    /// trust results for a C2PA claim signer.
+    ///
+    /// To report trust results for a different credential (e.g. a CAWG
+    /// creator-identity credential), use [`Verifier::with_credential_kind`].
     #[async_generic]
     pub fn verify_signature(
         &self,
@@ -68,6 +108,49 @@ impl Verifier<'_> {
         data: &[u8],
         additional_data: &[u8],
         tst_info: Option<&TstInfo>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<CertificateInfo, CoseError> {
+        if _sync {
+            self.verify_signature_with_kind(
+                cose_sign1,
+                data,
+                additional_data,
+                tst_info,
+                CredentialKind::C2paSigning,
+                validation_log,
+            )
+        } else {
+            self.verify_signature_with_kind_async(
+                cose_sign1,
+                data,
+                additional_data,
+                tst_info,
+                CredentialKind::C2paSigning,
+                validation_log,
+            )
+            .await
+        }
+    }
+
+    /// Bind a [`CredentialKind`] to this verifier so trust results are reported
+    /// with the status codes appropriate to that credential. The returned
+    /// [`CredentialVerifier`] exposes the same `verify_signature` API.
+    pub fn with_credential_kind(&self, credential_kind: CredentialKind) -> CredentialVerifier<'_, '_> {
+        CredentialVerifier {
+            verifier: self,
+            credential_kind,
+        }
+    }
+
+    /// Verify a COSE signature according to the configured policies.
+    #[async_generic]
+    pub(crate) fn verify_signature_with_kind(
+        &self,
+        cose_sign1: &[u8],
+        data: &[u8],
+        additional_data: &[u8],
+        tst_info: Option<&TstInfo>,
+        credential_kind: CredentialKind,
         validation_log: &mut StatusTracker,
     ) -> Result<CertificateInfo, CoseError> {
         let mut sign1 = parse_cose_sign1(cose_sign1, data, validation_log)?;
@@ -108,9 +191,9 @@ impl Verifier<'_> {
         .ok(); // Ignore errors here - they have already been logged.
 
         if _sync {
-            self.verify_trust(&sign1, tst_info, validation_log)
+            self.verify_trust(&sign1, tst_info, credential_kind, validation_log)
         } else {
-            self.verify_trust_async(&sign1, tst_info, validation_log)
+            self.verify_trust_async(&sign1, tst_info, credential_kind, validation_log)
                 .await
         }
         .ok(); // Ignore errors here - they have already been logged.
@@ -210,6 +293,7 @@ impl Verifier<'_> {
         &self,
         sign1: &CoseSign1,
         tst_info_res: Option<&TstInfo>,
+        credential_kind: CredentialKind,
         validation_log: &mut StatusTracker,
     ) -> Result<TrustAnchorType, CoseError> {
         // IMPORTANT: This function assumes that verify_profile has already been called.
@@ -252,16 +336,62 @@ impl Verifier<'_> {
                     ),
                     "verify_cose"
                 )
-                .validation_status(SIGNING_CREDENTIAL_TRUSTED)
+                .validation_status(credential_kind.trusted_status())
                 .success(validation_log);
 
                 Ok(tat)
             }
             Err(e) => Err(
                 log_item!("", "signing certificate untrusted", "verify_cose")
-                    .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
+                    .validation_status(credential_kind.untrusted_status())
                     .failure_as_err(validation_log, e.into()),
             ),
+        }
+    }
+}
+
+/// A [`Verifier`] bound to a specific [`CredentialKind`], so that trust results
+/// are reported with the status codes appropriate to that credential.
+///
+/// Created via [`Verifier::with_credential_kind`].
+#[derive(Debug)]
+pub struct CredentialVerifier<'v, 'a> {
+    verifier: &'v Verifier<'a>,
+    credential_kind: CredentialKind,
+}
+
+impl CredentialVerifier<'_, '_> {
+    /// Verify a COSE signature according to the bound verifier's policies,
+    /// reporting trust results for the bound [`CredentialKind`].
+    #[async_generic]
+    pub fn verify_signature(
+        &self,
+        cose_sign1: &[u8],
+        data: &[u8],
+        additional_data: &[u8],
+        tst_info: Option<&TstInfo>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<CertificateInfo, CoseError> {
+        if _sync {
+            self.verifier.verify_signature_with_kind(
+                cose_sign1,
+                data,
+                additional_data,
+                tst_info,
+                self.credential_kind,
+                validation_log,
+            )
+        } else {
+            self.verifier
+                .verify_signature_with_kind_async(
+                    cose_sign1,
+                    data,
+                    additional_data,
+                    tst_info,
+                    self.credential_kind,
+                    validation_log,
+                )
+                .await
         }
     }
 }

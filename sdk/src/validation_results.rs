@@ -27,6 +27,23 @@ use crate::{
     validation_status::{self, log_kind, ValidationStatus},
 };
 
+/// Returns `true` if `code` is an untrusted-credential failure that does not, by
+/// itself, invalidate a manifest.
+///
+/// This tolerates both the C2PA claim signer ([`SIGNING_CREDENTIAL_UNTRUSTED`])
+/// and the CAWG creator-identity credential ([`CAWG_IDENTITY_UNTRUSTED`]). CAWG
+/// identity trust is outside the scope of C2PA validity, so an untrusted CAWG
+/// identity is treated like an untrusted C2PA claim signer for the purpose of
+/// the C2PA validation state (i.e. the manifest may still be `Valid`, but never
+/// `Trusted`).
+///
+/// [`SIGNING_CREDENTIAL_UNTRUSTED`]: validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+/// [`CAWG_IDENTITY_UNTRUSTED`]: validation_status::CAWG_IDENTITY_UNTRUSTED
+pub(crate) fn is_untrusted_failure(code: &str) -> bool {
+    code == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+        || code == validation_status::CAWG_IDENTITY_UNTRUSTED
+}
+
 /// Represents the levels of assurance a manifest store achieves when evaluated against the C2PA
 /// specifications structural, cryptographic, and trust requirements.
 ///
@@ -232,7 +249,7 @@ impl ValidationResults {
                 // Then check if the manifest contains either no failures or that it's only untrusted.
                 && (active_manifest.failure().is_empty()
                     || active_manifest.failure().iter().all(|status| {
-                        status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                        is_untrusted_failure(status.code())
                     }))
                 // Finally check if the ingredients contain either no failures or the only failure is
                 // that the ingredient is untrusted.
@@ -241,7 +258,7 @@ impl ValidationResults {
                         let deltas = idv.validation_deltas();
                         deltas.failure().is_empty()
                             || deltas.failure().iter().all(|status| {
-                                status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                                is_untrusted_failure(status.code())
                             })
                     })
                 });
@@ -460,7 +477,7 @@ impl Display for ValidationFailureSummary<'_> {
             let failures = active_manifest
                 .failure
                 .iter()
-                .filter(|status| status.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+                .filter(|status| !is_untrusted_failure(status.code()))
                 .collect::<Vec<_>>();
             if !failures.is_empty() {
                 output_lines.push("failures:".to_string());
@@ -479,7 +496,7 @@ impl Display for ValidationFailureSummary<'_> {
                     .failure
                     .iter()
                     .filter(|status| {
-                        status.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+                        !is_untrusted_failure(status.code())
                     })
                     .collect::<Vec<_>>();
                 if !failures.is_empty() {
@@ -559,6 +576,15 @@ pub mod validation_codes {
     ///
     /// Any corresponding URL should point to a C2PA claim signature box.
     pub const SIGNING_CREDENTIAL_TRUSTED: &str = "signingCredential.trusted";
+
+    /// The CAWG creator-identity credential is listed on the validator's CAWG
+    /// trust list.
+    ///
+    /// This is the CAWG identity-assertion counterpart of
+    /// [`SIGNING_CREDENTIAL_TRUSTED`].
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_IDENTITY_TRUSTED: &str = "cawg.identity.trusted";
 
     /// The signing credential for the manifest has not been revoked:
     ///
@@ -778,6 +804,17 @@ pub mod validation_codes {
     ///
     /// Any corresponding URL should point to a C2PA claim signature box.
     pub const SIGNING_CREDENTIAL_UNTRUSTED: &str = "signingCredential.untrusted";
+
+    /// The CAWG creator-identity credential is not listed on the validator's
+    /// CAWG trust list.
+    ///
+    /// This is the CAWG identity-assertion counterpart of
+    /// [`SIGNING_CREDENTIAL_UNTRUSTED`]. CAWG identity trust is outside the
+    /// scope of C2PA validity, so this status does not by itself invalidate a
+    /// manifest.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_IDENTITY_UNTRUSTED: &str = "cawg.identity.untrusted";
 
     /// The signing credential is not valid for signing.
     ///
@@ -1082,6 +1119,7 @@ pub mod validation_codes {
             CLAIM_SIGNATURE_VALIDATED
             | CLAIM_SIGNATURE_INSIDE_VALIDITY
             | SIGNING_CREDENTIAL_TRUSTED
+            | CAWG_IDENTITY_TRUSTED
             | SIGNING_CREDENTIAL_NOT_REVOKED
             | TIMESTAMP_TRUSTED
             | TIMESTAMP_VALIDATED
@@ -1121,12 +1159,27 @@ pub mod tests {
         jumbf::labels,
         log_item,
         validation_status::{
-            ASSERTION_DATAHASH_MISMATCH, ASSERTION_HASHEDURI_MISMATCH, CLAIM_MALFORMED,
-            CLAIM_SIGNATURE_INSIDE_VALIDITY, CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED,
-            SIGNING_CREDENTIAL_UNTRUSTED,
+            ASSERTION_DATAHASH_MISMATCH, ASSERTION_HASHEDURI_MISMATCH, CAWG_IDENTITY_TRUSTED,
+            CAWG_IDENTITY_UNTRUSTED, CLAIM_MALFORMED, CLAIM_SIGNATURE_INSIDE_VALIDITY,
+            CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
         },
         HashedUri, Relationship,
     };
+
+    #[test]
+    fn trust_status_codes_classify_consistently() {
+        // The C2PA claim signer and the CAWG creator-identity credential each
+        // have a trusted/untrusted pair; both pairs must classify the same way.
+        for trusted in [SIGNING_CREDENTIAL_TRUSTED, CAWG_IDENTITY_TRUSTED] {
+            assert_eq!(log_kind(trusted), LogKind::Success);
+            assert!(!is_untrusted_failure(trusted));
+        }
+        for untrusted in [SIGNING_CREDENTIAL_UNTRUSTED, CAWG_IDENTITY_UNTRUSTED] {
+            assert_eq!(log_kind(untrusted), LogKind::Failure);
+            // Untrusted credentials are tolerated: Valid, but never Trusted.
+            assert!(is_untrusted_failure(untrusted));
+        }
+    }
 
     #[test]
     fn trusted_state() {
