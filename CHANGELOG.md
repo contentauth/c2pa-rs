@@ -9,6 +9,18 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.89.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.0...c2pa-v0.89.1)
+_26 June 2026_
+
+### Fixed
+
+* Don't serialize empty values ([#2254](https://github.com/contentauth/c2pa-rs/pull/2254))
+* CAI-10364 (Server-Side Request Forgery (SSRF) via CAWG did:web Resolution during Post-Validation ) ([#2168](https://github.com/contentauth/c2pa-rs/pull/2168))
+
+### Other
+
+* Lazy load all ingredient resources & remove old to_archive zip format. ([#2173](https://github.com/contentauth/c2pa-rs/pull/2173))
+
 ## [0.89.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.88.0...c2pa-v0.89.0)
 _19 June 2026_
 
