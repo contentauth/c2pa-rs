@@ -3021,7 +3021,7 @@ impl Store {
             RemoteManifest::EmbedWithRemote(url) => (Some(url), false),
         };
 
-        let io_handler = get_assetio_handler(format);
+        let io_handler = context.get_assetio_handler(format);
 
         let is_bmff = is_bmff_format(format);
         // fast_path applies to all formats: when there is no XMP embed and no manifest removal,
