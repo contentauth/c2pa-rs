@@ -1,0 +1,38 @@
+name: Semver checks
+
+# Enforces the additive-track contract: a change that ships as an additive
+# (0.x.y) release must NOT be an accidental breaking change. This runs on every
+# PR targeting a release-line branch -- including backport PRs opened by
+# backport.yml -- and baselines the public API against the latest crates.io
+# release.
+#
+# This deliberately does NOT run on release-candidate (`*-rc.*`) branches: the
+# breaking train IS the intended place for breaking changes.
+
+on:
+  pull_request:
+    branches:
+      - stable
+      - 'v0.*'
+
+permissions:
+  contents: read
+
+jobs:
+  semver-checks:
+    name: cargo-semver-checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run cargo-semver-checks
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          # Public-API library crates. c2patool is a binary (no API surface).
+          package: c2pa, c2pa-c-ffi

@@ -15,12 +15,19 @@ on:
       - reopened
       - synchronize
       - labeled
+  # Run the full suite continuously on release-candidate branches during a
+  # train's bake period, so breaking-change releases are validated end-to-end
+  # before promotion. (On these push events there is no PR label, so the
+  # per-job `if:` conditions below also accept `github.event_name == 'push'`.)
+  push:
+    branches:
+      - '*-rc.*'
 
 jobs:
   get-features:
     name: Get features
     runs-on: ubuntu-latest
-    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     outputs:
       rust-native-features: ${{ steps.get-features.outputs.rust-native-features }}
       openssl-features: ${{ steps.get-features.outputs.openssl-features }}
@@ -46,7 +53,7 @@ jobs:
   tests-openssl:
     name: Unit tests (with OpenSSL installed)
     needs: get-features
-    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -77,7 +84,7 @@ jobs:
   tests-rust-native-crypto:
     name: Unit tests (with Rust native crypto installed)
     needs: get-features
-    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -108,7 +115,7 @@ jobs:
   tests-cross:
     name: Unit tests
     needs: get-features
-    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ubuntu-latest
 
     strategy:
@@ -145,7 +152,7 @@ jobs:
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
     needs: get-features
-    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -174,7 +181,7 @@ jobs:
   unused_deps:
     name: Check for unused dependencies
     needs: get-features
-    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ubuntu-latest
 
     permissions:

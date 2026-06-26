@@ -55,7 +55,12 @@ This library also provides a [C API](https://github.com/contentauth/c2pa-rs/blob
 
 ## State of the project
 
-This is a beta release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.
+This is a beta release (version 0.x.x) of the project. We govern changes by whether they break compatibility, not by size:
+
+* **Additive changes** (new APIs, bug fixes) ship continuously as patch releases (the `y` in `0.x.y`).
+* **Breaking changes** are batched onto a scheduled "release train" that runs roughly every two months and bumps the middle number (`0.x.0`). If no breaking changes are queued when a train is due, it is skipped — so a bump of the middle number is a reliable signal that something actually broke.
+
+This lets us keep moving quickly before 1.0 while giving you a predictable schedule for migrations. For full details, see the [release process](docs/release-process.md) and [deprecation policy](docs/deprecation-policy.md).
 
 > [!NOTE]
 > The library supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) by default, and implementations should not generate deprecated v1 claims.  For details, see [C2PA v2 claims](docs/release-notes.md#c2pa-v2-claims).

@@ -24,7 +24,7 @@ A _build configuration_ will specify:
 Tier 1A configurations are the most actively supported.
 A Tier 1A configuration will:
 
-* Have continuous integration tests that build and pass for this build configuration on every commit to `main`.
+* Have continuous integration tests that build and pass for this build configuration on every commit to `main`, as well as to the release-line (`stable`, `v0.x`) and release-candidate (`*-rc.*`) branches described in the [release process](release-process.md).
 A pull request will be blocked if the tests do not pass.
 * This test suite is the most complete set of tests available for this component.
 * Tier 1A configurations _may_ also have built artifacts generated for each versioned release.
@@ -55,6 +55,7 @@ A Tier 1B configuration will:
 
 * Have continuous integration tests that build and pass for every versioned release.
 A release will be blocked if the tests do not pass.
+In practice these run on the release-plz release PR (which carries the `release` label) immediately before a crates.io publish, and continuously on a release-candidate branch during a train's bake. You can also invoke them on any PR by adding the `check-release` label.
 * This test suite should be the same as for Tier 1A.
 * Tier 1B configurations _may_ also have built artifacts generated for each versioned release.
 The location where these artifacts are published will be documented.
