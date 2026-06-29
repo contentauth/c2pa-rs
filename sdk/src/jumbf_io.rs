@@ -27,9 +27,9 @@ use lazy_static::lazy_static;
 use crate::asset_handlers::pdf_io::PdfIO;
 use crate::{
     asset_handlers::{
-        bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
-        jpegxl_io::JpegXlIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
-        tiff_io::TiffIO,
+        bmff_io::BmffIO, c2pa_io::C2paIO, facti_io::FactiIO, flac_io::FlacIO, gif_io::GifIO,
+        jpeg_io::JpegIO, jpegxl_io::JpegXlIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO,
+        svg_io::SvgIO, tiff_io::TiffIO,
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
@@ -44,6 +44,7 @@ lazy_static! {
         Box::new(PdfIO::new("")),
         Box::new(BmffIO::new("")),
         Box::new(C2paIO::new("")),
+        Box::new(FactiIO::new("")),
         Box::new(JpegIO::new("")),
         Box::new(JpegXlIO::new("")),
         Box::new(PngIO::new("")),
@@ -206,6 +207,21 @@ fn container_from_stream<R: Read + Seek>(stream: &mut R) -> Option<&'static str>
     #[cfg(feature = "pdf")]
     if n >= 4 && &buf[0..4] == b"%PDF" {
         return Some("pdf");
+    }
+
+    // BlockFact .facti: FA 49 41 00
+    if n >= 4 && buf[0..4] == [0xFA, 0x49, 0x41, 0x00] {
+        return Some("facti");
+    }
+
+    // BlockFact .facta: FA 41 41 00
+    if n >= 4 && buf[0..4] == [0xFA, 0x41, 0x41, 0x00] {
+        return Some("facta");
+    }
+
+    // BlockFact .factv: FA 56 41 00
+    if n >= 4 && buf[0..4] == [0xFA, 0x56, 0x41, 0x00] {
+        return Some("factv");
     }
 
     None
@@ -497,6 +513,7 @@ pub mod tests {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
+            Box::new(FactiIO::new("")),
             Box::new(JpegIO::new("")),
             Box::new(JpegXlIO::new("")),
             Box::new(PngIO::new("")),
@@ -521,6 +538,7 @@ pub mod tests {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
+            Box::new(FactiIO::new("")),
             Box::new(JpegIO::new("")),
             Box::new(JpegXlIO::new("")),
             #[cfg(feature = "pdf")]
@@ -545,6 +563,7 @@ pub mod tests {
     #[test]
     fn test_get_writer() {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
+            Box::new(FactiIO::new("")),
             Box::new(JpegIO::new("")),
             Box::new(JpegXlIO::new("")),
             Box::new(PngIO::new("")),
@@ -608,6 +627,9 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "svg"));
         assert!(supported.iter().any(|s| s == "mp3"));
         assert!(supported.iter().any(|s| s == "jxl"));
+        assert!(supported.iter().any(|s| s == "facti"));
+        assert!(supported.iter().any(|s| s == "facta"));
+        assert!(supported.iter().any(|s| s == "factv"));
     }
 
     fn test_jumbf(asset_type: &str, reader: &mut dyn CAIRead) {
@@ -762,5 +784,29 @@ pub mod tests {
     fn test_streams_c2pa() {
         let mut reader = std::fs::File::open("tests/fixtures/cloud_manifest.c2pa").unwrap();
         test_jumbf("c2pa", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_facti() {
+        use crate::asset_handlers::facti_io;
+        let container = facti_io::tests::build_test_facti_container();
+        let mut reader = Cursor::new(container);
+        test_jumbf("facti", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_facta() {
+        use crate::asset_handlers::facti_io;
+        let container = facti_io::tests::build_test_facta_container();
+        let mut reader = Cursor::new(container);
+        test_jumbf("facta", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_factv() {
+        use crate::asset_handlers::facti_io;
+        let container = facti_io::tests::build_test_factv_container();
+        let mut reader = Cursor::new(container);
+        test_jumbf("factv", &mut reader);
     }
 }
