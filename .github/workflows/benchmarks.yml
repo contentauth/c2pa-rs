@@ -41,7 +41,7 @@ jobs:
 
       - name: Check codspeed build cache
         id: cache-codspeed-build
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v5.0.5
         with:
           path: target/codspeed/
           key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
@@ -69,7 +69,7 @@ jobs:
 
       - name: Save codspeed build cache
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v5.0.5
         with:
           path: target/codspeed/
           key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
@@ -113,7 +113,7 @@ jobs:
         run: cargo binstall --no-confirm cargo-codspeed
 
       - name: Restore codspeed build
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v5.0.5
         with:
           path: target/codspeed/
           key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
@@ -132,7 +132,7 @@ jobs:
 
       - name: Check asset cache
         id: cache-assets
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v5.0.5
         with:
           path: sdk/benches/fixtures
           key: bench-asset-${{ steps.s3-etag.outputs.etag }}
@@ -148,14 +148,14 @@ jobs:
 
       - name: Save asset cache
         if: steps.cache-assets.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v5.0.5
         with:
           path: sdk/benches/fixtures
           key: bench-asset-${{ steps.s3-etag.outputs.etag }}
 
       - name: Restore asset cache
         if: steps.cache-assets.outputs.cache-hit == 'true'
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v5.0.5
         with:
           path: sdk/benches/fixtures
           key: bench-asset-${{ steps.s3-etag.outputs.etag }}
