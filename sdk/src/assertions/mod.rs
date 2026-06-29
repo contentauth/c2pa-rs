@@ -47,6 +47,7 @@ mod creative_work;
 pub use creative_work::CreativeWork;
 
 mod exif;
+#[allow(deprecated)]
 pub use exif::Exif;
 
 #[allow(dead_code)] // will become public later
