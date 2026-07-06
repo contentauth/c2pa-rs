@@ -2274,10 +2274,10 @@ impl Claim {
                             "verify_actions"
                         )
                         .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                        .failure_no_throw(
+                        .failure(
                             validation_log,
                             Error::ValidationRule("opened, placed and removed items must have ingredient(s) parameters".into()),
-                        );
+                        )?;
                         continue;
                     }
 
@@ -2290,10 +2290,10 @@ impl Claim {
                                 "verify_actions"
                             )
                             .validation_status(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
-                            .failure_no_throw(
+                            .failure(
                                 validation_log,
                                 Error::ValidationRule("opened, placed and removed items must have ingredients parameter must be non empty array".into()),
-                            );
+                            )?;
                         }
                     }
 
@@ -2413,6 +2413,22 @@ impl Claim {
                                 .failure_no_throw(validation_log, Error::ValidationRule(msg));
                         }
                     }
+                }
+
+                // 2.b.v c2pa.created must have a digitalSourceType
+                if action.action() == c2pa_action::CREATED && action.source_type().is_none() {
+                    log_item!(
+                        label.clone(),
+                        "c2pa.created action must have a digitalSourceType",
+                        "verify_actions"
+                    )
+                    .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                    .failure_no_throw(
+                        validation_log,
+                        Error::ValidationRule(
+                            "c2pa.created action must have a digitalSourceType".into(),
+                        ),
+                    );
                 }
 
                 // 2.c if ingredient is present it must be a valid parentOf reference
