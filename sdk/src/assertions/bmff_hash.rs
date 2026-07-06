@@ -91,11 +91,17 @@ pub struct UserHashInfo {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct ExclusionsMap {
     pub xpath: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub length: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Vec<DataMap>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub subset: Option<Vec<SubsetMap>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub flags: Option<ByteBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub exact: Option<bool>,
 }
 
