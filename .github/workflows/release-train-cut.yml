@@ -13,7 +13,7 @@ name: Release train cut
 #   * Don't-hold-the-train: the RC is cut from `main` AS-IS on the date;
 #     unfinished breaking work waits for the next train.
 # Promotion of the RC to a published release is a deliberate MANUAL step (a
-# maintainer merges the RC branch into `stable` after the >=3-day bake).
+# maintainer merges the RC branch into `stable` after the >=3-business-day bake).
 
 permissions:
   contents: write
@@ -65,14 +65,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: main
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
 
       - name: Compute next breaking version and RC branch
         id: ver
@@ -124,7 +126,7 @@ jobs:
 
       - name: Open tracking issue for the train
         if: steps.exists.outputs.skip != 'true' && steps.empty.outputs.skip != 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const next = '${{ steps.ver.outputs.next }}';
@@ -132,13 +134,13 @@ jobs:
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `Release train ${next}: bake (>=3 days)`,
+              title: `Release train ${next}: bake (>=3 business days)`,
               labels: ['release-train'],
               body: [
                 `Release-candidate branch \`${branch}\` was cut from \`main\` for the **${next}** breaking train.`,
                 'It is not published to crates.io; it only bakes under the Tier CI suites.',
                 '',
-                '- Bake at least **3 days**; hold longer if downstream validation needs it.',
+                '- Bake at least **3 business days**; hold longer if downstream validation needs it.',
                 '- Only **bugfixes** are accepted during the bake, upstream-first: fix on `main`, then cherry-pick onto the RC branch.',
                 '- When green, **manually promote**: snapshot the outgoing `stable` as `v0.<old>` (for backports), then merge the RC branch into `stable`. The merge triggers the `0.(x+1).0` publish.',
                 '- The previous `0.x` line is retired once `' + next + '` ships.',

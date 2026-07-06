@@ -1,7 +1,7 @@
 name: Cross-repo canary
 
 # Surfaces integration drift between c2pa-rs `main` and the `main` of crates we
-# have extracted into their own repositories (e.g. c2pa-raw-crypto). Because
+# have extracted into their own repositories (e.g. c2pa_cbor). Because
 # c2pa-rs releases pin a published version of each extracted crate, a breaking
 # change in an extracted crate can hide until the next bump. This scheduled job
 # builds c2pa-rs `main` against the extracted crate's `main` via a temporary
@@ -26,15 +26,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout c2pa-rs main
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: main
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Patch extracted crates to their main branch
         run: |
@@ -42,7 +44,7 @@ jobs:
 
           # TEMPORARY (canary only -- never commit this):
           [patch.crates-io]
-          c2pa-raw-crypto = { git = "https://github.com/contentauth/c2pa-raw-crypto", branch = "main" }
+          c2pa_cbor = { git = "https://github.com/contentauth/c2pa-cbor", branch = "main" }
           EOF
 
       - name: Build and test
@@ -52,7 +54,7 @@ jobs:
 
       - name: Open or update canary issue on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const title = 'Cross-repo canary failing: c2pa-rs main vs extracted-crate main';

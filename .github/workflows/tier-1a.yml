@@ -11,6 +11,10 @@ name: Tier 1A
 
 on:
   workflow_dispatch:
+  # Daily full-suite run against main (nightly). Scheduled runs use the default
+  # branch (main). See docs/support-tiers.md.
+  schedule:
+    - cron: '0 8 * * *'
   pull_request:
     branches:
       - main

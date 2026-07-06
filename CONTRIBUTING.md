@@ -65,7 +65,7 @@ This will give us an opportunity to discuss API design and avoid duplicate effor
 
 Open your pull request against **`main`**. We follow an _upstream-first_ rule: every change lands on `main` first, and release-line branches (`stable`, `v0.x`) only ever receive changes by cherry-pick — nothing originates on them. This keeps `main` the superset of all releases so nothing is lost across a version bump.
 
-* If your change is **additive** (a new API, a bug fix), it can ship continuously. After it merges, a maintainer adds a `backport-stable` label and a bot opens a cherry-pick PR onto the current release line.
+* If your change is **additive** (a new API, a bug fix), it can ship fairly quickly in an upcoming patch version of the current release line. If this is the case, a maintainer will add the `backport-stable` label and a bot will open a cherry-pick PR onto the current release line.
 * If your change is **breaking** (it changes or removes a public API), it waits on `main` for the next scheduled breaking "release train." Mark it with a `!` in the PR title (e.g. `feat!:`).
 * During a release candidate's bake period, its `*-rc.*` branch accepts **bug fixes only**, and those still follow upstream-first (fix on `main`, then cherry-pick).
 

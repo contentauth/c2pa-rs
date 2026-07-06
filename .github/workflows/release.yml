@@ -21,7 +21,7 @@ on:
 jobs:
   # Refuse to publish if a [patch]/git dependency is present. Such deps are used
   # only transiently while co-developing an extracted crate (e.g.
-  # c2pa-raw-crypto); they must be settled to a published version before any
+  # c2pa_cbor); they must be settled to a published version before any
   # release, because crates.io requires every dependency to resolve to a
   # published version.
   guard-no-patch-deps:
@@ -53,7 +53,7 @@ jobs:
       # guard against an accidental breaking change shipping as an additive
       # (0.x.y) release. (The hard gate is semver-checks.yml on the release PR.)
       - name: Install cargo-semver-checks
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
         with:
           tool: cargo-semver-checks
 

@@ -1,9 +1,12 @@
 name: Release-branch reconciliation
 
-# Safety net for the upstream-first rule. Everything is supposed to land on
-# `main` first and only be cherry-picked onto release-line branches. This job
-# detects the opposite -- a commit that exists on a release-line branch but not
-# on `main` -- and opens an issue so the change can be forward-ported and isn't
+# Reactive backstop for the upstream-first rule. The proactive guard is
+# upstream-first-check.yml, which blocks a PR to a release branch that isn't
+# already on `main`; this job catches anything that still slips through (e.g. a
+# direct push that bypassed a PR). Everything is supposed to land on `main`
+# first and only be cherry-picked onto release-line branches. This job detects
+# the opposite -- a commit that exists on a release-line branch but not on
+# `main` -- and opens an issue so the change can be forward-ported and isn't
 # lost across a future major bump.
 #
 # It deliberately does NOT merge a release-line branch back into `main`:
@@ -30,7 +33,7 @@ jobs:
         branch: [stable]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
@@ -54,7 +57,7 @@ jobs:
 
       - name: Open or update reconciliation issue
         if: steps.drift.outputs.missing != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const branch = '${{ matrix.branch }}';

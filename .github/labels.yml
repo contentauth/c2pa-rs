@@ -1,10 +1,11 @@
 # Version-controlled GitHub labels, synced by labels.yml workflow via
-# crazy-max/ghaction-github-labeler. Add labels here rather than creating them
-# by hand in the GitHub UI.
+# crazy-max/ghaction-github-labeler. Add long-lasting labels here rather
+# than creating them by hand in the GitHub UI.
 #
 # NOTE: This file intentionally lists only the labels the release process
-# depends on. Per-line backport labels (backport-v0.<N>) are created on demand
-# at train-cut time and are not enumerated here.
+# depends on. Per-line backport labels (backport-v0.<N>) can be created
+# manually on demand in the rare event that a security or other backport is
+# created for a release train that is considered retired.
 
 - name: release
   color: "0e8a16"
@@ -21,6 +22,10 @@
 - name: release-train
   color: "fbca04"
   description: "Tracking issue for an active breaking-change release train bake"
+
+- name: upstream-first-verified
+  color: "0e8a16"
+  description: "Attests an adapted cherry-pick is already on main (exempts the upstream-first check)"
 
 - name: reconciliation
   color: "d93f0b"

@@ -1,0 +1,69 @@
+name: Upstream-first check
+
+# Proactive guard for the upstream-first rule (see docs/release-process.md):
+# every change must land on `main` before it is brought onto a release-line
+# (`stable`, `v0.*`) or release-candidate (`*-rc.*`) branch. This blocks a PR to
+# such a branch if it introduces a commit whose change is not already present on
+# `main`, so drift is prevented rather than merely detected after the fact.
+#
+# This complements the reactive reconciliation.yml job (which catches anything
+# that still slips through, e.g. a direct push). To make it effective, enable
+# branch protection on the release-line/RC branches requiring PRs and this
+# check -- see docs/release-process.md ("Branch protection").
+#
+# Exemptions (checked inside the job so the required check always reports a
+# conclusive pass/fail rather than being skipped):
+#   * The release-plz release PR (labeled `release`) legitimately originates
+#     version-bump/changelog commits on the release branch.
+#   * If a cherry-pick had to be adapted to compile on the target branch (so its
+#     patch id no longer matches `main`), a maintainer can add the
+#     `upstream-first-verified` label to attest the change is already upstream.
+
+on:
+  pull_request:
+    branches:
+      - stable
+      - 'v0.*'
+      - '*-rc.*'
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify commits are already on main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Check that every PR commit is already on main
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          if echo "$LABELS" | grep -qE '"(release|upstream-first-verified)"'; then
+            echo "Exempt (release or upstream-first-verified label present); skipping check."
+            exit 0
+          fi
+
+          git fetch --no-tags origin main "$BASE_REF"
+          MERGE_BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+
+          # `git cherry` compares by patch id: commits this PR adds on top of its
+          # base (MERGE_BASE..HEAD) that have NO equivalent on main are marked '+'.
+          MISSING=$(git cherry origin/main HEAD "$MERGE_BASE" | grep '^+' || true)
+          if [ -n "$MISSING" ]; then
+            echo "::error::Upstream-first violation: these commits are not yet on \`main\`:"
+            git cherry -v origin/main HEAD "$MERGE_BASE" | grep '^+'
+            echo ""
+            echo "Land the change on 'main' first, then cherry-pick it here."
+            echo "If this is an adapted cherry-pick of a change already on 'main',"
+            echo "add the 'upstream-first-verified' label to acknowledge, then re-run."
+            exit 1
+          fi
+          echo "All PR commits are already present on 'main'."
