@@ -311,7 +311,10 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Install cargo-docs-rs
-        uses: dtolnay/install@cargo-docs-rs # Exception to tagged SHA policy
+        uses: baptiste0928/cargo-install@f204293d9709061b7bc1756fec3ec4e2cd57dec0 # v3.4.0
+        with:
+          crate: cargo-docs-rs
+          version: "1.0.4"
 
       - name: Preflight c2pa-rs docs.rs
         env:
