@@ -193,7 +193,7 @@ jobs:
           # errors.
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@44018a4d9c280bea4bd3f908fabe5a0909f89f92 # main
+        uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # 1.20.1
 
       - name: Install cargo-udeps
         run: cargo binstall --no-confirm cargo-udeps

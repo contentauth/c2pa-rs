@@ -55,7 +55,7 @@ jobs:
 
       - name: Install cargo-binstall
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
-        uses: cargo-bins/cargo-binstall@44018a4d9c280bea4bd3f908fabe5a0909f89f92 # main
+        uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # 1.20.1
 
       - name: Install cargo-codspeed
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
@@ -109,7 +109,7 @@ jobs:
           aws-region: us-east-1
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@44018a4d9c280bea4bd3f908fabe5a0909f89f92 # main
+        uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # 1.20.1
 
       - name: Install cargo-codspeed
         run: cargo binstall --no-confirm cargo-codspeed
