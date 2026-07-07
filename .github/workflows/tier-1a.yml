@@ -525,6 +525,12 @@ jobs:
 
       - name: Install clang
         run: |
+          # The runner image ships with Microsoft's apt repositories, which
+          # intermittently serve an invalid InRelease file and make
+          # `apt-get update` fail. We don't need them here, so remove them first.
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/azure-cli.list \
+                     /etc/apt/sources.list.d/azure-cli.sources
           sudo apt-get update
           sudo apt-get install -y clang
 
