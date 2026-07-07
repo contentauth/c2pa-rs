@@ -17,6 +17,11 @@ yanked = "deny"
 ignore = [
   "RUSTSEC-2023-0071", # rsa Marvin Attack: (https://jira.corp.adobe.com/browse/CAI-5104)
   "RUSTSEC-2024-0370", # proc-macro-error
+  # ttf-parser is unmaintained and reaches us only as a transitive dependency of
+  # lopdf (pdf feature). There is no fix available; we are tracking the lopdf
+  # migration off ttf-parser in https://github.com/contentauth/c2pa-rs/issues/2269
+  # (which follows https://github.com/J-F-Liu/lopdf/issues/514).
+  "RUSTSEC-2026-0192", # ttf-parser unmaintained (transitive via lopdf)
 ]
 
 [bans]
