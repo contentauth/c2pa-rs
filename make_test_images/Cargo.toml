@@ -7,7 +7,7 @@ edition = "2021"
 rust-version = "1.88.0"
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 c2pa = { workspace = true, features = [
     "openssl",
 	"fetch_remote_manifests",
