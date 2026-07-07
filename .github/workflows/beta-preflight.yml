@@ -27,19 +27,21 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: ${{ matrix.rust_version }}
           components: llvm-tools-preview
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        with:
+          tool: cargo-llvm-cov
 
       - name: Generate code coverage
         env:
@@ -58,19 +60,21 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: ${{ matrix.rust_version }}
           components: llvm-tools-preview
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        with:
+          tool: cargo-llvm-cov
 
       - name: Generate code coverage
         env:
@@ -93,20 +97,24 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@beta
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: beta
       # - name: Install Rust toolchain
       #   uses: dtolnay/rust-toolchain@nightly
       #   with:
       #     components: llvm-tools-preview
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        with:
+          tool: cargo-llvm-cov
 
       # Disabling code coverage for doc tests due to a new bug in Rust nightly
       # as of 2025-01-08. Will investigate later to see if there's a repro case.
@@ -141,13 +149,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@beta
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: beta
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: "`cargo check` with default features"
         run: cargo check
@@ -164,10 +174,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: ${{ matrix.rust_version }}
           targets: ${{ matrix.target }}
@@ -176,7 +186,7 @@ jobs:
         run: cargo install cross
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       # Note that we do not run code coverage because
       # it isn't readily accessible from cross-compilation
@@ -194,16 +204,18 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@beta
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: beta
 
       - name: Add wasm web target
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
+        uses: cargo-bins/cargo-binstall@44018a4d9c280bea4bd3f908fabe5a0909f89f92 # main
 
       - name: Extract wasm-bindgen version from Cargo.lock
         id: wasm-bindgen-version
@@ -228,15 +240,16 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@beta
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
+          toolchain: beta
           components: clippy
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Run Clippy
         run: cargo clippy --all-features --all-targets -- -Dwarnings

@@ -48,17 +48,19 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        with:
+          toolchain: stable
 
       - name: Run release-plz
         id: release-plz
-        uses: MarcoIeni/release-plz-action@v0.5.129
+        uses: MarcoIeni/release-plz-action@064f4d1e36c843611ddf013be726beaa4ad804db # v0.5.129
         with:
           verbose: true
         env:
@@ -119,25 +121,25 @@ jobs:
     steps:
       - name: Checkout repository
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust toolchain
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
         with:
           toolchain: ${{ matrix.rust_version }}
           components: llvm-tools-preview
 
       - name: Install cargo-sbom
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: baptiste0928/cargo-install@v3
+        uses: baptiste0928/cargo-install@f204293d9709061b7bc1756fec3ec4e2cd57dec0 # v3
         with:
           crate: cargo-sbom
           version: '0.9.1'
 
       - name: Cache Rust dependencies
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Run make release
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
@@ -145,7 +147,7 @@ jobs:
 
       - name: Upload binary to GitHub
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: svenstaro/upload-release-action@2.11.5
+        uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # 2.11.5
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/${{ matrix.artifact_name }}
@@ -159,7 +161,7 @@ jobs:
 
       - name: Upload SBOM to Github
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: svenstaro/upload-release-action@2.11.5
+        uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # 2.11.5
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: cli/c2patool-sbom.json
