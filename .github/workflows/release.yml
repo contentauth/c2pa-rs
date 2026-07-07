@@ -12,31 +12,31 @@ on:
     types: [opened, synchronize, reopened, labeled]
 
 jobs:
-#   dry-run-release-plz:
-#     name: Release-plz dry run
-#     runs-on: ubuntu-latest
-#     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release')
-# 
-#     steps:
-#       - name: Checkout repository
-#         uses: actions/checkout@v6
-#         with:
-#           fetch-depth: 0
-#           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
-#           ref: ${{ github.head_ref }}
-# 
-#       - name: Install Rust toolchain
-#         uses: dtolnay/rust-toolchain@stable
-# 
-#       - name: Dry-run release-plz
-#         uses: MarcoIeni/release-plz-action@v0.5.129
-#         with:
-#           command: release
-#           dry_run: true
-#           verbose: true
-#         env:
-#           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-#           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
+  #   dry-run-release-plz:
+  #     name: Release-plz dry run
+  #     runs-on: ubuntu-latest
+  #     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release')
+  #
+  #     steps:
+  #       - name: Checkout repository
+  #         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+  #         with:
+  #           fetch-depth: 0
+  #           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+  #           ref: ${{ github.head_ref }}
+  #
+  #       - name: Install Rust toolchain
+  #         uses: dtolnay/rust-toolchain@stable
+  #
+  #       - name: Dry-run release-plz
+  #         uses: MarcoIeni/release-plz-action@v0.5.129
+  #         with:
+  #           command: release
+  #           dry_run: true
+  #           verbose: true
+  #         env:
+  #           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+  #           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
 
   release-plz:
     name: Release-plz
@@ -48,13 +48,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
 
@@ -101,9 +101,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ macos-latest, ubuntu-latest, windows-latest ]
-        rust_version: [ stable ]
-        experimental: [ false ]
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        rust_version: [stable]
+        experimental: [false]
         include:
           - os: macos-latest
             artifact_name: c2patool_mac_universal.zip
@@ -121,25 +121,25 @@ jobs:
     steps:
       - name: Checkout repository
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: ${{ matrix.rust_version }}
           components: llvm-tools-preview
 
       - name: Install cargo-sbom
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: baptiste0928/cargo-install@f204293d9709061b7bc1756fec3ec4e2cd57dec0 # v3
+        uses: baptiste0928/cargo-install@f204293d9709061b7bc1756fec3ec4e2cd57dec0 # v3.4.0
         with:
           crate: cargo-sbom
-          version: '0.9.1'
+          version: "0.9.1"
 
       - name: Cache Rust dependencies
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Run make release
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}

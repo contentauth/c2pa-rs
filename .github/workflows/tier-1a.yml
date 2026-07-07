@@ -34,10 +34,10 @@ jobs:
       openssl-features: ${{ steps.get-features.outputs.openssl-features }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
 
@@ -66,19 +66,19 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
           components: llvm-tools-preview
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
         with:
           tool: cargo-llvm-cov
 
@@ -90,7 +90,7 @@ jobs:
           cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-openssl.info
 
       - name: Filter out tests
-        uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1
+        uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1.1.0
         with:
           input-file: lcov-openssl.info
           output-file: lcov-openssl.filtered.info
@@ -103,7 +103,7 @@ jobs:
           github.event.pull_request.author_association == 'COLLABORATOR' ||
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
@@ -125,19 +125,19 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
           components: llvm-tools-preview
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
         with:
           tool: cargo-llvm-cov
 
@@ -149,7 +149,7 @@ jobs:
           cargo llvm-cov -p c2pa --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
 
       - name: Filter out tests
-        uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1
+        uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1.1.0
         with:
           input-file: lcov-rust_native_crypto.info
           output-file: lcov-rust_native_crypto.filtered.info
@@ -162,7 +162,7 @@ jobs:
           github.event.pull_request.author_association == 'COLLABORATOR' ||
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
@@ -184,19 +184,19 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
           components: llvm-tools-preview
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
         with:
           tool: cargo-llvm-cov
 
@@ -215,7 +215,7 @@ jobs:
           github.event.pull_request.author_association == 'COLLABORATOR' ||
           github.event.pull_request.author_association == 'MEMBER' ||
           github.event.pull_request.user.login == 'dependabot[bot]'
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: true
@@ -237,15 +237,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Run tests
         env:
@@ -269,15 +269,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Run tests
         env:
@@ -300,18 +300,18 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: nightly
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Install cargo-docs-rs
-        uses: dtolnay/install@982daea0f5d846abc3c83e01a6a1d73c040047c1 # cargo-docs-rs
+        uses: dtolnay/install@cargo-docs-rs # Exception to tagged SHA policy
 
       - name: Preflight c2pa-rs docs.rs
         env:
@@ -348,18 +348,18 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
         with:
           tool: cargo-llvm-cov
 
@@ -389,7 +389,7 @@ jobs:
       #     github.event.pull_request.author_association == 'COLLABORATOR' ||
       #     github.event.pull_request.author_association == 'MEMBER' ||
       #     github.event.pull_request.user.login == 'dependabot[bot]'
-      #   uses: codecov/codecov-action@v7
+      #   uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
       #   with:
       #     token: ${{ secrets.CODECOV_TOKEN }}
       #     fail_ci_if_error: true
@@ -409,15 +409,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: "`cargo check` with default features"
         run: cargo check
@@ -436,10 +436,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
 
@@ -461,10 +461,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
 
@@ -472,7 +472,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # 1.20.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Extract wasm-bindgen version from Cargo.lock
         id: wasm-bindgen-version
@@ -506,12 +506,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
         # Nightly required for testing until this issue is resolved:
         # wasip2 target should not conditionally feature gate stdlib APIs rust-lang/rust#130323 https://github.com/rust-lang/rust/issues/130323
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: nightly-2026-01-16
 
@@ -529,7 +529,7 @@ jobs:
         run: rustup target add --toolchain nightly-2026-01-16 wasm32-wasip2
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Run WASI tests (c2pa-rs)
         env:
@@ -555,16 +555,16 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
           components: clippy
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Run Clippy
         env:
@@ -586,10 +586,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: nightly-2026-01-16
           components: rustfmt
@@ -611,9 +611,9 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Audit crate dependencies
-        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
         with:
           command: check advisories bans licenses sources

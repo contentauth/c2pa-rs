@@ -45,11 +45,11 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
         if: matrix.target != 'wasm32-unknown-emscripten'
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: stable
 
@@ -65,7 +65,7 @@ jobs:
 
       - name: Install Rust nightly toolchain for Emscripten
         if: matrix.target == 'wasm32-unknown-emscripten'
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: nightly
           targets: wasm32-unknown-emscripten
@@ -73,7 +73,7 @@ jobs:
 
       - name: Checkout Emscripten SDK
         if: matrix.target == 'wasm32-unknown-emscripten'
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: emscripten-core/emsdk
           path: emsdk
@@ -90,13 +90,13 @@ jobs:
 
       - name: Cache emsdk
         if: matrix.target == 'wasm32-unknown-emscripten'
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: emsdk
           key: emsdk-${{ runner.os }}-latest
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Build C library for mobile target
         if: matrix.target != 'wasm32-unknown-emscripten'
