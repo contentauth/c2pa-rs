@@ -1829,22 +1829,16 @@ impl Builder {
             if !a.label.starts_with(crate::assertions::Actions::LABEL) {
                 return false;
             }
-            let AssertionData::Json(value) = &a.data else {
+            let Ok(actions) = a.to_assertion::<crate::assertions::Actions>() else {
                 return false;
             };
-            value
-                .get("actions")
-                .and_then(|arr| arr.as_array())
-                .map(|acts| {
-                    acts.iter().any(|act| {
-                        matches!(
-                            act.get("action").and_then(|v| v.as_str()),
-                            Some(crate::assertions::c2pa_action::CREATED)
-                                | Some(crate::assertions::c2pa_action::OPENED)
-                        )
-                    })
-                })
-                .unwrap_or(false)
+            actions.actions().iter().any(|act| {
+                matches!(
+                    act.action(),
+                    crate::assertions::c2pa_action::CREATED
+                        | crate::assertions::c2pa_action::OPENED
+                )
+            })
         });
         if auto_parent
             && !has_created_or_opened
