@@ -55,7 +55,7 @@ jobs:
 
       - name: Install cargo-binstall
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
       - name: Install cargo-codspeed
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
@@ -109,7 +109,7 @@ jobs:
           aws-region: us-east-1
 
       - name: Install cargo-binstall
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
       - name: Install cargo-codspeed
         run: cargo binstall --no-confirm cargo-codspeed
