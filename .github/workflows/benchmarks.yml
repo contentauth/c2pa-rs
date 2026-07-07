@@ -173,6 +173,17 @@ jobs:
             echo "suffix=::small" >> $GITHUB_OUTPUT
           fi
 
+      # The GitHub-hosted runner image ships with Microsoft's apt repositories
+      # pre-configured. They intermittently serve an invalid InRelease file,
+      # which makes `apt-get update` (run by the CodSpeed action to install
+      # valgrind/libc6-dbg) fail and take the whole job down with it. We don't
+      # use those repos here, so remove them before running the benchmarks.
+      - name: Disable broken Microsoft apt repositories
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/azure-cli.list \
+                     /etc/apt/sources.list.d/azure-cli.sources
+
       - name: Run the benchmarks
         uses: CodSpeedHQ/action@a4a36bb07c0638b0b4ca52bf1f3dad1b4289e52f # v4.18.1
         with:
