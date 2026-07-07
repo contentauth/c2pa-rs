@@ -29,14 +29,14 @@ use uuid::Uuid;
 use zip::ZipArchive;
 
 #[allow(deprecated)]
-use crate::assertions::CreativeWork;
+use crate::assertions::{CreativeWork, Exif};
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action,
         labels::{self, parse_label},
         Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, DataHash,
-        DigitalSourceType, EmbeddedData, ExclusionsMap, Exif, MerkleMap, Metadata, SoftwareAgent,
+        DigitalSourceType, EmbeddedData, ExclusionsMap, MerkleMap, Metadata, SoftwareAgent,
         SubsetMap, Thumbnail, TimeStamp, User, UserCbor,
     },
     claim::Claim,
@@ -1707,6 +1707,7 @@ impl Builder {
                     let cw: CreativeWork = manifest_assertion.to_assertion()?;
                     claim.add_assertion(&cw)
                 }
+                #[allow(deprecated)]
                 Exif::LABEL => {
                     let exif: Exif = manifest_assertion.to_assertion()?;
                     add_assertion(&mut claim, &exif, manifest_assertion.created())
