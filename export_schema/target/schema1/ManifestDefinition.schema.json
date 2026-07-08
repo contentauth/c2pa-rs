@@ -1,0 +1,1222 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ManifestDefinition",
+  "description": "Use a ManifestDefinition to define a manifest and to build a `ManifestStore`.\nA manifest is a collection of ingredients and assertions\nused to define a claim that can be signed and embedded into a file.",
+  "type": "object",
+  "properties": {
+    "claim_version": {
+      "description": "The version of the claim.  Defaults to 2.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint8",
+      "minimum": 0,
+      "maximum": 255
+    },
+    "vendor": {
+      "description": "Optional prefix added to the generated Manifest Label\nThis is typically a reverse domain name.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "claim_generator_info": {
+      "description": "Software that generated the claim, as a list of [`ClaimGeneratorInfo`].\n\nIn JSON, when this key is **omitted** (or the array is empty), the value is\nresolved at claim-building time: settings.builder.claim_generator_info if set, otherwise\non the active [`Context`] is used if set, otherwise [`ClaimGeneratorInfo::default`].\nA non-empty list in the definition is used as given.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ClaimGeneratorInfo"
+      }
+    },
+    "metadata": {
+      "description": "Optional manifest metadata. This will be deprecated in the future; not recommended to use.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "$ref": "#/$defs/AssertionMetadata"
+      }
+    },
+    "title": {
+      "description": "A human-readable title, generally source filename.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "format": {
+      "description": "The format of the source file as a MIME type.",
+      "type": "string",
+      "default": "application/octet-stream"
+    },
+    "instance_id": {
+      "description": "Instance ID from `xmpMM:InstanceID` in XMP metadata.",
+      "type": "string",
+      "default": "xmp:iid:0879c2f9-2992-4647-a27f-cf8b78dd3e6f"
+    },
+    "thumbnail": {
+      "description": "An optional ResourceRef to a thumbnail image that represents the asset that was signed.\nMust be available when the manifest is signed.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ResourceRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ingredients": {
+      "description": "A List of ingredients",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Ingredient"
+      },
+      "default": []
+    },
+    "assertions": {
+      "description": "A list of assertions",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AssertionDefinition"
+      },
+      "default": []
+    },
+    "redactions": {
+      "description": "JUMBF URIs of assertions to redact from ingredient manifests.\n\nEach URI has the form\n`self#jumbf=/c2pa/<manifest_label>/c2pa.assertions/<assertion_label>`.\nUse a [`Reader`](crate::Reader) to discover the manifest label.\nSee the [redaction guide](https://github.com/contentauth/c2pa-rs/blob/main/docs/redaction.md)\nfor details.",
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      }
+    },
+    "label": {
+      "description": "Allows you to pre-define the manifest label, which must be unique.\nNot intended for general use.  If not set, it will be assigned automatically.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "hash_alg": {
+      "description": "Hash algorithm used for asset hashing (DataHash, BmffHash) and assertion hashing\nin the claim.  Defaults to `\"sha256\"` when not set.\n\nValid values: `\"sha256\"`, `\"sha384\"`, `\"sha512\"`.\n\nThis sets the claim-level `alg` field and is the default used by\n[`Builder::update_hash_from_stream`].  It can be overridden on individual\nhard binding assertions (e.g. a pre-constructed `DataHash`) by setting\nthe assertion's own `alg` field before adding it to the builder.\n\nNamed `hash_alg` (rather than `alg`) to avoid collision with the signer's\nsignature algorithm, which uses the same key in some combined JSON configurations.",
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "$defs": {
+    "ClaimGeneratorInfo": {
+      "description": "Description of the claim generator, or the software used in generating the claim.\n\nThis structure is also used for actions softwareAgent",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "A human readable string naming the claim_generator",
+          "type": "string"
+        },
+        "version": {
+          "description": "A human readable string of the product's version",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "icon": {
+          "description": "hashed URI to the icon (either embedded or remote)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UriOrResource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operating_system": {
+          "description": "A human readable string of the OS the claim generator is running on.\nCrJSON schema uses `operating_system`; C2PA CBOR may use `schema.org.SoftwareApplication.operatingSystem`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": true
+    },
+    "UriOrResource": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ResourceRef"
+        },
+        {
+          "$ref": "#/$defs/HashedUri"
+        }
+      ]
+    },
+    "ResourceRef": {
+      "description": "A reference to a resource to be used in JSON serialization.\n\nThe underlying data can be read as a stream via [`Reader::resource_to_stream`][crate::Reader::resource_to_stream].",
+      "type": "object",
+      "properties": {
+        "format": {
+          "description": "The mime type of the referenced resource.",
+          "type": "string"
+        },
+        "identifier": {
+          "description": "A URI that identifies the resource as referenced from the manifest.\n\nThis may be a JUMBF URI, a file path, a URL or any other string.\nRelative JUMBF URIs will be resolved with the manifest label.\nRelative file paths will be resolved with the base path if provided.",
+          "type": "string"
+        },
+        "data_types": {
+          "description": "More detailed data types as defined in the C2PA spec.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/AssetType"
+          }
+        },
+        "alg": {
+          "description": "The algorithm used to hash the resource (if applicable).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hash": {
+          "description": "The hash of the resource (if applicable).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "format",
+        "identifier"
+      ]
+    },
+    "AssetType": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "HashedUri": {
+      "description": "A `HashedUri` provides a reference to content available within the same\nmanifest store.\n\nThis is described in [URI References in the C2PA Technical\nSpecification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_uri_references).",
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "JUMBF URI reference",
+          "type": "string"
+        },
+        "alg": {
+          "description": "A string identifying the cryptographic hash algorithm used to compute\nthe hash",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hash": {
+          "description": "Byte string containing the hash value",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 255
+          }
+        }
+      },
+      "required": [
+        "url",
+        "hash"
+      ]
+    },
+    "AssertionMetadata": {
+      "description": "The AssertionMetadata structure can be used as part of other assertions or on its own to reference others",
+      "type": "object",
+      "properties": {
+        "reviewRatings": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ReviewRating"
+          }
+        },
+        "dateTime": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DateT"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HashedUri"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dataSource": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DataSource"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "localizations": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "regionOfInterest": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RegionOfInterest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "ReviewRating": {
+      "description": "A rating on an Assertion.\n\nSee [C2PA Specification - Review Ratings](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_review_ratings).",
+      "type": "object",
+      "properties": {
+        "explanation": {
+          "type": "string"
+        },
+        "code": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255
+        }
+      },
+      "required": [
+        "explanation",
+        "value"
+      ]
+    },
+    "DateT": {
+      "type": "string"
+    },
+    "DataSource": {
+      "description": "A description of the source for assertion data",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "A value from among the enumerated list indicating the source of the assertion.",
+          "type": "string"
+        },
+        "details": {
+          "description": "A human-readable string giving details about the source of the assertion data.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "actors": {
+          "description": "A list of [`Actor`]s associated with this source.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Actor"
+          }
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "Actor": {
+      "description": "Identifies a person responsible for an action.",
+      "type": "object",
+      "properties": {
+        "identifier": {
+          "description": "An identifier for a human actor, used when the \"type\" is `humanEntry.identified`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "credentials": {
+          "description": "List of references to W3C Verifiable Credentials.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/HashedUri"
+          }
+        }
+      }
+    },
+    "RegionOfInterest": {
+      "description": "A region of interest within an asset describing the change.\n\nThis struct can be used from [`Action::changes`][crate::assertions::Action::changes],\n[`AssertionMetadata::region_of_interest`][crate::assertions::AssertionMetadata::region_of_interest], or\n[`SoftBindingScope::region`][crate::assertions::soft_binding::SoftBindingScope::region].",
+      "type": "object",
+      "properties": {
+        "region": {
+          "description": "A range describing the region of interest for the specific asset.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Range"
+          }
+        },
+        "name": {
+          "description": "A free-text string representing a human-readable name for the region which might be used in a user interface.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "identifier": {
+          "description": "A free-text string representing a machine-readable, unique to this assertion, identifier for the region.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "A value from a controlled vocabulary such as <https://cv.iptc.org/newscodes/imageregiontype/> or an entity-specific\nvalue (e.g., com.litware.newType) that represents the type of thing(s) depicted by a region.\n\nNote this field serializes/deserializes into the name `type`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "role": {
+          "description": "A value from our controlled vocabulary or an entity-specific value (e.g., com.litware.coolArea) that represents\nthe role of a region among other regions.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Role"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "description": "A free-text string.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metadata": {
+          "description": "Additional information about the asset.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AssertionMetadata"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "region"
+      ]
+    },
+    "Range": {
+      "description": "A spatial, temporal, frame, or textual range describing the region of interest.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "The type of range of interest.",
+          "$ref": "#/$defs/RangeType"
+        },
+        "shape": {
+          "description": "A spatial range.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Shape"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "time": {
+          "description": "A temporal range.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frame": {
+          "description": "A frame range.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Frame"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "description": "A textual range.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Text"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item": {
+          "description": "A item identifier.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Item"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "RangeType": {
+      "description": "The type of range for the region of interest.",
+      "oneOf": [
+        {
+          "description": "A spatial range, see [`Shape`] for more details.",
+          "type": "string",
+          "const": "spatial"
+        },
+        {
+          "description": "A temporal range, see [`Time`] for more details.",
+          "type": "string",
+          "const": "temporal"
+        },
+        {
+          "description": "A spatial range, see [`Frame`] for more details.",
+          "type": "string",
+          "const": "frame"
+        },
+        {
+          "description": "A textual range, see [`Text`] for more details.",
+          "type": "string",
+          "const": "textual"
+        },
+        {
+          "description": "A range identified by a specific identifier and value, see [`Item`] for more details.",
+          "type": "string",
+          "const": "identified"
+        }
+      ]
+    },
+    "Shape": {
+      "description": "A spatial range representing rectangle, circle, or a polygon.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "The type of shape.",
+          "$ref": "#/$defs/ShapeType"
+        },
+        "unit": {
+          "description": "The type of unit for the shape range.",
+          "$ref": "#/$defs/UnitType"
+        },
+        "origin": {
+          "description": "THe origin of the coordinate in the shape.",
+          "$ref": "#/$defs/Coordinate"
+        },
+        "width": {
+          "description": "The width for rectangles or diameter for circles.\n\nThis field can be ignored for polygons.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "height": {
+          "description": "The height of a rectnagle.\n\nThis field can be ignored for circles and polygons.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "inside": {
+          "description": "If the range is inside the shape.\n\nThe default value is true.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "vertices": {
+          "description": "The vertices of the polygon.\n\nThis field can be ignored for rectangles and circles.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/Coordinate"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "unit",
+        "origin"
+      ]
+    },
+    "ShapeType": {
+      "description": "The type of shape for the range.",
+      "oneOf": [
+        {
+          "description": "A rectangle.",
+          "type": "string",
+          "const": "rectangle"
+        },
+        {
+          "description": "A circle.",
+          "type": "string",
+          "const": "circle"
+        },
+        {
+          "description": "A polygon.",
+          "type": "string",
+          "const": "polygon"
+        }
+      ]
+    },
+    "UnitType": {
+      "description": "The type of unit for the range.",
+      "oneOf": [
+        {
+          "description": "Use pixels.",
+          "type": "string",
+          "const": "pixel"
+        },
+        {
+          "description": "Use percentage.",
+          "type": "string",
+          "const": "percent"
+        }
+      ]
+    },
+    "Coordinate": {
+      "description": "An x, y coordinate used for specifying vertices in polygons.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "The coordinate along the x-axis.",
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "description": "The coordinate along the y-axis.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ]
+    },
+    "Time": {
+      "description": "A temporal range representing a starting time to an ending time.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "description": "The type of time.",
+          "$ref": "#/$defs/TimeType",
+          "default": "npt"
+        },
+        "start": {
+          "description": "The start time or the start of the asset if not present.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "end": {
+          "description": "The end time or the end of the asset if not present.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "TimeType": {
+      "description": "The type of time.",
+      "oneOf": [
+        {
+          "description": "Times are described using Normal Play Time (npt) as described in RFC 2326.",
+          "type": "string",
+          "const": "npt"
+        }
+      ]
+    },
+    "Frame": {
+      "description": "A frame range representing starting and ending frames or pages.\n\nIf both `start` and `end` are missing, the frame will span the entire asset.",
+      "type": "object",
+      "properties": {
+        "start": {
+          "description": "The start of the frame or the end of the asset if not present.\n\nThe first frame/page starts at 0.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "end": {
+          "description": "The end of the frame inclusive or the end of the asset if not present.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        }
+      }
+    },
+    "Text": {
+      "description": "A textual range representing multiple (possibly discontinuous) ranges of text.",
+      "type": "object",
+      "properties": {
+        "selectors": {
+          "description": "The ranges of text to select.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextSelectorRange"
+          }
+        }
+      },
+      "required": [
+        "selectors"
+      ]
+    },
+    "TextSelectorRange": {
+      "description": "One or two [`TextSelector`][TextSelector] identifiying the range to select.",
+      "type": "object",
+      "properties": {
+        "selector": {
+          "description": "The start (or entire) text range.",
+          "$ref": "#/$defs/TextSelector"
+        },
+        "end": {
+          "description": "The end of the text range.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextSelector"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "selector"
+      ]
+    },
+    "TextSelector": {
+      "description": "Selects a range of text via a fragment identifier.\n\nThis is modeled after the W3C Web Annotation selector model.",
+      "type": "object",
+      "properties": {
+        "fragment": {
+          "description": "Fragment identifier as per RFC3023 (XML) or ISO 32000-2 (PDF), Annex O.",
+          "type": "string"
+        },
+        "start": {
+          "description": "The start character offset or the start of the fragment if not present.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "end": {
+          "description": "The end character offset or the end of the fragment if not present.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        }
+      },
+      "required": [
+        "fragment"
+      ]
+    },
+    "Item": {
+      "description": "Description of the boundaries of an identified range.",
+      "type": "object",
+      "properties": {
+        "identifier": {
+          "description": "The container-specific term used to identify items, such as \"track_id\" for MP4 or \"item_ID\" for HEIF.",
+          "type": "string"
+        },
+        "value": {
+          "description": "The value of the identifier, e.g. a value of \"2\" for an identifier of \"track_id\" would imply track 2 of the asset.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "identifier",
+        "value"
+      ]
+    },
+    "Role": {
+      "description": "A role describing the region.",
+      "oneOf": [
+        {
+          "description": "Arbitrary area worth identifying.",
+          "type": "string",
+          "const": "c2pa.areaOfInterest"
+        },
+        {
+          "description": "This area is all that is left after a crop action.",
+          "type": "string",
+          "const": "c2pa.cropped"
+        },
+        {
+          "description": "This area has had edits applied to it.",
+          "type": "string",
+          "const": "c2pa.edited"
+        },
+        {
+          "description": "The area where an ingredient was placed/added.",
+          "type": "string",
+          "const": "c2pa.placed"
+        },
+        {
+          "description": "Something in this area was redacted.",
+          "type": "string",
+          "const": "c2pa.redacted"
+        },
+        {
+          "description": "Area specific to a subject (human or not).",
+          "type": "string",
+          "const": "c2pa.subjectArea"
+        },
+        {
+          "description": "A range of information was removed/deleted.",
+          "type": "string",
+          "const": "c2pa.deleted"
+        },
+        {
+          "description": "Styling was applied to this area.",
+          "type": "string",
+          "const": "c2pa.styled"
+        },
+        {
+          "description": "Invisible watermarking was applied to this area for the purpose of soft binding.",
+          "type": "string",
+          "const": "c2pa.watermarked"
+        }
+      ]
+    },
+    "Ingredient": {
+      "description": "An `Ingredient` is any external asset that has been used in the creation of an asset.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "A human-readable title, generally source filename.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "description": "The format of the source file as a MIME type.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "document_id": {
+          "description": "Document ID from `xmpMM:DocumentID` in XMP metadata.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "instance_id": {
+          "description": "Instance ID from `xmpMM:InstanceID` in XMP metadata.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provenance": {
+          "description": "URI from `dcterms:provenance` in XMP metadata.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "thumbnail": {
+          "description": "A thumbnail image capturing the visual state at the time of import.\n\nA tuple of thumbnail MIME format (for example `image/jpeg`) and binary bits of the image.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hash": {
+          "description": "An optional hash of the asset to prevent duplicates.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "relationship": {
+          "description": "Set to `ParentOf` if this is the parent ingredient.\n\nThere can only be one parent ingredient in the ingredients.",
+          "$ref": "#/$defs/Relationship",
+          "default": "componentOf"
+        },
+        "active_manifest": {
+          "description": "The active manifest label (if one exists).\n\nIf this ingredient has a [`ManifestStore`],\nthis will hold the label of the active [`Manifest`].\n\n[`Manifest`]: crate::Manifest\n[`ManifestStore`]: crate::ManifestStore",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "validation_status": {
+          "description": "Validation status (Ingredient v1 & v2)",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ValidationStatus"
+          }
+        },
+        "validation_results": {
+          "description": "Validation results (Ingredient.V3)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidationResults"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "data": {
+          "description": "A reference to the actual data of the ingredient.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "description": "Additional description of the ingredient.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "informational_URI": {
+          "description": "URI to an informational page about the ingredient or its data.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "metadata": {
+          "description": "Any additional [`Metadata`] as defined in the C2PA spec.\n\n[`Metadata`]: crate::Metadata",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AssertionMetadata"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "data_types": {
+          "description": "Additional information about the data's type to the ingredient V2 structure.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/AssetType"
+          }
+        },
+        "manifest_data": {
+          "description": "A [`ManifestStore`] from the source asset extracted as a binary C2PA blob.\n\n[`ManifestStore`]: crate::ManifestStore",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ResourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "description": "The ingredient's label as assigned in the manifest.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ocsp_responses": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ResourceRef"
+          }
+        }
+      }
+    },
+    "Relationship": {
+      "description": "The relationship of the ingredient to the current asset.",
+      "oneOf": [
+        {
+          "description": "The current asset is derived from this ingredient.",
+          "type": "string",
+          "const": "parentOf"
+        },
+        {
+          "description": "The current asset is a part of this ingredient.",
+          "type": "string",
+          "const": "componentOf"
+        },
+        {
+          "description": "The ingredient was used as an input to a computational process to create or modify the asset.",
+          "type": "string",
+          "const": "inputTo"
+        }
+      ]
+    },
+    "ValidationStatus": {
+      "description": "A `ValidationStatus` struct describes the validation status of a\nspecific part of a manifest.\n\nSee [Existing Manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_existing_manifests).",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "explanation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "success": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "writeOnly": true
+        }
+      },
+      "required": [
+        "code"
+      ]
+    },
+    "ValidationResults": {
+      "description": "A map of validation results for a manifest store.\n\nThe map contains the validation results for the active manifest and any ingredient deltas.\nIt is normal for there to be many",
+      "type": "object",
+      "properties": {
+        "activeManifest": {
+          "description": "Validation status codes for the ingredient's active manifest. Present if ingredient is a C2PA\nasset. Not present if the ingredient is not a C2PA asset.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StatusCodes"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ingredientDeltas": {
+          "description": "List of any changes/deltas between the current and previous validation results for each ingredient's\nmanifest. Present if the the ingredient is a C2PA asset.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/IngredientDeltaValidationResult"
+          }
+        },
+        "validationTime": {
+          "description": "Time when the validation was performed (RFC 3339 date-time). Used only for document-level validationInfo; not serialized in validationResults (e.g. ingredient assertions).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "writeOnly": true
+        }
+      }
+    },
+    "StatusCodes": {
+      "description": "Contains a set of success, informational, and failure validation status codes.",
+      "type": "object",
+      "properties": {
+        "success": {
+          "description": "An array of validation success codes. May be empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ValidationStatus"
+          }
+        },
+        "informational": {
+          "description": "An array of validation informational codes. May be empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ValidationStatus"
+          }
+        },
+        "failure": {
+          "description": "An array of validation failure codes. May be empty.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ValidationStatus"
+          }
+        }
+      },
+      "required": [
+        "success",
+        "informational",
+        "failure"
+      ]
+    },
+    "IngredientDeltaValidationResult": {
+      "description": "Represents any changes or deltas between the current and previous validation results for an ingredient's manifest.",
+      "type": "object",
+      "properties": {
+        "ingredientAssertionURI": {
+          "description": "JUMBF URI reference to the ingredient assertion",
+          "type": "string"
+        },
+        "validationDeltas": {
+          "description": "Validation results for the ingredient's active manifest",
+          "$ref": "#/$defs/StatusCodes"
+        }
+      },
+      "required": [
+        "ingredientAssertionURI",
+        "validationDeltas"
+      ]
+    },
+    "AssertionDefinition": {
+      "description": "Defines an assertion that consists of a label that can be either\na C2PA-defined assertion label or a custom label in reverse domain format.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "An assertion label in reverse domain format",
+          "type": "string"
+        },
+        "data": {
+          "description": "The assertion data",
+          "$ref": "#/$defs/AssertionData"
+        },
+        "kind": {
+          "description": "The kind of assertion data, either Cbor or Json (defaults to Cbor)",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ManifestAssertionKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created": {
+          "description": "True if this assertion is attributed to the signer (defaults to false)",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "label",
+        "data"
+      ]
+    },
+    "AssertionData": {
+      "description": "This allows the assertion to be expressed as CBOR or JSON.\nThe default is CBOR unless you specify that an assertion should be JSON.",
+      "anyOf": [
+        true
+      ]
+    },
+    "ManifestAssertionKind": {
+      "description": "Assertions in C2PA can be stored in several formats",
+      "type": "string",
+      "enum": [
+        "Cbor",
+        "Json",
+        "Binary",
+        "Uri"
+      ]
+    }
+  }
+}
