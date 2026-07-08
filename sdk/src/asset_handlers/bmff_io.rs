@@ -665,8 +665,14 @@ where
 
                     for data_map in data_map_vec {
                         // move to the start of exclusion
-                        skip_bytes_to(reader, box_start + data_map.offset)?;
-
+                        skip_bytes_to(
+                            reader,
+                            box_start
+                                .checked_add(data_map.offset)
+                                .ok_or(Error::InvalidAsset(
+                                    "BMFF data map offset overflow".to_string(),
+                                ))?,
+                        )?;
                         // match the data
                         let buf = reader.read_to_vec(data_map.value.len() as u64)?;
 
@@ -2990,6 +2996,34 @@ pub mod tests {
         let mut source = Cursor::new(data);
         assert!(matches!(
             bmff_io.read_cai(&mut source),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    #[test]
+    fn test_bmff_datamap_offset_overflow_returns_error() {
+        // A crafted C2PA manifest can embed a DataMap.offset of u64::MAX, which when
+        // added to any non-zero box_start overflows u64 and panics. Verify that
+        // bmff_to_jumbf_exclusions returns Err instead of panicking.
+        let mut data: Vec<u8> = Vec::new();
+        // ftyp box (16 bytes): size=16, type='ftyp', major_brand='mp41', minor_version=0
+        data.extend_from_slice(&16u32.to_be_bytes());
+        data.extend_from_slice(b"ftyp");
+        data.extend_from_slice(b"mp41");
+        data.extend_from_slice(&0u32.to_be_bytes());
+        // mdat box (8 bytes): size=8, type='mdat'
+        data.extend_from_slice(&8u32.to_be_bytes());
+        data.extend_from_slice(b"mdat");
+
+        let mut exclusion = ExclusionsMap::new("/mdat".to_string());
+        exclusion.data = Some(vec![crate::assertions::DataMap {
+            offset: u64::MAX,
+            value: vec![0],
+        }]);
+
+        let mut reader = Cursor::new(data);
+        assert!(matches!(
+            bmff_to_jumbf_exclusions(&mut reader, &[exclusion], false),
             Err(Error::InvalidAsset(_))
         ));
     }
