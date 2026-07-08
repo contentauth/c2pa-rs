@@ -335,11 +335,15 @@ impl ResourceStore {
         if !self.resources.contains_key(id) {
             match self.base_path.as_ref() {
                 Some(base) => {
+                    // Reject identifiers that would escape base_path (traversal, absolute
+                    // paths, backslash separators). Prevents attacker-supplied manifest
+                    // definitions from exfiltrating files outside the manifest directory.
+                    let sanitized_id = sanitize_archive_path(id)
+                        .map_err(|_| Error::ResourceNotFound(id.to_string()))?;
                     // read the file, save in Map and then return a reference
-                    let path = base.join(id);
-                    let value = read(path).map_err(|_| {
-                        let path = base.join(id).to_string_lossy().into_owned();
-                        Error::ResourceNotFound(path)
+                    let path = base.join(&sanitized_id);
+                    let value = read(&path).map_err(|_| {
+                        Error::ResourceNotFound(path.to_string_lossy().into_owned())
                     })?;
                     return Ok(Cow::Owned(value));
                 }
@@ -373,8 +377,11 @@ impl ResourceStore {
         if !self.resources.contains_key(id) {
             match self.base_path.as_ref() {
                 Some(base) => {
+                    // Reject identifiers that would escape base_path (see get()).
+                    let sanitized_id = sanitize_archive_path(id)
+                        .map_err(|_| Error::ResourceNotFound(id.to_string()))?;
                     // read from, the file to stream
-                    let path = base.join(id);
+                    let path = base.join(&sanitized_id);
                     let mut file = std::fs::File::open(path)?;
                     return std::io::copy(&mut file, &mut stream).map_err(Error::IoError);
                 }
@@ -412,9 +419,13 @@ impl ResourceStore {
 
         #[cfg(feature = "file_io")]
         if let Some(base) = self.base_path.as_ref() {
-            let path = base.join(id);
-            if path.exists() {
-                return true;
+            // Skip disk probes for identifiers that would escape base_path — a
+            // hostile id like `../etc/passwd` must not leak existence via this API.
+            if let Ok(sanitized_id) = sanitize_archive_path(id) {
+                let path = base.join(&sanitized_id);
+                if path.exists() {
+                    return true;
+                }
             }
         }
 
@@ -442,7 +453,8 @@ impl ResourceStore {
     #[cfg(feature = "file_io")]
     // Returns the full path for an ID.
     pub fn path_for_id(&self, id: &str) -> Option<PathBuf> {
-        self.base_path.as_ref().map(|base| base.join(id))
+        let sanitized_id = sanitize_archive_path(id).ok()?;
+        self.base_path.as_ref().map(|base| base.join(&sanitized_id))
     }
 }
 
@@ -617,6 +629,107 @@ mod tests {
 
             let result = store.add("..\\..\\etc\\passwd", b"attacker data".to_vec());
             assert!(result.is_err());
+        }
+
+        // Regression: an attacker-supplied manifest.json with an ingredient
+        // `data.identifier` containing a traversal payload must not read files
+        // outside base_path (the manifest directory) when Builder::sign reaches
+        // ResourceStore::get on the disk-fallback path.
+        #[test]
+        fn get_with_base_path_rejects_parent_dir_traversal() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            // A "secret" file outside the manifest dir the attacker wants to exfiltrate.
+            let secret = temp.path().join("secret.txt");
+            std::fs::write(&secret, b"SUPER SECRET").unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let result = store.get("../secret.txt");
+            assert!(
+                matches!(result, Err(Error::ResourceNotFound(_))),
+                "expected ResourceNotFound, got {result:?}"
+            );
+        }
+
+        #[test]
+        fn get_with_base_path_rejects_absolute_path() {
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            let result = store.get("/etc/passwd");
+            assert!(matches!(result, Err(Error::ResourceNotFound(_))));
+        }
+
+        #[test]
+        fn get_with_base_path_rejects_backslash_traversal() {
+            // A Windows-style backslash traversal must be blocked on all platforms —
+            // on Linux it would otherwise be joined verbatim into a filename lookup
+            // relative to base_path, but a malicious manifest with `..\` intent must
+            // never reach disk regardless of host separator conventions.
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            let result = store.get("..\\secrets\\password.txt");
+            assert!(matches!(result, Err(Error::ResourceNotFound(_))));
+        }
+
+        #[test]
+        fn get_with_base_path_accepts_normal_resource() {
+            let temp = tempdir().unwrap();
+            std::fs::write(temp.path().join("thumb.jpg"), b"image data").unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            let data = store.get("thumb.jpg").expect("get should succeed");
+            assert_eq!(data.as_slice(), b"image data");
+        }
+
+        #[test]
+        fn write_stream_with_base_path_rejects_parent_dir_traversal() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            std::fs::write(temp.path().join("secret.txt"), b"SUPER SECRET").unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let mut out = std::io::Cursor::new(Vec::<u8>::new());
+            let result = store.write_stream("../secret.txt", &mut out);
+            assert!(matches!(result, Err(Error::ResourceNotFound(_))));
+            assert!(out.get_ref().is_empty());
+        }
+
+        #[test]
+        fn exists_with_base_path_rejects_parent_dir_traversal() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            std::fs::write(temp.path().join("secret.txt"), b"SUPER SECRET").unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            assert!(!store.exists("../secret.txt"));
+            assert!(!store.exists("..\\secret.txt"));
+            assert!(!store.exists("/etc/passwd"));
+        }
+
+        #[test]
+        fn path_for_id_rejects_traversal() {
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            assert!(store.path_for_id("../secret.txt").is_none());
+            assert!(store.path_for_id("..\\secret.txt").is_none());
+            assert!(store.path_for_id("/etc/passwd").is_none());
+            assert!(store.path_for_id("thumb.jpg").is_some());
         }
     }
 }
