@@ -12,6 +12,7 @@
 // each license.
 
 //! Exif Assertion
+#![allow(deprecated)]
 use std::collections::HashMap;
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -27,7 +28,10 @@ use crate::{
 ///
 /// This does not yet define or validate individual fields, but will ensure the correct assertion structure.
 // NOTE: Hidden because it's now part of standard metadata assertions.
-#[doc(hidden)]
+#[deprecated(
+    since = "0.88.0",
+    note = "The Exif assertion is no longer part of the C2PA Technical Specification. Please use the CAWG identity and/or metadata assertion instead (https://opensource.contentauthenticity.org/docs/manifest/cawg-id)."
+)]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Exif {
     #[serde(rename = "@context", skip_serializing_if = "Option::is_none")]
