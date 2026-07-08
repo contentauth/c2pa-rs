@@ -56,7 +56,10 @@ pub(crate) trait SettingsValidate {
     }
 }
 
-/// Settings to configure the trust list.
+/// Settings to configure the C2PA trust list.
+///
+/// This configures the trust lists used when verifying C2PA manifest signers.
+/// CAWG identity trust is configured separately via [`CawgTrust`].
 #[cfg_attr(
     feature = "json_schema",
     derive(schemars::JsonSchema),
@@ -64,8 +67,143 @@ pub(crate) trait SettingsValidate {
 )]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Trust {
-    /// Whether to verify certificates against the trust lists specified in [`Trust`]. This
-    /// option is ONLY applicable to CAWG.
+    /// List of additional user-provided trust anchor root certificates as a PEM bundle.
+    pub user_anchors: Option<String>,
+    /// List of default trust anchor root certificates as a PEM bundle.
+    ///
+    /// Normally this option contains the official C2PA-recognized trust anchors found here:
+    /// <https://github.com/c2pa-org/conformance-public/tree/main/trust-list>
+    pub trust_anchors: Option<String>,
+    /// List of allowed extended key usage (EKU) object identifiers (OID) that
+    /// certificates must have.
+    pub trust_config: Option<String>,
+    /// List of explicitly allowed certificates as a PEM bundle.
+    pub allowed_list: Option<String>,
+}
+
+// load PEMs
+fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
+    let mut certs = Vec::new();
+
+    // allow for JSON-encoded PEMs with \n
+    let trust_data = String::from_utf8_lossy(trust_data)
+        .replace("\\n", "\n")
+        .into_bytes();
+    for pem_result in x509_parser::pem::Pem::iter_from_buffer(&trust_data) {
+        let pem = pem_result.map_err(|_e| Error::CoseInvalidCert)?;
+        certs.push(pem.contents);
+    }
+    Ok(certs)
+}
+
+// sanity check to see if can parse trust settings
+fn test_load_trust(allowed_list: &[u8]) -> Result<()> {
+    // check pems
+    if let Ok(cert_list) = load_trust_from_data(allowed_list) {
+        if !cert_list.is_empty() {
+            return Ok(());
+        }
+    }
+
+    // try to load the of base64 encoded encoding of the sha256 hash of the certificate DER encoding
+    let reader = Cursor::new(allowed_list);
+    let buf_reader = BufReader::new(reader);
+    let mut found_der_hash = false;
+
+    let mut inside_cert_block = false;
+    for l in buf_reader.lines().map_while(|v| v.ok()) {
+        if l.contains("-----BEGIN") {
+            inside_cert_block = true;
+        }
+        if l.contains("-----END") {
+            inside_cert_block = false;
+        }
+
+        // sanity check that that is is base64 encoded and outside of certificate block
+        if !inside_cert_block && base64::decode(&l).is_ok() && !l.is_empty() {
+            found_der_hash = true;
+        }
+    }
+
+    if found_der_hash {
+        Ok(())
+    } else {
+        Err(Error::CoseInvalidCert)
+    }
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for Trust {
+    fn default() -> Self {
+        // load test config store for unit tests
+        #[cfg(test)]
+        {
+            let mut trust = Self {
+                user_anchors: None,
+                trust_anchors: None,
+                trust_config: None,
+                allowed_list: None,
+            };
+
+            trust.trust_config = Some(
+                String::from_utf8_lossy(include_bytes!(
+                    "../../tests/fixtures/certs/trust/store.cfg"
+                ))
+                .into_owned(),
+            );
+            trust.user_anchors = Some(
+                String::from_utf8_lossy(include_bytes!(
+                    "../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
+                ))
+                .into_owned(),
+            );
+
+            trust
+        }
+        #[cfg(not(test))]
+        {
+            Self {
+                user_anchors: None,
+                trust_anchors: None,
+                trust_config: None,
+                allowed_list: None,
+            }
+        }
+    }
+}
+
+impl SettingsValidate for Trust {
+    fn validate(&self) -> Result<()> {
+        if let Some(ta) = &self.trust_anchors {
+            test_load_trust(ta.as_bytes())?;
+        }
+
+        if let Some(pa) = &self.user_anchors {
+            test_load_trust(pa.as_bytes())?;
+        }
+
+        if let Some(al) = &self.allowed_list {
+            test_load_trust(al.as_bytes())?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Settings to configure the CAWG identity trust lists.
+///
+/// This configures trust used when validating CAWG identity assertions. It is
+/// modeled separately from the C2PA [`Trust`] because several of these settings
+/// (such as [`verify_trust_list`](CawgTrust::verify_trust_list)) apply only to
+/// CAWG validation and have no effect on C2PA manifest verification.
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(default)
+)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct CawgTrust {
+    /// Whether to verify certificates against the trust lists specified in [`CawgTrust`].
     ///
     /// The default value is true.
     ///
@@ -87,61 +225,8 @@ pub struct Trust {
     pub allowed_list: Option<String>,
 }
 
-impl Trust {
-    // load PEMs
-    fn load_trust_from_data(&self, trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
-        let mut certs = Vec::new();
-
-        // allow for JSON-encoded PEMs with \n
-        let trust_data = String::from_utf8_lossy(trust_data)
-            .replace("\\n", "\n")
-            .into_bytes();
-        for pem_result in x509_parser::pem::Pem::iter_from_buffer(&trust_data) {
-            let pem = pem_result.map_err(|_e| Error::CoseInvalidCert)?;
-            certs.push(pem.contents);
-        }
-        Ok(certs)
-    }
-
-    // sanity check to see if can parse trust settings
-    fn test_load_trust(&self, allowed_list: &[u8]) -> Result<()> {
-        // check pems
-        if let Ok(cert_list) = self.load_trust_from_data(allowed_list) {
-            if !cert_list.is_empty() {
-                return Ok(());
-            }
-        }
-
-        // try to load the of base64 encoded encoding of the sha256 hash of the certificate DER encoding
-        let reader = Cursor::new(allowed_list);
-        let buf_reader = BufReader::new(reader);
-        let mut found_der_hash = false;
-
-        let mut inside_cert_block = false;
-        for l in buf_reader.lines().map_while(|v| v.ok()) {
-            if l.contains("-----BEGIN") {
-                inside_cert_block = true;
-            }
-            if l.contains("-----END") {
-                inside_cert_block = false;
-            }
-
-            // sanity check that that is is base64 encoded and outside of certificate block
-            if !inside_cert_block && base64::decode(&l).is_ok() && !l.is_empty() {
-                found_der_hash = true;
-            }
-        }
-
-        if found_der_hash {
-            Ok(())
-        } else {
-            Err(Error::CoseInvalidCert)
-        }
-    }
-}
-
 #[allow(clippy::derivable_impls)]
-impl Default for Trust {
+impl Default for CawgTrust {
     fn default() -> Self {
         // load test config store for unit tests
         #[cfg(test)]
@@ -182,18 +267,18 @@ impl Default for Trust {
     }
 }
 
-impl SettingsValidate for Trust {
+impl SettingsValidate for CawgTrust {
     fn validate(&self) -> Result<()> {
         if let Some(ta) = &self.trust_anchors {
-            self.test_load_trust(ta.as_bytes())?;
+            test_load_trust(ta.as_bytes())?;
         }
 
         if let Some(pa) = &self.user_anchors {
-            self.test_load_trust(pa.as_bytes())?;
+            test_load_trust(pa.as_bytes())?;
         }
 
         if let Some(al) = &self.allowed_list {
-            self.test_load_trust(al.as_bytes())?;
+            test_load_trust(al.as_bytes())?;
         }
 
         Ok(())
@@ -457,7 +542,7 @@ pub struct Settings {
     /// Settings for configuring the C2PA trust lists.
     pub trust: Trust,
     /// Settings for configuring the CAWG trust lists.
-    pub cawg_trust: Trust,
+    pub cawg_trust: CawgTrust,
     /// Settings for configuring core features.
     pub core: Core,
     /// Settings for configuring verification.
@@ -1433,6 +1518,31 @@ pub mod tests {
         } else {
             panic!("test_settings should have a Local signer configured");
         }
+    }
+
+    #[test]
+    fn test_cawg_trust_is_distinct_from_c2pa_trust() {
+        // The CAWG-only `verify_trust_list` setting lives on `cawg_trust` and is
+        // still reachable at its historical path for backward compatibility.
+        let settings = Settings::default()
+            .with_value("cawg_trust.verify_trust_list", false)
+            .unwrap();
+        assert!(!settings.cawg_trust.verify_trust_list);
+
+        // The CAWG trust configuration round-trips through JSON on its own struct.
+        let json = serde_json::to_string(&settings.cawg_trust).unwrap();
+        let cawg_trust: CawgTrust =
+            serde_json::from_value(serde_json::from_str::<serde_json::Value>(&json).unwrap())
+                .unwrap();
+        assert_eq!(cawg_trust, settings.cawg_trust);
+
+        // The C2PA `trust` struct no longer carries the CAWG-only field, so a
+        // stray `trust.verify_trust_list` is silently ignored rather than honored.
+        let settings = Settings::default()
+            .with_json(r#"{"trust": {"verify_trust_list": false}}"#)
+            .unwrap();
+        let trust_value = serde_json::to_value(&settings.trust).unwrap();
+        assert!(trust_value.get("verify_trust_list").is_none());
     }
 
     #[test]
