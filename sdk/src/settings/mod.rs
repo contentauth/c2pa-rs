@@ -194,8 +194,8 @@ impl SettingsValidate for Trust {
 ///
 /// This configures trust used when validating CAWG identity assertions. It is
 /// modeled separately from the C2PA [`Trust`] because several of these settings
-/// (such as [`verify_trust_list`](CawgTrust::verify_trust_list)) apply only to
-/// CAWG validation and have no effect on C2PA manifest verification.
+/// (such as `verify_trust_list`) apply only to CAWG validation and have no
+/// effect on C2PA manifest verification.
 #[cfg_attr(
     feature = "json_schema",
     derive(schemars::JsonSchema),
