@@ -3313,18 +3313,14 @@ mod tests {
         // add that issuer to `cawg_trust.trusted_ica_issuers` for the credential
         // to be reported as valid.
         let builder = unsafe { c2pa_context_builder_new() };
-        assert!(!builder.is_null());
-
         let settings = unsafe { c2pa_settings_new() };
-        assert!(!settings.is_null());
 
-        let json = CString::new(
-            r#"{"cawg_trust": {"trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]}}"#,
+        let path = CString::new("cawg_trust.trusted_ica_issuers").unwrap();
+        let value = CString::new(
+            r#"["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]"#,
         )
         .unwrap();
-        let format = CString::new("json").unwrap();
-        let result =
-            unsafe { c2pa_settings_update_from_string(settings, json.as_ptr(), format.as_ptr()) };
+        let result = unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) };
         assert_eq!(result, 0);
 
         let result = unsafe { c2pa_context_builder_set_settings(builder, settings) };
