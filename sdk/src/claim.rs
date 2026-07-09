@@ -1585,10 +1585,9 @@ impl Claim {
             hr.url()
         } else {
             // make a full path
-            if let Some(box_name) = box_name_from_uri(&hr.url()) {
+            {
+                let box_name = box_name_from_uri(&hr.url())?;
                 to_databox_uri(self.label(), &box_name)
-            } else {
-                return None;
             }
         };
 
