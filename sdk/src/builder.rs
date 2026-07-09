@@ -1823,7 +1823,27 @@ impl Builder {
             self.intent(),
             Some(BuilderIntent::Edit | BuilderIntent::Update)
         );
-        if auto_parent && !self.definition.ingredients.iter().any(|i| i.is_parent()) {
+        // Don't auto-add a parentOf ingredient if the user's manifest already declares a
+        // c2pa.created or c2pa.opened action — those are mutually exclusive with auto-parent.
+        let has_created_or_opened = self.definition.assertions.iter().any(|a| {
+            if !a.label.starts_with(crate::assertions::Actions::LABEL) {
+                return false;
+            }
+            let Ok(actions) = a.to_assertion::<crate::assertions::Actions>() else {
+                return false;
+            };
+            actions.actions().iter().any(|act| {
+                matches!(
+                    act.action(),
+                    crate::assertions::c2pa_action::CREATED
+                        | crate::assertions::c2pa_action::OPENED
+                )
+            })
+        });
+        if auto_parent
+            && !has_created_or_opened
+            && !self.definition.ingredients.iter().any(|i| i.is_parent())
+        {
             let parent_def = serde_json::json!({
                 "relationship": "parentOf",
             });
