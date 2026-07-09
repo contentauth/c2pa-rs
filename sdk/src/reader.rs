@@ -1245,48 +1245,13 @@ impl Reader {
 
         // Wire the archive store as a lazy resolver so that JUMBF URI identifiers in
         // the definition (thumbnails, ingredient data) can be resolved when re-signing.
-        use crate::{
-            assertion::AssertionData,
-            jumbf::labels::{ASSERTIONS, DATABOXES},
-        };
-        let store_get = Arc::clone(&self.store);
-        let store_has = Arc::clone(&self.store);
-        builder.resources.set_resolver(
-            Arc::new(move |uri: &str| {
-                if uri.contains(DATABOXES) {
-                    let label = manifest_label_from_uri(uri)?;
-                    let hashed_uri = crate::hashed_uri::HashedUri::new(uri.to_owned(), None, &[]);
-                    return store_get
-                        .get_data_box_from_uri_and_claim(&hashed_uri, &label)
-                        .map(|db| Ok(db.data.clone()));
-                }
-                if uri.contains(ASSERTIONS) {
-                    let assertion = store_get.get_assertion_from_uri(uri)?;
-                    if let Ok(embedded) = crate::assertions::EmbeddedData::try_from(assertion) {
-                        return Some(Ok(embedded.data));
-                    }
-                    return Some(Ok(assertion.data().to_vec()));
-                }
-                None
-            }),
-            Arc::new(move |uri: &str| {
-                if uri.contains(ASSERTIONS) {
-                    store_has
-                        .get_assertion_from_uri(uri)
-                        .map(|a| matches!(a.decode_data(), AssertionData::Binary(_)))
-                        .unwrap_or(false)
-                } else if uri.contains(DATABOXES) {
-                    let hr = crate::hashed_uri::HashedUri::new(uri.to_owned(), None, &[]);
-                    let label = manifest_label_from_uri(uri).unwrap_or_default();
-                    store_has
-                        .get_data_box_from_uri_and_claim(&hr, &label)
-                        .is_some()
-                } else {
-                    false
-                }
-            }),
-            Arc::new(Vec::new),
-        );
+        let label = builder.definition.label.clone().unwrap_or_default();
+        builder
+            .resources
+            .set_resolver(Arc::new(crate::manifest::ManifestStoreResolver {
+                store: Arc::clone(&self.store),
+                label,
+            }));
 
         Ok(builder)
     }

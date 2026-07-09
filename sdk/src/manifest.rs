@@ -381,9 +381,9 @@ impl Manifest {
 }
 
 #[derive(Debug)]
-struct ManifestStoreResolver {
-    store: Arc<Store>,
-    label: String,
+pub(crate) struct ManifestStoreResolver {
+    pub(crate) store: Arc<Store>,
+    pub(crate) label: String,
 }
 
 impl StoreResolver for ManifestStoreResolver {
