@@ -1362,7 +1362,7 @@ fn main() -> Result<()> {
             let report = ingredient.to_string();
 
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
-            println!("Ingredient report written to the directory {:?}", &output);
+            println!("Ingredient report written to the directory {:?}", output);
         } else {
             let reader = Reader::from_shared_context(&context)
                 .with_file(path)
@@ -1376,7 +1376,7 @@ fn main() -> Result<()> {
                 File::create(output.join("detailed.json"))?.write_all(&detailed.into_bytes())?;
             }
             File::create(output.join("manifest_store.json"))?.write_all(&report.into_bytes())?;
-            println!("Manifest report written to the directory {:?}", &output);
+            println!("Manifest report written to the directory {:?}", output);
         }
     } else if args.ingredient {
         let mut builder = Builder::from_shared_context(&context);
