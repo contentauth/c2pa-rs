@@ -4189,7 +4189,7 @@ impl Store {
 impl std::fmt::Display for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let report = &ManifestStoreReport::from_store(self).unwrap_or_default();
-        f.write_str(&format!("{}", &report))
+        f.write_str(&format!("{}", report))
     }
 }
 
