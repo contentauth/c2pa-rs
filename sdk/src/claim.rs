@@ -1585,10 +1585,8 @@ impl Claim {
             hr.url()
         } else {
             // make a full path
-            {
-                let box_name = box_name_from_uri(&hr.url())?;
-                to_databox_uri(self.label(), &box_name)
-            }
+            let box_name = box_name_from_uri(&hr.url())?;
+            to_databox_uri(self.label(), &box_name)
         };
 
         self.data_boxes.iter().find_map(|x| {
