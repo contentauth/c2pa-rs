@@ -350,9 +350,14 @@ fn check_stapled_ocsp_response(
         Err(_) => (None, None),
     };
 
+    // The OCSP response must pertain to the certificate that signed this
+    // manifest, so bind it to that signer's certificate chain.
+    let signing_cert_chain = cert_chain_from_sign1(sign1)?;
+
     let mut current_validation_log = StatusTracker::default();
     let Ok(ocsp_data) = OcspResponse::from_der_checked(
         ocsp_response_der,
+        &signing_cert_chain,
         signing_time,
         &mut current_validation_log,
     ) else {
@@ -449,11 +454,16 @@ pub(crate) fn fetch_and_check_ocsp_response(
 
     // Check the OCSP response, but only if it is well-formed.
     // Revocation errors are reported in the validation log.
-    let ocsp_data =
-        match OcspResponse::from_der_checked(&ocsp_response_der, signing_time, validation_log) {
-            Ok(data) => data,
-            Err(_) => return Ok(OcspResponse::default()),
-        };
+    // `certs` is the signing certificate chain; bind the OCSP response to it.
+    let ocsp_data = match OcspResponse::from_der_checked(
+        &ocsp_response_der,
+        &certs,
+        signing_time,
+        validation_log,
+    ) {
+        Ok(data) => data,
+        Err(_) => return Ok(OcspResponse::default()),
+    };
 
     // If we get a valid response validate the certs.
     if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
