@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use http::Request;
 use serde::{Deserialize, Serialize};
+use x509_parser::{error::PEMError, pem::Pem};
 
 use crate::{
     create_signer,
@@ -126,13 +127,22 @@ impl SignerSettings {
                 tsa_url,
                 referenced_assertions: _,
                 roles: _,
-            } => Ok(Box::new(RemoteSigner {
-                url,
-                alg,
-                reserve_size: 10000 + sign_cert.len(),
-                certs: vec![sign_cert.into_bytes()],
-                tsa_url,
-            })),
+            } => {
+                // Convert to DER; the certificate profile check runs before the remote call.
+                let certs = Pem::iter_from_buffer(sign_cert.as_bytes())
+                    .map(|r| r.map(|pem| pem.contents))
+                    .collect::<std::result::Result<Vec<Vec<u8>>, PEMError>>()
+                    .map_err(|e| {
+                        Error::BadParam(format!("invalid remote signer certificate: {e}"))
+                    })?;
+                Ok(Box::new(RemoteSigner {
+                    url,
+                    alg,
+                    reserve_size: 10000 + sign_cert.len(),
+                    certs,
+                    tsa_url,
+                }))
+            }
         }
     }
 
@@ -551,6 +561,19 @@ pub mod tests {
         assert_eq!(signer.alg(), alg);
         assert_eq!(signer.time_authority_url(), None);
         assert_eq!(signer.sign(&[1, 2, 3]).unwrap(), signed_bytes);
+
+        // Regression: certs must be DER, not raw PEM.
+        let certs = signer.certs().unwrap();
+        assert!(!certs.is_empty());
+        assert!(
+            !certs[0].starts_with(b"-----BEGIN"),
+            "certs must be DER, not PEM"
+        );
+        assert_eq!(
+            certs[0].first(),
+            Some(&0x30),
+            "DER cert starts with SEQUENCE tag"
+        );
 
         mock.assert();
     }
