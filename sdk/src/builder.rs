@@ -2936,11 +2936,18 @@ impl Builder {
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&format, source)?;
 
-        // convert the manifest to a store
-        let mut store = self.to_store()?;
+        let mut claim = self.to_claim()?;
 
         // Get signer from context
         let signer = self.context.signer()?;
+
+        // Add a timestamp if the signer has a timestamp authority (as sign() does).
+        if let Some(tsa_url) = signer.time_authority_url() {
+            self.maybe_add_timestamp(&tsa_url, &mut claim)?;
+        }
+
+        // convert the manifest to a store
+        let mut store = self.to_store_with_claim(claim)?;
 
         // sign and write our store to to the output image file
         store.save_to_stream(&format, source, dest, signer, &self.context)
