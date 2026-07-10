@@ -26,3 +26,13 @@ strip = true  # Automatically strip symbols from the binary.
 opt-level = 3
 lto = "thin"  # Link time optimization.
 
+# Temporary: the `id3` crate (v1.17.0, and current upstream `main`) still performs
+# an unchecked `content_size - 4` in its ID3v2.3 frame decoder
+# (src/stream/frame/v3.rs) — a compressed frame with body < 4 bytes underflows to
+# ~u64::MAX and aborts the process on the following allocation. The fix already
+# exists for ID3v2.4 (v4.rs, `saturating_sub`) but was never applied to v2.3.
+# Point at a fork that applies the same one-liner to v3.rs until it is released
+# upstream: https://codeberg.org/ssanthosh/rust-id3/pulls/1
+[patch.crates-io]
+id3 = { git = "https://codeberg.org/ssanthosh/rust-id3", rev = "4d8abd485a277e4f1b7b1fdeb4ea936936fd1f82" }
+

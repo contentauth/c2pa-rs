@@ -2236,8 +2236,7 @@ dependencies = [
 [[package]]
 name = "id3"
 version = "1.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70d6d9f23a28c6feab60d7b4a339e004809019ec9d5fd964b3f4c655ff9bc141"
+source = "git+https://codeberg.org/ssanthosh/rust-id3?rev=4d8abd485a277e4f1b7b1fdeb4ea936936fd1f82#4d8abd485a277e4f1b7b1fdeb4ea936936fd1f82"
 dependencies = [
  "bitflags 2.13.0",
  "byteorder",
