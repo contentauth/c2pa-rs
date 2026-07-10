@@ -1114,7 +1114,7 @@ impl Builder {
                 };
 
                 if index >= builder.definition.ingredients.len() {
-                    return Err(Error::OtherError(Box::new(std::io::Error::other(format!(
+                    Err(Error::OtherError(Box::new(std::io::Error::other(format!(
                         "Invalid ingredient index {index}"
                     )))))?; // todo add specific error
                 }
@@ -1724,7 +1724,7 @@ impl Builder {
             }
 
             // If a "ComponentOf" ingredient doesn't have an associated "c2pa.placed" action, create it here.
-            for (_id, (relationship, uri)) in ingredient_map.iter() {
+            for (relationship, uri) in ingredient_map.values() {
                 if *relationship == &Relationship::ComponentOf
                     && !referenced_uris.contains(&uri.url())
                 {

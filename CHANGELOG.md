@@ -9,6 +9,16 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.89.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.1...c2pa-v0.89.2)
+_09 July 2026_
+
+### Fixed
+
+* Bind OCSP response certId to the signing certificate (CAI-11829) ([#2273](https://github.com/contentauth/c2pa-rs/pull/2273))
+* Fix new Clippy warnings for Rust 1.97.0 ([#2279](https://github.com/contentauth/c2pa-rs/pull/2279))
+* Ensure created has a dst and don't add parent when actions already exist ([#2264](https://github.com/contentauth/c2pa-rs/pull/2264))
+* Integer overflow panic in bmff_to_jumbf_exclusions via DataMap offset addition ([#2263](https://github.com/contentauth/c2pa-rs/pull/2263))
+
 ## [0.89.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.0...c2pa-v0.89.1)
 _07 July 2026_
 
