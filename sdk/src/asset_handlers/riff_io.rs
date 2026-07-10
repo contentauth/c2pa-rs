@@ -34,11 +34,10 @@ use crate::{
     },
 };
 
-static SUPPORTED_TYPES: [&str; 14] = [
+static SUPPORTED_TYPES: [&str; 13] = [
     "avi",
     "wav",
     "webp",
-    "x-webp",
     "image/webp",
     "image/x-webp",
     "audio/wav",
@@ -185,7 +184,7 @@ where
         if let Some(xmp) = xmp_data {
             if is_riff_chunk && !xmp.is_empty() {
                 // if this is a webp doc we must also update VP8X
-                if format == "webp" || format == "x-webp" || format == "image/webp" || format == "image/x-webp" {
+                if format == "webp" {
                     // if already present we can patch otherwise add
                     if let Some(ChunkContents::Data(_id, chunk_data)) =
                         children_contents.iter_mut().find(|c| match c {
