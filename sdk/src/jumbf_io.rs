@@ -25,6 +25,8 @@ use lazy_static::lazy_static;
 
 #[cfg(feature = "pdf")]
 use crate::asset_handlers::pdf_io::PdfIO;
+#[cfg(feature = "text")]
+use crate::asset_handlers::structured_text_io::StructuredTextIO;
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
@@ -53,6 +55,8 @@ lazy_static! {
         Box::new(Mp3IO::new("")),
         Box::new(GifIO::new("")),
         Box::new(FlacIO::new("")),
+        #[cfg(feature = "text")]
+        Box::new(StructuredTextIO::new("")),
     ];
 
     static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
@@ -592,6 +596,9 @@ pub mod tests {
 
         let pdf_supported = supported.iter().any(|s| s == "pdf");
         assert_eq!(pdf_supported, cfg!(feature = "pdf"));
+
+        let text_supported = supported.iter().any(|s| s == "md");
+        assert_eq!(text_supported, cfg!(feature = "text"));
 
         assert!(supported.iter().any(|s| s == "jpg"));
         assert!(supported.iter().any(|s| s == "jpeg"));

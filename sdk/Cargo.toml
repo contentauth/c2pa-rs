@@ -37,6 +37,8 @@ openssl = [
     "dep:openssl",
 ]
 pdf = ["dep:lopdf"]
+# Experimental, non-default: native text asset handlers (C2PA A.7/A.8/A.9).
+text = []
 rust_native_crypto = [
     "dep:const-oid",
     "dep:ecdsa",
