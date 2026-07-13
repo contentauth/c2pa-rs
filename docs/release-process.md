@@ -68,6 +68,26 @@ Breaking changes and larger refactors are batched onto a scheduled train:
 
 A side effect of skip-if-empty: the middle version number stops being a clock and becomes a true signal that a breaking change happened. Recency therefore comes from dated changelogs, not the version number.
 
+### Version numbering across a train
+
+Every train advances the **minor** number by one, regardless of whether `cargo-semver-checks` detects a breaking change — a train is, by definition, a new minor line, and we want a clean, predictable number for it. Versions are **set by hand** (e.g. `cargo set-version`) rather than left to release-plz's semver detection, precisely because we are overriding that detection.
+
+The convention:
+
+* **`main` always carries the *next* release's version with a `-dev` suffix** — e.g. `0.91.0-dev`. Because `main` is never published, the `-dev` prerelease is purely a label that says "work in progress toward 0.91.0."
+* **Cutting the train** for `0.N.0` produces the release-candidate branch `0.N.0-rc.1` (the RC bakes but is never published). On promotion it becomes `0.N.0`.
+* **Right after the cut, `main` moves to `0.(N+1).0-dev`** so ongoing development is always numbered ahead of the line that's baking.
+* **`c2patool` follows the same pattern on its own numbering** (its own next minor), independent of `c2pa`.
+
+Worked example (the first train, which is also the transition onto this convention):
+
+| Crate | current `main` | RC branch (baking) | promoted | `main` after cut |
+| -- | -- | -- | -- | -- |
+| `c2pa` / `c2pa-c-ffi` | `0.89.3` | `0.90.0-rc.1` | `0.90.0` | `0.91.0-dev` |
+| `c2patool` | `0.26.72` | `0.27.0-rc.1` | `0.27.0` | `0.28.0-dev` |
+
+Steadily thereafter, `main` already carries `0.N.0-dev`, so the train's release version is that number with `-dev` dropped, and `main` advances to `0.(N+1).0-dev`.
+
 ## Keeping additive changes additive
 
 The model only works if we stay disciplined about keeping the fast lane non-breaking:

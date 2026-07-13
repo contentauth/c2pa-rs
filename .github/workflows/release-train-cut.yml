@@ -76,20 +76,39 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Compute next breaking version and RC branch
+      - name: Compute train versions and RC branch
         id: ver
         run: |
-          CUR=$(cargo metadata --format-version=1 --no-deps \
-            | jq -r '.packages[] | select(.name=="c2pa") | .version')
-          # Pre-1.0: a breaking change bumps the middle number: 0.x.y -> 0.(x+1).0
-          NEXT=$(echo "$CUR" | awk -F. '{printf "0.%d.0", $2+1}')
-          # The RC branch name contains "-rc." so it matches the Tier CI
-          # triggers (*-rc.*) but NOT the publish triggers (stable / v0.*).
-          # That is what guarantees a release candidate is never published.
+          # A train always advances the MINOR number by one (see
+          # docs/release-process.md "Version numbering across a train"). `main`
+          # normally carries the next release's version as `0.N.0-dev`, so the
+          # release version is that with `-dev` dropped; on the very first train
+          # `main` is a plain `0.x.y`, so we bump the minor instead.
+          rel_minor() {
+            local v="$1" base="${1%-dev}"
+            if [ "$base" != "$v" ]; then
+              echo "$base"                                   # 0.N.0-dev -> 0.N.0
+            else
+              echo "$v" | awk -F. '{printf "0.%d.0", $2+1}'  # 0.x.y -> 0.(x+1).0
+            fi
+          }
+          next_dev() { echo "$1" | awk -F. '{printf "0.%d.0-dev", $2+1}'; }
+
+          meta() { cargo metadata --format-version=1 --no-deps | jq -r ".packages[]|select(.name==\"$1\")|.version"; }
+          CUR_C2PA=$(meta c2pa); CUR_TOOL=$(meta c2patool)
+          REL_C2PA=$(rel_minor "$CUR_C2PA"); REL_TOOL=$(rel_minor "$CUR_TOOL")
+
+          # The RC branch name contains "-rc." so it matches the Tier CI triggers
+          # (*-rc.*) but NOT the publish triggers (stable / v0.*) -- a release
+          # candidate can never be published by construction.
           {
-            echo "current=$CUR"
-            echo "next=$NEXT"
-            echo "branch=${NEXT}-rc.1" # e.g. 0.90.0-rc.1
+            echo "rel_c2pa=$REL_C2PA"
+            echo "rel_tool=$REL_TOOL"
+            echo "rc_c2pa=${REL_C2PA}-rc.1"
+            echo "rc_tool=${REL_TOOL}-rc.1"
+            echo "dev_c2pa=$(next_dev "$REL_C2PA")"
+            echo "dev_tool=$(next_dev "$REL_TOOL")"
+            echo "branch=${REL_C2PA}-rc.1" # e.g. 0.90.0-rc.1
           } >> "$GITHUB_OUTPUT"
 
       - name: Skip if RC branch already exists
@@ -129,20 +148,39 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
-            const next = '${{ steps.ver.outputs.next }}';
-            const branch = '${{ steps.ver.outputs.branch }}';
+            const relC2pa = '${{ steps.ver.outputs.rel_c2pa }}';
+            const relTool = '${{ steps.ver.outputs.rel_tool }}';
+            const rcC2pa  = '${{ steps.ver.outputs.rc_c2pa }}';
+            const rcTool  = '${{ steps.ver.outputs.rc_tool }}';
+            const devC2pa = '${{ steps.ver.outputs.dev_c2pa }}';
+            const devTool = '${{ steps.ver.outputs.dev_tool }}';
+            const branch  = '${{ steps.ver.outputs.branch }}';
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `Release train ${next}: bake (>=3 business days)`,
+              title: `Release train ${relC2pa}: bake (>=3 business days)`,
               labels: ['release-train'],
               body: [
-                `Release-candidate branch \`${branch}\` was cut from \`main\` for the **${next}** breaking train.`,
+                `Release-candidate branch \`${branch}\` was cut from \`main\` for the **${relC2pa}** train.`,
                 'It is not published to crates.io; it only bakes under the Tier CI suites.',
+                '',
+                '**Set the release-candidate versions on the RC branch** (forced minor bump; see docs/release-process.md → "Version numbering across a train"):',
+                '```sh',
+                `git switch ${branch}`,
+                `cargo set-version -p c2pa ${rcC2pa}        # also sets c2pa-c-ffi (shared workspace version)`,
+                `cargo set-version -p c2patool ${rcTool}`,
+                `git commit -am "chore: set ${branch} release-candidate versions" && git push`,
+                '```',
+                '',
+                '**Bump `main` to the next dev versions** (open a PR):',
+                '```sh',
+                `cargo set-version -p c2pa ${devC2pa}`,
+                `cargo set-version -p c2patool ${devTool}`,
+                '```',
                 '',
                 '- Bake at least **3 business days**; hold longer if downstream validation needs it.',
                 '- Only **bugfixes** are accepted during the bake, upstream-first: fix on `main`, then cherry-pick onto the RC branch.',
-                '- When green, **manually promote**: snapshot the outgoing `stable` as `v0.<old>` (for backports), then merge the RC branch into `stable`. The merge triggers the `0.(x+1).0` publish.',
-                '- The previous `0.x` line is retired once `' + next + '` ships.',
+                `- When green, **manually promote**: snapshot the outgoing \`stable\` as \`v0.<old>\` (for backports), then merge the RC branch into \`stable\`. release-plz then publishes \`${relC2pa}\` (c2patool \`${relTool}\`).`,
+                '- The previous line is retired once this train ships.',
               ].join('\n'),
             });
