@@ -16,6 +16,9 @@ We follow [Semantic Versioning (SemVer)](https://semver.org/). Version 1.0.0 wil
 
 Pre-1.0 this fits with our two-track [release process](release-process.md): a **deprecation is additive**, so it ships quickly on the current release train as a patch release (the `y` in `0.x.y`) and starts the grace-period clock immediately. The eventual **removal is breaking**, so it rides the next scheduled breaking "train" (a bump of the middle number, `0.x.0`) once the grace period has elapsed. Users therefore get the replacement API and the deprecation warning right away, with a known schedule for when the old API disappears.
 
+> [!IMPORTANT]
+> We deprecate an API **only once its replacement is available**. A deprecation notice must always point users to a supported alternative, so there is never a window in which the recommended path is "stop using this, and wait." (If an API is dangerous enough that we want to steer people away before a replacement exists, that is a documentation/advisory matter — or, for a security issue, the [security exception](#security-and-bug-fix-exceptions) — not a routine deprecation.)
+
 > [!NOTE]
 > Pre-1.0, this policy is applied on a best-effort basis. We may not always be able to provide a full deprecation cycle for every change as the API converges on its 1.0 shape. In particular, the `c2pa::Error` type is expected to undergo non-trivial refactoring prior to 1.0 — variants may be added, removed, renamed, or have their payloads reshaped between minor releases, and downstream code that matches on specific variants should expect churn until 1.0.
 

@@ -33,4 +33,4 @@
 
 - name: canary
   color: "b60205"
-  description: "Cross-repo canary detected drift with an extracted crate"
+  description: "Cross-repo canary detected drift with an upstream crate we maintain (e.g. c2pa_cbor)"

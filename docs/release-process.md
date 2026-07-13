@@ -81,7 +81,7 @@ The model only works if we stay disciplined about keeping the fast lane non-brea
 
 We are extracting stable, low-churn code out of `c2pa-rs` into independent crates, each in its own repository, so that this code is not rebuilt on every PR to `c2pa-rs` `main`. The first example is **`c2pa_cbor`** — the CBOR (de)serialization primitives used throughout C2PA manifests, now in their own [`contentauth/c2pa-cbor`](https://github.com/contentauth/c2pa-cbor) repo. These crates are versioned **independently** (lockstep versioning would re-couple the build times we're trying to separate).
 
-Once a subproject lives in its own repo and is published, `c2pa-rs` depends on it by version (`c2pa_cbor = "0.77"`) like any third-party crate. That reframes the "wait period" from a scheduling problem into a dependency-edge problem:
+Once a subproject lives in its own repo and is published, `c2pa-rs` depends on it by version (`c2pa_cbor = "0.77"`) like any third-party crate. We use a normal caret requirement (not a pinned `=x.y.z`) and let `Cargo.lock` pin the exact version for reproducible builds — the same approach we take for any other dependency. That reframes the "wait period" from a scheduling problem into a dependency-edge problem:
 
 * **Extracted crates do not follow this release process.** Each upstream `c2pa-*` crate is released on a simple, as-needed basis. (Cut one when a change lands; update version as per `cargo-semver-checks`.) Because they rarely change, they have no meaningful wait period of their own. Incorporating those updates into `c2pa-rs` is treated exactly like any other change to `c2pa-rs`: a dependency upgrade may be backported to `stable` if it doesn't break `c2pa-rs` APIs; otherwise it waits for the next release change.
 * **The extraction itself is a Track 1 change** to `c2pa-rs`: depend on the published crate, delete the inlined module, re-export the same public paths. Additive; ships quickly on the current release train.
@@ -194,11 +194,11 @@ The `type` must be one of (bold = preferred in most cases):
 
 ### Failure to update downstream crates
 
-In repos that host multiple crates, an earlier crate in the dependency chain can warrant a release while a crate that depends on it has no commits of its own. `release-plz` updates the downstream version reference but doesn't always cut a new release of the downstream crate. (See [issue #2164](https://github.com/release-plz/release-plz/issues/2164) and [PR #2196](https://github.com/release-plz/release-plz/pull/2196).) Workaround: post a no-op change (a whitespace tweak or comment) to the downstream crate to trigger a release PR.
+In repos that host multiple crates, an earlier crate in the dependency chain can warrant a release while a crate that depends on it has no commits of its own. `release-plz` updates the downstream version reference but doesn't always cut a new release of the downstream crate. (See [issue #2164](https://github.com/release-plz/release-plz/issues/2164) and [PR #2196](https://github.com/release-plz/release-plz/pull/2196).) Workaround: post a no-op change (a whitespace tweak or comment) to the downstream crate to trigger a release PR. Tracked in [#2298](https://github.com/contentauth/c2pa-rs/issues/2298); remove this note once resolved upstream.
 
 ### Left-behind release branches
 
-`release-plz` sometimes creates a new release branch + PR instead of updating the existing one, leaving the old branch behind. To reduce noise, [`release-pr.yml`](../.github/workflows/release-pr.yml) deletes stale `release-plz-*` branches.
+`release-plz` sometimes creates a new release branch + PR instead of updating the existing one, leaving the old branch behind. To reduce noise, [`release-pr.yml`](../.github/workflows/release-pr.yml) deletes stale `release-plz-*` branches. Tracked in [#2299](https://github.com/contentauth/c2pa-rs/issues/2299); remove this note once resolved.
 
 ### `c2pa` crate accidentally published a 1.0.0 release
 
