@@ -320,18 +320,15 @@ jobs:
           crate: cargo-docs-rs
           version: "1.0.4"
 
-      # docs.rs does not build with `-Dwarnings`, so a new nightly warning
-      # would not actually break our published docs. Deny only the doc-
-      # correctness lints that would (broken links / bad HTML). Strict, blanket
-      # warning enforcement lives in the `docs_stable` job below instead.
+      # This job only verifies that the docs.rs build itself succeeds under the
+      # docs.rs environment (`--cfg docsrs`). We deliberately do not deny any
+      # warnings here: docs.rs does not build with `-Dwarnings`, and warning
+      # enforcement is handled on the predictable stable toolchain in the
+      # `docs_stable` job below.
       - name: Preflight c2pa-rs docs.rs
-        env:
-          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::invalid_html_tags
         run: cargo docs-rs -p c2pa
 
       - name: Preflight c2pa-c-ffi docs.rs
-        env:
-          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::invalid_html_tags
         run: cargo docs-rs -p c2pa-c-ffi
 
   docs_stable:
