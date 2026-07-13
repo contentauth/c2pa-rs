@@ -15,6 +15,11 @@
 #![deny(clippy::panic)]
 #![deny(clippy::unwrap_used)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+// Upstream rustdoc bug: with --all-features + --cfg docsrs, redundant-link
+// false positives can fire with no span, varying by which items are in
+// scope. See https://github.com/rust-lang/rust/issues/115637 and
+// https://github.com/rust-lang/rust/issues/141553.
+#![allow(rustdoc::redundant_explicit_links)]
 
 //! This library supports reading, creating, and embedding C2PA data
 //! for a variety of asset types.
