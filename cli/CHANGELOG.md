@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.70](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.69...c2patool-v0.26.70)
+_09 July 2026_
+
+### Fixed
+
+* Fix new Clippy warnings for Rust 1.97.0 ([#2279](https://github.com/contentauth/c2pa-rs/pull/2279))
+* Ensure created has a dst and don't add parent when actions already exist ([#2264](https://github.com/contentauth/c2pa-rs/pull/2264))
+
+## [0.26.69](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.68...c2patool-v0.26.69)
+_07 July 2026_
+
 ## [0.26.68](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.67...c2patool-v0.26.68)
 _19 June 2026_
 

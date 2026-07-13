@@ -551,7 +551,7 @@ impl Manifest {
             let label = claim_assertion.label();
             let base_label = assertion.label();
             let created = claim_assertion.assertion_type() == ClaimAssertionType::Created;
-            debug!("assertion = {}", &label);
+            debug!("assertion = {}", label);
             match base_label.as_ref() {
                 base if base.starts_with(labels::ACTIONS) => {
                     let mut actions = Actions::from_assertion(assertion)?;
