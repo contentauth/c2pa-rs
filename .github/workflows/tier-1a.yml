@@ -305,7 +305,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
-          toolchain: nightly
+          # Pinned to the nightly docs.rs itself runs (see the version string
+          # at https://docs.rs/about/builds). Pinning decouples this preflight
+          # from the Rust team's daily nightly churn; refresh periodically
+          # (e.g. at release time) to track what docs.rs is actually using.
+          toolchain: nightly-2026-07-12
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
@@ -316,17 +320,59 @@ jobs:
           crate: cargo-docs-rs
           version: "1.0.4"
 
+      # docs.rs does not build with `-Dwarnings`, so a new nightly warning
+      # would not actually break our published docs. Deny only the doc-
+      # correctness lints that would (broken links / bad HTML). Strict, blanket
+      # warning enforcement lives in the `docs_stable` job below instead.
       - name: Preflight c2pa-rs docs.rs
         env:
-          RUSTDOCFLAGS: -Dwarnings
+          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::invalid_html_tags
         run: cargo docs-rs -p c2pa
 
       - name: Preflight c2pa-c-ffi docs.rs
         env:
-          RUSTDOCFLAGS: -Dwarnings
+          RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links -D rustdoc::invalid_html_tags
         run: cargo docs-rs -p c2pa-c-ffi
 
-      - name: Preflight c2patool cargo docs
+  docs_stable:
+    name: Doc build (stable, warnings denied)
+    runs-on: ubuntu-latest
+
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+      contains(github.event.pull_request.labels.*.name, 'check-release')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      # Blanket `-Dwarnings` enforcement on the predictable stable toolchain
+      # (advances every ~6 weeks, not daily). These builds use plain `cargo
+      # doc` and omit `--cfg docsrs`, so the nightly-only `doc_cfg` feature in
+      # sdk/src/lib.rs stays inert and stable can compile the docs.
+      - name: c2pa docs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc -p c2pa --no-deps --all-features
+
+      - name: c2pa-c-ffi docs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc -p c2pa-c-ffi --no-deps --all-features
+
+      - name: c2patool docs
         env:
           RUSTDOCFLAGS: -Dwarnings
         run: cargo doc -p c2patool --no-deps --all-features
