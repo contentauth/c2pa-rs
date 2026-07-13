@@ -62,6 +62,13 @@ This is a beta release (version 0.x.x) of the project. We govern changes by whet
 
 This lets us keep moving quickly before 1.0 while giving you a predictable schedule for migrations. For full details, see the [release process](docs/release-process.md) and [deprecation policy](docs/deprecation-policy.md).
 
+### Which branch to use
+
+* **`main`** is the active development branch. It's always "green" (it compiles and passes CI), but its public API is **not** stable — it may contain unreleased or feature-gated work that changes at any time — and it is **never published to crates.io**. Build from `main` only if you want to preview upcoming work and can tolerate churn.
+* **`stable`** tracks the most recent crates.io release and is where published releases come from. Older `v0.x` branches are retained for retired release lines. **If you depend on `c2pa`, use a released version from [crates.io](https://crates.io/crates/c2pa)** (which comes from `stable`) rather than pinning to `main`.
+
+Every change lands on `main` first and is then brought onto `stable` for release, so `main` is always the superset of what has shipped.
+
 > [!NOTE]
 > The library supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) by default, and implementations should not generate deprecated v1 claims.  For details, see [C2PA v2 claims](docs/release-notes.md#c2pa-v2-claims).
 
