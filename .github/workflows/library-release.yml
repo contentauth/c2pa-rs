@@ -1,9 +1,15 @@
 name: Publish c2pa-library binaries
 
+# Triggered by `c2pa-v*` tags. Under the open-source release process these tags
+# are created by release-plz on a release-line branch (never on `main`, and
+# never on a release-candidate branch -- RCs are not published and therefore
+# never produce a `c2pa-v*` tag). Git tags are repo-global, so no branch filter
+# is needed here.
+
 on:
   push:
     tags:
-      - "c2pa-v*" # Trigger on version tags (e.g., v1.0.0)
+      - "c2pa-v*" # Trigger on version tags (e.g., c2pa-v0.90.0)
   workflow_dispatch:
 
 jobs:
