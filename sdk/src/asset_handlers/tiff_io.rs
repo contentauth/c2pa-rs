@@ -407,16 +407,16 @@ fn check_ifd_data_size(claimed_size: u64, file_size: u64) -> Result<()> {
     Ok(())
 }
 
+struct MappedTiff {
+    tiff_tree: Arena<ImageFileDirectory>,
+    page_tokens: Vec<Token>,
+    sub_files_map: HashMap<Token, Vec<ImageFileDirectory>>,
+    endianness: Endianness,
+    big_tiff: bool,
+}
+
 // create tree of TIFF structure IFDs and IFD entries.
-fn map_tiff<R>(
-    mut input: &mut R,
-) -> Result<(
-    Arena<ImageFileDirectory>,
-    Vec<Token>,
-    HashMap<Token, Vec<ImageFileDirectory>>,
-    Endianness,
-    bool,
-)>
+fn map_tiff<R>(mut input: &mut R) -> Result<MappedTiff>
 where
     R: Read + Seek + ?Sized,
 {
@@ -508,7 +508,7 @@ where
                         )?;
 
                         sub_files_map
-                            .entry(current_token.clone())
+                            .entry(current_token)
                             .and_modify(|v| v.push(subfile_ifd.clone()))
                             .or_insert(vec![subfile_ifd]);
                     }
@@ -526,7 +526,7 @@ where
                         TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Exif)?;
 
                     sub_files_map
-                        .entry(current_token.clone())
+                        .entry(current_token)
                         .and_modify(|v| v.push(exif_ifd.clone()))
                         .or_insert(vec![exif_ifd]);
                 }
@@ -543,7 +543,7 @@ where
                         TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Gps)?;
 
                     sub_files_map
-                        .entry(current_token.clone())
+                        .entry(current_token)
                         .and_modify(|v| v.push(gps_ifd.clone()))
                         .or_insert(vec![gps_ifd]);
                 }
@@ -567,7 +567,13 @@ where
             return Err(Error::InvalidAsset("TIFF structure invalid".to_string()));
         };
 
-    Ok((tiff_tree, tokens, sub_files_map, ts.byte_order, ts.big_tiff))
+    Ok(MappedTiff {
+        tiff_tree,
+        page_tokens: tokens,
+        sub_files_map,
+        endianness: ts.byte_order,
+        big_tiff: ts.big_tiff,
+    })
 }
 
 // struct used to clone source IFD entries. value_bytes are in target endianness
@@ -1001,7 +1007,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         new_tiff_tags: Vec<IfdClonedEntry>,
         remove_tiff_tags: &[u16],
     ) -> Result<()> {
-        if self.c2pa_mode == false {
+        if !self.c2pa_mode {
             return Err(Error::InternalError(
                 "clone_c2pa_mode called without using new_from_source constructor".to_string(),
             ));
@@ -1164,14 +1170,15 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         // if we updated the first IFD then we need to reread the current state so that
         // IFDs are accurate
         self.writer.rewind()?;
-        let (mut _tiff_tree, page_tokens, _sub_files_map, _endianness, _big_tiff) =
-            map_tiff(self.writer.inner_mut())?;
+        let mapped = map_tiff(self.writer.inner_mut())?;
+        let page_tokens = &mapped.page_tokens;
         if first_ifd_updated {
             last_page = page_tokens
                 .last()
                 .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
 
-            last_page_ifd = tiff_tree
+            last_page_ifd = mapped
+                .tiff_tree
                 .get(*last_page)
                 .ok_or_else(|| Error::InvalidAsset("TIFF does not have IFD".to_string()))?;
         }
@@ -1795,7 +1802,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         for page_token in tokens {
             // clone the subfile entries (DNG)
             let page_subfiles = page_sub_files_map
-                .get(&page_token)
+                .get(page_token)
                 .cloned()
                 .unwrap_or_else(Vec::new);
             let subfile_offsets = self.clone_sub_files(tiff_tree, &page_subfiles, asset_reader)?;
@@ -2168,8 +2175,13 @@ fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized
     asset_reader: &mut R,
     tiff_tags: Vec<IfdClonedEntry>,
 ) -> Result<()> {
-    let (mut tiff_tree, page_tokens, _sub_files_map, endianness, big_tiff) =
-        map_tiff(asset_reader)?;
+    let MappedTiff {
+        mut tiff_tree,
+        page_tokens,
+        sub_files_map: _sub_files_map,
+        endianness,
+        big_tiff,
+    } = map_tiff(asset_reader)?;
 
     let mut bo = ByteOrdered::new(asset_writer, endianness);
     let mut tc = TiffCloner::new_from_source(endianness, big_tiff, &mut bo, asset_reader)?;
@@ -2212,7 +2224,11 @@ fn get_cai_data<R>(mut asset_reader: &mut R) -> Result<Vec<u8>>
 where
     R: Read + Seek + ?Sized,
 {
-    let (tiff_tree, page_tokens, _sub_files_map, e, big_tiff) = map_tiff(asset_reader)?;
+    let mapped = map_tiff(asset_reader)?;
+    let tiff_tree = mapped.tiff_tree;
+    let page_tokens = mapped.page_tokens;
+    let e = mapped.endianness;
+    let big_tiff = mapped.big_tiff;
 
     let first_page = page_tokens
         .first()
@@ -2253,7 +2269,12 @@ fn get_xmp_data<R>(mut asset_reader: &mut R) -> Option<Vec<u8>>
 where
     R: Read + Seek + ?Sized,
 {
-    let (tiff_tree, page_tokens, _sub_files_map, e, big_tiff) = map_tiff(asset_reader).ok()?;
+    let mapped = map_tiff(asset_reader).ok()?;
+    let tiff_tree = mapped.tiff_tree;
+    let page_tokens = mapped.page_tokens;
+    let e = mapped.endianness;
+    let big_tiff = mapped.big_tiff;
+
     let first_page = page_tokens.first()?;
     let first_ifd = &tiff_tree[*first_page].data;
 
@@ -2400,7 +2421,11 @@ impl CAIWriter for TiffIO {
         add_required_tags_to_stream(input_stream, &mut output_stream)?;
         output_stream.rewind()?;
 
-        let (tiff_tree, page_tokens, _sub_files_map, e, big_tiff) = map_tiff(&mut output_stream)?;
+        let mapped = map_tiff(&mut output_stream)?;
+        let tiff_tree = mapped.tiff_tree;
+        let page_tokens = mapped.page_tokens;
+        let e = mapped.endianness;
+        let big_tiff = mapped.big_tiff;
 
         let first_page = page_tokens
             .first()
@@ -2466,7 +2491,11 @@ impl CAIWriter for TiffIO {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
     ) -> Result<()> {
-        let (mut tiff_tree, page_tokens, _sub_files_map, e, big_tiff) = map_tiff(input_stream)?;
+        let mapped = map_tiff(input_stream)?;
+        let mut tiff_tree = mapped.tiff_tree;
+        let page_tokens = mapped.page_tokens;
+        let e = mapped.endianness;
+        let big_tiff = mapped.big_tiff;
 
         let last_page = page_tokens
             .last()
@@ -2502,7 +2531,11 @@ impl AssetPatch for TiffIO {
             .create(false)
             .open(asset_path)?;
 
-        let (tiff_tree, page_tokens, _sub_files_map, e, big_tiff) = map_tiff(&mut asset_io)?;
+        let mapped = map_tiff(&mut asset_io)?;
+        let tiff_tree = mapped.tiff_tree;
+        let page_tokens = mapped.page_tokens;
+        let e = mapped.endianness;
+        let big_tiff = mapped.big_tiff;
 
         let last_page = page_tokens
             .last()
@@ -2790,7 +2823,7 @@ pub mod tests {
         let output = temp_dir_path(&temp_dir, "test.tiff");
 
         std::fs::copy(&source, &output).unwrap();
-        let mut asset_writer = std::fs::OpenOptions::new()
+        let asset_writer = std::fs::OpenOptions::new()
             .write(true)
             .read(true)
             .create(false)
