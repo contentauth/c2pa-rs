@@ -146,11 +146,11 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-artifacts-*
-          path: .
+          path: dist
           merge-multiple: true
 
       - name: List downloaded artifacts
-        run: ls -lh
+        run: ls -lh dist
 
       - name: Resolve release tag
         id: extract_tag
@@ -176,16 +176,50 @@ jobs:
           echo "Releasing tag: $TAG_NAME"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
 
+      # Generate the release notes ourselves, scoped to the previous tag of THIS
+      # crate. Tags are repo-global and interleaved across crates (c2pa-v*,
+      # c2patool-v*, c2pa-c-ffi-v*), and GitHub's automatic "previous tag" is the
+      # chronologically previous tag regardless of crate -- which produced
+      # nonsense ranges like `c2patool-v0.26.72...c2pa-v0.90.0`. Picking the
+      # previous same-crate tag keeps the changelog within this crate's history.
+      - name: Generate release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.extract_tag.outputs.tag_name }}"
+          PREFIX="c2pa-v"
+          repo="${{ github.repository }}"
+          # All tags for this crate, plus the current one, sorted ascending.
+          matching=$(gh api --paginate "repos/$repo/git/matching-refs/tags/$PREFIX" \
+                       --jq '.[].ref' | sed 's#refs/tags/##')
+          sorted=$(printf '%s\n%s\n' "$matching" "$TAG" | sort -V -u)
+          # The line immediately before the current tag is its predecessor.
+          prev=$(printf '%s\n' "$sorted" | { grep -F -x -B1 -- "$TAG" || true; } | head -n1)
+          [ "$prev" = "$TAG" ] && prev=""
+          if [ -n "$prev" ]; then
+            echo "Previous $PREFIX tag: $prev"
+            gh api "repos/$repo/releases/generate-notes" \
+              -f tag_name="$TAG" -f previous_tag_name="$prev" --jq .body > release-notes.md
+          else
+            echo "No previous $PREFIX tag; letting GitHub choose the range."
+            gh api "repos/$repo/releases/generate-notes" \
+              -f tag_name="$TAG" --jq .body > release-notes.md
+          fi
+          echo "----- release notes -----"; cat release-notes.md
+
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           tag_name: ${{ steps.extract_tag.outputs.tag_name }}
-
-          files: ./*
+          # Attach the release to the commit the triggering tag points at, never
+          # the default branch (a safety net against creating a stray tag).
+          target_commitish: ${{ github.sha }}
+          body_path: release-notes.md
+          files: dist/*
           draft: false
           prerelease: true
-          generate_release_notes: true
 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
