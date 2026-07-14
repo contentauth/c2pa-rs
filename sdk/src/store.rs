@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::{
     collections::{HashMap, HashSet},
-    io::{Cursor, Read, Seek, SeekFrom},
+    io::{Cursor, Read, Seek},
 };
 
 use async_generic::async_generic;
@@ -2987,7 +2987,7 @@ impl Store {
                 context.check_progress(ProgressPhase::Embedding, 1, 1)?;
 
                 if context.settings().verify.verify_after_sign {
-                    let output_len = output_stream.seek(SeekFrom::End(0))?;
+                    let output_len = stream_len(output_stream)?;
                     let validate_hash = context.settings().verify.verify_after_sign_hash;
                     let mut asset_data = if output_len > 0 && validate_hash {
                         Some(ClaimAssetData::Stream(output_stream, format))

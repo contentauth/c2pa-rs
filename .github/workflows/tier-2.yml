@@ -3,23 +3,36 @@
 # If you change the supported platforms in this workflow, please also
 # update docs/support-tiers.md to match the changes you're making.
 
-# Cool trick: If you want to assess release readiness for any PR,
-# add the "check-release" label to the PR.
+# Gating (see docs/support-tiers.md and docs/release-process.md): Tier 2 runs
+# automatically on any PR whose base is a release-line (`stable`, `v0.*`) or
+# release-candidate (`*-rc*`) branch -- this includes backport PRs and the
+# release-plz release PR. For a PR against `main`, add the "check-release" label
+# to run this suite on demand.
 
 name: Tier 2
 
 on:
+  # Daily full-suite run against main (nightly). Scheduled runs use the default
+  # branch (main).
+  schedule:
+    - cron: '0 8 * * *'
   pull_request:
     types:
       - opened
       - reopened
       - synchronize
       - labeled
+  # Also run continuously on release-candidate branches during a train's bake
+  # (there is no PR label on these push events, so the per-job `if:` conditions
+  # below also accept `github.event_name == 'push'`).
+  push:
+    branches:
+      - '*-rc*'
 
 jobs:
   c-library-mobile-builds:
     name: C library mobile builds
-    if: contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ${{ matrix.os }}
 
     strategy:

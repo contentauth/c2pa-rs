@@ -1,9 +1,18 @@
 name: Publish c2pa-library binaries
 
+# Triggered by `c2pa-v*` tags, which come from two places (see
+# docs/release-process.md):
+#   * release-plz, on a release-line branch -> a real tag like `c2pa-v0.90.0`.
+#   * release-rc.yml, when a release-candidate build is cut -> a prerelease tag
+#     like `c2pa-v0.90.0-rc.1`.
+# Either way the binaries are built here; the GitHub release is always marked as
+# a prerelease (pre-1.0). Nothing here publishes to crates.io. Git tags are
+# repo-global, so no branch filter is needed.
+
 on:
   push:
     tags:
-      - "c2pa-v*" # Trigger on version tags (e.g., v1.0.0)
+      - "c2pa-v*" # Trigger on version tags (e.g., c2pa-v0.90.0)
   workflow_dispatch:
 
 jobs:
