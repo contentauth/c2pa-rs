@@ -37,7 +37,7 @@ use crate::{
     context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
-    jumbf::labels::{manifest_label_from_uri, to_absolute_uri, ASSERTIONS, DATABOXES},
+    jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
     jumbf_io, log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
@@ -894,47 +894,46 @@ impl Reader {
         uri: &str,
         mut stream: impl Write + Read + Seek + MaybeSend,
     ) -> Result<usize> {
-        let label = manifest_label_from_uri(uri)
+        let explicit_label = manifest_label_from_uri(uri);
+        let label = explicit_label
+            .clone()
             .or_else(|| self.active_label().map(str::to_owned))
             .unwrap_or_default();
+        let relative_uri = to_relative_uri(uri);
         let absolute_uri = to_absolute_uri(&label, uri);
 
-        let bytes: &[u8] = if absolute_uri.contains(ASSERTIONS) {
-            self.store
-                .get_assertion_from_uri(&absolute_uri)
-                .map(|a| a.data())
-                .ok_or_else(|| Error::ResourceNotFound(uri.to_owned()))?
-        } else if absolute_uri.contains(DATABOXES) {
-            // Match by URL only — we don't have the hash at call time, and databox URIs
-            // are unique within a claim.
-            self.store
-                .get_claim(&label)
-                .and_then(|claim| {
-                    claim
-                        .databoxes()
-                        .iter()
-                        .find(|(hu, _)| hu.url() == absolute_uri)
-                        .map(|(_, db)| db.data.as_slice())
-                })
-                .ok_or_else(|| Error::ResourceNotFound(uri.to_owned()))?
-        } else {
-            // URI names a manifest — stream its JUMBF bytes
-            return self
-                .store
-                .get_claim(&label)
-                .ok_or_else(|| Error::ResourceNotFound(uri.to_owned()))
-                .and_then(|claim| Store::build_flat_ingredient_store(&self.store, claim))
-                .and_then(|s| s.to_jumbf_internal(0))
-                .and_then(|bytes| {
-                    let len = bytes.len();
-                    stream.write_all(&bytes).map_err(Error::IoError)?;
-                    Ok(len)
-                });
-        };
+        // Search the referenced manifest's own resource store, then each of its
+        // ingredients' resource stores. Each store is resolver-backed, so this also
+        // covers assertions/databoxes and lazily-materialized ingredient data — not
+        // just resources that were added under an arbitrary identifier.
+        if let Some(manifest) = self.manifests.get(&label) {
+            for resources in std::iter::once(manifest.resources())
+                .chain(manifest.ingredients().iter().map(Ingredient::resources))
+            {
+                for candidate in [relative_uri.as_str(), absolute_uri.as_str()] {
+                    if resources.exists(candidate) {
+                        return resources
+                            .write_stream(candidate, &mut stream)
+                            .map(|len| len as usize);
+                    }
+                }
+            }
+        }
 
-        let len = bytes.len();
-        stream.write_all(bytes).map_err(Error::IoError)?;
-        Ok(len)
+        // The uri may itself name a manifest — either an explicit JUMBF manifest
+        // reference, or the bare claim label of a manifest/ingredient — in which case
+        // we stream that manifest's flattened JUMBF bytes.
+        let manifest_label = explicit_label.unwrap_or_else(|| uri.to_owned());
+        self.store
+            .get_claim(&manifest_label)
+            .ok_or_else(|| Error::ResourceNotFound(uri.to_owned()))
+            .and_then(|claim| Store::build_flat_ingredient_store(&self.store, claim))
+            .and_then(|s| s.to_jumbf_internal(0))
+            .and_then(|bytes| {
+                let len = bytes.len();
+                stream.write_all(&bytes).map_err(Error::IoError)?;
+                Ok(len)
+            })
     }
 
     /// Write all resources to a folder.
@@ -1797,6 +1796,30 @@ pub mod tests {
         let n = reader.resource_to_stream(&md_ref.identifier, &mut out)?;
         assert!(n > 0, "expected non-empty manifest_data bytes");
         assert!(!out.into_inner().is_empty());
+
+        Ok(())
+    }
+
+    // Regression test for a bug where `resource_to_stream` silently fell back to
+    // returning the active manifest's own JUMBF bytes for any uri that didn't match
+    // a known assertion/databox pattern, instead of erroring for an unknown resource.
+    #[test]
+    fn test_resource_to_stream_unknown_uri_errors() -> Result<()> {
+        let reader =
+            Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+
+        for bad_uri in ["nonexistent_uri", "invalid://nonexistent"] {
+            let mut out = Cursor::new(Vec::new());
+            let result = reader.resource_to_stream(bad_uri, &mut out);
+            assert!(
+                matches!(result, Err(Error::ResourceNotFound(_))),
+                "expected ResourceNotFound for uri {bad_uri:?}, got {result:?}"
+            );
+            assert!(
+                out.into_inner().is_empty(),
+                "no bytes should be written to the stream on error for uri {bad_uri:?}"
+            );
+        }
 
         Ok(())
     }
