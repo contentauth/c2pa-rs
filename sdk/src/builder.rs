@@ -44,7 +44,7 @@ use crate::{
     crypto::cose,
     error::{Error, Result},
     hash_utils::hash_by_alg,
-    jumbf::labels::manifest_label_from_uri,
+    jumbf::labels::{assertion_label_from_uri, manifest_label_from_uri},
     jumbf_io,
     maybe_send_sync::MaybeSend,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
@@ -1034,7 +1034,7 @@ impl Builder {
             .definition
             .ingredients
             .iter()
-            .map(ingredient_effective_id)
+            .map(Ingredient::effective_id)
             .collect();
 
         // Decode the actions assertion (if any) WITHOUT removing it, so an error leaves the
@@ -1061,9 +1061,11 @@ impl Builder {
                 // Positional `parameters.ingredients` HashedUri references -> ingredients[N].
                 if let Some(uris) = action.parameters().and_then(|p| p.ingredients.as_ref()) {
                     for uri in uris {
-                        let (_, idx) = parse_positional_label(ingredient_ref_label(&uri.url()));
-                        if let Some(id) = pre_filter_ids.get(idx) {
-                            keep_set.insert(id.clone());
+                        if let Some(label) = assertion_label_from_uri(&uri.url()) {
+                            let (_, idx) = parse_positional_label(&label);
+                            if let Some(id) = pre_filter_ids.get(idx) {
+                                keep_set.insert(id.clone());
+                            }
                         }
                     }
                 }
@@ -1073,7 +1075,7 @@ impl Builder {
 
         // Prune: keep referenced, `parentOf`, or caller-rescued ingredients; drop the rest.
         self.definition.ingredients.retain(|ing| {
-            keep_set.contains(&ingredient_effective_id(ing))
+            keep_set.contains(&ing.effective_id())
                 || matches!(ing.relationship(), &Relationship::ParentOf)
                 || rescue(ing)
         });
@@ -1086,7 +1088,7 @@ impl Builder {
                 .definition
                 .ingredients
                 .iter()
-                .map(ingredient_effective_id)
+                .map(Ingredient::effective_id)
                 .collect();
             let id_to_new_idx: HashMap<&str, usize> = new_ids
                 .iter()
@@ -1597,11 +1599,7 @@ impl Builder {
 
         for ingredient in &definition.ingredients {
             // use the label if it exists and is not empty, otherwise use the instance_id
-            let id = ingredient
-                .label()
-                .filter(|label| !label.is_empty())
-                .map(|label| label.to_string())
-                .unwrap_or_else(|| ingredient.instance_id().to_string());
+            let id = ingredient.effective_id();
 
             // add it to the claim
             let uri = ingredient.add_to_claim(
@@ -3573,16 +3571,6 @@ fn action_ingredient_ids(action: &Action) -> Vec<String> {
     ids
 }
 
-/// The id used to reference an ingredient: its `label` when non-empty, otherwise its
-/// `instance_id`. Mirrors how `to_claim` keys the `ingredient_map` and how `ingredientIds`
-/// action parameters resolve.
-fn ingredient_effective_id(ing: &Ingredient) -> String {
-    ing.label()
-        .filter(|label| !label.is_empty())
-        .map(|label| label.to_string())
-        .unwrap_or_else(|| ing.instance_id().to_string())
-}
-
 /// Splits a positional ingredient label into its base and `__N` index.
 /// `c2pa.ingredient.v3__2` becomes (`c2pa.ingredient.v3`, 2); `c2pa.ingredient.v3` becomes
 /// (label, 0).
@@ -3598,6 +3586,11 @@ fn parse_positional_label(label: &str) -> (&str, usize) {
 /// The trailing assertion-label segment of an ingredient reference URL, e.g.
 /// `self#jumbf=c2pa.assertions/c2pa.ingredient.v3__2` -> `c2pa.ingredient.v3__2`.
 /// When the URL has no path separator, the whole URL is treated as the label.
+///
+/// This borrows a slice of `url` (rather than reusing [`assertion_label_from_uri`], which returns
+/// an owned, normalized `String`) so callers can compute the label's byte offset within the
+/// original URL and rebuild the prefix. Where only the label value is needed, prefer
+/// [`assertion_label_from_uri`].
 fn ingredient_ref_label(url: &str) -> &str {
     url.rsplit('/').next().unwrap_or(url)
 }
@@ -9136,12 +9129,7 @@ mod tests {
         )?;
 
         let mut ingredient_archive = Cursor::new(Vec::new());
-        let ingredient_id = {
-            let ing = &builder.definition.ingredients[0];
-            ing.label()
-                .map(String::from)
-                .unwrap_or_else(|| ing.instance_id().to_string())
-        };
+        let ingredient_id = builder.definition.ingredients[0].effective_id();
         builder.write_ingredient_archive(&ingredient_id, &mut ingredient_archive)?;
 
         let archive_bytes = ingredient_archive.into_inner();

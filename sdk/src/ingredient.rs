@@ -252,6 +252,19 @@ impl Ingredient {
         self.instance_id.as_deref().unwrap_or("None") // todo: deprecate and change to Option<&str>
     }
 
+    /// Returns the id used to reference this ingredient from a claim: its [`label`](Self::label)
+    /// when present and non-empty, otherwise its [`instance_id`](Self::instance_id).
+    ///
+    /// This is how the [`Builder`](crate::Builder) keys ingredients when resolving action
+    /// `ingredientIds` and emitting positional assertion labels, so any code matching actions to
+    /// ingredients must use the same rule.
+    pub fn effective_id(&self) -> String {
+        self.label()
+            .filter(|label| !label.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.instance_id().to_string())
+    }
+
     /// Returns the provenance URI if available.
     pub fn provenance(&self) -> Option<&str> {
         self.provenance.as_deref()
