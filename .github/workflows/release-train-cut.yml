@@ -76,6 +76,14 @@ jobs:
         with:
           toolchain: stable
 
+      # `cargo set-version` (from cargo-edit) is used to advance `main` to the
+      # next dev cycle; it keeps intra-workspace dependency requirements in sync.
+      - name: Install cargo-edit
+        uses: baptiste0928/cargo-install@f204293d9709061b7bc1756fec3ec4e2cd57dec0 # v3.4.0
+        with:
+          crate: cargo-edit
+          version: "0.13.6"
+
       - name: Compute train versions and RC branch
         id: ver
         run: |
@@ -103,11 +111,13 @@ jobs:
           # matches the Tier CI triggers (*-rc*) but NOT the publish triggers
           # (stable / v0.*), so a candidate branch can never be published by
           # construction. The per-build versions/tags are set by release-rc.yml.
+          DEV_C2PA=$(next_dev "$REL_C2PA")
           {
             echo "rel_c2pa=$REL_C2PA"
             echo "rel_tool=$REL_TOOL"
-            echo "dev_c2pa=$(next_dev "$REL_C2PA")"
+            echo "dev_c2pa=$DEV_C2PA"
             echo "dev_tool=$(next_dev "$REL_TOOL")"
+            echo "dev_cycle=${DEV_C2PA%-dev}" # e.g. 0.91.0, for the commit message
             echo "branch=${REL_C2PA}-rc" # e.g. 0.90.0-rc
           } >> "$GITHUB_OUTPUT"
 
@@ -154,6 +164,24 @@ jobs:
         run: |
           gh workflow run release-rc.yml --ref "${{ steps.ver.outputs.branch }}"
 
+      # Advance `main` to the next dev cycle so ongoing development is always
+      # numbered ahead of the line that's baking. This runs AFTER the RC branch
+      # is cut, so the candidate is taken from pre-bump `main` and `main` then
+      # moves forward. Committed directly to `main` (no PR) -- this requires the
+      # RELEASE_PLZ_TOKEN to be allowed to bypass `main`'s pull-request rule.
+      - name: Advance main to next dev cycle
+        if: steps.exists.outputs.skip != 'true' && steps.empty.outputs.skip != 'true'
+        run: |
+          # The working tree is `main` (checked out above). set-version updates
+          # the workspace version (c2pa + c2pa-c-ffi), c2patool, the intra-repo
+          # dependency references, and Cargo.lock.
+          cargo set-version -p c2pa "${{ steps.ver.outputs.dev_c2pa }}"
+          cargo set-version -p c2patool "${{ steps.ver.outputs.dev_tool }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: begin ${{ steps.ver.outputs.dev_cycle }} dev cycle (c2pa ${{ steps.ver.outputs.dev_c2pa }}, c2patool ${{ steps.ver.outputs.dev_tool }})"
+          git push origin HEAD:main
+
       - name: Open tracking issue for the train
         if: steps.exists.outputs.skip != 'true' && steps.empty.outputs.skip != 'true'
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
@@ -175,11 +203,7 @@ jobs:
                 '',
                 `The first build, **${relC2pa}-rc.1** (c2patool \`${relTool}-rc.1\`), is being cut automatically by \`release-rc.yml\`. Each build is tagged and gets a **prerelease GitHub release with binaries** so downstream binary consumers can validate during the bake.`,
                 '',
-                '**Bump `main` to the next dev versions** (open a PR):',
-                '```sh',
-                `cargo set-version -p c2pa ${devC2pa}`,
-                `cargo set-version -p c2patool ${devTool}`,
-                '```',
+                `\`main\` has been advanced automatically to the next dev cycle (**c2pa \`${devC2pa}\`, c2patool \`${devTool}\`**), so development stays numbered ahead of the baking line. No action needed unless that step failed.`,
                 '',
                 '- Bake at least **3 business days**; hold longer if downstream validation needs it.',
                 '- Only **bugfixes** are accepted during the bake, upstream-first: fix on `main`, then cherry-pick onto the RC branch.',

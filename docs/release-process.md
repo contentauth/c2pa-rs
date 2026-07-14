@@ -76,7 +76,7 @@ The convention:
 
 * **`main` always carries the *next* release's version with a `-dev` suffix** — e.g. `0.91.0-dev`. Because `main` is never published, the `-dev` prerelease is purely a label that says "work in progress toward 0.91.0."
 * **Cutting the train** for `0.N.0` produces the release-candidate branch `0.N.0-rc` (dropping the numeric suffix from the branch name; the number belongs to each *build*). Its builds are versioned `0.N.0-rc.1`, `0.N.0-rc.2`, … and, while never published to crates.io, are tagged and get prerelease GitHub-release binaries. On promotion the line becomes `0.N.0`.
-* **Right after the cut, `main` moves to `0.(N+1).0-dev`** so ongoing development is always numbered ahead of the line that's baking.
+* **Right after the cut, `main` moves to `0.(N+1).0-dev`** so ongoing development is always numbered ahead of the line that's baking. This bump is committed to `main` automatically by [`release-train-cut.yml`](#release-train-cut) as part of the cut — no separate PR.
 * **`c2patool` follows the same pattern on its own numbering** (its own next minor), independent of `c2pa`. RC build numbers are kept in lockstep across the crates, so `-rc.N` identifies one coherent candidate.
 
 Worked example (the first train, which is also the transition onto this convention):
@@ -173,7 +173,7 @@ As a backstop to the proactive check above, a scheduled job, [`reconciliation.ym
 
 ### Release-train cut
 
-[`release-train-cut.yml`](../.github/workflows/release-train-cut.yml) runs every Monday and gates on a date check so it only acts on the second Monday of an odd-numbered month (or when dispatched manually with `force: true`). When it fires it computes the next breaking version, applies skip-if-empty, and — if there's breaking work to ship — pushes a new `0.(x+1).0-rc` candidate branch from `main`, kicks off its first build by dispatching [`release-rc.yml`](#release-candidate-builds), and opens a `release-train` tracking issue describing the bake and the manual-promotion step.
+[`release-train-cut.yml`](../.github/workflows/release-train-cut.yml) runs every Monday and gates on a date check so it only acts on the second Monday of an odd-numbered month (or when dispatched manually with `force: true`). When it fires it computes the next breaking version, applies skip-if-empty, and — if there's breaking work to ship — pushes a new `0.(x+1).0-rc` candidate branch from `main`, kicks off its first build by dispatching [`release-rc.yml`](#release-candidate-builds), **advances `main` to the next `0.(x+2).0-dev` cycle** (committed directly, no PR), and opens a `release-train` tracking issue describing the bake and the manual-promotion step. The `main` bump happens after the RC branch is cut, so the candidate is taken from pre-bump `main`. (Committing to `main` directly requires the `RELEASE_PLZ_TOKEN` to be allowed to bypass `main`'s pull-request rule; see [branch protection](#branch-protection).)
 
 ### Release-candidate builds
 
@@ -261,6 +261,10 @@ The upstream-first guarantees rely on release-line and release-candidate branche
 * **Require status checks to pass**, including Tier 1A on `main`, and Tier 1A + 1B + 2, `cargo-semver-checks`, and the upstream-first check on release-line/RC branches (see [validation gating](#validation-gating)).
 
 Branch-name patterns (`v0.*`, `*-rc*`) can be covered with a single ruleset each so new release lines and candidates are protected automatically.
+
+Some release automation pushes directly to protected branches and so must be on the ruleset **bypass list** — grant this to the identity behind `RELEASE_PLZ_TOKEN`:
+
+* [`release-train-cut.yml`](#release-train-cut) commits the next-dev-cycle bump straight to `main`, and [`release-rc.yml`](#release-candidate-builds) commits `-rc.N` version bumps straight to the RC branch. Both bypass the pull-request rule by design (they are mechanical version bumps, not reviewed changes).
 
 ## One-time setup
 
