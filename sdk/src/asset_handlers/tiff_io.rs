@@ -407,6 +407,7 @@ fn check_ifd_data_size(claimed_size: u64, file_size: u64) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
 struct MappedTiff {
     tiff_tree: Arena<ImageFileDirectory>,
     page_tokens: Vec<Token>,

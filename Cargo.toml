@@ -18,7 +18,7 @@ version = "0.91.0-dev"
 c2pa = { path = "sdk", version = "0.91.0-dev", default-features = false }
 
 [profile.dev]
-# opt-level = 1        # enable allow test code to run faster at a small compile time cost and missing debug info
+# opt-level = 1        # enable to allow test code to run faster at a small compile time cost and missing debug info
 debug = 2              # symbols for debugging - switch to 1 to disable debug symbols
 
 [profile.release]
