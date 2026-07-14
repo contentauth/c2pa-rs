@@ -1,4 +1,12 @@
-name: Release-plz
+name: Release-plz publish
+
+# Publishes crates to crates.io and creates GitHub releases/tags.
+#
+# Under the open-source release process (see docs/release-process.md), crates
+# are published ONLY from release-line branches -- never from `main` (which is
+# nightly-like and intentionally unpublished) and never from release-candidate
+# branches (which bake before promotion). A push to a release-line branch
+# happens when a release-plz release PR (see release-pr.yml) is merged.
 
 permissions:
   pull-requests: write
@@ -7,59 +15,55 @@ permissions:
 on:
   push:
     branches:
-      - main
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
+      - stable # currently-active release line
+      - 'v0.*' # long-lived per-line branches (backports to retired lines)
 
 jobs:
-#   dry-run-release-plz:
-#     name: Release-plz dry run
-#     runs-on: ubuntu-latest
-#     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release')
-# 
-#     steps:
-#       - name: Checkout repository
-#         uses: actions/checkout@v6
-#         with:
-#           fetch-depth: 0
-#           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
-#           ref: ${{ github.head_ref }}
-# 
-#       - name: Install Rust toolchain
-#         uses: dtolnay/rust-toolchain@stable
-# 
-#       - name: Dry-run release-plz
-#         uses: MarcoIeni/release-plz-action@v0.5.129
-#         with:
-#           command: release
-#           dry_run: true
-#           verbose: true
-#         env:
-#           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-#           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
+  # Refuse to publish if a [patch]/git dependency is present. Such deps are used
+  # only transiently while co-developing an extracted crate (e.g.
+  # c2pa_cbor); they must be settled to a published version before any
+  # release, because crates.io requires every dependency to resolve to a
+  # published version.
+  guard-no-patch-deps:
+    name: Guard against patch/git dependencies
+    uses: ./.github/workflows/check-no-patch-deps.yml
 
   release-plz:
     name: Release-plz
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    needs: guard-no-patch-deps
+    # Defense in depth: release-candidate branches must never publish, even if
+    # one were ever added to the triggers above.
+    if: ${{ !contains(github.ref_name, '-rc.') }}
 
     outputs:
       c2patool-release-tag: ${{ steps.sniff-c2patool-release-tag.outputs.tag }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Run release-plz
-        id: release-plz
-        uses: MarcoIeni/release-plz-action@v0.5.129
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
+          toolchain: stable
+
+      # Make cargo-semver-checks available so release-plz uses it as an extra
+      # guard against an accidental breaking change shipping as an additive
+      # (0.x.y) release. (The hard gate is semver-checks.yml on the release PR.)
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
+        with:
+          tool: cargo-semver-checks
+
+      - name: Run release-plz (publish)
+        id: release-plz
+        uses: MarcoIeni/release-plz-action@064f4d1e36c843611ddf013be726beaa4ad804db # v0.5.129
+        with:
+          command: release
           verbose: true
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
@@ -67,20 +71,11 @@ jobs:
 
       - name: Debug release-plz outputs
         env:
-          PR: ${{ steps.release-plz.outputs.pr }}
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
         run: |
-          echo "=== Release-plz outputs ==="
-          echo "RP output: $PR"
-          echo "========================="
-
-      - name: Clean up stale release-plz branches
-        run: |
-          git --no-pager branch --remote |\
-            grep 'origin/release-plz-' |\
-            sort -r |\
-            tail -n +2 |\
-            sed 's/origin\///' |\
-            xargs -I {} git push origin --delete {}
+          echo "=== Release-plz releases ==="
+          echo "$RELEASES"
+          echo "==========================="
 
       - name: Identify c2patool release
         id: sniff-c2patool-release-tag
@@ -99,9 +94,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ macos-latest, ubuntu-latest, windows-latest ]
-        rust_version: [ stable ]
-        experimental: [ false ]
+        os: [macos-latest, ubuntu-latest, windows-latest]
+        rust_version: [stable]
+        experimental: [false]
         include:
           - os: macos-latest
             artifact_name: c2patool_mac_universal.zip
@@ -119,25 +114,25 @@ jobs:
     steps:
       - name: Checkout repository
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
           toolchain: ${{ matrix.rust_version }}
           components: llvm-tools-preview
 
       - name: Install cargo-sbom
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: baptiste0928/cargo-install@v3
+        uses: baptiste0928/cargo-install@f204293d9709061b7bc1756fec3ec4e2cd57dec0 # v3.4.0
         with:
           crate: cargo-sbom
-          version: '0.9.1'
+          version: "0.9.1"
 
       - name: Cache Rust dependencies
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Run make release
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
@@ -145,7 +140,7 @@ jobs:
 
       - name: Upload binary to GitHub
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: svenstaro/upload-release-action@2.11.5
+        uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # 2.11.5
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: target/${{ matrix.artifact_name }}
@@ -159,7 +154,7 @@ jobs:
 
       - name: Upload SBOM to Github
         if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: svenstaro/upload-release-action@2.11.5
+        uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # 2.11.5
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: cli/c2patool-sbom.json

@@ -1,0 +1,186 @@
+name: Release train cut
+
+# Cuts a release-candidate branch for the breaking-change "train".
+#
+# Cadence: the second Monday of each odd-numbered month. GitHub cron cannot
+# express that directly, so this runs every Monday and a date gate decides
+# whether today is actually a scheduled train date. The whole thing can also be
+# run manually (workflow_dispatch) with `force: true` to cut off-schedule.
+#
+# Policy implemented here (see docs/release-process.md):
+#   * Skip-if-empty: if `main` has no releasable commits beyond the current
+#     `stable` line, no train is cut.
+#   * Don't-hold-the-train: the RC is cut from `main` AS-IS on the date;
+#     unfinished breaking work waits for the next train.
+# Promotion of the RC to a published release is a deliberate MANUAL step (a
+# maintainer merges the RC branch into `stable` after the >=3-business-day bake).
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+on:
+  schedule:
+    # Every Monday at 16:00 UTC. The date gate below restricts actual cuts to
+    # the second Monday of odd-numbered months.
+    - cron: '0 16 * * 1'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Cut an RC even if today is not a scheduled train date'
+        type: boolean
+        default: false
+
+jobs:
+  gate:
+    name: Decide whether to cut today
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.check.outputs.go }}
+    steps:
+      - name: Evaluate cadence
+        id: check
+        run: |
+          MONTH=$(date -u +%m)
+          DAY=$(date -u +%d)
+          DOW=$(date -u +%u)   # 1 = Monday
+          # The second Monday is the Monday whose day-of-month is 8..14.
+          # 10# forces base-10 so leading-zero months (08, 09) don't parse as octal.
+          if [ $((10#$MONTH % 2)) -eq 1 ] && [ "$DOW" = "1" ] && [ "$DAY" -ge 08 ] && [ "$DAY" -le 14 ]; then
+            echo "Today is the second Monday of an odd-numbered month: scheduled train date."
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ inputs.force }}" = "true" ]; then
+            echo "Not a scheduled date, but force=true."
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Not a scheduled train date; nothing to do."
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  cut:
+    name: Cut release-candidate branch
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Compute train versions and RC branch
+        id: ver
+        run: |
+          # A train always advances the MINOR number by one (see
+          # docs/release-process.md "Version numbering across a train"). `main`
+          # normally carries the next release's version as `0.N.0-dev`, so the
+          # release version is that with `-dev` dropped; on the very first train
+          # `main` is a plain `0.x.y`, so we bump the minor instead.
+          rel_minor() {
+            local v="$1" base="${1%-dev}"
+            if [ "$base" != "$v" ]; then
+              echo "$base"                                   # 0.N.0-dev -> 0.N.0
+            else
+              echo "$v" | awk -F. '{printf "0.%d.0", $2+1}'  # 0.x.y -> 0.(x+1).0
+            fi
+          }
+          next_dev() { echo "$1" | awk -F. '{printf "0.%d.0-dev", $2+1}'; }
+
+          meta() { cargo metadata --format-version=1 --no-deps | jq -r ".packages[]|select(.name==\"$1\")|.version"; }
+          CUR_C2PA=$(meta c2pa); CUR_TOOL=$(meta c2patool)
+          REL_C2PA=$(rel_minor "$CUR_C2PA"); REL_TOOL=$(rel_minor "$CUR_TOOL")
+
+          # The RC branch name contains "-rc." so it matches the Tier CI triggers
+          # (*-rc.*) but NOT the publish triggers (stable / v0.*) -- a release
+          # candidate can never be published by construction.
+          {
+            echo "rel_c2pa=$REL_C2PA"
+            echo "rel_tool=$REL_TOOL"
+            echo "rc_c2pa=${REL_C2PA}-rc.1"
+            echo "rc_tool=${REL_TOOL}-rc.1"
+            echo "dev_c2pa=$(next_dev "$REL_C2PA")"
+            echo "dev_tool=$(next_dev "$REL_TOOL")"
+            echo "branch=${REL_C2PA}-rc.1" # e.g. 0.90.0-rc.1
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Skip if RC branch already exists
+        id: exists
+        run: |
+          if git ls-remote --exit-code --heads origin "${{ steps.ver.outputs.branch }}" >/dev/null 2>&1; then
+            echo "Branch ${{ steps.ver.outputs.branch }} already exists; not cutting again."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Skip if nothing new to release (skip-if-empty)
+        if: steps.exists.outputs.skip != 'true'
+        id: empty
+        run: |
+          if git ls-remote --exit-code --heads origin stable >/dev/null 2>&1; then
+            git fetch origin stable
+            if [ -z "$(git cherry origin/stable main | grep '^+' || true)" ]; then
+              echo "main has no commits beyond stable; skipping this train."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "No stable branch yet; treating as non-empty (first train)."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create RC branch from main
+        if: steps.exists.outputs.skip != 'true' && steps.empty.outputs.skip != 'true'
+        run: |
+          git push origin "main:refs/heads/${{ steps.ver.outputs.branch }}"
+
+      - name: Open tracking issue for the train
+        if: steps.exists.outputs.skip != 'true' && steps.empty.outputs.skip != 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const relC2pa = '${{ steps.ver.outputs.rel_c2pa }}';
+            const relTool = '${{ steps.ver.outputs.rel_tool }}';
+            const rcC2pa  = '${{ steps.ver.outputs.rc_c2pa }}';
+            const rcTool  = '${{ steps.ver.outputs.rc_tool }}';
+            const devC2pa = '${{ steps.ver.outputs.dev_c2pa }}';
+            const devTool = '${{ steps.ver.outputs.dev_tool }}';
+            const branch  = '${{ steps.ver.outputs.branch }}';
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Release train ${relC2pa}: bake (>=3 business days)`,
+              labels: ['release-train'],
+              body: [
+                `Release-candidate branch \`${branch}\` was cut from \`main\` for the **${relC2pa}** train.`,
+                'It is not published to crates.io; it only bakes under the Tier CI suites.',
+                '',
+                '**Set the release-candidate versions on the RC branch** (forced minor bump; see docs/release-process.md → "Version numbering across a train"):',
+                '```sh',
+                `git switch ${branch}`,
+                `cargo set-version -p c2pa ${rcC2pa}        # also sets c2pa-c-ffi (shared workspace version)`,
+                `cargo set-version -p c2patool ${rcTool}`,
+                `git commit -am "chore: set ${branch} release-candidate versions" && git push`,
+                '```',
+                '',
+                '**Bump `main` to the next dev versions** (open a PR):',
+                '```sh',
+                `cargo set-version -p c2pa ${devC2pa}`,
+                `cargo set-version -p c2patool ${devTool}`,
+                '```',
+                '',
+                '- Bake at least **3 business days**; hold longer if downstream validation needs it.',
+                '- Only **bugfixes** are accepted during the bake, upstream-first: fix on `main`, then cherry-pick onto the RC branch.',
+                `- When green, **manually promote**: snapshot the outgoing \`stable\` as \`v0.<old>\` (for backports), then merge the RC branch into \`stable\`. release-plz then publishes \`${relC2pa}\` (c2patool \`${relTool}\`).`,
+                '- The previous line is retired once this train ships.',
+              ].join('\n'),
+            });
