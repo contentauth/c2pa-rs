@@ -152,18 +152,29 @@ jobs:
       - name: List downloaded artifacts
         run: ls -lh
 
-      - name: Extract tag_name from zip file
+      - name: Resolve release tag
         id: extract_tag
         run: |
-          ZIP=$(find . -name "c2pa-v*-*.zip" | head -n1)
-          if [ -n "$ZIP" ]; then
-            TAG_NAME=$(echo "$ZIP" | sed -E 's/.*\/(c2pa-v[0-9]+\.[0-9]+\.[0-9]+)-.*\.zip/\1/')
-            echo "Found tag: $TAG_NAME"
-            echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-          else
-            echo "No zip files found"
-            exit 1
-          fi
+          # Use the exact ref that triggered this run as the release tag.
+          #
+          # The previous approach re-derived the tag from a built zip's
+          # filename with a regex (`c2pa-v[0-9]+\.[0-9]+\.[0-9]+`) that assumed
+          # a bare X.Y.Z version. That silently dropped any `-rc.N` prerelease
+          # suffix, so a release-candidate build was published under the FINAL
+          # release name -- e.g. `c2pa-v0.90.0-rc.2` was released as
+          # `c2pa-v0.90.0`, burning the name reserved for the post-bake release.
+          # The triggering ref is authoritative; trust it and never reconstruct
+          # the version from a filename.
+          TAG_NAME="${{ github.ref_name }}"
+          case "$TAG_NAME" in
+            c2pa-v*) ;;
+            *)
+              echo "::error::Expected a c2pa-v* tag ref, got '$TAG_NAME'. Run this workflow on a c2pa-v* tag."
+              exit 1
+              ;;
+          esac
+          echo "Releasing tag: $TAG_NAME"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Create Release
         id: create_release
