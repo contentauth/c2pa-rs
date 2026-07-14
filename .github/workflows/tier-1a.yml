@@ -20,7 +20,7 @@ on:
       - main
       - stable
       - 'v0.*'
-      - '*-rc.*'
+      - '*-rc*'
     types:
       - opened
       - reopened
@@ -31,7 +31,7 @@ on:
       - main
       - stable
       - 'v0.*'
-      - '*-rc.*'
+      - '*-rc*'
 
 jobs:
   get-features:
