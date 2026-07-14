@@ -27,9 +27,9 @@ Most changes never wait for the train: anything additive ships fairly quickly by
 | `main` | Always green but API-unstable ("nightly-like"). It must always compile and pass tests, but its public API is **not** guaranteed stable — it may contain unstabilized or feature-gated work. | **No** |
 | `stable` | Tracks the most-recent crates.io release and is the currently-active release line. Additive (`0.x.y`) releases, and the promoted breaking (`0.x.0`) release, are published from here. | **Yes** |
 | `v0.x` (e.g. `v0.89`) | A long-lived branch for a **retired** release line, snapshotted from `stable` when that line is retired. A potential target if a security or other critical bug fix is made to a retired line. | Yes (rare backports) |
-| `0.(x+1).0-rc.N` (release-candidate branch) | A transient breaking candidate, cut from `main`, that bakes before promotion. Its name contains `-rc.` so it is validated by CI but **never** matches a publish trigger. | **No** |
+| `0.(x+1).0-rc` (release-candidate branch) | A transient breaking candidate, cut from `main`, that bakes before promotion. Its name ends in `-rc` so it is validated by CI but **never** matches a crates.io publish trigger. Individual **builds** cut from it (`-rc.1`, `-rc.2`, …) are tagged and get *prerelease* GitHub releases with binaries, but are never published to crates.io. | crates.io: **No**; GitHub-release binaries: **yes** |
 
-The branch-name conventions are also the publish guard: the publish workflow only ever runs on `stable` and `v0.*`, and the `-rc.`-named candidate matches neither, so a candidate can never be published by construction.
+The branch-name conventions are also the crates.io publish guard: the publish workflow only ever runs on `stable` and `v0.*`, and the `-rc`-named candidate branch matches neither, so a candidate can never be published to crates.io by construction. (Its build tags carry the `-rc.` prerelease marker and drive binary-only GitHub releases; see [RC builds](#release-candidate-builds).)
 
 Two rules keep this coherent:
 
@@ -55,8 +55,8 @@ Key points:
 
 Breaking changes and larger refactors are batched onto a scheduled train:
 
-1. On the scheduled date, a release-candidate branch `0.(x+1).0-rc.1` is cut from `main`. **RC branches are not published to crates.io** (their name keeps them off every publish trigger).
-2. **Bake period: minimum 3 business days.** Only bug fixes are accepted during the bake, and they follow upstream-first (fix on `main`, cherry-pick to the candidate). Hold longer than 3 business days if needed to validate across the downstream projects we maintain.
+1. On the scheduled date, a release-candidate branch `0.(x+1).0-rc` is cut from `main`, and its first build `0.(x+1).0-rc.1` is cut immediately (versions set, tagged, prerelease binaries built). **RC branches are not published to crates.io** (their name keeps them off every crates.io publish trigger), but each build **does** get a prerelease GitHub release with binaries so downstream consumers that depend on pre-built binaries can validate during the bake. See [RC builds](#release-candidate-builds).
+2. **Bake period: minimum 3 business days.** Only bug fixes are accepted during the bake, and they follow upstream-first (fix on `main`, cherry-pick to the candidate). After fixes land, cut a fresh build (`-rc.2`, `-rc.3`, …) so downstream has updated binaries to test. Hold longer than 3 business days if needed to validate across the downstream projects we maintain.
 3. **Promote** (a deliberate, manual step): first snapshot the outgoing `stable` as `v0.<old>` so the retiring line is available for backports, then merge the candidate into `stable`. `release-plz` then opens the `0.(x+1).0` version/changelog PR on `stable`; merging it publishes the breaking release.
 
 ### Cadence: scheduled, but not forced
@@ -75,16 +75,16 @@ Every train advances the **minor** number by one, regardless of whether `cargo-s
 The convention:
 
 * **`main` always carries the *next* release's version with a `-dev` suffix** — e.g. `0.91.0-dev`. Because `main` is never published, the `-dev` prerelease is purely a label that says "work in progress toward 0.91.0."
-* **Cutting the train** for `0.N.0` produces the release-candidate branch `0.N.0-rc.1` (the RC bakes but is never published). On promotion it becomes `0.N.0`.
+* **Cutting the train** for `0.N.0` produces the release-candidate branch `0.N.0-rc` (dropping the numeric suffix from the branch name; the number belongs to each *build*). Its builds are versioned `0.N.0-rc.1`, `0.N.0-rc.2`, … and, while never published to crates.io, are tagged and get prerelease GitHub-release binaries. On promotion the line becomes `0.N.0`.
 * **Right after the cut, `main` moves to `0.(N+1).0-dev`** so ongoing development is always numbered ahead of the line that's baking.
-* **`c2patool` follows the same pattern on its own numbering** (its own next minor), independent of `c2pa`.
+* **`c2patool` follows the same pattern on its own numbering** (its own next minor), independent of `c2pa`. RC build numbers are kept in lockstep across the crates, so `-rc.N` identifies one coherent candidate.
 
 Worked example (the first train, which is also the transition onto this convention):
 
-| Crate | current `main` | RC branch (baking) | promoted | `main` after cut |
-| -- | -- | -- | -- | -- |
-| `c2pa` / `c2pa-c-ffi` | `0.89.3` | `0.90.0-rc.1` | `0.90.0` | `0.91.0-dev` |
-| `c2patool` | `0.26.72` | `0.27.0-rc.1` | `0.27.0` | `0.28.0-dev` |
+| Crate | current `main` | RC branch | RC builds (baking) | promoted | `main` after cut |
+| -- | -- | -- | -- | -- | -- |
+| `c2pa` / `c2pa-c-ffi` | `0.89.3` | `0.90.0-rc` | `0.90.0-rc.1`, `0.90.0-rc.2`, … | `0.90.0` | `0.91.0-dev` |
+| `c2patool` | `0.26.72` | `0.27.0-rc` | `0.27.0-rc.1`, `0.27.0-rc.2`, … | `0.27.0` | `0.28.0-dev` |
 
 Steadily thereafter, `main` already carries `0.N.0-dev`, so the train's release version is that number with `-dev` dropped, and `main` advances to `0.(N+1).0-dev`.
 
@@ -127,7 +127,14 @@ Cutting a release is mostly a CI action rather than manual toil. The pieces:
 We use [`release-plz`](https://release-plz.dev) (via the [GitHub Action wrapper](https://github.com/release-plz/action)), configured by [`release-plz.toml`](../release-plz.toml). Its two responsibilities are split across two workflows, both of which run on the **release-line and release-candidate branches** — never on `main`:
 
 * [`release-pr.yml`](../.github/workflows/release-pr.yml) runs `release-plz release-pr`: for each published crate it inspects commits since the last tag and opens/updates a **release PR** that bumps the version and updates the changelog. Because that PR targets a release-line branch, it runs the full Tier 1A + 1B + 2 suite (see [validation gating](#validation-gating)).
-* [`release.yml`](../.github/workflows/release.yml) runs `release-plz release`: when a release PR merges (a push to the release-line branch), it publishes the changed crates to crates.io, creates GitHub releases, and tags them `(crate-name)-v(version)`. It then builds and uploads the `c2patool` binaries and SBOMs. A push whose ref contains `-rc.` never publishes.
+* [`release.yml`](../.github/workflows/release.yml) runs `release-plz release`: when a release PR merges (a push to the release-line branch), it publishes the changed crates to crates.io, creates GitHub releases, and tags them `(crate-name)-v(version)`. Those tags then drive the binary builds ([`library-release.yml`](../.github/workflows/library-release.yml) on `c2pa-v*`, [`c2patool-release.yml`](../.github/workflows/c2patool-release.yml) on `c2patool-v*`) — `release.yml` no longer builds binaries itself, which is what lets release-candidate builds produce the same binaries from the same tags (see [RC builds](#release-candidate-builds)). A push whose ref contains `-rc` never publishes to crates.io.
+
+Binary builds are therefore entirely **tag-driven**, independent of how a tag was created:
+
+* [`library-release.yml`](../.github/workflows/library-release.yml) builds the `c2pa` / `c2pa-c-ffi` native libraries for every supported target on any `c2pa-v*` tag.
+* [`c2patool-release.yml`](../.github/workflows/c2patool-release.yml) builds the `c2patool` CLI binaries and SBOMs on any `c2patool-v*` tag.
+
+A tag whose name contains `-rc.` yields a **prerelease** GitHub release; nothing on either path publishes to crates.io.
 
 How `release-plz` chooses a version, per crate:
 
@@ -158,7 +165,7 @@ As a backstop to the proactive check above, a scheduled job, [`reconciliation.ym
 
 ### Semver checks
 
-[`semver-checks.yml`](../.github/workflows/semver-checks.yml) runs [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) on every PR targeting a release-line branch (including backport PRs), baselining against the latest crates.io release. It catches a change that would be an accidental break shipping as an additive release. It does **not** run on `-rc.*` branches — the train is the intended place for breaking changes.
+[`semver-checks.yml`](../.github/workflows/semver-checks.yml) runs [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) on every PR targeting a release-line branch (including backport PRs), baselining against the latest crates.io release. It catches a change that would be an accidental break shipping as an additive release. It does **not** run on `-rc` branches — the train is the intended place for breaking changes.
 
 ### Patch-dependency guard
 
@@ -166,7 +173,13 @@ As a backstop to the proactive check above, a scheduled job, [`reconciliation.ym
 
 ### Release-train cut
 
-[`release-train-cut.yml`](../.github/workflows/release-train-cut.yml) runs every Monday and gates on a date check so it only acts on the second Monday of an odd-numbered month (or when dispatched manually with `force: true`). When it fires it computes the next breaking version, applies skip-if-empty, and — if there's breaking work to ship — pushes a new `0.(x+1).0-rc.1` candidate branch from `main` and opens a `release-train` tracking issue describing the bake and the manual-promotion step.
+[`release-train-cut.yml`](../.github/workflows/release-train-cut.yml) runs every Monday and gates on a date check so it only acts on the second Monday of an odd-numbered month (or when dispatched manually with `force: true`). When it fires it computes the next breaking version, applies skip-if-empty, and — if there's breaking work to ship — pushes a new `0.(x+1).0-rc` candidate branch from `main`, kicks off its first build by dispatching [`release-rc.yml`](#release-candidate-builds), and opens a `release-train` tracking issue describing the bake and the manual-promotion step.
+
+### Release-candidate builds
+
+[`release-rc.yml`](../.github/workflows/release-rc.yml) cuts a numbered candidate **build** (`-rc.1`, `-rc.2`, …) from a candidate **branch** (`0.N.0-rc`). It sets the `-rc.N` versions on the branch (bumping `c2pa`/`c2pa-c-ffi` and `c2patool` in lockstep on the build number), commits, and pushes the `c2pa-v…-rc.N` and `c2patool-v…-rc.N` tags. Those tags trigger the tag-driven binary workflows above, which publish **prerelease** GitHub releases with binaries. Nothing here reaches crates.io — the build exists so downstream projects that consume pre-built binaries (rather than building from source) can validate the candidate during its bake.
+
+The first build (`-rc.1`) is cut automatically when the train is cut. A maintainer re-runs this workflow (via `workflow_dispatch` on the RC branch) to cut a fresh build after bugfixes have been cherry-picked onto the branch during the bake. Tags are pushed with a PAT (`RELEASE_PLZ_TOKEN`) so the tag-driven binary workflows actually run — pushes made with the default `GITHUB_TOKEN` do not cascade into other workflows.
 
 ### Cross-repo canary
 
@@ -181,8 +194,8 @@ Labels the process depends on are version-controlled in [`.github/labels.yml`](.
 The [support tiers](support-tiers.md) map directly onto the branching model:
 
 * **Merging to `main`** requires **Tier 1A** — the merge gate for everyday development.
-* **Any PR targeting a release-line (`stable`, `v0.x`) or release-candidate (`*-rc.*`) branch** must pass the **full Tier 1A + 1B + 2 suite** before it can merge. This includes **backport PRs**, RC bake bugfix PRs, and the `release-plz` release PR — anything headed for a published (or soon-to-be-published) artifact gets the most thorough validation we have. PRs targeting release lines additionally run [`cargo-semver-checks`](#semver-checks).
-* During a train's bake, Tier 1A + 1B + 2 also run on every push to the `*-rc.*` branch.
+* **Any PR targeting a release-line (`stable`, `v0.x`) or release-candidate (`*-rc*`) branch** must pass the **full Tier 1A + 1B + 2 suite** before it can merge. This includes **backport PRs**, RC bake bugfix PRs, and the `release-plz` release PR — anything headed for a published (or soon-to-be-published) artifact gets the most thorough validation we have. PRs targeting release lines additionally run [`cargo-semver-checks`](#semver-checks).
+* During a train's bake, Tier 1A + 1B + 2 also run on every push to the `*-rc*` branch.
 * **All three tiers also run against `main` on a daily schedule** (a nightly run), catching regressions that only appear under the heavier Tier 1B/2 configurations even when no release-targeting PR is open.
 * On a `main` PR you can opt into the full suite on demand by adding the `check-release` label (useful to assess release-readiness before a change is backported).
 
@@ -242,12 +255,12 @@ To vet a new version of `release-plz` or a config change, CAI team members can u
 
 ## Branch protection
 
-The upstream-first guarantees rely on release-line and release-candidate branches only receiving changes through PRs. Configure branch protection (a repository setting, not something this repo can commit) on `main`, `stable`, and each `v0.*` / `*-rc.*` branch to:
+The upstream-first guarantees rely on release-line and release-candidate branches only receiving changes through PRs. Configure branch protection (a repository setting, not something this repo can commit) on `main`, `stable`, and each `v0.*` / `*-rc*` branch to:
 
 * **Require a pull request before merging** — so nothing is pushed directly, which is what makes the [upstream-first check](#upstream-first-check-proactive) an effective gate rather than an after-the-fact report.
 * **Require status checks to pass**, including Tier 1A on `main`, and Tier 1A + 1B + 2, `cargo-semver-checks`, and the upstream-first check on release-line/RC branches (see [validation gating](#validation-gating)).
 
-Branch-name patterns (`v0.*`, `*-rc.*`) can be covered with a single ruleset each so new release lines and candidates are protected automatically.
+Branch-name patterns (`v0.*`, `*-rc*`) can be covered with a single ruleset each so new release lines and candidates are protected automatically.
 
 ## One-time setup
 

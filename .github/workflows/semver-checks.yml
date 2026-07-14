@@ -6,7 +6,7 @@ name: Semver checks
 # backport.yml -- and baselines the public API against the latest crates.io
 # release.
 #
-# This deliberately does NOT run on release-candidate (`*-rc.*`) branches: the
+# This deliberately does NOT run on release-candidate (`*-rc*`) branches: the
 # breaking train IS the intended place for breaking changes.
 
 on:
