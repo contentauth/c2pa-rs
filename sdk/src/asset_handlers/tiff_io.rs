@@ -2699,6 +2699,54 @@ pub mod tests {
     }
 
     #[test]
+    fn test_multipage_read_write_manifest_xmp() {
+        let data = "some data";
+        let data2 = "some xmp data";
+
+        let source = crate::utils::test::fixture_path("MultiPage.tif");
+
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "test.tif");
+
+        std::fs::copy(source, &output).unwrap();
+
+        let tiff_io = TiffIO {};
+
+        // save data to tiff
+        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+
+        // read data back
+        let loaded = tiff_io.read_cai_store(&output).unwrap();
+
+        assert_eq!(&loaded, data.as_bytes());
+
+        // test adding over existing
+        tiff_io
+            .remote_ref_writer_ref()
+            .unwrap()
+            .embed_reference(&output, RemoteRefEmbedType::Xmp(data2.to_string()))
+            .unwrap();
+
+        // read xmp data back
+        let mut output_file = std::fs::File::open(&output).unwrap();
+        let loaded = tiff_io.read_xmp(&mut output_file).unwrap();
+
+        assert!(loaded.contains(data2));
+
+        // make sure manifest was relocated correctly
+        let loaded = tiff_io.read_cai_store(&output).unwrap();
+        assert_eq!(&loaded, data.as_bytes());
+
+        // now test shrinking the manifest at the end of the file
+        let data3 = "short";
+        tiff_io.save_cai_store(&output, data3.as_bytes()).unwrap();
+
+        // read data back
+        let loaded = tiff_io.read_cai_store(&output).unwrap();
+        assert_eq!(&loaded, data3.as_bytes());
+    }
+
+    #[test]
     fn cyclic_ifd_self_loop_returns_error() {
         // 14-byte little-endian TIFF: IFD at offset 8 has next-offset = 8.
         // Chain: A → A
