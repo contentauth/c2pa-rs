@@ -26,6 +26,10 @@ use crate::{
 };
 
 /// Validates a CAWG identity assertion.
+///
+/// A `CawgValidator` carries the [`Context`] that governs CAWG validation,
+/// including the `cawg_trust.trusted_ica_issuers` allow-list. Construct one with
+/// [`CawgValidator::new`] to validate under a specific [`Context`].
 pub struct CawgValidator<'a> {
     context: &'a Context,
 }
@@ -129,18 +133,14 @@ mod tests {
 
         //println!("validation results: {}", reader);
 
-        assert_eq!(
-            reader
-                .validation_results()
-                .unwrap()
-                .active_manifest()
-                .unwrap()
-                .success()
-                .last()
-                .unwrap()
-                .code(),
-            "cawg.ica.credential_valid"
-        );
+        assert!(reader
+            .validation_results()
+            .unwrap()
+            .active_manifest()
+            .unwrap()
+            .success()
+            .iter()
+            .any(|s| s.code() == "cawg.ica.credential_valid"));
     }
 
     #[c2pa_test_async]
@@ -168,6 +168,67 @@ mod tests {
                 .len(),
             1
         );
+        assert_eq!(reader.validation_state(), ValidationState::Valid);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[c2pa_test_async]
+    async fn ica_issuer_untrusted_does_not_affect_manifest_state() {
+        use crate::{Context, Settings};
+
+        let _did_server = mock_connected_identities_did();
+
+        // Build a Context that trusts NO ICA issuers (empty allow-list) and skips
+        // C2PA certificate trust checking. The empty list must reach the verifier
+        // through the Context carried by the CawgValidator.
+        let settings = Settings::new()
+            .with_value("verify.verify_trust", false)
+            .unwrap()
+            .with_value("core.decode_identity_assertions", false)
+            .unwrap()
+            .with_value("cawg_trust.trusted_ica_issuers", Vec::<String>::new())
+            .unwrap();
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .into_shared();
+
+        // Both the reader and the validator share this context, so the empty
+        // allow-list reaches the verifier through the CawgValidator.
+        let validator = super::CawgValidator::new(&context);
+
+        let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
+        let mut reader = Reader::from_shared_context(&context)
+            .with_stream_async("image/jpeg", &mut stream)
+            .await
+            .unwrap();
+
+        reader.post_validate_async(&validator).await.unwrap();
+
+        let results = reader.validation_results().unwrap();
+        let active = results.active_manifest().unwrap();
+
+        // The credential's issuer is not on the (empty) allow-list, so an
+        // untrusted-issuer notice is recorded informationally for this identity
+        // assertion (not as a failure, so it does not affect manifest state)...
+        assert!(active
+            .informational()
+            .iter()
+            .any(|s| s.code() == "cawg.ica.untrusted_issuer"));
+        assert!(!active
+            .failure()
+            .iter()
+            .any(|s| s.code() == "cawg.ica.untrusted_issuer"));
+
+        // ...and, because the issuer is untrusted, the credential is not reported
+        // as valid.
+        assert!(!active
+            .success()
+            .iter()
+            .any(|s| s.code() == "cawg.ica.credential_valid"));
+
+        // But the untrusted ICA issuer is scoped to the identity assertion: it
+        // does NOT invalidate the enclosing C2PA manifest.
         assert_eq!(reader.validation_state(), ValidationState::Valid);
     }
 
