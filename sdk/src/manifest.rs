@@ -360,7 +360,7 @@ impl Manifest {
         &mut self.resources
     }
 
-    /// Returns an iterator over [`ResourceRef`][ResourceRef]s.
+    /// Returns an iterator over [`ResourceRef`]s.
     pub fn iter_resources(&self) -> impl Iterator<Item = ResourceRef> + '_ {
         self.resources.iter_resource_ids().into_iter().map(|uri| {
             let ext = uri.rsplit(['.', '/']).next().unwrap_or("");

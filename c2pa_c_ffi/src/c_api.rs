@@ -3308,14 +3308,40 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_c2pa_reader_from_stream_cawg() {
+        // This fixture's identity claims aggregation (ICA) credential is signed
+        // by a `did:jwk` issuer. ICA issuers are untrusted by default, so we must
+        // add that issuer to `cawg_trust.trusted_ica_issuers` for the credential
+        // to be reported as valid.
+        let builder = unsafe { c2pa_context_builder_new() };
+        let settings = unsafe { c2pa_settings_new() };
+
+        let path = CString::new("cawg_trust.trusted_ica_issuers").unwrap();
+        let value = CString::new(
+            r#"["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]"#,
+        )
+        .unwrap();
+        let result = unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) };
+        assert_eq!(result, 0);
+
+        let result = unsafe { c2pa_context_builder_set_settings(builder, settings) };
+        assert_eq!(result, 0);
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+
+        let reader = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader.is_null());
+
         let source_image = include_bytes!(
             "../../sdk/src/identity/tests/fixtures/claim_aggregation/ica_validation/success.jpg"
         );
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
-        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
-        assert!(!reader.is_null());
-        let json = unsafe { c2pa_reader_json(reader) };
+        let configured_reader =
+            unsafe { c2pa_reader_with_stream(reader, format.as_ptr(), stream.as_ptr()) };
+        assert!(!configured_reader.is_null());
+
+        let json = unsafe { c2pa_reader_json(configured_reader) };
         assert!(!json.is_null());
         let json_str = unsafe { CString::from_raw(json) };
         assert!(json_str.to_str().unwrap().contains("Silly Cats 929"));
@@ -3323,7 +3349,12 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("cawg.ica.credential_valid"));
-        unsafe { c2pa_reader_free(reader) };
+
+        unsafe {
+            c2pa_free(settings as *mut c_void);
+            c2pa_free(context as *mut c_void);
+            c2pa_reader_free(configured_reader);
+        };
     }
 
     #[test]
