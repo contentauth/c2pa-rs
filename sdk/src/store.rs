@@ -9096,7 +9096,7 @@ pub mod tests {
         let mut m1_report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let m1_store_loaded = Store::from_stream(
             format,
-            &mut Cursor::new(m1_vec.clone()),
+            Cursor::new(m1_vec.clone()),
             &mut m1_report,
             &context,
         )
@@ -9165,7 +9165,7 @@ pub mod tests {
         let mut m2_report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let m2_store_loaded = Store::from_stream(
             format,
-            &mut Cursor::new(m2_vec.clone()),
+            Cursor::new(m2_vec.clone()),
             &mut m2_report,
             &context,
         )

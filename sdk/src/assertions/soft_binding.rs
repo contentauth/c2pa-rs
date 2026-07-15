@@ -1,14 +1,12 @@
 use serde::{Deserialize, Serialize};
 
 use super::labels;
-
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::region_of_interest::RegionOfInterest,
     cbor_types::{DateT, UriT},
     Result,
 };
-use url::Url;
 
 /// Snapshot of the C2PA soft binding algorithm registry.
 ///
@@ -273,7 +271,7 @@ impl SoftBindingAlgorithm {
                 ));
             }
             for api in apis {
-                Url::parse(api.as_ref()).map_err(|_| {
+                url::Url::parse(api.as_ref()).map_err(|_| {
                     crate::error::Error::ValidationRule(format!(
                         "softBindingResolutionApis contains invalid URI: {}",
                         api.as_ref()
@@ -306,7 +304,7 @@ struct SoftBindingEntryMetadata {
 
 impl SoftBindingEntryMetadata {
     fn validate(&self) -> Result<()> {
-        Url::parse(self.informational_url.as_ref()).map_err(|_| {
+        url::Url::parse(self.informational_url.as_ref()).map_err(|_| {
             crate::error::Error::ValidationRule(format!(
                 "entryMetadata.informationalUrl is not a valid URI: {}",
                 self.informational_url.as_ref()

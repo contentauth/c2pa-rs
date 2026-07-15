@@ -92,8 +92,7 @@ pub mod region_of_interest;
 
 mod soft_binding;
 pub(crate) use soft_binding::SOFT_BINDING_ALGS;
-#[allow(unused_imports)]
-pub(crate) use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope};
+pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope};
 
 mod cloud_data;
 pub use cloud_data::{CloudData, HashedExtUri};

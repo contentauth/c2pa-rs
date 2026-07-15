@@ -125,7 +125,7 @@ impl CloudData {
         self
     }
 
-    /// Returns `true` if [`label`](Self::label) names a hard binding assertion
+    /// Returns `true` if [`label`](CloudData::label) names a hard binding assertion
     /// (`c2pa.hash.data`, any `c2pa.hash.bmff.*`, `c2pa.hash.boxes`,
     /// `c2pa.hash.collection.data`, or `c2pa.hash.multi-asset`).
     ///
@@ -133,7 +133,7 @@ impl CloudData {
     /// validators to emit [`assertion.cloud-data.hardBinding`].
     ///
     /// [`assertion.cloud-data.hardBinding`]: crate::validation_results::validation_codes::ASSERTION_CLOUD_DATA_HARD_BINDING
-    pub fn is_hard_binding(&self) -> bool {
+    pub(crate) fn is_hard_binding(&self) -> bool {
         let l = self.label.as_str();
         l == labels::DATA_HASH
             || l == labels::BOX_HASH
@@ -142,14 +142,14 @@ impl CloudData {
             || l.starts_with(labels::BMFF_HASH)
     }
 
-    /// Returns `true` if [`label`](Self::label) names an actions assertion
+    /// Returns `true` if [`label`](CloudData::label) names an actions assertion
     /// (`c2pa.actions` or any versioned variant such as `c2pa.actions.v2`).
     ///
     /// Actions assertions must not be stored as cloud data in update manifests;
     /// this method is used by validators to emit [`assertion.cloud-data.actions`].
     ///
     /// [`assertion.cloud-data.actions`]: crate::validation_results::validation_codes::ASSERTION_CLOUD_DATA_ACTIONS
-    pub fn is_actions(&self) -> bool {
+    pub(crate) fn is_actions(&self) -> bool {
         labels::base(&self.label) == labels::ACTIONS
     }
 }

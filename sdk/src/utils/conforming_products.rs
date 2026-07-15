@@ -11,8 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashMap;
-use std::io::Read;
+use std::{collections::HashMap, io::Read};
 
 use asn1_rs::FromDer as _;
 use serde::{Deserialize, Serialize};
@@ -160,6 +159,8 @@ pub fn find_conforming_product_for_cert<'a>(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
 
     // ---------------------------------------------------------------------------
