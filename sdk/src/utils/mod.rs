@@ -20,6 +20,8 @@ mod ephemeral_cert;
 pub mod ephemeral_signer;
 
 #[allow(dead_code)]
+pub(crate) mod conforming_products;
+#[allow(dead_code)]
 pub(crate) mod hash_utils;
 pub(crate) mod io_utils;
 pub(crate) mod merkle;

@@ -3311,6 +3311,176 @@ impl Claim {
         if claim.version() >= 2 {
             // only for claim version 2 or greater
             Claim::verify_metadata(claim, validation_log)?;
+            Claim::verify_claim_generator_info(claim, validation_log)?;
+        }
+
+        // soft binding algorithm validation applies to all claim versions
+        Claim::verify_soft_binding_alg(claim, validation_log)?;
+
+        // cloud-data assertion validation applies to all claim versions
+        Claim::verify_cloud_data(claim, validation_log)?;
+
+        Ok(())
+    }
+
+    // Validate claim_generator_info for v2+ claims per §10.2.2.
+    // Must be present, non-empty, and have a non-empty name field.
+    fn verify_claim_generator_info(
+        claim: &Claim,
+        validation_log: &mut StatusTracker,
+    ) -> Result<()> {
+        match claim.claim_generator_info() {
+            None | Some([]) => {
+                log_item!(
+                    claim.uri(),
+                    "claim_generator_info is required for v2+ claims",
+                    "verify_claim_generator_info"
+                )
+                .validation_status(validation_status::CLAIM_MALFORMED)
+                .failure(
+                    validation_log,
+                    Error::ClaimDecoding("claim_generator_info is missing".to_string()),
+                )?;
+            }
+            Some(cgi) => {
+                if cgi[0].name.is_empty() {
+                    log_item!(
+                        claim.uri(),
+                        "claim_generator_info name must not be empty",
+                        "verify_claim_generator_info"
+                    )
+                    .validation_status(validation_status::CLAIM_MALFORMED)
+                    .failure(
+                        validation_log,
+                        Error::ClaimDecoding("claim_generator_info name is empty".to_string()),
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate that each soft binding assertion's effective algorithm is in the
+    /// C2PA soft binding algorithm registry (§9.3.2).
+    ///
+    /// The effective algorithm is the assertion-level `alg` field when present,
+    /// falling back to the claim-level `alg_soft` field. If neither is present
+    /// the assertion is malformed.
+    fn verify_soft_binding_alg(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
+        use assertions::SoftBinding;
+
+        for ca in claim.soft_binding_assertions() {
+            let label = to_assertion_uri(claim.label(), &ca.label());
+
+            let soft_binding = SoftBinding::from_assertion(ca.assertion()).map_err(|_| {
+                log_item!(
+                    label.clone(),
+                    "soft binding assertion could not be decoded",
+                    "verify_soft_binding_alg"
+                )
+                .validation_status(validation_status::CLAIM_MALFORMED)
+                .failure_no_throw(validation_log, Error::ClaimDecoding(label.clone()));
+
+                Error::ClaimDecoding(label.clone())
+            })?;
+
+            // Effective alg: assertion field takes precedence over claim-level alg_soft.
+            let effective_alg = soft_binding
+                .alg
+                .as_deref()
+                .or_else(|| claim.alg_soft().map(String::as_str));
+
+            match effective_alg {
+                None => {
+                    log_item!(
+                        label.clone(),
+                        "soft binding assertion has no algorithm (alg or alg_soft required)",
+                        "verify_soft_binding_alg"
+                    )
+                    .validation_status(validation_status::CLAIM_MALFORMED)
+                    .failure(
+                        validation_log,
+                        Error::ValidationRule("soft binding missing algorithm".into()),
+                    )?;
+                }
+                Some(alg) if !assertions::SOFT_BINDING_ALGS.contains(&alg) => {
+                    log_item!(
+                        label.clone(),
+                        format!("soft binding algorithm '{alg}' is not in the C2PA soft binding algorithm registry"),
+                        "verify_soft_binding_alg"
+                    )
+                    .validation_status(validation_status::ALGORITHM_UNSUPPORTED)
+                    .failure(
+                        validation_log,
+                        Error::ValidationRule(format!(
+                            "unsupported soft binding algorithm: {alg}"
+                        )),
+                    )?;
+                }
+                Some(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate each `c2pa.cloud-data` assertion per §15.10.3.2.1.
+    ///
+    /// Checks:
+    /// 1. Required fields (`assertion`/label, `size`, `url`/location, `format`/content_type)
+    ///    are present — failure code `assertion.cloud-data.malformed`.
+    /// 2. The referenced assertion must not be a hard binding type — failure code
+    ///    `assertion.cloud-data.hardBinding`.
+    /// 3. In an update manifest the referenced assertion must not be an actions
+    ///    assertion — failure code `assertion.cloud-data.actions`.
+    fn verify_cloud_data(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
+        use assertions::CloudData;
+
+        for ca in claim.cloud_data_assertions() {
+            let label = to_assertion_uri(claim.label(), &ca.label());
+
+            let cloud_data = CloudData::from_assertion(ca.assertion()).map_err(|_| {
+                log_item!(
+                    label.clone(),
+                    "cloud-data assertion could not be decoded",
+                    "verify_cloud_data"
+                )
+                .validation_status(validation_status::ASSERTION_CLOUD_DATA_MALFORMED)
+                .failure_no_throw(validation_log, Error::ClaimDecoding(label.clone()));
+                Error::ClaimDecoding(label.clone())
+            })?;
+
+            // Step 1: size must be at least 1 byte.
+            if cloud_data.size < 1 {
+                log_item!(
+                    label.clone(),
+                    "cloud-data assertion has invalid size (must be >= 1)",
+                    "verify_cloud_data"
+                )
+                .validation_status(validation_status::ASSERTION_CLOUD_DATA_MALFORMED)
+                .failure(validation_log, Error::ClaimDecoding(label.clone()))?;
+            }
+
+            // Step 2: hard binding assertions must not be stored as cloud data.
+            if cloud_data.is_hard_binding() {
+                log_item!(
+                    label.clone(),
+                    "cloud-data assertion references a hard binding assertion",
+                    "verify_cloud_data"
+                )
+                .validation_status(validation_status::ASSERTION_CLOUD_DATA_HARD_BINDING)
+                .failure(validation_log, Error::ClaimDecoding(label.clone()))?;
+            }
+
+            // Step 3: actions assertions must not be stored as cloud data in update manifests.
+            if claim.update_manifest() && cloud_data.is_actions() {
+                log_item!(
+                    label.clone(),
+                    "cloud-data assertion references an actions assertion in an update manifest",
+                    "verify_cloud_data"
+                )
+                .validation_status(validation_status::ASSERTION_CLOUD_DATA_ACTIONS)
+                .failure(validation_log, Error::ClaimDecoding(label.clone()))?;
+            }
         }
 
         Ok(())
@@ -3351,24 +3521,34 @@ impl Claim {
         mda
     }
 
-    /// Return list of data hash assertions
+    /// Return list of data hash assertions.
+    ///
+    /// For v2+ claims, only created assertions are returned; gathered hash
+    /// assertions are excluded because hard bindings must be in created_assertions.
     pub fn hash_assertions(&self) -> Vec<&ClaimAssertion> {
+        let assertion_type = if self.claim_version >= 2 {
+            Some(ClaimAssertionType::Created)
+        } else {
+            None
+        };
+
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_hash = Assertion::new(DataHash::LABEL, None, dummy_data);
-        let mut data_hashes = self.assertions_by_type(&dummy_hash, None);
+        let mut data_hashes = self.assertions_by_type(&dummy_hash, assertion_type.clone());
 
-        // add in an BMFF hashes
+        // add in BMFF hashes
         let dummy_bmff_data = AssertionData::Cbor(Vec::new());
         let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
-        data_hashes.append(&mut self.assertions_by_type(&dummy_bmff_hash, None));
+        data_hashes.append(&mut self.assertions_by_type(&dummy_bmff_hash, assertion_type.clone()));
 
-        // add in an box hashes
+        // add in box hashes
         let dummy_box_data = AssertionData::Cbor(Vec::new());
         let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
-        data_hashes.append(&mut self.assertions_by_type(&dummy_box_hash, None));
+        data_hashes.append(&mut self.assertions_by_type(&dummy_box_hash, assertion_type));
 
         // remove any multipart hashes, those are handled elsewhere
-        data_hashes.retain(|x| !x.label_raw().ends_with(assertions::labels::PART));
+        data_hashes
+            .retain(|x: &&ClaimAssertion| !x.label_raw().ends_with(assertions::labels::PART));
 
         data_hashes
     }
@@ -3378,6 +3558,20 @@ impl Claim {
         let dummy_bmff_data = AssertionData::Cbor(Vec::new());
         let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
         self.assertions_by_type(&dummy_bmff_hash, None)
+    }
+
+    /// Return list of soft binding assertions.
+    pub fn soft_binding_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy = Assertion::new(assertions::labels::SOFT_BINDING, None, dummy_data);
+        self.assertions_by_type(&dummy, None)
+    }
+
+    /// Return list of cloud data assertions.
+    pub fn cloud_data_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy = Assertion::new(assertions::labels::CLOUD_DATA, None, dummy_data);
+        self.assertions_by_type(&dummy, None)
     }
 
     pub fn data_hash_assertions(&self) -> Vec<&ClaimAssertion> {
@@ -4366,5 +4560,279 @@ pub mod tests {
                 .is_none(),
             "instance 1 should be gone"
         );
+    }
+    fn make_soft_binding(alg: Option<&str>) -> assertions::SoftBinding {
+        use crate::assertions::{SoftBindingBlock, SoftBindingScope};
+        let mut sb = assertions::SoftBinding::default();
+        sb.alg = alg.map(str::to_string);
+        sb.blocks = vec![SoftBindingBlock {
+            scope: SoftBindingScope::default(),
+            value: "abc123".as_bytes().to_vec(),
+        }];
+        sb
+    }
+
+    #[test]
+    fn test_verify_soft_binding_alg_valid() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        claim
+            .add_assertion(&make_soft_binding(Some("com.digimarc.validate.1")))
+            .expect("add soft binding");
+
+        assert!(
+            Claim::verify_soft_binding_alg(&claim, &mut validation_log).is_ok(),
+            "known algorithm should pass"
+        );
+        assert!(validation_log.logged_items().is_empty());
+    }
+
+    #[test]
+    fn test_verify_soft_binding_alg_unknown() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        claim
+            .add_assertion(&make_soft_binding(Some("com.unknown.watermark.99")))
+            .expect("add soft binding");
+
+        let result = Claim::verify_soft_binding_alg(&claim, &mut validation_log);
+        assert!(result.is_err(), "unknown algorithm should fail");
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::ALGORITHM_UNSUPPORTED)),
+            "should log ALGORITHM_UNSUPPORTED"
+        );
+    }
+
+    #[test]
+    fn test_verify_soft_binding_alg_missing_alg() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // No alg on assertion, no alg_soft on claim
+        claim
+            .add_assertion(&make_soft_binding(None))
+            .expect("add soft binding");
+
+        let result = Claim::verify_soft_binding_alg(&claim, &mut validation_log);
+        assert!(result.is_err(), "missing algorithm should fail");
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::CLAIM_MALFORMED)),
+            "should log CLAIM_MALFORMED"
+        );
+    }
+
+    #[test]
+    fn test_verify_soft_binding_alg_fallback_to_alg_soft() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // No alg on assertion, but claim-level alg_soft is a known algorithm
+        claim.alg_soft = Some("io.iscc.v0".to_string());
+        claim
+            .add_assertion(&make_soft_binding(None))
+            .expect("add soft binding");
+
+        assert!(
+            Claim::verify_soft_binding_alg(&claim, &mut validation_log).is_ok(),
+            "valid alg_soft fallback should pass"
+        );
+        assert!(validation_log.logged_items().is_empty());
+    }
+
+    #[test]
+    fn test_verify_claim_generator_info_valid() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let claim = create_test_claim().expect("create test claim");
+
+        // create_test_claim adds a ClaimGeneratorInfo with name "test app"
+        assert!(
+            Claim::verify_claim_generator_info(&claim, &mut validation_log).is_ok(),
+            "valid claim_generator_info should pass"
+        );
+        assert!(
+            validation_log.logged_items().is_empty(),
+            "no errors should be logged for a valid claim"
+        );
+    }
+
+    #[test]
+    fn test_verify_claim_generator_info_missing() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        // Build a v2 claim without adding any claim_generator_info
+        let mut claim = Claim::new("test", Some("test"), 2);
+        claim.claim_generator_info = None;
+
+        let result = Claim::verify_claim_generator_info(&claim, &mut validation_log);
+        assert!(result.is_err(), "missing claim_generator_info should fail");
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::CLAIM_MALFORMED)),
+            "should log CLAIM_MALFORMED"
+        );
+    }
+
+    #[test]
+    fn test_verify_claim_generator_info_empty_name() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = Claim::new("test", Some("test"), 2);
+        claim.add_claim_generator_info(ClaimGeneratorInfo::new(""));
+
+        let result = Claim::verify_claim_generator_info(&claim, &mut validation_log);
+        assert!(result.is_err(), "empty name should fail");
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::CLAIM_MALFORMED)),
+            "should log CLAIM_MALFORMED"
+        );
+    }
+
+    fn make_cloud_data(label: &str) -> assertions::CloudData {
+        assertions::CloudData::new(
+            label,
+            1024,
+            assertions::HashedExtUri::new(
+                "https://example.com/data",
+                "sha256",
+                vec![0xde, 0xad, 0xbe, 0xef],
+            ),
+        )
+    }
+
+    #[test]
+    fn test_verify_cloud_data_valid() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // A fully-specified cloud-data assertion referencing a non-forbidden type.
+        claim
+            .add_assertion(&make_cloud_data("c2pa.metadata"))
+            .expect("add cloud data");
+
+        assert!(
+            Claim::verify_cloud_data(&claim, &mut validation_log).is_ok(),
+            "valid cloud-data assertion should pass"
+        );
+        assert!(validation_log.logged_items().is_empty());
+    }
+
+    #[test]
+    fn test_verify_cloud_data_zero_size_rejected() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // size must be >= 1 per spec (size-type = int .ge 1).
+        let cd = assertions::CloudData::new(
+            "c2pa.metadata",
+            0,
+            assertions::HashedExtUri::new(
+                "https://example.com/data",
+                "sha256",
+                vec![0xde, 0xad, 0xbe, 0xef],
+            ),
+        );
+        claim.add_assertion(&cd).expect("add cloud data");
+
+        let result = Claim::verify_cloud_data(&claim, &mut validation_log);
+        assert!(result.is_err(), "size=0 should fail");
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::ASSERTION_CLOUD_DATA_MALFORMED)),
+            "should log ASSERTION_CLOUD_DATA_MALFORMED"
+        );
+    }
+
+    #[test]
+    fn test_verify_cloud_data_hard_binding_rejected() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // Hard binding assertion referenced from cloud-data is forbidden.
+        claim
+            .add_assertion(&make_cloud_data(assertions::labels::DATA_HASH))
+            .expect("add cloud data");
+
+        let result = Claim::verify_cloud_data(&claim, &mut validation_log);
+        assert!(result.is_err(), "hard binding in cloud-data should fail");
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::ASSERTION_CLOUD_DATA_HARD_BINDING)),
+            "should log ASSERTION_CLOUD_DATA_HARD_BINDING"
+        );
+    }
+
+    #[test]
+    fn test_verify_cloud_data_actions_in_update_manifest_rejected() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+        claim.set_update_manifest(true);
+
+        claim
+            .add_assertion(&make_cloud_data(assertions::labels::ACTIONS))
+            .expect("add cloud data");
+
+        let result = Claim::verify_cloud_data(&claim, &mut validation_log);
+        assert!(
+            result.is_err(),
+            "actions in cloud-data of update manifest should fail"
+        );
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::ASSERTION_CLOUD_DATA_ACTIONS)),
+            "should log ASSERTION_CLOUD_DATA_ACTIONS"
+        );
+    }
+
+    #[test]
+    fn test_verify_cloud_data_actions_in_non_update_manifest_allowed() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // Actions cloud-data is only forbidden in update manifests.
+        claim
+            .add_assertion(&make_cloud_data(assertions::labels::ACTIONS))
+            .expect("add cloud data");
+
+        assert!(
+            Claim::verify_cloud_data(&claim, &mut validation_log).is_ok(),
+            "actions in cloud-data of a non-update manifest should pass"
+        );
+        assert!(validation_log.logged_items().is_empty());
     }
 }

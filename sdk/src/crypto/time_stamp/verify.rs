@@ -25,7 +25,7 @@ use sha2::{Sha256, Sha384, Sha512};
 
 use crate::{
     crypto::{
-        asn1::rfc3161::TstInfo,
+        asn1::rfc3161::{Accuracy, TstInfo},
         cose::{check_end_entity_certificate_profile, CertificateTrustPolicy},
         raw_signature::validator_for_sig_and_hash_algs,
         time_stamp::{
@@ -475,8 +475,11 @@ pub fn verify_time_stamp(
         // Make sure the time stamp's cert was valid for the stated signing time.
         let not_before = time_to_datetime(cert.tbs_certificate.validity.not_before).timestamp();
         let not_after = time_to_datetime(cert.tbs_certificate.validity.not_after).timestamp();
+        let accuracy_margin = tst_accuracy_seconds(tst.accuracy.as_ref());
 
-        if !(signing_time >= not_before && signing_time <= not_after) {
+        if !(signing_time >= not_before.saturating_sub(accuracy_margin)
+            && signing_time <= not_after.saturating_add(accuracy_margin))
+        {
             log_item!(
                 "",
                 "timestamp signer outside of certificate validity",
@@ -852,6 +855,34 @@ fn order_certificates_leaf_to_root(
     }
 
     Ok(ordered_certs)
+}
+
+fn integer_to_i64(int: &bcder::Integer) -> i64 {
+    let bytes = int.as_slice();
+    if bytes.is_empty() || bytes.len() > 8 {
+        return 0;
+    }
+    let mut result = 0i64;
+    for &b in bytes {
+        result = (result << 8) | (b as i64);
+    }
+    result
+}
+
+/// Convert a TSTInfo Accuracy value to a whole-second margin (ceiling).
+fn tst_accuracy_seconds(accuracy: Option<&Accuracy>) -> i64 {
+    let Some(acc) = accuracy else {
+        return 0;
+    };
+    let secs = acc.seconds.as_ref().map(integer_to_i64).unwrap_or(0);
+    let millis = acc.millis.as_ref().map(integer_to_i64).unwrap_or(0);
+    let micros = acc.micros.as_ref().map(integer_to_i64).unwrap_or(0);
+    let total_micros = secs
+        .saturating_mul(1_000_000)
+        .saturating_add(millis.saturating_mul(1_000))
+        .saturating_add(micros);
+    // ceiling division to full seconds
+    total_micros.saturating_add(999_999) / 1_000_000
 }
 
 fn validate_timestamp_sig(

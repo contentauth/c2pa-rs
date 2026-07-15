@@ -61,8 +61,8 @@ use crate::{
         self,
         boxes::*,
         labels::{
-            manifest_label_from_uri, manifest_label_to_parts, to_assertion_uri, to_manifest_uri,
-            ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
+            assertion_label_from_uri, manifest_label_from_uri, manifest_label_to_parts,
+            to_assertion_uri, to_manifest_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::{
@@ -4089,6 +4089,64 @@ impl Store {
         if let Some(redactions) = redactions {
             for r in redactions {
                 final_redactions.insert(r);
+            }
+        }
+
+        // For each redaction that targets an ingredient assertion, remove the corresponding
+        // entry from ingredient_references. If no other claim still references that ingredient
+        // claim, drop it from the incoming store entirely.
+        for redaction_uri in &final_redactions {
+            let assertion_label = match assertion_label_from_uri(redaction_uri) {
+                Some(l) => l,
+                None => continue,
+            };
+
+            // Only act on ingredient assertions.
+            if !assertion_label.starts_with(labels::INGREDIENT) {
+                continue;
+            }
+
+            // The redaction URI encodes which claim owns the assertion.
+            let claim_label = match manifest_label_from_uri(redaction_uri) {
+                Some(l) => l,
+                None => continue,
+            };
+
+            // Find the owning claim and then the specific assertion within it.
+            let Some(owning_claim) = i_store.get_claim(&claim_label) else {
+                continue;
+            };
+
+            let Some(ia) = owning_claim
+                .ingredient_assertions()
+                .into_iter()
+                .find(|a| a.label() == assertion_label)
+            else {
+                continue;
+            };
+
+            // Recover the referenced manifest URL from active_manifest or c2pa_manifest.
+            let Ok(ingredient_assertion) = Ingredient::from_assertion(ia.assertion()) else {
+                continue;
+            };
+
+            let Some(manifest_ref) = ingredient_assertion.c2pa_manifest() else {
+                continue;
+            };
+
+            let ingredient_label = Store::manifest_label_from_path(&manifest_ref.url());
+
+            let now_unreferenced =
+                if let Some(refs) = svi.ingredient_references.get_mut(&ingredient_label) {
+                    refs.remove(&claim_label);
+                    refs.is_empty()
+                } else {
+                    false
+                };
+
+            if now_unreferenced {
+                svi.ingredient_references.remove(&ingredient_label);
+                to_remove_from_incoming.push(ingredient_label);
             }
         }
 
@@ -9005,6 +9063,149 @@ pub mod tests {
         assert!(
             matches!(result, Err(Error::InvalidAsset(_))),
             "expected Err(InvalidAsset) for depth >= MAX_INGREDIENT_DEPTH, got: {result:?}"
+        );
+    }
+
+    // Verify that when an ingredient assertion is included in final_redactions, the claim it
+    // referenced is removed from the incoming store and from svi.ingredient_references.
+    #[test]
+    fn test_redacted_ingredient_assertion_removes_claim() {
+        use crate::{
+            hashed_uri::HashedUri, jumbf::labels::to_signature_uri,
+            utils::test::create_test_store_v1, ClaimGeneratorInfo, ValidationResults,
+        };
+
+        let context = Context::new();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // --- Build M1: a simple signed manifest with no sub-ingredients. ---
+        let (format, mut input_stream, mut m1_output) = create_test_streams("earth_apollo17.jpg");
+        let mut m1_store = create_test_store_v1().unwrap();
+        m1_store
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut m1_output,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+
+        m1_output.rewind().unwrap();
+        let m1_vec = m1_output.get_ref().clone();
+        let mut m1_report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let m1_store_loaded = Store::from_stream(
+            format,
+            &mut Cursor::new(m1_vec.clone()),
+            &mut m1_report,
+            &context,
+        )
+        .unwrap();
+        let m1_pc = m1_store_loaded.provenance_claim().unwrap();
+        let m1_label = m1_pc.label().to_owned();
+
+        // --- Build M2: an update manifest whose ingredient assertion points to M1. ---
+        let mut m2_claim = Claim::new("test", Some("m2_ingredient_redact"), 2);
+        m2_claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+        let (m1_jumbf, _) =
+            Store::load_jumbf_from_stream(format, &mut Cursor::new(m1_vec.clone()), &context)
+                .unwrap();
+        let mut m2_store =
+            Store::load_ingredient_to_claim(&mut m2_claim, &m1_jumbf, None, &context).unwrap();
+
+        let m1_hashes = m1_store_loaded.get_manifest_box_hashes(m1_pc);
+        let parent_uri = HashedUri::new(
+            m1_store_loaded.provenance_path().unwrap(),
+            Some(m1_pc.alg().to_string()),
+            &m1_hashes.manifest_box_hash,
+        );
+        let sig_uri = HashedUri::new(
+            to_signature_uri(m1_pc.label()),
+            Some(m1_pc.alg().to_string()),
+            &m1_hashes.signature_box_hash,
+        );
+
+        let m1_validation = ValidationResults::from_store(&m1_store_loaded, &m1_report);
+        let parent_ingredient = Ingredient::new_v3(Relationship::ParentOf)
+            .set_active_manifests_and_signature_from_hashed_uri(Some(parent_uri), Some(sig_uri))
+            .set_validation_results(Some(m1_validation));
+        m2_claim.add_assertion(&parent_ingredient).unwrap();
+
+        // An action referencing the ingredient is required by the update manifest schema.
+        let ia = m2_claim.ingredient_assertions()[0];
+        let ia_hashed_uri = HashedUri::new(
+            to_assertion_uri(m2_claim.label(), &ia.label()),
+            Some(m2_claim.alg().to_owned()),
+            ia.hash(),
+        );
+        let actions = Actions::new().add_action(
+            Action::new("c2pa.opened")
+                .set_parameter("ingredients", vec![ia_hashed_uri])
+                .unwrap(),
+        );
+        m2_claim.add_assertion(&actions).unwrap();
+
+        m2_store.commit_update_manifest(m2_claim).unwrap();
+        m1_output.rewind().unwrap();
+        let mut m2_output = Cursor::new(Vec::new());
+        m2_store
+            .save_to_stream(
+                format,
+                &mut m1_output,
+                &mut m2_output,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+
+        // Load M2 back to discover the exact labels and ingredient assertion label.
+        m2_output.rewind().unwrap();
+        let m2_vec = m2_output.get_ref().clone();
+        let mut m2_report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let m2_store_loaded = Store::from_stream(
+            format,
+            &mut Cursor::new(m2_vec.clone()),
+            &mut m2_report,
+            &context,
+        )
+        .unwrap();
+        let m2_pc = m2_store_loaded.provenance_claim().unwrap();
+        let m2_label = m2_pc.label().to_owned();
+
+        // Build a redaction URI targeting M2's ingredient assertion (which points to M1).
+        let m2_ingredient_assertions = m2_pc.ingredient_assertions();
+        assert!(
+            !m2_ingredient_assertions.is_empty(),
+            "M2 should have an ingredient assertion"
+        );
+        let ingredient_redaction_uri =
+            to_assertion_uri(m2_pc.label(), &m2_ingredient_assertions[0].label());
+
+        // --- Load M2 into M3 with the ingredient assertion redacted. ---
+        let mut m3_claim = Claim::new("test", Some("m3_ingredient_redact"), 2);
+        m3_claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+        let (m2_jumbf, _) =
+            Store::load_jumbf_from_stream(format, &mut Cursor::new(m2_vec), &context).unwrap();
+        Store::load_ingredient_to_claim(
+            &mut m3_claim,
+            &m2_jumbf,
+            Some(vec![ingredient_redaction_uri]),
+            &context,
+        )
+        .unwrap();
+
+        // M2 (the provenance claim of the incoming store) must still be present.
+        assert!(
+            m3_claim.claim_ingredient(&m2_label).is_some(),
+            "M2 should remain in M3's ingredients"
+        );
+
+        // M1 must have been removed: its only reference (M2's ingredient assertion) was redacted.
+        assert!(
+            m3_claim.claim_ingredient(&m1_label).is_none(),
+            "M1 should be removed because its only referencing assertion was redacted"
         );
     }
 }
