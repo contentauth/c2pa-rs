@@ -811,7 +811,7 @@ impl Reader {
                 // if there are any errors, the state is invalid unless the only error is an untrusted credential
                 let errs = status
                     .iter()
-                    .any(|s| s.code() != crate::validation_status::SIGNING_CREDENTIAL_UNTRUSTED);
+                    .any(|s| !crate::validation_results::is_untrusted_failure(s.code()));
                 if errs {
                     ValidationState::Invalid
                 } else if verify_trust {

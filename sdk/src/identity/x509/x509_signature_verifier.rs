@@ -17,7 +17,7 @@ use serde::Serialize;
 
 use crate::{
     crypto::{
-        cose::{parse_cose_sign1, CertificateInfo, CoseError, Verifier},
+        cose::{parse_cose_sign1, CertificateInfo, CoseError, CredentialKind, Verifier},
         raw_signature::RawSignatureValidationError,
     },
     identity::{
@@ -76,6 +76,7 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
 
         let cert_info = self
             .cose_verifier
+            .with_credential_kind(CredentialKind::CawgIdentity)
             .verify_signature(signature, &signer_payload_cbor, &[], None, status_tracker)
             .map_err(|e| match e {
                 CoseError::RawSignatureValidationError(
@@ -122,6 +123,7 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
 
         let cert_info = self
             .cose_verifier
+            .with_credential_kind(CredentialKind::CawgIdentity)
             .verify_signature_async(signature, &signer_payload_cbor, &[], None, status_tracker)
             .await
             .map_err(|e| match e {
@@ -307,7 +309,7 @@ mod tests {
 
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref() as &str,
-            "signingCredential.untrusted"
+            "cawg.identity.untrusted"
         );
     }
 }

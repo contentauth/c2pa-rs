@@ -23,7 +23,7 @@ use serde_bytes::ByteBuf;
 
 use crate::{
     crypto::{
-        cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
+        cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, CredentialKind, Verifier},
         raw_signature::RawSignatureValidationError,
     },
     dynamic_assertion::PartialClaim,
@@ -306,7 +306,7 @@ impl IdentityAssertion {
         status_tracker: &mut StatusTracker,
         context: &Context,
     ) -> Result<serde_json::Value, ValidationError<String>> {
-        let settings = Context::new().settings().clone();
+        let settings = context.settings().clone();
         self.check_padding(status_tracker)?;
 
         self.signer_payload
@@ -351,8 +351,12 @@ impl IdentityAssertion {
                 parse_cose_sign1(&self.signature, &signer_payload_cbor, status_tracker)
                     .map_err(|e| ValidationError::SignatureError(e.to_string()))?;
 
+            // Verify as a CAWG creator-identity credential so trust results are
+            // reported with the `cawg.identity.*` status codes rather than the
+            // C2PA claim-signer `signingCredential.*` codes.
+            let cawg_verifier = cose_verifier.with_credential_kind(CredentialKind::CawgIdentity);
             let cert_info = if _sync {
-                cose_verifier.verify_signature(
+                cawg_verifier.verify_signature(
                     &self.signature,
                     &signer_payload_cbor,
                     &[],
@@ -360,7 +364,7 @@ impl IdentityAssertion {
                     status_tracker,
                 )
             } else {
-                cose_verifier
+                cawg_verifier
                     .verify_signature_async(
                         &self.signature,
                         &signer_payload_cbor,
@@ -390,8 +394,9 @@ impl IdentityAssertion {
             )
             .validation_status("cawg.identity.well-formed")
             .success(status_tracker);
-            // TO DO (CAI-7980): Should instead issue `cawg.identity.trusted` if the
-            // signing cert is found on a configured trust list.
+            // NOTE (CAI-7980): when the signing cert is on a configured CAWG trust
+            // list, `verify_signature` above additionally logs `cawg.identity.trusted`
+            // (and `cawg.identity.untrusted` when it is not).
 
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))

@@ -55,4 +55,4 @@ mod time_stamp_storage;
 pub use time_stamp_storage::TimeStampStorage;
 
 mod verifier;
-pub use verifier::Verifier;
+pub use verifier::{CredentialKind, CredentialVerifier, Verifier};
