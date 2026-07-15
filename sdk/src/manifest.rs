@@ -360,7 +360,7 @@ impl Manifest {
         &mut self.resources
     }
 
-    /// Returns an iterator over [`ResourceRef`][ResourceRef]s.
+    /// Returns an iterator over [`ResourceRef`]s.
     pub fn iter_resources(&self) -> impl Iterator<Item = ResourceRef> + '_ {
         self.resources.iter_resource_ids().into_iter().map(|uri| {
             let ext = uri.rsplit(['.', '/']).next().unwrap_or("");
@@ -551,7 +551,7 @@ impl Manifest {
             let label = claim_assertion.label();
             let base_label = assertion.label();
             let created = claim_assertion.assertion_type() == ClaimAssertionType::Created;
-            debug!("assertion = {}", &label);
+            debug!("assertion = {}", label);
             match base_label.as_ref() {
                 base if base.starts_with(labels::ACTIONS) => {
                     let mut actions = Actions::from_assertion(assertion)?;
