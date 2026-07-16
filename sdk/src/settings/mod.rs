@@ -132,6 +132,9 @@ fn test_load_trust(allowed_list: &[u8]) -> Result<()> {
     }
 }
 
+// The `#[cfg(not(test))]` default is all-`None` (trivially derivable), so
+// `clippy::derivable_impls` fires on non-test builds; the `#[cfg(test)]` variant
+// loads bundled fixtures and cannot be derived.
 #[allow(clippy::derivable_impls)]
 impl Default for Trust {
     fn default() -> Self {
@@ -211,17 +214,19 @@ pub struct CawgTrust {
     /// Verifying trust is REQUIRED by the CAWG spec. This option should only be used for development or testing.
     /// </div>
     pub(crate) verify_trust_list: bool,
-    /// List of additional user-provided trust anchor root certificates as a PEM bundle.
-    pub user_anchors: Option<String>,
-    /// List of default trust anchor root certificates as a PEM bundle.
+    /// List of additional user-provided trust anchor root certificates as a PEM
+    /// bundle, used when validating CAWG X.509 identity signatures.
     ///
-    /// Normally this option contains the official C2PA-recognized trust anchors found here:
-    /// <https://github.com/c2pa-org/conformance-public/tree/main/trust-list>
+    /// These trust lists are independent of the C2PA [`Trust`] settings and are
+    /// consulted only for CAWG identity validation.
+    pub user_anchors: Option<String>,
+    /// List of default trust anchor root certificates as a PEM bundle, used when
+    /// validating CAWG X.509 identity signatures.
     pub trust_anchors: Option<String>,
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
-    /// certificates must have.
+    /// CAWG identity certificates must have.
     pub trust_config: Option<String>,
-    /// List of explicitly allowed certificates as a PEM bundle.
+    /// List of explicitly allowed CAWG identity certificates as a PEM bundle.
     pub allowed_list: Option<String>,
     /// Exact-match allow-list of trusted CAWG identity claims aggregation (ICA)
     /// issuer DIDs.
@@ -236,13 +241,9 @@ pub struct CawgTrust {
     /// is a deliberate secure default: a self-issued `did:jwk` (or any other
     /// issuer) is not trustworthy simply because its signature is
     /// self-consistent. Populate this list with the DIDs of issuers you trust.
-    // TO DO (CAI-12709): This field is only meaningful for `cawg_trust`, not for
-    // the C2PA `trust`. Move it (and the other CAWG-relevant settings) to a
-    // dedicated `CawgTrust` struct so it no longer pollutes the C2PA `Trust`.
     pub trusted_ica_issuers: Option<Vec<String>>,
 }
 
-#[allow(clippy::derivable_impls)]
 impl Default for CawgTrust {
     fn default() -> Self {
         // load test config store for unit tests
