@@ -26,7 +26,7 @@ use {
     crate::utils::path_utils::sanitize_archive_path,
     std::{
         fs::{create_dir_all, read, write},
-        path::{Path, PathBuf},
+        path::{Component, Path, PathBuf},
     },
 };
 
@@ -161,6 +161,17 @@ pub struct ResourceStore {
     #[cfg(feature = "file_io")]
     #[serde(skip_serializing_if = "Option::is_none")]
     base_path: Option<PathBuf>,
+    /// Directory that disk-backed resources must resolve within.
+    ///
+    /// Relative identifiers (including `..`) are resolved against
+    /// [`base_path`](Self::base_path) but the final path is confined to this
+    /// root, so an attacker-supplied identifier cannot escape the manifest tree
+    /// to read arbitrary files. When unset it defaults to `base_path`. Never
+    /// serialized — it is a runtime security boundary set by the caller, never
+    /// taken from (untrusted) manifest/archive data.
+    #[cfg(feature = "file_io")]
+    #[serde(skip)]
+    resource_root: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
     /// Optional resolver that can look up resource bytes by URI from an external source
@@ -211,6 +222,8 @@ impl ResourceStore {
             resources: HashMap::new(),
             #[cfg(feature = "file_io")]
             base_path: None,
+            #[cfg(feature = "file_io")]
+            resource_root: None,
             label: None,
             resolver: None,
         }
@@ -267,6 +280,18 @@ impl ResourceStore {
     /// Returns and removes the base path.
     pub fn take_base_path(&mut self) -> Option<PathBuf> {
         self.base_path.take()
+    }
+
+    #[cfg(feature = "file_io")]
+    /// Sets the containment root that disk-backed resources must resolve within.
+    ///
+    /// Relative identifiers are still resolved against [`base_path`](Self::base_path),
+    /// but the resolved path may not escape this root. Set this to the top-level
+    /// manifest directory so a nested ingredient (whose `base_path` is a
+    /// subdirectory) can still reference sibling resources via `..` while
+    /// attacker-supplied traversal that escapes the manifest tree is rejected.
+    pub fn set_resource_root<P: Into<PathBuf>>(&mut self, resource_root: P) {
+        self.resource_root = Some(resource_root.into());
     }
 
     /// Generates a unique ID for a given content type (adds a file extension).
@@ -335,11 +360,14 @@ impl ResourceStore {
         if !self.resources.contains_key(id) {
             match self.base_path.as_ref() {
                 Some(base) => {
-                    // Reject identifiers that would escape base_path (traversal, absolute
-                    // paths, backslash separators, or symlinks pointing outside base_path).
-                    // Prevents attacker-supplied manifest definitions from exfiltrating
-                    // files outside the manifest directory.
-                    let path = resolve_within_base(base, id)
+                    // Confine the identifier to the manifest root (defaults to
+                    // base_path). Relative `..` is allowed as long as it stays
+                    // within the manifest tree; absolute paths, escapes, and
+                    // escaping symlinks are rejected. Prevents attacker-supplied
+                    // manifest definitions from exfiltrating files outside the
+                    // manifest directory.
+                    let root = self.resource_root.as_deref().unwrap_or(base);
+                    let path = resolve_within_root(base, root, id)
                         .map_err(|_| Error::ResourceNotFound(id.to_string()))?;
                     // read the file, save in Map and then return a reference
                     let value = read(&path).map_err(|_| {
@@ -377,8 +405,9 @@ impl ResourceStore {
         if !self.resources.contains_key(id) {
             match self.base_path.as_ref() {
                 Some(base) => {
-                    // Reject identifiers that would escape base_path (see get()).
-                    let path = resolve_within_base(base, id)
+                    // Confine the identifier to the manifest root (see get()).
+                    let root = self.resource_root.as_deref().unwrap_or(base);
+                    let path = resolve_within_root(base, root, id)
                         .map_err(|_| Error::ResourceNotFound(id.to_string()))?;
                     // read from, the file to stream
                     let mut file = std::fs::File::open(path)?;
@@ -418,10 +447,11 @@ impl ResourceStore {
 
         #[cfg(feature = "file_io")]
         if let Some(base) = self.base_path.as_ref() {
-            // Skip disk probes for identifiers that would escape base_path — a
-            // hostile id like `../etc/passwd`, or a symlink pointing outside
-            // base_path, must not leak existence via this API.
-            if let Ok(resolved) = resolve_within_base(base, path) {
+            // Skip disk probes for identifiers that would escape the manifest
+            // root — a hostile id like `../../etc/passwd`, or a symlink pointing
+            // outside the manifest tree, must not leak existence via this API.
+            let root = self.resource_root.as_deref().unwrap_or(base);
+            if let Ok(resolved) = resolve_within_root(base, root, path) {
                 if resolved.exists() {
                     return true;
                 }
@@ -453,7 +483,8 @@ impl ResourceStore {
     // Returns the full path for an ID.
     pub fn path_for_id(&self, id: &str) -> Option<PathBuf> {
         let base = self.base_path.as_ref()?;
-        resolve_within_base(base, id).ok()
+        let root = self.resource_root.as_deref().unwrap_or(base);
+        resolve_within_root(base, root, id).ok()
     }
 }
 
@@ -463,34 +494,93 @@ impl Default for ResourceStore {
     }
 }
 
-/// Resolve a resource `path` (an attacker-influenced identifier) to a file
-/// inside `base`, rejecting anything that would escape the base directory.
+/// Lexically normalize a path by resolving `.` and `..` components without
+/// touching the filesystem.
 ///
-/// Two layers of defense are applied:
-///
-/// 1. String sanitization ([`sanitize_archive_path`]) rejects `..` traversal,
-///    absolute paths, backslash separators, and Windows drive/UNC prefixes
-///    before the filesystem is touched.
-/// 2. Symlink containment: if the resolved target exists, it is canonicalized
-///    (following symlinks) and verified to still live within the canonicalized
-///    `base`. A hostile manifest bundle could ship an innocuously-named symlink
-///    pointing at, say, `/etc/passwd`; string sanitization alone would not catch
-///    that. Both sides are canonicalized so a legitimately symlinked `base`
-///    (e.g. `/tmp` -> `/private/tmp` on macOS) is not falsely rejected, and
-///    symlinks that stay inside `base` are still allowed.
-///
-/// A non-existent target has nothing to escape, so it is returned as the plain
-/// joined path and the caller's own read/open surfaces the not-found error.
+/// Leading `..` components that cannot be popped (they would climb above the
+/// path's start, or the path is rooted) are preserved so that an escape above a
+/// relative base remains detectable by a later `starts_with` check.
 #[cfg(feature = "file_io")]
-fn resolve_within_base(base: &Path, path: &str) -> Result<PathBuf> {
-    let sanitized_path = sanitize_archive_path(path)?;
-    let joined = base.join(&sanitized_path);
+fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match out.components().next_back() {
+                // Pop a preceding normal segment.
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                // Cannot climb above a filesystem/drive root: drop the `..`.
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                // Nothing to pop (empty, or tail is already `..`): keep it so the
+                // escape stays visible.
+                _ => out.push(".."),
+            },
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
 
+/// Resolve a resource `path` (an attacker-influenced identifier) against `base`,
+/// confining the result to `root` (the manifest tree). Returns the resolved
+/// path, or an error if the identifier would escape `root`.
+///
+/// Relative identifiers — including `..` — are permitted: a nested ingredient
+/// (whose `base` is a subdirectory) may reference sibling resources one or more
+/// levels up, as long as the resolved path stays inside `root`. What is rejected
+/// is anything that escapes `root`:
+///
+/// 1. Backslashes and absolute paths are refused up front. Archives are
+///    portable, so a Windows-authored `\` separator would otherwise be treated
+///    as a filename on Linux; absolute identifiers are never legitimate.
+/// 2. Lexical containment: `base.join(path)` is normalized (resolving `.`/`..`
+///    without filesystem access) and must remain within the normalized `root`.
+///    This catches escapes even when the target does not exist.
+/// 3. Symlink containment: if the resolved target exists, it is canonicalized
+///    (following symlinks) and re-checked against the canonicalized `root`. A
+///    hostile bundle could ship an innocuously-named symlink pointing outside
+///    the manifest tree; lexical checks alone would not catch that. Both sides
+///    are canonicalized so a legitimately symlinked `root` (e.g. `/tmp` ->
+///    `/private/tmp` on macOS) is not falsely rejected.
+///
+/// A non-existent target passes step 3 (nothing to canonicalize) and is returned
+/// as the joined path; the caller's own read/open then surfaces the not-found
+/// error.
+#[cfg(feature = "file_io")]
+fn resolve_within_root(base: &Path, root: &Path, path: &str) -> Result<PathBuf> {
+    if path.is_empty() {
+        return Err(Error::BadParam(
+            "Empty resource path not allowed".to_string(),
+        ));
+    }
+    if path.contains('\\') {
+        return Err(Error::BadParam(format!(
+            "Backslash not allowed in resource path: {path}"
+        )));
+    }
+    if Path::new(path).is_absolute() {
+        return Err(Error::BadParam(format!(
+            "Absolute resource path not allowed: {path}"
+        )));
+    }
+
+    let joined = base.join(path);
+
+    // Lexical containment (works whether or not the target exists).
+    if !normalize_lexically(&joined).starts_with(normalize_lexically(root)) {
+        return Err(Error::BadParam(format!(
+            "Resource path escapes manifest root: {path}"
+        )));
+    }
+
+    // Symlink containment for targets that exist.
     if let Ok(canonical_target) = joined.canonicalize() {
-        let canonical_base = base.canonicalize()?;
-        if !canonical_target.starts_with(&canonical_base) {
+        let canonical_root = root.canonicalize()?;
+        if !canonical_target.starts_with(&canonical_root) {
             return Err(Error::BadParam(format!(
-                "Resource path escapes base directory: {path}"
+                "Resource path escapes manifest root: {path}"
             )));
         }
     }
@@ -886,6 +976,52 @@ mod tests {
             let result = store.write_stream("thumb.jpg", &mut out);
             assert!(matches!(result, Err(Error::ResourceNotFound(_))));
             assert!(out.get_ref().is_empty());
+        }
+
+        // Regression for the nested-ingredient case (c2patool ingredient_paths):
+        // a store whose base_path is a subdirectory of the manifest root may
+        // reference a sibling resource one level up via `..`, as long as the
+        // resolved path stays within the manifest root.
+        #[test]
+        fn get_with_resource_root_allows_parent_relative_within_root() {
+            let temp = tempdir().unwrap();
+            let root = temp.path().join("manifest");
+            let ingredient_dir = root.join("ingredient");
+            std::fs::create_dir_all(&ingredient_dir).unwrap();
+            // Sibling resource lives in the manifest root, referenced from the
+            // ingredient subdirectory as `../thumb.png`.
+            std::fs::write(root.join("thumb.png"), b"thumb data").unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(&ingredient_dir);
+            store.set_resource_root(&root);
+
+            let data = store
+                .get("../thumb.png")
+                .expect("parent-relative resource within root should resolve");
+            assert_eq!(data.as_slice(), b"thumb data");
+        }
+
+        // But `..` may not climb above the manifest root, even from a nested base.
+        #[test]
+        fn get_with_resource_root_rejects_escape_beyond_root() {
+            let temp = tempdir().unwrap();
+            let root = temp.path().join("manifest");
+            let ingredient_dir = root.join("ingredient");
+            std::fs::create_dir_all(&ingredient_dir).unwrap();
+            // Secret lives outside the manifest root entirely.
+            std::fs::write(temp.path().join("secret.txt"), b"SUPER SECRET").unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(&ingredient_dir);
+            store.set_resource_root(&root);
+
+            // `ingredient/../../secret.txt` -> temp/secret.txt, outside the root.
+            let result = store.get("../../secret.txt");
+            assert!(
+                matches!(result, Err(Error::ResourceNotFound(_))),
+                "escape above manifest root must be rejected, got {result:?}"
+            );
         }
     }
 }
