@@ -34,11 +34,12 @@ use crate::{
     },
 };
 
-static SUPPORTED_TYPES: [&str; 12] = [
+static SUPPORTED_TYPES: [&str; 13] = [
     "avi",
     "wav",
     "webp",
     "image/webp",
+    "image/x-webp",
     "audio/wav",
     "audio/wave",
     "audio/x-wav",
