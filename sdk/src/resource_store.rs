@@ -453,7 +453,7 @@ impl Default for ResourceStore {
 }
 
 pub trait ResourceResolver {
-    /// Read the data in a [`ResourceRef`][ResourceRef] via a stream.
+    /// Read the data in a [`ResourceRef`] via a stream.
     fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>>;
 }
 

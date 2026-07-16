@@ -401,7 +401,15 @@ fn box_start<R: Read + Seek + ?Sized>(reader: &mut R, is_large: bool) -> Result<
 }
 
 fn _skip_bytes<R: Read + Seek + ?Sized>(reader: &mut R, size: u64) -> Result<()> {
-    reader.seek(SeekFrom::Current(size as i64))?;
+    // `size as i64` on a value greater than i64::MAX wraps to a negative
+    // number, which would seek *backward* rather than skip forward. Compute
+    // the absolute target with checked_add on u64 and seek to it via
+    // `SeekFrom::Start`, which takes a u64 directly.
+    let current = reader.stream_position()?;
+    let target = current
+        .checked_add(size)
+        .ok_or_else(|| Error::InvalidAsset("BMFF skip past u64::MAX".to_string()))?;
+    reader.seek(SeekFrom::Start(target))?;
     Ok(())
 }
 
@@ -741,7 +749,7 @@ fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
     mut output: &mut W,
     bmff_tree: &Arena<BoxInfo>,
     bmff_path_map: &HashMap<String, Vec<Token>>,
-    adjust: i32,
+    adjust: i64,
 ) -> Result<()> {
     let start_pos = output.stream_position()?; // save starting point
 
@@ -2107,14 +2115,18 @@ impl CAIWriter for BmffIO {
         // write ContentProvenanceBox
         output_stream.write_all(&new_c2pa_box)?;
 
-        // calc offset adjustments
-        let offset_adjust: i32 = if end == 0 {
-            new_c2pa_box_size as i32
+        // calc offset adjustments. Use i64 so a box larger than i32::MAX
+        // (2 GiB) does not silently truncate and corrupt embedded offsets.
+        let new_c2pa_box_size_i64 = i64::try_from(new_c2pa_box_size)
+            .map_err(|_| Error::InvalidAsset("C2PA box too large".to_string()))?;
+        let offset_adjust: i64 = if end == 0 {
+            new_c2pa_box_size_i64
         } else {
             // value could be negative if box is truncated
             let existing_c2pa_box_size = end - start;
-            let pad_size: i32 = new_c2pa_box_size as i32 - existing_c2pa_box_size as i32;
-            pad_size
+            let existing_i64 = i64::try_from(existing_c2pa_box_size)
+                .map_err(|_| Error::InvalidAsset("existing C2PA box too large".to_string()))?;
+            new_c2pa_box_size_i64 - existing_i64
         };
 
         // write content after ContentProvenanceBox
@@ -2255,11 +2267,12 @@ impl CAIWriter for BmffIO {
         let mut before_manifest = input_stream.take(start as u64);
         std::io::copy(&mut before_manifest, output_stream)?;
 
-        // calc offset adjustments
-        // value will be negative since the box is truncated
-        let new_c2pa_box_size: i32 = 0;
+        // calc offset adjustments — value will be negative since the box is
+        // being truncated. Use i64 so boxes larger than i32::MAX (2 GiB) do
+        // not truncate and shift `stco`/`co64`/`iloc` offsets to garbage.
         let existing_c2pa_box_size = end - start;
-        let offset_adjust = new_c2pa_box_size - existing_c2pa_box_size as i32;
+        let offset_adjust: i64 = -i64::try_from(existing_c2pa_box_size)
+            .map_err(|_| Error::InvalidAsset("existing C2PA box too large".to_string()))?;
 
         // write content after ContentProvenanceBox
         input_stream.seek(SeekFrom::Start(end as u64))?;
@@ -2527,14 +2540,19 @@ impl RemoteRefEmbed for BmffIO {
                 // write ContentProvenanceBox
                 output_stream.write_all(&new_xmp_box)?;
 
-                // calc offset adjustments
-                let offset_adjust: i32 = if end == 0 {
-                    new_xmp_box_size as i32
+                // calc offset adjustments. Use i64 so XMP boxes larger than
+                // i32::MAX (2 GiB) do not silently truncate.
+                let new_xmp_box_size_i64 = i64::try_from(new_xmp_box_size)
+                    .map_err(|_| Error::InvalidAsset("XMP box too large".to_string()))?;
+                let offset_adjust: i64 = if end == 0 {
+                    new_xmp_box_size_i64
                 } else {
                     // value could be negative if box is truncated
                     let existing_xmp_box_size = end - start;
-                    let pad_size: i32 = new_xmp_box_size as i32 - existing_xmp_box_size as i32;
-                    pad_size
+                    let existing_i64 = i64::try_from(existing_xmp_box_size).map_err(|_| {
+                        Error::InvalidAsset("existing XMP box too large".to_string())
+                    })?;
+                    new_xmp_box_size_i64 - existing_i64
                 };
 
                 // write content after XMP box
@@ -2671,8 +2689,10 @@ pub(crate) fn inject_placeholder(
     // write content after free box
     std::io::copy(input_stream, output_stream)?;
 
-    // calc offset adjustments
-    let offset_adjust: i32 = free_box_bytes.len() as i32;
+    // calc offset adjustments — use i64 so a placeholder larger than
+    // i32::MAX (2 GiB) does not truncate.
+    let offset_adjust: i64 = i64::try_from(free_box_bytes.len())
+        .map_err(|_| Error::InvalidAsset("placeholder box too large".to_string()))?;
 
     // Manipulating the free box means we may need some patch offsets if they are file absolute offsets.
     if offset_adjust != 0 {
@@ -3088,5 +3108,100 @@ pub mod tests {
             get_uuid_box_purpose(&mut reader, node),
             Err(Error::InvalidAsset(_))
         ));
+    }
+
+    // Regression: `_skip_bytes(reader, size)` used `size as i64`, which wraps
+    // a u64 > i64::MAX to a negative i64 and would seek *backward* instead of
+    // forward. The fix routes through the current position + checked_add +
+    // SeekFrom::Start so the seek direction is always forward for any u64
+    // that fits inside the file, and any value that would overflow u64
+    // surfaces as InvalidAsset.
+    #[test]
+    fn test_skip_bytes_large_u64_does_not_seek_backward() {
+        // A small in-memory buffer where we can't actually seek that far
+        // forward — we only care that the function does not produce a
+        // *backward* seek and that its result is a well-formed forward seek
+        // to a position >= the starting position (or a controlled error).
+        let mut buf = vec![0u8; 32];
+        let mut reader = Cursor::new(&mut buf);
+        reader.seek(SeekFrom::Start(4)).unwrap();
+
+        // Size just above i64::MAX — the pre-fix `size as i64` cast would
+        // wrap this to a negative value. `SeekFrom::Start(u64)` handles the
+        // large target correctly; the actual stream_position after such a
+        // seek is well-defined (some backends allow seeking past EOF).
+        // The security property under test is *no backward seek*.
+        let before = reader.stream_position().unwrap();
+        let _ = _skip_bytes(&mut reader, (i64::MAX as u64) + 1);
+        let after = reader.stream_position().unwrap();
+        assert!(
+            after >= before,
+            "skip_bytes must never seek backward — before={before}, after={after}",
+        );
+    }
+
+    #[test]
+    fn test_skip_bytes_u64_max_returns_error_not_backward_seek() {
+        // A skip that would push the target past u64::MAX must surface as an
+        // `InvalidAsset` error, not wrap into a backward seek.
+        let mut buf = vec![0u8; 16];
+        let mut reader = Cursor::new(&mut buf);
+        reader.seek(SeekFrom::Start(8)).unwrap();
+
+        let result = _skip_bytes(&mut reader, u64::MAX);
+        assert!(
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "expected InvalidAsset for skip past u64::MAX, got {result:?}",
+        );
+    }
+
+    // Regression: `offset_adjust` used to be an `i32` that received a
+    // `usize as i32` cast. For a C2PA / free box larger than i32::MAX
+    // (2 GiB), the cast truncated to a bogus value (potentially negative),
+    // corrupting every stco/co64/iloc offset patched via
+    // `adjust_known_offsets`. Widening `adjust_known_offsets` to accept `i64`
+    // and guarding every producer with `i64::try_from(usize)` makes the
+    // adjustment either faithful or a clean `InvalidAsset` error.
+    #[test]
+    fn test_adjust_known_offsets_accepts_over_i32_max_positive() {
+        // Empty tree / path map → adjust_known_offsets should not touch
+        // anything, and must accept an i64 far beyond i32::MAX without a
+        // truncation panic or an integer overflow.
+        let (arena, _root) = Arena::with_data(BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size: 0,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        });
+        let map: HashMap<String, Vec<Token>> = HashMap::new();
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        let big_adjust: i64 = (i32::MAX as i64) + 1;
+        adjust_known_offsets(&mut cursor, &arena, &map, big_adjust).unwrap();
+    }
+
+    #[test]
+    fn test_adjust_known_offsets_accepts_below_neg_i32_min_negative() {
+        // Same invariant on the negative side — the pre-fix i32 signature
+        // could not represent a shrink adjustment for a box larger than
+        // 2 GiB (its magnitude); the i64 signature can, and empty maps keep
+        // the function a no-op.
+        let (arena, _root) = Arena::with_data(BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size: 0,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        });
+        let map: HashMap<String, Vec<Token>> = HashMap::new();
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        let big_neg: i64 = (i32::MIN as i64) - 1;
+        adjust_known_offsets(&mut cursor, &arena, &map, big_neg).unwrap();
     }
 }
