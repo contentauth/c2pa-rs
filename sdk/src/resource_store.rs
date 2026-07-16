@@ -978,6 +978,95 @@ mod tests {
             assert!(out.get_ref().is_empty());
         }
 
+        // Windows equivalents of the symlink tests above. The containment fix is
+        // cross-platform (Path::canonicalize resolves symlinks on Windows too),
+        // but creating a symlink on Windows requires Administrator rights or
+        // Developer Mode, which unprivileged CI runners lack. These tests skip
+        // (rather than fail) when symlink creation is not permitted.
+        #[cfg(windows)]
+        #[test]
+        fn get_with_base_path_rejects_escaping_symlink_windows() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            let secret = temp.path().join("secret.txt");
+            std::fs::write(&secret, b"SUPER SECRET").unwrap();
+            // An innocuously-named link inside base_path pointing outside it.
+            if std::os::windows::fs::symlink_file(&secret, base.join("thumb.jpg")).is_err() {
+                return; // no symlink privilege on this runner
+            }
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let result = store.get("thumb.jpg");
+            assert!(
+                matches!(result, Err(Error::ResourceNotFound(_))),
+                "escaping symlink must not be readable, got {result:?}"
+            );
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn get_with_base_path_allows_internal_symlink_windows() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            std::fs::write(base.join("real.jpg"), b"image data").unwrap();
+            if std::os::windows::fs::symlink_file(base.join("real.jpg"), base.join("alias.jpg"))
+                .is_err()
+            {
+                return; // no symlink privilege on this runner
+            }
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let data = store
+                .get("alias.jpg")
+                .expect("in-directory symlink should resolve");
+            assert_eq!(data.as_slice(), b"image data");
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn exists_with_base_path_rejects_escaping_symlink_windows() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            let secret = temp.path().join("secret.txt");
+            std::fs::write(&secret, b"SUPER SECRET").unwrap();
+            if std::os::windows::fs::symlink_file(&secret, base.join("thumb.jpg")).is_err() {
+                return; // no symlink privilege on this runner
+            }
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            assert!(!store.exists("thumb.jpg"));
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn write_stream_with_base_path_rejects_escaping_symlink_windows() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            let secret = temp.path().join("secret.txt");
+            std::fs::write(&secret, b"SUPER SECRET").unwrap();
+            if std::os::windows::fs::symlink_file(&secret, base.join("thumb.jpg")).is_err() {
+                return; // no symlink privilege on this runner
+            }
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let mut out = std::io::Cursor::new(Vec::<u8>::new());
+            let result = store.write_stream("thumb.jpg", &mut out);
+            assert!(matches!(result, Err(Error::ResourceNotFound(_))));
+            assert!(out.get_ref().is_empty());
+        }
+
         // Regression for the nested-ingredient case (c2patool ingredient_paths):
         // a store whose base_path is a subdirectory of the manifest root may
         // reference a sibling resource one level up via `..`, as long as the
