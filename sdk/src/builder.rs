@@ -10262,12 +10262,20 @@ mod tests {
         assert_eq!(all.len(), 2);
         // created-list keeps the inception action.
         assert_eq!(
-            all[0].actions.iter().map(|a| a.action()).collect::<Vec<_>>(),
+            all[0]
+                .actions
+                .iter()
+                .map(|a| a.action())
+                .collect::<Vec<_>>(),
             vec![c2pa_action::CREATED]
         );
         // gathered-list keeps cropped.
         assert_eq!(
-            all[1].actions.iter().map(|a| a.action()).collect::<Vec<_>>(),
+            all[1]
+                .actions
+                .iter()
+                .map(|a| a.action())
+                .collect::<Vec<_>>(),
             vec!["c2pa.cropped"]
         );
     }
