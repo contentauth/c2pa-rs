@@ -599,6 +599,34 @@ where
     c2pa_mode: bool,
 }
 
+/// Accumulates one strip/tile/BigTable byte count into `copied` and rejects the
+/// tag once the running total exceeds the source stream length.
+///
+/// TIFF strip/tile/BigTable data lives inside the source file, so a legitimate
+/// `sum(byte_counts)` is at most the file size. A crafted file can instead list
+/// many entries whose offsets all point at the same bytes and whose counts sum
+/// to far more than the file, making the clone re-copy the input over and over
+/// and grow the in-memory output to gigabytes (memory amplification → OOM
+/// abort; ~4.9 GB from a 293 KB input in the reported PoC). Capping the
+/// cumulative copy length at the source length stops that while leaving
+/// well-formed files untouched.
+///
+/// `kind` labels the error ("strip", "tile", "BigTable"). The error is returned
+/// via `Result` so the caller propagates it with `?`. Note that `with_order!`
+/// inlines its body into a `match` arm — it is not a real closure — so that `?`
+/// (like a bare `return`) exits `clone_image_data` directly, not just a closure.
+fn accumulate_copy_len(copied: &mut u64, cnt: u64, source_len: u64, kind: &str) -> Result<()> {
+    *copied = copied
+        .checked_add(cnt)
+        .ok_or_else(|| Error::InvalidAsset(format!("TIFF {kind} byte counts overflow")))?;
+    if *copied > source_len {
+        return Err(Error::InvalidAsset(format!(
+            "TIFF {kind} byte counts exceed source length"
+        )));
+    }
+    Ok(())
+}
+
 impl<T: Read + Write + Seek> TiffCloner<T> {
     pub fn new(endianness: Endianness, big_tiff: bool, writer: T) -> Result<TiffCloner<T>> {
         let bo = ByteOrdered::runtime(writer, endianness);
@@ -1462,14 +1490,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             _ => return Err(Error::InvalidAsset("invalid TIFF strip".to_string())),
                         };
 
-                        copied = copied.checked_add(*cnt).ok_or_else(|| {
-                            Error::InvalidAsset("TIFF strip byte counts overflow".to_string())
-                        })?;
-                        if copied > source_len {
-                            return Err(Error::InvalidAsset(
-                                "TIFF strip byte counts exceed source length".to_string(),
-                            ));
-                        }
+                        accumulate_copy_len(&mut copied, *cnt, source_len, "strip")?;
 
                         let dest_offset = self.writer.stream_position()?;
                         dest_offsets.push(dest_offset);
@@ -1573,14 +1594,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             _ => return Err(Error::InvalidAsset("invalid TIFF tile".to_string())),
                         };
 
-                        copied = copied.checked_add(*cnt).ok_or_else(|| {
-                            Error::InvalidAsset("TIFF tile byte counts overflow".to_string())
-                        })?;
-                        if copied > source_len {
-                            return Err(Error::InvalidAsset(
-                                "TIFF tile byte counts exceed source length".to_string(),
-                            ));
-                        }
+                        accumulate_copy_len(&mut copied, *cnt, source_len, "tile")?;
 
                         let dest_offset = self.writer.stream_position()?;
                         dest_offsets.push(dest_offset);
@@ -1707,14 +1721,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         _ => return Err(Error::InvalidAsset("invalid TIFF BigTable".to_string())),
                     };
 
-                    copied = copied.checked_add(*cnt).ok_or_else(|| {
-                        Error::InvalidAsset("TIFF BigTable byte counts overflow".to_string())
-                    })?;
-                    if copied > source_len {
-                        return Err(Error::InvalidAsset(
-                            "TIFF BigTable byte counts exceed source length".to_string(),
-                        ));
-                    }
+                    accumulate_copy_len(&mut copied, *cnt, source_len, "BigTable")?;
 
                     let dest_offset = self.writer.stream_position()?;
                     dest_offsets.push(dest_offset); // save offset where the new BigTable block is written for patching later
@@ -2698,6 +2705,7 @@ pub enum TiffError {
 
 #[cfg(test)]
 pub mod tests {
+    #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
@@ -3345,6 +3353,35 @@ pub mod tests {
         cloner
             .clone_image_data(&mut ifd, &mut asset_reader)
             .expect("valid strip byte counts should copy successfully");
+    }
+
+    // Unit test for the shared cap helper used by the strip, tile, and BigTable
+    // copy loops. Covers the running-total accounting, the exceed-source-length
+    // rejection (with the per-kind label), and the checked_add overflow guard.
+    #[test]
+    fn accumulate_copy_len_caps_and_labels() {
+        // Accumulates within the cap.
+        let mut copied = 0u64;
+        accumulate_copy_len(&mut copied, 40, 100, "strip").expect("within cap");
+        accumulate_copy_len(&mut copied, 60, 100, "strip").expect("exactly at cap");
+        assert_eq!(copied, 100);
+
+        // One more byte exceeds the source length and is rejected with the label.
+        let err = accumulate_copy_len(&mut copied, 1, 100, "tile").unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidAsset(msg)
+                if msg.contains("tile") && msg.contains("exceed source length")),
+            "got {err:?}",
+        );
+
+        // A count that overflows the u64 running total is rejected too.
+        let mut copied = u64::MAX;
+        let err = accumulate_copy_len(&mut copied, 1, u64::MAX, "BigTable").unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidAsset(msg)
+                if msg.contains("BigTable") && msg.contains("overflow")),
+            "got {err:?}",
+        );
     }
 
     /*  disable until I find smaller DNG
