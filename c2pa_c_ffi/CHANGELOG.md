@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.90.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.89.3...c2pa-c-ffi-v0.90.0)
+_16 July 2026_
+
+### Changed
+
+* Transition release onto the new scheduled breaking-change release train (see [release process](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-process.md)). This is a version-only bump: there are no `c2pa-c-ffi` library code changes since 0.89.3 ([#2250](https://github.com/contentauth/c2pa-rs/pull/2250)).
+
 ## [0.88.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.87.0...c2pa-c-ffi-v0.88.0)
 _11 June 2026_
 
