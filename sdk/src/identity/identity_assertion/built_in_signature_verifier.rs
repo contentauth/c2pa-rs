@@ -300,6 +300,14 @@ mod tests {
         let settings = crate::settings::Settings::default()
             .with_value("verify.verify_trust", false)
             .unwrap()
+            .with_value(
+                "soft_binding.soft_binding_algorithms",
+                [
+                    "com.adobe.trustmark.P".to_string(),
+                    "com.adobe.icn.dense".to_string(),
+                ],
+            )
+            .unwrap()
             .with_value("core.decode_identity_assertions", false)
             .unwrap();
         let context = crate::Context::new()

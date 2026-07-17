@@ -8,59 +8,6 @@ use crate::{
     Result,
 };
 
-/// Snapshot of the C2PA soft binding algorithm registry.
-///
-/// Source: <https://github.com/c2pa-org/softbinding-algorithm-list>
-///
-/// New entries are periodically added to the external registry; update this
-/// list to stay current. Last update was on 2024-06-05 of: <https://github.com/c2pa-org/softbinding-algorithm-list/blob/main/softbinding-algorithm-list.json>.
-pub(crate) const SOFT_BINDING_ALGS: &[&str] = &[
-    "com.digimarc.validate.1",
-    "org.atsc.a336",
-    "io.iscc.v0",
-    "com.adobe.trustmark.Q",
-    "com.adobe.trustmark.C",
-    "com.adobe.icn.dense",
-    "ai.steg.api",
-    "ai.trufo.gen1.image",
-    "ai.trufo.gen1.image-lite",
-    "app.overlai.watermark.1",
-    "tv.kinetiq.watercast.48.1",
-    "castLabs.watermark.1",
-    "com.adobe.trustmark.P",
-    "com.imatag.lamark.v1",
-    "com.nagra.nexguard.watermark.1",
-    "com.mentaport.watermark.1",
-    "com.digicaps.fingerprint.1",
-    "com.sonicorigin.watermark.1",
-    "com.microsoft.invismark.1",
-    "com.microsoft.wavmark.1",
-    "ai.contentlens.image.basewmk",
-    "ai.contentlens.image.ensemblewmk",
-    "ai.contentlens.image.customwmk",
-    "ai.contentlens.audio.mono",
-    "ai.contentlens.audio.stereo",
-    "es.lumatrace",
-    "com.markany.watermark.1",
-    "com.verimatrix.watermark.1",
-    "com.writerslogic.zwc-watermark.1",
-    "com.aiwatermark.videoseal.1",
-    "com.aiwatermark.pixelseal.1",
-    "com.aiwatermark.audioseal.1",
-    "eu.sasha.softbinding.v1",
-    "ai.verda.watermark.image.1",
-    "ai.verda.watermark.video.1",
-    "ai.verda.watermark.audio.1",
-    "com.evixar.eaw.1",
-    "com.evixar.efp.type3.1",
-    "com.cognitive-proof.vsrmark.1",
-    "me.deepmark.audio.vigil.128",
-    "com.writerslogic.text-fingerprint.1",
-    "com.writerslogic.zwc-watermark.2",
-    "com.writerslogic.text-structure.1",
-    "com.writerslogic.text-minhash.1",
-];
-
 /// The data structure used to store one or more soft bindings across some or all of the asset's content.
 ///
 /// See [Soft binding assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#soft_binding_assertion).

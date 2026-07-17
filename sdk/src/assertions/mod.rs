@@ -91,7 +91,6 @@ pub use embedded_data::EmbeddedData;
 pub mod region_of_interest;
 
 mod soft_binding;
-pub(crate) use soft_binding::SOFT_BINDING_ALGS;
 pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope};
 
 mod cloud_data;

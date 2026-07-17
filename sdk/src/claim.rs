@@ -3315,7 +3315,16 @@ impl Claim {
         }
 
         // soft binding algorithm validation applies to all claim versions
-        Claim::verify_soft_binding_alg(claim, validation_log)?;
+        Claim::verify_soft_binding_alg(
+            claim,
+            context
+                .settings()
+                .soft_binding
+                .soft_binding_algorithms
+                .as_deref()
+                .unwrap_or(&[]),
+            validation_log,
+        )?;
 
         // cloud-data assertion validation applies to all claim versions
         Claim::verify_cloud_data(claim, validation_log)?;
@@ -3366,7 +3375,11 @@ impl Claim {
     /// The effective algorithm is the assertion-level `alg` field when present,
     /// falling back to the claim-level `alg_soft` field. If neither is present
     /// the assertion is malformed.
-    fn verify_soft_binding_alg(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
+    fn verify_soft_binding_alg(
+        claim: &Claim,
+        soft_binding_algs: &[String],
+        validation_log: &mut StatusTracker,
+    ) -> Result<()> {
         use assertions::SoftBinding;
 
         for ca in claim.soft_binding_assertions() {
@@ -3403,7 +3416,7 @@ impl Claim {
                         Error::ValidationRule("soft binding missing algorithm".into()),
                     )?;
                 }
-                Some(alg) if !assertions::SOFT_BINDING_ALGS.contains(&alg) => {
+                Some(alg) if soft_binding_algs.iter().find(|&a| a == alg).is_none() => {
                     log_item!(
                         label.clone(),
                         format!("soft binding algorithm '{alg}' is not in the C2PA soft binding algorithm registry"),
@@ -4574,6 +4587,18 @@ pub mod tests {
 
     #[test]
     fn test_verify_soft_binding_alg_valid() {
+        let settings = Settings::new()
+            .with_json(
+                r#"
+                {
+                    "soft_binding": {
+                        "soft_binding_algorithms": ["com.adobe.trustmark.Q", "com.adobe.trustmark.C", "com.digimarc.validate.1"]
+                    }
+                }
+            "#,
+            )
+            .unwrap();
+
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let mut claim = create_test_claim().expect("create test claim");
@@ -4583,7 +4608,16 @@ pub mod tests {
             .expect("add soft binding");
 
         assert!(
-            Claim::verify_soft_binding_alg(&claim, &mut validation_log).is_ok(),
+            Claim::verify_soft_binding_alg(
+                &claim,
+                settings
+                    .soft_binding
+                    .soft_binding_algorithms
+                    .as_deref()
+                    .unwrap_or(&[]),
+                &mut validation_log
+            )
+            .is_ok(),
             "known algorithm should pass"
         );
         assert!(validation_log.logged_items().is_empty());
@@ -4591,6 +4625,18 @@ pub mod tests {
 
     #[test]
     fn test_verify_soft_binding_alg_unknown() {
+        let settings = Settings::new()
+            .with_json(
+                r#"
+                {
+                    "soft_binding": {
+                        "soft_binding_algorithms": ["com.adobe.trustmark.Q", "com.adobe.trustmark.C", "com.digimarc.validate.1"]
+                    }
+                }
+            "#,
+            )
+            .unwrap();
+
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let mut claim = create_test_claim().expect("create test claim");
@@ -4599,7 +4645,15 @@ pub mod tests {
             .add_assertion(&make_soft_binding(Some("com.unknown.watermark.99")))
             .expect("add soft binding");
 
-        let result = Claim::verify_soft_binding_alg(&claim, &mut validation_log);
+        let result = Claim::verify_soft_binding_alg(
+            &claim,
+            settings
+                .soft_binding
+                .soft_binding_algorithms
+                .as_deref()
+                .unwrap_or(&[]),
+            &mut validation_log,
+        );
         assert!(result.is_err(), "unknown algorithm should fail");
         assert!(
             validation_log
@@ -4613,6 +4667,18 @@ pub mod tests {
 
     #[test]
     fn test_verify_soft_binding_alg_missing_alg() {
+        let settings = Settings::new()
+            .with_json(
+                r#"
+                {
+                    "soft_binding": {
+                        "soft_binding_algorithms": ["com.adobe.trustmark.Q", "com.adobe.trustmark.C", "com.digimarc.validate.1"]
+                    }
+                }
+            "#,
+            )
+            .unwrap();
+
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let mut claim = create_test_claim().expect("create test claim");
@@ -4622,7 +4688,15 @@ pub mod tests {
             .add_assertion(&make_soft_binding(None))
             .expect("add soft binding");
 
-        let result = Claim::verify_soft_binding_alg(&claim, &mut validation_log);
+        let result = Claim::verify_soft_binding_alg(
+            &claim,
+            settings
+                .soft_binding
+                .soft_binding_algorithms
+                .as_deref()
+                .unwrap_or(&[]),
+            &mut validation_log,
+        );
         assert!(result.is_err(), "missing algorithm should fail");
         assert!(
             validation_log
@@ -4636,6 +4710,18 @@ pub mod tests {
 
     #[test]
     fn test_verify_soft_binding_alg_fallback_to_alg_soft() {
+        let settings = Settings::new()
+            .with_json(
+                r#"
+                {
+                    "soft_binding": {
+                        "soft_binding_algorithms": ["io.iscc.v0"]
+                    }
+                }
+            "#,
+            )
+            .unwrap();
+
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let mut claim = create_test_claim().expect("create test claim");
@@ -4647,7 +4733,16 @@ pub mod tests {
             .expect("add soft binding");
 
         assert!(
-            Claim::verify_soft_binding_alg(&claim, &mut validation_log).is_ok(),
+            Claim::verify_soft_binding_alg(
+                &claim,
+                settings
+                    .soft_binding
+                    .soft_binding_algorithms
+                    .as_deref()
+                    .unwrap_or(&[]),
+                &mut validation_log
+            )
+            .is_ok(),
             "valid alg_soft fallback should pass"
         );
         assert!(validation_log.logged_items().is_empty());
