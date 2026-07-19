@@ -65,7 +65,7 @@ fn manifest_def(title: &str, format: &str) -> String {
 
 fn print_progress(phase: ProgressPhase, step: u32, total: u32, elapsed_ms: f64) {
     if total == 0 {
-        println!("[{elapsed_ms:>8.3}ms] {phase:?} {step}/? (indeterminate)");
+        println!("[{elapsed_ms:>8.3}ms] {phase:?} {step}/?");
     } else {
         println!("[{elapsed_ms:>8.3}ms] {phase:?} {step}/{total}");
     }

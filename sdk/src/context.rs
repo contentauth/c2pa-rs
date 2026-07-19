@@ -126,7 +126,6 @@ enum SignerState {
     /// User-provided custom signer.
     Custom(BoxedSigner),
     /// Signer created from context's settings with lazy initialization.
-    /// The Result is cached so we only attempt creation once.
     FromSettings(OnceLock<Result<BoxedSigner>>),
 }
 
@@ -135,7 +134,6 @@ enum AsyncSignerState {
     /// User-provided custom async signer.
     Custom(BoxedAsyncSigner),
     /// Async signer created from context's settings with lazy initialization.
-    /// The Result is cached so we only attempt creation once.
     FromSettings(OnceLock<Result<BoxedAsyncSigner>>),
 }
 
@@ -269,8 +267,8 @@ impl IntoSettings for serde_json::Value {
 /// ```
 pub struct Context {
     settings: Settings,
-    sync_resolver: SyncResolverState,
-    async_resolver: AsyncResolverState,
+    sync_resolver_state: SyncResolverState,
+    async_resolver_state: AsyncResolverState,
     signer: SignerState,
     async_signer: AsyncSignerState,
     progress_callback: Option<Box<ProgressCallbackFunc>>,
@@ -283,8 +281,8 @@ impl Default for Context {
     fn default() -> Self {
         Self {
             settings: Settings::default(),
-            sync_resolver: SyncResolverState::Default(OnceLock::new()),
-            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
+            async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             #[cfg(test)]
             signer: SignerState::Custom(crate::utils::test_signer::test_signer(
                 crate::SigningAlg::Ps256,
@@ -412,7 +410,7 @@ impl Context {
         mut self,
         resolver: T,
     ) -> Self {
-        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
+        self.sync_resolver_state = SyncResolverState::Custom(Arc::new(resolver));
         self
     }
 
@@ -420,7 +418,7 @@ impl Context {
         &mut self,
         resolver: T,
     ) -> Result<()> {
-        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
+        self.sync_resolver_state = SyncResolverState::Custom(Arc::new(resolver));
         Ok(())
     }
 
@@ -435,7 +433,7 @@ impl Context {
         mut self,
         resolver: T,
     ) -> Self {
-        self.async_resolver = AsyncResolverState::Custom(Arc::new(resolver));
+        self.async_resolver_state = AsyncResolverState::Custom(Arc::new(resolver));
         self
     }
 
@@ -443,7 +441,7 @@ impl Context {
         &mut self,
         resolver: T,
     ) -> Result<()> {
-        self.async_resolver = AsyncResolverState::Custom(Arc::new(resolver));
+        self.async_resolver_state = AsyncResolverState::Custom(Arc::new(resolver));
         Ok(())
     }
 
@@ -452,14 +450,20 @@ impl Context {
     /// The default resolver is a `SyncGenericResolver` wrapped with `RestrictedResolver`
     /// to apply host filtering from the settings.
     pub fn resolver(&self) -> Arc<dyn SyncHttpResolver> {
-        match &self.sync_resolver {
+        match &self.sync_resolver_state {
             SyncResolverState::Custom(resolver) => resolver.clone(),
             SyncResolverState::Default(once_lock) => once_lock
                 .get_or_init(|| {
-                    let inner = SyncGenericResolver::new();
-                    let mut resolver = RestrictedResolver::new(inner);
-                    resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                    Arc::new(resolver)
+                    if self.settings.core.allowed_network_hosts.is_some() {
+                        let mut resolver = RestrictedResolver::new(SyncGenericResolver::new());
+                        resolver
+                            .set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
+                        Arc::new(resolver)
+                    } else {
+                        // For backwards compatibility, we enable redirects in the default case.
+                        // Source: https://github.com/contentauth/c2pa-rs/pull/1907
+                        Arc::new(SyncGenericResolver::with_redirects().unwrap_or_default())
+                    }
                 })
                 .clone(),
         }
@@ -470,14 +474,20 @@ impl Context {
     /// The default resolver is an `AsyncGenericResolver` wrapped with `RestrictedResolver`
     /// to apply host filtering from the settings.
     pub fn resolver_async(&self) -> Arc<dyn AsyncHttpResolver> {
-        match &self.async_resolver {
+        match &self.async_resolver_state {
             AsyncResolverState::Custom(resolver) => resolver.clone(),
             AsyncResolverState::Default(once_lock) => once_lock
                 .get_or_init(|| {
-                    let inner = AsyncGenericResolver::new();
-                    let mut resolver = RestrictedResolver::new(inner);
-                    resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                    Arc::new(resolver)
+                    if self.settings.core.allowed_network_hosts.is_some() {
+                        let mut resolver = RestrictedResolver::new(AsyncGenericResolver::new());
+                        resolver
+                            .set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
+                        Arc::new(resolver)
+                    } else {
+                        // For backwards compatibility, we enable redirects in the default case.
+                        // Source: https://github.com/contentauth/c2pa-rs/pull/1907
+                        Arc::new(AsyncGenericResolver::with_redirects().unwrap_or_default())
+                    }
                 })
                 .clone(),
         }
@@ -551,10 +561,10 @@ impl Context {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MissingSignerSettings`] if:
-    /// - No signer was explicitly set with `with_signer()`
-    /// - No signer configuration is present in this Context's settings
-    /// - The signer configuration in settings is invalid
+    /// Returns [`Error::MissingSignerSettings`] if no signer was explicitly set
+    /// with `with_signer()` and no signer configuration is present in this
+    /// Context's settings. Returns other errors if signer creation fails (e.g.
+    /// invalid credentials, unsupported algorithm, or crypto library errors).
     ///
     /// # Examples
     ///
@@ -600,11 +610,9 @@ impl Context {
             SignerState::Custom(signer) => Ok(signer.as_ref()),
             SignerState::FromSettings(once_lock) => {
                 let result = once_lock.get_or_init(|| {
-                    // Create signer from this context's settings
                     if let Some(signer_settings) = &self.settings.signer {
                         let c2pa_signer = signer_settings.clone().c2pa_signer()?;
 
-                        // Check for CAWG x509 wrapper
                         if let Some(cawg_settings) = &self.settings.cawg_x509_signer {
                             cawg_settings.clone().cawg_signer(c2pa_signer)
                         } else {
@@ -617,7 +625,9 @@ impl Context {
                 match result {
                     Ok(boxed) => Ok(boxed.as_ref()),
                     Err(Error::MissingSignerSettings) => Err(Error::MissingSignerSettings),
-                    Err(_) => Err(Error::MissingSignerSettings), // Treat all errors as missing settings
+                    Err(e) => Err(Error::BadParam(format!(
+                        "failed to create signer from settings: {e}"
+                    ))),
                 }
             }
         }
@@ -656,12 +666,9 @@ impl Context {
                 });
                 match result {
                     Ok(boxed) => Ok(boxed.as_ref()),
-                    Err(Error::BadParam(_)) => Err(Error::BadParam(
-                        "Async signer not configured in settings".to_string(),
-                    )),
-                    Err(_) => Err(Error::BadParam(
-                        "Async signer not configured in settings".to_string(),
-                    )),
+                    Err(e) => Err(Error::BadParam(format!(
+                        "failed to create async signer from settings: {e}"
+                    ))),
                 }
             }
         }
@@ -795,6 +802,12 @@ impl Context {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::utils::test_signer::async_test_signer;
+    use crate::{
+        utils::{test::test_context, test_signer::test_signer},
+        SigningAlg,
+    };
 
     #[test]
     fn test_into_settings_from_settings() {
@@ -836,9 +849,7 @@ mod tests {
 
     #[test]
     fn test_signer_from_settings() {
-        // Create a context with signer settings from the test_settings.toml file
-        let toml = include_str!("../tests/fixtures/test_settings.toml");
-        let context = Context::new().with_settings(toml).unwrap();
+        let context = test_context();
 
         // Verify that signer can be created from the settings
         let signer = context.signer();
@@ -847,7 +858,7 @@ mod tests {
         // Verify the signer has the expected algorithm
         let signer = signer.unwrap();
         assert!(
-            signer.alg() == crate::SigningAlg::Ps256,
+            signer.alg() == SigningAlg::Ps256,
             "Signer from settings should have Ps256 algorithm"
         );
 
@@ -862,8 +873,8 @@ mod tests {
         // create a context with FromSettings and empty settings
         let mut context = Context {
             settings: Settings::default(),
-            sync_resolver: SyncResolverState::Default(OnceLock::new()),
-            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
+            async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
@@ -894,7 +905,7 @@ mod tests {
     #[test]
     fn test_custom_signer() {
         // Create a custom test signer
-        let custom_signer = crate::utils::test_signer::test_signer(crate::SigningAlg::Es256);
+        let custom_signer = test_signer(SigningAlg::Es256);
 
         // Create a context with the custom signer
         let context = Context::new().with_signer(custom_signer);
@@ -902,7 +913,7 @@ mod tests {
         // Verify the custom signer is returned with the expected algorithm
         let signer = context.signer().unwrap();
         assert!(
-            signer.alg() == crate::SigningAlg::Es256,
+            signer.alg() == SigningAlg::Es256,
             "Custom signer should have Es256 algorithm"
         );
     }
@@ -910,10 +921,8 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_custom_async_signer() {
-        use crate::utils::test_signer::async_test_signer;
-
         // Create a custom async signer using the test utility
-        let custom_async_signer = async_test_signer(crate::SigningAlg::Es256);
+        let custom_async_signer = async_test_signer(SigningAlg::Es256);
 
         // Create a context with the custom async signer
         let context = Context::new().with_async_signer(custom_async_signer);
@@ -922,7 +931,7 @@ mod tests {
         let async_signer = context.async_signer().unwrap();
         assert_eq!(
             async_signer.alg(),
-            crate::SigningAlg::Es256,
+            SigningAlg::Es256,
             "Custom async signer should have Es256 algorithm"
         );
 
@@ -940,8 +949,8 @@ mod tests {
         // Create a context without custom async signer (will try to load from settings)
         let context = Context {
             settings: Settings::default(),
-            sync_resolver: SyncResolverState::Default(OnceLock::new()),
-            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
+            async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
@@ -1053,23 +1062,14 @@ mod tests {
 
     #[test]
     fn test_default_sync_resolver() {
-        // Create a context with default resolver
         let context = Context::new();
-
-        // Verify we can get the default resolver
         let _resolver = context.resolver();
     }
 
     #[test]
     fn test_default_async_resolver() {
-        // Create a context with default resolver
         let context = Context::new();
-
-        // Verify we can get the default async resolver
         let _resolver = context.resolver_async();
-
-        // The test passes if we can get the async resolver without errors
-        // The default is a RestrictedResolver wrapping AsyncGenericResolver
     }
 
     #[test]
@@ -1099,10 +1099,7 @@ mod tests {
             }
         }
 
-        // Create a context with the custom resolver
         let context = Context::new().with_resolver(MockSyncResolver);
-
-        // Verify the custom resolver is used
         let resolver = context.resolver();
 
         // Make a test request to verify it's our mock
@@ -1180,9 +1177,9 @@ mod tests {
             [core]
             allowed_network_hosts = ["example.com", "test.org"]
         "#;
-        let context = Context::new().with_settings(settings_toml).unwrap();
 
         // Get the resolver
+        let context = Context::new().with_settings(settings_toml).unwrap();
         let _resolver = context.resolver();
 
         // Note: We can't easily test the actual restriction behavior here
@@ -1205,8 +1202,6 @@ mod tests {
     fn test_resolver_caching() {
         // Create a context
         let context = Context::new();
-
-        // Get the resolver multiple times
         let _resolver1 = context.resolver();
         let _resolver2 = context.resolver();
         let _resolver3 = context.resolver();
@@ -1327,10 +1322,8 @@ mod tests {
 
     #[test]
     fn test_set_signer() {
-        use crate::SigningAlg;
-
         // Create a custom test signer (Es256)
-        let custom_signer = crate::utils::test_signer::test_signer(SigningAlg::Es256);
+        let custom_signer = test_signer(SigningAlg::Es256);
 
         // Create a context and mutate it with set_signer
         let mut context = Context::new();
@@ -1355,10 +1348,8 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_set_async_signer() {
-        use crate::SigningAlg;
-
         // Create a custom async test signer (Es256)
-        let custom_signer = crate::utils::test_signer::async_test_signer(SigningAlg::Es256);
+        let custom_signer = async_test_signer(SigningAlg::Es256);
 
         // Create a context and mutate it with set_async_signer
         let mut context = Context::new();
@@ -1389,10 +1380,8 @@ mod tests {
 
     #[test]
     fn test_set_methods_replace_previous_values() {
-        use crate::SigningAlg;
-
         // Create a context with initial signer (Ps256)
-        let initial_signer = crate::utils::test_signer::test_signer(SigningAlg::Ps256);
+        let initial_signer = test_signer(SigningAlg::Ps256);
         let mut context = Context::new().with_signer(initial_signer);
 
         // Verify initial signer
@@ -1404,7 +1393,7 @@ mod tests {
         );
 
         // Replace with new signer (Es256) using set_signer
-        let new_signer = crate::utils::test_signer::test_signer(SigningAlg::Es256);
+        let new_signer = test_signer(SigningAlg::Es256);
         context.set_signer(new_signer).unwrap();
 
         // Verify signer was replaced

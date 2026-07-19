@@ -16,21 +16,32 @@ A _build configuration_ will specify:
   * `stable` ([the most recent “stable” release](https://blog.rust-lang.org/releases/latest))
   * `MSRV` (the oldest release supported by this project)
 * A feature flag set, which will be either `all` (all flags defined in the c2pa-rs crate) or a list of specific features.
-* A crypto library flag, which will be either `rust_native_crypto` or `openssl`, depicting which cryptogrpahy stack is being built and tested.
+* A crypto library flag, which will be either `rust_native_crypto` or `openssl`, specifying the  cryptography stack to build and test.
 * On platforms where relevant, a C library identifier (i.e. `glibc` or `musl`).
+
+## How the tiers gate merges and releases
+
+The tiers map directly onto the branching model in the [release process](release-process.md):
+
+* **Tier 1A is the merge gate for `main`.** Every pull request must pass Tier 1A before it can merge — on `main` and on every release-line and release-candidate branch.
+* **Tiers 1B and 2 are additionally required for any pull request targeting a release-line (`stable`, `v0.x`) or release-candidate (`*-rc*`) branch.** This includes [backport PRs](release-process.md#backport-bot), release-candidate bake bugfixes, and the [`release-plz` release PR](release-process.md#release-plz). In short, anything headed for a published (or soon-to-be-published) artifact must pass all three tiers.
+* **All three tiers also run against `main` on a daily schedule** (a nightly run), so regressions that only surface under the heavier Tier 1B/2 configurations are caught even when no release-targeting PR is open.
+* On a `main` pull request you can run the full Tier 1B + 2 suite on demand by adding the `check-release` label — handy for assessing release-readiness before a change is backported.
+
+See [validation gating](release-process.md#validation-gating) in the release process for how this fits the overall flow.
 
 ## Tier 1A
 
 Tier 1A configurations are the most actively supported.
 A Tier 1A configuration will:
 
-* Have continuous integration tests that build and pass for this build configuration on every commit to `main`.
-A pull request will be blocked if the tests do not pass.
+* Have continuous integration tests that build and pass for this build configuration on every commit to `main`, as well as to the release-line (`stable`, `v0.x`) and release-candidate (`*-rc*`) branches described in the [release process](release-process.md).
+A pull request will be blocked if the tests do not pass. This is the merge gate for `main` (see [How the tiers gate merges and releases](#how-the-tiers-gate-merges-and-releases)).
 * This test suite is the most complete set of tests available for this component.
 * Tier 1A configurations _may_ also have built artifacts generated for each versioned release.
 The location where these artifacts are published will be documented.
 
-These requirements are enforced in the [Tier 1A workflow](/.github/workflows/tier-1a.yml).
+These requirements are enforced in the [Tier 1A workflow](../.github/workflows/tier-1a.yml).
 
 ### Tier 1A for c2pa-rs
 
@@ -55,13 +66,14 @@ A Tier 1B configuration will:
 
 * Have continuous integration tests that build and pass for every versioned release.
 A release will be blocked if the tests do not pass.
+In practice these run on every pull request targeting a release-line or release-candidate branch — including backport PRs and the `release-plz` release PR — and on every push to a release-candidate branch during a train's bake. You can also invoke them on a `main` PR by adding the `check-release` label. (See [How the tiers gate merges and releases](#how-the-tiers-gate-merges-and-releases).)
 * This test suite should be the same as for Tier 1A.
 * Tier 1B configurations _may_ also have built artifacts generated for each versioned release.
 The location where these artifacts are published will be documented.
 
 A decision to place a configuration in Tier 1B is typically made because the CI test suite for this configuration adds significantly to the time required to complete a PR validation and the likelihood of finding issues that are specific to this configuration is deemed low.
 
-These requirements are enforced in the [Tier 1B workflow](/.github/workflows/tier-1b.yml).
+These requirements are enforced in the [Tier 1B workflow](../.github/workflows/tier-1b.yml).
 
 ### Tier 1B for c2pa-rs
 
@@ -90,14 +102,14 @@ A Tier 2 configuration will:
 
 * Have continuous integration tests that _build_ for this build configuration for each versioned release.
 A release will be blocked if the build fails.
-This test suite may be triggered for a PR by adding the `release-readiness` label to the PR.
+Like Tier 1B, these run on every pull request targeting a release-line or release-candidate branch (including backport PRs and the `release-plz` release PR), and can be invoked on a `main` PR with the `check-release` label. (See [How the tiers gate merges and releases](#how-the-tiers-gate-merges-and-releases).)
 * A test suite that is a subset of the Tier 1 test suite may be defined for this build configuration.
 If it exists, a release will be blocked if the test suite fails.
-* Tier 2 should generally be avoided, but may necessary when a fully-native execution environment is not available to us.
+* Tier 2 should generally be avoided, but may be necessary when a fully-native execution environment is not available to us.
 (As an example, we can run iOS code in a _simulator,_ but we do not currently pay for hosted iPhone test machines that we can use from GitHub, so iOS native builds can not be in Tier 1.)
 * If built artifacts are generated for this build configuration, they should be built for every versioned release and the location should be documented.
 
-These requirements are enforced in the [Tier 2 workflow](/.github/workflows/tier-2.yml).
+These requirements are enforced in the [Tier 2 workflow](../.github/workflows/tier-2.yml).
 
 ### Tier 2 for c2pa-rs
 

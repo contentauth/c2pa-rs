@@ -28,79 +28,205 @@ use crate::asset_handlers::pdf_io::PdfIO;
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
-        mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO, tiff_io::TiffIO,
+        jpegxl_io::JpegXlIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
+        tiff_io::TiffIO,
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
     maybe_send_sync::MaybeSend,
 };
 
-// initialize asset handlers
+// One prototype instance per handler family. All three lookup maps are derived from
+// this single list so handlers only need to be enumerated here.
 lazy_static! {
+    static ref HANDLER_PROTOTYPES: Vec<Box<dyn AssetIO>> = vec![
+        #[cfg(feature = "pdf")]
+        Box::new(PdfIO::new("")),
+        Box::new(BmffIO::new("")),
+        Box::new(C2paIO::new("")),
+        Box::new(JpegIO::new("")),
+        Box::new(JpegXlIO::new("")),
+        Box::new(PngIO::new("")),
+        Box::new(RiffIO::new("")),
+        Box::new(SvgIO::new("")),
+        Box::new(TiffIO::new("")),
+        Box::new(Mp3IO::new("")),
+        Box::new(GifIO::new("")),
+        Box::new(FlacIO::new("")),
+    ];
+
     static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
-        let handlers: Vec<Box<dyn AssetIO>> = vec![
-            #[cfg(feature = "pdf")]
-            Box::new(PdfIO::new("")),
-            Box::new(BmffIO::new("")),
-            Box::new(C2paIO::new("")),
-            Box::new(JpegIO::new("")),
-            Box::new(PngIO::new("")),
-            Box::new(RiffIO::new("")),
-            Box::new(SvgIO::new("")),
-            Box::new(TiffIO::new("")),
-            Box::new(Mp3IO::new("")),
-            Box::new(GifIO::new("")),
-            Box::new(FlacIO::new("")),
-        ];
-
-        let mut handler_map = HashMap::new();
-
-        // build handler map
-        for h in handlers {
-            // get the supported types add entry for each
-            for supported_type in h.supported_types() {
-                handler_map.insert(supported_type.to_string(), h.get_handler(supported_type));
+        let mut map = HashMap::new();
+        for h in HANDLER_PROTOTYPES.iter() {
+            for t in h.supported_types() {
+                map.insert(t.to_string(), h.get_handler(t));
             }
         }
-
-        handler_map
+        map
     };
-}
 
-// initialize streaming write handlers
-lazy_static! {
     static ref CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>> = {
-        let handlers: Vec<Box<dyn AssetIO>> = vec![
-            Box::new(BmffIO::new("")),
-            Box::new(C2paIO::new("")),
-            Box::new(JpegIO::new("")),
-            Box::new(PngIO::new("")),
-            Box::new(RiffIO::new("")),
-            Box::new(SvgIO::new("")),
-            Box::new(TiffIO::new("")),
-            Box::new(Mp3IO::new("")),
-            Box::new(FlacIO::new("")),
-            Box::new(GifIO::new("")),
-        ];
-        let mut handler_map = HashMap::new();
-
-        // build handler map
-        for h in handlers {
-            // get the supported types add entry for each
-            for supported_type in h.supported_types() {
-                if let Some(writer) = h.get_writer(supported_type) { // get streaming writer if supported
-                    handler_map.insert(supported_type.to_string(), writer);
+        let mut map = HashMap::new();
+        for h in HANDLER_PROTOTYPES.iter() {
+            for t in h.supported_types() {
+                if let Some(writer) = h.get_writer(t) {
+                    map.insert(t.to_string(), writer);
                 }
             }
         }
+        map
+    };
 
-        handler_map
+    /// Maps every known format string (extension or MIME type) to its container ID.
+    ///
+    /// The container ID is the first format string registered by that format's I/O handler.
+    /// Two format strings with the same container ID belong to the same handler family
+    /// (e.g. "dng", "tif", "image/tiff" all map to "tif").
+    static ref CONTAINER_MAP: HashMap<String, &'static str> = {
+        let mut map = HashMap::new();
+        for h in HANDLER_PROTOTYPES.iter() {
+            let types = h.supported_types();
+            if let Some(&container_id) = types.first() {
+                for t in types {
+                    map.insert(t.to_string(), container_id);
+                }
+            }
+        }
+        map
     };
 }
 
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
-    let bmff_io = BmffIO::new("");
-    bmff_io.supported_types().contains(&asset_type)
+    container_from_format(asset_type) == container_from_format("avif")
+}
+
+/// Returns the container ID for a given format string (extension or MIME type), if known.
+///
+/// The container ID is the first format registered by the matching I/O handler. It can be
+/// used to check whether two format strings belong to the same container family without
+/// needing a separate enum: `container_from_format("dng") == container_from_format("tif")`.
+fn container_from_format(format: &str) -> Option<&'static str> {
+    CONTAINER_MAP.get(format.to_lowercase().as_str()).copied()
+}
+
+/// Detects the [`ContainerType`] of a stream by inspecting its leading bytes.
+///
+/// Reads a small header from the stream and matches it against magic signatures for each
+/// known container, then rewinds before returning. Returns `None` when the container cannot
+/// be identified from the bytes alone.
+fn container_from_stream<R: Read + Seek>(stream: &mut R) -> Option<&'static str> {
+    use std::io::SeekFrom;
+
+    stream.rewind().ok()?;
+    let mut buf = [0u8; 16];
+    let n = stream.read(&mut buf).ok()?;
+    stream.rewind().ok()?;
+
+    if n < 2 {
+        return None;
+    }
+
+    // JPEG: FF D8 FF
+    if n >= 3 && buf[0] == 0xff && buf[1] == 0xd8 && buf[2] == 0xff {
+        return Some("jpg");
+    }
+
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if n >= 8 && buf[0..8] == [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] {
+        return Some("png");
+    }
+
+    // GIF87a or GIF89a
+    if n >= 6 && &buf[0..3] == b"GIF" && (&buf[3..6] == b"87a" || &buf[3..6] == b"89a") {
+        return Some("gif");
+    }
+
+    // TIFF (standard and BigTIFF, both byte orders).
+    // DNG, ARW, and NEF all share the TIFF magic bytes; they all use TiffIO.
+    if n >= 4
+        && (buf[0..4] == [0x49, 0x49, 0x2A, 0x00]   // TIFF little-endian
+            || buf[0..4] == [0x4D, 0x4D, 0x00, 0x2A] // TIFF big-endian
+            || buf[0..4] == [0x49, 0x49, 0x2B, 0x00] // BigTIFF little-endian
+            || buf[0..4] == [0x4D, 0x4D, 0x00, 0x2B])
+    // BigTIFF big-endian
+    {
+        return Some("tif");
+    }
+
+    // JPEG XL container: 00 00 00 0C 4A 58 4C 20 0D 0A 87 0A
+    if n >= 12
+        && buf[0..12]
+            == [
+                0x00, 0x00, 0x00, 0x0c, 0x4a, 0x58, 0x4c, 0x20, 0x0d, 0x0a, 0x87, 0x0a,
+            ]
+    {
+        return Some("jxl");
+    }
+
+    // RIFF family (WEBP, AVI, WAV, …): all use the same I/O handler.
+    if n >= 4 && &buf[0..4] == b"RIFF" {
+        return Some("avi");
+    }
+
+    // BMFF family: ISO 14496-12 "ftyp" box at bytes 4-7.
+    // All BMFF subtypes (MP4, MOV, HEIC, HEIF, AVIF, …) share the same handler.
+    if n >= 8 && &buf[4..8] == b"ftyp" {
+        return Some("avif");
+    }
+
+    // FLAC: fLaC marker
+    if n >= 4 && &buf[0..4] == b"fLaC" {
+        return Some("flac");
+    }
+
+    // ID3 tag: may precede MP3 or FLAC audio.
+    // Decode the sync-safe tag size and peek past the tag to check for fLaC.
+    if n >= 10 && &buf[0..3] == b"ID3" {
+        let tag_size = ((buf[6] as u64 & 0x7f) << 21)
+            | ((buf[7] as u64 & 0x7f) << 14)
+            | ((buf[8] as u64 & 0x7f) << 7)
+            | (buf[9] as u64 & 0x7f);
+        let flac_offset = 10 + tag_size;
+        let mut marker = [0u8; 4];
+        let is_flac = stream
+            .seek(SeekFrom::Start(flac_offset))
+            .and_then(|_| stream.read_exact(&mut marker))
+            .map(|_| &marker == b"fLaC")
+            .unwrap_or(false);
+        let _ = stream.rewind();
+        return if is_flac { Some("flac") } else { Some("mp3") };
+    }
+
+    // MPEG audio frame sync: 0xFF followed by a byte with the top 3 bits set.
+    if n >= 2 && buf[0] == 0xff && (buf[1] & 0xe0) == 0xe0 {
+        return Some("mp3");
+    }
+
+    // PDF: %PDF (only available with the pdf feature)
+    #[cfg(feature = "pdf")]
+    if n >= 4 && &buf[0..4] == b"%PDF" {
+        return Some("pdf");
+    }
+
+    None
+}
+
+/// Resolves the format string to use for reading by combining a caller-supplied hint
+/// with stream-based container detection.
+///
+/// * If the hint maps to the same container family as the detected bytes, the hint is
+///   returned unchanged (it may be more specific, e.g. `"dng"` within the TIFF family).
+/// * If they differ, the stream-detected container's canonical format is returned.
+/// * If stream detection fails, the hint is returned as-is.
+/// * Note that for reading, the exact format is not critical as long as it leads to the right container.
+pub(crate) fn format_from_stream<R: Read + Seek>(hint: &str, stream: &mut R) -> String {
+    let detected = container_from_stream(stream);
+    let hinted = container_from_format(hint);
+    match (hinted, detected) {
+        (Some(h), Some(d)) if h == d => hint.to_string(),
+        (_, Some(d)) => d.to_string(),
+        (_, None) => hint.to_string(),
+    }
 }
 
 /// Return jumbf block from in memory asset
@@ -372,6 +498,7 @@ pub mod tests {
             Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
             Box::new(JpegIO::new("")),
+            Box::new(JpegXlIO::new("")),
             Box::new(PngIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(TiffIO::new("")),
@@ -395,6 +522,7 @@ pub mod tests {
             Box::new(C2paIO::new("")),
             Box::new(BmffIO::new("")),
             Box::new(JpegIO::new("")),
+            Box::new(JpegXlIO::new("")),
             #[cfg(feature = "pdf")]
             Box::new(PdfIO::new("")),
             Box::new(PngIO::new("")),
@@ -418,6 +546,7 @@ pub mod tests {
     fn test_get_writer() {
         let handlers: Vec<Box<dyn AssetIO>> = vec![
             Box::new(JpegIO::new("")),
+            Box::new(JpegXlIO::new("")),
             Box::new(PngIO::new("")),
             Box::new(Mp3IO::new("")),
             Box::new(FlacIO::new("")),
@@ -478,13 +607,14 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "dng"));
         assert!(supported.iter().any(|s| s == "svg"));
         assert!(supported.iter().any(|s| s == "mp3"));
+        assert!(supported.iter().any(|s| s == "jxl"));
     }
 
     fn test_jumbf(asset_type: &str, reader: &mut dyn CAIRead) {
         let mut writer = Cursor::new(Vec::new());
         let store = create_test_store().unwrap();
         let signer = test_signer(SigningAlg::Ps256);
-        let jumbf = store.to_jumbf(&*signer).unwrap();
+        let jumbf = store.to_jumbf_internal(signer.reserve_size()).unwrap();
         save_jumbf_to_stream(asset_type, reader, &mut writer, &jumbf).unwrap();
         writer.set_position(0);
         let jumbf2 = load_jumbf_from_stream(asset_type, &mut writer).unwrap();
@@ -615,6 +745,17 @@ pub mod tests {
         test_jumbf("mp4", &mut reader);
         reader.rewind().unwrap();
         test_remote_ref("mp4", &mut reader);
+    }
+
+    #[test]
+    fn test_streams_jxl() {
+        // Build a minimal JPEG XL container in memory for testing
+        use crate::asset_handlers::jpegxl_io;
+        let container = jpegxl_io::tests::build_test_jxl_container();
+        let mut reader = Cursor::new(container);
+        test_jumbf("jxl", &mut reader);
+        reader.rewind().unwrap();
+        test_remote_ref("jxl", &mut reader);
     }
 
     #[test]

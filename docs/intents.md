@@ -51,7 +51,7 @@ The value of `digitalSourceType` is one of the enum values [listed in the API do
 
 ### Edit intent
 
-Us `BuilderIntent::Edit` for editing an existing asset (most common case). This intent:
+Use `BuilderIntent::Edit` for editing an existing asset (most common case). This intent:
 
 - Requires a parent ingredient.
 - Automatically derives the parent ingredient from the source stream if not provided.
@@ -94,10 +94,6 @@ Run the builder example:
 cd sdk
 cargo run --example builder_sample
 ```
-
-
-
-
 
 
 

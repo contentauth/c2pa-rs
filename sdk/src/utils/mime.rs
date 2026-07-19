@@ -23,6 +23,7 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
         "ico" => "image/x-icon",
         "bmp" => "image/bmp",
         "webp" => "image/webp",
+        "jxl" => "image/jxl",
         "dng" => "image/x-adobe-dng",
         "heic" => "image/heic",
         "heif" => "image/heif",
@@ -58,8 +59,8 @@ pub fn format_to_mime(format: &str) -> String {
     .to_string()
 }
 
-/// Converts a format to a file extension
-#[cfg(feature = "file_io")]
+/// Converts a format to a file extension (not used anymore but maybe we want it later?)
+#[allow(unused)]
 pub fn format_to_extension(format: &str) -> Option<&'static str> {
     Some(match format.to_lowercase().as_str() {
         "jpg" | "jpeg" | "image/jpeg" => "jpg",
@@ -94,7 +95,6 @@ pub fn format_to_extension(format: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
-
 /// Return a MIME type given a file path.
 ///
 /// This function will use the file extension to determine the MIME type.

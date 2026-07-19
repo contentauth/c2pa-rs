@@ -1,0 +1,192 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+
+env:
+  S3_BUCKET: adobe-cai-open-source-c2pa-sdk-test-assets-prod
+
+jobs:
+  build:
+    name: Build benchmarks
+    if: |
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+        (github.event.pull_request.author_association == 'COLLABORATOR' ||
+        github.event.pull_request.author_association == 'MEMBER' ||
+        github.event.pull_request.user.login == 'dependabot[bot]' ||
+        contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+        contains(github.event.pull_request.labels.*.name, 'check-release') ||
+        contains(github.event.pull_request.labels.*.name, 'benchmark')))
+
+    runs-on: ubuntu-latest
+
+    env:
+      BUILD_MODE: simulation,memory
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Check codspeed build cache
+        id: cache-codspeed-build
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: target/codspeed/
+          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          lookup-only: true
+
+      - name: Install Rust toolchain
+        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Install cargo-binstall
+        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
+        uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+
+      - name: Install cargo-codspeed
+        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
+        run: cargo binstall --no-confirm cargo-codspeed
+
+      - name: Cache Rust dependencies
+        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Build all benchmark targets
+        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
+        run: cargo codspeed build -m $BUILD_MODE -p c2pa --no-default-features --features rust_native_crypto
+
+      - name: Save codspeed build cache
+        if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: target/codspeed/
+          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+
+  benchmarks:
+    name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }} <${{ matrix.build_mode || 'simulation' }}>)
+    needs: [build]
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        bench: [sign, read]
+        format: [jpeg, png, gif, tiff, svg, mp3, mp4, wav]
+        include:
+          - bench: complex_read
+            format: ""
+            build_mode: simulation
+          - bench: complex_read
+            format: ""
+            build_mode: memory
+
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@254c19bd240aabef8777f48595e9d2d7b972184b # v6.2.1
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+
+      - name: Install cargo-codspeed
+        run: cargo binstall --no-confirm cargo-codspeed
+
+      - name: Restore codspeed build
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: target/codspeed/
+          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          fail-on-cache-miss: true
+
+      - name: Set binary permissions
+        run: chmod +x target/codspeed/analysis/c2pa/*
+
+      - name: Get asset ETag from S3
+        id: s3-etag
+        run: |
+          KEY=bench/${{ matrix.bench }}${{ matrix.format && format('-{0}', matrix.format) || '' }}.tar.zst
+          ETAG=$(aws s3api head-object --bucket ${{ env.S3_BUCKET }} --key $KEY --query ETag --output text)
+          echo "etag=$ETAG" >> $GITHUB_OUTPUT
+          echo "key=$KEY" >> $GITHUB_OUTPUT
+
+      - name: Check asset cache
+        id: cache-assets
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: sdk/benches/fixtures
+          key: bench-asset-${{ steps.s3-etag.outputs.etag }}
+          lookup-only: true
+
+      - name: Download bench assets from S3
+        if: steps.cache-assets.outputs.cache-hit != 'true'
+        run: |
+          aws s3 cp s3://${{ env.S3_BUCKET }}/${{ steps.s3-etag.outputs.key }} assets.tar.zst
+          mkdir -p sdk/benches/fixtures
+          tar --zstd -xf assets.tar.zst -C sdk/benches/fixtures
+          rm assets.tar.zst
+
+      - name: Save asset cache
+        if: steps.cache-assets.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: sdk/benches/fixtures
+          key: bench-asset-${{ steps.s3-etag.outputs.etag }}
+
+      - name: Restore asset cache
+        if: steps.cache-assets.outputs.cache-hit == 'true'
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: sdk/benches/fixtures
+          key: bench-asset-${{ steps.s3-etag.outputs.etag }}
+          fail-on-cache-miss: true
+
+      # Only run the full suite if the PR has the "benchmark" label or it's not a PR (such as for workflow_dispatch).
+      - name: Set size filter
+        id: size
+        run: |
+          if ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'benchmark') }}; then
+            echo "suffix=" >> $GITHUB_OUTPUT
+          else
+            echo "suffix=::small" >> $GITHUB_OUTPUT
+          fi
+
+      # The GitHub-hosted runner image ships with Microsoft's apt repositories
+      # pre-configured. They intermittently serve an invalid InRelease file,
+      # which makes `apt-get update` (run by the CodSpeed action to install
+      # valgrind/libc6-dbg) fail and take the whole job down with it. We don't
+      # use those repos here, so remove them before running the benchmarks.
+      - name: Disable broken Microsoft apt repositories
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/azure-cli.list \
+                     /etc/apt/sources.list.d/azure-cli.sources
+
+      - name: Run the benchmarks
+        uses: CodSpeedHQ/action@a4a36bb07c0638b0b4ca52bf1f3dad1b4289e52f # v4.18.1
+        with:
+          mode: ${{ matrix.build_mode || 'simulation' }}
+          run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}{2}"', matrix.bench, matrix.format, steps.size.outputs.suffix) || '' }}
+          token: ${{ secrets.CODSPEED_TOKEN }}

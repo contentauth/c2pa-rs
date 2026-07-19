@@ -23,8 +23,8 @@ use std::{
     io::{BufRead, BufReader, Cursor},
 };
 
-use config::{Config, FileFormat};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use signer::SignerSettings;
 
 use crate::{
@@ -34,9 +34,18 @@ use crate::{
 
 const VERSION: u32 = 1;
 
+/// Maximum recursion depth for JSON merging.
+const MERGE_MAX_DEPTH: usize = 64;
+
+/// Default maximum number of assertions allowed per manifest.
+/// Shared by [`BuilderSettings`], [`Verify`], [`crate::Claim`], and [`crate::Store`] so that
+/// all enforcement points use the same value.
+pub(crate) const MAX_ASSERTIONS: usize = 100_000;
+
 thread_local!(
-    static SETTINGS: RefCell<Config> =
-        RefCell::new(Config::try_from(&Settings::default()).unwrap_or_default());
+    static SETTINGS: RefCell<Value> = RefCell::new(
+        serde_json::to_value(Settings::default()).unwrap_or(Value::Object(Map::new())),
+    );
 );
 
 // trait used to validate user input to make sure user supplied configurations are valid
@@ -76,6 +85,23 @@ pub struct Trust {
     pub trust_config: Option<String>,
     /// List of explicitly allowed certificates as a PEM bundle.
     pub allowed_list: Option<String>,
+    /// Exact-match allow-list of trusted CAWG identity claims aggregation (ICA)
+    /// issuer DIDs.
+    ///
+    /// Each entry is a full DID string (any DID method) that is compared, after
+    /// stripping any fragment, against the `issuer` of an ICA verifiable
+    /// credential. An issuer that is not present on this list is reported with
+    /// the informational code `cawg.ica.untrusted_issuer` for that identity
+    /// assertion and its `cawg.ica.credential_valid` success code is withheld.
+    ///
+    /// The default value is empty, meaning that NO ICA issuer is trusted. This
+    /// is a deliberate secure default: a self-issued `did:jwk` (or any other
+    /// issuer) is not trustworthy simply because its signature is
+    /// self-consistent. Populate this list with the DIDs of issuers you trust.
+    // TO DO (CAI-12709): This field is only meaningful for `cawg_trust`, not for
+    // the C2PA `trust`. Move it (and the other CAWG-relevant settings) to a
+    // dedicated `CawgTrust` struct so it no longer pollutes the C2PA `Trust`.
+    pub trusted_ica_issuers: Option<Vec<String>>,
 }
 
 impl Trust {
@@ -143,6 +169,13 @@ impl Default for Trust {
                 trust_anchors: None,
                 trust_config: None,
                 allowed_list: None,
+                // Trust the ICA issuer DIDs used by the bundled CAWG test
+                // fixtures so the existing ICA validation tests continue to
+                // produce `cawg.ica.credential_valid`.
+                trusted_ica_issuers: Some(vec![
+                    "did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9".to_string(),
+                    "did:web:connected-identities.identity-stage.adobe.com".to_string(),
+                ]),
             };
 
             trust.trust_config = Some(
@@ -168,6 +201,7 @@ impl Default for Trust {
                 trust_anchors: None,
                 trust_config: None,
                 allowed_list: None,
+                trusted_ica_issuers: None,
             }
         }
     }
@@ -209,7 +243,9 @@ pub struct Core {
     /// [`MerkleMap::fixed_block_size`]: crate::assertions::MerkleMap::fixed_block_size
     /// [`BmffHash`]: crate::assertions::BmffHash
     pub merkle_tree_chunk_size_in_kb: Option<usize>,
-    /// Maximum number of proofs when validating or writing a [`BmffHash`] merkle tree.
+    /// Maximum number of proof hashes stored in UUID merkle boxes when  generating a [`BmffHash`] merkle tree.  This
+    /// determines the Merkle tree row stored in the manifest and thus the number of proof hashes that need to be
+    /// provided during validation. The value may be 0 to store just leaf node hashes (no UUID boxes are generated in this case).
     ///
     /// This option defaults to 5.
     ///
@@ -275,6 +311,20 @@ pub struct Core {
     /// When network requests occur depends on the operations being performed (reading manifests,
     /// validating credentials, timestamping, etc.).
     pub allowed_network_hosts: Option<Vec<HostPattern>>,
+    /// Whether to prefer compressing manifests. This can reduce the size of the manifest. Compressed manifest
+    /// are not always possible and will default back to uncompressed if the manifest contains features
+    /// that are not compatible with compression.
+    ///
+    ///  The default value is false.
+    ///
+    /// See more information in the spec here:
+    /// [Compressed manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_compressed_boxes)
+    pub prefer_compress_manifests: bool,
+    /// Maximum size in megabytes of a Brotli-decompressed JUMBF manifest.
+    /// Limits memory consumption from decompression bomb attacks.
+    ///
+    /// The default is 32 MB.
+    pub max_decompressed_manifest_size_in_mb: usize,
 }
 
 impl Default for Core {
@@ -285,12 +335,20 @@ impl Default for Core {
             backing_store_memory_threshold_in_mb: 512,
             decode_identity_assertions: true,
             allowed_network_hosts: None,
+            prefer_compress_manifests: false,
+            max_decompressed_manifest_size_in_mb: 32,
         }
     }
 }
 
 impl SettingsValidate for Core {
     fn validate(&self) -> Result<()> {
+        const MAX_MANIFEST_SIZE_MB: usize = 1024; // 1 GiB
+        if self.max_decompressed_manifest_size_in_mb > MAX_MANIFEST_SIZE_MB {
+            return Err(Error::BadParam(format!(
+                "max_decompressed_manifest_size_in_mb must not exceed {MAX_MANIFEST_SIZE_MB} MB"
+            )));
+        }
         Ok(())
     }
 }
@@ -317,8 +375,8 @@ pub struct Verify {
     /// Whether to verify the manifest after signing in the [`Builder`].
     ///
     /// The default value is false.
-    /// There is a known bug related to this setting: [#1875](https://github.com/contentauth/c2pa-rs/issues/1875).
-    /// When the bug is fixed, the default value should be true.
+    ///
+    /// In the future, this setting will default to true.
     ///
     /// <div class="warning">
     /// Disabling validation can improve signing performance, BUT it carries the risk of signing an invalid
@@ -327,6 +385,12 @@ pub struct Verify {
     ///
     /// [`Builder`]: crate::Builder
     pub verify_after_sign: bool,
+    /// Whether to include asset hash validation when verifying after signing.
+    ///
+    /// The default value is false.
+    ///
+    /// Has no effect when [`Verify::verify_after_sign`] is false.
+    pub(crate) verify_after_sign_hash: bool,
     /// Whether to verify certificates against the trust lists specified in [`Trust`]. To configure
     /// timestamp certificate verification, see [`Verify::verify_timestamp_trust`].
     ///
@@ -385,7 +449,9 @@ impl Default for Verify {
     fn default() -> Self {
         Self {
             verify_after_reading: true,
-            verify_after_sign: false, // TODO: Update docs when #1875 is fixed.
+            // TODO: set this to true [#1875](https://github.com/contentauth/c2pa-rs/issues/1875)
+            verify_after_sign: cfg!(test),
+            verify_after_sign_hash: cfg!(test),
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
@@ -436,8 +502,14 @@ pub struct Settings {
 impl Settings {
     #[cfg(feature = "file_io")]
     /// Load thread-local [Settings] from a file.
-    /// to be deprecated - use [Settings::with_file] instead
+    ///
+    /// Use [`Settings::new().with_file()`](Settings::with_file) instead,
+    /// which does not modify thread-local state.
     #[doc(hidden)]
+    #[deprecated(
+        note = "Use `Settings::new().with_file(path)` instead, which does not modify thread-local state."
+    )]
+    #[allow(deprecated)]
     pub fn from_file<P: AsRef<Path>>(settings_path: P) -> Result<Self> {
         let ext = settings_path
             .as_ref()
@@ -451,47 +523,35 @@ impl Settings {
 
     /// Load thread-local [Settings] from string representation of the configuration.
     /// Format of configuration must be supplied (json or toml).
-    /// to be deprecated - use [Settings::with_json] or [Settings::with_toml] instead
+    ///
+    /// Use [`Settings::new().with_json()`](Settings::with_json) or
+    /// [`Settings::new().with_toml()`](Settings::with_toml) instead,
+    /// which do not modify thread-local state.
     #[doc(hidden)]
+    #[deprecated(
+        note = "Use `Settings::new().with_json(str)` or `Settings::new().with_toml(str)` instead, which do not modify thread-local state."
+    )]
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
-        let f = match format.to_lowercase().as_str() {
-            "json" => FileFormat::Json,
-            "toml" => FileFormat::Toml,
-            _ => return Err(Error::UnsupportedType),
-        };
+        let overlay = parse_to_value(settings_str, format)?;
+        let mut merged = SETTINGS.with_borrow(Value::clone);
+        merge_json(&mut merged, overlay);
 
-        let new_config = Config::builder()
-            .add_source(config::File::from_str(settings_str, f))
-            .build()
-            .map_err(|_e| Error::BadParam("could not parse configuration file".into()))?;
+        let settings: Settings =
+            serde_json::from_value(merged.clone()).map_err(|e| Error::BadParam(e.to_string()))?;
+        settings.validate()?;
 
-        let update_config = SETTINGS.with_borrow(|current_settings| {
-            Config::builder()
-                .add_source(current_settings.clone())
-                .add_source(new_config)
-                .build() // merge overrides, allows for partial changes
-        });
-
-        match update_config {
-            Ok(update_config) => {
-                // sanity check the values before committing
-                let settings = update_config
-                    .clone()
-                    .try_deserialize::<Settings>()
-                    .map_err(|e| Error::BadParam(e.to_string()))?;
-
-                settings.validate()?;
-
-                SETTINGS.set(update_config.clone());
-
-                Ok(settings)
-            }
-            Err(_) => Err(Error::OtherError("could not update configuration".into())),
-        }
+        SETTINGS.set(merged);
+        Ok(settings)
     }
 
-    /// Set the thread-local [Settings] from a toml file.
-    /// to be deprecated use [Settings::with_toml] instead
+    /// Set the thread-local [Settings] from a toml string.
+    ///
+    /// Use [`Settings::new().with_toml()`](Settings::with_toml) instead,
+    /// which does not modify thread-local state.
+    #[deprecated(
+        note = "Use `Settings::new().with_toml(toml)` instead, which does not modify thread-local state."
+    )]
+    #[allow(deprecated)]
     pub fn from_toml(toml: &str) -> Result<()> {
         Settings::from_string(toml, "toml").map(|_| ())
     }
@@ -540,31 +600,7 @@ impl Settings {
     /// assert!(settings.verify.verify_after_sign);
     /// ```
     pub fn update_from_str(&mut self, settings_str: &str, format: &str) -> Result<()> {
-        let file_format = match format.to_lowercase().as_str() {
-            "json" => FileFormat::Json,
-            "toml" => FileFormat::Toml,
-            _ => return Err(Error::UnsupportedType),
-        };
-
-        // Convert current settings to Config
-        let current_config = Config::try_from(&*self)
-            .map_err(|e| Error::BadParam(format!("could not convert settings: {e}")))?;
-
-        // Build new config with the source
-        let merged_config = Config::builder()
-            .add_source(current_config)
-            .add_source(config::File::from_str(settings_str, file_format))
-            .build()
-            .map_err(|e| Error::BadParam(format!("could not merge configuration: {e}")))?;
-
-        // Deserialize and validate
-        let updated_settings = merged_config
-            .try_deserialize::<Settings>()
-            .map_err(|e| Error::BadParam(e.to_string()))?;
-
-        updated_settings.validate()?;
-
-        *self = updated_settings;
+        *self = self.with_string(settings_str, format)?;
         Ok(())
     }
 
@@ -574,34 +610,16 @@ impl Settings {
     /// For example "core.hash_alg" would set settings.core.hash_alg value. The nesting can be arbitrarily
     /// deep based on the [Settings] definition.
     #[allow(unused)]
-    pub(crate) fn set_thread_local_value<T: Into<config::Value>>(
-        value_path: &str,
-        value: T,
-    ) -> Result<()> {
-        let c = SETTINGS.take();
+    pub(crate) fn set_thread_local_value<T: Into<Value>>(value_path: &str, value: T) -> Result<()> {
+        let mut merged = SETTINGS.with_borrow(Value::clone);
+        set_at_path(&mut merged, value_path, value.into())?;
 
-        let update_config = Config::builder()
-            .add_source(c.clone())
-            .set_override(value_path, value);
+        let settings: Settings =
+            serde_json::from_value(merged.clone()).map_err(|e| Error::BadParam(e.to_string()))?;
+        settings.validate()?;
 
-        if let Ok(updated) = update_config {
-            let update_config = updated
-                .build()
-                .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
-
-            let settings = update_config
-                .clone()
-                .try_deserialize::<Settings>()
-                .map_err(|e| Error::BadParam(e.to_string()))?;
-            settings.validate()?;
-
-            SETTINGS.set(update_config);
-
-            Ok(())
-        } else {
-            SETTINGS.set(c);
-            Err(Error::OtherError("could not save settings".into()))
-        }
+        SETTINGS.set(merged);
+        Ok(())
     }
 
     /// Get a [Settings] value by path reference from the thread-local settings.
@@ -611,16 +629,12 @@ impl Settings {
     /// For example "core.hash_alg" would get the settings.core.hash_alg value. The nesting can be arbitrarily
     /// deep based on the [Settings] definition.
     #[allow(unused)]
-    fn get_thread_local_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
-        SETTINGS.with_borrow(|current_settings| {
-            let update_config = Config::builder()
-                .add_source(current_settings.clone())
-                .build()
-                .map_err(|_e| Error::OtherError("could not update configuration".into()))?;
-
-            update_config
-                .get::<T>(value_path)
-                .map_err(|_| Error::BadParam("could not get settings value".into()))
+    fn get_thread_local_value<T: serde::de::DeserializeOwned>(value_path: &str) -> Result<T> {
+        SETTINGS.with_borrow(|current| {
+            let leaf = get_at_path(current, value_path)
+                .ok_or_else(|| Error::BadParam("could not get settings value".into()))?;
+            serde_json::from_value(leaf.clone())
+                .map_err(|err| Error::BadParam(format!("could not get settings value: {err}")))
         })
     }
 
@@ -628,12 +642,10 @@ impl Settings {
     /// to be deprecated
     #[allow(unused)]
     pub(crate) fn reset() -> Result<()> {
-        if let Ok(default_settings) = Config::try_from(&Settings::default()) {
-            SETTINGS.set(default_settings);
-            Ok(())
-        } else {
-            Err(Error::OtherError("could not reset settings".into()))
-        }
+        let value = serde_json::to_value(Settings::default())
+            .map_err(|err| Error::OtherError(format!("could not reset settings: {err}").into()))?;
+        SETTINGS.set(value);
+        Ok(())
     }
 
     /// Creates a new Settings instance with default values.
@@ -675,7 +687,7 @@ impl Settings {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_json(self, json: &str) -> Result<Self> {
+    pub fn with_json(&self, json: &str) -> Result<Self> {
         self.with_string(json, "json")
     }
 
@@ -703,7 +715,7 @@ impl Settings {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_toml(self, toml: &str) -> Result<Self> {
+    pub fn with_toml(&self, toml: &str) -> Result<Self> {
         self.with_string(toml, "toml")
     }
 
@@ -726,7 +738,7 @@ impl Settings {
     /// # }
     /// ```
     #[cfg(feature = "file_io")]
-    pub fn with_file<P: AsRef<Path>>(self, path: P) -> Result<Self> {
+    pub fn with_file<P: AsRef<Path>>(&self, path: P) -> Result<Self> {
         let path = path.as_ref();
         let ext = path
             .extension()
@@ -743,52 +755,53 @@ impl Settings {
     ///
     /// This overlays the parsed configuration on top of the current Settings
     /// instance without touching thread-local state.
-    fn with_string(self, settings_str: &str, format: &str) -> Result<Self> {
-        let f = match format.to_lowercase().as_str() {
-            "json" => FileFormat::Json,
-            "toml" => FileFormat::Toml,
-            _ => return Err(Error::UnsupportedType),
-        };
+    fn with_string(&self, settings_str: &str, format: &str) -> Result<Self> {
+        let overlay = parse_to_value(settings_str, format)?;
+        let mut merged =
+            serde_json::to_value(self).map_err(|err| Error::OtherError(Box::new(err)))?;
+        merge_json(&mut merged, overlay);
 
-        // Convert current settings to Config
-        let current_config = Config::try_from(&self).map_err(|e| Error::OtherError(Box::new(e)))?;
-
-        // Parse new config and overlay it on current
-        let updated_config = Config::builder()
-            .add_source(current_config)
-            .add_source(config::File::from_str(settings_str, f))
-            .build()
-            .map_err(|_e| Error::BadParam("could not parse configuration".into()))?;
-
-        // Deserialize back to Settings
-        let settings = updated_config
-            .try_deserialize::<Settings>()
-            .map_err(|e| Error::BadParam(e.to_string()))?;
-
-        // Validate
+        let settings: Settings =
+            serde_json::from_value(merged).map_err(|err| Error::BadParam(err.to_string()))?;
         settings.validate()?;
 
         Ok(settings)
     }
 
     /// Serializes the thread-local [Settings] into a toml string.
+    ///
+    /// Use `toml::to_string(&settings)` on a [`Settings`] instance instead.
     #[doc(hidden)]
+    #[deprecated(
+        note = "Use `toml::to_string(&settings)` on a `Settings` instance instead of reading from thread-local state."
+    )]
     pub fn to_toml() -> Result<String> {
         let settings = get_thread_local_settings();
         Ok(toml::to_string(&settings)?)
     }
 
     /// Serializes the thread-local [Settings] into a pretty (formatted) toml string.
+    ///
+    /// Use `toml::to_string_pretty(&settings)` on a [`Settings`] instance instead.
     #[doc(hidden)]
+    #[deprecated(
+        note = "Use `toml::to_string_pretty(&settings)` on a `Settings` instance instead of reading from thread-local state."
+    )]
     pub fn to_pretty_toml() -> Result<String> {
         let settings = get_thread_local_settings();
         Ok(toml::to_string_pretty(&settings)?)
     }
 
-    /// Returns the constructed signer from the `signer` field.
+    /// Returns the constructed signer from the thread-local `signer` settings field.
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
+    ///
+    /// Configure the signer via a [`Context`](crate::Context) passed explicitly to
+    /// [`Builder::from_context`](crate::Builder::from_context) instead.
     #[inline]
+    #[deprecated(
+        note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings."
+    )]
     pub fn signer() -> Result<crate::BoxedSigner> {
         SignerSettings::signer()
     }
@@ -801,7 +814,7 @@ impl Settings {
     /// # Arguments
     ///
     /// * `path` - A dot-separated path to the setting (e.g., "verify.verify_trust")
-    /// * `value` - Any value that can be converted into a config::Value
+    /// * `value` - Any value that can be converted into a `serde_json::Value`
     ///
     /// # Returns
     ///
@@ -826,24 +839,14 @@ impl Settings {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_value<T: Into<config::Value>>(self, path: &str, value: T) -> Result<Self> {
-        // Convert self to Config
-        let config = Config::try_from(&self).map_err(|e| Error::OtherError(Box::new(e)))?;
+    pub fn with_value<T: Into<Value>>(&self, path: &str, value: T) -> Result<Self> {
+        let mut merged =
+            serde_json::to_value(self).map_err(|err| Error::OtherError(Box::new(err)))?;
+        set_at_path(&mut merged, path, value.into())
+            .map_err(|err| Error::BadParam(format!("invalid path '{path}': {err}")))?;
 
-        // Apply the override
-        let updated_config = Config::builder()
-            .add_source(config)
-            .set_override(path, value)
-            .map_err(|e| Error::BadParam(format!("Invalid path '{path}': {e}")))?
-            .build()
-            .map_err(|e| Error::OtherError(Box::new(e)))?;
-
-        // Deserialize back to Settings
-        let updated_settings = updated_config
-            .try_deserialize::<Settings>()
-            .map_err(|e| Error::BadParam(format!("Invalid value for '{path}': {e}")))?;
-
-        // Validate the updated settings
+        let updated_settings: Settings = serde_json::from_value(merged)
+            .map_err(|err| Error::BadParam(format!("invalid value for '{path}': {err}")))?;
         updated_settings.validate()?;
 
         Ok(updated_settings)
@@ -856,7 +859,7 @@ impl Settings {
     /// # Arguments
     ///
     /// * `path` - A dot-separated path to the setting
-    /// * `value` - Any value that can be converted into a config::Value
+    /// * `value` - Any value that can be converted into a `serde_json::Value`
     ///
     /// # Errors
     ///
@@ -876,8 +879,8 @@ impl Settings {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn set_value<T: Into<config::Value>>(&mut self, path: &str, value: T) -> Result<()> {
-        *self = std::mem::take(self).with_value(path, value)?;
+    pub fn set_value<T: Into<Value>>(&mut self, path: &str, value: T) -> Result<()> {
+        *self = self.with_value(path, value)?;
         Ok(())
     }
 
@@ -919,12 +922,12 @@ impl Settings {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn get_value<'de, T: serde::de::Deserialize<'de>>(&self, path: &str) -> Result<T> {
-        let config = Config::try_from(self).map_err(|e| Error::OtherError(Box::new(e)))?;
-
-        config
-            .get::<T>(path)
-            .map_err(|e| Error::BadParam(format!("Failed to get value at '{path}': {e}")))
+    pub fn get_value<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let value = serde_json::to_value(self).map_err(|err| Error::OtherError(Box::new(err)))?;
+        let leaf = get_at_path(&value, path)
+            .ok_or_else(|| Error::BadParam(format!("value at '{path}' not found")))?;
+        serde_json::from_value(leaf.clone())
+            .map_err(|err| Error::BadParam(format!("failed to get value at '{path}': {err}")))
     }
 }
 
@@ -963,29 +966,87 @@ impl SettingsValidate for Settings {
     }
 }
 
+/// Overlays `overlay` onto `target`. Objects are merged key-by-key, and any
+/// other value (e.g. `null` and arrays) replaces the target value.
+fn merge_json(target: &mut Value, overlay: Value) {
+    merge_json_depth(target, overlay, 0);
+}
+
+fn merge_json_depth(target: &mut Value, overlay: Value, depth: usize) {
+    match (target, overlay) {
+        (Value::Object(target_map), Value::Object(overlay_map)) if depth < MERGE_MAX_DEPTH => {
+            for (key, overlay_value) in overlay_map {
+                merge_json_depth(
+                    target_map.entry(key).or_insert(Value::Null),
+                    overlay_value,
+                    depth + 1,
+                );
+            }
+        }
+        (target, overlay) => *target = overlay,
+    }
+}
+
+fn parse_to_value(settings_str: &str, format: &str) -> Result<Value> {
+    match format.to_lowercase().as_str() {
+        "json" => serde_json::from_str(settings_str)
+            .map_err(|err| Error::BadParam(format!("could not parse configuration: {err}"))),
+        "toml" => {
+            let toml_value: toml::Value = toml::from_str(settings_str)
+                .map_err(|err| Error::BadParam(format!("could not parse configuration: {err}")))?;
+            serde_json::to_value(toml_value)
+                .map_err(|err| Error::BadParam(format!("could not parse configuration: {err}")))
+        }
+        _ => Err(Error::UnsupportedType),
+    }
+}
+
+fn set_at_path(target: &mut Value, path: &str, value: Value) -> Result<()> {
+    let mut segments = path.split('.').peekable();
+    let mut current = target;
+    while let Some(segment) = segments.next() {
+        if !current.is_object() {
+            *current = Value::Object(Map::new());
+        }
+        let Some(map) = current.as_object_mut() else {
+            // Unreachable, but to be safe...
+            return Err(Error::BadParam("expected object at path segment".into()));
+        };
+        if segments.peek().is_none() {
+            map.insert(segment.to_string(), value);
+            return Ok(());
+        }
+        current = map
+            .entry(segment.to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+    }
+    Err(Error::BadParam("empty path".into()))
+}
+
+fn get_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut current = value;
+    for segment in path.split('.') {
+        current = current.as_object()?.get(segment)?;
+    }
+    Some(current)
+}
+
 /// Get a snapshot of the thread-local Settings, always returns a valid Settings object.
 /// If the thread-local settings cannot be deserialized, returns default Settings.
 #[allow(unused)]
 pub(crate) fn get_thread_local_settings() -> Settings {
-    SETTINGS.with_borrow(|config| {
-        config
-            .clone()
-            .try_deserialize::<Settings>()
-            .unwrap_or_default()
-    })
+    SETTINGS.with_borrow(|value| serde_json::from_value(value.clone()).unwrap_or_default())
 }
-
-// Save the current configuration to a json file.
 
 /// See [Settings::set_thread_local_value] for more information.
 #[cfg(test)]
-pub(crate) fn set_settings_value<T: Into<config::Value>>(value_path: &str, value: T) -> Result<()> {
+pub(crate) fn set_settings_value<T: Into<Value>>(value_path: &str, value: T) -> Result<()> {
     Settings::set_thread_local_value(value_path, value)
 }
 
 /// See [Settings::get_thread_local_value] for more information.
 #[cfg(test)]
-fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> Result<T> {
+fn get_settings_value<T: serde::de::DeserializeOwned>(value_path: &str) -> Result<T> {
     Settings::get_thread_local_value(value_path)
 }
 
@@ -994,6 +1055,37 @@ fn get_settings_value<'de, T: serde::de::Deserialize<'de>>(value_path: &str) -> 
 // #[deprecated = "use `Settings::reset` instead"]
 pub fn reset_default_settings() -> Result<()> {
     Settings::reset()
+}
+
+// Used for backwards compatibility with the `config` crate.
+pub(crate) fn deserialize_case_insensitive<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = Value::deserialize(deserializer)?;
+    serde_json::from_value(normalize_enum_value(value)).map_err(serde::de::Error::custom)
+}
+
+// Used for backwards compatibility with the `config` crate.
+pub(crate) fn deserialize_case_insensitive_opt<'de, D, T>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    Option::<Value>::deserialize(deserializer)?
+        .map(|v| serde_json::from_value(normalize_enum_value(v)).map_err(serde::de::Error::custom))
+        .transpose()
+}
+
+// Used for backwards compatibility with the `config` crate.
+fn normalize_enum_value(value: Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(s.to_lowercase()),
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -1006,95 +1098,30 @@ pub mod tests {
     use crate::utils::io_utils::tempdirectory;
     use crate::{utils::test::test_settings, SigningAlg};
 
-    #[cfg(feature = "file_io")]
-    fn save_settings_as_json<P: AsRef<Path>>(settings_path: P) -> Result<()> {
-        let settings = get_thread_local_settings();
-
-        let settings_json = serde_json::to_string_pretty(&settings).map_err(Error::JsonError)?;
-
-        std::fs::write(settings_path, settings_json.as_bytes()).map_err(Error::IoError)
-    }
-
+    /// Legacy test: verifies the thread-local settings API reads defaults and round-trips values.
     #[test]
-    fn test_get_defaults() {
+    fn test_thread_local_settings() {
+        // Verify defaults are accessible via thread-local
         let settings = get_thread_local_settings();
-
         assert_eq!(settings.core, Core::default());
         assert_eq!(settings.trust, Trust::default());
-        assert_eq!(settings.cawg_trust, Trust::default());
         assert_eq!(settings.verify, Verify::default());
         assert_eq!(settings.builder, BuilderSettings::default());
 
-        reset_default_settings().unwrap();
-    }
-
-    #[test]
-    fn test_get_val_by_direct_path() {
-        // you can do this for all values but if these sanity checks pass they all should if the path is correct
+        // Verify individual values can be read by path
         assert_eq!(
             get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
             BuilderSettings::default().thumbnail.enabled
         );
         assert_eq!(
-            get_settings_value::<Option<String>>("trust.user_anchors").unwrap(),
-            Trust::default().user_anchors
-        );
-
-        // test getting full objects
-        assert_eq!(get_settings_value::<Core>("core").unwrap(), Core::default());
-        assert_eq!(
-            get_settings_value::<Verify>("verify").unwrap(),
-            Verify::default()
-        );
-        assert_eq!(
-            get_settings_value::<BuilderSettings>("builder").unwrap(),
-            BuilderSettings::default()
-        );
-        assert_eq!(
-            get_settings_value::<Trust>("trust").unwrap(),
-            Trust::default()
-        );
-
-        // test implicit deserialization
-        let remote_manifest_fetch: bool =
-            get_settings_value("verify.remote_manifest_fetch").unwrap();
-        let auto_thumbnail: bool = get_settings_value("builder.thumbnail.enabled").unwrap();
-        let user_anchors: Option<String> = get_settings_value("trust.user_anchors").unwrap();
-
-        assert_eq!(
-            remote_manifest_fetch,
+            get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap(),
             Verify::default().remote_manifest_fetch
         );
-        assert_eq!(auto_thumbnail, BuilderSettings::default().thumbnail.enabled);
-        assert_eq!(user_anchors, Trust::default().user_anchors);
 
-        // test implicit deserialization on objects
-        let core: Core = get_settings_value("core").unwrap();
-        let verify: Verify = get_settings_value("verify").unwrap();
-        let builder: BuilderSettings = get_settings_value("builder").unwrap();
-        let trust: Trust = get_settings_value("trust").unwrap();
-
-        assert_eq!(core, Core::default());
-        assert_eq!(verify, Verify::default());
-        assert_eq!(builder, BuilderSettings::default());
-        assert_eq!(trust, Trust::default());
-
-        reset_default_settings().unwrap();
-    }
-
-    #[test]
-    fn test_set_val_by_direct_path() {
-        let ts = include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem");
-
-        // test updating values
+        // Verify set/get round-trip via thread-local API
         Settings::set_thread_local_value("core.merkle_tree_chunk_size_in_kb", 10).unwrap();
         Settings::set_thread_local_value("verify.remote_manifest_fetch", false).unwrap();
         Settings::set_thread_local_value("builder.thumbnail.enabled", false).unwrap();
-        Settings::set_thread_local_value(
-            "trust.user_anchors",
-            Some(String::from_utf8(ts.to_vec()).unwrap()),
-        )
-        .unwrap();
 
         assert_eq!(
             get_settings_value::<usize>("core.merkle_tree_chunk_size_in_kb").unwrap(),
@@ -1102,22 +1129,6 @@ pub mod tests {
         );
         assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
         assert!(!get_settings_value::<bool>("builder.thumbnail.enabled").unwrap());
-        assert_eq!(
-            get_settings_value::<Option<String>>("trust.user_anchors").unwrap(),
-            Some(String::from_utf8(ts.to_vec()).unwrap())
-        );
-
-        // the current config should be different from the defaults
-        assert_ne!(get_settings_value::<Core>("core").unwrap(), Core::default());
-        assert_ne!(
-            get_settings_value::<Verify>("verify").unwrap(),
-            Verify::default()
-        );
-        assert_ne!(
-            get_settings_value::<BuilderSettings>("builder").unwrap(),
-            BuilderSettings::default()
-        );
-        assert!(get_settings_value::<Trust>("trust").unwrap() == Trust::default());
 
         reset_default_settings().unwrap();
     }
@@ -1128,90 +1139,49 @@ pub mod tests {
         let temp_dir = tempdirectory().unwrap();
         let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
 
-        save_settings_as_json(&op).unwrap();
+        let settings_json = serde_json::to_string_pretty(&Settings::default()).unwrap();
+        std::fs::write(&op, settings_json.as_bytes()).unwrap();
 
-        Settings::from_file(&op).unwrap();
-        let settings = get_thread_local_settings();
-
+        let settings = Settings::new().with_file(&op).unwrap();
         assert_eq!(settings, Settings::default());
-
-        reset_default_settings().unwrap();
-    }
-
-    #[cfg(feature = "file_io")]
-    #[test]
-    fn test_save_load_from_string() {
-        let temp_dir = tempdirectory().unwrap();
-        let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
-
-        save_settings_as_json(&op).unwrap();
-
-        let setting_buf = std::fs::read(&op).unwrap();
-
-        {
-            let settings_str: &str = &String::from_utf8_lossy(&setting_buf);
-            Settings::from_string(settings_str, "json").map(|_| ())
-        }
-        .unwrap();
-        let settings = get_thread_local_settings();
-
-        assert_eq!(settings, Settings::default());
-
-        reset_default_settings().unwrap();
     }
 
     #[test]
-    fn test_partial_loading() {
-        // we support just changing the fields you are interested in changing
-        // here is an example of incomplete structures only overriding specific
-        // fields
-
-        let modified_core = toml::toml! {
-            [core]
-            debug = true
-            hash_alg = "sha512"
-            max_memory_usage = 123456
-        }
-        .to_string();
-
-        Settings::from_toml(&modified_core).unwrap();
-
-        // see if updated values match
-        assert!(get_settings_value::<bool>("core.debug").unwrap());
-        assert_eq!(
-            get_settings_value::<String>("core.hash_alg").unwrap(),
-            "sha512".to_string()
-        );
-        assert_eq!(
-            get_settings_value::<u32>("core.max_memory_usage").unwrap(),
-            123456u32
-        );
-
-        // check a few defaults to make sure they are still there
-        assert_eq!(
-            get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
-            BuilderSettings::default().thumbnail.enabled
-        );
-
-        reset_default_settings().unwrap();
+    fn test_settings_from_json_str() {
+        // Verify that Settings round-trips through JSON without touching thread-local state.
+        let json = serde_json::to_string(&Settings::default()).unwrap();
+        let settings = Settings::new().with_json(&json).unwrap();
+        assert_eq!(settings, Settings::default());
     }
 
     #[test]
     fn test_bad_setting() {
+        // Verify that type-invalid TOML values are rejected without touching thread-local state.
         let modified_core = toml::toml! {
             [core]
             merkle_tree_chunk_size_in_kb = true
             merkle_tree_max_proofs = "sha1000000"
             backing_store_memory_threshold_in_mb = -123456
+            max_decompressed_manifest_size_in_mb = -123456
         }
         .to_string();
 
-        assert!(Settings::from_toml(&modified_core).is_err());
-
-        reset_default_settings().unwrap();
+        assert!(Settings::new().with_toml(&modified_core).is_err());
     }
+
     #[test]
-    fn test_hidden_setting() {
+    fn test_core_validate_rejects_oversized_manifest_cap() {
+        let result =
+            Settings::default().with_value("core.max_decompressed_manifest_size_in_mb", 1025usize);
+        assert!(result.is_err());
+    }
+
+    /// Legacy test: verifies arbitrary (hidden) keys can be stored and retrieved via the
+    /// thread-local Figment config. This is not possible with the instance-based API since
+    /// unknown keys are not part of the `Settings` struct.
+    #[test]
+    #[allow(deprecated)]
+    fn test_thread_local_hidden_setting() {
         let secret = toml::toml! {
             [hidden]
             test1 = true
@@ -1236,45 +1206,11 @@ pub mod tests {
     }
 
     #[test]
-    fn test_all_setting() {
-        let all_settings = toml::toml! {
-            version = 1
-
-            [trust]
-
-            [Core]
-            debug = false
-            hash_alg = "sha256"
-            salt_jumbf_boxes = true
-            prefer_bmff_merkle_tree = false
-            compress_manifests = true
-
-            [Builder]
-            prefer_box_hash = false
-
-            [Verify]
-            verify_after_reading = true
-            verify_after_sign = true
-            verify_trust = true
-            ocsp_fetch = false
-            remote_manifest_fetch = true
-            skip_ingredient_conflict_resolution = false
-            strict_v1_validation = false
-        }
-        .to_string();
-
-        Settings::from_toml(&all_settings).unwrap();
-
-        reset_default_settings().unwrap();
-    }
-
-    #[test]
     fn test_load_settings_from_sample_toml() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
-
         let toml = include_bytes!("../../examples/c2pa.toml");
-        Settings::from_toml(std::str::from_utf8(toml).unwrap()).unwrap();
+        Settings::new()
+            .with_toml(std::str::from_utf8(toml).unwrap())
+            .unwrap();
     }
 
     #[test]

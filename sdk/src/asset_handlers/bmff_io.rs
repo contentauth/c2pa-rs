@@ -401,7 +401,15 @@ fn box_start<R: Read + Seek + ?Sized>(reader: &mut R, is_large: bool) -> Result<
 }
 
 fn _skip_bytes<R: Read + Seek + ?Sized>(reader: &mut R, size: u64) -> Result<()> {
-    reader.seek(SeekFrom::Current(size as i64))?;
+    // `size as i64` on a value greater than i64::MAX wraps to a negative
+    // number, which would seek *backward* rather than skip forward. Compute
+    // the absolute target with checked_add on u64 and seek to it via
+    // `SeekFrom::Start`, which takes a u64 directly.
+    let current = reader.stream_position()?;
+    let target = current
+        .checked_add(size)
+        .ok_or_else(|| Error::InvalidAsset("BMFF skip past u64::MAX".to_string()))?;
+    reader.seek(SeekFrom::Start(target))?;
     Ok(())
 }
 
@@ -665,8 +673,14 @@ where
 
                     for data_map in data_map_vec {
                         // move to the start of exclusion
-                        skip_bytes_to(reader, box_start + data_map.offset)?;
-
+                        skip_bytes_to(
+                            reader,
+                            box_start
+                                .checked_add(data_map.offset)
+                                .ok_or(Error::InvalidAsset(
+                                    "BMFF data map offset overflow".to_string(),
+                                ))?,
+                        )?;
                         // match the data
                         let buf = reader.read_to_vec(data_map.value.len() as u64)?;
 
@@ -735,7 +749,7 @@ fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
     mut output: &mut W,
     bmff_tree: &Arena<BoxInfo>,
     bmff_path_map: &HashMap<String, Vec<Token>>,
-    adjust: i32,
+    adjust: i64,
 ) -> Result<()> {
     let start_pos = output.stream_position()?; // save starting point
 
@@ -1293,8 +1307,14 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     let mut current = start;
     while current < end {
         // Get box header.
-        let header = BoxHeaderLite::read(reader)
-            .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {err}")))?;
+        let header = match BoxHeaderLite::read(reader) {
+            Ok(h) => h,
+            Err(_) => {
+                // if we can't read a header, just return what we have so far since some files have trailing data after the last box
+                skip_bytes_to(reader, end)?;
+                break;
+            }
+        };
 
         // Break if size zero BoxHeader
         let mut s = header.size;
@@ -1302,7 +1322,10 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
             break;
         }
 
-        if current + s > end {
+        let box_end = current
+            .checked_add(s)
+            .ok_or_else(|| Error::InvalidAsset("BMFF box size overflow".to_string()))?;
+        if box_end > end {
             if BoxType::MdatBox == header.name {
                 // for mdat boxes that extend beyond the end of the file we will just set the size to the remaining bytes in the file since
                 // some files have malformed mdat sizes but we can still hash the content by treating it as a truncated box
@@ -1482,26 +1505,40 @@ fn get_uuid_box_purpose<R: Read + Seek + ?Sized>(
     box_info: &atree::Node<BoxInfo>,
 ) -> Result<(String, u64)> {
     if box_info.data.box_type == BoxType::UuidBox {
-        let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
+        let mut data_len = box_info
+            .data
+            .size
+            .checked_sub(HEADER_SIZE)
+            .and_then(|n| n.checked_sub(16))
+            .ok_or_else(|| Error::InvalidAsset("UUID box too small".to_string()))?;
 
         // set reader to start of box contents
         skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
 
         // Fullbox => 8 bits for version 24 bits for flags
         let (_version, _flags) = read_box_header_ext(reader)?;
-        data_len -= 4;
+        data_len = data_len.checked_sub(4).ok_or_else(|| {
+            Error::InvalidAsset("UUID box too small for FullBox header".to_string())
+        })?;
 
-        // get the purpose
+        // get the purpose (null-terminated string bounded by the box)
         let mut purpose_bytes = Vec::with_capacity(64);
         loop {
+            // Guard prevents reading past the box boundary, which would cause
+            // data_len to underflow (wrapping to u64::MAX) and the caller to
+            // attempt a u64::MAX-byte allocation.
+            if data_len == 0 {
+                return Err(Error::InvalidAsset(
+                    "UUID box purpose field missing null terminator".to_string(),
+                ));
+            }
             let mut buf = [0; 1];
             reader.read_exact(&mut buf)?;
             data_len -= 1;
             if buf[0] == 0x00 {
                 break;
-            } else {
-                purpose_bytes.push(buf[0]);
             }
+            purpose_bytes.push(buf[0]);
         }
 
         let purpose = String::from_utf8_lossy(&purpose_bytes);
@@ -1610,7 +1647,11 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             // offset to first aux uuid with purpose merkle
                             let mut buf = [0u8; 8];
                             reader.read_exact(&mut buf)?;
-                            data_len -= 8;
+                            data_len = data_len.checked_sub(8).ok_or_else(|| {
+                                Error::InvalidAsset(
+                                    "UUID box too small for merkle offset field".to_string(),
+                                )
+                            })?;
 
                             // read the manifest box contents
                             let manifest = reader.read_to_vec(data_len)?;
@@ -1658,7 +1699,14 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             });
                         }
                     } else if vec_compare(&XMP_UUID, uuid) {
-                        let data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
+                        let data_len = box_info
+                            .data
+                            .size
+                            .checked_sub(HEADER_SIZE)
+                            .and_then(|n| n.checked_sub(16))
+                            .ok_or_else(|| {
+                                Error::InvalidAsset("XMP UUID box too small".to_string())
+                            })?;
 
                         // set reader to start of box contents
                         skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
@@ -2067,14 +2115,18 @@ impl CAIWriter for BmffIO {
         // write ContentProvenanceBox
         output_stream.write_all(&new_c2pa_box)?;
 
-        // calc offset adjustments
-        let offset_adjust: i32 = if end == 0 {
-            new_c2pa_box_size as i32
+        // calc offset adjustments. Use i64 so a box larger than i32::MAX
+        // (2 GiB) does not silently truncate and corrupt embedded offsets.
+        let new_c2pa_box_size_i64 = i64::try_from(new_c2pa_box_size)
+            .map_err(|_| Error::InvalidAsset("C2PA box too large".to_string()))?;
+        let offset_adjust: i64 = if end == 0 {
+            new_c2pa_box_size_i64
         } else {
             // value could be negative if box is truncated
             let existing_c2pa_box_size = end - start;
-            let pad_size: i32 = new_c2pa_box_size as i32 - existing_c2pa_box_size as i32;
-            pad_size
+            let existing_i64 = i64::try_from(existing_c2pa_box_size)
+                .map_err(|_| Error::InvalidAsset("existing C2PA box too large".to_string()))?;
+            new_c2pa_box_size_i64 - existing_i64
         };
 
         // write content after ContentProvenanceBox
@@ -2215,11 +2267,12 @@ impl CAIWriter for BmffIO {
         let mut before_manifest = input_stream.take(start as u64);
         std::io::copy(&mut before_manifest, output_stream)?;
 
-        // calc offset adjustments
-        // value will be negative since the box is truncated
-        let new_c2pa_box_size: i32 = 0;
+        // calc offset adjustments — value will be negative since the box is
+        // being truncated. Use i64 so boxes larger than i32::MAX (2 GiB) do
+        // not truncate and shift `stco`/`co64`/`iloc` offsets to garbage.
         let existing_c2pa_box_size = end - start;
-        let offset_adjust = new_c2pa_box_size - existing_c2pa_box_size as i32;
+        let offset_adjust: i64 = -i64::try_from(existing_c2pa_box_size)
+            .map_err(|_| Error::InvalidAsset("existing C2PA box too large".to_string()))?;
 
         // write content after ContentProvenanceBox
         input_stream.seek(SeekFrom::Start(end as u64))?;
@@ -2487,14 +2540,19 @@ impl RemoteRefEmbed for BmffIO {
                 // write ContentProvenanceBox
                 output_stream.write_all(&new_xmp_box)?;
 
-                // calc offset adjustments
-                let offset_adjust: i32 = if end == 0 {
-                    new_xmp_box_size as i32
+                // calc offset adjustments. Use i64 so XMP boxes larger than
+                // i32::MAX (2 GiB) do not silently truncate.
+                let new_xmp_box_size_i64 = i64::try_from(new_xmp_box_size)
+                    .map_err(|_| Error::InvalidAsset("XMP box too large".to_string()))?;
+                let offset_adjust: i64 = if end == 0 {
+                    new_xmp_box_size_i64
                 } else {
                     // value could be negative if box is truncated
                     let existing_xmp_box_size = end - start;
-                    let pad_size: i32 = new_xmp_box_size as i32 - existing_xmp_box_size as i32;
-                    pad_size
+                    let existing_i64 = i64::try_from(existing_xmp_box_size).map_err(|_| {
+                        Error::InvalidAsset("existing XMP box too large".to_string())
+                    })?;
+                    new_xmp_box_size_i64 - existing_i64
                 };
 
                 // write content after XMP box
@@ -2631,8 +2689,10 @@ pub(crate) fn inject_placeholder(
     // write content after free box
     std::io::copy(input_stream, output_stream)?;
 
-    // calc offset adjustments
-    let offset_adjust: i32 = free_box_bytes.len() as i32;
+    // calc offset adjustments — use i64 so a placeholder larger than
+    // i32::MAX (2 GiB) does not truncate.
+    let offset_adjust: i64 = i64::try_from(free_box_bytes.len())
+        .map_err(|_| Error::InvalidAsset("placeholder box too large".to_string()))?;
 
     // Manipulating the free box means we may need some patch offsets if they are file absolute offsets.
     if offset_adjust != 0 {
@@ -2933,5 +2993,215 @@ pub mod tests {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn test_bmff_large_size_overflow_does_not_panic() {
+        // Craft a 32-byte MP4: 16-byte ftyp box followed by a 16-byte large-size box
+        // that claims 0xFFFFFFFFFFFFFFF0 bytes. When current=16 (after ftyp), the
+        // unchecked addition 16 + 0xFFFFFFFFFFFFFFF0 overflows u64 in debug mode
+        // (panic exit 101) and silently wraps to bypass the bounds check in release mode.
+        let mut data: Vec<u8> = Vec::new();
+        // ftyp box (16 bytes): size=16, type='ftyp', major_brand='mp41', minor_version=0
+        data.extend_from_slice(&16u32.to_be_bytes());
+        data.extend_from_slice(b"ftyp");
+        data.extend_from_slice(b"mp41");
+        data.extend_from_slice(&0u32.to_be_bytes());
+        // large-size box (16 bytes): size=1 signals largesize, type='mdat', largesize=MAX-15
+        data.extend_from_slice(&1u32.to_be_bytes());
+        data.extend_from_slice(b"mdat");
+        data.extend_from_slice(&0xfffffffffffffff0u64.to_be_bytes());
+
+        let bmff_io = BmffIO::new("mp4");
+        let mut source = Cursor::new(data);
+        assert!(matches!(
+            bmff_io.read_cai(&mut source),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    #[test]
+    fn test_bmff_datamap_offset_overflow_returns_error() {
+        // A crafted C2PA manifest can embed a DataMap.offset of u64::MAX, which when
+        // added to any non-zero box_start overflows u64 and panics. Verify that
+        // bmff_to_jumbf_exclusions returns Err instead of panicking.
+        let mut data: Vec<u8> = Vec::new();
+        // ftyp box (16 bytes): size=16, type='ftyp', major_brand='mp41', minor_version=0
+        data.extend_from_slice(&16u32.to_be_bytes());
+        data.extend_from_slice(b"ftyp");
+        data.extend_from_slice(b"mp41");
+        data.extend_from_slice(&0u32.to_be_bytes());
+        // mdat box (8 bytes): size=8, type='mdat'
+        data.extend_from_slice(&8u32.to_be_bytes());
+        data.extend_from_slice(b"mdat");
+
+        let mut exclusion = ExclusionsMap::new("/mdat".to_string());
+        exclusion.data = Some(vec![crate::assertions::DataMap {
+            offset: u64::MAX,
+            value: vec![0],
+        }]);
+
+        let mut reader = Cursor::new(data);
+        assert!(matches!(
+            bmff_to_jumbf_exclusions(&mut reader, &[exclusion], false),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    // Regression tests for the UUID box purpose field u64 underflow vulnerability.
+    // Without the data_len == 0 guard, reading past the end of the box would decrement
+    // data_len from 0 to u64::MAX (wrapping), causing the caller to attempt a
+    // u64::MAX-byte allocation (OOM crash).
+
+    #[test]
+    fn test_uuid_purpose_missing_null_terminator_rejected() {
+        // Box layout: HEADER(8) + UUID(16) + FullBox(4) + payload(8) = 36 bytes total.
+        // Payload is 8 non-null bytes — no null terminator — so the parser must hit
+        // data_len == 0 and return an error instead of underflowing.
+        let size: u64 = 36;
+        let (arena, token) = Arena::with_data(BoxInfo {
+            path: "/uuid".to_string(),
+            parent: None,
+            offset: 0,
+            size,
+            box_type: BoxType::UuidBox,
+            user_type: Some(C2PA_UUID.to_vec()),
+            version: None,
+            flags: None,
+        });
+        let node = &arena[token];
+
+        // Reader bytes starting at offset 0:
+        //   [0..7]   HEADER (8 bytes) — skipped by skip_bytes_to(offset + 8 + 16)
+        //   [8..23]  UUID extension (16 bytes)
+        //   [24..27] FullBox version(1)+flags(3) = 0x00000000
+        //   [28..35] purpose bytes — 8 non-null bytes, no terminator
+        let mut bytes = vec![0u8; 8 + 16]; // header + UUID
+        bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // FullBox
+        bytes.extend_from_slice(b"manifest"); // 8 bytes, no null terminator
+
+        let mut reader = Cursor::new(bytes);
+        assert!(matches!(
+            get_uuid_box_purpose(&mut reader, node),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    #[test]
+    fn test_uuid_purpose_box_too_small_rejected() {
+        // size = 20 < HEADER_SIZE(8) + UUID(16) = 24; the checked_sub chain must return
+        // Err(InvalidAsset) before any read occurs.
+        let (arena, token) = Arena::with_data(BoxInfo {
+            path: "/uuid".to_string(),
+            parent: None,
+            offset: 0,
+            size: 20,
+            box_type: BoxType::UuidBox,
+            user_type: Some(C2PA_UUID.to_vec()),
+            version: None,
+            flags: None,
+        });
+        let node = &arena[token];
+
+        let mut reader = Cursor::new(vec![0u8; 20]);
+        assert!(matches!(
+            get_uuid_box_purpose(&mut reader, node),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    // Regression: `_skip_bytes(reader, size)` used `size as i64`, which wraps
+    // a u64 > i64::MAX to a negative i64 and would seek *backward* instead of
+    // forward. The fix routes through the current position + checked_add +
+    // SeekFrom::Start so the seek direction is always forward for any u64
+    // that fits inside the file, and any value that would overflow u64
+    // surfaces as InvalidAsset.
+    #[test]
+    fn test_skip_bytes_large_u64_does_not_seek_backward() {
+        // A small in-memory buffer where we can't actually seek that far
+        // forward — we only care that the function does not produce a
+        // *backward* seek and that its result is a well-formed forward seek
+        // to a position >= the starting position (or a controlled error).
+        let mut buf = vec![0u8; 32];
+        let mut reader = Cursor::new(&mut buf);
+        reader.seek(SeekFrom::Start(4)).unwrap();
+
+        // Size just above i64::MAX — the pre-fix `size as i64` cast would
+        // wrap this to a negative value. `SeekFrom::Start(u64)` handles the
+        // large target correctly; the actual stream_position after such a
+        // seek is well-defined (some backends allow seeking past EOF).
+        // The security property under test is *no backward seek*.
+        let before = reader.stream_position().unwrap();
+        let _ = _skip_bytes(&mut reader, (i64::MAX as u64) + 1);
+        let after = reader.stream_position().unwrap();
+        assert!(
+            after >= before,
+            "skip_bytes must never seek backward — before={before}, after={after}",
+        );
+    }
+
+    #[test]
+    fn test_skip_bytes_u64_max_returns_error_not_backward_seek() {
+        // A skip that would push the target past u64::MAX must surface as an
+        // `InvalidAsset` error, not wrap into a backward seek.
+        let mut buf = vec![0u8; 16];
+        let mut reader = Cursor::new(&mut buf);
+        reader.seek(SeekFrom::Start(8)).unwrap();
+
+        let result = _skip_bytes(&mut reader, u64::MAX);
+        assert!(
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "expected InvalidAsset for skip past u64::MAX, got {result:?}",
+        );
+    }
+
+    // Regression: `offset_adjust` used to be an `i32` that received a
+    // `usize as i32` cast. For a C2PA / free box larger than i32::MAX
+    // (2 GiB), the cast truncated to a bogus value (potentially negative),
+    // corrupting every stco/co64/iloc offset patched via
+    // `adjust_known_offsets`. Widening `adjust_known_offsets` to accept `i64`
+    // and guarding every producer with `i64::try_from(usize)` makes the
+    // adjustment either faithful or a clean `InvalidAsset` error.
+    #[test]
+    fn test_adjust_known_offsets_accepts_over_i32_max_positive() {
+        // Empty tree / path map → adjust_known_offsets should not touch
+        // anything, and must accept an i64 far beyond i32::MAX without a
+        // truncation panic or an integer overflow.
+        let (arena, _root) = Arena::with_data(BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size: 0,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        });
+        let map: HashMap<String, Vec<Token>> = HashMap::new();
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        let big_adjust: i64 = (i32::MAX as i64) + 1;
+        adjust_known_offsets(&mut cursor, &arena, &map, big_adjust).unwrap();
+    }
+
+    #[test]
+    fn test_adjust_known_offsets_accepts_below_neg_i32_min_negative() {
+        // Same invariant on the negative side — the pre-fix i32 signature
+        // could not represent a shrink adjustment for a box larger than
+        // 2 GiB (its magnitude); the i64 signature can, and empty maps keep
+        // the function a no-op.
+        let (arena, _root) = Arena::with_data(BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size: 0,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        });
+        let map: HashMap<String, Vec<Token>> = HashMap::new();
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        let big_neg: i64 = (i32::MIN as i64) - 1;
+        adjust_known_offsets(&mut cursor, &arena, &map, big_neg).unwrap();
     }
 }

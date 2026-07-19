@@ -28,7 +28,7 @@ use tempfile::TempDir;
 use crate::{
     assertions::{
         labels, Action, Actions, DigitalSourceType, EmbeddedData, Ingredient, Relationship,
-        ReviewRating, SchemaDotOrg, Thumbnail, User,
+        ReviewRating, Thumbnail, User,
     },
     asset_io::CAIReadWrite,
     claim::Claim,
@@ -110,7 +110,7 @@ define_fixtures!(
     C_JPEG => ("C.jpg", "image/jpeg"),
     CA_JPEG => ("CA.jpg", "image/jpeg"),
     XCA_JPEG => ("XCA.jpg", "image/jpeg"),
-    SAMPLE_PNG => ("libpng-test.png", "image/png"),
+    SAMPLE_PNG => ("sample1.png", "image/png"),
     SAMPLE_WAV => ("sample1.wav", "audio/wav"),
     SAMPLE_WEBP => ("sample1.webp", "image/webp"),
     SAMPLE_TIFF => ("TUSCANY.TIF", "image/tiff"),
@@ -343,7 +343,7 @@ pub fn create_test_claim_v1() -> Result<Claim> {
             "alternateName": "False"
         }
     }"#;
-    let claim_review = SchemaDotOrg::from_json_str(cr)?;
+    let claim_review = User::new("schema.org", cr);
     let thumbnail_claim = Thumbnail::new(labels::JPEG_CLAIM_THUMBNAIL, some_binary_data.clone());
     let thumbnail_ingred = Thumbnail::new(labels::JPEG_INGREDIENT_THUMBNAIL, some_binary_data);
     let user_assertion = User::new(TEST_USER_ASSERTION, user_assertion_data);
@@ -456,6 +456,34 @@ pub fn create_test_streams(
         let output_cursor = std::io::Cursor::new(Vec::new());
 
         (format, input_cursor, output_cursor)
+    }
+    #[cfg(not(feature = "file_io"))]
+    {
+        panic!(
+            "Fixture '{}' not found in embedded registry and file I/O is disabled",
+            fixture_name
+        );
+    }
+}
+
+/// Create a single in-memory input stream from a fixture file.
+/// Use this for read-only tests (e.g. format detection) that don't need an output stream.
+#[allow(clippy::expect_used)]
+pub fn create_test_stream(fixture_name: &str) -> (&'static str, std::io::Cursor<Vec<u8>>) {
+    if let Some(fixture) = get_registry().get(fixture_name) {
+        return (fixture.1, std::io::Cursor::new(fixture.0.to_vec()));
+    }
+
+    #[cfg(feature = "file_io")]
+    {
+        let input_path = fixture_path(fixture_name);
+        let input_data = std::fs::read(&input_path).expect("could not read input file");
+        let format = input_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .and_then(extension_to_mime)
+            .unwrap_or("application/octet-stream");
+        (format, std::io::Cursor::new(input_data))
     }
     #[cfg(not(feature = "file_io"))]
     {

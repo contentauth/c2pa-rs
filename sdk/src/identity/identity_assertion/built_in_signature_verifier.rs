@@ -33,7 +33,7 @@ use crate::{
 pub struct BuiltInSignatureVerifier<'a> {
     /// Configuration to use when an identity claims aggregation credential is
     /// presented.
-    pub ica_verifier: IcaSignatureVerifier,
+    pub ica_verifier: IcaSignatureVerifier<'a>,
 
     /// Configuration to use when an X.509 credential is presented.
     pub x509_verifier: X509SignatureVerifier<'a>,
@@ -45,7 +45,7 @@ impl SignatureVerifier for BuiltInSignatureVerifier<'_> {
     type Error = BuiltInSignatureError;
     type Output = BuiltInCredential;
 
-    async fn check_signature(
+    fn check_signature(
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],
@@ -55,13 +55,36 @@ impl SignatureVerifier for BuiltInSignatureVerifier<'_> {
             crate::identity::claim_aggregation::CAWG_ICA_SIG_TYPE => self
                 .ica_verifier
                 .check_signature(signer_payload, signature, status_tracker)
-                .await
                 .map(BuiltInCredential::IdentityClaimsAggregationCredential)
                 .map_err(map_err_to_built_in),
 
             crate::identity::x509::CAWG_X509_SIG_TYPE => self
                 .x509_verifier
                 .check_signature(signer_payload, signature, status_tracker)
+                .map(BuiltInCredential::X509Signature)
+                .map_err(map_err_to_built_in),
+
+            sig_type => Err(ValidationError::UnknownSignatureType(sig_type.to_string())),
+        }
+    }
+
+    async fn check_signature_async(
+        &self,
+        signer_payload: &SignerPayload,
+        signature: &[u8],
+        status_tracker: &mut StatusTracker,
+    ) -> Result<Self::Output, ValidationError<Self::Error>> {
+        match signer_payload.sig_type.as_str() {
+            crate::identity::claim_aggregation::CAWG_ICA_SIG_TYPE => self
+                .ica_verifier
+                .check_signature_async(signer_payload, signature, status_tracker)
+                .await
+                .map(BuiltInCredential::IdentityClaimsAggregationCredential)
+                .map_err(map_err_to_built_in),
+
+            crate::identity::x509::CAWG_X509_SIG_TYPE => self
+                .x509_verifier
+                .check_signature_async(signer_payload, signature, status_tracker)
                 .await
                 .map(BuiltInCredential::X509Signature)
                 .map_err(map_err_to_built_in),
@@ -171,6 +194,7 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
+        context::Context,
         crypto::raw_signature,
         identity::{
             builder::{
@@ -187,7 +211,7 @@ mod tests {
             IdentityAssertion, SignerPayload, ValidationError,
         },
         status_tracker::StatusTracker,
-        Builder, HashedUri, Reader, SigningAlg,
+        Builder, HashedUri, SigningAlg,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
@@ -199,7 +223,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
@@ -234,7 +258,7 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = crate::identity::tests::read_manifest(format, &mut dest).await;
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
@@ -247,7 +271,8 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let verifier = default_built_in_signature_verifier();
+        let context = Context::new();
+        let verifier = default_built_in_signature_verifier(&context);
         let sig_info = ia.validate(manifest, &mut st, &verifier).await.unwrap();
 
         let BuiltInCredential::X509Signature(sig_info) = sig_info else {
@@ -266,15 +291,25 @@ mod tests {
 
     #[c2pa_test_async]
     async fn adobe_connected_identities() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
         let format = "image/jpeg";
         let test_image =
             include_bytes!("../tests/fixtures/claim_aggregation/adobe_connected_identities.jpg");
 
         let mut test_image = Cursor::new(test_image);
 
-        let reader = Reader::from_stream(format, &mut test_image).unwrap();
+        let settings = crate::settings::Settings::default()
+            .with_value("verify.verify_trust", false)
+            .unwrap()
+            .with_value("core.decode_identity_assertions", false)
+            .unwrap();
+        let context = crate::Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .into_shared();
+        let reader = crate::Reader::from_shared_context(&context)
+            .with_stream_async(format, &mut test_image)
+            .await
+            .unwrap();
         assert_eq!(reader.validation_status(), None);
 
         let manifest = reader.active_manifest().unwrap();
@@ -287,7 +322,8 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let verifier = default_built_in_signature_verifier();
+        let context = Context::new();
+        let verifier = default_built_in_signature_verifier(&context);
         let ica = ia.validate(manifest, &mut st, &verifier).await.unwrap();
 
         let BuiltInCredential::IdentityClaimsAggregationCredential(ica) = ica else {
@@ -364,7 +400,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
@@ -386,7 +422,7 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = crate::identity::tests::read_manifest(format, &mut dest).await;
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
@@ -399,7 +435,8 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let verifier = default_built_in_signature_verifier();
+        let context = Context::new();
+        let verifier = default_built_in_signature_verifier(&context);
         let err = ia.validate(manifest, &mut st, &verifier).await.unwrap_err();
 
         match err {

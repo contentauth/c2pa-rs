@@ -11,8 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
+// The TiffCloner::clone_tiff path is no longer used in favor of append only changes to the TIFF file.  It is kept for reference and possible future use.
+#![allow(dead_code, unused_variables)]
+
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fs::OpenOptions,
     io::{Cursor, Read, Seek, SeekFrom, Write},
     path::Path,
@@ -52,10 +55,17 @@ const STRIPOFFSETS: u16 = 273;
 const TILEBYTECOUNTS: u16 = 325;
 const TILEOFFSETS: u16 = 324;
 
+const BIGTABLEDIGESTS: u16 = 52540;
+const BIGTABLEOFFSETS: u16 = 52541;
+const BIGTABLEBYTECOUNTS: u16 = 52542;
+
 /* support when we find a use case
 const FREEOFFSETS: u16 = 288;
 const FREEBYTECOUNTS: u16 = 289;
 */
+
+const MAX_PAGES: usize = 2000; // avoid arbitrary large allocations and possible DoS attacks.  This is a reasonable limit for TIFF files.
+const MAX_SUBFILES: usize = 1000; // avoid arbitrary large allocations and possible DoS attacks.  This is a reasonable limit for TIFF files.
 
 const SUBFILES: [u16; 4] = [SUBFILE_TAG, EXIFIFD_TAG, GPSIFD_TAG, INTEROPERABILITY_TAG];
 
@@ -151,7 +161,7 @@ pub struct ImageFileDirectory {
     offset: u64,
     entry_cnt: u64,
     ifd_type: IfdType,
-    entries: HashMap<u16, IfdEntry>,
+    entries: BTreeMap<u16, IfdEntry>,
     next_ifd_offset: Option<u64>,
     next_idf_offset_location: u64,
 }
@@ -261,7 +271,7 @@ impl TiffStructure {
         byte_reader: &mut ByteOrdered<&mut R, Endianness>,
         big_tiff: bool,
         entry_cnt: u64,
-        entries: &mut HashMap<u16, IfdEntry>,
+        entries: &mut BTreeMap<u16, IfdEntry>,
     ) -> Result<()>
     where
         R: Read + Seek + ?Sized,
@@ -340,7 +350,7 @@ impl TiffStructure {
             offset: ifd_offset,
             entry_cnt,
             ifd_type,
-            entries: HashMap::new(),
+            entries: BTreeMap::new(),
             next_ifd_offset: None,
             next_idf_offset_location: 0,
         };
@@ -384,140 +394,187 @@ fn decode_offset(offset_file_native: u64, endianness: Endianness, big_tiff: bool
     Ok(offset)
 }
 
+/// Reject forged IFD `value_count` fields whose claimed byte size exceeds the
+/// actual file size. Used before every `safe_vec`/`read_to_vec` allocation
+/// driven by attacker-controlled count fields, so a 52-byte BigTIFF can't
+/// trigger a multi-GB allocation.
+fn check_ifd_data_size(claimed_size: u64, file_size: u64) -> Result<()> {
+    if claimed_size > file_size {
+        return Err(Error::InvalidAsset(
+            "IFD entry data size exceeds file size".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct MappedTiff {
+    tiff_tree: Arena<ImageFileDirectory>,
+    page_tokens: Vec<Token>,
+    sub_files_map: HashMap<Token, Vec<ImageFileDirectory>>,
+    endianness: Endianness,
+    big_tiff: bool,
+}
+
 // create tree of TIFF structure IFDs and IFD entries.
-fn map_tiff<R>(
-    mut input: &mut R,
-) -> Result<(Arena<ImageFileDirectory>, Vec<Token>, Endianness, bool)>
+fn map_tiff<R>(mut input: &mut R) -> Result<MappedTiff>
 where
     R: Read + Seek + ?Sized,
 {
-    let _size = stream_len(input)?;
+    let file_size = stream_len(input)?;
     input.rewind()?;
 
     let mut tokens = Vec::new();
+    let mut sub_files_map: HashMap<Token, Vec<ImageFileDirectory>> = HashMap::new();
+
     let ts = TiffStructure::load(input)?;
 
-    let tiff_tree: Arena<ImageFileDirectory> = if let Some(ifd) = ts.first_ifd.clone() {
-        let (mut tiff_tree, page_0) = Arena::with_data(ifd);
-        let mut current_token = page_0;
+    let tiff_tree: Arena<ImageFileDirectory> =
+        if let Some(ifd) = ts.first_ifd.clone() {
+            let first_offset = ifd.offset;
+            let (mut tiff_tree, page_0) = Arena::with_data(ifd);
+            let mut current_token = page_0;
+            let mut visited_offsets: HashSet<u64> = HashSet::new();
+            visited_offsets.insert(first_offset);
 
-        // get the pages
-        loop {
-            tokens.push(current_token);
-
-            // look for known special IFDs
-            let page_subifd = tiff_tree[current_token].data.get_tag(SUBFILE_TAG).copied();
-
-            // grab SubIFDs for page (DNG)
-            if let Some(subifd) = page_subifd {
-                let decoded_offset =
-                    decode_offset(subifd.value_offset, ts.byte_order, ts.big_tiff)?;
-                input.seek(SeekFrom::Start(decoded_offset))?;
-
-                let num_longs_x4 = usize::try_from(
-                    subifd
-                        .value_count
-                        .checked_mul(4)
-                        .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?,
-                )
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-                let mut subfile_offsets = safe_vec(subifd.value_count, Some(0u32))?; // will contain offsets in native endianness
-
-                if num_longs_x4 <= 4 || ts.big_tiff && num_longs_x4 <= 8 {
-                    let offset_bytes = subifd.value_offset.to_ne_bytes();
-                    let offset_reader = Cursor::new(offset_bytes);
-
-                    with_order!(offset_reader, ts.byte_order, |src| {
-                        for item in subfile_offsets.iter_mut().take(num_longs_x4 / 4) {
-                            let s = src.read_u32()?; // read a long from offset
-                            *item = s; // write a long in output endian
-                        }
-                    });
-                } else {
-                    let buf = input.read_to_vec(num_longs_x4 as u64)?;
-                    let offsets_buf = Cursor::new(buf);
-
-                    with_order!(offsets_buf, ts.byte_order, |src| {
-                        for item in subfile_offsets.iter_mut().take(num_longs_x4 / 4) {
-                            let s = src.read_u32()?; // read a long from offset
-                            *item = s; // write a long in output endian
-                        }
-                    });
+            // get the pages
+            loop {
+                tokens.push(current_token);
+                if tokens.len() > MAX_PAGES {
+                    return Err(Error::InvalidAsset(
+                        "TIFF file has too many pages".to_string(),
+                    ));
                 }
 
-                // get all subfiles
-                for subfile_offset in subfile_offsets {
-                    let u64_offset = subfile_offset as u64;
-                    input.seek(SeekFrom::Start(u64_offset))?;
+                // look for known special IFDs
+                let page_subifd = tiff_tree[current_token].data.get_tag(SUBFILE_TAG).copied();
 
-                    //println!("Reading SubIFD: {}", u64_offset);
+                // grab SubIFDs for page (DNG)
+                if let Some(subifd) = page_subifd {
+                    let decoded_offset =
+                        decode_offset(subifd.value_offset, ts.byte_order, ts.big_tiff)?;
+                    input.seek(SeekFrom::Start(decoded_offset))?;
 
-                    let subfile_ifd = TiffStructure::read_ifd(
-                        input,
-                        ts.byte_order,
-                        ts.big_tiff,
-                        IfdType::Subfile,
-                    )?;
-                    let subfile_token = tiff_tree.new_node(subfile_ifd);
+                    let num_longs_x4 =
+                        usize::try_from(subifd.value_count.checked_mul(4).ok_or_else(|| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?)
+                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                    current_token
-                        .append_node(&mut tiff_tree, subfile_token)
-                        .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
+                    check_ifd_data_size(num_longs_x4 as u64, file_size)?;
+
+                    let mut subfile_offsets = safe_vec(subifd.value_count, Some(0u32))?; // will contain offsets in native endianness
+
+                    if num_longs_x4 <= 4 || ts.big_tiff && num_longs_x4 <= 8 {
+                        let offset_bytes = subifd.value_offset.to_ne_bytes();
+                        let offset_reader = Cursor::new(offset_bytes);
+
+                        with_order!(offset_reader, ts.byte_order, |src| {
+                            for item in subfile_offsets.iter_mut().take(num_longs_x4 / 4) {
+                                let s = src.read_u32()?; // read a long from offset
+                                *item = s; // write a long in output endian
+                            }
+                        });
+                    } else {
+                        let buf = input.read_to_vec(num_longs_x4 as u64)?;
+                        let offsets_buf = Cursor::new(buf);
+
+                        with_order!(offsets_buf, ts.byte_order, |src| {
+                            for item in subfile_offsets.iter_mut().take(num_longs_x4 / 4) {
+                                let s = src.read_u32()?; // read a long from offset
+                                *item = s; // write a long in output endian
+                            }
+                        });
+                    }
+
+                    // make sure this is resonable number of subfiles, avoid arbitrary large allocations and possible DoS attacks
+                    if subfile_offsets.len() > MAX_SUBFILES {
+                        return Err(Error::InvalidAsset(
+                            "TIFF file has too many subfiles".to_string(),
+                        ));
+                    }
+
+                    // get all subfiles
+                    for subfile_offset in subfile_offsets {
+                        let u64_offset = subfile_offset as u64;
+                        input.seek(SeekFrom::Start(u64_offset))?;
+
+                        //println!("Reading SubIFD: {}", u64_offset);
+
+                        let subfile_ifd = TiffStructure::read_ifd(
+                            input,
+                            ts.byte_order,
+                            ts.big_tiff,
+                            IfdType::Subfile,
+                        )?;
+
+                        sub_files_map
+                            .entry(current_token)
+                            .and_modify(|v| v.push(subfile_ifd.clone()))
+                            .or_insert(vec![subfile_ifd]);
+                    }
                 }
-            }
 
-            // grab EXIF IFD for page (DNG)
-            if let Some(exififd) = tiff_tree[current_token].data.get_tag(EXIFIFD_TAG) {
-                let decoded_offset =
-                    decode_offset(exififd.value_offset, ts.byte_order, ts.big_tiff)?;
-                input.seek(SeekFrom::Start(decoded_offset))?;
+                // grab EXIF IFD for page (DNG)
+                if let Some(exififd) = tiff_tree[current_token].data.get_tag(EXIFIFD_TAG) {
+                    let decoded_offset =
+                        decode_offset(exififd.value_offset, ts.byte_order, ts.big_tiff)?;
+                    input.seek(SeekFrom::Start(decoded_offset))?;
 
-                //println!("EXIF Reading SubIFD: {}", decoded_offset);
+                    //println!("EXIF Reading SubIFD: {}", decoded_offset);
 
-                let exif_ifd =
-                    TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Exif)?;
-                let exif_token = tiff_tree.new_node(exif_ifd);
+                    let exif_ifd =
+                        TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Exif)?;
 
-                current_token
-                    .append_node(&mut tiff_tree, exif_token)
-                    .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
-            }
+                    sub_files_map
+                        .entry(current_token)
+                        .and_modify(|v| v.push(exif_ifd.clone()))
+                        .or_insert(vec![exif_ifd]);
+                }
 
-            // grab GPS IFD for page (DNG)
-            if let Some(gpsifd) = tiff_tree[current_token].data.get_tag(GPSIFD_TAG) {
-                let decoded_offset =
-                    decode_offset(gpsifd.value_offset, ts.byte_order, ts.big_tiff)?;
-                input.seek(SeekFrom::Start(decoded_offset))?;
+                // grab GPS IFD for page (DNG)
+                if let Some(gpsifd) = tiff_tree[current_token].data.get_tag(GPSIFD_TAG) {
+                    let decoded_offset =
+                        decode_offset(gpsifd.value_offset, ts.byte_order, ts.big_tiff)?;
+                    input.seek(SeekFrom::Start(decoded_offset))?;
 
-                //println!("GPS Reading SubIFD: {}", decoded_offset);
+                    //println!("GPS Reading SubIFD: {}", decoded_offset);
 
-                let gps_ifd =
-                    TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Gps)?;
-                let gps_token = tiff_tree.new_node(gps_ifd);
+                    let gps_ifd =
+                        TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Gps)?;
 
-                current_token
-                    .append_node(&mut tiff_tree, gps_token)
-                    .map_err(|_err| Error::InvalidAsset("Bad TIFF Structure".to_string()))?;
-            }
+                    sub_files_map
+                        .entry(current_token)
+                        .and_modify(|v| v.push(gps_ifd.clone()))
+                        .or_insert(vec![gps_ifd]);
+                }
 
-            // move to next page
-            if let Some(next_ifd_offset) = tiff_tree[current_token].data.next_ifd_offset {
                 // move to next page
-                input.seek(SeekFrom::Start(next_ifd_offset))?;
-                let next_ifd =
-                    TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Page)?;
-                current_token = current_token.insert_after(&mut tiff_tree, next_ifd);
-            } else {
-                break;
+                if let Some(next_ifd_offset) = tiff_tree[current_token].data.next_ifd_offset {
+                    if !visited_offsets.insert(next_ifd_offset) {
+                        return Err(Error::InvalidAsset("Cyclic IFD chain detected".to_string()));
+                    }
+                    input.seek(SeekFrom::Start(next_ifd_offset))?;
+                    let next_ifd =
+                        TiffStructure::read_ifd(input, ts.byte_order, ts.big_tiff, IfdType::Page)?;
+                    current_token = current_token.insert_after(&mut tiff_tree, next_ifd);
+                } else {
+                    break;
+                }
             }
-        }
 
-        tiff_tree
-    } else {
-        return Err(Error::InvalidAsset("TIFF structure invalid".to_string()));
-    };
+            tiff_tree
+        } else {
+            return Err(Error::InvalidAsset("TIFF structure invalid".to_string()));
+        };
 
-    Ok((tiff_tree, tokens, ts.byte_order, ts.big_tiff))
+    Ok(MappedTiff {
+        tiff_tree,
+        page_tokens: tokens,
+        sub_files_map,
+        endianness: ts.byte_order,
+        big_tiff: ts.big_tiff,
+    })
 }
 
 // struct used to clone source IFD entries. value_bytes are in target endianness
@@ -539,6 +596,7 @@ where
     first_idf_offset: u64,
     writer: ByteOrdered<T, Endianness>,
     additional_ifds: BTreeMap<u16, IfdClonedEntry>,
+    c2pa_mode: bool,
 }
 
 impl<T: Read + Write + Seek> TiffCloner<T> {
@@ -551,9 +609,37 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             first_idf_offset: 0,
             writer: bo,
             additional_ifds: BTreeMap::new(),
+            c2pa_mode: false,
         };
 
         tc.write_header()?;
+
+        Ok(tc)
+    }
+
+    // Start with a copy of the source file to writer, then we will adjust the IFDs and add new tags as needed.
+    // Use this constructor if you are cloning with C2PA mode
+    pub fn new_from_source<R: Read + Seek + ?Sized>(
+        endianness: Endianness,
+        big_tiff: bool,
+        writer: T,
+        source: &mut R,
+    ) -> Result<TiffCloner<T>> {
+        let bo = ByteOrdered::runtime(writer, endianness);
+
+        let mut tc = TiffCloner {
+            endianness,
+            big_tiff,
+            first_idf_offset: 0,
+            writer: bo,
+            additional_ifds: BTreeMap::new(),
+            c2pa_mode: true,
+        };
+
+        // start with copy of source file to writer, then we will adjust the IFDs and add new tags as needed
+        source.rewind()?;
+        std::io::copy(source, tc.writer.inner_mut())?;
+        source.rewind()?;
 
         Ok(tc)
     }
@@ -600,6 +686,21 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         Ok(offset)
     }
 
+    fn adjust_header_ifd_offset(&mut self, offset: u64) -> Result<()> {
+        if self.big_tiff {
+            self.writer.seek(SeekFrom::Start(8))?;
+            self.writer.write_u64(offset)?;
+        } else {
+            self.writer.seek(SeekFrom::Start(4))?;
+            let offset_u32 = u32::try_from(offset)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+            self.writer.write_u32(offset_u32)?;
+        }
+
+        Ok(())
+    }
+
     fn write_entry_count(&mut self, count: usize) -> Result<()> {
         if self.big_tiff {
             let cnt = u64::try_from(count)
@@ -618,6 +719,9 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
     fn write_ifd(&mut self, target_ifd: &mut BTreeMap<u16, IfdClonedEntry>) -> Result<u64> {
         let is_c2pa_idf = target_ifd.len() == 1 && target_ifd.contains_key(&C2PA_TAG);
+
+        // Write out the data and IFD at end of file
+        self.writer.seek(SeekFrom::End(0))?;
 
         if !is_c2pa_idf {
             // write out all data and save the offsets, skipping subfiles since the data is already written
@@ -659,8 +763,6 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 }
             }
         }
-
-        // Write out the IFD
 
         // start on a WORD boundary
         self.pad_word_boundary()?;
@@ -731,6 +833,544 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         self.additional_ifds.insert(entry.entry_tag, entry);
     }
 
+    // Writes a clone of the incoming IFD, only writing new data if it has changed to the end of the file, otherwise the
+    // entries point to existing data.  If the entry contains C2PA data, it is written at the end of the file.
+    // Returns location of start of IFD.
+    fn write_adjusted_ifd(
+        &mut self,
+        target_ifd: &mut BTreeMap<u16, IfdClonedEntry>,
+        adjust_tags: &[u16],
+        next_ifd: u64,
+        c2pa_buf: Option<Vec<u8>>,
+    ) -> Result<u64> {
+        let data_bytes = if self.big_tiff { 8 } else { 4 };
+
+        // write new IFD data at the end
+        self.writer.seek(SeekFrom::End(0))?;
+
+        // Write out the IFD
+
+        // start on a WORD boundary
+        self.pad_word_boundary()?;
+
+        // save location of start of IFD
+        let ifd_offset = self.writer.stream_position()?;
+
+        // write out the entry count
+        self.write_entry_count(target_ifd.len())?;
+
+        // write out the placeholder entries, all value_bytes are data_bytes in size
+        let entry_array_offset = self.writer.stream_position()?;
+        for (tag, entry) in target_ifd.iter() {
+            self.writer.write_u16(*tag)?;
+            self.writer.write_u16(entry.entry_type)?;
+
+            if self.big_tiff {
+                self.writer.write_u64(entry.value_count)?;
+            } else {
+                let cnt = u32::try_from(entry.value_count)
+                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                self.writer.write_u32(cnt)?;
+            }
+            // just write out 0s for this placeholder pass
+            let buf = vec![0u8; data_bytes];
+            self.writer.write_all(&buf)?;
+        }
+
+        // terminate IFD
+        if self.big_tiff {
+            self.writer.write_u64(next_ifd)?;
+        } else {
+            let next_ifd32 = u32::try_from(next_ifd)?;
+            self.writer.write_u32(next_ifd32)?;
+        }
+
+        // Update all changed data and save the offsets, existing tag pointers will be used for unchanged data.
+        // C2PA data is written last per the spec.
+        let mut adjust_c2pa_data = false;
+        for &mut IfdClonedEntry {
+            entry_tag,
+            value_bytes: ref mut value_bytes_ref,
+            ..
+        } in target_ifd.values_mut()
+        {
+            if value_bytes_ref.len() > data_bytes {
+                if entry_tag == C2PA_TAG {
+                    // C2PA data must be written after all other data and is done after IFD write
+                    continue;
+                }
+
+                // if this value should be adjusted write out the data bytes
+                if adjust_tags.contains(&entry_tag) {
+                    adjust_c2pa_data = true;
+
+                    // get location of entry data start
+                    let offset = self.writer.stream_position()?;
+
+                    self.writer.write_all(value_bytes_ref)?;
+
+                    // set offset pointer in file source endian
+                    let mut offset_vec = vec![0; data_bytes];
+
+                    with_order!(offset_vec.as_mut_slice(), self.endianness, |ew| {
+                        if self.big_tiff {
+                            ew.write_u64(offset)?;
+                        } else {
+                            let offset_u32 = u32::try_from(offset).map_err(|_err| {
+                                Error::InvalidAsset("value out of range".to_string())
+                            })?; // get beginning of chunk which starts 4 bytes before label
+
+                            ew.write_u32(offset_u32)?;
+                        }
+                    });
+
+                    // set value_buf new data offset position pointer
+                    *value_bytes_ref = offset_vec;
+                }
+            }
+        }
+
+        // Write out the C2PA data if it is in the entry list, we will rewrite the C2PA manifest to
+        // make sure it is last. If we have adjusted tags we need to move the C2PA manifest to the end
+        let c2pa_data_changed = adjust_tags.contains(&C2PA_TAG);
+        if adjust_c2pa_data || c2pa_data_changed {
+            if let Some(c2pa_entry) = target_ifd.get_mut(&C2PA_TAG) {
+                if c2pa_entry.value_bytes.len() > data_bytes {
+                    // write data to output and make value_bytes its pointer
+                    // get location of entry data start
+                    let offset = self.writer.stream_position()?;
+                    if c2pa_data_changed {
+                        self.writer.write_all(&c2pa_entry.value_bytes)?;
+                    } else {
+                        // migrate existing manifest
+                        if let Some(data) = c2pa_buf {
+                            self.writer.write_all(&data)?;
+                        } else {
+                            return Err(Error::InternalError(
+                                "could not relocate manifest".to_string(),
+                            ));
+                        }
+                    }
+
+                    // update the entry value_bytes to point to the new offset
+                    let mut offset_vec = vec![0; data_bytes];
+                    with_order!(offset_vec.as_mut_slice(), self.endianness, |ew| {
+                        if self.big_tiff {
+                            ew.write_u64(offset)?;
+                        } else {
+                            let offset_u32 = u32::try_from(offset).map_err(|_err| {
+                                Error::InvalidAsset("value out of range".to_string())
+                            })?;
+                            ew.write_u32(offset_u32)?;
+                        }
+                    });
+                    c2pa_entry.value_bytes = offset_vec;
+                } else {
+                    // since it fits set value_buf as the actual data
+                    while c2pa_entry.value_bytes.len() < data_bytes {
+                        c2pa_entry.value_bytes.push(0);
+                    }
+                }
+            }
+        }
+
+        // seek to the start of the entries and write out again with the true offsets
+        self.writer.seek(SeekFrom::Start(entry_array_offset))?;
+        for (tag, entry) in target_ifd.iter() {
+            self.writer.write_u16(*tag)?;
+            self.writer.write_u16(entry.entry_type)?;
+
+            if self.big_tiff {
+                self.writer.write_u64(entry.value_count)?;
+            } else {
+                let cnt = u32::try_from(entry.value_count)
+                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                self.writer.write_u32(cnt)?;
+            }
+
+            self.writer.write_all(&entry.value_bytes[0..data_bytes])?;
+        }
+
+        Ok(ifd_offset)
+    }
+
+    // Leave original content intact and replace first IDF with a new cloned IFD appended to the asset.
+    // Any tag changes in the new IFD will be written to new data locations.  Existing data is preserved.
+    // Since 2.4 now allows the C2PA tag to be in the first IFD for single page TIFF, and in its own last IFD for
+    // the case of multi-page TIFF.
+    pub fn clone_c2pa_mode<R: Read + Seek + ?Sized>(
+        &mut self,
+        mut asset_reader: &mut R,
+        tiff_tree: &mut Arena<ImageFileDirectory>,
+        page_tokens: &[Token],
+        new_tiff_tags: Vec<IfdClonedEntry>,
+        remove_tiff_tags: &[u16],
+    ) -> Result<()> {
+        if !self.c2pa_mode {
+            return Err(Error::InternalError(
+                "clone_c2pa_mode called without using new_from_source constructor".to_string(),
+            ));
+        }
+
+        let first_page = page_tokens
+            .first()
+            .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
+
+        let mut last_page = page_tokens
+            .last()
+            .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
+
+        let mut last_page_ifd = tiff_tree
+            .get(*last_page)
+            .ok_or_else(|| Error::InvalidAsset("TIFF does not have IFD".to_string()))?;
+
+        let first_page_ifd = tiff_tree
+            .get(*first_page)
+            .ok_or_else(|| Error::InvalidAsset("TIFF does not have IFD".to_string()))?;
+
+        // separate out the C2PA entry since it may go into its own IFD
+        let c2pa_entry = new_tiff_tags
+            .iter()
+            .find(|t| t.entry_tag == C2PA_TAG)
+            .cloned();
+
+        // if this is a single page TIFF then we can insert the C2PA tag into the first IFD, otherwise it must be in its own IFD
+        let insert_to_first_page = *first_page == *last_page;
+
+        // can we patch the existing C2PA tag in place
+        // this case is required since we don't want to add a new IFD entry if we are replacing a placeholder C2PA manifest
+        let try_patch = new_tiff_tags.len() == 1
+            && c2pa_entry.is_some()
+            && remove_tiff_tags.is_empty()
+            && last_page_ifd.data.entries.contains_key(&C2PA_TAG);
+
+        if try_patch {
+            let cai_ifd_entry = last_page_ifd
+                .data
+                .entries
+                .get(&C2PA_TAG)
+                .ok_or(Error::JumbfNotFound)?;
+
+            // make sure data type is for unstructured data
+            if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
+                return Err(Error::InvalidAsset(
+                    "Ifd entry for C2PA must be type UNKNOWN(7)".to_string(),
+                ));
+            }
+
+            let manifest_len: usize = usize::try_from(cai_ifd_entry.value_count)
+                .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
+
+            let store_bytes = c2pa_entry
+                .as_ref()
+                .ok_or(Error::JumbfNotFound)?
+                .value_bytes
+                .as_slice();
+
+            // only patch if they are the same size
+            if store_bytes.len() == manifest_len {
+                // move read point to start of entry
+                let decoded_offset =
+                    decode_offset(cai_ifd_entry.value_offset, self.endianness, self.big_tiff)?;
+                self.writer.seek(SeekFrom::Start(decoded_offset))?;
+
+                self.writer.write_all(store_bytes)?;
+                return Ok(());
+            }
+        }
+
+        // find out if we need to replace first IFD if the first IFD contains the C2PA tag or if we have to add new tag or remove a tag that is in the first IFD.
+        let needs_new_first_page_ifd = first_page_ifd.data.entries.contains_key(&C2PA_TAG)
+            && !insert_to_first_page
+            || (new_tiff_tags
+                .iter()
+                .find(|t| t.entry_tag == C2PA_TAG)
+                .is_some()
+                && insert_to_first_page)
+            || new_tiff_tags.iter().any(|t| t.entry_tag != C2PA_TAG)
+            || remove_tiff_tags
+                .iter()
+                .any(|t| first_page_ifd.data.entries.contains_key(t));
+
+        let mut first_ifd_updated = false;
+        if needs_new_first_page_ifd {
+            let mut new_first_ifd_entries: BTreeMap<u16, IfdClonedEntry> = BTreeMap::new();
+
+            // duplicate the first IFD entries but skip any tags in the remove list and add any new tags
+            for (tag, entry) in &first_page_ifd.data.entries {
+                if !remove_tiff_tags.contains(tag) {
+                    new_first_ifd_entries.insert(
+                        *tag,
+                        IfdClonedEntry {
+                            entry_tag: *tag,
+                            entry_type: entry.entry_type,
+                            value_count: entry.value_count,
+                            value_bytes: entry.value_offset.to_ne_bytes().to_vec(), // note: this is in source byte order
+                        },
+                    );
+                }
+            }
+            let had_removals = first_page_ifd.data.entries.len() > new_first_ifd_entries.len();
+
+            // add in the new tags to the new first IFD
+            let mut changed_ifd_tags: Vec<u16> = Vec::new();
+            for new_tag in &new_tiff_tags {
+                // C2PA will be added to its own tag for multi-page TIFF
+                if new_tag.entry_tag == C2PA_TAG && !insert_to_first_page {
+                    new_first_ifd_entries.remove(&C2PA_TAG);
+                    continue;
+                }
+                changed_ifd_tags.push(new_tag.entry_tag);
+                new_first_ifd_entries.insert(new_tag.entry_tag, new_tag.clone());
+            }
+
+            if !changed_ifd_tags.is_empty() || had_removals {
+                // pass in existing manifest in case this is a manifest move only case
+                // (i.e. no new manifest data but we need to move the manifest to the end of the file)
+                let existing_c2pa_data = match last_page_ifd.data.get_tag(C2PA_TAG) {
+                    Some(e) => {
+                        // make sure data type is for unstructured data
+                        if e.entry_type != C2PA_FIELD_TYPE {
+                            return Err(Error::InvalidAsset(
+                                "Ifd entry for C2PA must be type UNDEFINED(7)".to_string(),
+                            ));
+                        }
+
+                        // move read point to start of entry
+                        let decoded_offset =
+                            decode_offset(e.value_offset, self.endianness, self.big_tiff)?;
+                        asset_reader.seek(SeekFrom::Start(decoded_offset))?;
+
+                        let data = asset_reader.read_to_vec(e.value_count).map_err(|_err| {
+                            Error::InvalidAsset("TIFF/DNG out of range".to_string())
+                        })?;
+                        Some(data)
+                    }
+                    None => None,
+                };
+
+                // write out the new first IDF needed
+                let second_ifd_offset = first_page_ifd.data.next_ifd_offset.unwrap_or(0);
+
+                let new_ifd_offset = self.write_adjusted_ifd(
+                    &mut new_first_ifd_entries,
+                    &changed_ifd_tags,
+                    second_ifd_offset,
+                    existing_c2pa_data,
+                )?;
+
+                // patch the header first IFD pointer to point to second IFD if present
+                self.adjust_header_ifd_offset(new_ifd_offset)?;
+
+                first_ifd_updated = true;
+            }
+        }
+
+        // if we updated the first IFD then we need to reread the current state so that
+        // IFDs are accurate
+        self.writer.rewind()?;
+        let mapped = map_tiff(self.writer.inner_mut())?;
+        let page_tokens = &mapped.page_tokens;
+        if first_ifd_updated {
+            last_page = page_tokens
+                .last()
+                .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
+
+            last_page_ifd = mapped
+                .tiff_tree
+                .get(*last_page)
+                .ok_or_else(|| Error::InvalidAsset("TIFF does not have IFD".to_string()))?;
+        }
+
+        // write out the new C2PA IFD if we have one and it was not added to the first IFD
+        if let Some(c2pa_entry) = c2pa_entry {
+            // C2PA manifest is in its own IFD
+            if last_page_ifd.data.entries.contains_key(&C2PA_TAG) && !insert_to_first_page {
+                let last_ifd_offset = last_page_ifd.data.offset;
+
+                // we can just update the existing last page C2PA entry
+                let existing_c2pa_entry = last_page_ifd
+                    .data
+                    .entries
+                    .get(&C2PA_TAG)
+                    .ok_or(Error::NotFound)?;
+                let len_size = if self.big_tiff { 8 } else { 4 };
+
+                let c2pa_offset = decode_offset(
+                    existing_c2pa_entry.value_offset,
+                    self.endianness,
+                    self.big_tiff,
+                )?;
+
+                // if c2pa_offset is the last content in the file we can just overwrite the new C2PA data there
+                let asset_len = stream_len(&mut self.writer)?;
+
+                // if the manifest is at the end of the file and the new manifest is larger than the existing manifest
+                // we can overwrite it and update the offset in the IFD entry
+                if c2pa_offset + existing_c2pa_entry.value_count == asset_len
+                    && c2pa_entry.value_count >= existing_c2pa_entry.value_count
+                {
+                    self.writer.seek(SeekFrom::Start(c2pa_offset))?;
+
+                    // write the new C2PA data bytes in place
+                    self.writer.write_all(&c2pa_entry.value_bytes)?;
+
+                    // jump to location to write the updated offset
+                    let entry_offset = last_ifd_offset
+                        + if self.big_tiff { 8u64 } else { 2u64 } // entry count
+                        + (if self.big_tiff { 16u64 } else { 12u64 } * last_page_ifd.data.entries.keys().position(|t| t == &C2PA_TAG).ok_or(Error::NotFound)? as u64); // offset of C2PA entry
+
+                    // adjust the c2pa IFD entry count to the size of the new C2PA data
+                    let new_c2pa_count = c2pa_entry.value_count;
+                    self.writer.seek(SeekFrom::Start(entry_offset + 4))?;
+
+                    if self.big_tiff {
+                        self.writer.write_u64(new_c2pa_count)?;
+                    } else {
+                        let cnt = u32::try_from(new_c2pa_count).map_err(|_err| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?;
+
+                        self.writer.write_u32(cnt)?;
+                    }
+                } else {
+                    // we have to write the new C2PA data at the end of the file and update the offset in the IFD entry
+                    self.writer.seek(SeekFrom::End(0))?;
+                    let new_c2pa_offset = self.offset()?;
+
+                    // write the new C2PA data bytes at the end of the file
+                    self.writer.write_all(&c2pa_entry.value_bytes)?;
+
+                    // patch the IFD entry to point to the new C2PA data location
+                    let mut new_offset_buf = vec![0; len_size];
+
+                    with_order!(new_offset_buf.as_mut_slice(), self.endianness, |ew| {
+                        if self.big_tiff {
+                            ew.write_u64(new_c2pa_offset)?;
+                        } else {
+                            let offset_u32 = u32::try_from(new_c2pa_offset)?;
+                            ew.write_u32(offset_u32)?;
+                        }
+                    });
+
+                    // jump to location to write the updated offset
+                    let entry_offset = last_ifd_offset
+                        + if self.big_tiff { 8u64 } else { 2u64 } // entry count
+                        + (if self.big_tiff { 16u64 } else { 12u64 } * last_page_ifd.data.entries.keys().position(|t| t == &C2PA_TAG).ok_or(Error::NotFound)? as u64); // offset of C2PA entry
+
+                    self.writer.seek(SeekFrom::Start(
+                        entry_offset + if self.big_tiff { 12u64 } else { 8u64 },
+                    ))?;
+
+                    // write the updated offset
+                    self.writer.write_all(&new_offset_buf)?;
+
+                    // adjust the c2pa IFD entry count to the size of the new C2PA data
+                    let new_c2pa_count = c2pa_entry.value_count;
+                    self.writer.seek(SeekFrom::Start(entry_offset + 4))?;
+
+                    if self.big_tiff {
+                        self.writer.write_u64(new_c2pa_count)?;
+                    } else {
+                        let cnt = u32::try_from(new_c2pa_count).map_err(|_err| {
+                            Error::InvalidAsset("value out of range".to_string())
+                        })?;
+
+                        self.writer.write_u32(cnt)?;
+                    }
+                }
+            } else {
+                // write out the new C2PA IFD
+                if !insert_to_first_page {
+                    let last_ifd_offset = last_page_ifd.data.offset;
+
+                    let mut c2pa_ifd_entries: BTreeMap<u16, IfdClonedEntry> = BTreeMap::new();
+                    c2pa_ifd_entries.insert(c2pa_entry.entry_tag, c2pa_entry);
+
+                    let new_c2pa_ifd_offset = self.write_ifd(&mut c2pa_ifd_entries)?;
+
+                    // point last page IFD to the new C2PA IFD
+                    self.writer.seek(SeekFrom::Start(last_ifd_offset))?;
+                    let prior_ifd = TiffStructure::read_ifd(
+                        &mut self.writer.inner_mut(),
+                        self.endianness,
+                        self.big_tiff,
+                        IfdType::Page,
+                    )?;
+
+                    self.set_next_ifd_offset(&prior_ifd, new_c2pa_ifd_offset)?;
+                }
+            }
+        } else {
+            // is this a manifest removal?
+            // remove the last IDF just by set a new last IFD if there is a C2PA tag in the remove list and we are not inserting to the first page
+            if remove_tiff_tags.contains(&C2PA_TAG) && !insert_to_first_page {
+                let second_to_last = &page_tokens[page_tokens.len() - 2];
+
+                let second_to_last_ifd = tiff_tree
+                    .get(*second_to_last)
+                    .ok_or_else(|| Error::InvalidAsset("TIFF does not have IFD".to_string()))?;
+
+                // make last page IFD to the prior IFD
+                self.set_next_ifd_offset(&second_to_last_ifd.data, 0)?;
+
+                return Ok(());
+            }
+
+            // wrote a new first IFD so we need to move C2PA data to end if there is a C2PA entry
+            if first_ifd_updated && !insert_to_first_page {
+                let last_ifd_offset = last_page_ifd.data.offset;
+
+                // we can just update the existing last page C2PA entry
+                if let Some(existing_c2pa_entry) = last_page_ifd.data.entries.get(&C2PA_TAG) {
+                    let len_size = if self.big_tiff { 8 } else { 4 };
+
+                    let c2pa_offset = decode_offset(
+                        existing_c2pa_entry.value_offset,
+                        self.endianness,
+                        self.big_tiff,
+                    )?;
+
+                    // read old data
+                    let mut c2pa_buf: Vec<u8> = safe_vec(existing_c2pa_entry.value_count, None)?;
+                    self.writer.seek(SeekFrom::Start(c2pa_offset))?;
+                    std::io::copy(&mut self.writer, &mut c2pa_buf)?;
+
+                    // write manifest at the end of asset
+                    let new_c2pa_offset = self.writer.seek(SeekFrom::End(0))?;
+                    self.writer.write_all(&c2pa_buf)?;
+
+                    let mut new_offset_buf = vec![0; len_size];
+                    with_order!(new_offset_buf.as_mut_slice(), self.endianness, |ew| {
+                        if self.big_tiff {
+                            ew.write_u64(new_c2pa_offset)?;
+                        } else {
+                            let offset_u32 = u32::try_from(new_c2pa_offset)?;
+                            ew.write_u32(offset_u32)?;
+                        }
+                    });
+
+                    // fix up the location
+                    // jump to location to write the updated offset
+                    let entry_offset = last_ifd_offset
+                        + if self.big_tiff { 8u64 } else { 2u64 } // entry count
+                        + (if self.big_tiff { 16u64 } else { 12u64 } * last_page_ifd.data.entries.keys().position(|t| t == &C2PA_TAG).ok_or(Error::NotFound)? as u64); // offset of C2PA entry
+
+                    self.writer.seek(SeekFrom::Start(
+                        entry_offset + if self.big_tiff { 12u64 } else { 8u64 },
+                    ))?;
+
+                    // write the updated offset
+                    self.writer.write_all(&new_offset_buf)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn set_next_ifd_offset(&mut self, entry: &ImageFileDirectory, offset: u64) -> Result<()> {
         self.writer
             .seek(SeekFrom::Start(entry.next_idf_offset_location))?;
@@ -748,7 +1388,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     fn clone_image_data<R: Read + Seek + ?Sized>(
         &mut self,
         target_ifd: &mut BTreeMap<u16, IfdClonedEntry>,
-        mut asset_reader: &mut R,
+        asset_reader: &mut R,
     ) -> Result<()> {
         match (
             target_ifd.contains_key(&STRIPBYTECOUNTS),
@@ -798,11 +1438,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
                 // copy the strips
                 with_order!(so_entry.value_bytes.as_slice(), self.endianness, |src| {
-                    for c in sbcs.iter() {
-                        let cnt = usize::try_from(*c).map_err(|_err| {
-                            Error::InvalidAsset("value out of range".to_string())
-                        })?;
-
+                    for cnt in sbcs.iter() {
                         // get the offset
                         let so: u64 = match so_entry.entry_type {
                             4u16 => {
@@ -822,8 +1458,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
                         // copy the strip to new file
                         asset_reader.seek(SeekFrom::Start(so))?;
-                        let data = asset_reader.read_to_vec(cnt as u64)?;
-                        self.writer.write_all(data.as_slice())?;
+                        let mut data_reader = asset_reader.take(*cnt);
+                        std::io::copy(&mut data_reader, &mut self.writer)?; // copy the BigTable block to new file
                     }
                 });
 
@@ -903,11 +1539,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
                 // copy the tiles
                 with_order!(to_entry.value_bytes.as_slice(), self.endianness, |src| {
-                    for c in tbcs.iter() {
-                        let cnt = usize::try_from(*c).map_err(|_err| {
-                            Error::InvalidAsset("value out of range".to_string())
-                        })?;
-
+                    for cnt in tbcs.iter() {
                         // get the offset
                         let to: u64 = match to_entry.entry_type {
                             4u16 => {
@@ -923,8 +1555,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
                         // copy the tile to new file
                         asset_reader.seek(SeekFrom::Start(to))?;
-                        let data = asset_reader.read_to_vec(cnt as u64)?;
-                        self.writer.write_all(data.as_slice())?;
+                        let mut data_reader = asset_reader.take(*cnt);
+                        std::io::copy(&mut data_reader, &mut self.writer)?; // copy the BigTable block to new file
                     }
                 });
 
@@ -968,28 +1600,143 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         Ok(())
     }
 
+    // Special DNG case - clone BigTable data if present. BigTable data is stored similarly
+    // to strip/tile data but with three separate tags for offsets, byte counts, and digests.
+    // We need to clone the data and patch the offsets to preserve the integrity of the DNG.
+    // Note: this is not a general DNG feature. Converts the target_ifd to the final
+    // IFD with the copied data and actual offsets.
+    fn clone_dng_bigtable_data<R: Read + Seek + ?Sized>(
+        &mut self,
+        target_ifd: &mut BTreeMap<u16, IfdClonedEntry>,
+        asset_reader: &mut R,
+    ) -> Result<()> {
+        // BigTable image data — only when all three BigTable tags are present.
+        if target_ifd.contains_key(&BIGTABLEOFFSETS)
+            && target_ifd.contains_key(&BIGTABLEDIGESTS)
+            && target_ifd.contains_key(&BIGTABLEBYTECOUNTS)
+        {
+            let bbc_entry = target_ifd[&BIGTABLEBYTECOUNTS].clone();
+            let bo_entry = target_ifd
+                .get_mut(&BIGTABLEOFFSETS)
+                .ok_or(Error::NotFound)?;
+
+            if bo_entry.value_count != bbc_entry.value_count {
+                return Err(Error::InvalidAsset(
+                    "TIFF BigTable count does not match BigTable offset count".to_string(),
+                ));
+            }
+
+            let mut bbcs: Vec<u64> = safe_vec(bbc_entry.value_count, Some(0u64))?;
+            let mut dest_offsets: Vec<u64> = Vec::new();
+
+            // get the byte counts
+            with_order!(bbc_entry.value_bytes.as_slice(), self.endianness, |src| {
+                for val in &mut bbcs {
+                    match bbc_entry.entry_type {
+                        4u16 => {
+                            let s = src.read_u32()?;
+                            *val = s.into();
+                        }
+                        3u16 => {
+                            let s = src.read_u16()?;
+                            *val = s.into();
+                        }
+                        16u16 => {
+                            let s = src.read_u64()?;
+                            *val = s;
+                        }
+                        _ => return Err(Error::InvalidAsset("invalid TIFF BigTable".to_string())),
+                    }
+                }
+            });
+
+            // Seek to our tracked write position (not End(0) which could be wrong if stream has leftover data)
+            let current_offset = self.offset()?;
+            self.writer.seek(SeekFrom::Start(current_offset))?;
+
+            // copy the BigTable blocks
+            with_order!(bo_entry.value_bytes.as_slice(), self.endianness, |src| {
+                for cnt in bbcs.iter() {
+                    let bo: u64 = match bo_entry.entry_type {
+                        4u16 => {
+                            let s = src.read_u32()?;
+                            s.into()
+                        }
+                        3u16 => {
+                            let s = src.read_u16()?;
+                            s.into()
+                        }
+                        16u16 => src.read_u64()?,
+                        _ => return Err(Error::InvalidAsset("invalid TIFF BigTable".to_string())),
+                    };
+
+                    let dest_offset = self.writer.stream_position()?;
+                    dest_offsets.push(dest_offset); // save offset where the new BigTable block is written for patching later
+
+                    asset_reader.seek(SeekFrom::Start(bo))?;
+                    let mut data_reader = asset_reader.take(*cnt);
+                    std::io::copy(&mut data_reader, &mut self.writer)?; // copy the BigTable block to new file
+                }
+            });
+
+            // patch with final offsets where the BigTable blocks were written in the new file
+            with_order!(
+                bo_entry.value_bytes.as_mut_slice(),
+                self.endianness,
+                |dest| {
+                    for o in dest_offsets.iter() {
+                        match bo_entry.entry_type {
+                            4u16 => {
+                                let offset = u32::try_from(*o).map_err(|_err| {
+                                    Error::InvalidAsset("value out of range".to_string())
+                                })?;
+                                dest.write_u32(offset)?;
+                            }
+                            3u16 => {
+                                let offset = u16::try_from(*o).map_err(|_err| {
+                                    Error::InvalidAsset("value out of range".to_string())
+                                })?;
+                                dest.write_u16(offset)?;
+                            }
+                            16u16 => {
+                                dest.write_u64(*o)?;
+                            }
+                            _ => {
+                                return Err(Error::InvalidAsset(
+                                    "invalid TIFF BigTable".to_string(),
+                                ))
+                            }
+                        }
+                    }
+                }
+            );
+        }
+        Ok(())
+    }
+
     fn clone_sub_files<R: Read + Seek + ?Sized>(
         &mut self,
         tiff_tree: &Arena<ImageFileDirectory>,
-        page: Token,
+        page_sub_files: &Vec<ImageFileDirectory>,
         asset_reader: &mut R,
-    ) -> Result<HashMap<u16, Vec<u64>>> {
+    ) -> Result<BTreeMap<u16, Vec<u64>>> {
         // offset map
-        let mut offset_map: HashMap<u16, Vec<u64>> = HashMap::new();
+        let mut offset_map: BTreeMap<u16, Vec<u64>> = BTreeMap::new();
 
         let mut offsets_ifd: Vec<u64> = Vec::new();
         let mut offsets_exif: Vec<u64> = Vec::new();
         let mut offsets_gps: Vec<u64> = Vec::new();
 
         // clone the EXIF entry and DNG entries
-        for n in page.children(tiff_tree) {
-            let ifd = &n.data;
-
+        for ifd in page_sub_files {
             // clone IFD entries
             let mut cloned_ifd = self.clone_ifd_entries(&ifd.entries, asset_reader)?;
 
             // clone the image data
             self.clone_image_data(&mut cloned_ifd, asset_reader)?;
+
+            // clone bigtable data if DNG
+            self.clone_dng_bigtable_data(&mut cloned_ifd, asset_reader)?;
 
             // write directory
             let sub_ifd_offset = self.write_ifd(&mut cloned_ifd)?;
@@ -1014,6 +1761,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
         &mut self,
         tiff_tree: &mut Arena<ImageFileDirectory>,
         tokens: &[Token],
+        page_sub_files_map: &HashMap<Token, Vec<ImageFileDirectory>>,
         asset_reader: &mut R,
     ) -> Result<()> {
         let mut page_ifd_offsets = Vec::new();
@@ -1054,7 +1802,11 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
         for page_token in tokens {
             // clone the subfile entries (DNG)
-            let subfile_offsets = self.clone_sub_files(tiff_tree, *page_token, asset_reader)?;
+            let page_subfiles = page_sub_files_map
+                .get(page_token)
+                .cloned()
+                .unwrap_or_else(Vec::new);
+            let subfile_offsets = self.clone_sub_files(tiff_tree, &page_subfiles, asset_reader)?;
 
             let page_ifd = tiff_tree
                 .get(*page_token)
@@ -1065,6 +1817,9 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
             // clone the image data
             self.clone_image_data(&mut cloned_ifd, asset_reader)?;
+
+            // clone bigtable data if DNG
+            self.clone_dng_bigtable_data(&mut cloned_ifd, asset_reader)?;
 
             // add in new Tags to first IFD (XMP for example)
             if page_token == first_page {
@@ -1171,9 +1926,10 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
     fn clone_ifd_entries<R: Read + Seek + ?Sized>(
         &mut self,
-        entries: &HashMap<u16, IfdEntry>,
+        entries: &BTreeMap<u16, IfdEntry>,
         mut asset_reader: &mut R,
     ) -> Result<BTreeMap<u16, IfdClonedEntry>> {
+        let file_size = stream_len(asset_reader)?;
         let mut target_ifd: BTreeMap<u16, IfdClonedEntry> = BTreeMap::new();
 
         for (tag, entry) in entries {
@@ -1193,6 +1949,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 | IFDEntryType::Ascii => {
                     let num_bytes = usize::try_from(cnt)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    check_ifd_data_size(cnt, file_size)?;
 
                     let mut data = safe_vec(cnt, Some(0u8))?;
 
@@ -1219,6 +1977,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             Error::InvalidAsset("value out of range".to_string())
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    check_ifd_data_size(num_shorts_x2 as u64, file_size)?;
 
                     let mut data = safe_vec(num_shorts_x2 as u64, Some(0u8))?;
 
@@ -1250,6 +2010,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
+                    check_ifd_data_size(num_longs_x4 as u64, file_size)?;
+
                     let mut data = safe_vec(num_longs_x4 as u64, Some(0u8))?;
 
                     if num_longs_x4 <= 4 || self.big_tiff && num_longs_x4 <= 8 {
@@ -1279,6 +2041,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             Error::InvalidAsset("value out of range".to_string())
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+                    check_ifd_data_size(num_sshorts_x2 as u64, file_size)?;
 
                     let mut data = safe_vec(num_sshorts_x2 as u64, Some(0u8))?;
 
@@ -1310,6 +2074,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
+                    check_ifd_data_size(num_slongs_x4 as u64, file_size)?;
+
                     let mut data = safe_vec(num_slongs_x4 as u64, Some(0u8))?;
 
                     if num_slongs_x4 <= 4 || self.big_tiff && num_slongs_x4 <= 8 {
@@ -1340,6 +2106,8 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         })?)
                         .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
+                    check_ifd_data_size(num_floats_x4 as u64, file_size)?;
+
                     let mut data = safe_vec(num_floats_x4 as u64, Some(0u8))?;
 
                     if num_floats_x4 <= 4 || self.big_tiff && num_floats_x4 <= 8 {
@@ -1369,6 +2137,14 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 | IFDEntryType::Double
                 | IFDEntryType::Long8
                 | IFDEntryType::Ifd8 => {
+                    // Each element is 8 bytes wide. Use checked_mul to prevent u64 overflow
+                    // when a crafted BigTIFF supplies a malicious value_count (e.g.
+                    // 0x2000000000000001 * 8 wraps past u64::MAX in release builds and
+                    // panics in debug builds).
+                    let num_bytes_8 = cnt
+                        .checked_mul(8)
+                        .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?;
+
                     // move to start of data
                     asset_reader.seek(SeekFrom::Start(decode_offset(
                         entry.value_offset,
@@ -1376,7 +2152,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         self.big_tiff,
                     )?))?;
 
-                    asset_reader.read_to_vec(cnt * 8)?
+                    asset_reader.read_to_vec(num_bytes_8)?
                 }
             };
 
@@ -1400,36 +2176,24 @@ fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized
     asset_reader: &mut R,
     tiff_tags: Vec<IfdClonedEntry>,
 ) -> Result<()> {
-    let (mut tiff_tree, page_tokens, endianness, big_tiff) = map_tiff(asset_reader)?;
-
-    // if only tag is the C2PA tag try to do fast append
-    if let Some(tt) = tiff_tags.iter().find(|t| t.entry_tag == C2PA_TAG) {
-        if tiff_tags.len() == 1 {
-            let status = fast_update(
-                asset_writer,
-                asset_reader,
-                &mut tiff_tree,
-                &page_tokens,
-                &tt.value_bytes,
-                big_tiff,
-                endianness,
-            )?;
-
-            // we were able to fast write
-            if status {
-                return Ok(());
-            }
-        }
-    }
+    let MappedTiff {
+        mut tiff_tree,
+        page_tokens,
+        sub_files_map: _sub_files_map,
+        endianness,
+        big_tiff,
+    } = map_tiff(asset_reader)?;
 
     let mut bo = ByteOrdered::new(asset_writer, endianness);
-    let mut tc = TiffCloner::new(endianness, big_tiff, &mut bo)?;
+    let mut tc = TiffCloner::new_from_source(endianness, big_tiff, &mut bo, asset_reader)?;
 
-    for t in tiff_tags {
-        tc.add_target_tag(t);
-    }
-
-    tc.clone_tiff(&mut tiff_tree, &page_tokens, asset_reader)?;
+    tc.clone_c2pa_mode(
+        asset_reader,
+        &mut tiff_tree,
+        &page_tokens,
+        tiff_tags.clone(),
+        &[],
+    )?;
 
     Ok(())
 }
@@ -1461,14 +2225,28 @@ fn get_cai_data<R>(mut asset_reader: &mut R) -> Result<Vec<u8>>
 where
     R: Read + Seek + ?Sized,
 {
-    let (tiff_tree, page_tokens, e, big_tiff) = map_tiff(asset_reader)?;
+    let mapped = map_tiff(asset_reader)?;
+    let tiff_tree = mapped.tiff_tree;
+    let page_tokens = mapped.page_tokens;
+    let e = mapped.endianness;
+    let big_tiff = mapped.big_tiff;
 
+    let first_page = page_tokens
+        .first()
+        .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
     let last_page = page_tokens
         .last()
         .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
     let last_ifd = &tiff_tree[*last_page].data;
 
-    let cai_ifd_entry = last_ifd.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?;
+    let cai_ifd_entry = match last_ifd.get_tag(C2PA_TAG) {
+        Some(entry) => entry,
+        None => {
+            // if the last page doesn't have the C2PA tag, check the first page for backwards compatibility with older TIFFs
+            let first_ifd = &tiff_tree[*first_page].data;
+            first_ifd.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?
+        }
+    };
 
     // make sure data type is for unstructured data
     if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
@@ -1492,7 +2270,12 @@ fn get_xmp_data<R>(mut asset_reader: &mut R) -> Option<Vec<u8>>
 where
     R: Read + Seek + ?Sized,
 {
-    let (tiff_tree, page_tokens, e, big_tiff) = map_tiff(asset_reader).ok()?;
+    let mapped = map_tiff(asset_reader).ok()?;
+    let tiff_tree = mapped.tiff_tree;
+    let page_tokens = mapped.page_tokens;
+    let e = mapped.endianness;
+    let big_tiff = mapped.big_tiff;
+
     let first_page = page_tokens.first()?;
     let first_ifd = &tiff_tree[*first_page].data;
 
@@ -1507,81 +2290,6 @@ where
     asset_reader.seek(SeekFrom::Start(decoded_offset)).ok()?;
 
     asset_reader.read_to_vec(xmp_ifd_entry.value_count).ok()
-}
-
-// if the manifest is the last content of the file then a quick update can be performed
-fn fast_update<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized>(
-    asset_writer: &mut W,
-    asset_reader: &mut R,
-    tiff_tree: &mut Arena<ImageFileDirectory>,
-    tokens: &[Token],
-    data: &[u8],
-    big_tiff: bool,
-    endianness: Endianness,
-) -> Result<bool> {
-    let mut bo = ByteOrdered::new(asset_writer, endianness);
-
-    let first_page = tokens
-        .first()
-        .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
-
-    let last_page = tokens
-        .last()
-        .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
-
-    let last_page_ifd = tiff_tree
-        .get(*last_page)
-        .ok_or_else(|| Error::InvalidAsset("TIFF does not have IFD".to_string()))?;
-
-    // if the idf is not in its own c2pa only IDF we cannot do the fast path
-    if last_page != first_page
-        && last_page_ifd.data.entries.contains_key(&C2PA_TAG)
-        && last_page_ifd.data.entries.len() == 1
-    {
-        // check if the manifest is last content in the file
-        let ifd_offset = last_page_ifd.data.offset;
-        let manifest_offset = &last_page_ifd.data.entries[&C2PA_TAG].value_offset;
-        let new_manifest_size = data.len() as u64;
-        let manifest_size = last_page_ifd.data.entries[&C2PA_TAG].value_count;
-        let asset_len = stream_len(asset_reader)?;
-
-        if (*manifest_offset + manifest_size) != asset_len {
-            // can't do since the manifest is not the last set of bytes
-            return Ok(false);
-        }
-
-        // can just copy the source byte up to the manifest position
-        bo.rewind()?;
-        asset_reader.rewind()?;
-        let mut before_manifest = asset_reader.take(*manifest_offset);
-        std::io::copy(&mut before_manifest, &mut bo)?;
-
-        // now write the new manifest
-        bo.write_all(data)?;
-
-        // patch the IFD manifest size
-        let entry_cnt_size = if big_tiff { 8u64 } else { 2u64 };
-        let size_offset = ifd_offset
-            + entry_cnt_size // entry count 
-            + 2 // 1st tag
-            + 2; // 1st type
-
-        // jump to location to write the updated size
-        bo.seek(SeekFrom::Start(size_offset))?;
-
-        // update the count
-        if big_tiff {
-            bo.write_u64(new_manifest_size)?;
-        } else {
-            let new_manifest_size_u32 = u32::try_from(new_manifest_size)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-            bo.write_u32(new_manifest_size_u32)?;
-        }
-
-        return Ok(true);
-    }
-
-    Ok(false)
 }
 
 pub struct TiffIO {}
@@ -1714,22 +2422,33 @@ impl CAIWriter for TiffIO {
         add_required_tags_to_stream(input_stream, &mut output_stream)?;
         output_stream.rewind()?;
 
-        let (ifds, page_tokens, e, big_tiff) = map_tiff(&mut output_stream)?;
+        let mapped = map_tiff(&mut output_stream)?;
+        let tiff_tree = mapped.tiff_tree;
+        let page_tokens = mapped.page_tokens;
+        let e = mapped.endianness;
+        let big_tiff = mapped.big_tiff;
 
+        let first_page = page_tokens
+            .first()
+            .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
         let last_page = page_tokens
             .last()
-            .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
-        let cai_ifd_entry = match ifds[*last_page].data.get_tag(C2PA_TAG) {
-            Some(ifd) => ifd,
+            .ok_or(Error::InvalidAsset("no IFD".to_string()))?;
+        let last_page_ifd = &tiff_tree[*last_page].data;
+
+        let cai_ifd_entry = match last_page_ifd.get_tag(C2PA_TAG) {
+            Some(entry) => entry,
             None => {
-                return Ok(Vec::new());
+                // if the last page doesn't have the C2PA tag, check the first page for backwards compatibility with older TIFFs
+                let first_ifd = &tiff_tree[*first_page].data;
+                first_ifd.get_tag(C2PA_TAG).ok_or(Error::JumbfNotFound)?
             }
         };
 
         // make sure data type is for unstructured data
         if cai_ifd_entry.entry_type != C2PA_FIELD_TYPE {
             return Err(Error::InvalidAsset(
-                "Ifd entry for C2PA must be type UNKNOWN(7)".to_string(),
+                "Ifd entry for C2PA must be type UNDEFINED(7)".to_string(),
             ));
         }
 
@@ -1739,12 +2458,16 @@ impl CAIWriter for TiffIO {
         let manifest_len = usize::try_from(cai_ifd_entry.value_count)
             .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
 
-        // figure out count  to exclude
-        let entry_cnt_size = if big_tiff { 8u64 } else { 2u64 };
-        let count_offset = ifds[*last_page].data.offset
-            + entry_cnt_size // entry count size
-            + 2 // 1st tag
-            + 2; // 1st type
+        // figure out count to exclude
+        let c2p_entry_pos = last_page_ifd
+            .entries
+            .keys()
+            .position(|t| t == &C2PA_TAG)
+            .ok_or(Error::NotFound)?;
+        let count_offset = last_page_ifd.offset
+                        + if big_tiff { 8u64 } else { 2u64 } // entry count
+                        + (if big_tiff { 16u64 } else { 12u64 } * c2p_entry_pos as u64) // offset of C2PA entry
+                        + 4; // tag(2) + type(2)
 
         // size of the count field
         let count_size = if big_tiff { 8 } else { 4 };
@@ -1769,18 +2492,28 @@ impl CAIWriter for TiffIO {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
     ) -> Result<()> {
-        let (mut ifds, page_tokens, e, big_tiff) = map_tiff(input_stream)?;
+        let mapped = map_tiff(input_stream)?;
+        let mut tiff_tree = mapped.tiff_tree;
+        let page_tokens = mapped.page_tokens;
+        let e = mapped.endianness;
+        let big_tiff = mapped.big_tiff;
 
         let last_page = page_tokens
             .last()
             .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
 
         // we remove tag if found and rewrite the file
-        if ifds[*last_page].data.entries.remove(&C2PA_TAG).is_some() {
+        if tiff_tree[*last_page].data.entries.contains_key(&C2PA_TAG) {
             let mut bo = ByteOrdered::new(output_stream, e);
-            let mut tc = TiffCloner::new(e, big_tiff, &mut bo)?;
+            let mut tc = TiffCloner::new_from_source(e, big_tiff, &mut bo, input_stream)?;
 
-            tc.clone_tiff(&mut ifds, &page_tokens, input_stream)?;
+            tc.clone_c2pa_mode(
+                input_stream,
+                &mut tiff_tree,
+                &page_tokens,
+                Vec::new(),
+                &[C2PA_TAG],
+            )?;
         } else {
             // just copy if no changes made
             input_stream.rewind()?;
@@ -1799,7 +2532,11 @@ impl AssetPatch for TiffIO {
             .create(false)
             .open(asset_path)?;
 
-        let (tiff_tree, page_tokens, e, big_tiff) = map_tiff(&mut asset_io)?;
+        let mapped = map_tiff(&mut asset_io)?;
+        let tiff_tree = mapped.tiff_tree;
+        let page_tokens = mapped.page_tokens;
+        let e = mapped.endianness;
+        let big_tiff = mapped.big_tiff;
 
         let last_page = page_tokens
             .last()
@@ -1952,13 +2689,21 @@ pub mod tests {
         let loaded = tiff_io.read_cai_store(&output).unwrap();
 
         assert_eq!(&loaded, data2.as_bytes());
+
+        // let's remove the manifest
+        tiff_io.remove_cai_store(&output).unwrap();
+
+        // should not contain a manifest
+        let result = tiff_io.read_cai_store(&output);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn test_read_write_manifest() {
+    fn test_multipage_read_write_manifest_xmp() {
         let data = "some data";
+        let data2 = "some xmp data";
 
-        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+        let source = crate::utils::test::fixture_path("MultiPage.tif");
 
         let temp_dir = tempdirectory().unwrap();
         let output = temp_dir_path(&temp_dir, "test.tif");
@@ -1974,6 +2719,103 @@ pub mod tests {
         let loaded = tiff_io.read_cai_store(&output).unwrap();
 
         assert_eq!(&loaded, data.as_bytes());
+
+        // test adding over existing
+        tiff_io
+            .remote_ref_writer_ref()
+            .unwrap()
+            .embed_reference(&output, RemoteRefEmbedType::Xmp(data2.to_string()))
+            .unwrap();
+
+        // read xmp data back
+        let mut output_file = std::fs::File::open(&output).unwrap();
+        let loaded = tiff_io.read_xmp(&mut output_file).unwrap();
+
+        assert!(loaded.contains(data2));
+
+        // make sure manifest was relocated correctly
+        let loaded = tiff_io.read_cai_store(&output).unwrap();
+        assert_eq!(&loaded, data.as_bytes());
+
+        // now test shrinking the manifest at the end of the file
+        let data3 = "short";
+        tiff_io.save_cai_store(&output, data3.as_bytes()).unwrap();
+
+        // read data back
+        let loaded = tiff_io.read_cai_store(&output).unwrap();
+        assert_eq!(&loaded, data3.as_bytes());
+    }
+
+    #[test]
+    fn cyclic_ifd_self_loop_returns_error() {
+        // 14-byte little-endian TIFF: IFD at offset 8 has next-offset = 8.
+        // Chain: A → A
+        #[rustfmt::skip]
+        let crafted_tiff: &[u8] = &[
+            0x49, 0x49, // byte order: little-endian
+            0x2A, 0x00, // magic: 42
+            0x08, 0x00, 0x00, 0x00, // first IFD at offset 8
+            0x00, 0x00, // IFD entry count: 0
+            0x08, 0x00, 0x00, 0x00, // next IFD offset: 8 (self-loop)
+        ];
+        let mut cursor = Cursor::new(crafted_tiff);
+        let result = map_tiff(&mut cursor);
+        assert!(result.is_err(), "self-loop IFD must return an error");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Cyclic IFD chain"),
+            "unexpected error message: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn cyclic_ifd_two_node_cycle_returns_error() {
+        // 20-byte little-endian TIFF with two IFDs forming a cycle.
+        // Chain: A (offset 8) → B (offset 14) → A (offset 8)
+        #[rustfmt::skip]
+        let crafted_tiff: &[u8] = &[
+            0x49, 0x49, // byte order: little-endian
+            0x2A, 0x00, // magic: 42
+            0x08, 0x00, 0x00, 0x00, // first IFD at offset 8
+            // IFD A at offset 8
+            0x00, 0x00, // entry count: 0
+            0x0E, 0x00, 0x00, 0x00, // next IFD offset: 14 (IFD B)
+            // IFD B at offset 14
+            0x00, 0x00, // entry count: 0
+            0x08, 0x00, 0x00, 0x00, // next IFD offset: 8 (back to IFD A)
+        ];
+        let mut cursor = Cursor::new(crafted_tiff);
+        let result = map_tiff(&mut cursor);
+        assert!(result.is_err(), "A→B→A IFD cycle must return an error");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Cyclic IFD chain"),
+            "unexpected error message: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_read_write_manifest() {
+        let data = "some data";
+        let data2 = "some different data";
+
+        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "test.tif");
+
+        std::fs::copy(source, &output).unwrap();
+
+        let tiff_io = TiffIO {};
+
+        // save data to tiff
+        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+        tiff_io.save_cai_store(&output, data2.as_bytes()).unwrap();
+
+        // read data back
+        let loaded = tiff_io.read_cai_store(&output).unwrap();
+
+        assert_eq!(&loaded, data2.as_bytes());
     }
 
     #[test]
@@ -1999,6 +2841,106 @@ pub mod tests {
     }
 
     #[test]
+    fn test_read_write_manifest_dng_bigdata() {
+        let data = "some data";
+
+        let source = crate::utils::test::fixture_path("Foo.dng");
+
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "test.dng");
+
+        std::fs::copy(source, &output).unwrap();
+
+        let tiff_io = TiffIO {};
+
+        // save data to tiff
+        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+
+        // read data back
+        let loaded = tiff_io.read_cai_store(&output).unwrap();
+
+        assert_eq!(&loaded, data.as_bytes());
+    }
+
+    #[test]
+    fn test_legacy_cloner_tiff_bomb() {
+        let data = "some data";
+
+        let source = crate::utils::test::fixture_path("tiff_poc.tiff");
+
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "test.tiff");
+
+        std::fs::copy(&source, &output).unwrap();
+        let asset_writer = std::fs::OpenOptions::new()
+            .write(true)
+            .read(true)
+            .create(false)
+            .open(&output)
+            .unwrap();
+
+        let mut asset_reader = std::fs::OpenOptions::new()
+            .write(false)
+            .read(true)
+            .create(false)
+            .open(&source)
+            .unwrap();
+
+        let l = u64::try_from(data.len())
+            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))
+            .unwrap();
+
+        let entry = IfdClonedEntry {
+            entry_tag: C2PA_TAG,
+            entry_type: C2PA_FIELD_TYPE,
+            value_count: l,
+            value_bytes: data.as_bytes().to_vec(),
+        };
+
+        let result = map_tiff(&mut asset_reader);
+        assert!(result.is_err(), "should not be able to map tiff bomb");
+    }
+
+    #[test]
+    fn test_cloner_tiff_bomb() {
+        let data = "some data";
+
+        let source = crate::utils::test::fixture_path("tiff_poc.tiff");
+
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "test.tif");
+
+        std::fs::copy(source, &output).unwrap();
+        let mut asset_writer = std::fs::OpenOptions::new()
+            .write(true)
+            .read(true)
+            .create(false)
+            .open(&output)
+            .unwrap();
+
+        let mut asset_reader = std::fs::OpenOptions::new()
+            .write(false)
+            .read(true)
+            .create(false)
+            .open(&output)
+            .unwrap();
+
+        let l = u64::try_from(data.len())
+            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))
+            .unwrap();
+
+        let entry = IfdClonedEntry {
+            entry_tag: C2PA_TAG,
+            entry_type: C2PA_FIELD_TYPE,
+            value_count: l,
+            value_bytes: data.as_bytes().to_vec(),
+        };
+
+        let result = tiff_clone_with_tags(&mut asset_writer, &mut asset_reader, vec![entry]);
+        assert!(result.is_err(), "should not be able to clone tiff bomb");
+    }
+
+    #[test]
     fn test_write_xmp() {
         let data = "some data";
 
@@ -2010,6 +2952,10 @@ pub mod tests {
         std::fs::copy(source, &output).unwrap();
 
         let tiff_io = TiffIO {};
+
+        // add a manifest first to stress this case
+        // save data to tiff
+        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
 
         // save data to tiff
         let eh = tiff_io.remote_ref_writer_ref().unwrap();
@@ -2096,6 +3042,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore = "This code is no longer accessed.  We do not clone ifd entries."]
     fn test_overflow_clone_ifd_entries() {
         let data = [
             0x49, 0x49, 0x2b, 0x00, 0x08, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -2132,6 +3079,126 @@ pub mod tests {
 
         let tiff_io = TiffIO {};
 
+        let locations = tiff_io.get_object_locations_from_stream(&mut stream);
+        assert!(matches!(locations, Err(Error::InvalidAsset(_))));
+    }
+
+    /// Regression test for integer overflow in `clone_ifd_entries` for 8-byte element types.
+    ///
+    /// IFD entry types Rational, SRational, Double, Long8, SLong8, and Ifd8 are all 8 bytes
+    /// wide per element. Before the fix, the byte count was computed as `cnt * 8` with no
+    /// overflow guard. A crafted BigTIFF carrying `value_count = 0x2000000000000001` causes
+    /// `0x2000000000000001 * 8 = 0x10000000000000008`, which wraps past u64::MAX:
+    ///   - debug builds: immediate panic (exit code 101)
+    ///   - release builds: silent truncation to 0x8, producing wrong results
+    ///
+    /// The fix adds `checked_mul(8)` — matching the pattern already used for every other
+    /// multi-byte type — and returns `Error::InvalidAsset` instead of overflowing.
+    ///
+    /// The binary blob below is the same crafted BigTIFF as in `test_overflow_clone_ifd_entries`
+    /// but with entry_type changed from 0x04 (Long, ×4) to 0x05 (Rational, ×8) and
+    /// value_count set to 0x2000000000000001 (overflows ×8).
+    #[test]
+    #[ignore = "This code is no longer accessed.  We do not clone ifd entries."]
+    fn test_overflow_clone_ifd_entries_rational_type() {
+        let data = [
+            0x49, 0x49, 0x2b, 0x00, 0x08, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x49,
+            0x49, 0x2a, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xf9, 0x00,
+            0x00, 0x00, 0x00, 0x05, 0x00, 0x07, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+            // entry — type 0x05 (Rational, 8 bytes/element), count overflows × 8
+            //
+            0x00, 0x00, // entry_tag
+            0x05, 0x00, // entry_type: Rational (was 0x04 Long)
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x20, // value_count = 0x2000000000000001
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // value_offset
+            //
+            // entry
+            //
+            0x00, 0x00, // entry_tag
+            0x05, 0x00, // entry_type: Rational (was 0x04 Long)
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x20, // value_count = 0x2000000000000001
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // value_offset
+            //
+            // ...
+            //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00,
+        ];
+
+        let mut stream = Cursor::new(&data);
+        let tiff_io = TiffIO {};
+
+        // Before the fix: this would panic (exit 101) in debug or silently overflow in release.
+        // After the fix: must return Err(Error::InvalidAsset) without any panic.
+        let locations = tiff_io.get_object_locations_from_stream(&mut stream);
+        assert!(matches!(locations, Err(Error::InvalidAsset(_))));
+    }
+
+    /// Regression test for OOM in `clone_ifd_entries` for Byte/1-byte element types.
+    ///
+    /// On Linux containers with memory overcommit (the default), `safe_vec` uses
+    /// `try_reserve_exact` which succeeds for a 10 GB allocation because the OS commits
+    /// virtual address space lazily. The subsequent `resize` then touches all 10 GB of
+    /// pages, triggering the OOM killer (exit 137) in any 8 GB container.
+    ///
+    /// The fix validates `cnt <= file_size` before calling `safe_vec`, returning
+    /// `Err(InvalidAsset)` for any count that exceeds the file's actual byte count.
+    ///
+    /// The binary blob is the same crafted BigTIFF as `test_overflow_clone_ifd_entries`
+    /// but with entry_type changed from 0x04 (Long, ×4) to 0x01 (Byte, ×1) and
+    /// value_count set to 10_000_000_000 (0x00000002540BE400 little-endian).
+    #[test]
+    #[ignore = "This code is no longer accessed.  We do not clone ifd entries."]
+    fn test_oom_clone_ifd_entries_byte_type() {
+        // Same BigTIFF blob as test_overflow_clone_ifd_entries, with entry_type changed from
+        // 0x04 (Long, ×4) to 0x01 (Byte, ×1) and value_count changed from the overflow-inducing
+        // 0x8000000000000003 to 10_000_000_000 (0x00000002540BE400 LE). The IFD offset (0x31 = 49)
+        // and entry count (3) at that offset must stay identical to the original blob.
+        let data = [
+            0x49, 0x49, 0x2b, 0x00, 0x08, 0x00, 0x00, 0x00, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x49,
+            0x49, 0x2a, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0xf9, 0x00,
+            0x00, 0x00, 0x00, 0x05, 0x00, 0x07, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, //
+            // entry — type 0x01 (Byte, 1 byte/element), value_count = 10_000_000_000
+            //
+            0x00, 0x00, // entry_tag
+            0x01, 0x00, // entry_type: Byte (was 0x04 Long)
+            0x00, 0xe4, 0x0b, 0x54, 0x02, 0x00, 0x00, 0x00, // value_count = 10_000_000_000 LE
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // value_offset
+            //
+            // entry
+            //
+            0x00, 0x00, // entry_tag
+            0x01, 0x00, // entry_type: Byte (was 0x04 Long)
+            0x00, 0xe4, 0x0b, 0x54, 0x02, 0x00, 0x00, 0x00, // value_count = 10_000_000_000 LE
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // value_offset
+            //
+            // ...
+            //
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00,
+        ];
+
+        let mut stream = Cursor::new(&data);
+        let tiff_io = TiffIO {};
+
+        // Before the fix: this would OOM-kill an 8 GB Linux container.
+        // After the fix: must return Err(Error::InvalidAsset) without any allocation.
         let locations = tiff_io.get_object_locations_from_stream(&mut stream);
         assert!(matches!(locations, Err(Error::InvalidAsset(_))));
     }

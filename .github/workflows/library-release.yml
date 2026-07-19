@@ -1,9 +1,18 @@
 name: Publish c2pa-library binaries
 
+# Triggered by `c2pa-v*` tags, which come from two places (see
+# docs/release-process.md):
+#   * release-plz, on a release-line branch -> a real tag like `c2pa-v0.90.0`.
+#   * release-rc.yml, when a release-candidate build is cut -> a prerelease tag
+#     like `c2pa-v0.90.0-rc.1`.
+# Either way the binaries are built here; the GitHub release is always marked as
+# a prerelease (pre-1.0). Nothing here publishes to crates.io. Git tags are
+# repo-global, so no branch filter is needed.
+
 on:
   push:
     tags:
-      - "c2pa-v*" # Trigger on version tags (e.g., v1.0.0)
+      - "c2pa-v*" # Trigger on version tags (e.g., c2pa-v0.90.0)
   workflow_dispatch:
 
 jobs:
@@ -34,6 +43,10 @@ jobs:
             target: x86_64-apple-ios
           - os: macos-latest
             target: aarch64-apple-ios-sim
+          - os: macos-latest
+            target: aarch64-apple-ios-macabi
+          - os: macos-latest
+            target: x86_64-apple-ios-macabi
           - os: ubuntu-latest
             target: aarch64-linux-android
           - os: ubuntu-latest
@@ -47,10 +60,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
 
       # Use a separate target directory for Android cross builds to prevent
       # host-compiled build scripts from being reused inside the cross Docker
@@ -78,13 +93,13 @@ jobs:
 
       - name: Cache emsdk
         if: matrix.target == 'wasm32-unknown-emscripten'
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/emsdk
           key: emsdk-${{ runner.os }}-latest
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Build Windows release
         if: matrix.os == 'windows-latest'
@@ -101,25 +116,23 @@ jobs:
 
       - name: Build emscripten release
         if: matrix.target == 'wasm32-unknown-emscripten'
-        env:
-          RUSTFLAGS: -C target-feature=+atomics,+bulk-memory -C link-arg=-pthread -C link-arg=-sUSE_PTHREADS=1 -C link-arg=-sSIDE_MODULE=1 -C link-arg=-flto
         run: make release TARGET=${{ matrix.target }}
         working-directory: ./c2pa_c_ffi
 
       - name: Build release
-        if: matrix.os != 'windows-latest' && matrix.os != 'windows-11-arm' && matrix.os != 'wasm32-unknown-emscripten'
+        if: matrix.os != 'windows-latest' && matrix.os != 'windows-11-arm' && matrix.target != 'wasm32-unknown-emscripten'
         run: make release TARGET=${{ matrix.target }}
 
       - name: Upload build artifacts (Android)
         if: contains(matrix.target, 'android')
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
           path: target-${{ matrix.target }}/artifacts/
 
       - name: Upload build artifacts (Non-Android)
         if: "!contains(matrix.target, 'android')"
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
           path: target/artifacts/
@@ -130,38 +143,83 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-artifacts-*
-          path: .
+          path: dist
           merge-multiple: true
 
       - name: List downloaded artifacts
-        run: ls -lh
+        run: ls -lh dist
 
-      - name: Extract tag_name from zip file
+      - name: Resolve release tag
         id: extract_tag
         run: |
-          ZIP=$(find . -name "c2pa-v*-*.zip" | head -n1)
-          if [ -n "$ZIP" ]; then
-            TAG_NAME=$(echo "$ZIP" | sed -E 's/.*\/(c2pa-v[0-9]+\.[0-9]+\.[0-9]+)-.*\.zip/\1/')
-            echo "Found tag: $TAG_NAME"
-            echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          # Use the exact ref that triggered this run as the release tag.
+          #
+          # The previous approach re-derived the tag from a built zip's
+          # filename with a regex (`c2pa-v[0-9]+\.[0-9]+\.[0-9]+`) that assumed
+          # a bare X.Y.Z version. That silently dropped any `-rc.N` prerelease
+          # suffix, so a release-candidate build was published under the FINAL
+          # release name -- e.g. `c2pa-v0.90.0-rc.2` was released as
+          # `c2pa-v0.90.0`, burning the name reserved for the post-bake release.
+          # The triggering ref is authoritative; trust it and never reconstruct
+          # the version from a filename.
+          TAG_NAME="${{ github.ref_name }}"
+          case "$TAG_NAME" in
+            c2pa-v*) ;;
+            *)
+              echo "::error::Expected a c2pa-v* tag ref, got '$TAG_NAME'. Run this workflow on a c2pa-v* tag."
+              exit 1
+              ;;
+          esac
+          echo "Releasing tag: $TAG_NAME"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+
+      # Generate the release notes ourselves, scoped to the previous tag of THIS
+      # crate. Tags are repo-global and interleaved across crates (c2pa-v*,
+      # c2patool-v*, c2pa-c-ffi-v*), and GitHub's automatic "previous tag" is the
+      # chronologically previous tag regardless of crate -- which produced
+      # nonsense ranges like `c2patool-v0.26.72...c2pa-v0.90.0`. Picking the
+      # previous same-crate tag keeps the changelog within this crate's history.
+      - name: Generate release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.extract_tag.outputs.tag_name }}"
+          PREFIX="c2pa-v"
+          repo="${{ github.repository }}"
+          # All tags for this crate, plus the current one, sorted ascending.
+          matching=$(gh api --paginate "repos/$repo/git/matching-refs/tags/$PREFIX" \
+                       --jq '.[].ref' | sed 's#refs/tags/##')
+          sorted=$(printf '%s\n%s\n' "$matching" "$TAG" | sort -V -u)
+          # The line immediately before the current tag is its predecessor.
+          prev=$(printf '%s\n' "$sorted" | { grep -F -x -B1 -- "$TAG" || true; } | head -n1)
+          [ "$prev" = "$TAG" ] && prev=""
+          if [ -n "$prev" ]; then
+            echo "Previous $PREFIX tag: $prev"
+            gh api "repos/$repo/releases/generate-notes" \
+              -f tag_name="$TAG" -f previous_tag_name="$prev" --jq .body > release-notes.md
           else
-            echo "No zip files found"
-            exit 1
+            echo "No previous $PREFIX tag; letting GitHub choose the range."
+            gh api "repos/$repo/releases/generate-notes" \
+              -f tag_name="$TAG" --jq .body > release-notes.md
           fi
+          echo "----- release notes -----"; cat release-notes.md
 
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           tag_name: ${{ steps.extract_tag.outputs.tag_name }}
-
-          files: ./*
+          # Attach the release to the commit the triggering tag points at, never
+          # the default branch (a safety net against creating a stray tag).
+          target_commitish: ${{ github.sha }}
+          body_path: release-notes.md
+          files: dist/*
           draft: false
           prerelease: true
-          generate_release_notes: true
 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

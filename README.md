@@ -19,10 +19,11 @@ You can also read the documentation directly in GitHub:
 - [Usage](https://github.com/contentauth/c2pa-rs/blob/main/docs/usage.md)
 - [Supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md)
 - [Using the CAWG identity assertion](https://github.com/contentauth/c2pa-rs/blob/main/docs/cawg-id.md)
-- [Configuring SDK settings](https://github.com/contentauth/c2pa-rs/blob/main/docs/settings.md)
+- [Configuring SDK settings](https://github.com/contentauth/c2pa-rs/blob/main/docs/context-settings.md)
 - [Using intents](https://github.com/contentauth/c2pa-rs/blob/main/docs/intents.md)
 - [Using working stores and archives](https://github.com/contentauth/c2pa-rs/blob/main/docs/working-stores.md)
 - [Using the embeddable API](https://github.com/contentauth/c2pa-rs/blob/main/docs/embeddable-api.md) that provides explicit control over how a C2PA manifest is embedded into an asset. 
+- [Progress and cancellation API](https://github.com/contentauth/c2pa-rs/blob/main/docs/progress_callbacks.md)
 - [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
 - [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md)
 
@@ -32,6 +33,7 @@ You can also read the documentation directly in GitHub:
   - [Using an X.509 certificate](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/x_509.md)
   - [Change log](https://github.com/contentauth/c2pa-rs/blob/main/cli/CHANGELOG.md)
 
+- [C API](https://github.com/contentauth/c2pa-rs/blob/main/c2pa_c_ffi/README.md): Interface that you can use to integrate with any application that uses C or interfaces with C libraries.
 </div>
 
 ## Key features
@@ -49,9 +51,23 @@ The library supports several common C2PA [assertions](https://c2pa.org/specifica
 
 For details on what you can do with the library, see [Using the Rust library](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/usage).
 
+This library also provides a [C API](https://github.com/contentauth/c2pa-rs/blob/main/c2pa_c_ffi/README.md)  that you can use to integrate with any application that uses C or interfaces with C libraries.
+
 ## State of the project
 
-This is a beta release (version 0.x.x) of the project. The minor version number (0.x.0) is incremented when there are breaking API changes, which may happen frequently.
+This is a beta release (version 0.x.x) of the project. We govern changes by whether they break compatibility, not by size:
+
+* **Additive changes** (new APIs, bug fixes) ship quickly on the current release train as patch releases (the `y` in `0.x.y`).
+* **Breaking changes** are batched onto a scheduled "release train" that runs roughly every two months and bumps the middle number (`0.x.0`). If no breaking changes are queued when a train is due, it is skipped — so a bump of the middle number is a reliable signal that something actually broke.
+
+This lets us keep moving quickly before 1.0 while giving you a predictable schedule for migrations. For full details, see the [release process](docs/release-process.md) and [deprecation policy](docs/deprecation-policy.md).
+
+### Which branch to use
+
+* **`main`** is the active development branch. It's always "green" (it compiles and passes CI), but its public API is **not** stable — it may contain unreleased or feature-gated work that changes at any time — and it is **never published to crates.io**. Build from `main` only if you want to preview upcoming work and can tolerate churn.
+* **`stable`** tracks the most recent crates.io release and is where published releases come from. Older `v0.x` branches are retained for retired release lines. **If you depend on `c2pa`, use a released version from [crates.io](https://crates.io/crates/c2pa)** (which comes from `stable`) rather than pinning to `main`.
+
+Every change lands on `main` first and is then brought onto `stable` for release, so `main` is always the superset of what has shipped.
 
 > [!NOTE]
 > The library supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) by default, and implementations should not generate deprecated v1 claims.  For details, see [C2PA v2 claims](docs/release-notes.md#c2pa-v2-claims).
@@ -69,7 +85,7 @@ The library uses a `Context` structure to configure C2PA operations, replacing t
 - **Backwards compatible**: All existing Settings (JSON/TOML) files work unchanged with Context
 - **Automatic signer creation**: Signers are created automatically from settings when needed
 
-See [Configuring SDK settings](docs/settings.md) for details. 
+See [Configuring SDK settings](docs/context-settings.md) for details.
 
 ## Installation
 

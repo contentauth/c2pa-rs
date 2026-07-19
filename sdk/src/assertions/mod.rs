@@ -14,9 +14,11 @@
 //! Assertion helpers to build, validate, and parse assertions.
 
 mod actions;
+#[allow(deprecated)]
+pub use actions::c2pa_reason;
 pub(crate) use actions::V2_DEPRECATED_ACTIONS;
 pub use actions::{
-    c2pa_action, Action, ActionParameters, ActionTemplate, Actions, DigitalSourceType,
+    c2pa_action, Action, ActionParameters, ActionTemplate, Actions, C2paReason, DigitalSourceType,
     SoftwareAgent,
 };
 
@@ -45,6 +47,7 @@ mod creative_work;
 pub use creative_work::CreativeWork;
 
 mod exif;
+#[allow(deprecated)]
 pub use exif::Exif;
 
 #[allow(dead_code)] // will become public later

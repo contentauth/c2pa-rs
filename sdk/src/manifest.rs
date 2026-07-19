@@ -11,9 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{borrow::Cow, path::PathBuf, slice::Iter};
-#[cfg(feature = "file_io")]
-use std::{fs::create_dir_all, path::Path};
+use std::{borrow::Cow, slice::Iter, sync::Arc};
 
 use async_generic::async_generic;
 use log::debug;
@@ -28,25 +26,24 @@ use crate::{
     assertions::{labels, Actions, AssertionMetadata, EmbeddedData, Metadata, SoftwareAgent},
     claim::{ClaimAssertionType, RemoteManifest},
     crypto::raw_signature::SigningAlg,
+    dynamic_assertion::PartialClaim,
     error::{Error, Result},
     hashed_uri::HashedUri,
     identity::IdentityAssertion,
     ingredient::Ingredient,
-    jumbf::labels::{to_absolute_uri, to_assertion_uri},
+    jumbf::labels::{
+        manifest_label_from_uri, to_absolute_uri, to_assertion_uri, ASSERTIONS, DATABOXES,
+    },
     manifest_assertion::ManifestAssertion,
-    resource_store::{mime_from_uri, ResourceRef, ResourceStore},
-    settings::Settings,
+    resource_store::{ResourceRef, ResourceStore, StoreResolver},
     status_tracker::StatusTracker,
     store::Store,
-    ClaimGeneratorInfo, ManifestAssertionKind,
+    ClaimGeneratorInfo, Context, ManifestAssertionKind,
 };
 
 /// This is used internally when generating manifests from a Store
 #[derive(Debug, Default)]
 pub(crate) struct StoreOptions {
-    /// Optional alternate path for resources (can reference builder resources)
-    #[allow(dead_code)] // never used in some builds (i.e. wasm)
-    pub(crate) resource_path: Option<PathBuf>,
     /// List of assertions that were listed and not found
     pub(crate) missing_assertions: Vec<String>,
     /// List of all assertions declared as redacted
@@ -107,7 +104,12 @@ pub struct Manifest {
     #[serde(skip)]
     assertion_references: Vec<HashedUri>,
 
-    /// A list of redactions - URIs to a redacted assertions
+    /// JUMBF URIs of assertions that were redacted by this manifest.
+    ///
+    /// Each entry has the form
+    /// `self#jumbf=/c2pa/<manifest_label>/c2pa.assertions/<assertion_label>`
+    /// and corresponds to an assertion that was intentionally removed from an
+    /// ingredient manifest in the claim chain.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) redactions: Option<Vec<String>>,
 
@@ -230,6 +232,14 @@ impl Manifest {
         self.assertion_references.iter()
     }
 
+    /// Returns JUMBF URIs of assertions redacted by this manifest, if any.
+    ///
+    /// Each URI identifies an assertion that was intentionally removed from
+    /// an ingredient manifest in the claim chain.
+    pub fn redactions(&self) -> Option<&[String]> {
+        self.redactions.as_deref()
+    }
+
     /// Returns Verifiable Credentials.
     pub fn credentials(&self) -> Option<&[Value]> {
         self.credentials.as_deref()
@@ -340,41 +350,95 @@ impl Manifest {
         self.signature_info.to_owned().and_then(|sig| sig.time)
     }
 
-    /// Returns an iterator over [`ResourceRef`][ResourceRef]s.
-    pub fn iter_resources(&self) -> impl Iterator<Item = ResourceRef> + '_ {
-        self.resources
-            .resources()
-            .keys()
-            .map(|uri| ResourceRef::new(mime_from_uri(uri), uri.to_owned()))
-    }
-
-    /// Return an immutable reference to the manifest resources
     #[doc(hidden)]
     pub fn resources(&self) -> &ResourceStore {
         &self.resources
     }
 
-    /// Return a mutable reference to the manifest resources
     #[doc(hidden)]
     pub fn resources_mut(&mut self) -> &mut ResourceStore {
         &mut self.resources
     }
 
-    /// Set a base path to make the manifest use resource files instead of memory buffers.
-    ///
-    /// The files will be relative to the given base path.
-    /// Ingredients' resources will also be relative to this path.
-    #[cfg(feature = "file_io")]
-    pub fn with_base_path<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
-        create_dir_all(&base_path)?;
-        self.resources.set_base_path(base_path.as_ref());
-        for i in 0..self.ingredients.len() {
-            // todo: create different subpath for each ingredient?
-            self.ingredients[i].with_base_path(base_path.as_ref())?;
-        }
-        Ok(self)
+    /// Returns an iterator over [`ResourceRef`]s.
+    pub fn iter_resources(&self) -> impl Iterator<Item = ResourceRef> + '_ {
+        self.resources.iter_resource_ids().into_iter().map(|uri| {
+            let ext = uri.rsplit(['.', '/']).next().unwrap_or("");
+            let format = crate::utils::mime::extension_to_mime(ext)
+                .unwrap_or("application/octet-stream")
+                .to_owned();
+            ResourceRef::new(format, uri)
+        })
     }
 
+    /// Adds a store-backed resolver on this manifest's resources so that
+    /// JUMBF-URI identifiers (e.g. claim thumbnails) can be resolved lazily.
+    pub(crate) fn set_store_resolver(&mut self, store: Arc<Store>) {
+        let label = self.label().unwrap_or_default().to_owned();
+        self.resources
+            .set_resolver(Arc::new(ManifestStoreResolver { store, label }));
+    }
+}
+
+#[derive(Debug)]
+struct ManifestStoreResolver {
+    store: Arc<Store>,
+    label: String,
+}
+
+impl StoreResolver for ManifestStoreResolver {
+    fn get(&self, uri: &str) -> Option<crate::Result<Vec<u8>>> {
+        if uri.contains(DATABOXES) {
+            let label = manifest_label_from_uri(uri)?;
+            let hashed_uri = HashedUri::new(uri.to_owned(), None, &[]);
+            return self
+                .store
+                .get_data_box_from_uri_and_claim(&hashed_uri, &label)
+                .map(|db| Ok(db.data.clone()));
+        }
+        if uri.contains(ASSERTIONS) {
+            let assertion = self.store.get_assertion_from_uri(uri)?;
+            if let Ok(embedded) = EmbeddedData::from_assertion(assertion) {
+                return Some(Ok(embedded.data));
+            }
+            return Some(Ok(assertion.data().to_vec()));
+        }
+        None
+    }
+
+    fn has(&self, uri: &str) -> bool {
+        if uri.contains(ASSERTIONS) {
+            self.store
+                .get_assertion_from_uri(uri)
+                .map(|a| matches!(a.decode_data(), AssertionData::Binary(_)))
+                .unwrap_or(false)
+        } else if uri.contains(DATABOXES) {
+            let hr = HashedUri::new(uri.to_owned(), None, &[]);
+            let label = manifest_label_from_uri(uri).unwrap_or_default();
+            self.store
+                .get_data_box_from_uri_and_claim(&hr, &label)
+                .is_some()
+        } else {
+            false
+        }
+    }
+
+    fn keys(&self) -> Vec<String> {
+        let Some(claim) = self.store.get_claim(&self.label) else {
+            return Vec::new();
+        };
+        let mut keys: Vec<String> = claim
+            .claim_assertion_store()
+            .iter()
+            .filter(|ca| matches!(ca.assertion().decode_data(), AssertionData::Binary(_)))
+            .map(|ca| to_assertion_uri(&self.label, &ca.label()))
+            .collect();
+        keys.extend(claim.databoxes().iter().map(|(hr, _)| hr.url().to_owned()));
+        keys
+    }
+}
+
+impl Manifest {
     // Generates a Manifest given a store and a manifest label.
     #[async_generic]
     pub(crate) fn from_store(
@@ -382,7 +446,7 @@ impl Manifest {
         manifest_label: &str,
         options: &mut StoreOptions,
         validation_log: &mut StatusTracker,
-        settings: &Settings,
+        context: &Context,
     ) -> Result<Self> {
         let claim = store
             .get_claim(manifest_label)
@@ -404,17 +468,12 @@ impl Manifest {
             ..Default::default()
         };
 
-        #[cfg(feature = "file_io")]
-        if let Some(base_path) = options.resource_path.as_deref() {
-            manifest.with_base_path(base_path)?;
-        }
-
         if let Some(info_vec) = claim.claim_generator_info() {
             let mut generators = Vec::new();
             for claim_info in info_vec {
                 let mut info = claim_info.to_owned();
                 if let Some(icon) = claim_info.icon.as_ref() {
-                    info.set_icon(icon.to_resource_ref(manifest.resources_mut(), claim)?);
+                    info.set_icon(icon.to_resource_ref(claim)?);
                 }
                 generators.push(info);
             }
@@ -472,7 +531,7 @@ impl Manifest {
             })
             .collect();
 
-        let decode_identity_assertions = settings.core.decode_identity_assertions;
+        let decode_identity_assertions = context.settings().core.decode_identity_assertions;
 
         for assertion in claim.assertions() {
             let claim_assertion = match store
@@ -492,7 +551,7 @@ impl Manifest {
             let label = claim_assertion.label();
             let base_label = assertion.label();
             let created = claim_assertion.assertion_type() == ClaimAssertionType::Created;
-            debug!("assertion = {}", &label);
+            debug!("assertion = {}", label);
             match base_label.as_ref() {
                 base if base.starts_with(labels::ACTIONS) => {
                     let mut actions = Actions::from_assertion(assertion)?;
@@ -502,7 +561,7 @@ impl Manifest {
                             action.software_agent_mut()
                         {
                             if let Some(icon) = info.icon.as_mut() {
-                                let icon = icon.to_resource_ref(manifest.resources_mut(), claim)?;
+                                let icon = icon.to_resource_ref(claim)?;
                                 info.set_icon(icon);
                             }
                         }
@@ -513,9 +572,7 @@ impl Manifest {
                         for template in templates {
                             // replace icon with resource ref
                             template.icon = match template.icon.take() {
-                                Some(icon) => {
-                                    Some(icon.to_resource_ref(manifest.resources_mut(), claim)?)
-                                }
+                                Some(icon) => Some(icon.to_resource_ref(claim)?),
                                 None => None,
                             };
 
@@ -523,8 +580,7 @@ impl Manifest {
                             template.software_agent = match template.software_agent.take() {
                                 Some(mut info) => {
                                     if let Some(icon) = info.icon.as_mut() {
-                                        let icon =
-                                            icon.to_resource_ref(manifest.resources_mut(), claim)?;
+                                        let icon = icon.to_resource_ref(claim)?;
                                         info.set_icon(icon);
                                     }
                                     Some(info)
@@ -541,13 +597,8 @@ impl Manifest {
                 base if base.starts_with(labels::INGREDIENT) => {
                     // note that we use the original label here, not the base label
                     let assertion_uri = to_assertion_uri(claim.label(), &label);
-                    let ingredient = Ingredient::from_ingredient_uri(
-                        store,
-                        manifest_label,
-                        &assertion_uri,
-                        #[cfg(feature = "file_io")]
-                        options.resource_path.as_deref(),
-                    )?;
+                    let ingredient =
+                        Ingredient::from_ingredient_uri(store, manifest_label, &assertion_uri)?;
                     manifest.add_ingredient(ingredient);
                 }
                 labels::DATA_HASH | labels::BMFF_HASH | labels::BOX_HASH => {
@@ -556,12 +607,7 @@ impl Manifest {
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
                     let thumbnail = EmbeddedData::from_assertion(assertion)?;
                     let id = to_assertion_uri(claim.label(), label);
-                    //let id = jumbf::labels::to_relative_uri(&id);
-                    manifest.thumbnail = Some(manifest.resources.add_uri(
-                        &id,
-                        &thumbnail.content_type,
-                        thumbnail.data,
-                    )?);
+                    manifest.thumbnail = Some(ResourceRef::new(&thumbnail.content_type, &id));
                 } // handle special case for AssertionMetadata
                 labels::ASSERTION_METADATA => {
                     let assertion_metadata = AssertionMetadata::from_assertion(assertion)?;
@@ -585,26 +631,21 @@ impl Manifest {
                     let mut ma = ManifestAssertion::new(label.to_string(), value)
                         .set_instance(claim_assertion.instance());
 
-                    let mut partial_claim = crate::dynamic_assertion::PartialClaim::default();
+                    let mut partial_claim = PartialClaim::default();
                     for a in claim.assertions() {
                         partial_claim.add_assertion(a);
                     }
 
                     let uri = to_assertion_uri(manifest_label, label);
                     validation_log.push_current_uri(&uri);
+                    let identity_assertion: IdentityAssertion = ma.to_assertion()?;
                     let value: Option<serde_json::Value> = if _sync {
-                        crate::log_item!(
-                            uri,
-                            "decoding identity assertions not supported in sync",
-                            "from_store - validating cawg.identity"
-                        )
-                        .validation_status("cawg.validation_skipped")
-                        .informational(validation_log);
-                        None
-                    } else {
-                        let identity_assertion: IdentityAssertion = ma.to_assertion()?;
                         identity_assertion
-                            .validate_partial_claim(&partial_claim, validation_log)
+                            .validate_partial_claim(&partial_claim, validation_log, context)
+                            .ok()
+                    } else {
+                        identity_assertion
+                            .validate_partial_claim_async(&partial_claim, validation_log, context)
                             .await
                             .ok()
                     };
@@ -621,7 +662,7 @@ impl Manifest {
                     match assertion.decode_data() {
                         AssertionData::Cbor(_) => {
                             let value = assertion.as_json_object()?;
-                            let ma = ManifestAssertion::new(label, value)
+                            let ma = ManifestAssertion::new(base_label.clone(), value)
                                 .set_instance(claim_assertion.instance())
                                 .set_created(created);
 
@@ -629,7 +670,7 @@ impl Manifest {
                         }
                         AssertionData::Json(_) => {
                             let value = assertion.as_json_object()?;
-                            let ma = ManifestAssertion::new(label, value)
+                            let ma = ManifestAssertion::new(base_label.clone(), value)
                                 .set_instance(claim_assertion.instance())
                                 .set_kind(ManifestAssertionKind::Json)
                                 .set_created(created);
