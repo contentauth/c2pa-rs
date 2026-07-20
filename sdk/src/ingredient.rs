@@ -2206,27 +2206,13 @@ mod tests_file_io {
         );
     }
 
-    // REVIEW: this test fails because Error::PrereleaseError isn't added to the validation log, it's a hard error.
-    //         should we change it to be added to the validation log?
     #[test]
     #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
     fn test_jpg_prerelease() {
         const PRERELEASE_JPEG: &str = "prerelease.jpg";
         let ap = fixture_path(PRERELEASE_JPEG);
-        let ingredient = Ingredient::from_file(ap).expect("from_file");
-        stats(&ingredient);
-
-        println!("ingredient = {ingredient}");
-        assert_eq!(ingredient.title(), Some(PRERELEASE_JPEG));
-        assert_eq!(ingredient.format(), Some("image/jpeg"));
-        test_thumbnail(&ingredient, "image/jpeg");
-        assert!(ingredient.provenance().is_some());
-        assert_eq!(ingredient.manifest_data(), None);
-        assert!(ingredient.validation_status().is_some());
-        assert_eq!(
-            ingredient.validation_status().unwrap()[0].code(),
-            validation_status::STATUS_PRERELEASE
-        );
+        let ingredient = Ingredient::from_file(ap);
+        assert!(matches!(ingredient, Err(Error::PrereleaseError)));
     }
 
     #[test]
