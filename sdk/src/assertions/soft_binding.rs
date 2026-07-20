@@ -31,7 +31,7 @@ pub struct SoftBinding {
 
     /// A string describing parameters of the soft binding algorithm.
     #[serde(rename = "alg-params", skip_serializing_if = "Option::is_none")]
-    pub alg_params: Option<serde_bytes::ByteBuf>,
+    pub alg_params: Option<String>,
 
     #[serde(default, with = "serde_bytes")]
     pad: Vec<u8>,
