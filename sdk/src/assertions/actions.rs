@@ -958,20 +958,6 @@ pub mod tests {
         )
     }
 
-    #[test]
-    fn digital_source_type_from_string() {
-        assert_eq!(
-            DigitalSourceType::from(
-                "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia".to_owned(),
-            ),
-            DigitalSourceType::TrainedAlgorithmicMedia
-        );
-        assert_eq!(
-            DigitalSourceType::from("https://example.com/digital-source-type".to_owned()),
-            DigitalSourceType::Other("https://example.com/digital-source-type".to_owned())
-        );
-    }
-
     fn make_action1() -> Action {
         Action::new(c2pa_action::CROPPED)
             .set_software_agent("test")

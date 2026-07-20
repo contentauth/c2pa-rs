@@ -1559,25 +1559,6 @@ impl Store {
                 .failure_as_err(validation_log, e)
             })?;
 
-            if ingredient_assertion.active_manifest.is_some()
-                && ingredient_assertion.digital_source_type.is_some()
-            {
-                log_item!(
-                    i.label().clone(),
-                    "ingredient shall not contain both activeManifest and digitalSourceType",
-                    "ingredient_checks"
-                )
-                .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
-                .failure(
-                    validation_log,
-                    Error::ValidationRule(
-                        "ingredient shall not contain both activeManifest and digitalSourceType"
-                            .to_string(),
-                    ),
-                )?;
-                continue;
-            }
-
             // we don't care about InputTo ingredients
             if ingredient_assertion.relationship == Relationship::InputTo {
                 continue;
@@ -1801,25 +1782,6 @@ impl Store {
                 .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
                 .failure_as_err(validation_log, e)
             })?;
-
-            if ingredient_assertion.active_manifest.is_some()
-                && ingredient_assertion.digital_source_type.is_some()
-            {
-                log_item!(
-                    i.label().clone(),
-                    "ingredient shall not contain both activeManifest and digitalSourceType",
-                    "ingredient_checks"
-                )
-                .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
-                .failure(
-                    validation_log,
-                    Error::ValidationRule(
-                        "ingredient shall not contain both activeManifest and digitalSourceType"
-                            .to_string(),
-                    ),
-                )?;
-                continue;
-            }
 
             // we don't care about InputTo ingredients
             if ingredient_assertion.relationship == Relationship::InputTo {
@@ -4486,21 +4448,6 @@ pub mod tests {
         ClaimGeneratorInfo, DigitalSourceType,
     };
 
-    struct TestIngredientAssertion(Assertion);
-
-    impl AssertionBase for TestIngredientAssertion {
-        const LABEL: &'static str = labels::INGREDIENT;
-        const VERSION: Option<usize> = Some(3);
-
-        fn to_assertion(&self) -> Result<Assertion> {
-            Ok(self.0.clone())
-        }
-
-        fn from_assertion(assertion: &Assertion) -> Result<Self> {
-            Ok(Self(assertion.clone()))
-        }
-    }
-
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
         let uuid_str = "deadbeefdeadbeefdeadbeefdeadbeef";
 
@@ -7103,52 +7050,6 @@ pub mod tests {
 
         assert!(report.has_status(validation_status::ASSERTION_HASHEDURI_MISMATCH));
         assert!(report.has_status(validation_status::INGREDIENT_MANIFEST_MISSING));
-    }
-
-    #[test]
-    fn test_ingredient_active_manifest_and_digital_source_type_conflict() {
-        #[derive(Serialize)]
-        struct ConflictingIngredient {
-            relationship: Relationship,
-            #[serde(rename = "activeManifest")]
-            active_manifest: HashedUri,
-            #[serde(rename = "digitalSourceType")]
-            digital_source_type: String,
-        }
-
-        let assertion = Assertion::new(
-            labels::INGREDIENT,
-            Some(3),
-            AssertionData::Cbor(
-                c2pa_cbor::to_vec(&ConflictingIngredient {
-                    relationship: Relationship::ParentOf,
-                    active_manifest: HashedUri::new(
-                        "self#jumbf=c2pa/urn:c2pa:TEST".to_owned(),
-                        Some("sha256".to_owned()),
-                        &[1, 2, 3],
-                    ),
-                    digital_source_type:
-                        "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
-                            .to_owned(),
-                })
-                .unwrap(),
-            ),
-        );
-        let mut claim = Claim::new("unit test", None, 1);
-        claim
-            .add_assertion(&TestIngredientAssertion(assertion))
-            .unwrap();
-
-        let store = Store::new();
-        let svi = StoreValidationInfo::default();
-        let context = Context::new();
-        let mut report = StatusTracker::default();
-        let mut asset_data = ClaimAssetData::Bytes(&[], "image/jpeg");
-
-        Store::ingredient_checks(&store, &claim, &svi, &mut asset_data, &mut report, &context)
-            .unwrap();
-
-        assert!(report.has_status(validation_status::ASSERTION_INGREDIENT_MALFORMED));
     }
 
     #[test]

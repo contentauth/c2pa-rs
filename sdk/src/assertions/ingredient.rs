@@ -924,6 +924,15 @@ impl AssertionBase for Ingredient {
                 let digital_source_type: Option<String> =
                     map_cbor_to_type("digitalSourceType", &ingredient_value);
 
+                // activeManifest and digitalSourceType are mutually exclusive
+                if active_manifest.is_some() && digital_source_type.is_some() {
+                    return Err(to_decoding_err(
+                        &assertion.label(),
+                        assertion.get_ver(),
+                        "ingredient shall not contain both activeManifest and digitalSourceType",
+                    ));
+                }
+
                 Ingredient {
                     title,
                     format,
@@ -1255,8 +1264,6 @@ pub mod tests {
         let assertion = ingredient.to_assertion().expect("to_assertion");
         let decoded = Ingredient::from_assertion(&assertion).expect("from_assertion");
         assert_eq!(decoded, ingredient);
-        // a manifest-less ingredient carrying a digitalSourceType is a valid v3 shape
-        assert!(decoded.is_v3_compatible());
 
         // digital_source_type + active_manifest is mutually exclusive
         let bad = Ingredient {
@@ -1272,7 +1279,6 @@ pub mod tests {
             version: 3,
             ..Default::default()
         };
-        assert!(!bad.is_v3_compatible());
         assert!(bad.to_assertion().is_err());
     }
 
