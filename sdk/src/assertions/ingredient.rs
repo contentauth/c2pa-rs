@@ -98,7 +98,7 @@ impl Serialize for Ingredient {
 impl Ingredient {
     /// Label prefix for an ingredient assertion.
     ///
-    /// See [ingredient_assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#ingredient_assertion)
+    /// See [ingredient_assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#ingredient_assertion)
     pub const LABEL: &'static str = labels::INGREDIENT;
 
     pub fn new(title: &str, format: &str, instance_id: &str, document_id: Option<&str>) -> Self {
@@ -168,12 +168,15 @@ impl Ingredient {
     }
 
     fn is_v3_compatible(&self) -> bool {
-        self.document_id.is_none()    // V3 restricted fields
+        self.document_id.is_none() // V3 restricted fields
             && self.validation_status.is_none()
             && self.c2pa_manifest.is_none()
-            && self.validation_results.is_some()
-            && self.active_manifest.is_some()
-            && self.claim_signature.is_some()
+            // activeManifest, claimSignature, and validationResults are present together
+            // (an ingredient with its own manifest) or all absent (a manifest-less ingredient)
+            && (self.active_manifest.is_some() == self.validation_results.is_some())
+            && (self.active_manifest.is_some() == self.claim_signature.is_some())
+            // activeManifest and digitalSourceType are mutually exclusive
+            && !(self.active_manifest.is_some() && self.digital_source_type.is_some())
     }
 
     pub fn set_title<S: Into<String>>(mut self, title: S) -> Self {
@@ -421,6 +424,7 @@ impl Ingredient {
             ? "informationalURI": tstr .size (1..max-tstr-length), ; URI to an informational page about the ingredient or its data
             ? "softBindingsMatched": bool, ; Whether soft bindings were matched
             ? "softBindingAlgorithmsMatched": [1* tstr] ; Array of algorithm names used for discovering the active manifest
+            ? "digitalSourceType": tstr .size (1..max-tstr-length), ; One of the source types defined at https://cv.iptc.org/newscodes/digitalsourcetype/ or in this specification. Cannot be combined with `activeManifest`.
             ? "metadata": $assertion-metadata-map ; additional information about the assertion
         */
 
@@ -1251,6 +1255,8 @@ pub mod tests {
         let assertion = ingredient.to_assertion().expect("to_assertion");
         let decoded = Ingredient::from_assertion(&assertion).expect("from_assertion");
         assert_eq!(decoded, ingredient);
+        // a manifest-less ingredient carrying a digitalSourceType is a valid v3 shape
+        assert!(decoded.is_v3_compatible());
 
         // digital_source_type + active_manifest is mutually exclusive
         let bad = Ingredient {
@@ -1266,6 +1272,7 @@ pub mod tests {
             version: 3,
             ..Default::default()
         };
+        assert!(!bad.is_v3_compatible());
         assert!(bad.to_assertion().is_err());
     }
 
