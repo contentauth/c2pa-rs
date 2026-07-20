@@ -37,7 +37,7 @@ impl X509CredentialHolder {
     /// [`RawSigner`] together with its signing certificate chain (each
     /// certificate in DER form, end-entity first).
     ///
-    /// [`RawSigner`]: c2pa_raw_crypto::RawSigner
+    /// [`RawSigner`]: crate::RawSigner
     pub fn from_raw_signer(
         signer: Box<dyn RawSigner + Sync + Send + 'static>,
         cert_chain: Vec<Vec<u8>>,

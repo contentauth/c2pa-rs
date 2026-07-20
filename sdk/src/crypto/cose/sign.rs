@@ -478,7 +478,7 @@ const PAD_OFFSET: usize = 7;
 /// Compute the number of bytes to reserve for a `c2pa.signature` JUMBF box that
 /// wraps a COSE `Sign1`.
 ///
-/// A [`RawSigner`](c2pa_raw_crypto::RawSigner) reports only the size of its raw
+/// A [`RawSigner`](crate::RawSigner) reports only the size of its raw
 /// signature; the surrounding COSE framing, certificate chain, optional RFC 3161
 /// time stamp, and optional OCSP response are this crate's responsibility, so we
 /// account for them here.

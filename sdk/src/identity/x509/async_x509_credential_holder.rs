@@ -51,7 +51,7 @@ impl AsyncX509CredentialHolder {
     /// [`RawSigner`] together with its signing certificate chain (each
     /// certificate in DER form, end-entity first).
     ///
-    /// [`RawSigner`]: c2pa_raw_crypto::RawSigner
+    /// [`RawSigner`]: crate::RawSigner
     #[cfg(not(target_arch = "wasm32"))]
     pub fn from_async_raw_signer(
         signer: Box<dyn RawSigner + Send + Sync + 'static>,
@@ -64,7 +64,7 @@ impl AsyncX509CredentialHolder {
     /// [`RawSigner`] together with its signing certificate chain (each
     /// certificate in DER form, end-entity first).
     ///
-    /// [`RawSigner`]: c2pa_raw_crypto::RawSigner
+    /// [`RawSigner`]: crate::RawSigner
     #[cfg(target_arch = "wasm32")]
     pub fn from_async_raw_signer(
         signer: Box<dyn RawSigner + 'static>,

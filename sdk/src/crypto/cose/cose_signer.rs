@@ -13,7 +13,7 @@
 
 //! Signing abstractions used internally by the COSE layer.
 //!
-//! Unlike [`c2pa_raw_crypto::RawSigner`], which produces only a raw signature,
+//! Unlike [`RawSigner`](crate::RawSigner), which produces only a raw signature,
 //! a [`CoseSigner`] bundles the raw signature with the time stamp and OCSP
 //! information the COSE `Sign1` builder needs. The raw-signature primitive lives
 //! in `c2pa-raw-crypto`; time stamping and OCSP are concerns of this crate, so
