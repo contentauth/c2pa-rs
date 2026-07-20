@@ -185,7 +185,8 @@ pub enum DigitalSourceType {
 
 impl From<String> for DigitalSourceType {
     fn from(s: String) -> Self {
-        serde_json::from_value::<DigitalSourceType>(serde_json::Value::String(s)).unwrap()
+        serde_json::from_value(serde_json::Value::String(s.clone()))
+            .unwrap_or(DigitalSourceType::Other(s))
     }
 }
 
@@ -955,6 +956,21 @@ pub mod tests {
             None,
             b"hashed",
         )
+    }
+
+    #[test]
+    fn digital_source_type_from_string() {
+        assert_eq!(
+            DigitalSourceType::from(
+                "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+                    .to_owned(),
+            ),
+            DigitalSourceType::TrainedAlgorithmicMedia
+        );
+        assert_eq!(
+            DigitalSourceType::from("https://example.com/digital-source-type".to_owned()),
+            DigitalSourceType::Other("https://example.com/digital-source-type".to_owned())
+        );
     }
 
     fn make_action1() -> Action {
