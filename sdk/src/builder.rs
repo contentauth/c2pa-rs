@@ -10325,6 +10325,66 @@ mod tests {
         assert!(b.definition.ingredients.is_empty());
     }
 
+    // an action that references its ingredient only via the deprecated top-level `instanceId`
+    // field still keeps that ingredient (exercises the Action::ingredient_ids fallback path).
+    #[test]
+    fn filter_ingredients_deprecated_instance_id_reference() {
+        let mut b = removal_builder(json!({
+            "ingredients": [
+                { "title": "d", "format": "image/jpeg", "relationship": "componentOf", "instance_id": "dep_id" },
+            ],
+            "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                created_action(),
+                // `instanceId` at the action top level maps to the deprecated `Action::instance_id`
+                // field, not a parameter.
+                { "action": "c2pa.placed", "instanceId": "dep_id" },
+            ]}}]
+        }));
+        b.filter_ingredients(|_| false).unwrap();
+        assert_eq!(b.definition.ingredients.len(), 1);
+        assert_eq!(b.definition.ingredients[0].instance_id(), "dep_id");
+    }
+
+    // rewrite_action_ingredient_urls (and rewrite_one_ingredient_uri) directly: a positional ref
+    // whose ingredient was pruned degrades to a logged Stale ref kept as-is, an out-of-range ref
+    // is left Unchanged, and a valid shift is Rewritten. Driven directly because filter_ingredients
+    // never prunes an ingredient that a surviving action still references.
+    #[test]
+    fn rewrite_action_ingredient_urls_stale_shift_and_out_of_range() {
+        use std::collections::HashMap;
+        let mut actions: Actions = serde_json::from_value(json!({ "actions": [
+            { "action": "c2pa.placed", "parameters": { "ingredients": [
+                { "url": "self#jumbf=c2pa.assertions/c2pa.ingredient.v3", "alg": "sha256", "hash": [1] },
+                { "url": "self#jumbf=c2pa.assertions/c2pa.ingredient.v3__1", "alg": "sha256", "hash": [2] },
+                { "url": "self#jumbf=c2pa.assertions/c2pa.ingredient.v3__9", "alg": "sha256", "hash": [3] },
+            ]}},
+        ]}))
+        .unwrap();
+
+        // Pre-prune order was [id0, id1]; id0 was pruned, id1 survives at new index 0.
+        let pre_filter_ids = vec!["id0".to_string(), "id1".to_string()];
+        let mut id_to_new_idx: HashMap<&str, usize> = HashMap::new();
+        id_to_new_idx.insert("id1", 0);
+
+        rewrite_action_ingredient_urls(&mut actions, &pre_filter_ids, &id_to_new_idx).unwrap();
+
+        let urls: Vec<String> = actions.actions[0]
+            .parameters()
+            .unwrap()
+            .ingredients
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|u| u.url())
+            .collect();
+        // idx0 -> id0 pruned: Stale, left as-is.
+        assert!(urls[0].ends_with("c2pa.ingredient.v3"));
+        // __1 -> id1 moved to index 0: Rewritten to the base label.
+        assert!(urls[1].ends_with("c2pa.ingredient.v3"));
+        // __9 out of range: Unchanged.
+        assert!(urls[2].ends_with("c2pa.ingredient.v3__9"));
+    }
+
     // the keep-set spans EVERY actions assertion: an ingredient referenced only from the
     // gathered-list actions assertion must survive an orphan prune.
     #[test]

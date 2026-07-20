@@ -549,4 +549,35 @@ pub mod tests {
             "acme:urn:uuid:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4"
         );
     }
+
+    #[test]
+    fn test_label_segment_from_uri() {
+        assert_eq!(
+            label_segment_from_uri("self#jumbf=c2pa.assertions/c2pa.ingredient.v3__2"),
+            "c2pa.ingredient.v3__2"
+        );
+        // No path separator: the whole string is treated as the label.
+        assert_eq!(
+            label_segment_from_uri("c2pa.ingredient.v3"),
+            "c2pa.ingredient.v3"
+        );
+    }
+
+    #[test]
+    fn test_parse_positional_label() {
+        assert_eq!(
+            parse_positional_label("c2pa.ingredient.v3__2"),
+            ("c2pa.ingredient.v3", 2)
+        );
+        // No instance suffix.
+        assert_eq!(
+            parse_positional_label("c2pa.ingredient.v3"),
+            ("c2pa.ingredient.v3", 0)
+        );
+        // A non-numeric `__` suffix is not an instance index.
+        assert_eq!(
+            parse_positional_label("c2pa.foo__bar"),
+            ("c2pa.foo__bar", 0)
+        );
+    }
 }
