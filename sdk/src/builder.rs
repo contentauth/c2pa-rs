@@ -44,7 +44,10 @@ use crate::{
     crypto::cose,
     error::{Error, Result},
     hash_utils::hash_by_alg,
-    jumbf::labels::{assertion_label_from_uri, manifest_label_from_uri},
+    jumbf::labels::{
+        assertion_label_from_uri, label_segment_from_uri, manifest_label_from_uri,
+        parse_positional_label,
+    },
     jumbf_io,
     maybe_send_sync::MaybeSend,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
@@ -1049,7 +1052,7 @@ impl Builder {
                 // Symbolic references: ingredientIds / org.cai.ingredientIds / instanceId /
                 // deprecated instance_id. Relationship-agnostic: any referenced ingredient is
                 // kept whatever its relationship (e.g. `c2pa.edited` -> `inputTo`).
-                for id in action_ingredient_ids(action) {
+                for id in action.ingredient_ids() {
                     keep_set.insert(id);
                 }
                 // Positional `parameters.ingredients` HashedUri references -> ingredients[N].
@@ -3521,69 +3524,6 @@ impl std::fmt::Display for Builder {
     }
 }
 
-/// Collects all ingredient instance IDs an action references, checking every linking mechanism:
-/// `ingredientIds`, `org.cai.ingredientIds`, `instanceId` parameter, and the deprecated
-/// `action.instance_id` field.
-///
-/// Read-only: unlike [`Action::extract_ingredient_ids`](crate::assertions::Action), which is
-/// mutating (it removes the params it reads), this must not corrupt the action during a prune.
-fn action_ingredient_ids(action: &Action) -> Vec<String> {
-    let extract = |opt: Option<c2pa_cbor::Value>| -> Vec<String> {
-        match opt {
-            Some(c2pa_cbor::Value::Array(arr)) => arr
-                .into_iter()
-                .filter_map(|v| match v {
-                    c2pa_cbor::Value::Text(s) => Some(s),
-                    _ => None,
-                })
-                .collect(),
-            Some(c2pa_cbor::Value::Text(s)) => vec![s],
-            _ => vec![],
-        }
-    };
-    let mut ids = Vec::new();
-    ids.extend(extract(
-        action.get_parameter::<c2pa_cbor::Value>("ingredientIds"),
-    ));
-    ids.extend(extract(
-        action.get_parameter::<c2pa_cbor::Value>("org.cai.ingredientIds"),
-    ));
-    ids.extend(extract(
-        action.get_parameter::<c2pa_cbor::Value>("instanceId"),
-    ));
-    if ids.is_empty() {
-        #[allow(deprecated)]
-        if let Some(id) = action.instance_id() {
-            ids.push(id.to_owned());
-        }
-    }
-    ids
-}
-
-/// Splits a positional ingredient label into its base and `__N` index.
-/// `c2pa.ingredient.v3__2` becomes (`c2pa.ingredient.v3`, 2); `c2pa.ingredient.v3` becomes
-/// (label, 0).
-fn parse_positional_label(label: &str) -> (&str, usize) {
-    if let Some(pos) = label.rfind("__") {
-        if let Ok(n) = label[pos + 2..].parse::<usize>() {
-            return (&label[..pos], n);
-        }
-    }
-    (label, 0)
-}
-
-/// The trailing assertion-label segment of an ingredient reference URL, e.g.
-/// `self#jumbf=c2pa.assertions/c2pa.ingredient.v3__2` -> `c2pa.ingredient.v3__2`.
-/// When the URL has no path separator, the whole URL is treated as the label.
-///
-/// This borrows a slice of `url` (rather than reusing [`assertion_label_from_uri`], which returns
-/// an owned, normalized `String`) so callers can compute the label's byte offset within the
-/// original URL and rebuild the prefix. Where only the label value is needed, prefer
-/// [`assertion_label_from_uri`].
-fn ingredient_ref_label(url: &str) -> &str {
-    url.rsplit('/').next().unwrap_or(url)
-}
-
 /// Outcome of rewriting one positional ingredient reference after pruning.
 enum UriRewrite {
     /// Already points at the correct index (or is not a tracked positional ref); leave as-is.
@@ -3602,7 +3542,7 @@ fn rewrite_one_ingredient_uri(
     id_to_new_idx: &HashMap<&str, usize>,
 ) -> UriRewrite {
     let url = hu.url();
-    let label = ingredient_ref_label(&url);
+    let label = label_segment_from_uri(&url);
     let label_start = url.len() - label.len();
     let (base, old_idx) = parse_positional_label(label);
     // An out-of-range index is not a positional ingredient ref we track; leave it untouched
@@ -3653,7 +3593,7 @@ fn rewrite_action_ingredient_urls(
                     log::warn!(
                         "action '{}' has stale ingredient ref '{}'",
                         action.action(),
-                        ingredient_ref_label(&uri.url()),
+                        label_segment_from_uri(&uri.url()),
                     );
                     remapped_uris.push(uri.clone());
                 }

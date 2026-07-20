@@ -186,6 +186,35 @@ pub(crate) fn box_name_from_uri(uri: &str) -> Option<String> {
     parts.last().map(|b| b.to_string())
 }
 
+// Returns the trailing label segment of a JUMBF URI as a slice of the input, e.g.
+// `self#jumbf=c2pa.assertions/c2pa.ingredient.v3__2` -> `c2pa.ingredient.v3__2`.
+// When the URI has no path separator, the whole string is treated as the label.
+//
+// Sibling of `box_name_from_uri` (which returns an owned, normalized `String`) and
+// `assertion_label_from_uri` (which additionally validates the assertion structure). This variant
+// exists because it borrows a slice of the original `uri`, so callers can compute the label's byte
+// offset within `uri` and rebuild the prefix. Where only the label value is needed, prefer
+// `assertion_label_from_uri`.
+pub(crate) fn label_segment_from_uri(uri: &str) -> &str {
+    uri.rsplit('/').next().unwrap_or(uri)
+}
+
+// Splits a positional label into its base and `__N` instance index, e.g.
+// `c2pa.ingredient.v3__2` -> (`c2pa.ingredient.v3`, 2); `c2pa.ingredient.v3` -> (label, 0).
+//
+// Sibling of `parse_label`, which returns `(base, version, instance)` and strips BOTH the `.vN`
+// version and the `__N` instance off the base. This variant strips only the instance and keeps the
+// version in the returned base, so the base round-trips through `Claim::label_with_instance` to
+// rebuild the exact positional label. Prefer `parse_label` when the version is wanted separately.
+pub(crate) fn parse_positional_label(label: &str) -> (&str, usize) {
+    if let Some(pos) = label.rfind("__") {
+        if let Ok(n) = label[pos + 2..].parse::<usize>() {
+            return (&label[..pos], n);
+        }
+    }
+    (label, 0)
+}
+
 // Struct deconstructed manifest label
 #[derive(Clone, Debug)]
 pub(crate) struct ManifestParts {
