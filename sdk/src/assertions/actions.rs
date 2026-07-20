@@ -962,8 +962,7 @@ pub mod tests {
     fn digital_source_type_from_string() {
         assert_eq!(
             DigitalSourceType::from(
-                "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
-                    .to_owned(),
+                "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia".to_owned(),
             ),
             DigitalSourceType::TrainedAlgorithmicMedia
         );

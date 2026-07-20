@@ -7127,7 +7127,9 @@ pub mod tests {
                         Some("sha256".to_owned()),
                         &[1, 2, 3],
                     ),
-                    digital_source_type: "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia".to_owned(),
+                    digital_source_type:
+                        "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+                            .to_owned(),
                 })
                 .unwrap(),
             ),
@@ -7143,15 +7145,8 @@ pub mod tests {
         let mut report = StatusTracker::default();
         let mut asset_data = ClaimAssetData::Bytes(&[], "image/jpeg");
 
-        Store::ingredient_checks(
-            &store,
-            &claim,
-            &svi,
-            &mut asset_data,
-            &mut report,
-            &context,
-        )
-        .unwrap();
+        Store::ingredient_checks(&store, &claim, &svi, &mut asset_data, &mut report, &context)
+            .unwrap();
 
         assert!(report.has_status(validation_status::ASSERTION_INGREDIENT_MALFORMED));
     }

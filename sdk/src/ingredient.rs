@@ -1151,7 +1151,9 @@ impl Ingredient {
             description: ingredient_assertion.description,
             informational_uri: ingredient_assertion.informational_uri,
             data_types: ingredient_assertion.data_types,
-            digital_source_type: ingredient_assertion.digital_source_type.map(DigitalSourceType::from),
+            digital_source_type: ingredient_assertion
+                .digital_source_type
+                .map(DigitalSourceType::from),
             label,
             ..Default::default()
         };
@@ -1513,7 +1515,8 @@ impl Ingredient {
             .informational_uri
             .clone_from(&self.informational_uri);
         ingredient_assertion.data_types.clone_from(&self.data_types);
-        ingredient_assertion.digital_source_type = self.digital_source_type.as_ref().map(|dst| dst.to_string());
+        ingredient_assertion.digital_source_type =
+            self.digital_source_type.as_ref().map(|dst| dst.to_string());
         claim.add_assertion(&ingredient_assertion)
     }
 
