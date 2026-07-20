@@ -466,10 +466,12 @@ impl SettingsValidate for Verify {}
 
 /// Settings for configuring all aspects of c2pa-rs.
 ///
-/// [Settings::default] is used as the thread-local configuration by default.
-/// Use [Settings::new] together with builder-style methods such as
-/// [`with_toml`](Settings::with_toml) to construct a configuration without
-/// modifying thread-local state.
+/// [`Settings::default`] is used as the thread-local configuration by default.
+/// Use [`Settings::new`] together with builder-style methods such as
+/// [`with_toml`] to construct a configuration without modifying thread-local
+/// state.
+///
+/// [`with_toml`]: Settings::with_toml
 #[cfg_attr(
     feature = "json_schema",
     derive(schemars::JsonSchema),
