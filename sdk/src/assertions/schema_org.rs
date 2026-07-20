@@ -28,6 +28,10 @@ use crate::{
 const ASSERTION_CREATION_VERSION: usize = 1;
 
 /// Assertion that implements various schema.org-based assertions.
+#[deprecated(
+    since = "0.88.0",
+    note = "The CreativeWork assertion is no longer part of the C2PA Technical Specification. Please use the CAWG identity and/or metadata assertion instead (https://opensource.contentauthenticity.org/docs/manifest/cawg-id)."
+)]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SchemaDotOrg {
     #[serde(rename = "@context", skip_serializing_if = "Option::is_none")]

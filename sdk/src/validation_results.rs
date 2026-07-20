@@ -220,6 +220,13 @@ impl ValidationResults {
             // NOTE: Changes here may impact the impl of [`ValidationFailureSummary::fmt`].
             //       Ensure changes are reciprocated in both locations.
             //
+            // A failure to trust the issuer of a CAWG identity claims aggregation
+            // (ICA) credential is scoped to that individual identity assertion and
+            // does not affect the enclosing manifest's state. It is recorded with
+            // the informational code `cawg.ica.untrusted_issuer` (and the
+            // credential's `cawg.ica.credential_valid` success code is withheld),
+            // so it never appears among the failures examined below.
+            //
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
             let is_valid = active_manifest
                 // First check if the claim is valid and the certificate hasn't expired.
@@ -256,9 +263,7 @@ impl ValidationResults {
                 && active_manifest.failure().is_empty()
                 // Finally check if the ingredients contain no failures.
                 && self.ingredient_deltas.as_ref().iter().all(|deltas| {
-                    deltas.iter().all(|idv| {
-                        idv.validation_deltas().failure().is_empty()
-                    })
+                    deltas.iter().all(|idv| idv.validation_deltas().failure().is_empty())
                 })
                 && is_valid;
 
@@ -779,6 +784,19 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA claim signature box.
     pub const SIGNING_CREDENTIAL_UNTRUSTED: &str = "signingCredential.untrusted";
 
+    /// The issuer of a CAWG identity claims aggregation (ICA) credential is not
+    /// listed on the validator's configured list of trusted ICA issuers.
+    ///
+    /// This is informational and scoped to the individual CAWG identity
+    /// assertion: it does not by itself render the enclosing C2PA manifest
+    /// invalid or untrusted. The credential's `cawg.ica.credential_valid` success
+    /// code is withheld when this is reported, so consumers should treat the
+    /// absence of `cawg.ica.credential_valid` as the signal that the identity was
+    /// not validated.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_UNTRUSTED_ISSUER: &str = "cawg.ica.untrusted_issuer";
+
     /// The signing credential is not valid for signing.
     ///
     /// Any corresponding URL should point to a C2PA claim signature box.
@@ -1104,7 +1122,8 @@ pub mod validation_codes {
             | ALGORITHM_DEPRECATED
             | TIME_OF_SIGNING_INSIDE_VALIDITY
             | INGREDIENT_PROVENANCE_UNKNOWN
-            | ASSERTION_DATAHASH_ADDITIONAL_EXCLUSIONS => LogKind::Informational,
+            | ASSERTION_DATAHASH_ADDITIONAL_EXCLUSIONS
+            | CAWG_ICA_UNTRUSTED_ISSUER => LogKind::Informational,
             _ => LogKind::Failure,
         }
     }

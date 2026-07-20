@@ -18,8 +18,8 @@ use rand::{thread_rng, Rng};
 use sha2::{Digest, Sha256};
 
 use crate::{
+    context::Context,
     crypto::{asn1::rfc3161::TimeStampReq, time_stamp::TimeStampError},
-    http::SyncGenericResolver,
     maybe_send_sync::MaybeSync,
 };
 
@@ -66,12 +66,9 @@ pub trait TimeStampProvider {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
+                let context = Context::new();
                 return Some(super::http_request::default_rfc3161_request(
-                    &url,
-                    headers,
-                    &body,
-                    message,
-                    &SyncGenericResolver::with_redirects().unwrap_or_default(),
+                    &url, headers, &body, message, &context,
                 ));
             }
         }
@@ -122,16 +119,11 @@ pub trait AsyncTimeStampProvider: MaybeSync {
     ) -> Option<Result<Vec<u8>, TimeStampError>> {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
-                use crate::http::AsyncGenericResolver;
-
                 let headers: Option<Vec<(String, String)>> = self.time_stamp_request_headers();
+                let context = Context::new();
                 return Some(
                     super::http_request::default_rfc3161_request_async(
-                        &url,
-                        headers,
-                        &body,
-                        message,
-                        &AsyncGenericResolver::with_redirects().unwrap_or_default(),
+                        &url, headers, &body, message, &context,
                     )
                     .await,
                 );

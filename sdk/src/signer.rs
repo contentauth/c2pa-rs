@@ -15,9 +15,9 @@ use async_trait::async_trait;
 use c2pa_raw_crypto::{RawSigner, RawSignerError, SigningAlg};
 
 use crate::{
+    context::Context,
     crypto::cose::cose_reserve_size,
     dynamic_assertion::{AsyncDynamicAssertion, DynamicAssertion},
-    http::SyncGenericResolver,
     maybe_send_sync::{MaybeSend, MaybeSync},
     Result,
 };
@@ -89,13 +89,12 @@ pub trait Signer {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                // TODO: This is not a recommended practice to create the Context object this way.
+                // Context should always be created using the settings set from the underlying application.
+                let context = Context::new();
                 return Some(
                     crate::crypto::time_stamp::default_rfc3161_request(
-                        &url,
-                        headers,
-                        &body,
-                        message,
-                        &SyncGenericResolver::with_redirects().unwrap_or_default(),
+                        &url, headers, &body, message, &context,
                     )
                     .map_err(|e| e.into()),
                 );
@@ -202,16 +201,13 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
     async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
         if let Some(url) = self.time_authority_url() {
             if let Ok(body) = self.timestamp_request_body(message) {
-                use crate::http::AsyncGenericResolver;
-
                 let headers: Option<Vec<(String, String)>> = self.timestamp_request_headers();
+                // TODO: This is not a recommended practice to create the Context object this way.
+                // Context should always be created using the settings set from the underlying application.
+                let context = Context::new();
                 return Some(
                     crate::crypto::time_stamp::default_rfc3161_request_async(
-                        &url,
-                        headers,
-                        &body,
-                        message,
-                        &AsyncGenericResolver::with_redirects().unwrap_or_default(),
+                        &url, headers, &body, message, &context,
                     )
                     .await
                     .map_err(|e| e.into()),

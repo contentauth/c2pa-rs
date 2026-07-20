@@ -26,17 +26,17 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
-use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
+use zip::ZipArchive;
 
 #[allow(deprecated)]
-use crate::assertions::CreativeWork;
+use crate::assertions::{CreativeWork, Exif};
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action,
         labels::{self, parse_label},
         Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, DataHash,
-        DigitalSourceType, EmbeddedData, ExclusionsMap, Exif, MerkleMap, Metadata, SoftwareAgent,
+        DigitalSourceType, EmbeddedData, ExclusionsMap, MerkleMap, Metadata, SoftwareAgent,
         SubsetMap, Thumbnail, TimeStamp, User, UserCbor,
     },
     claim::Claim,
@@ -107,9 +107,6 @@ impl ArchiveKind {
         }
     }
 }
-
-/// Version of the Builder Archive file
-const ARCHIVE_VERSION: &str = "1";
 
 /// Use a ManifestDefinition to define a manifest and to build a `ManifestStore`.
 /// A manifest is a collection of ingredients and assertions
@@ -457,6 +454,19 @@ impl AsRef<Builder> for Builder {
     }
 }
 
+/// Returns `true` if `child` resolves to a location inside `ancestor`.
+///
+/// Both are canonicalized so symlinks and `.`/`..` segments are resolved; if
+/// canonicalization fails (e.g. a path does not exist) it falls back to a
+/// lexical prefix comparison.
+#[cfg(feature = "file_io")]
+fn path_is_within(child: &Path, ancestor: &Path) -> bool {
+    match (child.canonicalize(), ancestor.canonicalize()) {
+        (Ok(child), Ok(ancestor)) => child.starts_with(ancestor),
+        _ => child.starts_with(ancestor),
+    }
+}
+
 impl Builder {
     /// Creates a new [`Builder`] struct using thread-local settings.
     ///
@@ -737,6 +747,39 @@ impl Builder {
         self.base_path.as_deref()
     }
 
+    /// Apply the resource base path and manifest containment root before disk-backed
+    /// resources are read at claim time.
+    ///
+    /// `base_path` is where relative identifiers are resolved from; the containment
+    /// root is the boundary they may not escape (defaults to `base_path`).
+    ///
+    /// Each ingredient is confined to its own base directory, widened to the
+    /// top-level manifest root only when that base lives *inside* the manifest tree.
+    /// This lets a nested ingredient (base is a subdirectory of the manifest dir)
+    /// reference sibling resources via `..`, while an ingredient loaded from an
+    /// unrelated directory (e.g. via `--parent`) stays confined to its own folder
+    /// and is not spuriously allowed to escape — or forced to escape — the manifest
+    /// root.
+    #[cfg(feature = "file_io")]
+    fn apply_resource_base_path(&mut self) {
+        if let Some(base_path) = self.base_path.clone() {
+            self.resources.set_base_path(&base_path);
+            self.resources.set_resource_root(&base_path);
+            for ingredient in self.definition.ingredients.iter_mut() {
+                let ingredient_root = match ingredient.resources().base_path() {
+                    Some(ingredient_base) if path_is_within(ingredient_base, &base_path) => {
+                        base_path.clone()
+                    }
+                    Some(ingredient_base) => ingredient_base.to_path_buf(),
+                    None => base_path.clone(),
+                };
+                ingredient
+                    .resources_mut()
+                    .set_resource_root(ingredient_root);
+            }
+        }
+    }
+
     /// Sets the remote_url for this [`Builder`].
     ///
     /// The URL must return the manifest data and is injected into the destination asset when signing.
@@ -985,7 +1028,12 @@ impl Builder {
     where
         I: Into<Ingredient>,
     {
-        self.definition.ingredients.push(ingredient.into());
+        let ingredient: Ingredient = ingredient.into();
+        // If the ingredient was loaded from a manifest store, chain its resolver
+        // onto builder.resources so that builder.resources.get(uri) can serve
+        // bytes from that store without eagerly copying them.
+        ingredient.chain_resolver_to(&mut self.resources);
+        self.definition.ingredients.push(ingredient);
         self
     }
 
@@ -1014,68 +1062,6 @@ impl Builder {
         let _size = stream.read_to_end(&mut buf)?;
         self.resources.add(sanitized_id, buf)?;
         Ok(self)
-    }
-
-    /// Convert the Builder into a archive formatted stream.
-    ///
-    /// The archive is a stream in zip format containing the manifest JSON, resources, and ingredients.
-    /// # Arguments
-    /// * `stream` - A stream to write the zip into.
-    /// # Errors
-    /// * Returns an [`Error`] if the archive cannot be written.
-    fn old_to_archive(&self, stream: impl Write + Seek) -> Result<()> {
-        drop(
-            // this drop seems to be required to force a flush before reading back.
-            {
-                let mut zip = ZipWriter::new(stream);
-                let options =
-                    SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-                // write a version file
-                zip.start_file("version.txt", options)
-                    .map_err(|e| Error::OtherError(Box::new(e)))?;
-                zip.write_all(ARCHIVE_VERSION.as_bytes())?;
-                // write the manifest.json file
-                zip.start_file("manifest.json", options)
-                    .map_err(|e| Error::OtherError(Box::new(e)))?;
-                zip.write_all(&serde_json::to_vec(self)?)?;
-                // add resource files to a resources folder
-                zip.start_file("resources/", options)
-                    .map_err(|e| Error::OtherError(Box::new(e)))?;
-                for (id, data) in self.resources.resources() {
-                    let sanitized_id = sanitize_archive_path(id)?;
-                    zip.start_file(format!("resources/{sanitized_id}"), options)
-                        .map_err(|e| Error::OtherError(Box::new(e)))?;
-                    zip.write_all(data)?;
-                }
-                // Write the manifest_data files
-                // The filename is filesystem safe version of the associated manifest_label
-                // with a .c2pa extension inside a "manifests" folder.
-                zip.start_file("manifests/", options)
-                    .map_err(|e| Error::OtherError(Box::new(e)))?;
-                for ingredient in self.definition.ingredients.iter() {
-                    for (id, data) in ingredient.resources().resources() {
-                        let sanitized_id = sanitize_archive_path(id)?;
-                        zip.start_file(format!("resources/{sanitized_id}"), options)
-                            .map_err(|e| Error::OtherError(Box::new(e)))?;
-                        zip.write_all(data)?;
-                    }
-
-                    if let Some(manifest_label) = ingredient.active_manifest() {
-                        if let Some(manifest_data) = ingredient.manifest_data() {
-                            // Convert to valid archive / file path name
-                            let manifest_name = manifest_label.replace([':'], "_") + ".c2pa";
-                            let sanitized_manifest_name = sanitize_archive_path(&manifest_name)?;
-                            zip.start_file(format!("manifests/{sanitized_manifest_name}"), options)
-                                .map_err(|e| Error::OtherError(Box::new(e)))?;
-                            zip.write_all(&manifest_data)?;
-                        }
-                    }
-                }
-                zip.finish()
-            }
-            .map_err(|e| Error::OtherError(Box::new(e)))?,
-        );
-        Ok(())
     }
 
     /// Unpacks an archive stream into a Builder.
@@ -1174,7 +1160,7 @@ impl Builder {
                 };
 
                 if index >= builder.definition.ingredients.len() {
-                    return Err(Error::OtherError(Box::new(std::io::Error::other(format!(
+                    Err(Error::OtherError(Box::new(std::io::Error::other(format!(
                         "Invalid ingredient index {index}"
                     )))))?; // todo add specific error
                 }
@@ -1188,23 +1174,20 @@ impl Builder {
 
     /// Creates a builder archive from the builder and writes it to a stream.
     ///
-    /// This will be stored in the standard application/c2pa .c2pa JUMBF format
-    /// The legacy zip format will be written if `builder.generate_c2pa_archive` is set to `false`
-    /// See docs/working-stores.md for more information.
-    ///
     /// # Arguments
-    /// * `stream` - A stream to write the C2PA archive or ZIP file into.
+    /// * `stream` - A stream to write the C2PA archive into.
     ///
     /// # Errors
     /// * Returns an [`Error`] if the archive cannot be written.
     pub fn to_archive(&self, mut stream: impl Write + Seek) -> Result<()> {
-        if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
-            let c2pa_data = self.working_store_sign(ArchiveKind::Builder)?;
-            stream.write_all(&c2pa_data)?;
-            return Ok(());
+        if self.context.settings().builder.generate_c2pa_archive == Some(false) {
+            return Err(Error::NotImplemented(
+                "ZIP archive format is no longer supported; remove the generate_c2pa_archive=false setting".to_string(),
+            ));
         }
-
-        self.old_to_archive(stream)
+        let c2pa_data = self.working_store_sign(ArchiveKind::Builder)?;
+        stream.write_all(&c2pa_data)?;
+        Ok(())
     }
 
     /// Writes a JUMBF working-store archive that contains a single ingredient from this builder.
@@ -1237,17 +1220,6 @@ impl Builder {
             ingredient_id: ingredient_id.to_string(),
         })?;
         stream.write_all(&c2pa_data)?;
-        Ok(())
-    }
-
-    /// Copies binary resources from `store` into this builder when the id is not already present.
-    fn merge_resources_from_store(&mut self, store: &ResourceStore) -> Result<()> {
-        for (id, data) in store.resources() {
-            let sanitized_id = sanitize_archive_path(id)?;
-            if !self.resources.exists(&sanitized_id) {
-                self.resources.add(sanitized_id, data.clone())?;
-            }
-        }
         Ok(())
     }
 
@@ -1593,6 +1565,7 @@ impl Builder {
                     let cw: CreativeWork = manifest_assertion.to_assertion()?;
                     claim.add_assertion(&cw)
                 }
+                #[allow(deprecated)]
                 Exif::LABEL => {
                     let exif: Exif = manifest_assertion.to_assertion()?;
                     add_assertion(&mut claim, &exif, manifest_assertion.created())
@@ -1797,7 +1770,7 @@ impl Builder {
             }
 
             // If a "ComponentOf" ingredient doesn't have an associated "c2pa.placed" action, create it here.
-            for (_id, (relationship, uri)) in ingredient_map.iter() {
+            for (relationship, uri) in ingredient_map.values() {
                 if *relationship == &Relationship::ComponentOf
                     && !referenced_uris.contains(&uri.url())
                 {
@@ -1896,7 +1869,27 @@ impl Builder {
             self.intent(),
             Some(BuilderIntent::Edit | BuilderIntent::Update)
         );
-        if auto_parent && !self.definition.ingredients.iter().any(|i| i.is_parent()) {
+        // Don't auto-add a parentOf ingredient if the user's manifest already declares a
+        // c2pa.created or c2pa.opened action — those are mutually exclusive with auto-parent.
+        let has_created_or_opened = self.definition.assertions.iter().any(|a| {
+            if !a.label.starts_with(crate::assertions::Actions::LABEL) {
+                return false;
+            }
+            let Ok(actions) = a.to_assertion::<crate::assertions::Actions>() else {
+                return false;
+            };
+            actions.actions().iter().any(|act| {
+                matches!(
+                    act.action(),
+                    crate::assertions::c2pa_action::CREATED
+                        | crate::assertions::c2pa_action::OPENED
+                )
+            })
+        });
+        if auto_parent
+            && !has_created_or_opened
+            && !self.definition.ingredients.iter().any(|i| i.is_parent())
+        {
             let parent_def = serde_json::json!({
                 "relationship": "parentOf",
             });
@@ -1996,21 +1989,17 @@ impl Builder {
 
             if let Some(claim) = provenance_claim.claim_ingredient(&manifest_label) {
                 let signature = claim.cose_sign1()?.signature;
+                let context = self.context();
                 if _sync {
                     timestamp_assertion.refresh_timestamp(
                         tsa_url,
                         &manifest_label,
                         &signature,
-                        &self.context().resolver(),
+                        context,
                     )?;
                 } else {
                     timestamp_assertion
-                        .refresh_timestamp_async(
-                            tsa_url,
-                            &manifest_label,
-                            &signature,
-                            &self.context().resolver_async(),
-                        )
+                        .refresh_timestamp_async(tsa_url, &manifest_label, &signature, context)
                         .await?;
                 }
             }
@@ -2882,9 +2871,7 @@ impl Builder {
         source.rewind()?;
 
         #[cfg(feature = "file_io")]
-        if let Some(base_path) = &self.base_path {
-            self.resources.set_base_path(base_path);
-        }
+        self.apply_resource_base_path();
 
         self.maybe_add_parent(&format, source)?;
 
@@ -2983,9 +2970,7 @@ impl Builder {
         source.rewind()?;
 
         #[cfg(feature = "file_io")]
-        if let Some(base_path) = &self.base_path {
-            self.resources.set_base_path(base_path);
-        }
+        self.apply_resource_base_path();
 
         self.maybe_add_parent(&format, source)?;
 
@@ -3289,13 +3274,6 @@ impl Builder {
                 }
             }
         };
-
-        if let Some(m) = reader.active_manifest() {
-            self.merge_resources_from_store(m.resources())?;
-            for ing in m.ingredients() {
-                self.merge_resources_from_store(ing.resources())?;
-            }
-        }
 
         let mut ingredient = reader.to_ingredient()?;
         if let Some(id) = ingredient_id {
@@ -9129,8 +9107,6 @@ mod tests {
         archive_new.rewind()?;
         let mut header = [0u8; 12];
         archive_new.read_exact(&mut header)?;
-        // C2PA archives should start with JUMBF box structure
-        // Check for "jumb" box type at offset 4-8
         assert_eq!(
             &header[4..8],
             b"jumb",
@@ -9145,8 +9121,12 @@ mod tests {
             .with_definition(r#"{"title": "Test Old Format"}"#)?;
 
         let mut archive_old = Cursor::new(Vec::new());
-        builder_old.to_archive(&mut archive_old)?;
+        builder_old
+            .to_archive(&mut archive_old)
+            .expect_err("Expected error for old format");
 
+        // now load an actual old format archive from fixtures to confirm it's ZIP
+        let mut archive_old = std::fs::File::open("tests/fixtures/old_format_archive.zip")?;
         // Verify it's ZIP format (starts with PK signature)
         archive_old.rewind()?;
         let mut zip_header = [0u8; 4];
@@ -9693,10 +9673,10 @@ mod tests {
     // An attacker embedding "base_path": "/" must not be able to redirect resource
     // resolution to an arbitrary filesystem root (file exfiltration via archive).
     //
-    // Uses the legacy zip archive path (generate_c2pa_archive = false) so we can
-    // manipulate the manifest.json inside the zip before loading it back.
-    #[test]
+    // Validate that the legacy zip archive path (generate_c2pa_archive = false) isn't supported
+    // And then load an old archive that contains "base_path": "/" in its manifest.json
     #[cfg(feature = "file_io")]
+    #[test]
     fn test_base_path_not_deserialized_from_archive() {
         // Force the old zip format so we can manipulate manifest.json directly.
         let settings = Settings::new()
@@ -9705,39 +9685,15 @@ mod tests {
         let builder = Builder::from_context(Context::new().with_settings(settings).unwrap());
 
         let mut archive = Cursor::new(Vec::new());
-        builder.to_archive(&mut archive).unwrap();
-        archive.rewind().unwrap();
+        // we now get an error when trying to write the archive because the old format is not supported for writing.
+        builder
+            .to_archive(&mut archive)
+            .expect_err("Expected error for old format");
 
-        // Inject "base_path": "/" into manifest.json inside the zip.
-        let mut modified = Cursor::new(Vec::new());
-        {
-            let mut zip_in = ZipArchive::new(&mut archive).unwrap();
-            let mut zip_out = ZipWriter::new(&mut modified);
-            let options =
-                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        // Load the "bad_path_archive.zip" fixture, which contains a manifest.json with "base_path": "/".
+        let bad_archive = std::fs::File::open(fixture_path("bad_path_archive.zip")).unwrap();
 
-            for i in 0..zip_in.len() {
-                let mut entry = zip_in.by_index(i).unwrap();
-                let name = entry.name().to_string();
-                let mut buf = Vec::new();
-                entry.read_to_end(&mut buf).unwrap();
-
-                zip_out.start_file(&name, options).unwrap();
-                if name == "manifest.json" {
-                    let mut value: serde_json::Value = serde_json::from_slice(&buf).unwrap();
-                    value["base_path"] = serde_json::Value::String("/".to_string());
-                    zip_out
-                        .write_all(&serde_json::to_vec(&value).unwrap())
-                        .unwrap();
-                } else {
-                    zip_out.write_all(&buf).unwrap();
-                }
-            }
-            zip_out.finish().unwrap();
-        }
-        modified.rewind().unwrap();
-
-        let loaded = Builder::from_archive(modified).unwrap();
+        let loaded = Builder::from_archive(bad_archive).unwrap();
 
         assert!(
             loaded.base_path.is_none(),

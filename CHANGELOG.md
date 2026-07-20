@@ -9,6 +9,59 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.89.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.2...c2pa-v0.89.3)
+_13 July 2026_
+
+### Documented
+
+* Fix docs build, take 2 ([#2297](https://github.com/contentauth/c2pa-rs/pull/2297))
+* Fix docs build ([#2296](https://github.com/contentauth/c2pa-rs/pull/2296))
+
+### Fixed
+
+* Harden against integer underflow attacks in PNG iTxt chunks XMP parsing ([#2274](https://github.com/contentauth/c2pa-rs/pull/2274))
+* Harden against integer overflow attacks in BMFF parser ([#2280](https://github.com/contentauth/c2pa-rs/pull/2280))
+* Resource_to_stream returns error for unknown resource URIs instead of manifest JUMBF ([#2289](https://github.com/contentauth/c2pa-rs/pull/2289)) ([#2290](https://github.com/contentauth/c2pa-rs/pull/2290))
+
+## [0.89.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.1...c2pa-v0.89.2)
+_09 July 2026_
+
+### Fixed
+
+* Bind OCSP response certId to the signing certificate (CAI-11829) ([#2273](https://github.com/contentauth/c2pa-rs/pull/2273))
+* Fix new Clippy warnings for Rust 1.97.0 ([#2279](https://github.com/contentauth/c2pa-rs/pull/2279))
+* Ensure created has a dst and don't add parent when actions already exist ([#2264](https://github.com/contentauth/c2pa-rs/pull/2264))
+* Integer overflow panic in bmff_to_jumbf_exclusions via DataMap offset addition ([#2263](https://github.com/contentauth/c2pa-rs/pull/2263))
+
+## [0.89.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.0...c2pa-v0.89.1)
+_07 July 2026_
+
+### Documented
+
+* Update README.md doc links ([#2261](https://github.com/contentauth/c2pa-rs/pull/2261))
+
+### Fixed
+
+* Resolve crate audit advisories (lopdf, quick-xml, crossbeam-epoch, ttf-parser) ([#2268](https://github.com/contentauth/c2pa-rs/pull/2268))
+* Don't serialize empty values ([#2254](https://github.com/contentauth/c2pa-rs/pull/2254))
+* CAI-10364 (Server-Side Request Forgery (SSRF) via CAWG did:web Resolution during Post-Validation ) ([#2168](https://github.com/contentauth/c2pa-rs/pull/2168))
+
+### Other
+
+* Lazy load all ingredient resources & remove old to_archive zip format. ([#2173](https://github.com/contentauth/c2pa-rs/pull/2173))
+
+## [0.89.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.88.0...c2pa-v0.89.0)
+_19 June 2026_
+
+### Added
+
+* Add source to `HttpResolverError::Other` error message ([#2237](https://github.com/contentauth/c2pa-rs/pull/2237))
+* Auto format detect for Reader ([#2181](https://github.com/contentauth/c2pa-rs/pull/2181))
+
+### Fixed
+
+* Harden JUMBF and JPEG XL parsers against Brotli decompression bombs ([#2210](https://github.com/contentauth/c2pa-rs/pull/2210))
+
 ## [0.88.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.87.0...c2pa-v0.88.0)
 _11 June 2026_
 

@@ -26,7 +26,7 @@ use uuid::Uuid;
 #[cfg(doc)]
 use crate::Manifest;
 use crate::{
-    assertion::{Assertion, AssertionBase},
+    assertion::{Assertion, AssertionBase, AssertionData},
     assertions::{
         self, labels, AssertionMetadata, AssetType, CertificateStatus, EmbeddedData, Relationship,
     },
@@ -38,17 +38,21 @@ use crate::{
     hashed_uri::HashedUri,
     jumbf::{
         self,
-        labels::{assertion_label_from_uri, manifest_label_from_uri},
+        labels::{
+            assertion_label_from_uri, manifest_label_from_uri, to_assertion_uri, ASSERTIONS,
+            DATABOXES,
+        },
     },
     log_item,
-    resource_store::{ResourceRef, ResourceStore},
+    resource_store::{ResourceRef, ResourceStore, StoreResolver},
+    settings::get_thread_local_settings,
     status_tracker::StatusTracker,
     store::Store,
     utils::{
         mime::{extension_to_mime, format_to_mime},
         xmp_inmemory_utils::XmpInfo,
     },
-    validation_results::ValidationResults,
+    validation_results::{ValidationResults, ValidationState},
     validation_status::{self, ValidationStatus},
 };
 
@@ -139,11 +143,6 @@ pub struct Ingredient {
     /// [`ManifestStore`]: crate::ManifestStore
     #[serde(skip_serializing_if = "Option::is_none")]
     manifest_data: Option<ResourceRef>,
-
-    /// When set, [`Ingredient::manifest_data`] is resolved on demand from this store
-    /// (see [`Reader`](crate::Reader) construction) instead of from [`Ingredient::resources`].
-    #[serde(skip)]
-    source_store: Option<Arc<Store>>,
 
     /// The ingredient's label as assigned in the manifest.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -328,24 +327,7 @@ impl Ingredient {
     /// manifest_data is the binary form of a manifest store in .c2pa format.
     pub fn manifest_data(&self) -> Option<Cow<'_, Vec<u8>>> {
         let r = self.manifest_data.as_ref()?;
-        match self.resources.get(&r.identifier) {
-            Ok(cow) => Some(cow),
-            Err(_) => self
-                .try_get_deferred_manifest_data(&r.identifier)
-                .ok()
-                .map(Cow::Owned),
-        }
-    }
-
-    fn try_get_deferred_manifest_data(&self, id: &str) -> Result<Vec<u8>> {
-        let mdr = self.manifest_data.as_ref().ok_or_else(|| Error::NotFound)?;
-        if mdr.identifier != id {
-            return Err(Error::NotFound);
-        }
-        let source_store = self.source_store.as_ref().ok_or_else(|| Error::NotFound)?;
-        let claim = source_store.get_claim(id).ok_or_else(|| Error::NotFound)?;
-        let sub = Store::build_flat_ingredient_store(source_store.as_ref(), claim)?;
-        sub.to_jumbf_internal(0)
+        self.resources.get(&r.identifier).ok()
     }
 
     /// Returns a reference to ingredient data if it exists.
@@ -479,14 +461,12 @@ impl Ingredient {
 
     /// Sets a reference to Manifest C2PA data.
     pub fn set_manifest_data_ref(&mut self, data_ref: ResourceRef) -> Result<&mut Self> {
-        self.source_store = None;
         self.manifest_data = Some(data_ref);
         Ok(self)
     }
 
     /// Sets the Manifest C2PA data for this ingredient with bytes.
     pub fn set_manifest_data(&mut self, data: Vec<u8>) -> Result<&mut Self> {
-        self.source_store = None;
         let base_id = "manifest_data".to_string();
         self.manifest_data = Some(
             self.resources
@@ -495,19 +475,37 @@ impl Ingredient {
         Ok(self)
     }
 
-    /// Lazily resolve [`Ingredient::manifest_data`] from `source_store` using
-    /// [`Ingredient::active_manifest`] as the provenance claim label.
-    pub(crate) fn set_deferred_manifest_data(&mut self, source_store: Arc<Store>) -> Result<()> {
-        let active = self
-            .active_manifest()
-            .map(str::to_owned)
-            .ok_or_else(|| Error::NotFound)?;
-        if source_store.get_claim(&active).is_none() {
-            return Ok(());
+    /// Adds a resolver on this ingredient's [`ResourceStore`] that looks up
+    /// assertion, databox, and manifest bytes from `store` by URI on demand.
+    ///
+    /// Also sets the deferred `manifest_data` ref when `active_manifest` names a
+    /// claim that exists in `store`, replacing the former `set_deferred_manifest_data`
+    /// mechanism.
+    ///
+    /// This allows the resource store to remain empty at read time while still
+    /// satisfying calls to `resources().get(uri)` / `resources().exists(uri)`.
+    /// Chains this ingredient's manifest-store resolver onto `target` as a fallback.
+    ///
+    /// After this call, `target.get(uri)` will delegate to this ingredient's
+    /// store for any URI not found locally — enabling lazy byte access without
+    /// copying the bytes into `target`.
+    pub(crate) fn chain_resolver_to(&self, target: &mut ResourceStore) {
+        target.chain_resolver_from(&self.resources);
+    }
+
+    pub(crate) fn set_store_resolver(&mut self, store: Arc<Store>) {
+        let active = self.active_manifest().map(str::to_owned);
+
+        if self.manifest_data.is_none() {
+            if let Some(ref a) = active {
+                if store.get_claim(a).is_some() {
+                    self.manifest_data = Some(ResourceRef::new("application/c2pa", a.clone()));
+                }
+            }
         }
-        self.source_store = Some(source_store);
-        self.manifest_data = Some(ResourceRef::new("application/c2pa", active));
-        Ok(())
+
+        self.resources
+            .set_resolver(Arc::new(IngredientStoreResolver { store, active }));
     }
 
     /// Sets a reference to Ingredient data.
@@ -657,24 +655,12 @@ impl Ingredient {
                                 .rsplit_once('.')
                                 .and_then(|(_, ext)| extension_to_mime(ext))
                                 .unwrap_or("image/jpeg"); // default to jpeg??
-                            let mut thumb = crate::resource_store::ResourceRef::new(format, &uri);
+                            let mut thumb = ResourceRef::new(format, &uri);
                             // keep track of the alg and hash for reuse
                             thumb.alg = hashed_uri.alg();
                             let hash = base64::encode(&hashed_uri.hash());
                             thumb.hash = Some(hash);
                             self.set_thumbnail_ref(thumb)?;
-
-                            // add a resource to give clients access, but don't directly reference it.
-                            // this way a client can view the thumbnail without needing to load the manifest
-                            // but the the embedded thumbnail is still the primary reference
-                            let claim_assertion = store.get_claim_assertion_from_uri(&uri)?;
-                            let thumbnail =
-                                EmbeddedData::from_assertion(claim_assertion.assertion())?;
-                            self.resources.add_uri(
-                                &uri,
-                                &thumbnail.content_type,
-                                thumbnail.data,
-                            )?;
                         }
                     }
                     self.active_manifest = Some(claim.label().to_string());
@@ -740,7 +726,7 @@ impl Ingredient {
     #[deprecated(note = "Use with_stream with an explicit Context instead")]
     pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_thread_local_settings();
+        let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
         let ingredient = Self::from_stream_info(stream, format, "untitled");
         stream.rewind()?;
@@ -906,7 +892,7 @@ impl Ingredient {
     )]
     pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_thread_local_settings();
+        let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
         Self::from_stream_async_with_settings(format, stream, &context).await
     }
@@ -976,7 +962,6 @@ impl Ingredient {
         store: &Store,
         claim_label: &str,
         ingredient_uri: &str,
-        #[cfg(feature = "file_io")] resource_path: Option<&Path>,
     ) -> Result<Self> {
         let assertion =
             store
@@ -997,7 +982,7 @@ impl Ingredient {
 
         debug!(
             "Adding Ingredient {:?} {:?}",
-            ingredient_assertion.title, &active_manifest
+            ingredient_assertion.title, active_manifest
         );
 
         // keep track of the assertion label for this ingredient.
@@ -1020,11 +1005,6 @@ impl Ingredient {
 
         ingredient.resources.set_label(claim_label); // set the label for relative paths
 
-        #[cfg(feature = "file_io")]
-        if let Some(base_path) = resource_path {
-            ingredient.resources_mut().set_base_path(base_path)
-        }
-
         // Find the thumbnail and add as a ResourceRef.
         if let Some(hashed_uri) = ingredient_assertion.thumbnail.as_ref() {
             // This could be a relative or absolute thumbnail reference to another manifest
@@ -1036,23 +1016,19 @@ impl Ingredient {
                 jumbf::labels::to_absolute_uri(&target_claim_label, &hashed_uri.url());
             let maybe_resource_ref = match hashed_uri.url() {
                 uri if uri.contains(jumbf::labels::ASSERTIONS) => {
-                    // Get the bits of the thumbnail and convert it to a resource
-                    // it may be in an assertion or a data box
+                    // Verify the assertion exists; record its format, but don't copy bytes —
+                    // the resolver will fetch them on demand.
                     store
                         .get_assertion_from_uri_and_claim(&hashed_uri.url(), &target_claim_label)
                         .map(|assertion| {
-                            let (format, image) = Self::thumbnail_from_assertion(assertion);
-                            ingredient.resources.add_uri(&absolute_uri, format, image)
+                            let format = Self::thumbnail_from_assertion(assertion).0;
+                            Ok::<ResourceRef, Error>(ResourceRef::new(format, &absolute_uri))
                         })
                 }
                 uri if uri.contains(jumbf::labels::DATABOXES) => store
                     .get_data_box_from_uri_and_claim(hashed_uri, &target_claim_label)
                     .map(|data_box| {
-                        ingredient.resources.add_uri(
-                            &absolute_uri,
-                            &data_box.format,
-                            data_box.data.clone(),
-                        )
+                        Ok::<ResourceRef, Error>(ResourceRef::new(&data_box.format, &absolute_uri))
                     }),
                 _ => None,
             };
@@ -1074,34 +1050,25 @@ impl Ingredient {
             }
         };
 
-        // if the ingredient as a data field, we need to resolve that as well
+        // if the ingredient has a data field, we need to resolve that as well
         if let Some(data_uri) = ingredient_assertion.data.as_ref() {
-            let maybe_data_ref = match data_uri.url() {
-                uri if uri.contains(jumbf::labels::ASSERTIONS) => {
-                    // if this is a claim data box, then use the label from the data uri
+            let maybe_data_ref = match jumbf::labels::to_absolute_uri(claim_label, &data_uri.url())
+            {
+                absolute_uri if absolute_uri.contains(jumbf::labels::ASSERTIONS) => {
+                    // Verify the assertion exists; record its format, but don't copy bytes —
+                    // the resolver will fetch them on demand.
                     store
-                        .get_assertion_from_uri_and_claim(&uri, claim_label)
-                        .map(|assertion| {
-                            let embedded_data = EmbeddedData::from_assertion(assertion)?;
-                            ingredient.resources.add_uri(
-                                &data_uri.url(),
-                                &embedded_data.content_type,
-                                embedded_data.data,
-                            )
-                        })
+                        .get_assertion_from_uri_and_claim(&absolute_uri, claim_label)
+                        .map(|assertion| ResourceRef::new(assertion.content_type(), &absolute_uri))
                 }
-                uri if uri.contains(jumbf::labels::DATABOXES) => store
+                absolute_uri if absolute_uri.contains(jumbf::labels::DATABOXES) => store
                     .get_data_box_from_uri_and_claim(data_uri, claim_label)
-                    .map(|data_box| {
-                        ingredient
-                            .resources
-                            .add_uri(&uri, &data_box.format, data_box.data.clone())
-                    }),
+                    .map(|data_box| ResourceRef::new(&data_box.format, &absolute_uri)),
                 _ => None,
             };
             match maybe_data_ref {
                 Some(data_ref) => {
-                    ingredient.data = Some(data_ref?);
+                    ingredient.data = Some(data_ref);
                 }
                 None => {
                     if !store.is_uri_redacted(claim_label, &data_uri.url()) {
@@ -1134,14 +1101,11 @@ impl Ingredient {
         let mut thumbnail = None;
         // for Builder model, ingredient resources may be in the manifest
         let get_resource = |id: &str| {
-            self.resources
-                .get(id)
-                .or_else(|_| {
-                    resources
-                        .ok_or_else(|| Error::NotFound)
-                        .and_then(|r| r.get(id))
-                })
-                .or_else(|_| self.try_get_deferred_manifest_data(id).map(Cow::Owned))
+            self.resources.get(id).or_else(|_| {
+                resources
+                    .ok_or_else(|| Error::NotFound)
+                    .and_then(|r| r.get(id))
+            })
         };
 
         // Collect the redacted thumbnail URIs, use them for comparison.
@@ -1186,7 +1150,7 @@ impl Ingredient {
                 // Use the parent claim thumbnail if validation passed and it was not redacted.
                 let is_valid = self
                     .validation_results()
-                    .is_some_and(|v| v.validation_state() != crate::ValidationState::Invalid);
+                    .is_some_and(|v| v.validation_state() != ValidationState::Invalid);
                 if is_valid {
                     thumbnail = ingredient_active_claim
                         .assertions()
@@ -1205,12 +1169,12 @@ impl Ingredient {
                 }
                 // generate c2pa_manifest hashed_uris
                 (
-                    Some(crate::hashed_uri::HashedUri::new(
+                    Some(HashedUri::new(
                         uri,
                         Some(ingredient_active_claim.alg().to_owned()),
                         hash.as_ref(),
                     )),
-                    Some(crate::hashed_uri::HashedUri::new(
+                    Some(HashedUri::new(
                         signature_uri,
                         Some(ingredient_active_claim.alg().to_owned()),
                         sig_hash.as_ref(),
@@ -1389,16 +1353,6 @@ impl Ingredient {
         claim.add_assertion(&ingredient_assertion)
     }
 
-    /// Setting a base path will make the ingredient use resource files instead of memory buffers.
-    ///
-    /// The files will be relative to the given base path.
-    #[cfg(feature = "file_io")]
-    pub(crate) fn with_base_path<P: AsRef<Path>>(&mut self, base_path: P) -> Result<&Self> {
-        std::fs::create_dir_all(&base_path)?;
-        self.resources.set_base_path(base_path.as_ref());
-        Ok(self)
-    }
-
     /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes,
     /// using thread-local settings.
     ///
@@ -1448,7 +1402,7 @@ impl Ingredient {
         stream: &mut dyn CAIRead,
     ) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_thread_local_settings();
+        let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
 
@@ -1573,6 +1527,72 @@ impl std::fmt::Display for Ingredient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let report = serde_json::to_string_pretty(self).unwrap_or_default();
         f.write_str(&report)
+    }
+}
+
+#[derive(Debug)]
+struct IngredientStoreResolver {
+    store: Arc<Store>,
+    active: Option<String>,
+}
+
+impl StoreResolver for IngredientStoreResolver {
+    fn get(&self, uri: &str) -> Option<crate::Result<Vec<u8>>> {
+        if uri.contains(DATABOXES) {
+            let label = manifest_label_from_uri(uri)?;
+            let hashed_uri = HashedUri::new(uri.to_owned(), None, &[]);
+            return self
+                .store
+                .get_data_box_from_uri_and_claim(&hashed_uri, &label)
+                .map(|db| Ok(db.data.clone()));
+        }
+        if uri.contains(ASSERTIONS) {
+            let assertion = self.store.get_assertion_from_uri(uri)?;
+            return Some(Ok(assertion.data().to_vec()));
+        }
+        // Manifest: uri is a bare claim label set by manifest_data ref.
+        if let Some(claim) = self.store.get_claim(uri) {
+            return Some(
+                Store::build_flat_ingredient_store(&self.store, claim)
+                    .and_then(|s| s.to_jumbf_internal(0)),
+            );
+        }
+        None
+    }
+
+    fn has(&self, uri: &str) -> bool {
+        if uri.contains(ASSERTIONS) {
+            self.store
+                .get_assertion_from_uri(uri)
+                .map(|a| matches!(a.decode_data(), AssertionData::Binary(_)))
+                .unwrap_or(false)
+        } else if uri.contains(DATABOXES) {
+            let hr = HashedUri::new(uri.to_owned(), None, &[]);
+            let label = manifest_label_from_uri(uri).unwrap_or_default();
+            self.store
+                .get_data_box_from_uri_and_claim(&hr, &label)
+                .is_some()
+        } else {
+            self.store.get_claim(uri).is_some()
+        }
+    }
+
+    fn keys(&self) -> Vec<String> {
+        let Some(ref label) = self.active else {
+            return Vec::new();
+        };
+        let Some(claim) = self.store.get_claim(label) else {
+            return Vec::new();
+        };
+        let mut result: Vec<String> = claim
+            .claim_assertion_store()
+            .iter()
+            .filter(|ca| matches!(ca.assertion().decode_data(), AssertionData::Binary(_)))
+            .map(|ca| to_assertion_uri(label, &ca.label()))
+            .collect();
+        result.extend(claim.databoxes().iter().map(|(hr, _)| hr.url().to_owned()));
+        result.push(label.clone());
+        result
     }
 }
 

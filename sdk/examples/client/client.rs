@@ -16,11 +16,11 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-#[allow(deprecated)]
 use c2pa::{
-    assertions::{labels, Actions, CreativeWork, Exif},
+    assertions::{labels, Actions},
     create_signer, Builder, BuilderIntent, ClaimGeneratorInfo, Reader, SigningAlg,
 };
+use serde_json::json;
 
 const GENERATOR: &str = "test_app";
 const INDENT_SPACE: usize = 2;
@@ -48,19 +48,9 @@ fn show_manifest(reader: &Reader, manifest_label: &str, level: usize) -> Result<
                         println!("{}{}", indent, action.action());
                     }
                 }
-                #[allow(deprecated)]
-                labels::CREATIVE_WORK => {
-                    let creative_work: CreativeWork = assertion.to_assertion()?;
-                    if let Some(authors) = creative_work.author() {
-                        for author in authors {
-                            if let Some(name) = author.name() {
-                                println!("{indent}author = {name} ");
-                            }
-                        }
-                    }
-                    if let Some(url) = creative_work.get::<String>("url") {
-                        println!("{indent}url = {url} ");
-                    }
+                labels::METADATA => {
+                    let metadata: serde_json::Value = assertion.to_assertion()?;
+                    println!("{indent}metadata = {metadata}");
                 }
                 _ => {}
             }
@@ -108,20 +98,6 @@ pub fn main() -> Result<()> {
         std::fs::remove_file(&dest)?;
     }
 
-    let exif = Exif::from_json_str(
-        r#"{
-        "@context" : {
-          "exif": "http://ns.adobe.com/exif/1.0/"
-        },
-        "exif:GPSVersionID": "2.2.0.0",
-        "exif:GPSLatitude": "39,21.102N",
-        "exif:GPSLongitude": "74,26.5737W",
-        "exif:GPSAltitudeRef": 0,
-        "exif:GPSAltitude": "100963/29890",
-        "exif:GPSTimeStamp": "2019-09-22T18:22:57Z"
-    }"#,
-    )?;
-
     // create a new Manifest
     let mut builder = Builder::default();
     builder.definition.claim_version = Some(2);
@@ -130,7 +106,20 @@ pub fn main() -> Result<()> {
     builder
         .set_intent(BuilderIntent::Edit)
         .set_claim_generator_info(generator)
-        .add_assertion(Exif::LABEL, &exif)?;
+        .add_assertion(
+            "c2pa.metadata",
+            &json!({
+                "@context": {
+                    "exif": "http://ns.adobe.com/exif/1.0/"
+                },
+                "exif:GPSVersionID": "2.2.0.0",
+                "exif:GPSLatitude": "39,21.102N",
+                "exif:GPSLongitude": "74,26.5737W",
+                "exif:GPSAltitudeRef": 0,
+                "exif:GPSAltitude": "100963/29890",
+                "exif:GPSTimeStamp": "2019-09-22T18:22:57Z"
+            }),
+        )?;
 
     // sign and embed into the target file
     let signcert_path = "sdk/tests/fixtures/certs/es256.pub";

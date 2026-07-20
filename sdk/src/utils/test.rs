@@ -28,7 +28,7 @@ use tempfile::TempDir;
 use crate::{
     assertions::{
         labels, Action, Actions, DigitalSourceType, EmbeddedData, Ingredient, Relationship,
-        ReviewRating, SchemaDotOrg, Thumbnail, User,
+        ReviewRating, Thumbnail, User,
     },
     asset_io::CAIReadWrite,
     claim::Claim,
@@ -343,7 +343,7 @@ pub fn create_test_claim_v1() -> Result<Claim> {
             "alternateName": "False"
         }
     }"#;
-    let claim_review = SchemaDotOrg::from_json_str(cr)?;
+    let claim_review = User::new("schema.org", cr);
     let thumbnail_claim = Thumbnail::new(labels::JPEG_CLAIM_THUMBNAIL, some_binary_data.clone());
     let thumbnail_ingred = Thumbnail::new(labels::JPEG_INGREDIENT_THUMBNAIL, some_binary_data);
     let user_assertion = User::new(TEST_USER_ASSERTION, user_assertion_data);

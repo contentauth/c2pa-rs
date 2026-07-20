@@ -1,0 +1,86 @@
+name: Cross-repo canary
+
+# Surfaces integration drift between c2pa-rs `main` and the `main` of crates we
+# have extracted into their own repositories (e.g. c2pa_cbor). Because
+# c2pa-rs releases pin a published version of each extracted crate, a breaking
+# change in an extracted crate can hide until the next bump. This scheduled job
+# builds c2pa-rs `main` against the extracted crate's `main` via a temporary
+# `[patch]` so breaks are found early, while they are cheap.
+#
+# The `[patch]` lives only inside this runner's checkout; it is never committed,
+# and the release guard (check-no-patch-deps.yml) ensures it can never leak into
+# a real release.
+
+on:
+  schedule:
+    - cron: '0 6 * * *' # daily (UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  canary:
+    name: Build main against extracted-crate main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout c2pa-rs main
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: main
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Patch extracted crates to their main branch
+        run: |
+          cat >> Cargo.toml <<'EOF'
+
+          # TEMPORARY (canary only -- never commit this):
+          [patch.crates-io]
+          c2pa_cbor = { git = "https://github.com/contentauth/c2pa-cbor", branch = "main" }
+          EOF
+
+      - name: Build and test
+        run: |
+          cargo build --workspace --all-features
+          cargo test --workspace --all-features
+
+      - name: Open or update canary issue on failure
+        if: failure()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const title = 'Cross-repo canary failing: c2pa-rs main vs extracted-crate main';
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              'The cross-repo canary failed to build/test `c2pa-rs` `main` against the `main` branch of an extracted crate.',
+              '',
+              'This usually means an extracted crate has drifted ahead of what `c2pa-rs` expects. Investigate before the next dependency bump.',
+              '',
+              `Run: ${run}`,
+            ].join('\n');
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'canary',
+            });
+            const match = existing.data.find(i => i.title === title);
+            if (match) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: match.number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, labels: ['canary'], body,
+              });
+            }
