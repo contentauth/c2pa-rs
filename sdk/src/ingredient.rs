@@ -715,20 +715,16 @@ impl Ingredient {
             | Err(Error::ProvenanceMissing)
             | Err(Error::UnsupportedType) => Ok(()), // no claims but valid file
             Err(Error::BadParam(desc)) if desc == *"unrecognized file type" => Ok(()),
+            // TODO: We cannot report `manifest.inaccessible` in `validation_results` because the spec requires
+            //       the ingredient fields `active_manifest` and `validation_results` exist simultaneously,
+            //       which is impossible since there is no manifest!
+            //
+            //       See https://github.com/contentauth/c2pa-rs/issues/2327
             Err(Error::RemoteManifestUrl(url)) | Err(Error::RemoteManifestFetch(url)) => {
                 if context.settings().builder.ignore_ingredient_errors {
                     debug!("ignoring ingredient error: remote manifest not fetched: {url}");
                     return Ok(());
                 }
-
-                let status =
-                    ValidationStatus::new_failure(validation_status::MANIFEST_INACCESSIBLE)
-                        .set_url(url)
-                        .set_explanation("Remote manifest not fetched".to_string());
-                let mut validation_results = ValidationResults::default();
-                validation_results.add_status(status.clone());
-                self.validation_results = Some(validation_results);
-                self.validation_status = Some(vec![status]);
                 Ok(())
             }
             Err(e) => {
@@ -736,23 +732,6 @@ impl Ingredient {
                     debug!("ignoring ingredient error: {e:?}");
                     return Ok(());
                 }
-
-                // we can ignore the error here because it should have a log entry corresponding to it
-                debug!("ingredient {e:?}");
-
-                let mut results = ValidationResults::default();
-                // convert any other error to a validation status
-                let statuses: Vec<ValidationStatus> = validation_log
-                    .logged_items()
-                    .iter()
-                    .filter_map(ValidationStatus::from_log_item)
-                    .collect();
-
-                for status in statuses {
-                    results.add_status(status.clone());
-                }
-                self.validation_status = results.validation_errors();
-                self.validation_results = Some(results);
                 Ok(())
             }
         }
