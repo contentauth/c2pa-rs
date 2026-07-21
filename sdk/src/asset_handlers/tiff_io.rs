@@ -1086,8 +1086,7 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             && !insert_to_first_page
             || (new_tiff_tags
                 .iter()
-                .find(|t| t.entry_tag == C2PA_TAG)
-                .is_some()
+                .any(|t| t.entry_tag == C2PA_TAG)
                 && insert_to_first_page)
             || new_tiff_tags.iter().any(|t| t.entry_tag != C2PA_TAG)
             || remove_tiff_tags

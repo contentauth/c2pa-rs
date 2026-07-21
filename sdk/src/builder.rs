@@ -1252,7 +1252,7 @@ impl Builder {
     /// # }
     /// ```
     pub fn with_archive(self, stream: impl Read + Seek + Send) -> Result<Self> {
-        self.try_with_archive(stream).map_err(|(_, e)| e)
+        self.try_with_archive(stream).map_err(|b| b.1)
     }
 
     /// Like [`with_archive`](Self::with_archive), but on error returns the input
@@ -1264,7 +1264,7 @@ impl Builder {
     pub fn try_with_archive(
         self,
         stream: impl Read + Seek + Send,
-    ) -> std::result::Result<Self, (Self, Error)> {
+    ) -> std::result::Result<Self, Box<(Self, Error)>> {
         let mut stream = stream;
         let result = Self::old_from_archive(&mut stream).or_else(|_| {
             // if the old method fails, try the new method
@@ -1287,7 +1287,7 @@ impl Builder {
         });
         match result {
             Ok(builder) => Ok(builder),
-            Err(e) => Err((self, e)),
+            Err(e) => Err(Box::new((self, e))),
         }
     }
 

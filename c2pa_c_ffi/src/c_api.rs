@@ -83,7 +83,7 @@ unsafe fn reconfigure_or_restore<T, E, F>(ptr: *mut T, op: F) -> *mut T
 where
     T: 'static + crate::maybe_send_sync::MaybeSend,
     CimplError: From<E>,
-    F: FnOnce(T) -> std::result::Result<T, (T, E)>,
+    F: FnOnce(T) -> std::result::Result<T, Box<(T, E)>>,
 {
     // Owns a (vacated) FFI allocation after the value is read out.
     // Its own Drop frees that allocation, so a panic in the `op` function leaks nothing.
@@ -103,7 +103,8 @@ where
             crate::track_box(Box::into_raw(Box::new(new_val)))
             // `guard` frees the vacated allocation here.
         }
-        Err((orig, e)) => {
+        Err(boxed) => {
+            let (orig, e) = *boxed;
             // Restore the original value and re-track it; caller keeps the pointer.
             std::mem::forget(guard);
             std::ptr::write(ptr, orig);

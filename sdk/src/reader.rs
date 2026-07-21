@@ -228,7 +228,7 @@ impl Reader {
         } else {
             self.try_with_stream_async(format, stream).await
         }
-        .map_err(|(_, e)| e)
+        .map_err(|b| b.1)
     }
 
     /// Like [`with_stream`](Self::with_stream), but on error returns the input
@@ -245,11 +245,11 @@ impl Reader {
         mut self,
         format: &str,
         mut stream: impl Read + Seek + MaybeSend,
-    ) -> std::result::Result<Self, (Self, Error)> {
+    ) -> std::result::Result<Self, Box<(Self, Error)>> {
         let mut validation_log = StatusTracker::default();
         // Ensure stream is at the start.
         if let Err(e) = stream.rewind() {
-            return Err((self, e.into()));
+            return Err(Box::new((self, e.into())));
         }
 
         // Prefer the caller's format hint when it identifies the same container as the
@@ -258,7 +258,7 @@ impl Reader {
         let format = format_owned.as_str();
 
         if let Err(e) = self.context.check_progress(ProgressPhase::Reading, 1, 1) {
-            return Err((self, e));
+            return Err(Box::new((self, e)));
         }
 
         let store_result = if _sync {
@@ -268,7 +268,7 @@ impl Reader {
         };
         let store = match store_result {
             Ok(store) => store,
-            Err(e) => return Err((self, e)),
+            Err(e) => return Err(Box::new((self, e))),
         };
 
         let with_store_result = if _sync {
@@ -279,7 +279,7 @@ impl Reader {
                 .map(|_| ())
         };
         if let Err(e) = with_store_result {
-            return Err((self, e));
+            return Err(Box::new((self, e)));
         }
         Ok(self)
     }
@@ -476,7 +476,7 @@ impl Reader {
             self.try_with_manifest_data_and_stream_async(c2pa_data, format, stream)
                 .await
         }
-        .map_err(|(_, e)| e)
+        .map_err(|b| b.1)
     }
 
     /// Like [`with_manifest_data_and_stream`](Self::with_manifest_data_and_stream),
@@ -492,7 +492,7 @@ impl Reader {
         c2pa_data: &[u8],
         format: &str,
         stream: impl Read + Seek + MaybeSend,
-    ) -> std::result::Result<Self, (Self, Error)> {
+    ) -> std::result::Result<Self, Box<(Self, Error)>> {
         let mut validation_log = StatusTracker::default();
 
         let store_result = if _sync {
@@ -515,7 +515,7 @@ impl Reader {
         };
         let store = match store_result {
             Ok(store) => store,
-            Err(e) => return Err((self, e)),
+            Err(e) => return Err(Box::new((self, e))),
         };
 
         let with_store_result = if _sync {
@@ -526,7 +526,7 @@ impl Reader {
                 .map(|_| ())
         };
         if let Err(e) = with_store_result {
-            return Err((self, e));
+            return Err(Box::new((self, e)));
         }
         Ok(self)
     }
@@ -586,7 +586,7 @@ impl Reader {
         } else {
             self.try_with_fragment_async(format, stream, fragment).await
         }
-        .map_err(|(_, e)| e)
+        .map_err(|b| b.1)
     }
 
     /// Like [`with_fragment`](Self::with_fragment), but on error returns the input
@@ -601,7 +601,7 @@ impl Reader {
         format: &str,
         mut stream: impl Read + Seek + MaybeSend,
         mut fragment: impl Read + Seek + MaybeSend,
-    ) -> std::result::Result<Self, (Self, Error)> {
+    ) -> std::result::Result<Self, Box<(Self, Error)>> {
         let mut validation_log = StatusTracker::default();
 
         let store_result = if _sync {
@@ -624,7 +624,7 @@ impl Reader {
         };
         let store = match store_result {
             Ok(store) => store,
-            Err(e) => return Err((self, e)),
+            Err(e) => return Err(Box::new((self, e))),
         };
 
         let with_store_result = if _sync {
@@ -635,7 +635,7 @@ impl Reader {
                 .map(|_| ())
         };
         if let Err(e) = with_store_result {
-            return Err((self, e));
+            return Err(Box::new((self, e)));
         }
         Ok(self)
     }
