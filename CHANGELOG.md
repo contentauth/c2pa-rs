@@ -9,6 +9,30 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.89.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.2...c2pa-v0.89.3)
+_13 July 2026_
+
+### Documented
+
+* Fix docs build, take 2 ([#2297](https://github.com/contentauth/c2pa-rs/pull/2297))
+* Fix docs build ([#2296](https://github.com/contentauth/c2pa-rs/pull/2296))
+
+### Fixed
+
+* Harden against integer underflow attacks in PNG iTxt chunks XMP parsing ([#2274](https://github.com/contentauth/c2pa-rs/pull/2274))
+* Harden against integer overflow attacks in BMFF parser ([#2280](https://github.com/contentauth/c2pa-rs/pull/2280))
+* Resource_to_stream returns error for unknown resource URIs instead of manifest JUMBF ([#2289](https://github.com/contentauth/c2pa-rs/pull/2289)) ([#2290](https://github.com/contentauth/c2pa-rs/pull/2290))
+
+## [0.89.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.1...c2pa-v0.89.2)
+_09 July 2026_
+
+### Fixed
+
+* Bind OCSP response certId to the signing certificate (CAI-11829) ([#2273](https://github.com/contentauth/c2pa-rs/pull/2273))
+* Fix new Clippy warnings for Rust 1.97.0 ([#2279](https://github.com/contentauth/c2pa-rs/pull/2279))
+* Ensure created has a dst and don't add parent when actions already exist ([#2264](https://github.com/contentauth/c2pa-rs/pull/2264))
+* Integer overflow panic in bmff_to_jumbf_exclusions via DataMap offset addition ([#2263](https://github.com/contentauth/c2pa-rs/pull/2263))
+
 ## [0.89.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.0...c2pa-v0.89.1)
 _07 July 2026_
 

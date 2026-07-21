@@ -1,0 +1,52 @@
+# Version-controlled GitHub labels, synced by labels.yml workflow via
+# crazy-max/ghaction-github-labeler. Add long-lasting labels here rather
+# than creating them by hand in the GitHub UI.
+#
+# NOTE: This file intentionally lists only the labels the release process
+# depends on. Per-line backport labels (backport-v0.<N>) can be created
+# manually on demand in the rare event that a security or other backport is
+# created for a release train that is considered retired.
+
+- name: release
+  color: "0e8a16"
+  description: "release-plz release PR; runs the full Tier 1A+1B+2 suite"
+
+- name: check-release
+  color: "1d76db"
+  description: "Force the full Tier 1A+1B+2 suite on this PR"
+
+- name: backport-stable
+  color: "5319e7"
+  description: "Cherry-pick this merged main PR onto the stable release line"
+
+- name: release-train
+  color: "fbca04"
+  description: "Tracking issue for an active breaking-change release train bake"
+
+- name: upstream-first-verified
+  color: "0e8a16"
+  description: "Attests an adapted cherry-pick is already on main (exempts the upstream-first check)"
+
+- name: reconciliation
+  color: "d93f0b"
+  description: "A release branch has commits missing from main (upstream-first violation)"
+
+- name: canary
+  color: "b60205"
+  description: "Cross-repo canary detected drift with an upstream crate we maintain (e.g. c2pa_cbor)"
+
+- name: accepted
+  color: "0e8a16"
+  description: "Triaged and accepted for work"
+
+- name: bug
+  color: "b60205"
+  description: "Something isn't working"
+
+- name: feature
+  color: "fbca04"
+  description: "New capability or enhancement"
+
+- name: task
+  color: "1d76db"
+  description: "General work item or chore"

@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::{
     collections::{HashMap, HashSet},
-    io::{Cursor, Read, Seek, SeekFrom},
+    io::{Cursor, Read, Seek},
 };
 
 use async_generic::async_generic;
@@ -43,8 +43,9 @@ use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            fetch_and_check_ocsp_response, fetch_and_check_ocsp_response_async, parse_cose_sign1,
-            CertificateTrustPolicy, TimeStampStorage,
+            cert_chain_from_sign1, fetch_and_check_ocsp_response,
+            fetch_and_check_ocsp_response_async, parse_cose_sign1, CertificateTrustPolicy,
+            TimeStampStorage,
         },
         hash::sha256,
         ocsp::OcspResponse,
@@ -1963,11 +1964,23 @@ impl Store {
                 let certificate_status_assertion =
                     CertificateStatus::from_assertion(csa.assertion())?;
 
+                // The certificate status assertion carries OCSP responses for
+                // this manifest's own signing certificate, so bind each
+                // response to that certificate's chain (RFC 6960 §4.1.1).
+                let signing_cert_chain = found_claim
+                    .cose_sign1()
+                    .ok()
+                    .and_then(|sign1| cert_chain_from_sign1(&sign1).ok())
+                    .unwrap_or_default();
+
                 // save the ocsp_ders stored in the StoreValidationInfo
                 for ocsp_der in certificate_status_assertion.as_ref() {
-                    if let Ok(response) =
-                        OcspResponse::from_der_checked(ocsp_der, None, validation_log)
-                    {
+                    if let Ok(response) = OcspResponse::from_der_checked(
+                        ocsp_der,
+                        &signing_cert_chain,
+                        None,
+                        validation_log,
+                    ) {
                         let ocsp_ders = svi
                             .certificate_statuses
                             .entry(response.certificate_serial_num)
@@ -2974,7 +2987,7 @@ impl Store {
                 context.check_progress(ProgressPhase::Embedding, 1, 1)?;
 
                 if context.settings().verify.verify_after_sign {
-                    let output_len = output_stream.seek(SeekFrom::End(0))?;
+                    let output_len = stream_len(output_stream)?;
                     let validate_hash = context.settings().verify.verify_after_sign_hash;
                     let mut asset_data = if output_len > 0 && validate_hash {
                         Some(ClaimAssetData::Stream(output_stream, format))
@@ -4176,7 +4189,7 @@ impl Store {
 impl std::fmt::Display for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let report = &ManifestStoreReport::from_store(self).unwrap_or_default();
-        f.write_str(&format!("{}", &report))
+        f.write_str(&format!("{}", report))
     }
 }
 
