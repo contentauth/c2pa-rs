@@ -118,7 +118,7 @@ impl CimplError {
         Self::new(5, format!("Other: {}", msg.into()))
     }
 
-    /// Runs `f` with mutable access to the thread-local last-error slot.
+    /// Runs function `f` with mutable access to the thread-local last-error slot.
     fn with_last<T>(f: impl FnOnce(&mut Option<CimplError>) -> T) -> T {
         LAST_ERROR.with(|prev| f(&mut prev.borrow_mut()))
     }
