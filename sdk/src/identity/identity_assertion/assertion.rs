@@ -24,7 +24,7 @@ use serde_bytes::ByteBuf;
 use crate::{
     context::Context,
     crypto::{
-        cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
+        cose::{CertificateTrustPolicy, CoseError, Verifier},
         raw_signature::RawSignatureValidationError,
     },
     dynamic_assertion::PartialClaim,
@@ -38,7 +38,10 @@ use crate::{
             signer_payload::SignerPayload,
         },
         internal::debug_byte_slice::DebugByteSlice,
-        x509::X509SignatureInfo,
+        x509::{
+            verify_signer_payload_signature, verify_signer_payload_signature_async,
+            X509SignatureInfo,
+        },
         SignatureVerifier, ToCredentialSummary, ValidationError,
     },
     jumbf::labels::to_assertion_uri,
@@ -343,33 +346,21 @@ impl IdentityAssertion {
                 Verifier::IgnoreProfileAndTrustPolicy
             };
 
-            let mut signer_payload_cbor: Vec<u8> = vec![];
-            c2pa_cbor::to_writer(&mut signer_payload_cbor, &self.signer_payload).map_err(|_| {
-                ValidationError::InternalError("CBOR serialization error".to_string())
-            })?;
-
-            let cose_sign1 =
-                parse_cose_sign1(&self.signature, &signer_payload_cbor, status_tracker)
-                    .map_err(|e| ValidationError::SignatureError(e.to_string()))?;
-
-            let cert_info = if _sync {
-                cose_verifier.verify_signature(
+            let (cose_sign1, cert_info) = if _sync {
+                verify_signer_payload_signature(
+                    &cose_verifier,
+                    &self.signer_payload,
                     &self.signature,
-                    &signer_payload_cbor,
-                    &[],
-                    None,
                     status_tracker,
                 )
             } else {
-                cose_verifier
-                    .verify_signature_async(
-                        &self.signature,
-                        &signer_payload_cbor,
-                        &[],
-                        None,
-                        status_tracker,
-                    )
-                    .await
+                verify_signer_payload_signature_async(
+                    &cose_verifier,
+                    &self.signer_payload,
+                    &self.signature,
+                    status_tracker,
+                )
+                .await
             }
             .map_err(|e| match e {
                 CoseError::RawSignatureValidationError(

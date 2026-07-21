@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use async_generic::async_generic;
 use async_trait::async_trait;
 use coset::CoseSign1;
 use serde::Serialize;
@@ -27,6 +28,112 @@ use crate::{
     log_current_item,
     status_tracker::StatusTracker,
 };
+
+/// Verifies `signature` against `signer_payload`, reconstructing the detached
+/// COSE payload bytes by re-encoding `signer_payload` as CBOR.
+///
+/// c2pa_cbor enforces RFC 8949 §4.2.1 (Core Deterministic Encoding) by
+/// default, as required by the C2PA spec. Content signed before that
+/// enforcement was added may have been signed over a non-canonical
+/// (declaration-order) encoding of the same `signer_payload`, so if the
+/// canonical encoding doesn't validate, this falls back to that legacy
+/// encoding before reporting a mismatch. This keeps already-signed CAWG
+/// identity assertions verifiable across the transition.
+#[async_generic]
+pub(crate) fn verify_signer_payload_signature(
+    cose_verifier: &Verifier<'_>,
+    signer_payload: &SignerPayload,
+    signature: &[u8],
+    status_tracker: &mut StatusTracker,
+) -> Result<(CoseSign1, CertificateInfo), CoseError> {
+    let mut canonical_cbor: Vec<u8> = vec![];
+    c2pa_cbor::to_writer(&mut canonical_cbor, signer_payload)
+        .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
+
+    let mut canonical_log = StatusTracker::default();
+    let canonical_result = if _sync {
+        try_verify_signer_payload(
+            cose_verifier,
+            signature,
+            &canonical_cbor,
+            &mut canonical_log,
+        )
+    } else {
+        try_verify_signer_payload_async(
+            cose_verifier,
+            signature,
+            &canonical_cbor,
+            &mut canonical_log,
+        )
+        .await
+    };
+
+    match canonical_result {
+        Ok(ok) => {
+            status_tracker.append(&canonical_log);
+            Ok(ok)
+        }
+        Err(CoseError::RawSignatureValidationError(
+            RawSignatureValidationError::SignatureMismatch,
+        )) => {
+            let mut legacy_cbor: Vec<u8> = vec![];
+            c2pa_cbor::to_writer_unordered(&mut legacy_cbor, signer_payload)
+                .map_err(|e| CoseError::CborGenerationError(e.to_string()))?;
+
+            let mut legacy_log = StatusTracker::default();
+            let legacy_result = if _sync {
+                try_verify_signer_payload(cose_verifier, signature, &legacy_cbor, &mut legacy_log)
+            } else {
+                try_verify_signer_payload_async(
+                    cose_verifier,
+                    signature,
+                    &legacy_cbor,
+                    &mut legacy_log,
+                )
+                .await
+            };
+
+            match legacy_result {
+                Ok(ok) => {
+                    status_tracker.append(&legacy_log);
+                    Ok(ok)
+                }
+                Err(_) => {
+                    // Neither encoding validated; report against the
+                    // canonical (currently spec-compliant) attempt.
+                    status_tracker.append(&canonical_log);
+                    Err(CoseError::RawSignatureValidationError(
+                        RawSignatureValidationError::SignatureMismatch,
+                    ))
+                }
+            }
+        }
+        Err(e) => {
+            status_tracker.append(&canonical_log);
+            Err(e)
+        }
+    }
+}
+
+#[async_generic]
+fn try_verify_signer_payload(
+    cose_verifier: &Verifier<'_>,
+    signature: &[u8],
+    data: &[u8],
+    status_tracker: &mut StatusTracker,
+) -> Result<(CoseSign1, CertificateInfo), CoseError> {
+    let cose_sign1 = parse_cose_sign1(signature, data, status_tracker)?;
+
+    let cert_info = if _sync {
+        cose_verifier.verify_signature(signature, data, &[], None, status_tracker)
+    } else {
+        cose_verifier
+            .verify_signature_async(signature, data, &[], None, status_tracker)
+            .await
+    }?;
+
+    Ok((cose_sign1, cert_info))
+}
 
 /// An implementation of [`SignatureVerifier`] that supports COSE signatures
 /// generated from X.509 credentials as specified in [§8.2, X.509 certificates
@@ -68,22 +175,19 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
             ));
         }
 
-        let mut signer_payload_cbor: Vec<u8> = vec![];
-        c2pa_cbor::to_writer(&mut signer_payload_cbor, signer_payload)
-            .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
+        let (cose_sign1, cert_info) = verify_signer_payload_signature(
+            &self.cose_verifier,
+            signer_payload,
+            signature,
+            status_tracker,
+        )
+        .map_err(|e| match e {
+            CoseError::RawSignatureValidationError(
+                RawSignatureValidationError::SignatureMismatch,
+            ) => ValidationError::SignatureMismatch,
 
-        let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, status_tracker)?;
-
-        let cert_info = self
-            .cose_verifier
-            .verify_signature(signature, &signer_payload_cbor, &[], None, status_tracker)
-            .map_err(|e| match e {
-                CoseError::RawSignatureValidationError(
-                    RawSignatureValidationError::SignatureMismatch,
-                ) => ValidationError::SignatureMismatch,
-
-                e => ValidationError::SignatureError(e),
-            })?;
+            e => ValidationError::SignatureError(e),
+        })?;
 
         Ok(X509SignatureInfo {
             signer_payload: signer_payload.clone(),
@@ -114,23 +218,20 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
             ));
         }
 
-        let mut signer_payload_cbor: Vec<u8> = vec![];
-        c2pa_cbor::to_writer(&mut signer_payload_cbor, signer_payload)
-            .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
+        let (cose_sign1, cert_info) = verify_signer_payload_signature_async(
+            &self.cose_verifier,
+            signer_payload,
+            signature,
+            status_tracker,
+        )
+        .await
+        .map_err(|e| match e {
+            CoseError::RawSignatureValidationError(
+                RawSignatureValidationError::SignatureMismatch,
+            ) => ValidationError::SignatureMismatch,
 
-        let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, status_tracker)?;
-
-        let cert_info = self
-            .cose_verifier
-            .verify_signature_async(signature, &signer_payload_cbor, &[], None, status_tracker)
-            .await
-            .map_err(|e| match e {
-                CoseError::RawSignatureValidationError(
-                    RawSignatureValidationError::SignatureMismatch,
-                ) => ValidationError::SignatureMismatch,
-
-                e => ValidationError::SignatureError(e),
-            })?;
+            e => ValidationError::SignatureError(e),
+        })?;
 
         Ok(X509SignatureInfo {
             signer_payload: signer_payload.clone(),

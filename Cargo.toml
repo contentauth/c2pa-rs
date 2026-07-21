@@ -17,6 +17,9 @@ version = "0.91.0-dev"
 [workspace.dependencies]
 c2pa = { path = "sdk", version = "0.91.0-dev", default-features = false }
 
+[patch.crates-io]
+c2pa_cbor = { path = "../c2pa-cbor" }
+
 [profile.dev]
 # opt-level = 1        # enable to allow test code to run faster at a small compile time cost and missing debug info
 debug = 2              # symbols for debugging - switch to 1 to disable debug symbols

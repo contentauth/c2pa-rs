@@ -1465,4 +1465,56 @@ pub mod tests {
             .unwrap();
         assert_eq!(action6.extract_ingredient_ids(), None);
     }
+
+    #[test]
+    fn test_action_common_params_serialize_deterministically() {
+        // Regression test: `ActionParameters.common` is a `HashMap<String, Value>`
+        // (actions.rs's `#[serde(flatten)] common` field) holding any non-standard
+        // action parameter. c2pa_cbor's map encoder writes entries in whatever
+        // order the map is iterated, with no key sorting/canonicalization
+        // (see c2pa_cbor::encoder::SerializeVec::Map::end). `std::HashMap`
+        // iteration order depends on a per-instance randomized hasher, so two
+        // independently built `Action`s with the *same* logical parameters (same
+        // keys/values, just constructed separately - e.g. the same ingredient
+        // action added while producing more than one output manifest) can
+        // serialize to different bytes, and therefore hash differently via
+        // `Claim::calc_assertion_box_hash` / `to_assertion()`, even though the
+        // content is identical. That breaks the assumption that a HashedUri for a
+        // given logical assertion is stable.
+        //
+        // This uses enough distinct custom keys that two independent `HashMap`s
+        // with the same content are astronomically unlikely to coincidentally
+        // iterate in the same order, so in practice this reliably fails today.
+        fn build() -> Actions {
+            Actions::new().add_action(
+                Action::new("c2pa.filtered")
+                    .set_parameter("alpha", "1")
+                    .unwrap()
+                    .set_parameter("bravo", "2")
+                    .unwrap()
+                    .set_parameter("charlie", "3")
+                    .unwrap()
+                    .set_parameter("delta", "4")
+                    .unwrap()
+                    .set_parameter("echo", "5")
+                    .unwrap()
+                    .set_parameter("foxtrot", "6")
+                    .unwrap()
+                    .set_parameter("golf", "7")
+                    .unwrap()
+                    .set_parameter("hotel", "8")
+                    .unwrap(),
+            )
+        }
+
+        let assertion1 = build().to_assertion().unwrap();
+        let assertion2 = build().to_assertion().unwrap();
+
+        assert_eq!(
+            assertion1.data(),
+            assertion2.data(),
+            "two independently constructed Actions assertions with identical \
+             content serialized to different CBOR bytes"
+        );
+    }
 }
