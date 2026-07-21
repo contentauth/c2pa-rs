@@ -1849,7 +1849,15 @@ impl Builder {
             }
         }
 
-        let mut found_actions = false;
+        // An Actions assertion may already be present in the claim if it was added directly
+        // via `add_assertion_with_ref` (pre_claim path) rather than through
+        // `definition.assertions`. Treat that the same as `found_actions` below so we don't
+        // auto-generate and append a second, duplicate Actions assertion from settings.
+        let mut found_actions = claim.claim_assertion_store().iter().any(|ca| {
+            let label = ca.label_raw();
+            let (match_label, _version, _instance) = parse_label(&label);
+            match_label.starts_with(Actions::LABEL)
+        });
         // add any additional assertions
         for manifest_assertion in &definition.assertions {
             let (match_label, version, _instance) = parse_label(manifest_assertion.label());
@@ -10294,6 +10302,74 @@ mod tests {
             params.ingredients.is_some(),
             "opened action should reference the ingredient"
         );
+    }
+
+    /// When an Actions assertion is added directly via `add_assertion_with_ref` (the
+    /// pre_claim path), `to_claim()` must not also auto-generate and append a second
+    /// Actions assertion from `builder.actions.actions` settings. Regression test for a bug
+    /// where `found_actions` only looked at `definition.assertions`, so it stayed `false`
+    /// even though an Actions assertion already existed in the claim, resulting in two
+    /// separate `c2pa.actions` assertions.
+    #[test]
+    fn test_add_assertion_with_ref_actions_no_duplicate_with_settings() {
+        use crate::assertions::{c2pa_action, Action, Actions, DigitalSourceType};
+
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [[builder.actions.actions]]
+                    action = (c2pa_action::COLOR_ADJUSTMENTS)
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
+
+        let mut builder = Builder::from_context(context);
+
+        let mut actions = Actions::new();
+        actions = actions.add_action(
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty),
+        );
+        builder
+            .add_assertion_with_ref(&actions)
+            .expect("actions assertion");
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
+            .expect("sign");
+
+        output.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+        let manifest = reader.active_manifest().expect("active manifest");
+
+        // Only one Actions assertion should be present, carrying just the manually
+        // added "created" action -- not a second one auto-generated from settings.
+        assert_eq!(
+            manifest
+                .assertions()
+                .iter()
+                .filter(|a| a.label().starts_with(Actions::LABEL))
+                .count(),
+            1,
+            "expected exactly one Actions assertion, found a duplicate"
+        );
+
+        let found_actions: Actions = manifest
+            .find_assertion(Actions::LABEL)
+            .expect("actions assertion in manifest");
+        assert_eq!(found_actions.actions().len(), 1);
+        assert_eq!(found_actions.actions()[0].action(), c2pa_action::CREATED);
     }
 
     // Ensures that the future returned by `Builder::sign_async` implements `Send`, thus making it
