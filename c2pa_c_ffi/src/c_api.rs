@@ -66,15 +66,16 @@ unsafe fn is_safe_buffer_size(size: usize, ptr: *const c_uchar) -> bool {
 /// Runs a fallible, value-consuming operation on the value
 /// behind an untracked pointer.
 ///
-/// * On success the result is tracked in a fresh allocation and its pointer is
-///   returned; the input allocation is freed and its pointer is consumed.
-/// * On error the input value is restored into its allocation and re-tracked, the
-///   error is recorded, and null is returned; the caller keeps the input pointer.
-/// * If `op` panics the value is dropped once and the input allocation is freed,
-///   so the unwind leaks nothing.
+/// - On success the result is tracked in a fresh allocation and its pointer is
+///   returned. The input allocation is freed and its pointer is consumed. The caller
+///   does not keep the pointer in this case.
+/// - On error the input value is restored into its allocation and re-tracked, the
+///   error is recorded, and null is returned. The caller keeps the input pointer.
+/// - If `op` function panics the value is dropped and the input allocation is freed,
+///   so the unwind doesn't leak.
 ///
-/// So a null return means the input was not consumed (caller must free it) and a
-/// non-null return is a new handle whose old pointer is gone.
+/// So: A null return means the input was not consumed (caller must free it),
+/// and a non-null return is a new handle whose old pointer is gone.
 ///
 /// # Safety
 /// `ptr` must be non-null, point to an initialized `T`, and be untracked at the
@@ -85,8 +86,8 @@ where
     CimplError: From<E>,
     F: FnOnce(T) -> std::result::Result<T, Box<(T, E)>>,
 {
-    // Owns a (vacated) FFI allocation after the value is read out.
-    // Its own Drop frees that allocation, so a panic in the `op` function leaks nothing.
+    // Owns a (vacated) FFI allocation slot.
+    // Its own Drop frees that allocation, so a panic in the `op` function doesn't leak.
     struct AllocationGuard<T>(*mut ManuallyDrop<T>);
     impl<T> Drop for AllocationGuard<T> {
         fn drop(&mut self) {
@@ -105,7 +106,8 @@ where
         }
         Err(boxed) => {
             let (orig, e) = *boxed;
-            // Restore the original value and re-track it; caller keeps the pointer.
+            // Restore the original value and re-track it:
+            // caller gets its pointer back to keep it.
             std::mem::forget(guard);
             std::ptr::write(ptr, orig);
             crate::track_box(ptr);
