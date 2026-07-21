@@ -3284,7 +3284,7 @@ mod tests {
             let msg_str = unsafe { std::ffi::CStr::from_ptr(msg) };
             assert_eq!(msg_str.to_str().unwrap(), "");
             assert_eq!(code, 0);
-            assert_eq!(unsafe { cimpl_free(msg as *mut std::ffi::c_void) }, 0);
+            assert_eq!(cimpl_free(msg as *mut std::ffi::c_void), 0);
         })
         .join()
         .unwrap();
@@ -3302,7 +3302,7 @@ mod tests {
             let msg_str = unsafe { std::ffi::CStr::from_ptr(msg) };
             assert_eq!(msg_str.to_str().unwrap(), "Other: boom");
             assert_eq!(code, 5);
-            assert_eq!(unsafe { cimpl_free(msg as *mut std::ffi::c_void) }, 0);
+            assert_eq!(cimpl_free(msg as *mut std::ffi::c_void), 0);
 
             // Slot is cleared: a peek now sees nothing.
             assert!(CimplError::last_message().is_none());
@@ -3322,7 +3322,7 @@ mod tests {
             assert!(!msg.is_null());
             let msg_str = unsafe { std::ffi::CStr::from_ptr(msg) };
             assert_eq!(msg_str.to_str().unwrap(), "Other: boom");
-            assert_eq!(unsafe { cimpl_free(msg as *mut std::ffi::c_void) }, 0);
+            assert_eq!(cimpl_free(msg as *mut std::ffi::c_void), 0);
 
             assert!(CimplError::last_message().is_none());
         })
