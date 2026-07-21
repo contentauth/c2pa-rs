@@ -1266,6 +1266,8 @@ impl Builder {
         stream: impl Read + Seek + Send,
     ) -> std::result::Result<Self, Box<(Self, Error)>> {
         let mut stream = stream;
+        // On success this creates a rebuilt Builder (not the input `self`).
+        // On a failure, `self` is handed back as-is in the `Err` below.
         let result = Self::old_from_archive(&mut stream).or_else(|_| {
             // if the old method fails, try the new method
             // Archives contain unsigned working stores (signed with BoxHash placeholder)
