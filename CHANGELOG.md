@@ -9,6 +9,21 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.0...c2pa-v0.90.1)
+_21 July 2026_
+
+### Added
+
+* *(sdk)* Gate Builder action/ingredient filtering behind experimental feature flag (backport #2340) ([#2342](https://github.com/contentauth/c2pa-rs/pull/2342))
+* *(sdk)* Add Builder action/ingredient removal API (backport #2281) ([#2337](https://github.com/contentauth/c2pa-rs/pull/2337))
+
+### Fixed
+
+* Terminate crJSON b64' byte-string values with closing quote (backport #2333) ([#2339](https://github.com/contentauth/c2pa-rs/pull/2339))
+* Repair broken intra-doc link in Settings doc comment (backport #2331) ([#2332](https://github.com/contentauth/c2pa-rs/pull/2332))
+* Harden against arbitrary Local file read and exfiltration via manifest relative path traversal attacks (backport #2271) ([#2326](https://github.com/contentauth/c2pa-rs/pull/2326))
+* Support additional MP3 mime_types for compatibility (backport #2320) ([#2325](https://github.com/contentauth/c2pa-rs/pull/2325))
+
 ## [0.90.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.3...c2pa-v0.90.0)
 _16 July 2026_
 
