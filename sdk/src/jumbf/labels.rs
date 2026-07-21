@@ -195,6 +195,10 @@ pub(crate) fn box_name_from_uri(uri: &str) -> Option<String> {
 // exists because it borrows a slice of the original `uri`, so callers can compute the label's byte
 // offset within `uri` and rebuild the prefix. Where only the label value is needed, prefer
 // `assertion_label_from_uri`.
+//
+// Only the experimental `Builder` filtering API needs this, so it is gated to avoid an unused-item
+// warning when that feature is off.
+#[cfg(feature = "experimental_builder_filter")]
 pub(crate) fn label_segment_from_uri(uri: &str) -> &str {
     uri.rsplit('/').next().unwrap_or(uri)
 }
@@ -206,6 +210,10 @@ pub(crate) fn label_segment_from_uri(uri: &str) -> &str {
 // version and the `__N` instance off the base. This variant strips only the instance and keeps the
 // version in the returned base, so the base round-trips through `Claim::label_with_instance` to
 // rebuild the exact positional label. Prefer `parse_label` when the version is wanted separately.
+//
+// Only the experimental `Builder` filtering API needs this, so it is gated to avoid an unused-item
+// warning when that feature is off.
+#[cfg(feature = "experimental_builder_filter")]
 pub(crate) fn parse_positional_label(label: &str) -> (&str, usize) {
     if let Some(pos) = label.rfind("__") {
         if let Ok(n) = label[pos + 2..].parse::<usize>() {
@@ -550,6 +558,7 @@ pub mod tests {
         );
     }
 
+    #[cfg(feature = "experimental_builder_filter")]
     #[test]
     fn test_label_segment_from_uri() {
         assert_eq!(
@@ -563,6 +572,7 @@ pub mod tests {
         );
     }
 
+    #[cfg(feature = "experimental_builder_filter")]
     #[test]
     fn test_parse_positional_label() {
         assert_eq!(
