@@ -506,6 +506,33 @@ pub unsafe extern "C" fn c2pa_error_set_last(error_str: *const c_char) -> c_int 
     0
 }
 
+/// Takes the last error message: returns the error message, puts the potential error
+/// code inside the out param (code).
+///
+/// This clears the thread-local error slot so a subsequent `c2pa_error` call
+/// returns empty until a new error occurs. Therefore, this can be used to reset
+/// errors in-between operations, or to clean up error states after errors have
+/// been handled.
+///
+/// If `code` is non-NULL, the last error's numeric code is written to `*code`
+/// (0 when no error is set). Passing NULL for `code` is allowed and ignored.
+///
+/// # Errors
+/// Never fails. Returns an empty string (and writes code 0) when no error is set.
+///
+/// # Safety
+/// The returned value MUST be released by calling `c2pa_free`
+/// and is no longer valid after that call.
+/// If `code` is non-NULL it must point to a writable `int`.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_error_take(code: *mut c_int) -> *mut c_char {
+    let (error_code, message) = CimplError::take_last_parts();
+    if !code.is_null() {
+        *code = error_code;
+    }
+    to_c_string(message)
+}
+
 /// Load Settings from a string.
 /// Sets thread-local settings.
 ///
@@ -3245,6 +3272,62 @@ mod tests {
         assert!(!error.is_null());
         let error_str = unsafe { CString::from_raw(error) };
         assert_eq!(error_str.to_str().unwrap(), "");
+    }
+
+    #[test]
+    fn test_c2pa_error_take_no_error() {
+        // Run on a fresh thread so the thread-local error slot is guaranteed empty
+        std::thread::spawn(|| {
+            let mut code: c_int = -42; // sentinel so we can prove it was overwritten to 0
+            let msg = unsafe { c2pa_error_take(&mut code) };
+            assert!(!msg.is_null());
+            let msg_str = unsafe { std::ffi::CStr::from_ptr(msg) };
+            assert_eq!(msg_str.to_str().unwrap(), "");
+            assert_eq!(code, 0);
+            assert_eq!(unsafe { cimpl_free(msg as *mut std::ffi::c_void) }, 0);
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn test_c2pa_error_take_returns_and_clears() {
+        std::thread::spawn(|| {
+            // Set a known error into the thread-local slot. `other` uses code 5.
+            CimplError::other("boom").set_last();
+
+            let mut code: c_int = 0;
+            let msg = unsafe { c2pa_error_take(&mut code) };
+            assert!(!msg.is_null());
+            let msg_str = unsafe { std::ffi::CStr::from_ptr(msg) };
+            assert_eq!(msg_str.to_str().unwrap(), "Other: boom");
+            assert_eq!(code, 5);
+            assert_eq!(unsafe { cimpl_free(msg as *mut std::ffi::c_void) }, 0);
+
+            // Slot is cleared: a peek now sees nothing.
+            assert!(CimplError::last_message().is_none());
+            assert_eq!(CimplError::last_code(), 0);
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn test_c2pa_error_take_null_code_out_param() {
+        std::thread::spawn(|| {
+            CimplError::other("boom").set_last();
+
+            // NULL code out-param must not crash and must still return and clear.
+            let msg = unsafe { c2pa_error_take(std::ptr::null_mut()) };
+            assert!(!msg.is_null());
+            let msg_str = unsafe { std::ffi::CStr::from_ptr(msg) };
+            assert_eq!(msg_str.to_str().unwrap(), "Other: boom");
+            assert_eq!(unsafe { cimpl_free(msg as *mut std::ffi::c_void) }, 0);
+
+            assert!(CimplError::last_message().is_none());
+        })
+        .join()
+        .unwrap();
     }
 
     #[test]

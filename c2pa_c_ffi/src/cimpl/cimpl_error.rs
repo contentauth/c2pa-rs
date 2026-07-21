@@ -118,11 +118,16 @@ impl CimplError {
         Self::new(5, format!("Other: {}", msg.into()))
     }
 
+    /// Runs `f` with mutable access to the thread-local last-error slot.
+    fn with_last<T>(f: impl FnOnce(&mut Option<CimplError>) -> T) -> T {
+        LAST_ERROR.with(|prev| f(&mut prev.borrow_mut()))
+    }
+
     /// Peeks at the last error message without clearing it
     ///
     /// Returns None if no error is set. This does not clear the error.
     pub fn last_message() -> Option<String> {
-        LAST_ERROR.with(|prev| prev.borrow().as_ref().map(|e| e.message.clone()))
+        Self::with_last(|slot| slot.as_ref().map(|e| e.message.clone()))
     }
 
     /// Peeks at the last error code without clearing it
@@ -135,20 +140,29 @@ impl CimplError {
     /// - **1-99**: cimpl infrastructure errors
     /// - **100+**: Library-specific errors
     pub fn last_code() -> i32 {
-        LAST_ERROR.with(|prev| prev.borrow().as_ref().map(|e| e.code).unwrap_or(0))
+        Self::with_last(|slot| slot.as_ref().map(|e| e.code).unwrap_or(0))
     }
 
     /// Sets this error as the last error
     pub fn set_last(self) {
-        LAST_ERROR.with(|prev| *prev.borrow_mut() = Some(self));
+        Self::with_last(|slot| *slot = Some(self));
     }
 
     /// Takes the last error and clears it
     ///
-    /// This is rarely needed - errors naturally get overwritten by new errors.
-    /// Provided for completeness and testing.
+    /// Note: Older errors get overwritten by newer errors.
     pub fn take_last() -> Option<CimplError> {
-        LAST_ERROR.with(|prev| prev.borrow_mut().take())
+        Self::with_last(|slot| slot.take())
+    }
+
+    /// Takes the last error and clears it, returning its `(code, message)`.
+    ///
+    /// Returns `(0, "")` when no error is set.
+    pub fn take_last_parts() -> (i32, String) {
+        match Self::take_last() {
+            Some(e) => (e.code, e.message),
+            None => (0, String::new()),
+        }
     }
 }
 
