@@ -14,6 +14,7 @@
 use std::{
     os::raw::{c_char, c_int, c_uchar, c_void},
     sync::Arc,
+    mem::ManuallyDrop,
 };
 
 // C has no namespace so we prefix things with C2PA to make them unique (as namespace)
@@ -62,8 +63,8 @@ unsafe fn is_safe_buffer_size(size: usize, ptr: *const c_uchar) -> bool {
     true
 }
 
-/// Runs a fallible, value-consuming operation on the value behind an untracked
-/// pointer.
+/// Runs a fallible, value-consuming operation on the value
+/// behind an untracked pointer.
 ///
 /// * On success the result is tracked in a fresh allocation and its pointer is
 ///   returned; the input allocation is freed and its pointer is consumed.
@@ -84,9 +85,7 @@ where
     CimplError: From<E>,
     F: FnOnce(T) -> std::result::Result<T, (T, E)>,
 {
-    use std::mem::ManuallyDrop;
-
-    // Owns a vacated FFI allocation after the value is read out.
+    // Owns a (vacated) FFI allocation after the value is read out.
     // Its own Drop frees that allocation, so a panic in the `op` function leaks nothing.
     struct AllocationGuard<T>(*mut ManuallyDrop<T>);
     impl<T> Drop for AllocationGuard<T> {
