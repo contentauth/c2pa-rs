@@ -1252,8 +1252,21 @@ impl Builder {
     /// # }
     /// ```
     pub fn with_archive(self, stream: impl Read + Seek + Send) -> Result<Self> {
+        self.try_with_archive(stream).map_err(|(_, e)| e)
+    }
+
+    /// Like [`with_archive`](Self::with_archive), but on error returns the input
+    /// [`Builder`] back to the caller together with the [`Error`].
+    ///
+    /// # Returns
+    /// `Ok(builder)` with the archive applied, or `Err((builder, error))` with the
+    /// original, unmodified [`Builder`] handed back.
+    pub fn try_with_archive(
+        self,
+        stream: impl Read + Seek + Send,
+    ) -> std::result::Result<Self, (Self, Error)> {
         let mut stream = stream;
-        Self::old_from_archive(&mut stream).or_else(|_| {
+        let result = Self::old_from_archive(&mut stream).or_else(|_| {
             // if the old method fails, try the new method
             // Archives contain unsigned working stores (signed with BoxHash placeholder)
 
@@ -1271,7 +1284,11 @@ impl Builder {
             let mut reader = Reader::from_shared_context(&self.context);
             reader.with_store(store, &mut validation_log)?;
             reader.into_builder()
-        })
+        });
+        match result {
+            Ok(builder) => Ok(builder),
+            Err(e) => Err((self, e)),
+        }
     }
 
     /// Create a [`Builder`] from an archive stream using thread-local settings.

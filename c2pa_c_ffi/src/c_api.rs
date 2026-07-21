@@ -62,6 +62,59 @@ unsafe fn is_safe_buffer_size(size: usize, ptr: *const c_uchar) -> bool {
     true
 }
 
+/// Runs a fallible, value-consuming operation on the value behind an untracked
+/// pointer.
+///
+/// * On success the result is tracked in a fresh allocation and its pointer is
+///   returned; the input allocation is freed and its pointer is consumed.
+/// * On error the input value is restored into its allocation and re-tracked, the
+///   error is recorded, and null is returned; the caller keeps the input pointer.
+/// * If `op` panics the value is dropped once and the input allocation is freed,
+///   so the unwind leaks nothing.
+///
+/// So a null return means the input was not consumed (caller must free it) and a
+/// non-null return is a new handle whose old pointer is gone.
+///
+/// # Safety
+/// `ptr` must be non-null, point to an initialized `T`, and be untracked at the
+/// moment of the call.
+unsafe fn reconfigure_or_restore<T, E, F>(ptr: *mut T, op: F) -> *mut T
+where
+    T: 'static + crate::maybe_send_sync::MaybeSend,
+    CimplError: From<E>,
+    F: FnOnce(T) -> std::result::Result<T, (T, E)>,
+{
+    use std::mem::ManuallyDrop;
+
+    // Owns a vacated FFI allocation after the value is read out.
+    // Its own Drop frees that allocation, so a panic in the `op` function leaks nothing.
+    struct AllocationGuard<T>(*mut ManuallyDrop<T>);
+    impl<T> Drop for AllocationGuard<T> {
+        fn drop(&mut self) {
+            unsafe { drop(Box::from_raw(self.0)) };
+        }
+    }
+
+    // Move the value out, leaving the allocation intact for restore-on-error.
+    let owned = std::ptr::read(ptr);
+    let guard = AllocationGuard(ptr as *mut ManuallyDrop<T>);
+    match op(owned) {
+        Ok(new_val) => {
+            // Track the new value before freeing the old, so addresses can't collide.
+            crate::track_box(Box::into_raw(Box::new(new_val)))
+            // `guard` frees the vacated allocation here.
+        }
+        Err((orig, e)) => {
+            // Restore the original value and re-track it; caller keeps the pointer.
+            std::mem::forget(guard);
+            std::ptr::write(ptr, orig);
+            crate::track_box(ptr);
+            CimplError::from(e).set_last();
+            std::ptr::null_mut()
+        }
+    }
+}
+
 // Work around limitations in cbindgen.
 mod cbindgen_fix {
     #[repr(C)]
@@ -1104,15 +1157,21 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
 
 /// Configures an existing reader with a stream.
 ///
-/// This method consumes the original reader and returns a new configured reader.
-/// The original reader pointer becomes invalid after this call.
+/// On success this method consumes the original reader and returns a new
+/// configured reader.
 ///
 /// # Safety
 ///
 /// * `reader` must be a valid pointer to a C2paReader.
 /// * `format` must be a valid null-terminated string with the MIME type.
 /// * `stream` must be a valid pointer to a C2paStream.
-/// * After calling this function, the `reader` pointer is INVALID.
+///
+/// # Ownership
+///
+/// * On success (non-NULL return), the `reader` pointer is consumed and becomes
+///   invalid. Do not use or free it, use the returned pointer instead.
+/// * On error (NULL return), the `reader` pointer is NOT consumed and remains
+///   valid and owned by the caller, who must free it with `c2pa_reader_free`.
 ///
 /// # Returns
 ///
@@ -1129,16 +1188,13 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
 
     // Now safe to take ownership - all validations passed
     untrack_or_return_null!(reader, C2paReader);
-    let reader = Box::from_raw(reader);
-    let reader = ok_or_return_null!((*reader).with_stream(&format, stream));
-    box_tracked!(reader)
+    reconfigure_or_restore(reader, |r| r.try_with_stream(&format, stream))
 }
 
 /// Configures an existing passed in Reader with manifest data and a stream.
 /// This covers the case when a Reader needs to be able to re-read signed
-/// manifest bytes. This method consumes the original Reader and returns a
-/// new configured Reader. The original Reader pointer becomes invalid after
-/// this call and should not be reused.
+/// manifest bytes. On success this method consumes the original Reader and
+/// returns a new configured Reader.
 ///
 /// # Safety
 ///
@@ -1148,7 +1204,13 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
 /// * `stream` must be a valid pointer to a C2paStream.
 /// * `manifest_data` must be a valid pointer to manifest bytes.
 /// * `manifest_size` must be the length of the manifest_data buffer.
-/// * After calling this function, the `reader` pointer becomes invalid.
+///
+/// # Ownership
+///
+/// * On success (non-NULL return), the `reader` pointer is consumed and becomes
+///   invalid. Do not use or free it, use the returned pointer instead.
+/// * On error (NULL return), the `reader` pointer is NOT consumed and remains
+///   valid and owned by the caller, who must free it with `c2pa_reader_free`.
 ///
 /// # Returns
 ///
@@ -1167,21 +1229,16 @@ pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
 
     // Take ownership of the Reader (needs to remove it from tracking to take it)
     untrack_or_return_null!(reader, C2paReader);
-    let reader = Box::from_raw(reader);
-    let reader = ok_or_return_null!((*reader).with_manifest_data_and_stream(
-        manifest_bytes,
-        &format,
-        stream
-    ));
-    // New reader, will be tracked now too
-    box_tracked!(reader)
+    reconfigure_or_restore(reader, |r| {
+        r.try_with_manifest_data_and_stream(manifest_bytes, &format, stream)
+    })
 }
 
 /// Configures an existing reader with a fragment stream.
 ///
 /// This is used for fragmented BMFF media formats where manifests are stored
-/// in separate fragments. This method consumes the original reader and returns
-/// a new configured reader. The original reader pointer becomes invalid after this call.
+/// in separate fragments. On success this method consumes the original reader and
+/// returns a new configured reader.
 ///
 /// # Safety
 ///
@@ -1189,7 +1246,13 @@ pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
 /// * `format` must be a valid null-terminated string with the MIME type.
 /// * `stream` must be a valid pointer to a C2paStream (the main asset stream).
 /// * `fragment` must be a valid pointer to a C2paStream (the fragment stream).
-/// * After calling this function, the `reader` pointer is INVALID.
+///
+/// # Ownership
+///
+/// * On success (non-NULL return), the `reader` pointer is consumed and becomes
+///   invalid. Do not use or free it, use the returned pointer instead.
+/// * On error (NULL return), the `reader` pointer is NOT consumed and remains
+///   valid and owned by the caller, who must free it with `c2pa_reader_free`.
 ///
 /// # Returns
 ///
@@ -1200,7 +1263,12 @@ pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
 /// ```c
 /// C2paReader* reader = c2pa_reader_from_context(ctx);
 /// C2paReader* new_reader = c2pa_reader_with_fragment(reader, "video/mp4", main_stream, fragment_stream);
-/// // reader is now invalid, use new_reader
+/// if (new_reader == NULL) {
+///     // error: reader is still valid and owned by the caller
+///     c2pa_reader_free(reader);
+/// } else {
+///     // success: reader was consumed, use new_reader
+/// }
 /// ```
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_with_fragment(
@@ -1216,9 +1284,7 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
 
     // Now safe to take ownership - all validations passed
     untrack_or_return_null!(reader, C2paReader);
-    let reader = Box::from_raw(reader);
-    let reader = ok_or_return_null!((*reader).with_fragment(&format, stream, fragment));
-    box_tracked!(reader)
+    reconfigure_or_restore(reader, |r| r.try_with_fragment(&format, stream, fragment))
 }
 
 /// Creates a new C2paReader from a shared Context.
@@ -1595,14 +1661,20 @@ pub unsafe extern "C" fn c2pa_builder_with_definition(
 
 /// Configures an existing builder with an archive stream.
 ///
-/// This consumes the original builder and returns a new configured builder.
-/// The original builder pointer becomes invalid after this call.
+/// On success this consumes the original builder and returns a new configured
+/// builder.
 ///
 /// # Safety
 ///
 /// * `builder` must be a valid pointer to a C2paBuilder.
 /// * `stream` must be a valid pointer to a C2paStream.
-/// * After calling this function, the `builder` pointer is INVALID.
+///
+/// # Ownership
+///
+/// * On success (non-NULL return), the `builder` pointer is consumed and becomes
+///   INVALID — do not use or free it; use the returned pointer instead.
+/// * On error (NULL return), the `builder` pointer is NOT consumed and remains
+///   valid and owned by the caller, who must free it with `c2pa_builder_free`.
 ///
 /// # Returns
 ///
@@ -1613,7 +1685,12 @@ pub unsafe extern "C" fn c2pa_builder_with_definition(
 /// ```c
 /// C2paBuilder* builder = c2pa_builder_from_context(ctx);
 /// C2paBuilder* new_builder = c2pa_builder_with_archive(builder, archive_stream);
-/// // builder is now invalid, use new_builder
+/// if (new_builder == NULL) {
+///     // error: builder is still valid and owned by the caller
+///     c2pa_builder_free(builder);
+/// } else {
+///     // success: builder was consumed, use new_builder
+/// }
 /// ```
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_with_archive(
@@ -1625,9 +1702,7 @@ pub unsafe extern "C" fn c2pa_builder_with_archive(
 
     // Now safe to take ownership - stream is valid
     untrack_or_return_null!(builder, C2paBuilder);
-    let builder = Box::from_raw(builder);
-    let result = (*builder).with_archive(stream);
-    box_tracked!(ok_or_return_null!(result))
+    reconfigure_or_restore(builder, |b| b.try_with_archive(stream))
 }
 
 /// Sets the builder intent on the Builder.
@@ -4335,18 +4410,14 @@ verify_after_sign = true
         let archive_bytes = include_bytes!(fixture_path!("C.jpg"));
         let mut archive_stream = TestStream::new(archive_bytes.to_vec());
 
-        // Add archive to builder (this consumes the builder and returns a new one)
+        // A plain JPEG is not a valid archive, so the operation fails.
         let new_builder = unsafe { c2pa_builder_with_archive(builder, archive_stream.as_ptr()) };
+        assert!(new_builder.is_null(), "Expected failure for a non-archive");
 
-        // Verify consumed builder is no longer tracked
+        // Builder is still tracked because the operation failed
+        // after the transfer point but the input was restored to the caller.
         let free_result = unsafe { c2pa_free(builder as *const c_void) };
-        assert_eq!(free_result, -1);
-
-        if !new_builder.is_null() {
-            unsafe {
-                c2pa_free(new_builder as *mut c_void);
-            }
-        }
+        assert_eq!(free_result, 0);
     }
 
     #[test]
@@ -4385,7 +4456,7 @@ verify_after_sign = true
         let mut fragment_stream = TestStream::new(fragment_bytes.to_vec());
         let mut main_stream = TestStream::new(source_image.to_vec());
 
-        // Add fragment to reader (this consumes the reader and returns a new one)
+        // A plain JPEG is not a valid fragmented-BMFF asset, so this fails.
         let new_reader = unsafe {
             c2pa_reader_with_fragment(
                 reader,
@@ -4394,16 +4465,12 @@ verify_after_sign = true
                 fragment_stream.as_ptr(),
             )
         };
+        assert!(new_reader.is_null(), "Expected failure for a non-fragment asset");
 
-        // Verify consumed reader is no longer tracked
+        // Reader is still tracked because the operation failed after the transfer,
+        // but the input was restored to the caller.
         let free_result = unsafe { c2pa_free(reader as *const c_void) };
-        assert_eq!(free_result, -1);
-
-        if !new_reader.is_null() {
-            unsafe {
-                c2pa_free(new_reader as *mut c_void);
-            }
-        }
+        assert_eq!(free_result, 0);
     }
 
     #[test]
@@ -4437,6 +4504,106 @@ verify_after_sign = true
         // Reader is still tracked because validation failed before consumption
         let free_result = unsafe { c2pa_free(reader as *const c_void) };
         assert_eq!(free_result, 0);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_c2pa_reader_with_fragment_op_failure_reader_still_usable() {
+        // A plain JPEG is not a valid fragmented-BMFF asset, so with_fragment
+        // fails inside the SDK after the ownership transfer point.
+        // The reader must be handed back intact:
+        // still tracked, freeable, and re-usable.
+        let source_image = include_bytes!(fixture_path!("C.jpg"));
+        let mut stream = TestStream::new(source_image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
+        assert!(!reader.is_null());
+
+        let mut fragment_stream = TestStream::new(source_image.to_vec());
+        let mut main_stream = TestStream::new(source_image.to_vec());
+        let new_reader = unsafe {
+            c2pa_reader_with_fragment(
+                reader,
+                format.as_ptr(),
+                main_stream.as_ptr(),
+                fragment_stream.as_ptr(),
+            )
+        };
+        assert!(new_reader.is_null(), "Expected failure for a non-fragment asset");
+
+        // The reader was restored to its original address and is still tracked
+        let mut fragment_stream2 = TestStream::new(source_image.to_vec());
+        let mut main_stream2 = TestStream::new(source_image.to_vec());
+        let new_reader2 = unsafe {
+            c2pa_reader_with_fragment(
+                reader,
+                format.as_ptr(),
+                main_stream2.as_ptr(),
+                fragment_stream2.as_ptr(),
+            )
+        };
+        assert!(new_reader2.is_null(), "Second call should also fail cleanly");
+
+        // Still owned by the caller after two failed calls: free succeeds once.
+        assert_eq!(unsafe { c2pa_free(reader as *const c_void) }, 0);
+        // Freeing again is a no-op error (already freed / untracked), not a crash.
+        assert_eq!(unsafe { c2pa_free(reader as *const c_void) }, -1);
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_c2pa_reader_with_stream_success_consumes_old_handle() {
+        // On success the input reader is consumed and a new, distinct handle is returned.
+        // The old pointer must no longer be tracked (and must not alias the new one).
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+        let reader = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader.is_null());
+
+        let source_image = include_bytes!(fixture_path!("adobe-20220124-E-clm-CAICAI.jpg"));
+        let mut stream = TestStream::new(source_image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+
+        let configured = unsafe { c2pa_reader_with_stream(reader, format.as_ptr(), stream.as_ptr()) };
+        assert!(!configured.is_null(), "Configuring a valid asset should succeed");
+
+        // New handle is distinct from the consumed handle.
+        assert_ne!(configured as *const c_void, reader as *const c_void);
+        // The old input pointer is consumed.
+        assert_eq!(unsafe { c2pa_free(reader as *const c_void) }, -1);
+        // The new handle is live and freeable.
+        assert_eq!(unsafe { c2pa_free(configured as *const c_void) }, 0);
+
+        unsafe {
+            c2pa_free(context as *const c_void);
+        }
+    }
+
+    #[test]
+    fn test_reconfigure_or_restore_op_panic_frees_husk_once() {
+        // If `op` panics, the value is dropped exactly once.
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static DROPS: AtomicUsize = AtomicUsize::new(0);
+        struct Counted(#[allow(dead_code)] u32);
+        impl Drop for Counted {
+            fn drop(&mut self) {
+                DROPS.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let ptr = crate::track_box(Box::into_raw(Box::new(Counted(1))));
+        crate::untrack_pointer::<Counted>(ptr).unwrap();
+
+        let caught = catch_unwind(AssertUnwindSafe(|| unsafe {
+            reconfigure_or_restore::<Counted, Error, _>(ptr, |_v| panic!("boom"))
+        }));
+        assert!(caught.is_err(), "panic should propagate");
+        assert_eq!(DROPS.load(Ordering::SeqCst), 1, "value dropped exactly once");
+        // The allocation was freed, so the pointer is no longer tracked.
+        assert_eq!(unsafe { c2pa_free(ptr as *const c_void) }, -1);
     }
 
     // ========== High-Value Coverage Tests ==========

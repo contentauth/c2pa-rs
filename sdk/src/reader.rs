@@ -219,31 +219,68 @@ impl Reader {
     /// The updated [`Reader`] with the added manifest store.
     #[async_generic]
     pub fn with_stream(
+        self,
+        format: &str,
+        stream: impl Read + Seek + MaybeSend,
+    ) -> Result<Self> {
+        if _sync {
+            self.try_with_stream(format, stream)
+        } else {
+            self.try_with_stream_async(format, stream).await
+        }
+        .map_err(|(_, e)| e)
+    }
+
+    /// Like [`with_stream`](Self::with_stream), but on error returns the input
+    /// [`Reader`] back to the caller together with the [`Error`].
+    ///
+    /// # Arguments
+    /// * `format` - The MIME type or file extension of the stream (see [`with_stream`](Self::with_stream)).
+    /// * `stream` - The stream to read from.
+    /// # Returns
+    /// `Ok(reader)` with the updated [`Reader`], or `Err((reader, error))` with the
+    /// original, unmodified [`Reader`] handed back.
+    #[async_generic]
+    pub fn try_with_stream(
         mut self,
         format: &str,
         mut stream: impl Read + Seek + MaybeSend,
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, (Self, Error)> {
         let mut validation_log = StatusTracker::default();
-        stream.rewind()?; // Ensure stream is at the start
+        // Ensure stream is at the start.
+        if let Err(e) = stream.rewind() {
+            return Err((self, e.into()));
+        }
 
         // Prefer the caller's format hint when it identifies the same container as the
         // stream bytes (e.g. "dng" stays "dng" rather than being widened to "image/tiff").
         let format_owned = jumbf_io::format_from_stream(format, &mut stream);
         let format = format_owned.as_str();
 
-        self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
+        if let Err(e) = self.context.check_progress(ProgressPhase::Reading, 1, 1) {
+            return Err((self, e));
+        }
 
-        let store = if _sync {
+        let store_result = if _sync {
             Store::from_stream(format, stream, &mut validation_log, &self.context)
         } else {
             Store::from_stream_async(format, stream, &mut validation_log, &self.context).await
-        }?;
+        };
+        let store = match store_result {
+            Ok(store) => store,
+            Err(e) => return Err((self, e)),
+        };
 
-        if _sync {
-            self.with_store(store, &mut validation_log)
+        let with_store_result = if _sync {
+            self.with_store(store, &mut validation_log).map(|_| ())
         } else {
-            self.with_store_async(store, &mut validation_log).await
-        }?;
+            self.with_store_async(store, &mut validation_log)
+                .await
+                .map(|_| ())
+        };
+        if let Err(e) = with_store_result {
+            return Err((self, e));
+        }
         Ok(self)
     }
 
@@ -428,14 +465,37 @@ impl Reader {
     /// You must check validation status for non-severe errors.
     #[async_generic]
     pub fn with_manifest_data_and_stream(
-        mut self,
+        self,
         c2pa_data: &[u8],
         format: &str,
         stream: impl Read + Seek + MaybeSend,
     ) -> Result<Self> {
+        if _sync {
+            self.try_with_manifest_data_and_stream(c2pa_data, format, stream)
+        } else {
+            self.try_with_manifest_data_and_stream_async(c2pa_data, format, stream)
+                .await
+        }
+        .map_err(|(_, e)| e)
+    }
+
+    /// Like [`with_manifest_data_and_stream`](Self::with_manifest_data_and_stream),
+    /// but on error returns the input [`Reader`] back to the caller together with
+    /// the [`Error`].
+    ///
+    /// # Returns
+    /// `Ok(reader)` with the updated [`Reader`], or `Err((reader, error))` with the
+    /// original, unmodified [`Reader`] handed back.
+    #[async_generic]
+    pub fn try_with_manifest_data_and_stream(
+        mut self,
+        c2pa_data: &[u8],
+        format: &str,
+        stream: impl Read + Seek + MaybeSend,
+    ) -> std::result::Result<Self, (Self, Error)> {
         let mut validation_log = StatusTracker::default();
 
-        let store = if _sync {
+        let store_result = if _sync {
             Store::from_manifest_data_and_stream(
                 c2pa_data,
                 format,
@@ -452,12 +512,22 @@ impl Reader {
                 &self.context,
             )
             .await
-        }?;
-        if _sync {
-            self.with_store(store, &mut validation_log)
+        };
+        let store = match store_result {
+            Ok(store) => store,
+            Err(e) => return Err((self, e)),
+        };
+
+        let with_store_result = if _sync {
+            self.with_store(store, &mut validation_log).map(|_| ())
         } else {
-            self.with_store_async(store, &mut validation_log).await
-        }?;
+            self.with_store_async(store, &mut validation_log)
+                .await
+                .map(|_| ())
+        };
+        if let Err(e) = with_store_result {
+            return Err((self, e));
+        }
         Ok(self)
     }
 
@@ -506,14 +576,35 @@ impl Reader {
     /// You must check validation status for non-severe errors.
     #[async_generic]
     pub fn with_fragment(
+        self,
+        format: &str,
+        stream: impl Read + Seek + MaybeSend,
+        fragment: impl Read + Seek + MaybeSend,
+    ) -> Result<Self> {
+        if _sync {
+            self.try_with_fragment(format, stream, fragment)
+        } else {
+            self.try_with_fragment_async(format, stream, fragment).await
+        }
+        .map_err(|(_, e)| e)
+    }
+
+    /// Like [`with_fragment`](Self::with_fragment), but on error returns the input
+    /// [`Reader`] back to the caller together with the [`Error`].
+    ///
+    /// # Returns
+    /// `Ok(reader)` with the updated [`Reader`], or `Err((reader, error))` with the
+    /// original, unmodified [`Reader`] handed back.
+    #[async_generic]
+    pub fn try_with_fragment(
         mut self,
         format: &str,
         mut stream: impl Read + Seek + MaybeSend,
         mut fragment: impl Read + Seek + MaybeSend,
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, (Self, Error)> {
         let mut validation_log = StatusTracker::default();
 
-        let store = if _sync {
+        let store_result = if _sync {
             Store::load_fragment_from_stream(
                 format,
                 &mut stream,
@@ -530,13 +621,22 @@ impl Reader {
                 &self.context,
             )
             .await
-        }?;
+        };
+        let store = match store_result {
+            Ok(store) => store,
+            Err(e) => return Err((self, e)),
+        };
 
-        if _sync {
-            self.with_store(store, &mut validation_log)
+        let with_store_result = if _sync {
+            self.with_store(store, &mut validation_log).map(|_| ())
         } else {
-            self.with_store_async(store, &mut validation_log).await
-        }?;
+            self.with_store_async(store, &mut validation_log)
+                .await
+                .map(|_| ())
+        };
+        if let Err(e) = with_store_result {
+            return Err((self, e));
+        }
         Ok(self)
     }
 
