@@ -30,6 +30,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = ["openssl", "default_http"]
 add_thumbnails = ["dep:image"]
+# Experimental Builder action/ingredient filtering API (`Builder::filter_actions`,
+# `Builder::filter_ingredients`, `Ingredient::effective_id`). These are exempt from the crate's
+# usual semantic-versioning stability guarantees and may change or be removed in any release.
+experimental_builder_filter = []
 file_io = []
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
