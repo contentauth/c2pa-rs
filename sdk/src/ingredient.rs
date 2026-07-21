@@ -257,8 +257,10 @@ impl Ingredient {
     ///
     /// This is how the [`Builder`](crate::Builder) keys ingredients when resolving action
     /// `ingredientIds` and emitting positional assertion labels, so any code matching actions to
-    /// ingredients must use the same rule.
-    pub(crate) fn effective_id(&self) -> String {
+    /// ingredients must use the same rule. It is public for exactly that reason: external code
+    /// filtering or matching actions against ingredients must not reimplement (and risk diverging
+    /// from) this rule.
+    pub fn effective_id(&self) -> String {
         self.label()
             .filter(|label| !label.is_empty())
             .map(str::to_string)
