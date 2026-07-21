@@ -457,6 +457,19 @@ impl AsRef<Builder> for Builder {
     }
 }
 
+/// Returns `true` if `child` resolves to a location inside `ancestor`.
+///
+/// Both are canonicalized so symlinks and `.`/`..` segments are resolved; if
+/// canonicalization fails (e.g. a path does not exist) it falls back to a
+/// lexical prefix comparison.
+#[cfg(feature = "file_io")]
+fn path_is_within(child: &Path, ancestor: &Path) -> bool {
+    match (child.canonicalize(), ancestor.canonicalize()) {
+        (Ok(child), Ok(ancestor)) => child.starts_with(ancestor),
+        _ => child.starts_with(ancestor),
+    }
+}
+
 impl Builder {
     /// Creates a new [`Builder`] struct using thread-local settings.
     ///
@@ -735,6 +748,39 @@ impl Builder {
     #[cfg(feature = "file_io")]
     pub fn base_path(&self) -> Option<&Path> {
         self.base_path.as_deref()
+    }
+
+    /// Apply the resource base path and manifest containment root before disk-backed
+    /// resources are read at claim time.
+    ///
+    /// `base_path` is where relative identifiers are resolved from; the containment
+    /// root is the boundary they may not escape (defaults to `base_path`).
+    ///
+    /// Each ingredient is confined to its own base directory, widened to the
+    /// top-level manifest root only when that base lives *inside* the manifest tree.
+    /// This lets a nested ingredient (base is a subdirectory of the manifest dir)
+    /// reference sibling resources via `..`, while an ingredient loaded from an
+    /// unrelated directory (e.g. via `--parent`) stays confined to its own folder
+    /// and is not spuriously allowed to escape — or forced to escape — the manifest
+    /// root.
+    #[cfg(feature = "file_io")]
+    fn apply_resource_base_path(&mut self) {
+        if let Some(base_path) = self.base_path.clone() {
+            self.resources.set_base_path(&base_path);
+            self.resources.set_resource_root(&base_path);
+            for ingredient in self.definition.ingredients.iter_mut() {
+                let ingredient_root = match ingredient.resources().base_path() {
+                    Some(ingredient_base) if path_is_within(ingredient_base, &base_path) => {
+                        base_path.clone()
+                    }
+                    Some(ingredient_base) => ingredient_base.to_path_buf(),
+                    None => base_path.clone(),
+                };
+                ingredient
+                    .resources_mut()
+                    .set_resource_root(ingredient_root);
+            }
+        }
     }
 
     /// Sets the remote_url for this [`Builder`].
@@ -3019,9 +3065,7 @@ impl Builder {
         source.rewind()?;
 
         #[cfg(feature = "file_io")]
-        if let Some(base_path) = &self.base_path {
-            self.resources.set_base_path(base_path);
-        }
+        self.apply_resource_base_path();
 
         self.maybe_add_parent(&format, source)?;
 
@@ -3120,9 +3164,7 @@ impl Builder {
         source.rewind()?;
 
         #[cfg(feature = "file_io")]
-        if let Some(base_path) = &self.base_path {
-            self.resources.set_base_path(base_path);
-        }
+        self.apply_resource_base_path();
 
         self.maybe_add_parent(&format, source)?;
 
