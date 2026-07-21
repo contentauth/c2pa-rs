@@ -54,8 +54,13 @@ struct Base64Bytes(Vec<u8>);
 
 impl Serialize for Base64Bytes {
     fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        s.serialize_str(&format!("b64'{}", base64::encode(&self.0)))
+        s.serialize_str(&b64_str(&self.0))
     }
+}
+
+/// Formats bytes as a crJSON `b64'<base64>'` delimited string.
+fn b64_str(bytes: impl AsRef<[u8]>) -> String {
+    format!("b64'{}'", base64::encode(bytes.as_ref()))
 }
 
 /// A `hashedURIMap` as defined in the crJSON specification: `{ url, hash, alg? }`.
@@ -302,13 +307,14 @@ impl<'a> CrJsonExporter<'a> {
             alg: Some(claim.alg().to_string()),
             alg_soft: claim.alg_soft().map(|s| s.to_string()),
             title: claim.title().map(|s| s.to_string()),
-            redacted_assertions: claim.redactions().and_then(|r| {
-                if r.is_empty() {
-                    None
-                } else {
-                    Some(r.to_vec())
-                }
-            }),
+            redacted_assertions: if is_v1 {
+                claim
+                    .redactions()
+                    .and_then(|r| if r.is_empty() { None } else { Some(r.to_vec()) })
+            } else {
+                // v2: field must always be present, empty array when absent.
+                Some(claim.redactions().map(|r| r.to_vec()).unwrap_or_default())
+            },
             metadata: claim.metadata().and_then(|m| {
                 if m.is_empty() {
                     None
@@ -387,7 +393,7 @@ impl<'a> CrJsonExporter<'a> {
                         key,
                         json!({
                             "identifier": absolute_uri,
-                            "hash": format!("b64'{}", base64::encode(&assertion_ref.hash()))
+                            "hash": b64_str(assertion_ref.hash())
                         }),
                     );
                 }
@@ -429,7 +435,7 @@ impl<'a> CrJsonExporter<'a> {
                 Ok(Some(json!({
                     "format": assertion.content_type(),
                     "identifier": absolute_uri,
-                    "hash": format!("b64'{}", base64::encode(ca.hash()))
+                    "hash": b64_str(ca.hash())
                 })))
             }
             _ => Ok(assertion.as_json_object().ok().map(fix_hash_encoding)),
@@ -676,10 +682,7 @@ fn fix_hash_encoding(value: Value) -> Value {
                                 .iter()
                                 .filter_map(|v| v.as_u64().map(|n| n as u8))
                                 .collect();
-                            map.insert(
-                                field.to_string(),
-                                json!(format!("b64'{}", base64::encode(&bytes))),
-                            );
+                            map.insert(field.to_string(), json!(b64_str(&bytes)));
                         }
                     }
                 }
@@ -687,7 +690,7 @@ fn fix_hash_encoding(value: Value) -> Value {
 
             // Ensure hash-bearing objects also carry a (possibly empty) pad field.
             if map.contains_key("hash") && !map.contains_key("pad") {
-                map.insert("pad".to_string(), json!("b64'"));
+                map.insert("pad".to_string(), json!(b64_str(b"")));
             }
 
             if let Some(sig_val) = map.get("signature") {
@@ -697,9 +700,8 @@ fn fix_hash_encoding(value: Value) -> Value {
                             .iter()
                             .filter_map(|v| v.as_u64().map(|n| n as u8))
                             .collect();
-                        let decoded = decode_cawg_signature(&sig_bytes).unwrap_or_else(|_| {
-                            json!(format!("b64'{}", base64::encode(&sig_bytes)))
-                        });
+                        let decoded = decode_cawg_signature(&sig_bytes)
+                            .unwrap_or_else(|_| json!(b64_str(&sig_bytes)));
                         map.insert("signature".to_string(), decoded);
                     }
                 }
@@ -836,6 +838,16 @@ mod tests {
     use crate::{reader::Reader, validation_results::ValidationState};
 
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+
+    #[test]
+    fn test_base64_bytes_delimited() {
+        let value = serde_json::to_value(Base64Bytes(vec![0, 1, 2, 3])).unwrap();
+        let s = value.as_str().unwrap();
+        assert!(
+            s.starts_with("b64'") && s.ends_with('\''),
+            "b64 string must be delimited on both sides, got {s}"
+        );
+    }
 
     #[test]
     fn test_jpeg_trust_reader_from_stream() -> Result<()> {

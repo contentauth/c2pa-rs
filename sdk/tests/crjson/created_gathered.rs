@@ -106,6 +106,15 @@ fn test_created_and_gathered_assertions_separated() -> Result<()> {
         created_assertions.len()
     );
 
+    // redacted_assertions must be present as an empty array when absent (crJSON spec).
+    let redacted_assertions = claim_v2["redacted_assertions"]
+        .as_array()
+        .expect("redacted_assertions should be present as an array");
+    assert!(
+        redacted_assertions.is_empty(),
+        "redacted_assertions should be empty when no assertions are redacted"
+    );
+
     // Find the created assertion - should be in created_assertions
     let has_created_ref = created_assertions.iter().any(|assertion_ref| {
         if let Some(url) = assertion_ref.get("url") {
