@@ -959,6 +959,24 @@ impl Builder {
         let action_value = serde_json::to_value(action)?;
         let action: Action = serde_json::from_value(action_value).map_err(Error::JsonError)?;
 
+        // If an Actions assertion was already added directly to pre_claim (e.g. via
+        // `add_assertion_with_ref`), merge into it in place instead of pushing a second
+        // Actions assertion onto `definition.assertions` — `to_claim()` would sign both,
+        // producing a duplicate `c2pa.actions` assertion.
+        if let Some(pre) = self.pre_claim.as_mut() {
+            let existing = pre.claim_assertion_store().iter().find(|ca| {
+                let label = ca.label_raw();
+                let (match_label, _version, _instance) = parse_label(&label);
+                match_label.starts_with(Actions::LABEL)
+            });
+            if let Some(ca) = existing {
+                let mut actions = Actions::from_assertion(ca.assertion())?;
+                actions = actions.add_action(action);
+                pre.replace_assertion(actions.to_assertion()?)?;
+                return Ok(self);
+            }
+        }
+
         // if an actions assertion already exists, we will append to it
         // if not, we will create a new one
         let (actions, original_label) = if let Some(pos) = self
@@ -2268,6 +2286,18 @@ impl Builder {
         );
         // Don't auto-add a parentOf ingredient if the user's manifest already declares a
         // c2pa.created or c2pa.opened action — those are mutually exclusive with auto-parent.
+        // An Actions assertion may live in `definition.assertions` (added via `add_action`/
+        // `add_assertion`) or directly in `pre_claim` (added via `add_assertion_with_ref`), so
+        // both are checked.
+        fn actions_has_created_or_opened(actions: &crate::assertions::Actions) -> bool {
+            actions.actions().iter().any(|act| {
+                matches!(
+                    act.action(),
+                    crate::assertions::c2pa_action::CREATED
+                        | crate::assertions::c2pa_action::OPENED
+                )
+            })
+        }
         let has_created_or_opened = self.definition.assertions.iter().any(|a| {
             if !a.label.starts_with(crate::assertions::Actions::LABEL) {
                 return false;
@@ -2275,12 +2305,16 @@ impl Builder {
             let Ok(actions) = a.to_assertion::<crate::assertions::Actions>() else {
                 return false;
             };
-            actions.actions().iter().any(|act| {
-                matches!(
-                    act.action(),
-                    crate::assertions::c2pa_action::CREATED
-                        | crate::assertions::c2pa_action::OPENED
-                )
+            actions_has_created_or_opened(&actions)
+        }) || self.pre_claim.as_ref().is_some_and(|pre| {
+            pre.claim_assertion_store().iter().any(|ca| {
+                let label = ca.label_raw();
+                let (match_label, _version, _instance) = parse_label(&label);
+                if !match_label.starts_with(crate::assertions::Actions::LABEL) {
+                    return false;
+                }
+                crate::assertions::Actions::from_assertion(ca.assertion())
+                    .is_ok_and(|actions| actions_has_created_or_opened(&actions))
             })
         });
         if auto_parent
@@ -10243,7 +10277,7 @@ mod tests {
         // Build Actions: software agent carries the icon; opened action references the ingredient.
         let agent_cgi = ClaimGeneratorInfo {
             name: "TestEditor".to_string(),
-            icon: Some(UriOrResource::HashedUri(icon_uri)),
+            icon: Some(UriOrResource::HashedUri(icon_uri.clone())),
             ..Default::default()
         };
 
@@ -10302,6 +10336,14 @@ mod tests {
             params.ingredients.is_some(),
             "opened action should reference the ingredient"
         );
+
+        let agent = found_actions
+            .software_agents()
+            .as_ref()
+            .unwrap()
+            .first()
+            .expect("software agent");
+        assert_eq!(agent.icon(), Some(&UriOrResource::HashedUri(icon_uri)));
     }
 
     /// When an Actions assertion is added directly via `add_assertion_with_ref` (the
@@ -10370,6 +10412,97 @@ mod tests {
             .expect("actions assertion in manifest");
         assert_eq!(found_actions.actions().len(), 1);
         assert_eq!(found_actions.actions()[0].action(), c2pa_action::CREATED);
+    }
+
+    /// `add_action()` must merge into an Actions assertion that already lives in `pre_claim`
+    /// (added via `add_assertion_with_ref`) rather than pushing a second Actions assertion onto
+    /// `definition.assertions` — the latter would sign as a duplicate `c2pa.actions` assertion.
+    #[test]
+    fn test_add_action_merges_into_pre_claim_actions_assertion() {
+        use crate::assertions::{c2pa_action, Action, Actions, DigitalSourceType};
+
+        let mut builder = Builder::default();
+
+        let actions = Actions::new().add_action(
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty),
+        );
+        builder
+            .add_assertion_with_ref(&actions)
+            .expect("actions assertion");
+
+        builder
+            .add_action(Action::new(c2pa_action::EDITED))
+            .expect("add_action");
+
+        // add_action must not have pushed a second Actions assertion onto definition.assertions.
+        assert!(
+            !builder
+                .definition
+                .assertions
+                .iter()
+                .any(|a| a.label().starts_with(Actions::LABEL)),
+            "add_action should have merged into pre_claim, not definition.assertions"
+        );
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut output,
+            )
+            .expect("sign");
+
+        output.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+        let manifest = reader.active_manifest().expect("active manifest");
+
+        assert_eq!(
+            manifest
+                .assertions()
+                .iter()
+                .filter(|a| a.label().starts_with(Actions::LABEL))
+                .count(),
+            1,
+            "expected exactly one Actions assertion, found a duplicate"
+        );
+
+        let found_actions: Actions = manifest
+            .find_assertion(Actions::LABEL)
+            .expect("actions assertion in manifest");
+        assert_eq!(found_actions.actions().len(), 2);
+        assert_eq!(found_actions.actions()[0].action(), c2pa_action::CREATED);
+        assert_eq!(found_actions.actions()[1].action(), c2pa_action::EDITED);
+    }
+
+    /// `maybe_add_parent()` must also recognize a c2pa.opened/created action that lives only in
+    /// `pre_claim` (added via `add_assertion_with_ref`) so it doesn't auto-add a conflicting
+    /// parentOf ingredient on top of the caller's own opened action.
+    #[test]
+    fn test_maybe_add_parent_skips_auto_parent_for_pre_claim_opened_action() {
+        use crate::assertions::{c2pa_action, Action, Actions};
+
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+
+        let actions = Actions::new().add_action(Action::new(c2pa_action::OPENED));
+        builder
+            .add_assertion_with_ref(&actions)
+            .expect("actions assertion");
+
+        let mut source = Cursor::new(TEST_IMAGE);
+        builder
+            .maybe_add_parent("image/jpeg", &mut source)
+            .expect("maybe_add_parent");
+
+        assert!(
+            builder.definition.ingredients.is_empty(),
+            "should not auto-add a parent ingredient when pre_claim already has an opened action"
+        );
     }
 
     // Ensures that the future returned by `Builder::sign_async` implements `Send`, thus making it
