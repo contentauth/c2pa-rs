@@ -95,6 +95,36 @@ jobs:
       - name: List artifacts
         run: ls -lh dist
 
+      # Generate the release notes ourselves, scoped to the previous tag of THIS
+      # crate. Tags are repo-global and interleaved across crates (c2pa-v*,
+      # c2patool-v*, c2pa-c-ffi-v*), and GitHub's automatic "previous tag" is the
+      # chronologically previous tag regardless of crate, producing nonsense
+      # ranges. Picking the previous same-crate tag keeps the changelog within
+      # this crate's history.
+      - name: Generate release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          PREFIX="c2patool-v"
+          repo="${{ github.repository }}"
+          matching=$(gh api --paginate "repos/$repo/git/matching-refs/tags/$PREFIX" \
+                       --jq '.[].ref' | sed 's#refs/tags/##')
+          sorted=$(printf '%s\n%s\n' "$matching" "$TAG" | sort -V -u)
+          prev=$(printf '%s\n' "$sorted" | { grep -F -x -B1 -- "$TAG" || true; } | head -n1)
+          [ "$prev" = "$TAG" ] && prev=""
+          if [ -n "$prev" ]; then
+            echo "Previous $PREFIX tag: $prev"
+            gh api "repos/$repo/releases/generate-notes" \
+              -f tag_name="$TAG" -f previous_tag_name="$prev" --jq .body > release-notes.md
+          else
+            echo "No previous $PREFIX tag; letting GitHub choose the range."
+            gh api "repos/$repo/releases/generate-notes" \
+              -f tag_name="$TAG" --jq .body > release-notes.md
+          fi
+          echo "----- release notes -----"; cat release-notes.md
+
       # Creates the release if it does not exist yet (the release-candidate
       # case, where release-plz never ran) and updates it in place otherwise
       # (the promotion case, where release-plz already opened the release). A
@@ -103,9 +133,10 @@ jobs:
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           tag_name: ${{ github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          body_path: release-notes.md
           files: dist/*
           draft: false
           prerelease: ${{ contains(github.ref_name, '-rc.') }}
-          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

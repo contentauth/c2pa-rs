@@ -26,7 +26,7 @@ use {
     crate::utils::path_utils::sanitize_archive_path,
     std::{
         fs::{create_dir_all, read, write},
-        path::{Path, PathBuf},
+        path::{Component, Path, PathBuf},
     },
 };
 
@@ -161,6 +161,17 @@ pub struct ResourceStore {
     #[cfg(feature = "file_io")]
     #[serde(skip_serializing_if = "Option::is_none")]
     base_path: Option<PathBuf>,
+    /// Directory that disk-backed resources must resolve within.
+    ///
+    /// Relative identifiers (including `..`) are resolved against
+    /// [`base_path`](Self::base_path) but the final path is confined to this
+    /// root, so an attacker-supplied identifier cannot escape the manifest tree
+    /// to read arbitrary files. When unset it defaults to `base_path`. Never
+    /// serialized — it is a runtime security boundary set by the caller, never
+    /// taken from (untrusted) manifest/archive data.
+    #[cfg(feature = "file_io")]
+    #[serde(skip)]
+    resource_root: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
     /// Optional resolver that can look up resource bytes by URI from an external source
@@ -211,6 +222,8 @@ impl ResourceStore {
             resources: HashMap::new(),
             #[cfg(feature = "file_io")]
             base_path: None,
+            #[cfg(feature = "file_io")]
+            resource_root: None,
             label: None,
             resolver: None,
         }
@@ -267,6 +280,18 @@ impl ResourceStore {
     /// Returns and removes the base path.
     pub fn take_base_path(&mut self) -> Option<PathBuf> {
         self.base_path.take()
+    }
+
+    #[cfg(feature = "file_io")]
+    /// Sets the containment root that disk-backed resources must resolve within.
+    ///
+    /// Relative identifiers are still resolved against [`base_path`](Self::base_path),
+    /// but the resolved path may not escape this root. Set this to the top-level
+    /// manifest directory so a nested ingredient (whose `base_path` is a
+    /// subdirectory) can still reference sibling resources via `..` while
+    /// attacker-supplied traversal that escapes the manifest tree is rejected.
+    pub fn set_resource_root<P: Into<PathBuf>>(&mut self, resource_root: P) {
+        self.resource_root = Some(resource_root.into());
     }
 
     /// Generates a unique ID for a given content type (adds a file extension).
@@ -335,11 +360,18 @@ impl ResourceStore {
         if !self.resources.contains_key(id) {
             match self.base_path.as_ref() {
                 Some(base) => {
+                    // Confine the identifier to the manifest root (defaults to
+                    // base_path). Relative `..` is allowed as long as it stays
+                    // within the manifest tree; absolute paths, escapes, and
+                    // escaping symlinks are rejected. Prevents attacker-supplied
+                    // manifest definitions from exfiltrating files outside the
+                    // manifest directory.
+                    let root = self.resource_root.as_deref().unwrap_or(base);
+                    let path = resolve_within_root(base, root, id)
+                        .map_err(|_| Error::ResourceNotFound(id.to_string()))?;
                     // read the file, save in Map and then return a reference
-                    let path = base.join(id);
-                    let value = read(path).map_err(|_| {
-                        let path = base.join(id).to_string_lossy().into_owned();
-                        Error::ResourceNotFound(path)
+                    let value = read(&path).map_err(|_| {
+                        Error::ResourceNotFound(path.to_string_lossy().into_owned())
                     })?;
                     return Ok(Cow::Owned(value));
                 }
@@ -373,8 +405,11 @@ impl ResourceStore {
         if !self.resources.contains_key(id) {
             match self.base_path.as_ref() {
                 Some(base) => {
+                    // Confine the identifier to the manifest root (see get()).
+                    let root = self.resource_root.as_deref().unwrap_or(base);
+                    let path = resolve_within_root(base, root, id)
+                        .map_err(|_| Error::ResourceNotFound(id.to_string()))?;
                     // read from, the file to stream
-                    let path = base.join(id);
                     let mut file = std::fs::File::open(path)?;
                     return std::io::copy(&mut file, &mut stream).map_err(Error::IoError);
                 }
@@ -405,21 +440,26 @@ impl ResourceStore {
     }
 
     /// Returns `true` if the resource has been added or exists as a file or in the resolver.
-    pub fn exists(&self, id: &str) -> bool {
-        if self.resources.contains_key(id) {
+    pub fn exists(&self, path: &str) -> bool {
+        if self.resources.contains_key(path) {
             return true;
         }
 
         #[cfg(feature = "file_io")]
         if let Some(base) = self.base_path.as_ref() {
-            let path = base.join(id);
-            if path.exists() {
-                return true;
+            // Skip disk probes for identifiers that would escape the manifest
+            // root — a hostile id like `../../etc/passwd`, or a symlink pointing
+            // outside the manifest tree, must not leak existence via this API.
+            let root = self.resource_root.as_deref().unwrap_or(base);
+            if let Ok(resolved) = resolve_within_root(base, root, path) {
+                if resolved.exists() {
+                    return true;
+                }
             }
         }
 
         if let Some(resolver) = &self.resolver {
-            if resolver.has(id) {
+            if resolver.has(path) {
                 return true;
             }
         }
@@ -442,7 +482,9 @@ impl ResourceStore {
     #[cfg(feature = "file_io")]
     // Returns the full path for an ID.
     pub fn path_for_id(&self, id: &str) -> Option<PathBuf> {
-        self.base_path.as_ref().map(|base| base.join(id))
+        let base = self.base_path.as_ref()?;
+        let root = self.resource_root.as_deref().unwrap_or(base);
+        resolve_within_root(base, root, id).ok()
     }
 }
 
@@ -450,6 +492,100 @@ impl Default for ResourceStore {
     fn default() -> Self {
         ResourceStore::new()
     }
+}
+
+/// Lexically normalize a path by resolving `.` and `..` components without
+/// touching the filesystem.
+///
+/// Leading `..` components that cannot be popped (they would climb above the
+/// path's start, or the path is rooted) are preserved so that an escape above a
+/// relative base remains detectable by a later `starts_with` check.
+#[cfg(feature = "file_io")]
+fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match out.components().next_back() {
+                // Pop a preceding normal segment.
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                // Cannot climb above a filesystem/drive root: drop the `..`.
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                // Nothing to pop (empty, or tail is already `..`): keep it so the
+                // escape stays visible.
+                _ => out.push(".."),
+            },
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Resolve a resource `path` (an attacker-influenced identifier) against `base`,
+/// confining the result to `root` (the manifest tree). Returns the resolved
+/// path, or an error if the identifier would escape `root`.
+///
+/// Relative identifiers — including `..` — are permitted: a nested ingredient
+/// (whose `base` is a subdirectory) may reference sibling resources one or more
+/// levels up, as long as the resolved path stays inside `root`. What is rejected
+/// is anything that escapes `root`:
+///
+/// 1. Backslashes and absolute paths are refused up front. Archives are
+///    portable, so a Windows-authored `\` separator would otherwise be treated
+///    as a filename on Linux; absolute identifiers are never legitimate.
+/// 2. Lexical containment: `base.join(path)` is normalized (resolving `.`/`..`
+///    without filesystem access) and must remain within the normalized `root`.
+///    This catches escapes even when the target does not exist.
+/// 3. Symlink containment: if the resolved target exists, it is canonicalized
+///    (following symlinks) and re-checked against the canonicalized `root`. A
+///    hostile bundle could ship an innocuously-named symlink pointing outside
+///    the manifest tree; lexical checks alone would not catch that. Both sides
+///    are canonicalized so a legitimately symlinked `root` (e.g. `/tmp` ->
+///    `/private/tmp` on macOS) is not falsely rejected.
+///
+/// A non-existent target passes step 3 (nothing to canonicalize) and is returned
+/// as the joined path; the caller's own read/open then surfaces the not-found
+/// error.
+#[cfg(feature = "file_io")]
+fn resolve_within_root(base: &Path, root: &Path, path: &str) -> Result<PathBuf> {
+    if path.is_empty() {
+        return Err(Error::BadParam(
+            "Empty resource path not allowed".to_string(),
+        ));
+    }
+    if path.contains('\\') {
+        return Err(Error::BadParam(format!(
+            "Backslash not allowed in resource path: {path}"
+        )));
+    }
+    if Path::new(path).is_absolute() {
+        return Err(Error::BadParam(format!(
+            "Absolute resource path not allowed: {path}"
+        )));
+    }
+
+    let joined = base.join(path);
+
+    // Lexical containment (works whether or not the target exists).
+    if !normalize_lexically(&joined).starts_with(normalize_lexically(root)) {
+        return Err(Error::BadParam(format!(
+            "Resource path escapes manifest root: {path}"
+        )));
+    }
+
+    // Symlink containment for targets that exist.
+    if let Ok(canonical_target) = joined.canonicalize() {
+        let canonical_root = root.canonicalize()?;
+        if !canonical_target.starts_with(&canonical_root) {
+            return Err(Error::BadParam(format!(
+                "Resource path escapes manifest root: {path}"
+            )));
+        }
+    }
+
+    Ok(joined)
 }
 
 pub trait ResourceResolver {
@@ -473,9 +609,7 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::{
-        crypto::raw_signature::SigningAlg, utils::test_signer::test_signer, Builder, Reader,
-    };
+    use crate::{utils::test_signer::test_signer, Builder, Reader, SigningAlg};
 
     #[test]
     fn resource_store() {
@@ -617,6 +751,364 @@ mod tests {
 
             let result = store.add("..\\..\\etc\\passwd", b"attacker data".to_vec());
             assert!(result.is_err());
+        }
+
+        // Regression: an attacker-supplied manifest.json with an ingredient
+        // `data.identifier` containing a traversal payload must not read files
+        // outside base_path (the manifest directory) when Builder::sign reaches
+        // ResourceStore::get on the disk-fallback path.
+        #[test]
+        fn get_with_base_path_rejects_parent_dir_traversal() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            // A "secret" file outside the manifest dir the attacker wants to exfiltrate.
+            let secret = temp.path().join("secret.txt");
+            std::fs::write(&secret, b"SUPER SECRET").unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let result = store.get("../secret.txt");
+            assert!(
+                matches!(result, Err(Error::ResourceNotFound(_))),
+                "expected ResourceNotFound, got {result:?}"
+            );
+        }
+
+        #[test]
+        fn get_with_base_path_rejects_absolute_path() {
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            let result = store.get("/etc/passwd");
+            assert!(matches!(result, Err(Error::ResourceNotFound(_))));
+        }
+
+        #[test]
+        fn get_with_base_path_rejects_backslash_traversal() {
+            // A Windows-style backslash traversal must be blocked on all platforms —
+            // on Linux it would otherwise be joined verbatim into a filename lookup
+            // relative to base_path, but a malicious manifest with `..\` intent must
+            // never reach disk regardless of host separator conventions.
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            let result = store.get("..\\secrets\\password.txt");
+            assert!(matches!(result, Err(Error::ResourceNotFound(_))));
+        }
+
+        #[test]
+        fn get_with_base_path_accepts_normal_resource() {
+            let temp = tempdir().unwrap();
+            std::fs::write(temp.path().join("thumb.jpg"), b"image data").unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            let data = store.get("thumb.jpg").expect("get should succeed");
+            assert_eq!(data.as_slice(), b"image data");
+        }
+
+        #[test]
+        fn write_stream_with_base_path_rejects_parent_dir_traversal() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            std::fs::write(temp.path().join("secret.txt"), b"SUPER SECRET").unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let mut out = std::io::Cursor::new(Vec::<u8>::new());
+            let result = store.write_stream("../secret.txt", &mut out);
+            assert!(matches!(result, Err(Error::ResourceNotFound(_))));
+            assert!(out.get_ref().is_empty());
+        }
+
+        #[test]
+        fn exists_with_base_path_rejects_parent_dir_traversal() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            std::fs::write(temp.path().join("secret.txt"), b"SUPER SECRET").unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            assert!(!store.exists("../secret.txt"));
+            assert!(!store.exists("..\\secret.txt"));
+            assert!(!store.exists("/etc/passwd"));
+        }
+
+        #[test]
+        fn path_for_id_rejects_traversal() {
+            let temp = tempdir().unwrap();
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            assert!(store.path_for_id("../secret.txt").is_none());
+            assert!(store.path_for_id("..\\secret.txt").is_none());
+            assert!(store.path_for_id("/etc/passwd").is_none());
+            assert!(store.path_for_id("thumb.jpg").is_some());
+        }
+
+        // A legitimate nested resource (e.g. `resources/thumb.jpg`) must still be
+        // readable — sanitization must not over-block ordinary subdirectories.
+        #[test]
+        fn get_with_base_path_accepts_nested_resource() {
+            let temp = tempdir().unwrap();
+            std::fs::create_dir_all(temp.path().join("resources/thumbs")).unwrap();
+            std::fs::write(
+                temp.path().join("resources/thumbs/thumb.jpg"),
+                b"nested image data",
+            )
+            .unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(temp.path().to_path_buf());
+
+            let data = store
+                .get("resources/thumbs/thumb.jpg")
+                .expect("nested get should succeed");
+            assert_eq!(data.as_slice(), b"nested image data");
+        }
+
+        // A `..` buried inside an otherwise-legitimate nested path must be caught
+        // (the whole path is rejected, not just a leading `..`).
+        #[test]
+        fn get_with_base_path_rejects_nested_traversal() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(base.join("resources")).unwrap();
+            std::fs::write(temp.path().join("secret.txt"), b"SUPER SECRET").unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let result = store.get("resources/../../secret.txt");
+            assert!(
+                matches!(result, Err(Error::ResourceNotFound(_))),
+                "expected ResourceNotFound, got {result:?}"
+            );
+        }
+
+        // Symlink defense-in-depth: a symlink planted inside base_path (e.g. by
+        // an extracted manifest bundle) that points to a file *outside* base_path
+        // must not be read, even though its name contains no traversal sequence.
+        #[cfg(unix)]
+        #[test]
+        fn get_with_base_path_rejects_escaping_symlink() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            let secret = temp.path().join("secret.txt");
+            std::fs::write(&secret, b"SUPER SECRET").unwrap();
+            // An innocuously-named link inside base_path pointing outside it.
+            std::os::unix::fs::symlink(&secret, base.join("thumb.jpg")).unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let result = store.get("thumb.jpg");
+            assert!(
+                matches!(result, Err(Error::ResourceNotFound(_))),
+                "escaping symlink must not be readable, got {result:?}"
+            );
+        }
+
+        // The containment check follows symlinks but only rejects those that
+        // escape base_path — a symlink pointing at a sibling *inside* base_path
+        // is still a valid resource and must resolve.
+        #[cfg(unix)]
+        #[test]
+        fn get_with_base_path_allows_internal_symlink() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            std::fs::write(base.join("real.jpg"), b"image data").unwrap();
+            std::os::unix::fs::symlink(base.join("real.jpg"), base.join("alias.jpg")).unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let data = store
+                .get("alias.jpg")
+                .expect("in-directory symlink should resolve");
+            assert_eq!(data.as_slice(), b"image data");
+        }
+
+        // `exists` must not confirm the presence of an escaping-symlink target.
+        #[cfg(unix)]
+        #[test]
+        fn exists_with_base_path_rejects_escaping_symlink() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            let secret = temp.path().join("secret.txt");
+            std::fs::write(&secret, b"SUPER SECRET").unwrap();
+            std::os::unix::fs::symlink(&secret, base.join("thumb.jpg")).unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            assert!(!store.exists("thumb.jpg"));
+        }
+
+        // `write_stream` must not stream out the contents of an escaping symlink.
+        #[cfg(unix)]
+        #[test]
+        fn write_stream_with_base_path_rejects_escaping_symlink() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            let secret = temp.path().join("secret.txt");
+            std::fs::write(&secret, b"SUPER SECRET").unwrap();
+            std::os::unix::fs::symlink(&secret, base.join("thumb.jpg")).unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let mut out = std::io::Cursor::new(Vec::<u8>::new());
+            let result = store.write_stream("thumb.jpg", &mut out);
+            assert!(matches!(result, Err(Error::ResourceNotFound(_))));
+            assert!(out.get_ref().is_empty());
+        }
+
+        // Windows equivalents of the symlink tests above. The containment fix is
+        // cross-platform (Path::canonicalize resolves symlinks on Windows too),
+        // but creating a symlink on Windows requires Administrator rights or
+        // Developer Mode, which unprivileged CI runners lack. These tests skip
+        // (rather than fail) when symlink creation is not permitted.
+        #[cfg(windows)]
+        #[test]
+        fn get_with_base_path_rejects_escaping_symlink_windows() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            let secret = temp.path().join("secret.txt");
+            std::fs::write(&secret, b"SUPER SECRET").unwrap();
+            // An innocuously-named link inside base_path pointing outside it.
+            if std::os::windows::fs::symlink_file(&secret, base.join("thumb.jpg")).is_err() {
+                return; // no symlink privilege on this runner
+            }
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let result = store.get("thumb.jpg");
+            assert!(
+                matches!(result, Err(Error::ResourceNotFound(_))),
+                "escaping symlink must not be readable, got {result:?}"
+            );
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn get_with_base_path_allows_internal_symlink_windows() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            std::fs::write(base.join("real.jpg"), b"image data").unwrap();
+            if std::os::windows::fs::symlink_file(base.join("real.jpg"), base.join("alias.jpg"))
+                .is_err()
+            {
+                return; // no symlink privilege on this runner
+            }
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let data = store
+                .get("alias.jpg")
+                .expect("in-directory symlink should resolve");
+            assert_eq!(data.as_slice(), b"image data");
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn exists_with_base_path_rejects_escaping_symlink_windows() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            let secret = temp.path().join("secret.txt");
+            std::fs::write(&secret, b"SUPER SECRET").unwrap();
+            if std::os::windows::fs::symlink_file(&secret, base.join("thumb.jpg")).is_err() {
+                return; // no symlink privilege on this runner
+            }
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            assert!(!store.exists("thumb.jpg"));
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn write_stream_with_base_path_rejects_escaping_symlink_windows() {
+            let temp = tempdir().unwrap();
+            let base = temp.path().join("manifest_dir");
+            std::fs::create_dir_all(&base).unwrap();
+            let secret = temp.path().join("secret.txt");
+            std::fs::write(&secret, b"SUPER SECRET").unwrap();
+            if std::os::windows::fs::symlink_file(&secret, base.join("thumb.jpg")).is_err() {
+                return; // no symlink privilege on this runner
+            }
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(base);
+
+            let mut out = std::io::Cursor::new(Vec::<u8>::new());
+            let result = store.write_stream("thumb.jpg", &mut out);
+            assert!(matches!(result, Err(Error::ResourceNotFound(_))));
+            assert!(out.get_ref().is_empty());
+        }
+
+        // Regression for the nested-ingredient case (c2patool ingredient_paths):
+        // a store whose base_path is a subdirectory of the manifest root may
+        // reference a sibling resource one level up via `..`, as long as the
+        // resolved path stays within the manifest root.
+        #[test]
+        fn get_with_resource_root_allows_parent_relative_within_root() {
+            let temp = tempdir().unwrap();
+            let root = temp.path().join("manifest");
+            let ingredient_dir = root.join("ingredient");
+            std::fs::create_dir_all(&ingredient_dir).unwrap();
+            // Sibling resource lives in the manifest root, referenced from the
+            // ingredient subdirectory as `../thumb.png`.
+            std::fs::write(root.join("thumb.png"), b"thumb data").unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(&ingredient_dir);
+            store.set_resource_root(&root);
+
+            let data = store
+                .get("../thumb.png")
+                .expect("parent-relative resource within root should resolve");
+            assert_eq!(data.as_slice(), b"thumb data");
+        }
+
+        // But `..` may not climb above the manifest root, even from a nested base.
+        #[test]
+        fn get_with_resource_root_rejects_escape_beyond_root() {
+            let temp = tempdir().unwrap();
+            let root = temp.path().join("manifest");
+            let ingredient_dir = root.join("ingredient");
+            std::fs::create_dir_all(&ingredient_dir).unwrap();
+            // Secret lives outside the manifest root entirely.
+            std::fs::write(temp.path().join("secret.txt"), b"SUPER SECRET").unwrap();
+
+            let mut store = ResourceStore::new();
+            store.set_base_path(&ingredient_dir);
+            store.set_resource_root(&root);
+
+            // `ingredient/../../secret.txt` -> temp/secret.txt, outside the root.
+            let result = store.get("../../secret.txt");
+            assert!(
+                matches!(result, Err(Error::ResourceNotFound(_))),
+                "escape above manifest root must be rejected, got {result:?}"
+            );
         }
     }
 }
