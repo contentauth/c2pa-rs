@@ -115,6 +115,69 @@ fn timestamp_assertion_parent_scope() {
         .is_some());
 }
 
+// Regression test for #2143: signing the parent via `save_to_stream` (which uses
+// the context signer) must add timestamp assertions just like `sign()` does.
+#[test]
+fn timestamp_assertion_save_to_stream() {
+    let base_settings = test_settings();
+    let child_context = Context::new().with_settings(base_settings).unwrap();
+
+    let mut child_image = Cursor::new(Vec::new());
+
+    let mut builder = Builder::from_context(child_context);
+    builder
+        .sign(
+            &WrappedTsaSigner(Box::new(common::test_signer())),
+            FORMAT,
+            &mut Cursor::new(TEST_IMAGE),
+            &mut child_image,
+        )
+        .unwrap();
+
+    let mut parent_settings = test_settings();
+    parent_settings
+        .update_from_str(
+            &toml::toml! {
+                [builder.auto_timestamp_assertion]
+                enabled = true
+                skip_existing = false
+                fetch_scope = "parent"
+            }
+            .to_string(),
+            "toml",
+        )
+        .unwrap();
+
+    child_image.rewind().unwrap();
+
+    let mut parent_image = Cursor::new(Vec::new());
+
+    // The context signer from test_settings has a `tsa_url`, so save_to_stream
+    // has everything needed to timestamp the child ingredient.
+    let parent_context = Context::new().with_settings(parent_settings).unwrap();
+    let mut builder = Builder::from_context(parent_context);
+    builder.set_intent(BuilderIntent::Update);
+    builder
+        .save_to_stream(FORMAT, &mut child_image, &mut parent_image)
+        .unwrap();
+
+    parent_image.rewind().unwrap();
+
+    let reader = Reader::default().with_stream(FORMAT, parent_image).unwrap();
+    let timestamp_assertion: TimeStamp = reader
+        .active_manifest()
+        .unwrap()
+        .find_assertion(assertions::labels::TIMESTAMP)
+        .unwrap();
+
+    let child_manifest_label = reader.active_manifest().unwrap().ingredients()[0]
+        .active_manifest()
+        .unwrap();
+    assert!(timestamp_assertion
+        .get_timestamp(child_manifest_label)
+        .is_some());
+}
+
 // Sign a manifest with a child ingredient and add all manifests (excluding active)
 // as a timestamp assertion in the main manifest.
 #[test]
