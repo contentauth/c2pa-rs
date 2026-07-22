@@ -406,7 +406,7 @@ macro_rules! untrack_or_return_null {
 /// Used when a function accepts a tracked pointer, consumes it, and returns a new tracked pointer.
 /// Untrack a tracked pointer, take ownership, apply a fallible consuming operation,
 /// and re-track the result — or early-return with a custom error value.
-/// # Examples
+/// # Ex
 /// ```rust,ignore
 /// consume_or_return!(
 ///     reader,
