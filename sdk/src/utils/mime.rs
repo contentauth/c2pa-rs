@@ -44,6 +44,17 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
         "arw" => "image/x-sony-arw",
         "nef" => "image/x-nikon-nef",
         "c2pa" | "application/x-c2pa-manifest-store" | "application/c2pa" => "application/c2pa",
+        "md" | "markdown" => "text/markdown",
+        "yaml" | "yml" => "application/yaml",
+        "toml" => "application/toml",
+        "css" => "text/css",
+        "js" | "mjs" => "text/javascript",
+        "py" => "text/x-python",
+        "sql" => "application/sql",
+        "tex" => "application/x-tex",
+        "vtt" => "text/vtt",
+        "rss" => "application/rss+xml",
+        "atom" => "application/atom+xml",
         _ => return None,
     })
 }

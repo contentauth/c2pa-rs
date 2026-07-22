@@ -4544,6 +4544,81 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "text")]
+    fn test_builder_sign_structured_text() {
+        let cases: &[(&str, &[u8])] = &[
+            ("text/markdown", b"# Title\n\nStructured-text body.\n"),
+            ("application/yaml", b"title: Example\nvalue: 1\n"),
+            ("application/toml", b"title = \"Example\"\n"),
+        ];
+
+        for (format, content) in cases {
+            let mut source = Cursor::new(content.to_vec());
+            let mut dest = Cursor::new(Vec::new());
+
+            let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+            builder
+                .add_ingredient_from_stream(parent_json(), format, &mut source)
+                .unwrap();
+            builder
+                .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+                .unwrap();
+
+            let signer = test_signer(SigningAlg::Ps256);
+            builder
+                .sign(signer.as_ref(), format, &mut source, &mut dest)
+                .unwrap();
+
+            dest.rewind().unwrap();
+            let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
+            assert_eq!(
+                manifest_store.validation_state(),
+                ValidationState::Trusted,
+                "signed {format} did not validate as Trusted"
+            );
+            assert_eq!(
+                manifest_store.active_manifest().unwrap().title().unwrap(),
+                "Test_Manifest"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "text")]
+    fn test_tampered_structured_text_fails_validation() {
+        let mut source = Cursor::new(b"# Doc\n\nOriginal TAMPER_ME body.\n".to_vec());
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "text/markdown", &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "text/markdown", &mut source, &mut dest)
+            .unwrap();
+
+        // Same-length replacement keeps byte offsets (and the manifest block)
+        // stable, so only the visible content changes.
+        let signed = String::from_utf8(dest.into_inner()).unwrap();
+        let tampered = signed.replace("TAMPER_ME", "tampered!");
+        assert_ne!(tampered, signed, "replacement must change the bytes");
+
+        let mut tampered_stream = Cursor::new(tampered.into_bytes());
+        let manifest_store = Reader::default()
+            .with_stream("text/markdown", &mut tampered_stream)
+            .unwrap();
+        assert_ne!(
+            manifest_store.validation_state(),
+            ValidationState::Trusted,
+            "tampered structured text must not validate as Trusted"
+        );
+    }
+
+    #[test]
     #[cfg(feature = "file_io")]
     fn test_builder_sign_assets() {
         const TESTFILES: &[&str] = &[
