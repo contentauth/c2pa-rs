@@ -403,6 +403,46 @@ macro_rules! untrack_or_return_null {
     }};
 }
 
+/// Used when a function accepts a tracked pointer, consumes it, and returns a new tracked pointer.
+/// Untrack a tracked pointer, take ownership, apply a fallible consuming operation,
+/// and re-track the result — or early-return with a custom error value.
+/// # Examples
+/// ```rust,ignore
+/// consume_or_return!(
+///     reader,
+///     C2paReader,
+///     |reader: C2paReader| reader.with_fragment(&format, stream, fragment),
+///     std::ptr::null_mut()
+/// )
+/// ```
+///
+/// On `Err`, the boxed value is dropped via Rust's ordinary `Drop` — the pointer
+/// was already removed from the registry by the untrack step, so no explicit free call
+/// is needed (or correct: the pointer is no longer tracked, so `cimpl_free` would just
+/// report an error) at that point.
+#[macro_export]
+macro_rules! consume_or_return {
+    ($ptr:expr, $type:ty, $op:expr, $err_val:expr) => {{
+        $crate::untrack_or_return!($ptr, $type, $err_val);
+        let boxed = Box::from_raw($ptr);
+        match ($op)(*boxed) {
+            Ok(value) => $crate::box_tracked!(value),
+            Err(e) => {
+                $crate::CimplError::from(e).set_last();
+                return $err_val;
+            }
+        }
+    }};
+}
+
+/// Same as [`consume_or_return`], returning NULL on error.
+#[macro_export]
+macro_rules! consume_or_return_null {
+    ($ptr:expr, $type:ty, $op:expr) => {{
+        $crate::consume_or_return!($ptr, $type, $op, std::ptr::null_mut())
+    }};
+}
+
 /// Maximum length for C strings when using bounded conversion (64KB)
 pub const MAX_CSTRING_LEN: usize = 1048576;
 

@@ -1128,10 +1128,8 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     let stream = deref_mut_or_return_null!(stream, C2paStream);
 
     // Now safe to take ownership - all validations passed
-    untrack_or_return_null!(reader, C2paReader);
-    let reader = Box::from_raw(reader);
-    let reader = ok_or_return_null!((*reader).with_stream(&format, stream));
-    box_tracked!(reader)
+    consume_or_return_null!(reader, C2paReader, |reader: C2paReader| reader
+        .with_stream(&format, stream))
 }
 
 /// Configures an existing passed in Reader with manifest data and a stream.
@@ -1166,15 +1164,8 @@ pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
     let manifest_bytes = bytes_or_return_null!(manifest_data, manifest_size, "manifest_data");
 
     // Take ownership of the Reader (needs to remove it from tracking to take it)
-    untrack_or_return_null!(reader, C2paReader);
-    let reader = Box::from_raw(reader);
-    let reader = ok_or_return_null!((*reader).with_manifest_data_and_stream(
-        manifest_bytes,
-        &format,
-        stream
-    ));
-    // New reader, will be tracked now too
-    box_tracked!(reader)
+    consume_or_return_null!(reader, C2paReader, |reader: C2paReader| reader
+        .with_manifest_data_and_stream(manifest_bytes, &format, stream))
 }
 
 /// Configures an existing reader with a fragment stream.
@@ -1215,10 +1206,8 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
     let fragment = deref_mut_or_return_null!(fragment, C2paStream);
 
     // Now safe to take ownership - all validations passed
-    untrack_or_return_null!(reader, C2paReader);
-    let reader = Box::from_raw(reader);
-    let reader = ok_or_return_null!((*reader).with_fragment(&format, stream, fragment));
-    box_tracked!(reader)
+    consume_or_return_null!(reader, C2paReader, |reader: C2paReader| reader
+        .with_fragment(&format, stream, fragment))
 }
 
 /// Creates a new C2paReader from a shared Context.
@@ -1587,10 +1576,8 @@ pub unsafe extern "C" fn c2pa_builder_with_definition(
     let manifest_json = cstr_or_return_null!(manifest_json);
 
     // Now safe to take ownership - all validations passed
-    untrack_or_return_null!(builder, C2paBuilder);
-    let builder = Box::from_raw(builder);
-    let result = (*builder).with_definition(manifest_json);
-    box_tracked!(ok_or_return_null!(result))
+    consume_or_return_null!(builder, C2paBuilder, |builder: C2paBuilder| builder
+        .with_definition(manifest_json))
 }
 
 /// Configures an existing builder with an archive stream.
@@ -1624,10 +1611,8 @@ pub unsafe extern "C" fn c2pa_builder_with_archive(
     let stream = deref_mut_or_return_null!(stream, C2paStream);
 
     // Now safe to take ownership - stream is valid
-    untrack_or_return_null!(builder, C2paBuilder);
-    let builder = Box::from_raw(builder);
-    let result = (*builder).with_archive(stream);
-    box_tracked!(ok_or_return_null!(result))
+    consume_or_return_null!(builder, C2paBuilder, |builder: C2paBuilder| builder
+        .with_archive(stream))
 }
 
 /// Sets the builder intent on the Builder.
