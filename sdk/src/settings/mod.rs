@@ -222,11 +222,32 @@ pub struct CawgTrust {
     pub user_anchors: Option<String>,
     /// List of default trust anchor root certificates as a PEM bundle, used when
     /// validating CAWG X.509 identity signatures.
+    ///
+    /// Under the CAWG interim trust model (CAWG identity assertion spec §8.2.4.1,
+    /// valid for assertions issued on or before 31 March 2027 and carrying a
+    /// trusted time stamp), these are the CAWG-recognized trust anchors – the
+    /// Mozilla Root Store with the Email (S/MIME) trust bit enabled
+    /// (<https://ccadb.my.salesforce-sites.com/mozilla/IncludedRootsPEMTxt?TrustBitsInclude=Email>)
+    /// and the IPTC Origin Verified News Publishers trust-anchor list
+    /// (<https://trust.iptc.org/anchor-list.pem>) – not the C2PA conformance
+    /// trust-list.
     pub trust_anchors: Option<String>,
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
     /// CAWG identity certificates must have.
+    ///
+    /// The CAWG interim trust model (CAWG identity assertion spec §8.2.4.1)
+    /// requires the `id-kp-emailProtection` EKU (1.3.6.1.5.5.7.3.4) together with
+    /// one of the CA/Browser Forum S/MIME certificate-policy OIDs:
+    /// organization-validated (2.23.140.1.5.2.2 / 2.23.140.1.5.2.3),
+    /// sponsor-validated (2.23.140.1.5.3.2 / 2.23.140.1.5.3.3), or
+    /// individual-validated (2.23.140.1.5.4.2 / 2.23.140.1.5.4.3). Mailbox-validated
+    /// and legacy certificate purposes are not accepted.
     pub trust_config: Option<String>,
     /// List of explicitly allowed CAWG identity certificates as a PEM bundle.
+    ///
+    /// Under the CAWG interim trust model (CAWG identity assertion spec §8.2.4.1),
+    /// this corresponds to the IPTC Origin Verified News Publishers end-entity
+    /// certificate list (<https://trust.iptc.org/end-entity-list.pem>).
     pub allowed_list: Option<String>,
     /// Exact-match allow-list of trusted CAWG identity claims aggregation (ICA)
     /// issuer DIDs.
