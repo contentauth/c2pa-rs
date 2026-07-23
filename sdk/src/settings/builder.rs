@@ -459,7 +459,7 @@ impl SettingsValidate for ActionsSettings {
 pub enum TimeStampFetchScope {
     /// Fetch timestamps for only the parent manifest.
     Parent,
-    /// Fetch timestmaps for all manifests in the manifest store.
+    /// Fetch timestamps for all manifests in the manifest store.
     All,
 }
 
