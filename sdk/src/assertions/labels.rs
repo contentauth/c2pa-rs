@@ -167,9 +167,11 @@ pub const SCHEMA_ORG: &str = "schema.org";
 /// Label prefix for a claim review assertion.
 ///
 /// Label prefix for a creative review assertion. Deprecated in c2pa 2.0 spec.
+#[deprecated(note = "This attribute is deprecated from c2pa spec version 2.0")]
 pub const CLAIM_REVIEW: &str = "stds.schema-org.ClaimReview";
 
 /// Label prefix for a creative work assertion. Deprecated in c2pa 2.0 spec.
+#[deprecated(note = "This attribute is deprecated from c2pa spec version 2.0")]
 pub const CREATIVE_WORK: &str = "stds.schema-org.CreativeWork";
 
 /// Label prefix for a timestamp assertion.
