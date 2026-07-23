@@ -754,10 +754,9 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
     signer_ptr: *mut C2paSigner,
 ) -> c_int {
     let builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
-    // Untrack the signer before taking ownership via Box::from_raw.
+    // Untrack the signer before taking ownership.
     // This prevents double-free if C code later calls c2pa_signer_free().
-    untrack_or_return_int!(signer_ptr, C2paSigner);
-    let c2pa_signer = Box::from_raw(signer_ptr);
+    let c2pa_signer = untrack_or_return_int!(signer_ptr, C2paSigner);
     let result = builder.set_signer(c2pa_signer.signer);
     ok_or_return_int!(result);
     0
@@ -864,9 +863,8 @@ pub unsafe extern "C" fn c2pa_context_builder_set_http_resolver(
     resolver_ptr: *mut C2paHttpResolver,
 ) -> c_int {
     let builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
-    untrack_or_return_int!(resolver_ptr, C2paHttpResolver);
-    let c2pa_resolver = Box::from_raw(resolver_ptr);
-    let result = builder.set_resolver(*c2pa_resolver);
+    let c2pa_resolver = untrack_or_return_int!(resolver_ptr, C2paHttpResolver);
+    let result = builder.set_resolver(c2pa_resolver);
     ok_or_return_int!(result);
     0
 }
@@ -890,9 +888,8 @@ pub unsafe extern "C" fn c2pa_context_builder_set_http_resolver(
 pub unsafe extern "C" fn c2pa_context_builder_build(
     builder: *mut C2paContextBuilder,
 ) -> *mut C2paContext {
-    untrack_or_return_null!(builder, C2paContextBuilder);
-    let context = Box::from_raw(builder);
-    box_tracked!((*context).into_shared())
+    let context = untrack_or_return_null!(builder, C2paContextBuilder);
+    box_tracked!(context.into_shared())
 }
 
 /// Creates a new immutable context with default settings.
@@ -1150,14 +1147,16 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     format: *const c_char,
     stream: *mut C2paStream,
 ) -> *mut C2paReader {
-    // Validate inputs first, while reader is still tracked
+    // Take ownership of `reader` first: every early return below now drops it via
+    // Rust's ordinary scope-exit `Drop`, so a validation failure here invalidates
+    // `reader` exactly like a failure in `with_stream` itself would -- the caller
+    // never needs to free the passed-in reader themselves, success or failure.
+    let reader = untrack_or_return_null!(reader, C2paReader);
+
     let format = cstr_or_return_null!(format);
     let stream = deref_mut_or_return_null!(stream, C2paStream);
 
-    // Now safe to take ownership - all validations passed
-    untrack_or_return_null!(reader, C2paReader);
-    let reader = Box::from_raw(reader);
-    let reader = ok_or_return_null!((*reader).with_stream(&format, stream));
+    let reader = ok_or_return_null!(reader.with_stream(&format, stream));
     box_tracked!(reader)
 }
 
@@ -1188,19 +1187,16 @@ pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
     manifest_data: *const c_uchar,
     manifest_size: usize,
 ) -> *mut C2paReader {
+    // Take ownership of `reader` first so every early return below (ours or
+    // `with_manifest_data_and_stream`'s) drops it uniformly via scope-exit `Drop`.
+    let reader = untrack_or_return_null!(reader, C2paReader);
+
     let format = cstr_or_return_null!(format);
     let stream = deref_mut_or_return_null!(stream, C2paStream);
     let manifest_bytes = bytes_or_return_null!(manifest_data, manifest_size, "manifest_data");
 
-    // Take ownership of the Reader (needs to remove it from tracking to take it)
-    untrack_or_return_null!(reader, C2paReader);
-    let reader = Box::from_raw(reader);
-    let reader = ok_or_return_null!((*reader).with_manifest_data_and_stream(
-        manifest_bytes,
-        &format,
-        stream
-    ));
-    // New reader, will be tracked now too
+    let reader =
+        ok_or_return_null!(reader.with_manifest_data_and_stream(manifest_bytes, &format, stream));
     box_tracked!(reader)
 }
 
@@ -1236,15 +1232,15 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
     stream: *mut C2paStream,
     fragment: *mut C2paStream,
 ) -> *mut C2paReader {
-    // Validate inputs first, while reader is still tracked
+    // Take ownership of `reader` first so every early return below (ours or
+    // `with_fragment`'s) drops it uniformly via scope-exit `Drop`.
+    let reader = untrack_or_return_null!(reader, C2paReader);
+
     let format = cstr_or_return_null!(format);
     let stream = deref_mut_or_return_null!(stream, C2paStream);
     let fragment = deref_mut_or_return_null!(fragment, C2paStream);
 
-    // Now safe to take ownership - all validations passed
-    untrack_or_return_null!(reader, C2paReader);
-    let reader = Box::from_raw(reader);
-    let reader = ok_or_return_null!((*reader).with_fragment(&format, stream, fragment));
+    let reader = ok_or_return_null!(reader.with_fragment(&format, stream, fragment));
     box_tracked!(reader)
 }
 
@@ -1610,14 +1606,14 @@ pub unsafe extern "C" fn c2pa_builder_with_definition(
     builder: *mut C2paBuilder,
     manifest_json: *const c_char,
 ) -> *mut C2paBuilder {
-    // Validate inputs first, while builder is still tracked
+    // Take ownership of `builder` first so every early return below (ours or
+    // `with_definition`'s) drops it uniformly via scope-exit `Drop`.
+    let builder = untrack_or_return_null!(builder, C2paBuilder);
+
     let manifest_json = cstr_or_return_null!(manifest_json);
 
-    // Now safe to take ownership - all validations passed
-    untrack_or_return_null!(builder, C2paBuilder);
-    let builder = Box::from_raw(builder);
-    let result = (*builder).with_definition(manifest_json);
-    box_tracked!(ok_or_return_null!(result))
+    let builder = ok_or_return_null!(builder.with_definition(manifest_json));
+    box_tracked!(builder)
 }
 
 /// Configures an existing builder with an archive stream.
@@ -1647,14 +1643,14 @@ pub unsafe extern "C" fn c2pa_builder_with_archive(
     builder: *mut C2paBuilder,
     stream: *mut C2paStream,
 ) -> *mut C2paBuilder {
-    // Validate stream first, while builder is still tracked
+    // Take ownership of `builder` first so every early return below (ours or
+    // `with_archive`'s) drops it uniformly via scope-exit `Drop`.
+    let builder = untrack_or_return_null!(builder, C2paBuilder);
+
     let stream = deref_mut_or_return_null!(stream, C2paStream);
 
-    // Now safe to take ownership - stream is valid
-    untrack_or_return_null!(builder, C2paBuilder);
-    let builder = Box::from_raw(builder);
-    let result = (*builder).with_archive(stream);
-    box_tracked!(ok_or_return_null!(result))
+    let builder = ok_or_return_null!(builder.with_archive(stream));
+    box_tracked!(builder)
 }
 
 /// Sets the builder intent on the Builder.
@@ -2676,10 +2672,8 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
     referenced_assertions: *const *const c_char,
     roles: *const *const c_char,
 ) -> *mut C2paSigner {
-    untrack_or_return_null!(c2pa_signer_ptr, C2paSigner);
-    untrack_or_return_null!(identity_signer_ptr, C2paSigner);
-    let c2pa_signer = Box::from_raw(c2pa_signer_ptr);
-    let identity_signer = Box::from_raw(identity_signer_ptr);
+    let c2pa_signer = untrack_or_return_null!(c2pa_signer_ptr, C2paSigner);
+    let identity_signer = untrack_or_return_null!(identity_signer_ptr, C2paSigner);
 
     let referenced_assertions = cstr_array_or_return_null!(referenced_assertions);
     let roles = cstr_array_or_return_null!(roles);
@@ -3475,9 +3469,10 @@ mod tests {
             unsafe { c2pa_reader_with_stream(reader, format.as_ptr(), stream.as_ptr()) };
         assert!(!configured_reader.is_null());
 
-        // Verify consumed reader is no longer tracked
-        let free_result = unsafe { c2pa_free(reader as *const c_void) };
-        assert_eq!(free_result, -1);
+        // Note: we don't verify that `reader` is untracked by freeing it here. In a
+        // parallel test binary, another thread can allocate a new tracked pointer at
+        // that exact (now-freed) address between this call returning and any check
+        // we'd run, making such a check inherently unreliable.
 
         // Verify we can read the manifest
         let json = unsafe { c2pa_reader_json(configured_reader) };
@@ -3558,9 +3553,10 @@ mod tests {
             "Reader should be configured with manifest data and stream"
         );
 
-        // Verify the original reader was consumed
-        let free_result = unsafe { c2pa_free(reader as *const c_void) };
-        assert_eq!(free_result, -1);
+        // Note: we don't verify that `reader` is untracked by freeing it here. In a
+        // parallel test binary, another thread can allocate a new tracked pointer at
+        // that exact (now-freed) address between this call returning and any check
+        // we'd run, making such a check inherently unreliable.
 
         // Verify we can read the manifest
         let json = unsafe { c2pa_reader_json(configured_reader) };
@@ -4116,9 +4112,10 @@ verify_after_sign = true
         let context = unsafe { c2pa_context_builder_build(builder) };
         assert!(!context.is_null());
 
-        // Verify consumed builder is no longer tracked
-        let free_result = unsafe { c2pa_free(builder as *const c_void) };
-        assert_eq!(free_result, -1);
+        // Note: we don't verify that `builder` is untracked by freeing it here. In a
+        // parallel test binary, another thread can allocate a new tracked pointer at
+        // that exact (now-freed) address between this call returning and any check
+        // we'd run, making such a check inherently unreliable.
 
         unsafe {
             c2pa_free(settings as *mut c_void);
@@ -4377,9 +4374,10 @@ verify_after_sign = true
         let new_builder = unsafe { c2pa_builder_with_definition(builder, new_manifest.as_ptr()) };
         assert!(!new_builder.is_null(), "Should return new builder");
 
-        // Verify consumed builder is no longer tracked
-        let free_result = unsafe { c2pa_free(builder as *const c_void) };
-        assert_eq!(free_result, -1);
+        // Note: we don't verify that `builder` is untracked by freeing it here. In a
+        // parallel test binary, another thread can allocate a new tracked pointer at
+        // that exact (now-freed) address between this call returning and any check
+        // we'd run, making such a check inherently unreliable.
 
         unsafe {
             c2pa_free(new_builder as *mut c_void);
@@ -4394,16 +4392,16 @@ verify_after_sign = true
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
-        // Test with null JSON: returns null, but the builder is not consumed!
+        // Test with null JSON: returns null, and the builder IS consumed -- the
+        // pointer becomes invalid on any failure, not just on success. (We don't
+        // verify this by freeing `builder` here: in a parallel test binary another
+        // thread can reallocate that exact address in the meantime, making such a
+        // check inherently unreliable.)
         let new_builder = unsafe { c2pa_builder_with_definition(builder, std::ptr::null()) };
         assert!(
             new_builder.is_null(),
             "Should return null for invalid input"
         );
-
-        // Builder is still tracked because validation failed before consumption
-        let free_result = unsafe { c2pa_free(builder as *mut c_void) };
-        assert_eq!(free_result, 0);
     }
 
     #[test]
@@ -4421,9 +4419,10 @@ verify_after_sign = true
         // Add archive to builder (this consumes the builder and returns a new one)
         let new_builder = unsafe { c2pa_builder_with_archive(builder, archive_stream.as_ptr()) };
 
-        // Verify consumed builder is no longer tracked
-        let free_result = unsafe { c2pa_free(builder as *const c_void) };
-        assert_eq!(free_result, -1);
+        // Note: we don't verify that `builder` is untracked by freeing it here. In a
+        // parallel test binary, another thread can allocate a new tracked pointer at
+        // that exact (now-freed) address between this call returning and any check
+        // we'd run, making such a check inherently unreliable.
 
         if !new_builder.is_null() {
             unsafe {
@@ -4440,16 +4439,16 @@ verify_after_sign = true
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 
-        // Test with null stream: returns null, but the builder is NOT consumed
+        // Test with null stream: returns null, and the builder IS consumed -- the
+        // pointer becomes invalid on any failure, not just on success. (We don't
+        // verify this by freeing `builder` here: in a parallel test binary another
+        // thread can reallocate that exact address in the meantime, making such a
+        // check inherently unreliable.)
         let new_builder = unsafe { c2pa_builder_with_archive(builder, std::ptr::null_mut()) };
         assert!(
             new_builder.is_null(),
             "Should return null for invalid stream"
         );
-
-        // Builder is still tracked because validation failed before consumption
-        let free_result = unsafe { c2pa_free(builder as *mut c_void) };
-        assert_eq!(free_result, 0);
     }
 
     #[test]
@@ -4478,9 +4477,10 @@ verify_after_sign = true
             )
         };
 
-        // Verify consumed reader is no longer tracked
-        let free_result = unsafe { c2pa_free(reader as *const c_void) };
-        assert_eq!(free_result, -1);
+        // Note: we don't verify that `reader` is untracked by freeing it here. In a
+        // parallel test binary, another thread can allocate a new tracked pointer at
+        // that exact (now-freed) address between this call returning and any check
+        // we'd run, making such a check inherently unreliable.
 
         if !new_reader.is_null() {
             unsafe {
@@ -4503,7 +4503,11 @@ verify_after_sign = true
         let mut fragment_stream = TestStream::new(source_image.to_vec());
         let mut main_stream = TestStream::new(source_image.to_vec());
 
-        // Test with null format: returns null, but the reader is NOT consumed
+        // Test with null format: returns null, and the reader IS consumed -- the
+        // pointer becomes invalid on any failure, not just on success. (We don't
+        // verify this by freeing `reader` here: in a parallel test binary another
+        // thread can reallocate that exact address in the meantime, making such a
+        // check inherently unreliable.)
         let new_reader = unsafe {
             c2pa_reader_with_fragment(
                 reader,
@@ -4516,10 +4520,6 @@ verify_after_sign = true
             new_reader.is_null(),
             "Should return null for invalid format"
         );
-
-        // Reader is still tracked because validation failed before consumption
-        let free_result = unsafe { c2pa_free(reader as *const c_void) };
-        assert_eq!(free_result, 0);
     }
 
     // ========== High-Value Coverage Tests ==========
@@ -5112,9 +5112,10 @@ verify_after_sign = true
         let result = unsafe { c2pa_context_builder_set_signer(builder, signer) };
         assert_eq!(result, 0);
 
-        // Verify the signer is consumed: freeing it should fail cleanly (-1)
-        let free_result = unsafe { c2pa_free(signer as *const c_void) };
-        assert_eq!(free_result, -1);
+        // Note: we don't verify that `signer` is untracked by freeing it here. In a
+        // parallel test binary, another thread can allocate a new tracked pointer at
+        // that exact (now-freed) address between this call returning and any check
+        // we'd run, making such a check inherently unreliable.
 
         let context = unsafe { c2pa_context_builder_build(builder) };
         assert!(!context.is_null());
