@@ -177,7 +177,6 @@ pub mod tests {
 
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
-        crypto::raw_signature::SigningAlg,
         status_tracker::{ErrorBehavior, StatusTracker},
         store::Store,
         utils::{
@@ -185,6 +184,7 @@ pub mod tests {
             test::{fixture_path, temp_dir_path},
             test_signer::test_signer,
         },
+        SigningAlg,
     };
 
     #[test]
