@@ -375,6 +375,24 @@ pub mod tests {
 
     // ── MP3-specific tests ───────────────────────────────────────────────────
 
+    /// Regression: an MP3 with a crafted ID3v2.3 COMPRESSION frame whose body is
+    /// shorter than the 4-byte decompressed-size prefix. The `id3` crate's v2.3
+    /// decoder used to compute `content_size - 4`, underflowing to ~u64::MAX and
+    /// aborting the process on the following allocation. With the patched `id3`
+    /// (see `[patch.crates-io]` in the workspace Cargo.toml) reading this file
+    /// must return cleanly instead of crashing — here, no manifest is present.
+    #[test]
+    fn read_cai_store_malicious_id3v23_compression_does_not_crash() {
+        let mp3_io = Mp3IO::new("mp3");
+        let result = mp3_io.read_cai_store(&fixture_path("id3v23_compression_underflow.mp3"));
+        // The point of the test is that the process survives this call. Without a
+        // C2PA GEOB frame the read reports "no manifest".
+        assert!(
+            matches!(result, Err(Error::JumbfNotFound)),
+            "expected JumbfNotFound (no crash), got {result:?}",
+        );
+    }
+
     /// A bare MPEG stream (MPEG sync word, no ID3 tag) contains no C2PA manifest.
     #[test]
     fn test_read_cai_store_no_id3() {
