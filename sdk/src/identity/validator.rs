@@ -146,13 +146,23 @@ mod tests {
     #[c2pa_test_async]
     async fn test_multiple_identities_valid() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        crate::settings::set_settings_value(
+            "soft_binding.soft_binding_algorithms",
+            [
+                "com.adobe.trustmark.P".to_string(),
+                "com.adobe.icn.dense".to_string(),
+            ],
+        )
+        .unwrap();
+        let settings = crate::settings::get_thread_local_settings();
+        let context = crate::Context::new().with_settings(settings).unwrap();
 
         #[cfg(not(target_arch = "wasm32"))]
         let _did_server = mock_connected_identities_did();
 
         let mut stream = Cursor::new(MULTIPLE_IDENTITIES_VALID);
 
-        let reader = Reader::default()
+        let reader = Reader::from_context(context)
             .with_stream_async("image/jpeg", &mut stream)
             .await
             .unwrap();
@@ -187,6 +197,14 @@ mod tests {
             .with_value("core.decode_identity_assertions", false)
             .unwrap()
             .with_value("cawg_trust.trusted_ica_issuers", Vec::<String>::new())
+            .unwrap()
+            .with_value(
+                "soft_binding.soft_binding_algorithms",
+                [
+                    "com.adobe.trustmark.P".to_string(),
+                    "com.adobe.icn.dense".to_string(),
+                ],
+            )
             .unwrap();
         let context = Context::new()
             .with_settings(settings)

@@ -119,7 +119,7 @@ mod integration_v2 {
             {
                 "label": "c2pa.soft-binding",
                 "data": {
-                    "alg": "phash",
+                    "alg": "com.adobe.trustmark.Q",
                     "pad": [0],
                     "blocks": [
                         {

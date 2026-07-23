@@ -463,6 +463,18 @@ impl Default for Verify {
 
 impl SettingsValidate for Verify {}
 
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(default)
+)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct SoftBinding {
+    pub soft_binding_algorithms: Option<Vec<String>>,
+}
+
+impl SettingsValidate for SoftBinding {}
+
 /// Settings for configuring all aspects of c2pa-rs.
 ///
 /// [`Settings::default`] is used as the thread-local configuration by default.
@@ -500,6 +512,8 @@ pub struct Settings {
     /// Settings for configuring the CAWG x509 signer, accessible via [`Settings::signer`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cawg_x509_signer: Option<SignerSettings>,
+    /// List of soft binding algorithms to validate against. If not specified, soft binding errors may be generated.
+    pub soft_binding: SoftBinding,
 }
 
 impl Settings {
@@ -945,6 +959,7 @@ impl Default for Settings {
             builder: Default::default(),
             signer: None,
             cawg_x509_signer: None,
+            soft_binding: Default::default(),
         }
     }
 }
@@ -1503,6 +1518,29 @@ pub mod tests {
         assert_eq!(
             original.verify.verify_trust, after.verify.verify_trust,
             "Builder pattern should not modify thread_local settings"
+        );
+    }
+
+    #[test]
+    fn test_loading_soft_binding_algorithms() {
+        let settings = Settings::new()
+            .with_json(
+                r#"
+                {
+                    "soft_binding": {
+                        "soft_binding_algorithms": ["com.adobe.trustmark.Q", "com.adobe.trustmark.C"]
+                    }
+                }
+            "#,
+            )
+            .unwrap();
+
+        assert_eq!(
+            settings.soft_binding.soft_binding_algorithms,
+            Some(vec![
+                "com.adobe.trustmark.Q".to_string(),
+                "com.adobe.trustmark.C".to_string()
+            ])
         );
     }
 }
