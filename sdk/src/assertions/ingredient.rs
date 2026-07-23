@@ -15,11 +15,13 @@ use std::io::{Read, Seek};
 
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
-use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
+use serde::{de::Deserializer, ser::SerializeStruct, Deserialize, Serialize, Serializer};
 
 use super::AssetType;
 use crate::{
-    assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
+    assertion::{
+        Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
+    },
     assertions::{labels, AssertionMetadata, ReviewRating},
     cbor_types::map_cbor_to_type,
     context::Context,
@@ -63,7 +65,7 @@ impl Relationship {
 }
 
 /// An ingredient assertion
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Ingredient {
     pub title: Option<String>,
     pub format: Option<String>,
@@ -101,6 +103,65 @@ impl Serialize for Ingredient {
                 "Unsupported ingredient version: {v}"
             ))),
         }
+    }
+}
+
+/// Deserializes the v3 ingredient assertion JSON schema (the shape produced by
+/// `Ingredient::serialize_v3`) by re-encoding the input as CBOR and delegating to
+/// `Ingredient::from_assertion`.
+impl<'de> Deserialize<'de> for Ingredient {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let cbor_data = c2pa_cbor::to_vec(&value).map_err(serde::de::Error::custom)?;
+        let assertion = Assertion::new(Self::LABEL, Some(3), AssertionData::Cbor(cbor_data));
+        Ingredient::from_assertion(&assertion).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Clone by value, so `&Ingredient` can be used anywhere an owned value is expected (e.g.
+/// [`crate::Builder::add_ingredient_with_reader`]).
+impl From<&Ingredient> for Ingredient {
+    fn from(value: &Ingredient) -> Self {
+        value.clone()
+    }
+}
+
+/// Implement TryFrom for &str (JSON string).
+impl TryFrom<&str> for Ingredient {
+    type Error = Error;
+
+    fn try_from(value: &str) -> Result<Self> {
+        serde_json::from_str(value).map_err(Error::JsonError)
+    }
+}
+
+/// Implement TryFrom for String.
+impl TryFrom<String> for Ingredient {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        value.as_str().try_into()
+    }
+}
+
+/// Implement TryFrom for &String.
+impl TryFrom<&String> for Ingredient {
+    type Error = Error;
+
+    fn try_from(value: &String) -> Result<Self> {
+        value.as_str().try_into()
+    }
+}
+
+/// Implement TryFrom for serde_json::Value.
+impl TryFrom<serde_json::Value> for Ingredient {
+    type Error = Error;
+
+    fn try_from(value: serde_json::Value) -> Result<Self> {
+        serde_json::from_value(value).map_err(Error::JsonError)
     }
 }
 

@@ -36,8 +36,8 @@ use crate::{
         c2pa_action,
         labels::{self, parse_label},
         Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, DataHash,
-        DigitalSourceType, EmbeddedData, ExclusionsMap, MerkleMap, Metadata, SoftwareAgent,
-        SubsetMap, Thumbnail, TimeStamp, User, UserCbor,
+        DigitalSourceType, EmbeddedData, ExclusionsMap, IngredientAssertion, MerkleMap, Metadata,
+        SoftwareAgent, SubsetMap, Thumbnail, TimeStamp, User, UserCbor,
     },
     claim::Claim,
     context::{Context, ProgressPhase},
@@ -46,7 +46,7 @@ use crate::{
     hash_utils::hash_by_alg,
     jumbf::labels::{
         assertion_label_from_uri, label_segment_from_uri, manifest_label_from_uri,
-        parse_positional_label,
+        parse_positional_label, to_manifest_uri, to_signature_uri,
     },
     jumbf_io,
     maybe_send_sync::MaybeSend,
@@ -1337,6 +1337,72 @@ impl Builder {
         let mut data = Vec::new();
         stream.read_to_end(&mut data)?;
         self.add_assertion_with_ref(&EmbeddedData::new(label, format_to_mime(format), data))
+    }
+
+    /// Adds an ingredient assertion to the manifest from an [`IngredientAssertion`] and an
+    /// already-read [`Reader`], returning the ingredient assertion's [`HashedUri`].
+    ///
+    /// This is the counterpart to [`Builder::add_ingredient_from_stream`]: instead
+    /// of reading and validating the ingredient's asset itself, it takes a [`Reader`] that has
+    /// already done so, and returns a [`HashedUri`] rather than a `&mut Ingredient`, so the
+    /// caller can immediately wire it into other assertions (e.g.
+    /// [`Action::set_ingredient_refs`]) before signing. `reader`'s
+    /// [`Reader::validation_results`] are reused directly, rather than re-validating the
+    /// ingredient here.
+    ///
+    /// For an ingredient with no manifest data of its own (no `Reader`), build the
+    /// [`IngredientAssertion`] directly and add it with [`Builder::add_assertion_with_ref`]
+    /// instead.
+    ///
+    /// # Arguments
+    /// * `ingredient_assertion` - An [`IngredientAssertion`], a `&IngredientAssertion`, or JSON
+    ///   text/[`serde_json::Value`] matching the v3 ingredient assertion schema (`dc:title`,
+    ///   `dc:format`, `relationship`, etc). Its `activeManifest`, `claimSignature`, and
+    ///   `validationResults` fields, if present, are overwritten with values derived from
+    ///   `reader`.
+    /// * `reader` - A [`Reader`] that has already read and validated the ingredient's own asset.
+    /// * `redactions` - JUMBF URIs of assertions to redact from the ingredient's manifest
+    ///   chain, if any.
+    pub fn add_ingredient_with_reader<T>(
+        &mut self,
+        ingredient_assertion: T,
+        reader: &Reader,
+        redactions: Option<Vec<String>>,
+    ) -> Result<HashedUri>
+    where
+        T: TryInto<IngredientAssertion>,
+        Error: From<T::Error>,
+    {
+        let mut ing_assertion: IngredientAssertion = ingredient_assertion.try_into()?;
+
+        let validation_results = reader.validation_results().cloned().unwrap_or_default();
+        let manifest_bytes = reader.store.to_jumbf_internal(0)?;
+
+        let context = self.context.clone();
+        let claim = self.ensure_pre_claim()?;
+        let ingredient_store =
+            Store::load_ingredient_to_claim(claim, &manifest_bytes, redactions, &context)?;
+
+        let ingredient_active_claim = ingredient_store
+            .provenance_claim()
+            .ok_or(Error::JumbfNotFound)?;
+        let manifest_label = ingredient_active_claim.label();
+        let hashes = ingredient_store.get_manifest_box_hashes(ingredient_active_claim);
+        let alg = Some(ingredient_active_claim.alg().to_owned());
+
+        ing_assertion.active_manifest = Some(HashedUri::new(
+            to_manifest_uri(manifest_label),
+            alg.clone(),
+            hashes.manifest_box_hash.as_ref(),
+        ));
+        ing_assertion.claim_signature = Some(HashedUri::new(
+            to_signature_uri(manifest_label),
+            alg,
+            hashes.signature_box_hash.as_ref(),
+        ));
+        ing_assertion.validation_results = Some(validation_results);
+
+        self.add_assertion_with_ref(&ing_assertion)
     }
 
     /// Adds a resource to the manifest.
@@ -3643,6 +3709,7 @@ impl Builder {
     /// * `reader` - The Reader to get the ingredient from.
     /// # Returns
     /// * A reference to the added ingredient.
+    #[deprecated(note = "Use `Builder::add_ingredient_from_archive` instead.")]
     pub fn add_ingredient_from_reader(
         &mut self,
         reader: &crate::Reader,
@@ -3664,8 +3731,7 @@ impl Builder {
     /// this builder when their ids are not already present, so thumbnails and similar assertions
     /// can resolve when signing.
     ///
-    /// For other `application/c2pa` stores, use [`Self::add_ingredient_from_reader`] or
-    /// [`Self::add_ingredient_from_stream`].
+    /// For other `application/c2pa` stores, use [`Self::add_ingredient_from_stream`].
     #[async_generic]
     pub fn add_ingredient_from_archive<'a, R>(
         &'a mut self,
@@ -9755,6 +9821,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_builder_add_ingredient_from_reader() -> Result<()> {
         use std::io::Cursor;
 
@@ -10344,6 +10411,175 @@ mod tests {
             .first()
             .expect("software agent");
         assert_eq!(agent.icon(), Some(&UriOrResource::HashedUri(icon_uri)));
+    }
+
+    /// Tests `add_ingredient_with_reader()`: JSON text, a `serde_json::Value`, and a
+    /// directly-built `IngredientAssertion` should all work as `ingredient_json` input, each
+    /// getting `activeManifest`/`claimSignature`/`validationResults` filled in from a `Reader`.
+    #[test]
+    fn test_add_ingredient_with_reader() {
+        use crate::{
+            assertions::{c2pa_action, Action, Actions, IngredientAssertion, Relationship},
+            utils::test::create_test_streams,
+        };
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let (format, mut ingredient_stream, _) = create_test_streams("C.jpg");
+
+        let reader = Reader::default()
+            .with_stream(format, &mut ingredient_stream)
+            .expect("read ingredient asset");
+
+        let mut builder = Builder::default();
+        builder.definition.format = format.to_string();
+        builder.definition.title = Some("Test add_ingredient_with_reader".to_string());
+
+        // JSON text.
+        let ing_uri_from_json = builder
+            .add_ingredient_with_reader(
+                r#"{"relationship": "parentOf", "dc:title": "C.jpg", "dc:format": "image/jpeg"}"#,
+                &reader,
+                None,
+            )
+            .expect("add ingredient with reader from json text");
+
+        // serde_json::Value.
+        let ing_uri_from_value = builder
+            .add_ingredient_with_reader(
+                serde_json::json!({
+                    "relationship": "componentOf",
+                    "dc:title": "C.jpg",
+                    "dc:format": "image/jpeg",
+                }),
+                &reader,
+                None,
+            )
+            .expect("add ingredient with reader from json value");
+
+        // A directly-built IngredientAssertion (and a reference to one).
+        let struct_assertion = IngredientAssertion::new_v3(Relationship::InputTo)
+            .set_title("C.jpg")
+            .set_format(format);
+        let ing_uri_from_struct = builder
+            .add_ingredient_with_reader(&struct_assertion, &reader, None)
+            .expect("add ingredient with reader from &IngredientAssertion");
+        let ing_uri_from_owned_struct = builder
+            .add_ingredient_with_reader(struct_assertion, &reader, None)
+            .expect("add ingredient with reader from owned IngredientAssertion");
+
+        let action = Action::new(c2pa_action::OPENED).set_ingredient_refs(vec![
+            ing_uri_from_json,
+            ing_uri_from_value,
+            ing_uri_from_struct,
+            ing_uri_from_owned_struct,
+        ]);
+        let actions = Actions::new().add_action(action);
+        builder
+            .add_assertion_with_ref(&actions)
+            .expect("add actions assertion");
+
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .expect("sign");
+
+        dest.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream(format, &mut dest)
+            .expect("read signed asset");
+
+        assert_ne!(
+            reader.validation_state(),
+            ValidationState::Invalid,
+            "manifest should be valid"
+        );
+
+        let manifest = reader.active_manifest().expect("active manifest");
+        assert_eq!(manifest.ingredients().len(), 4, "expected four ingredients");
+        for ingredient in manifest.ingredients() {
+            assert_eq!(ingredient.title(), Some("C.jpg"));
+            assert!(
+                ingredient.active_manifest().is_some(),
+                "ingredient should resolve to its own embedded manifest"
+            );
+        }
+    }
+
+    /// Demonstrates redacting an assertion from an ingredient's own manifest chain: use a
+    /// `Reader` to find the JUMBF URI for one of the ingredient's assertions (here, C.jpg's
+    /// claim thumbnail), then pass it as a redaction to `add_ingredient_with_reader`.
+    #[test]
+    fn test_add_ingredient_with_reader_redaction() {
+        use crate::{
+            assertions::{c2pa_action, labels, Action, Actions, IngredientAssertion, Relationship},
+            utils::test::create_test_streams,
+        };
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let (format, mut ingredient_stream, _) = create_test_streams("C.jpg");
+        let ingredient_reader = Reader::default()
+            .with_stream(format, &mut ingredient_stream)
+            .expect("read ingredient asset");
+
+        // Find the ingredient's own manifest label, then build the JUMBF URI for its claim
+        // thumbnail assertion — this is what gets redacted when the ingredient is merged in.
+        let ingredient_label = ingredient_reader
+            .active_label()
+            .expect("ingredient active label")
+            .to_owned();
+        let thumbnail_uri =
+            crate::jumbf::labels::to_assertion_uri(&ingredient_label, labels::JPEG_CLAIM_THUMBNAIL);
+
+        let mut builder = Builder::default();
+        builder.definition.format = format.to_string();
+        builder.definition.title = Some("Test add_ingredient_with_reader redaction".to_string());
+
+        let ing_assertion = IngredientAssertion::new_v3(Relationship::ParentOf)
+            .set_title("C.jpg")
+            .set_format(format);
+        let ing_uri = builder
+            .add_ingredient_with_reader(
+                ing_assertion,
+                &ingredient_reader,
+                Some(vec![thumbnail_uri]),
+            )
+            .expect("add ingredient with reader (redacted thumbnail)");
+
+        let action = Action::new(c2pa_action::OPENED).set_ingredient_refs(vec![ing_uri]);
+        let actions = Actions::new().add_action(action);
+        builder
+            .add_assertion_with_ref(&actions)
+            .expect("add actions assertion");
+
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .expect("sign");
+
+        dest.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream(format, &mut dest)
+            .expect("read signed asset");
+
+        assert_ne!(
+            reader.validation_state(),
+            ValidationState::Invalid,
+            "manifest should be valid"
+        );
+
+        // The ingredient's own manifest, as merged into the combined store, should no longer
+        // carry the redacted thumbnail assertion.
+        let ingredient_manifest = reader
+            .get_manifest(&ingredient_label)
+            .expect("ingredient manifest present in combined store");
+        assert!(
+            ingredient_manifest.thumbnail_ref().is_none(),
+            "thumbnail assertion should have been redacted"
+        );
     }
 
     /// When an Actions assertion is added directly via `add_assertion_with_ref` (the
