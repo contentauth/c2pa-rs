@@ -1346,7 +1346,7 @@ impl Builder {
     /// of reading and validating the ingredient's asset itself, it takes a [`Reader`] that has
     /// already done so, and returns a [`HashedUri`] rather than a `&mut Ingredient`, so the
     /// caller can immediately wire it into other assertions (e.g.
-    /// [`Action::set_ingredient_refs`]) before signing. `reader`'s
+    /// [`Action::add_ingredient_ref`]) before signing. `reader`'s
     /// [`Reader::validation_results`] are reused directly, rather than re-validating the
     /// ingredient here.
     ///
@@ -10348,7 +10348,7 @@ mod tests {
             ..Default::default()
         };
 
-        let action = Action::new(c2pa_action::OPENED).set_ingredient_refs(vec![ing_uri]);
+        let action = Action::new(c2pa_action::OPENED).add_ingredient_ref(ing_uri);
 
         let mut actions = Actions::new();
         actions.add_software_agent(agent_cgi);
@@ -10395,7 +10395,7 @@ mod tests {
         assert_eq!(found_actions.actions().len(), 1);
         assert_eq!(found_actions.actions()[0].action(), c2pa_action::OPENED);
 
-        // The action should carry ingredient refs set via set_ingredient_refs().
+        // The action should carry ingredient refs set via add_ingredient_ref().
         let params = found_actions.actions()[0]
             .parameters()
             .expect("action parameters");
@@ -10468,12 +10468,11 @@ mod tests {
             .add_ingredient_with_reader(struct_assertion, &reader, None)
             .expect("add ingredient with reader from owned IngredientAssertion");
 
-        let action = Action::new(c2pa_action::OPENED).set_ingredient_refs(vec![
-            ing_uri_from_json,
-            ing_uri_from_value,
-            ing_uri_from_struct,
-            ing_uri_from_owned_struct,
-        ]);
+        let action = Action::new(c2pa_action::OPENED)
+            .add_ingredient_ref(ing_uri_from_json)
+            .add_ingredient_ref(ing_uri_from_value)
+            .add_ingredient_ref(ing_uri_from_struct)
+            .add_ingredient_ref(ing_uri_from_owned_struct);
         let actions = Actions::new().add_action(action);
         builder
             .add_assertion_with_ref(&actions)
@@ -10548,7 +10547,7 @@ mod tests {
             )
             .expect("add ingredient with reader (redacted thumbnail)");
 
-        let action = Action::new(c2pa_action::OPENED).set_ingredient_refs(vec![ing_uri]);
+        let action = Action::new(c2pa_action::OPENED).add_ingredient_ref(ing_uri);
         let actions = Actions::new().add_action(action);
         builder
             .add_assertion_with_ref(&actions)
