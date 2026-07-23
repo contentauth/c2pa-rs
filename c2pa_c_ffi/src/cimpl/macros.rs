@@ -350,35 +350,34 @@ macro_rules! arc_tracked {
     }};
 }
 
-/// Untrack a pointer from the registry (ownership transfer from C to Rust).
+/// Untrack a pointer from the registry and take ownership of the pointee
+/// (ownership transfer from C to Rust), yielding it by value.
 ///
-/// Validates the pointer is tracked with the correct type, then removes it
-/// from the registry without running cleanup. Call this *before* `Box::from_raw()`
-/// in any FFI function that consumes a tracked pointer, so the registry doesn't
-/// hold a stale entry that would cause a double-free or false leak warning.
-///
-/// After this macro succeeds, the caller owns the allocation and must drop it
-/// (typically via `Box::from_raw()` immediately after).
+/// Validates the pointer is tracked with the correct type, removes it from the
+/// registry so it can't be double-freed or flagged as a leak, then immediately
+/// `Box::from_raw`s it and moves the value out. Because the result is an owned
+/// value rather than a pointer, any early return written *after* this macro
+/// (e.g. from validating another argument) drops it via Rust's ordinary
+/// scope-exit `Drop` — so the input is consumed the same way on every failure
+/// path, not just when the rest of the function succeeds.
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// // In c2pa_context_builder_set_signer — signer is moved into the builder:
-/// untrack_or_return_int!(signer_ptr, C2paSigner);
-/// let signer = Box::from_raw(signer_ptr);
+/// let signer = untrack_or_return_int!(signer_ptr, C2paSigner);
 /// builder.set_signer(signer.signer);
 ///
 /// // In c2pa_context_builder_build — builder is consumed to produce a context:
-/// untrack_or_return_null!(builder, C2paContextBuilder);
-/// let context = Box::from_raw(builder);
-/// box_tracked!((*context).into_shared())
+/// let builder = untrack_or_return_null!(builder, C2paContextBuilder);
+/// box_tracked!(builder.into_shared())
 /// ```
 #[macro_export]
 macro_rules! untrack_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
         $crate::ptr_or_return!($ptr, $err_val);
         match $crate::untrack_pointer::<$type>($ptr) {
-            Ok(()) => {}
+            Ok(()) => *Box::from_raw($ptr as *mut $type),
             Err(e) => {
                 $crate::CimplError::from(e).set_last();
                 return $err_val;
@@ -387,7 +386,7 @@ macro_rules! untrack_or_return {
     }};
 }
 
-/// Untrack a pointer from the registry, returning -1 on error.
+/// Untrack a pointer and take ownership of the pointee, returning -1 on error.
 #[macro_export]
 macro_rules! untrack_or_return_int {
     ($ptr:expr, $type:ty) => {{
@@ -395,51 +394,11 @@ macro_rules! untrack_or_return_int {
     }};
 }
 
-/// Untrack a pointer from the registry, returning NULL on error.
+/// Untrack a pointer and take ownership of the pointee, returning NULL on error.
 #[macro_export]
 macro_rules! untrack_or_return_null {
     ($ptr:expr, $type:ty) => {{
         $crate::untrack_or_return!($ptr, $type, std::ptr::null_mut())
-    }};
-}
-
-/// Used when a function accepts a tracked pointer, consumes it, and returns a new tracked pointer.
-/// Untrack a tracked pointer, take ownership, apply a fallible consuming operation,
-/// and re-track the result — or early-return with a custom error value.
-/// # Ex
-/// ```rust,ignore
-/// consume_or_return!(
-///     reader,
-///     C2paReader,
-///     |reader: C2paReader| reader.with_fragment(&format, stream, fragment),
-///     std::ptr::null_mut()
-/// )
-/// ```
-///
-/// On `Err`, the boxed value is dropped via Rust's ordinary `Drop` — the pointer
-/// was already removed from the registry by the untrack step, so no explicit free call
-/// is needed (or correct: the pointer is no longer tracked, so `cimpl_free` would just
-/// report an error) at that point.
-#[macro_export]
-macro_rules! consume_or_return {
-    ($ptr:expr, $type:ty, $op:expr, $err_val:expr) => {{
-        $crate::untrack_or_return!($ptr, $type, $err_val);
-        let boxed = Box::from_raw($ptr);
-        match ($op)(*boxed) {
-            Ok(value) => $crate::box_tracked!(value),
-            Err(e) => {
-                $crate::CimplError::from(e).set_last();
-                return $err_val;
-            }
-        }
-    }};
-}
-
-/// Same as [`consume_or_return`], returning NULL on error.
-#[macro_export]
-macro_rules! consume_or_return_null {
-    ($ptr:expr, $type:ty, $op:expr) => {{
-        $crate::consume_or_return!($ptr, $type, $op, std::ptr::null_mut())
     }};
 }
 
