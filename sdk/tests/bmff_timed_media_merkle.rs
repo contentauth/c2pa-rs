@@ -675,3 +675,144 @@ fn zero_samples_per_chunk_is_rejected() {
         "unexpected error: {msg}"
     );
 }
+
+// --- Regression: CAI-12277 / VULN-35208 -----------------------------------
+//
+// A crafted MP4 with a malformed `emsg` box (a scheme_id_uri string with no
+// null terminator inside the box) drove an integer underflow panic in the old
+// third-party `mp4` crate's EmsgBox::read_box. The native reader never parses
+// `emsg`, so the same input must now fail cleanly instead of panicking.
+
+/// Builds the emsg-underflow MP4 from the ticket's proof-of-concept: an `emsg`
+/// box whose 38-byte scheme_id_uri runs to the following box header, followed by
+/// a C2PA merkle `uuid` box and a minimal `moov`.
+fn build_emsg_crash_mp4() -> Vec<u8> {
+    let mut f = Vec::new();
+    f.extend_from_slice(&build_box(b"ftyp", b"isom\x00\x00\x00\x00isom"));
+
+    // emsg: declared size 50, body = version/flags (4) + 38 bytes of 0x41 with
+    // no null terminator inside the box.
+    let mut emsg = Vec::new();
+    emsg.extend_from_slice(&50u32.to_be_bytes());
+    emsg.extend_from_slice(b"emsg");
+    emsg.push(0);
+    emsg.extend_from_slice(&[0u8; 3]);
+    emsg.extend_from_slice(&[0x41u8; 38]);
+    f.extend_from_slice(&emsg);
+
+    // C2PA merkle uuid box (localId 1, location 0).
+    f.extend_from_slice(&build_merkle_uuid_box(0, 1, 0));
+
+    // Minimal moov with one track and an empty stbl.
+    let mvhd = build_fullbox(b"mvhd", 0, 0, &[0u8; 96]);
+    let mut tkhd_p = vec![0u8; 8];
+    tkhd_p.extend_from_slice(&1u32.to_be_bytes());
+    tkhd_p.extend_from_slice(&[0u8; 76]);
+    let tkhd = build_fullbox(b"tkhd", 0, 1, &tkhd_p);
+    let stsd = build_fullbox(b"stsd", 0, 0, &0u32.to_be_bytes());
+    let stts = build_fullbox(b"stts", 0, 0, &0u32.to_be_bytes());
+    let stsc = build_fullbox(b"stsc", 0, 0, &0u32.to_be_bytes());
+    let stsz = build_fullbox(b"stsz", 0, 0, &[0u8; 8]);
+    let stco = build_fullbox(b"stco", 0, 0, &0u32.to_be_bytes());
+    let stbl = build_box(b"stbl", &[stsd, stts, stsc, stsz, stco].concat());
+    let minf = build_box(b"minf", &stbl);
+    let mdia = build_box(b"mdia", &minf);
+    let trak = build_box(b"trak", &[tkhd, mdia].concat());
+    let moov = build_box(b"moov", &[mvhd, trak].concat());
+    f.extend_from_slice(&moov);
+
+    f.extend_from_slice(&build_box(b"mdat", &[0u8; 8]));
+    f
+}
+
+/// The crafted `emsg` asset must return an error, not panic. (Before the native
+/// reader, this input panicked with an integer underflow / capacity overflow.)
+#[test]
+fn crafted_emsg_does_not_panic() {
+    let mut bmff_hash = BmffHash::new("test", "sha256", None);
+    bmff_hash.add_exclusions(&mut vec![ExclusionsMap::new("/uuid".to_owned())]);
+    bmff_hash.set_merkle(vec![MerkleMap {
+        unique_id: 0,
+        local_id: 1,
+        count: 1,
+        alg: Some("sha256".into()),
+        init_hash: None,
+        hashes: VecByteBuf(vec![ByteBuf::from(vec![0u8; 32])]),
+        fixed_block_size: None,
+        variable_block_sizes: None,
+    }]);
+
+    let mut reader = Cursor::new(build_emsg_crash_mp4());
+    // Must not panic; the malformed asset is rejected with an error.
+    let result = bmff_hash.verify_stream_hash(&mut reader, Some("sha256"));
+    assert!(result.is_err(), "crafted emsg asset should be rejected");
+}
+
+/// A sample whose declared (fixed) size runs past the end of the stream must be
+/// rejected before allocating, guarding against memory-amplification.
+#[test]
+fn oversized_sample_is_rejected() {
+    let track = TrackSpec {
+        track_id: 1,
+        stsc: vec![StscEntry {
+            first_chunk: 1,
+            samples_per_chunk: 1,
+            sample_description_index: 1,
+        }],
+        // Fixed sample size far larger than the file.
+        sample_sizes: SampleSizes::Fixed(0xffff_ff00),
+        use_co64: false,
+    };
+    let (file, roots) = build_single_track_asset(track, &[b"tiny"]);
+    let bmff_hash = track_merkle_assertion(1, &roots);
+    let mut reader = Cursor::new(file);
+    let err = bmff_hash
+        .verify_stream_hash(&mut reader, Some("sha256"))
+        .unwrap_err();
+    // Rejected cleanly (no OOM / panic).
+    assert!(
+        matches!(
+            err,
+            c2pa::Error::InvalidAsset(_) | c2pa::Error::HashMismatch(_)
+        ),
+        "expected a clean rejection, got: {err:?}"
+    );
+}
+
+/// An `stco` box declaring far more entries than its size can hold must be
+/// rejected at parse time, not drive a huge allocation.
+#[test]
+fn oversized_stco_entry_count_is_rejected() {
+    let track = TrackSpec {
+        track_id: 1,
+        stsc: vec![StscEntry {
+            first_chunk: 1,
+            samples_per_chunk: 1,
+            sample_description_index: 1,
+        }],
+        sample_sizes: SampleSizes::Variable(vec![4]),
+        use_co64: false,
+    };
+    let (mut file, roots) = build_single_track_asset(track, &[b"data"]);
+
+    // Overwrite the stco entry_count with a huge value.
+    let pos = file
+        .windows(4)
+        .position(|w| w == b"stco")
+        .expect("stco box present");
+    let ec = pos + 4 + 4; // past fourcc + version/flags
+    file[ec..ec + 4].copy_from_slice(&0xffff_ffffu32.to_be_bytes());
+
+    let bmff_hash = track_merkle_assertion(1, &roots);
+    let mut reader = Cursor::new(file);
+    let err = bmff_hash
+        .verify_stream_hash(&mut reader, Some("sha256"))
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            c2pa::Error::InvalidAsset(_) | c2pa::Error::HashMismatch(_)
+        ),
+        "expected a clean rejection, got: {err:?}"
+    );
+}
