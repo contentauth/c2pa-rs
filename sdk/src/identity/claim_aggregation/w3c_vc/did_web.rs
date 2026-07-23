@@ -198,8 +198,27 @@ pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
     // Reject bare IPv4/IPv6 literals — did:web requires a DNS domain name.
     // Domain may include a %3A-encoded port (e.g. "192.168.1.1%3A8080"), so
     // strip the port suffix before checking.
-    let host_part = domain_name.split("%3A").next().unwrap_or(domain_name);
-    if host_part.parse::<std::net::IpAddr>().is_ok() {
+    let mut host_part = String::from(domain_name.split("%3A").next().unwrap_or(domain_name));
+
+    // For the case [::1] which is a loopback address
+    host_part.retain(|c| c != '[' && c != ']');
+    
+    let mut invalid_host = host_part.parse::<std::net::IpAddr>().is_ok();
+
+    if !invalid_host {
+        host_part = host_part.to_lowercase();
+        const INVALID_HOSTS: [&str; 3] = ["localhost", "nip.io", "sslip.io"];
+        invalid_host = INVALID_HOSTS
+            .into_iter()
+            .any(|suffix| host_part == suffix || host_part.ends_with(&format!(".{suffix}")));
+    }
+
+    #[cfg(test)]
+    if host_part == "localhost" {
+        invalid_host = false;
+    }
+
+    if invalid_host {
         return Err(DidWebError::InvalidWebDid(did.to_owned()));
     }
 
@@ -289,6 +308,31 @@ mod tests {
         assert!(
             did_web::to_url(did("did:web:192.168.1.1%3A8080:path").method_specific_id()).is_err(),
             "RFC-1918 IPv4 with port must be rejected"
+        );
+        // Note: `to_url` splits its input on ':' to isolate the domain
+        // segment before any host validation runs, so `domain_name` can
+        // never itself contain a ':' — a raw IPv6 literal (bracketed or
+        // not) can therefore never reach the host checks below. There is
+        // no reachable bypass to test here.
+        // DNS-rebinding services that resolve arbitrary subdomains to the
+        // requested IP must be rejected regardless of case.
+        assert!(
+            did_web::to_url(did("did:web:169.254.169.254.nip.io").method_specific_id()).is_err(),
+            "nip.io subdomain must be rejected"
+        );
+        assert!(
+            did_web::to_url(did("did:web:10.0.0.1.sslip.io").method_specific_id()).is_err(),
+            "sslip.io subdomain must be rejected"
+        );
+        assert!(
+            did_web::to_url(did("did:web:NIP.IO").method_specific_id()).is_err(),
+            "nip.io must be rejected case-insensitively"
+        );
+        // A domain that merely contains "nip.io" as a substring without a
+        // dot boundary must not be falsely rejected.
+        assert!(
+            did_web::to_url(did("did:web:evilnip.io").method_specific_id()).is_ok(),
+            "non-boundary substring match must not be rejected"
         );
     }
 
