@@ -4615,6 +4615,65 @@ mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    fn test_builder_resign_clears_stale_png_xmp_provenance() {
+        // Reproduces https://github.com/contentauth/c2pa-rs/issues/1532: sign a PNG with an
+        // embedded+remote manifest (which writes the remote URL into XMP's dcterms:provenance),
+        // then re-sign it with an embedded-only manifest. The stale provenance URL from the
+        // first signing must not survive into the re-signed output.
+        let source_path = crate::utils::test::fixture_path("sample1.png");
+        let source_bytes = std::fs::read(source_path).unwrap();
+
+        let mut source = Cursor::new(source_bytes);
+        let mut with_remote = Cursor::new(Vec::new());
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
+        builder.set_remote_url("http://my_remote_url");
+        builder
+            .sign(signer.as_ref(), "image/png", &mut source, &mut with_remote)
+            .unwrap();
+
+        with_remote.set_position(0);
+        let xmp = crate::jumbf_io::get_cailoader_handler("image/png")
+            .unwrap()
+            .read_xmp(&mut with_remote)
+            .unwrap();
+        assert!(crate::utils::xmp_inmemory_utils::extract_provenance(&xmp)
+            .unwrap()
+            .contains("my_remote_url"));
+
+        // re-sign, embedded-only (default RemoteManifest::NoRemote)
+        with_remote.set_position(0);
+        let mut embedded_only = Cursor::new(Vec::new());
+        let mut builder2 = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
+        builder2
+            .sign(
+                signer.as_ref(),
+                "image/png",
+                &mut with_remote,
+                &mut embedded_only,
+            )
+            .unwrap();
+
+        embedded_only.set_position(0);
+        let new_xmp = crate::jumbf_io::get_cailoader_handler("image/png")
+            .unwrap()
+            .read_xmp(&mut embedded_only);
+        if let Some(new_xmp) = new_xmp {
+            assert!(
+                crate::utils::xmp_inmemory_utils::extract_provenance(&new_xmp).is_none(),
+                "stale remote manifest URL was not cleared from XMP on re-sign"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
     fn test_builder_remote_url() {
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut dest = Cursor::new(Vec::new());
