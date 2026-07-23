@@ -5897,7 +5897,7 @@ mod tests {
             .unwrap()
             .with_value("verify.remote_manifest_fetch", false)
             .unwrap()
-            .with_value("verify.ignore_ingredient_errors", true)
+            .with_value("builder.ignore_ingredient_errors", true)
             .unwrap();
         let context = Context::default().with_settings(settings).unwrap();
 

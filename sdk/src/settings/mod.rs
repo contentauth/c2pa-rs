@@ -443,19 +443,6 @@ pub struct Verify {
     ///
     /// The default value is false.
     pub strict_v1_validation: bool,
-    /// Whether to ignore errors encountered while loading or validating an [`Ingredient`]'s
-    /// manifest (e.g. a remote manifest that couldn't be fetched, or a invalid file format).
-    ///
-    /// The default value is false.
-    ///
-    /// <div class="warning">
-    /// When enabled, an ingredient whose manifest can't be loaded is returned with no manifest
-    /// instead of failing (no `active_manifest`, `manifest_data`, or validation status/results).
-    /// See [#2327](https://github.com/contentauth/c2pa-rs/issues/2327).
-    /// </div>
-    ///
-    /// [`Ingredient`]: crate::Ingredient
-    pub ignore_ingredient_errors: bool,
 }
 
 impl Default for Verify {
@@ -470,7 +457,6 @@ impl Default for Verify {
             remote_manifest_fetch: true,
             skip_ingredient_conflict_resolution: false,
             strict_v1_validation: false,
-            ignore_ingredient_errors: false,
         }
     }
 }

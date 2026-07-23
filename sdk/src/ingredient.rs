@@ -1883,7 +1883,7 @@ mod tests {
 
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_and_bad_manifest() {
-        crate::settings::set_settings_value("verify.ignore_ingredient_errors", true).unwrap();
+        crate::settings::set_settings_value("builder.ignore_ingredient_errors", true).unwrap();
 
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let bad_manifest_bytes = b"not a real c2pa manifest".to_vec();
