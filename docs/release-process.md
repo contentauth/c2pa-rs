@@ -167,6 +167,8 @@ As a backstop to the proactive check above, a scheduled job, [`reconciliation.ym
 
 [`semver-checks.yml`](../.github/workflows/semver-checks.yml) runs [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) on every PR targeting a release-line branch (including backport PRs), baselining against the latest crates.io release. It catches a change that would be an accidental break shipping as an additive release. It does **not** run on `-rc` branches — the train is the intended place for breaking changes.
 
+By default, `cargo-semver-checks` ignores features named `unstable`, `nightly`, `bench`, or `no_std`, and any feature whose name begins with `_`, `unstable-`, or `unstable_`. We rely on this: [experimental features](experimental-features.md) are gated behind `unstable_<name>` flags precisely so that changes confined to them are exempt from breaking-change detection and never force a version bump. An experimental API is free to change at will, as long as the change doesn't touch the public/stable API surface.
+
 ### Patch-dependency guard
 
 [`check-no-patch-deps.yml`](../.github/workflows/check-no-patch-deps.yml) fails if a `[patch]` section or a git dependency is present. It runs on release-branch PRs and as a required prerequisite of `release.yml`, so a `[patch]` left over from co-developing an extracted crate can never leak into a publish.
