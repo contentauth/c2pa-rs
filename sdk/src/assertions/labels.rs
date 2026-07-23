@@ -176,7 +176,7 @@ pub const CLAIM_REVIEW: &str = "stds.schema-org.ClaimReview";
 /// Label prefix for a Creative Work assertion. Deprecated in C2PA 2.0 spec.
 #[deprecated(
     since = "0.91.0",
-    note = "This attribute is deprecated from c2pa spec version 2.0"
+    note = "This attribute is deprecated from C2PA spec version 2.0. Will be deleted on or after 2026-12-01."
 )]
 pub const CREATIVE_WORK: &str = "stds.schema-org.CreativeWork";
 
