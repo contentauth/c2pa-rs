@@ -19,7 +19,7 @@ We follow [Semantic Versioning (SemVer)](https://semver.org/). Version 1.0.0 wil
 Pre-1.0, the Rust SDK aligns this with our two-track [release process](release-process.md). Both the deprecation notice and the eventual removal are made **on `main` only – never backported** to the active release line, and both surface to users on the scheduled breaking "train" (a bump of the middle number, `0.x.0`):
 
 - A **deprecation** is authored on `main` and becomes published when the **next** scheduled train is cut (currently `0.91`, mid-September). Its replacement API is available by that train at the latest (a purely additive replacement may land earlier on the current line), so that train is the first release in which users see the deprecation warning alongside a supported alternative.
-- The **removal** is scheduled for the **second** scheduled train after the deprecation was authored (currently `0.92`, mid-December), which is the deletion-eligibility milestone recorded in the deprecation notice. Immediately after each train is cut, we delete every currently-deprecated API on `main` – again `main`-only, with no backport – and that deletion becomes official when the following train ships.
+- The **removal** is scheduled for the **second** scheduled train after the deprecation was authored (currently `0.92`, mid-November), which is the deletion-eligibility milestone recorded in the deprecation notice. Immediately after each train is cut, we delete every currently-deprecated API on `main` – again `main`-only, with no backport – and that deletion becomes official when the following train ships.
 
 Users therefore get one full published train in which the API is present but marked deprecated, with a known date – the second train – on which it disappears.
 
@@ -84,7 +84,7 @@ The initial stage provides advance notice of the deprecation:
 
 During the grace period, the deprecated API remains operational without functional regression before being retired.
 
-**Rust SDK (`c2pa-rs`).** The grace period is measured in release trains, not days. A deprecation authored on `main` is published by the next train and removed by the following one, so the API is present-but-deprecated for exactly one published train. Concretely, an API deprecated today is published deprecated in `0.91` (mid-September) and removed in `0.92` (mid-December): the **second scheduled train** is its deletion-eligibility milestone.
+**Rust SDK (`c2pa-rs`).** The grace period is measured in release trains, not days. A deprecation authored on `main` is published by the next train and removed by the following one, so the API is present-but-deprecated for exactly one published train. Concretely, an API deprecated today is published deprecated in `0.91` (mid-September) and removed in `0.92` (mid-November): the **second scheduled train** is its deletion-eligibility milestone.
 
 **Language bindings** (and any project not yet on the release-train cadence) use a calendar-based _minimum_ instead:
 
@@ -99,7 +99,7 @@ During the grace period, the deprecated API remains operational without function
 
 In the final stage, the item is actually removed from the API.
 
-**Rust SDK (`c2pa-rs`), pre-1.0.** Immediately after a train is cut, we delete every currently-deprecated API on `main`. Because every deprecation is published by the train that immediately precedes this sweep, each API removed this way has had exactly one published train of deprecation warning first. The deletion is made on `main` only and is **not** backported; it becomes official – visible to users – when the following [breaking train](release-process.md#track-2--the-breaking-train-0x0) ships (the deprecation's second train, currently `0.92`, mid-December). The same applies to an item that was only ever made public via a non-default feature/build configuration.
+**Rust SDK (`c2pa-rs`), pre-1.0.** Immediately after a train is cut, we delete every currently-deprecated API on `main`. Because every deprecation is published by the train that immediately precedes this sweep, each API removed this way has had exactly one published train of deprecation warning first. The deletion is made on `main` only and is **not** backported; it becomes official – visible to users – when the following [breaking train](release-process.md#track-2--the-breaking-train-0x0) ships (the deprecation's second train, currently `0.92`, mid-November). The same applies to an item that was only ever made public via a non-default feature/build configuration.
 
 **Post-1.0:** the deprecated item is removed in the next major release.
 
@@ -116,7 +116,7 @@ Deprecation warnings are expressed using each language's idiomatic mechanism so 
 ```rust
 #[deprecated(
     since = "0.91.0",
-    note = "Use `Builder::new_v2()` instead. Will be removed in 0.92.0 (scheduled for mid-December 2026)."
+    note = "Use `Builder::new_v2()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
 )]
 pub fn old_builder() -> Builder { ... }
 ```
