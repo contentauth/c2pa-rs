@@ -164,9 +164,7 @@ pub const IPTC_PHOTO_METADATA: &str = "stds.iptc.photo-metadata";
 #[doc(hidden)]
 pub const SCHEMA_ORG: &str = "schema.org";
 
-/// Label prefix for a claim review assertion.
-///
-/// Label prefix for a claim review assertion. Deprecated since C2PA 2.0 spec.
+/// Label prefix for a Claim Review assertion. Deprecated since C2PA 2.0 spec.
 #[deprecated(
     since = "0.91.0",
     note = "This attribute is deprecated from C2PA spec version 2.0. Will be deleted on or after 2026-11-09."
