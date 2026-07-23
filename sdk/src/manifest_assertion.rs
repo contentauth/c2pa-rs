@@ -68,11 +68,11 @@ impl ManifestAssertion {
     }
 
     /// An assertion label in reverse domain format with appended instance number
-    /// The instance number follows two underscores and is only added when the instance is > 1
+    /// The instance number follows two underscores and is only added when the instance is > 0
     /// This is a c2pa spec internal standard format
     pub fn label_with_instance(&self) -> String {
         match self.instance {
-            Some(i) if i > 1 => format!("{}__{}", self.label, i),
+            Some(i) if i > 0 => format!("{}__{}", self.label, i),
             _ => self.label.to_owned(),
         }
     }
@@ -220,5 +220,23 @@ pub(crate) mod tests {
         let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
         let ma2 = ManifestAssertion::from_assertion(&actions).expect("from_assertion");
         let _actions2: Actions = ma2.to_assertion().expect("to_assertion");
+    }
+
+    #[test]
+    fn test_label_with_instance() {
+        // matches the write-side `Claim::label_with_instance`, and the spec's example
+        // (three `c2pa.metadata` assertions are labeled `c2pa.metadata`,
+        // `c2pa.metadata__1`, `c2pa.metadata__2`): the first occurrence is unsuffixed,
+        // every subsequent occurrence is suffixed starting from `__1`.
+        let base = ManifestAssertion::new(Actions::LABEL.to_owned(), Value::Null);
+
+        let ma = base.clone().set_instance(0);
+        assert_eq!(ma.label_with_instance(), Actions::LABEL);
+
+        let ma = base.clone().set_instance(1);
+        assert_eq!(ma.label_with_instance(), format!("{}__1", Actions::LABEL));
+
+        let ma = base.set_instance(2);
+        assert_eq!(ma.label_with_instance(), format!("{}__2", Actions::LABEL));
     }
 }
