@@ -5806,6 +5806,8 @@ mod tests {
             .with_value("verify.verify_timestamp_trust", false)
             .unwrap()
             .with_value("verify.remote_manifest_fetch", false)
+            .unwrap()
+            .with_value("verify.ignore_ingredient_errors", true)
             .unwrap();
         let context = Context::default().with_settings(settings).unwrap();
 

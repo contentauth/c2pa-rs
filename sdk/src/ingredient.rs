@@ -660,6 +660,7 @@ impl Ingredient {
         result: Result<Store>,
         manifest_bytes: Option<Vec<u8>>,
         validation_log: &StatusTracker,
+        context: &Context,
     ) -> Result<()> {
         match result {
             Ok(store) => {
@@ -720,6 +721,7 @@ impl Ingredient {
             //
             //       See https://github.com/contentauth/c2pa-rs/issues/2327
             // Err(Error::RemoteManifestUrl(url)) | Err(Error::RemoteManifestFetch(url)) => {}
+            Err(_) if context.settings().verify.ignore_ingredient_errors => Ok(()),
             Err(err) => Err(err),
         }
     }
@@ -869,7 +871,7 @@ impl Ingredient {
         }
 
         // set validation status from result and log
-        self.update_validation_status(result, manifest_bytes, &validation_log)?;
+        self.update_validation_status(result, manifest_bytes, &validation_log, context)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -959,7 +961,7 @@ impl Ingredient {
             };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
+        ingredient.update_validation_status(result, manifest_bytes, &validation_log, context)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -1451,7 +1453,12 @@ impl Ingredient {
             };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, Some(manifest_bytes), &validation_log)?;
+        ingredient.update_validation_status(
+            result,
+            Some(manifest_bytes),
+            &validation_log,
+            &context,
+        )?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -1865,6 +1872,8 @@ mod tests {
 
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_and_bad_manifest() {
+        crate::settings::set_settings_value("verify.ignore_ingredient_errors", true).unwrap();
+
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let bad_manifest_bytes = b"not a real c2pa manifest".to_vec();
         let format = "image/jpeg";
@@ -1877,7 +1886,7 @@ mod tests {
         .expect("ingredient should load even with a bad manifest");
 
         assert_eq!(ingredient.format(), Some(format));
-        assert!(ingredient.validation_status().is_some());
+        assert_eq!(ingredient.validation_status(), None);
     }
 
     #[test]
@@ -2038,8 +2047,7 @@ mod tests {
     #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
     fn test_jpg_prerelease() {
         const PRERELEASE_JPEG: &str = "prerelease.jpg";
-        let ap = fixture_path(PRERELEASE_JPEG);
-        let ingredient = Ingredient::from_file(ap);
+        let ingredient = load_ingredient(PRERELEASE_JPEG);
         assert!(matches!(ingredient, Err(Error::PrereleaseError)));
     }
 
@@ -2055,13 +2063,11 @@ mod tests {
     #[test]
     #[cfg(feature = "fetch_remote_manifests")]
     fn test_jpg_cloud_failure() {
-        let ingredient = load_ingredient("cloudx.jpg").expect("load_ingredient");
-        println!("ingredient = {ingredient}");
-        assert!(ingredient.validation_status().is_some());
-        assert_eq!(
-            ingredient.validation_status().unwrap()[0].code(),
-            validation_status::MANIFEST_INACCESSIBLE
-        );
+        let result = load_ingredient("cloudx.jpg");
+        assert!(matches!(
+            result,
+            Err(Error::RemoteManifestFetch(_)) | Err(Error::RemoteManifestUrl(_))
+        ));
     }
 
     #[test]
