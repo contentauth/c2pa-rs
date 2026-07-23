@@ -715,7 +715,7 @@ impl Ingredient {
             | Err(Error::UnsupportedType) => Ok(()), // no claims but valid file
             Err(Error::BadParam(desc)) if desc == *"unrecognized file type" => Ok(()),
             // TODO: We cannot report `manifest.inaccessible` in `validation_results` because the spec requires
-            //       the ingredient fields `active_manifest` and `validation_results` exist simultaneously,
+            //       the ingredient fields `active_manifest` and `validation_results` to exist simultaneously,
             //       which is impossible since there is no manifest!
             //
             //       See https://github.com/contentauth/c2pa-rs/issues/2327
