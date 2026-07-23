@@ -253,15 +253,15 @@ pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
 ///
 /// After this call, the pointer is no longer managed by the registry. The
 /// caller owns the underlying allocation and must drop it — typically by
-/// calling `Box::from_raw()` immediately after untracking.
+/// calling `Box::from_raw()` immediately after untracking. The
+/// `untrack_or_return_*!` macros do this for you, yielding the owned value directly.
 ///
 /// # Example
 ///
 /// ```rust,ignore
 /// // FFI function that consumes a signer to configure a builder:
-/// untrack_or_return_int!(signer_ptr, C2paSigner);
-/// let signer = Box::from_raw(signer_ptr);   // sole owner now
-/// builder.set_signer(signer.signer);         // inner value moved into builder
+/// let signer = untrack_or_return_int!(signer_ptr, C2paSigner); // sole owner now
+/// builder.set_signer(signer.signer);                           // inner value moved into builder
 /// // C2paSigner wrapper dropped here — no double-free risk
 /// ```
 pub fn untrack_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
