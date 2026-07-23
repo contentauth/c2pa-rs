@@ -14,11 +14,10 @@
 use std::{
     collections::{hash_map::Entry::Vacant, BTreeMap, HashMap},
     fmt,
-    io::{BufReader, Cursor, Read, Seek},
+    io::{Cursor, Read, Seek},
     ops::Deref,
 };
 
-use mp4::*;
 use serde::{
     de::{SeqAccess, Visitor},
     ser::SerializeSeq,
@@ -61,7 +60,8 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
     asset_handlers::bmff_io::{
-        bmff_to_jumbf_exclusions, read_bmff_c2pa_boxes, BoxInfoLite, C2PABmffBoxes,
+        bmff_to_jumbf_exclusions, read_bmff_c2pa_boxes, BmffSampleReader, BoxInfoLite,
+        C2PABmffBoxes,
     },
     asset_io::CAIRead,
     cbor_types::UriT,
@@ -749,7 +749,10 @@ impl BmffHash {
     }
 
     // get regions to hash based on the list of top level boxes in file order
-    pub fn box_list_to_user_exclusions(&self, _box_paths: &[String]) -> Result<Vec<UserHashInfo>> {
+    pub fn box_list_to_user_exclusions(
+        &self,
+        _box_paths: &[String],
+    ) -> crate::Result<Vec<UserHashInfo>> {
         let uhis = Vec::new();
 
         Ok(uhis)
@@ -1390,10 +1393,9 @@ impl BmffHash {
                 let track_to_bmff_merkle_map = self.split_bmff_merkle_map(bmff_merkle.clone())?;
 
                 reader.rewind()?;
-                let buf_reader = BufReader::new(reader);
-                let mut mp4 = mp4::Mp4Reader::read_header(buf_reader, size)
+                let media = BmffSampleReader::from_stream(reader)
                     .map_err(|_e| Error::InvalidAsset("Could not parse BMFF".to_string()))?;
-                let track_count = mp4.tracks().len();
+                let track_count = media.tracks().len();
 
                 for mm in mm_vec {
                     let alg = match &mm.alg {
@@ -1405,18 +1407,10 @@ impl BmffHash {
 
                     if track_count > 0 {
                         // timed media case
-                        let track = {
-                            // clone so we can borrow later
-                            let tt = mp4.tracks().get(&(mm.local_id as u32)).ok_or(
-                                Error::HashMismatch("Merkle location not found".to_owned()),
-                            )?;
-
-                            Mp4Track {
-                                trak: tt.trak.clone(),
-                                trafs: tt.trafs.clone(),
-                                default_sample_duration: tt.default_sample_duration,
-                            }
-                        };
+                        let track = media
+                            .tracks()
+                            .get(&(mm.local_id as u32))
+                            .ok_or(Error::HashMismatch("Merkle location not found".to_owned()))?;
 
                         let sample_cnt = track.sample_count();
                         if sample_cnt == 0 {
@@ -1430,11 +1424,11 @@ impl BmffHash {
                         // create sample to chunk mapping
                         // create the Merkle tree per samples in a chunk
                         let mut chunk_hash_map: HashMap<u32, Hasher> = HashMap::new();
-                        let stsc = &track.trak.mdia.minf.stbl.stsc;
+                        let stsc = track.stsc_runs();
                         for sample_id in 1..=sample_cnt {
-                            let stsc_idx = stsc_index(&track, sample_id)?;
+                            let stsc_idx = track.stsc_index(sample_id)?;
 
-                            let stsc_entry = &stsc.entries[stsc_idx];
+                            let stsc_entry = &stsc[stsc_idx];
 
                             let first_chunk = stsc_entry.first_chunk;
                             let first_sample = stsc_entry.first_sample;
@@ -1466,14 +1460,16 @@ impl BmffHash {
                                 e.insert(hasher_enum);
                             }
 
-                            if let Ok(Some(sample)) = &mp4.read_sample(track_id, sample_id) {
+                            if let Ok(Some(sample)) =
+                                &media.read_sample(reader, track_id, sample_id)
+                            {
                                 let h = chunk_hash_map.get_mut(&chunk_id).ok_or(
                                     Error::HashMismatch(
                                         "Bad Merkle tree sample mapping".to_string(),
                                     ),
                                 )?;
                                 // add sample data to hash
-                                h.update(&sample.bytes);
+                                h.update(sample);
                             } else {
                                 return Err(Error::HashMismatch(
                                     "Merle location not found".to_owned(),
@@ -2452,22 +2448,6 @@ impl AssertionBase for BmffHash {
 
         Ok(bmff_hash)
     }
-}
-
-fn stsc_index(track: &Mp4Track, sample_id: u32) -> crate::Result<usize> {
-    if track.trak.mdia.minf.stbl.stsc.entries.is_empty() {
-        return Err(Error::InvalidAsset("BMFF has no stsc entries".to_string()));
-    }
-    for (i, entry) in track.trak.mdia.minf.stbl.stsc.entries.iter().enumerate() {
-        if sample_id < entry.first_sample {
-            return if i == 0 {
-                Err(Error::InvalidAsset("BMFF no sample not found".to_string()))
-            } else {
-                Ok(i - 1)
-            };
-        }
-    }
-    Ok(track.trak.mdia.minf.stbl.stsc.entries.len() - 1)
 }
 
 #[cfg(test)]
