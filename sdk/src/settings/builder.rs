@@ -591,6 +591,19 @@ pub struct BuilderSettings {
     ///
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     pub auto_timestamp_assertion: TimeStampSettings,
+    /// Whether to ignore errors encountered while loading or validating an [`Ingredient`]'s
+    /// manifest (e.g. a remote manifest that couldn't be fetched, or a invalid file format).
+    ///
+    /// The default value is false.
+    ///
+    /// <div class="warning">
+    /// When enabled, an ingredient whose manifest can't be loaded is returned with no manifest
+    /// instead of failing (no `active_manifest`, `manifest_data`, or validation status/results).
+    /// See [#2327](https://github.com/contentauth/c2pa-rs/issues/2327).
+    /// </div>
+    ///
+    /// [`Ingredient`]: crate::Ingredient
+    pub ignore_ingredient_errors: bool,
 }
 
 impl Default for BuilderSettings {
@@ -607,6 +620,7 @@ impl Default for BuilderSettings {
             prefer_box_hash: false,
             generate_c2pa_archive: Some(true),
             auto_timestamp_assertion: TimeStampSettings::default(),
+            ignore_ingredient_errors: false,
         }
     }
 }

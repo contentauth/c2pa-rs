@@ -721,7 +721,7 @@ impl Ingredient {
             //
             //       See https://github.com/contentauth/c2pa-rs/issues/2327
             // Err(Error::RemoteManifestUrl(url)) | Err(Error::RemoteManifestFetch(url)) => {}
-            Err(_) if context.settings().verify.ignore_ingredient_errors => Ok(()),
+            Err(_) if context.settings().builder.ignore_ingredient_errors => Ok(()),
             Err(err) => Err(err),
         }
     }
@@ -1872,7 +1872,7 @@ mod tests {
 
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_and_bad_manifest() {
-        crate::settings::set_settings_value("verify.ignore_ingredient_errors", true).unwrap();
+        crate::settings::set_settings_value("builder.ignore_ingredient_errors", true).unwrap();
 
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let bad_manifest_bytes = b"not a real c2pa manifest".to_vec();
