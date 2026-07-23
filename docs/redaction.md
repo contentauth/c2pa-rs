@@ -1,7 +1,7 @@
 # Redaction
 
 Redaction removes an assertion from a prior manifest in the C2PA claim chain.
-This is useful when you need to strip sensitive metadata — such as GPS coordinates — before distributing an asset.
+This is useful when you need to strip sensitive metadata, such as GPS coordinates, before distributing an asset.
 
 When an assertion is redacted, its JUMBF box is replaced with a zero-filled placeholder so verifiers can distinguish an intentional removal from data corruption.
 
@@ -12,8 +12,8 @@ Common scenarios include:
 - **Privacy**: Removing location data (EXIF GPS) or identity before publishing.
 - **Metadata cleanup**: Stripping outdated or incorrect metadata while preserving the rest of the provenance chain.
 
-> **Tip:** To *replace* a metadata field rather than simply remove it, redact the existing
-> assertion and add a new one with the updated values in the same manifest.
+> [!TIP]
+> To *replace* a metadata field rather than simply remove it, redact the existing assertion and add a new one with the updated values in the same manifest.
 
 ## Rules and constraints
 
@@ -44,9 +44,9 @@ The `<manifest_label>` comes from the parent manifest you are redacting from. Si
 
 ## Workflow
 
-The recommended workflow uses a [`Reader`] to discover assertion URIs, then a [`Builder`] with an update manifest to apply the redaction.
+The recommended workflow uses a `Reader` to discover assertion URIs, then a `Builder` with an update manifest to apply the redaction.
 
-### Step 1 — Discover the redaction target
+### Step 1: Discover the redaction target
 
 Open the signed asset and gather URIs for all assertions you want to redact:
 
@@ -65,14 +65,14 @@ let redacted_uri = manifest.assertion_references()
     .expect("assertion not found");
 ```
 
-### Step 2 — Build the manifest
+### Step 2: Build the manifest
 
 Use `BuilderIntent::Update` if redaction is your only change. Update manifests
 can only modify manifest-level information and cannot alter the asset's content.
 If the redaction is part of a wider edit that also changes the asset, use
 `BuilderIntent::Edit` instead.
 
-Create a [`Builder`] and add the URI to the `redactions` list:
+Create a `Builder` and add the URI to the `redactions` list:
 
 ```rust
 use c2pa::{assertions::c2pa_action, Builder, BuilderIntent};
@@ -93,7 +93,7 @@ let redacted_action = Action::new(c2pa_action::REDACTED)
 builder.add_action(redacted_action)?;
 ```
 
-### Step 3 — Sign
+### Step 3: Sign
 
 Sign the update manifest using the previously signed asset as the source:
 
@@ -105,7 +105,7 @@ builder.save_to_stream("image/jpeg", &mut source, &mut output)?;
 
 The `Update` intent automatically creates the source as a parent ingredient. The builder will locate the matching assertion in the parent's manifest store and replace its JUMBF box with a redaction placeholder.
 
-### Step 4 — Verify
+### Step 4: Verify
 
 Read back the output and confirm the redaction is listed on the active manifest:
 
@@ -166,7 +166,7 @@ Each URI must include the correct manifest label for the ingredient it targets. 
 
 ## Redacting from nested manifests
 
-A redaction URI can target any manifest in an ingredient's claim chain, not just the ingredient's active manifest. If the parent itself has ingredients (grandparent manifests), you can redact from those as well — as long as the URI contains the correct manifest label.
+A redaction URI can target any manifest in an ingredient's claim chain, not just the ingredient's active manifest. If the parent itself has ingredients (grandparent manifests), you can redact from those as well, as long as the URI contains the correct manifest label.
 
 ## Complete example
 

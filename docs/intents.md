@@ -2,7 +2,7 @@
 
 _Intents_ tell the C2PA `Builder` what kind of manifest you are creating. They enable validation, add required default actions, and help prevent invalid operations.
 
-You can use an intent for any asset type.  Intents are about the operation (create/edit/update), not the asset type.
+You can use an intent for any asset type. Intents are about the operation (create/edit/update), not the asset type.
 
 <div class="github-only">
 
@@ -25,7 +25,7 @@ There are three types of intents:
 
 ### Create intent
 
-Use `BuilderIntent::Create(DigitalSourceType)` for new digital creations without a parent ingredient.  This intent:
+Use `BuilderIntent::Create(DigitalSourceType)` for new digital creations without a parent ingredient. This intent:
 
 - Requires a `DigitalSourceType` (see below).
 - Must not have a parent ingredient.
@@ -70,7 +70,7 @@ builder.add_ingredient_from_stream(
 
 ### Update intent
 
-Use `BuilderIntent::Update` for non-editorial (metadata-only) changes. It is a restricted version of the edit intent.  This intent:
+Use `BuilderIntent::Update` for non-editorial (metadata-only) changes. It is a restricted version of the edit intent. This intent:
 
 - Allows exactly one ingredient (the parent).
 - Does not allow changes to the parent’s hashed content.
@@ -94,6 +94,3 @@ Run the builder example:
 cd sdk
 cargo run --example builder_sample
 ```
-
-
-
