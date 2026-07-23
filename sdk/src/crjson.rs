@@ -170,6 +170,10 @@ struct CrJsonClaim {
 #[derive(Serialize)]
 struct CrJsonManifest {
     label: String,
+    #[serde(rename = "isUpdateManifest")]
+    is_update_manifest: bool,
+    #[serde(rename = "isCompressedManifest")]
+    is_compressed_manifest: bool,
     /// Assertions map: `label -> assertion value`. Keys may include instance suffixes
     /// such as `c2pa.actions__2`.
     assertions: Map<String, Value>,
@@ -281,6 +285,8 @@ impl<'a> CrJsonExporter<'a> {
 
         Ok(CrJsonManifest {
             label: label.to_string(),
+            is_update_manifest: claim.update_manifest(),
+            is_compressed_manifest: claim.compressed(),
             assertions,
             claim_v1,
             claim_v2,
